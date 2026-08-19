@@ -162,7 +162,16 @@
 			const after = currentText.slice(range.index + range.length);
 
 			const baseCharCount = countCharsFromText(stripTrailingNewline(before + after));
-			const availableChars = MAX_CHARS - baseCharCount;
+
+			// Budget against the same growth rule the text-change gate applies, not
+			// against MAX_CHARS alone. A grandfathered bio may not grow past its own
+			// size, but replacing a long selection with a shorter paste shrinks it,
+			// which the typing path allows and this path must not refuse. The count is
+			// of the WHOLE document, taken before the selection is subtracted out, so
+			// for a bio within the limit the ceiling is exactly MAX_CHARS.
+			const currentDocCount = countCharsFromText(stripTrailingNewline(currentText));
+			const ceiling = Math.max(MAX_CHARS, currentDocCount);
+			const availableChars = ceiling - baseCharCount;
 
 			// Load-bearing: slice() with a negative end counts from the right, so an
 			// already-full editor would keep the tail of the paste instead of nothing.

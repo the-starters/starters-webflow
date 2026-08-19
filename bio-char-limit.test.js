@@ -129,10 +129,32 @@ for (const [label, source] of BIO_SURFACES) {
   })
 
   test(`${label}: paste is trimmed to the remaining characters, on a whole character`, () => {
-    assert.match(source, /const availableChars = MAX_CHARS - baseCharCount;/)
+    assert.match(source, /const availableChars = ceiling - baseCharCount;/)
     assert.match(source, /const allowedPaste = dropSplitSurrogate\(pastedText\.slice\(0, Math\.max\(availableChars, 0\)\)\);/)
     // The <= 0 early return is load-bearing: a negative end slices from the right.
     assert.ok(at(source, 'if (availableChars <= 0) {', label) < at(source, 'const allowedPaste =', label))
+  })
+
+  test(`${label}: paste budgets against the same ceiling the typing gate uses`, () => {
+    // Budgeting against MAX_CHARS alone refuses every paste into a grandfathered bio,
+    // including one that replaces a long selection with a shorter string — a shrink,
+    // which the typing path allows. The ceiling has to be the document's own size.
+    assert.match(
+      source,
+      /const currentDocCount = countCharsFromText\(stripTrailingNewline\(currentText\)\);/,
+    )
+    assert.match(source, /const ceiling = Math\.max\(MAX_CHARS, currentDocCount\);/)
+    assert.doesNotMatch(source, /availableChars = MAX_CHARS - baseCharCount/)
+    assert.ok(at(source, 'const ceiling =', label) < at(source, 'const availableChars =', label))
+
+    // The ceiling counts the WHOLE document, so it must read currentText, which still
+    // holds the selection; baseCharCount is the doc minus the selection, not the doc.
+    // Counting the same string as baseCharCount would make the ceiling collapse into
+    // it and hand every paste a budget of zero.
+    assert.match(source, /const baseCharCount = countCharsFromText\(stripTrailingNewline\(before \+ after\)\);/)
+    assert.ok(
+      at(source, 'const currentDocCount =', label) < at(source, 'const ceiling =', label),
+    )
   })
 
   test(`${label}: counting normalizes CRLF so one line break is one character`, () => {
