@@ -202,10 +202,13 @@
           if (record.data_environment !== expectedDataEnvironment) return false;
           if (record.is_paid === true) {
               const priceCents = Number(record.price_cents);
+              const duration = Number(record.duration);
               return record.payment_environment === expectedPaymentEnvironment &&
                   String(record.currency || '').toUpperCase() === 'USD' &&
                   Number.isInteger(priceCents) &&
-                  priceCents >= 500;
+                  priceCents >= 500 &&
+                  Number.isInteger(duration) &&
+                  duration > 0;
           }
           return record.is_paid === false;
       });
@@ -652,6 +655,7 @@
                       typeof paidController.installPaidBookingController === 'function' &&
                       paidController.installPaidBookingController({
                           config: paidConfig,
+                          grantId: grant_id,
                           starterSlug: decodeURIComponent(
                               window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
                           ),

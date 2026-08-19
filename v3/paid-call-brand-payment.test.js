@@ -565,6 +565,83 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
   }
 })
 
+test('a newer Paid selection runs after a Paid to Free to Paid switch', async () => {
+  const previous = {
+    document: global.document,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const readinessResolvers = []
+  const container = new CalendarElement('div')
+  const price = { textContent: '$50' }
+  const item = {
+    style: {},
+    querySelector(selector) { return selector === '[call-type-price]' ? price : null },
+  }
+  const paid = {
+    attrs: { 'data-config': 'config_paid' },
+    getAttribute(name) { return this.attrs[name] || null },
+    setAttribute(name, value) { this.attrs[name] = value },
+    closest() { return item },
+  }
+  const freeListeners = {}
+  const free = {
+    addEventListener(name, listener) { freeListeners[name] = listener },
+  }
+  const popup = {
+    querySelector(selector) {
+      if (selector === '[nylas-container]') return container
+      return null
+    },
+  }
+  global.document = {
+    querySelector(selector) {
+      if (selector === '[popup-booking]') return popup
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector.includes('data-type="free"') ? [free] : [paid]
+    },
+  }
+  global.xanoAuthFetch = async () => new Promise((resolve) => {
+    readinessResolvers.push(function () { resolve(response({ bookable: true })) })
+  })
+  const mounts = []
+
+  try {
+    assert.equal(api.installPaidBookingController({
+      config: {
+        config_id: 'config_paid',
+        duration: 30,
+        is_paid: true,
+        currency: 'usd',
+        price_cents: 500,
+      },
+      grantId: 'grant_test',
+      mountCalendar(options) {
+        mounts.push(options.config)
+        return Promise.resolve({ slots: [] })
+      },
+    }), true)
+    const first = paid.onclick({ preventDefault() {} })
+    freeListeners.click()
+    container.textContent = 'Free scheduler'
+    const second = paid.onclick({ preventDefault() {} })
+    assert.equal(container.textContent, 'Loading available times...')
+    assert.equal(readinessResolvers.length, 1)
+    readinessResolvers[0]()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(readinessResolvers.length, 2)
+    readinessResolvers[1]()
+    await Promise.all([first, second])
+    assert.equal(mounts.length, 1)
+    assert.equal(mounts[0].grant_id, 'grant_test')
+    assert.equal(mounts[0].duration, 30)
+  } finally {
+    global.document = previous.document
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
 test('card setup retries reuse the same setup and default-selection attempts', async () => {
   const previous = {
     document: global.document,

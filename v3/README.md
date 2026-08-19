@@ -2970,13 +2970,21 @@ The browser sends neither field. The controller uses this sequence:
    creates the provider booking.
 
 `hire-profile.js` passes only Free configurations to the legacy shared modal
-initializer. It gives the exact active Paid configuration to this controller.
-The adapter blocks legacy Stripe provider routes on V3 scheduling surfaces.
-For every accepted Paid CTA, the authored `[call-type-item]` must contain a
-`[call-type-price]` node. The controller replaces that node's CMS or Designer
-text with the canonical USD value from `price_cents` before it reveals the Paid
-option. A missing price node, non-USD currency, non-integer price, or price below
-500 cents makes installation fail closed.
+initializer. It gives the exact active Paid configuration and the canonical
+Starter Nylas grant to this controller. The controller uses that grant with the
+canonical Paid duration for availability and fails closed when either value is
+missing or invalid. The adapter blocks legacy Stripe provider routes on V3
+scheduling surfaces. For every accepted Paid CTA, the authored
+`[call-type-item]` must contain a `[call-type-price]` node. The controller
+replaces that node's CMS or Designer text with the canonical USD value from
+`price_cents` before it reveals the Paid option. A missing price node, non-USD
+currency, non-integer price, or price below 500 cents makes installation fail
+closed.
+
+While a Paid readiness request is pending, another click on the same current
+Paid choice is ignored. A Free choice invalidates that request. If the member
+then chooses Paid again, the controller runs only that latest Paid choice after
+the stale request settles.
 
 The booking payload contains only the Starter slug, configuration ID, selected
 slot, timezone, optional topic/context, and a bounded idempotency key. Price,

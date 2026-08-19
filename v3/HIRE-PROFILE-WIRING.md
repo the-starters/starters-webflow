@@ -211,13 +211,13 @@ true`, and the host's exact `data_environment` (`test` on the Webflow test host,
 `production` on the production hosts). Free records must have `is_paid ===
 false`. Paid records must have `is_paid === true` and the matching
 `payment_environment` (`test` or `live`), USD currency, and an integer
-`price_cents` of at least 500. Unknown hosts return no bookable set. The client
-excludes records from another data or payment environment and rejects invalid
-Paid prices. It rejects the complete remaining set if a `config_id` repeats or
-if more than one active Free or Paid record remains. A valid pair is ordered
-Free then Paid so the nearest-slot preview is deterministic. An empty or
-rejected set does not reveal the Book Call trigger, initialize booking
-components, or request a nearest slot.
+`price_cents` of at least 500, plus a positive integer `duration`. Unknown hosts
+return no bookable set. The client excludes records from another data or payment
+environment and rejects invalid Paid prices or durations. It rejects the
+complete remaining set if a `config_id` repeats or if more than one active Free
+or Paid record remains. A valid pair is ordered Free then Paid so the
+nearest-slot preview is deterministic. An empty or rejected set does not reveal
+the Book Call trigger, initialize booking components, or request a nearest slot.
 
 Before it checks page helpers or member identity, `hire-profile.js` hides every
 Designer-authored `[call-type-item]` and removes `data-config` from its booking
