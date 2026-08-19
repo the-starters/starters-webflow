@@ -31,9 +31,9 @@ the two surfaces to a character-for-character identical bio block.
 The bio editor logs two staging-only `console.warn` messages when the authored counter
 markup drifts: one when the field wrapper has no `.count-input` element, and one when
 the text node after that element is not an authored `/<number>` denominator. Same
-gating as the `submit-diagnostics.js` warning described below (`*.webflow.io`,
-localhost, `127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`),
-and each is a warning only — a drifted counter never blocks the editor or the save.
+[staging-only gate](../../README.md#staging-only-console-diagnostics) as every other
+console diagnostic here, and each is a warning only — a drifted counter never blocks
+the editor or the save.
 
 `canonical-profile-hydrator.js` is a supplemental fallback loaded by the
 existing `profile-photo.js` asset. It does not replace an inline block. After
@@ -91,10 +91,10 @@ on a state change, so a stale visible error is never charged to the retry that
 follows it. Errors stay on the form.
 
 Because the CTA is now the only way out of a successful submit, a success state
-with no link to `/starter-onboarding` is a dead end. The module logs a staging-only
-`console.warn` in that case (`*.webflow.io`, localhost, `127.0.0.1`,
-`*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`). It is a warning only
-and never blocks init. The same invariant is enforced at release time by
+with no link to `/starter-onboarding` is a dead end. The module logs a
+[staging-only](../../README.md#staging-only-console-diagnostics) `console.warn` in
+that case. It is a warning only and never blocks init. The same invariant is
+enforced at release time by
 `build-profile-wiring-audit.js`, which also owns the exact rule the CTA's `href`
 has to satisfy — see [Build-profile Videsigns wiring audit](../../README.md#build-profile-videsigns-wiring-audit).
 

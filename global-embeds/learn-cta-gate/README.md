@@ -258,12 +258,10 @@ one that throws never stops the gate opening.
   hard gate it is a deliberate no-op rather than a console bypass, so QA an exit
   animation by authoring a close control, never by reaching past the guard.
 
-`console` diagnostics are emitted on staging hosts (`*.webflow.io`, `localhost`,
-`127.0.0.1`, `*.trycloudflare.com`) and when `window.STARTERS_DEBUG === true`;
-production is silent. The host patterns are anchored, so a lookalike
-(`notwebflow.io`, `evil-trycloudflare.com`) cannot read as staging, and
-`STARTERS_DEBUG` may turn logging on in production but must never widen what
-counts as a staging host.
+`console` diagnostics use the repo-wide
+[staging-only console diagnostics](../../README.md#staging-only-console-diagnostics)
+gate, which owns the host predicate and the anchoring rules; production is
+silent.
 
 ## The stylesheet: the closed state
 

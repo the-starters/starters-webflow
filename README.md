@@ -38,6 +38,28 @@ Do not discard local changes unless the user explicitly asks.
 - Before adding a script here, check whether native Webflow, `wf-xano`, `wf-algolia`, or another established shared library already owns the behavior. Prefer extending the appropriate library when the capability will be reused. One-off page scripts belong here only when the behavior is genuinely page-specific or cannot fit a shared attribute contract without distorting it.
 - Browser behavior must connect to Webflow elements through custom attributes, not styling classes or generated IDs. Reuse the owning library's vocabulary; do not invent a parallel attribute dialect.
 
+## Staging-only console diagnostics
+
+Almost every script here narrates itself to the console on staging and says
+nothing in production. The predicate is the same in all of them, and this section
+owns it — module docs point here rather than respelling it.
+
+A page counts as staging when `window.location.hostname` is `localhost`,
+`127.0.0.1`, or matches `*.webflow.io` or `*.trycloudflare.com` (the
+`./dev-tunnel.sh` quick tunnel). Setting `window.STARTERS_DEBUG = true` turns
+diagnostics on anywhere, production included.
+
+Two rules hold in every implementation:
+
+- The host patterns are anchored (`/(\.|^)webflow\.io$/`), so a lookalike such as
+  `notwebflow.io` or `evil-trycloudflare.com` cannot read as staging.
+- `STARTERS_DEBUG` is tested outside the host check. It may turn logging on in
+  production, but it must never widen what counts as a staging host.
+
+This gate covers `console` output only. A module that gates something with real
+consequence — a data read, an overlay that prints record ids — uses its own,
+tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it lives.
+
 ## Current Scripts
 
 - `code-components/` — parked, preparation-only Webflow React package containing
