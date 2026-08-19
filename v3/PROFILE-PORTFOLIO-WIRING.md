@@ -20,13 +20,17 @@ Hire template → Page Settings → Custom Code → **Head Code**:
 
 ## Requirements on the page
 
-| Needed | Attribute (preferred) | Class fallback (legacy) |
+| Needed | Attribute (preferred) | Legacy fallback |
 | --- | --- | --- |
 | Card list wrapper | `data-highlights` ✅ already present | `.case-studies-wrapper` |
 | Card template | `wf-portfolio-element="card"` | `.portfolio_card` |
+| Card open control | `wf-portfolio-element="open"` | `[show-portfolio]` or `[aria-label="open-modal"]` |
 | View all control | `data-btn-view-all` | None |
 | Section | `portfolio-section` ✅ already present | `.profile-hightlights_wr` |
 | Modal | `wf-portfolio-element="modal"` | `.portfolio_modal-component` |
+| Modal content | `wf-portfolio-element="content"` | `.portfolio_modal-content` |
+| Modal scrim | `wf-portfolio-element="scrim"` | `.portfolio_modal-background` |
+| Modal close control | `wf-portfolio-element="close"` | `[data-modal-close]`, `[aria-label="close-modal"]`, or `.portfolio_modal-close` |
 | Modal images | `wf-portfolio-element="images"` | `.portfolio_modal-images` |
 | Modal videos | `wf-portfolio-element="videos"` | `.portfolio_modal-videos` |
 
@@ -41,7 +45,7 @@ numeric `id` as the tie-breaker. A valid empty array hides the Highlights
 section. An HTTP or response-shape failure does not apply that empty state; it
 stops rendering and writes only a generic error to the console.
 
-The class fallbacks exist so this can ship BEFORE the Designer attributes are
+The legacy fallbacks exist so this can ship BEFORE the Designer attributes are
 added. Delete them once every row above has its attribute.
 
 ## Cutover
@@ -61,3 +65,7 @@ component back before publishing. Do not leave both renderers installed.
 4. The renderer shows the first three case studies initially. It shows the
    `data-btn-view-all` control only when more case studies exist. Selecting the
    control reveals all remaining case studies and hides the control.
+5. The modal closes when a user selects its close control or scrim, or presses
+   Escape. A click inside `wf-portfolio-element="content"` does not close it.
+   Closing restores page scrolling, resets modal scroll, and returns focus to
+   the card open control.
