@@ -20,7 +20,7 @@ Hire template → Page Settings → Custom Code → **Head Code**:
 
 ## Requirements on the page
 
-| Needed | Attribute (preferred) | Class fallback (legacy) |
+| Needed | Attribute (preferred) | Legacy fallback |
 | --- | --- | --- |
 | Card list wrapper | `data-highlights` ✅ already present | `.case-studies-wrapper` |
 | Card template | `wf-portfolio-element="card"` | `.portfolio_card` |
@@ -45,7 +45,7 @@ numeric `id` as the tie-breaker. A valid empty array hides the Highlights
 section. An HTTP or response-shape failure does not apply that empty state; it
 stops rendering and writes only a generic error to the console.
 
-The class fallbacks exist so this can ship BEFORE the Designer attributes are
+The legacy fallbacks exist so this can ship BEFORE the Designer attributes are
 added. Delete them once every row above has its attribute.
 
 ## Cutover
