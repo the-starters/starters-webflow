@@ -33,11 +33,68 @@ function makeEnv({
   const appendedCards = []
   const errors = []
 
+  function addListener(store, type, handler) {
+    if (!store[type]) store[type] = []
+    store[type].push(handler)
+  }
+
+  function dispatchListeners(store, type, event = {}) {
+    return Promise.all((store[type] || []).map((handler) => handler(event)))
+  }
+
+  function interactiveElement(attributes = {}, classes = []) {
+    const elementListeners = {}
+    const attrs = { ...attributes }
+    return {
+      attrs,
+      classList: {
+        contains(value) { return classes.includes(value) },
+      },
+      focused: false,
+      addEventListener(type, handler) { addListener(elementListeners, type, handler) },
+      click(target = this) {
+        return dispatchListeners(elementListeners, 'click', {
+          target,
+          preventDefault() {},
+        })
+      },
+      closest(selector) {
+        const attributeMatch = Object.entries(attrs).some(([name, value]) =>
+          selector.includes(`[${name}="${value}"]`) || (value === '' && selector.includes(`[${name}]`)),
+        )
+        const classMatch = classes.some((name) => selector.includes(`.${name}`))
+        return attributeMatch || classMatch ? this : null
+      },
+      focus() { this.focused = true },
+    }
+  }
+
+  const modalContent = { scrollTop: 25 }
+  const modalScrim = interactiveElement({ 'wf-portfolio-element': 'scrim' })
+  const modalClose = interactiveElement({ 'wf-portfolio-element': 'close' })
+  const modalListeners = {}
+  const modal = {
+    style: { display: 'flex' },
+    addEventListener(type, handler) { addListener(modalListeners, type, handler) },
+    click(target) {
+      return dispatchListeners(modalListeners, 'click', {
+        target,
+        preventDefault() {},
+      })
+    },
+    querySelector(selector) {
+      if (selector === '[wf-portfolio-element="content"]') return modalContent
+      if (selector === '[wf-portfolio-element="scrim"]') return modalScrim
+      return null
+    },
+  }
+
   const template = {
     classList: classList(),
     style: {},
     cloneNode() {
       const idBlock = { textContent: '' }
+      const openButton = interactiveElement({ 'wf-portfolio-element': 'open' })
       return {
         classList: classList(),
         style: {},
@@ -45,8 +102,10 @@ function makeEnv({
         setAttribute(name, value) { this.attrs[name] = value },
         querySelector(selector) {
           if (selector === '.portfolio_card-id') return idBlock
+          if (selector === '[wf-portfolio-element="open"]') return openButton
           return null
         },
+        openButton,
         get portfolioId() { return idBlock.textContent },
       }
     },
@@ -95,16 +154,17 @@ function makeEnv({
 
   const document = {
     addEventListener(type, handler) {
-      listeners[type] = handler
+      addListener(listeners, type, handler)
     },
-    dispatch(type) {
-      return listeners[type] ? listeners[type]() : undefined
+    dispatch(type, event) {
+      return dispatchListeners(listeners, type, event)
     },
     querySelector(selector) {
       if (selector === '[data-highlights]' || selector === '.case-studies-wrapper') return wrapper
       if (selector === '[portfolio-section]') return section
       if (selector === '#portfolio-block') return block
       if (selector === '[data-btn-view-all]') return viewAllButton
+      if (selector === '[wf-portfolio-element="modal"]') return modal
       return null
     },
     querySelectorAll(selector) {
@@ -113,6 +173,7 @@ function makeEnv({
       }
       return []
     },
+    activeElement: null,
     body: { style: {} },
   }
 
@@ -122,7 +183,10 @@ function makeEnv({
     document,
     fetch(url) {
       requests.push(url)
-      return responsePromise || Promise.resolve({ ok: responseOk, json: () => Promise.resolve(response) })
+      if (url.includes('/Get_approved_portfolios?')) {
+        return responsePromise || Promise.resolve({ ok: responseOk, json: () => Promise.resolve(response) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
     },
   }
 
@@ -149,6 +213,10 @@ function makeEnv({
     errors,
     section,
     viewAllButton,
+    modal,
+    modalContent,
+    modalScrim,
+    modalClose,
   }
 }
 
@@ -255,4 +323,58 @@ test('does not treat a failed public read as an empty portfolio list', async () 
   assert.deepEqual(env.appendedIds, [])
   assert.equal(env.section.classList.has('hidden'), false)
   assert.deepEqual(env.errors, ['Portfolio: approved public read failed'])
+})
+
+test('closes the modal from the custom-attribute close control', async () => {
+  const env = makeEnv({ response: [{ id: 1, title: 'Case study' }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  env.appendedCards[0].openButton.click()
+  await settle()
+  assert.equal(env.modal.style.display, 'flex')
+  assert.equal(env.document.body.style.overflow, 'hidden')
+
+  await env.modal.click(env.modalClose)
+
+  assert.equal(env.modal.style.display, 'none')
+  assert.equal(env.document.body.style.overflow, '')
+  assert.equal(env.modalContent.scrollTop, 0)
+  assert.equal(env.appendedCards[0].openButton.focused, true)
+})
+
+test('closes the modal from the custom-attribute scrim', async () => {
+  const env = makeEnv({ response: [{ id: 1 }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+  env.appendedCards[0].openButton.click()
+  await settle()
+
+  await env.modal.click(env.modalScrim)
+
+  assert.equal(env.modal.style.display, 'none')
+})
+
+test('closes the open modal with Escape', async () => {
+  const env = makeEnv({ response: [{ id: 1 }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+  env.appendedCards[0].openButton.click()
+  await settle()
+
+  await env.document.dispatch('keydown', { key: 'Escape', preventDefault() {} })
+
+  assert.equal(env.modal.style.display, 'none')
+})
+
+test('keeps the modal open for clicks inside its content', async () => {
+  const env = makeEnv({ response: [{ id: 1 }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+  env.appendedCards[0].openButton.click()
+  await settle()
+
+  await env.modal.click(env.modalContent)
+
+  assert.equal(env.modal.style.display, 'flex')
 })

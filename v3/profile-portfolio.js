@@ -12,7 +12,7 @@
  * 2026-08-15 that table also holds 1,439 imported
  * legacy V2 case studies, which are TEXT ONLY.
  *
- * Four deliberate changes from the embed:
+ * Five deliberate changes from the embed:
  *
  *  1. memberstackId is read from the page's existing `starter_memberstack_id`
  *     global instead of being hardcoded. In the embed the value came from a CMS
@@ -26,6 +26,8 @@
  *     shows an empty "Images" heading.
  *  4. Only three case studies show initially. The authored View all control
  *     reveals the complete approved set when more case studies exist.
+ *  5. The modal closes from its close control, scrim, or Escape key. Modal
+ *     behaviour is wired by `wf-portfolio-element` attributes first.
  *
  * Ownership: this CDN file is the only Highlights renderer. The legacy on-canvas
  * owner-read embed must be removed in the same Webflow whole-block cutover.
@@ -73,10 +75,22 @@
     if (template) template.classList.add('hidden');
 
     var modal = pick('[wf-portfolio-element="modal"]', '.portfolio_modal-component');
+    var modalContent = modal
+      ? pick('[wf-portfolio-element="content"]', '.portfolio_modal-content', modal)
+      : null;
+    var modalScrim = modal
+      ? pick('[wf-portfolio-element="scrim"]', '.portfolio_modal-background', modal)
+      : null;
     var modalTitle = document.querySelector('[portfolio-title]');
     var modalDescription = document.querySelector('[portfolio-description]');
     var modalImages = pick('[wf-portfolio-element="images"]', '.portfolio_modal-images');
     var modalVideos = pick('[wf-portfolio-element="videos"]', '.portfolio_modal-videos');
+    var lastModalTrigger = null;
+    var bodyOverflowBeforeOpen = '';
+
+    function isModalOpen() {
+      return !!modal && modal.style.display !== 'none';
+    }
 
     function getAssetUrl(value) {
       if (!value) return '';
@@ -104,8 +118,11 @@
       contentWrapper.style.display = hasContent ? '' : 'none';
     }
 
-    async function openModal(portfolio) {
+    async function openModal(portfolio, trigger) {
       if (!modal) return;
+
+      if (!isModalOpen()) bodyOverflowBeforeOpen = document.body.style.overflow || '';
+      lastModalTrigger = trigger || document.activeElement || null;
 
       if (modalTitle) modalTitle.textContent = truncateText(portfolio.title || '', 150);
       if (modalDescription) {
@@ -155,14 +172,43 @@
       document.body.style.overflow = 'hidden';
     }
 
-    function closeModal() {
+    function closeModal(options) {
       if (!modal) return;
+      var restoreFocus = !options || options.restoreFocus !== false;
       modal.style.display = 'none';
-      document.body.style.overflow = '';
+      document.body.style.overflow = bodyOverflowBeforeOpen;
 
-      var content = modal.querySelector('.portfolio_modal-content');
-      if (!content) return;
-      content.scrollTop = 0;
+      if (modalContent) modalContent.scrollTop = 0;
+
+      if (restoreFocus && lastModalTrigger && typeof lastModalTrigger.focus === 'function') {
+        lastModalTrigger.focus();
+      }
+      lastModalTrigger = null;
+    }
+
+    function wireModalDismiss() {
+      if (!modal) return;
+
+      modal.addEventListener('click', function (event) {
+        var target = event.target;
+        var closeControl =
+          target && typeof target.closest === 'function'
+            ? target.closest(
+                '[wf-portfolio-element="close"], [data-modal-close], [aria-label="close-modal"], .portfolio_modal-close',
+              )
+            : null;
+
+        if (closeControl || target === modal || (modalScrim && target === modalScrim)) {
+          event.preventDefault();
+          closeModal();
+        }
+      });
+
+      document.addEventListener('keydown', function (event) {
+        if (event.key !== 'Escape' || !isModalOpen()) return;
+        event.preventDefault();
+        closeModal();
+      });
     }
 
     function createCard(portfolio) {
@@ -173,7 +219,9 @@
       var image = pick('[wf-portfolio-element="thumb"]', '.portfolio_card-thumb', card);
       var title = pick('[wf-portfolio-element="title"]', '.portfolio_card-title', card);
       var idBlock = card.querySelector('.portfolio_card-id');
-      var openButton = card.querySelector('[show-portfolio]');
+      var openButton =
+        card.querySelector('[wf-portfolio-element="open"]') ||
+        card.querySelector('[show-portfolio], [aria-label="open-modal"]');
 
       if (image) {
         image.src = getThumbUrl(portfolio.thumbnail_url || portfolio.featured_image_url);
@@ -187,7 +235,7 @@
       if (openButton) {
         openButton.addEventListener('click', async function (event) {
           event.preventDefault();
-          await openModal(portfolio);
+          await openModal(portfolio, openButton);
         });
       }
 
@@ -244,12 +292,14 @@
       return Array.isArray(data) ? data : [];
     }
 
+    wireModalDismiss();
+
     if (!wrapper || !template) return;
 
     if (wrapper.hasAttribute(OWNED)) return;
     wrapper.setAttribute(OWNED, 'cdn');
 
-    closeModal();
+    closeModal({ restoreFocus: false });
 
     var canRevealPortfolios = false;
     var viewAllButton = document.querySelector('[data-btn-view-all]');
