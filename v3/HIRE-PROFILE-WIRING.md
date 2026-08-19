@@ -172,10 +172,12 @@ Canaries: `/hire/ashna-rana` (free + paid calls, 5000 / 4500) and
 
 The beside-services calendar markup remains authored for possible future use,
 but runtime keeps `[data-availability-element="wrapper"]` hidden. The live flow
-uses the existing modal sequence: Book Call opens `popup-booking-main`, an
-eligible Free or Paid option opens `popup-booking`, and Nylas renders the
-calendar and times there. Valid `/hire/<slug>` paths use the host-classified
-TEST or production route map. The authored Book Call wrapper stays hidden and
+uses the existing modal sequence: Book Call opens `popup-booking-main`, and an
+eligible Free or Paid option opens `popup-booking`. Free uses the Nylas public
+component. Paid uses the authenticated calendar and booking flow owned by
+[`README.md`](README.md#brand-paid-call-payment-method-client) inside the same
+authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
+production route map. The authored Book Call wrapper stays hidden and
 `aria-hidden="true"` until canonical discovery produces a Free option that the
 shared initializer can own or a Paid option that the V3 controller accepts.
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
@@ -239,9 +241,8 @@ On the Free Call details screen, the controller hides the booking-form rows for
 timeslot. It does not remove or change either field, so both stable IDs remain
 in the Nylas booking payload for Xano environment routing and ownership checks.
 Name, Email, Add guest, and Call Context remain visible. This presentation-only
-change does not apply to Paid Consulting Call. Paid prevents the public Nylas
-booking mutation and submits the selected slot through the authenticated V3
-booking command described in [`README.md`](README.md#brand-paid-call-payment-method-client).
+change does not apply to Paid Consulting Call. The Paid flow is described in
+[`README.md`](README.md#brand-paid-call-payment-method-client).
 
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code
