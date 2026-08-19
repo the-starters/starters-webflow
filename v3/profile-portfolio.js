@@ -251,27 +251,30 @@
 
     closeModal();
 
+    var canRevealPortfolios = false;
+    var viewAllButton = document.querySelector('[data-btn-view-all]');
+
+    if (viewAllButton) {
+      viewAllButton.style.display = 'none';
+      viewAllButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        if (!canRevealPortfolios) return;
+
+        var cards = wrapper.querySelectorAll('[data-portfolio-item]');
+        cards.forEach(function (card) {
+          card.style.display = '';
+        });
+        canRevealPortfolios = false;
+        viewAllButton.style.display = 'none';
+      });
+    }
+
     var portfolios;
     try {
       portfolios = await loadPortfolios();
     } catch (error) {
       console.error('Portfolio: approved public read failed');
       return;
-    }
-    var viewAllButton = document.querySelector('[data-btn-view-all]');
-
-    if (viewAllButton) {
-      viewAllButton.style.display =
-        portfolios.length > INITIAL_VISIBLE_COUNT ? '' : 'none';
-
-      viewAllButton.addEventListener('click', function (event) {
-        event.preventDefault();
-        var cards = wrapper.querySelectorAll('[data-portfolio-item]');
-        cards.forEach(function (card) {
-          card.style.display = '';
-        });
-        viewAllButton.style.display = 'none';
-      });
     }
 
     template.classList.add('hidden');
@@ -294,5 +297,8 @@
       if (index >= INITIAL_VISIBLE_COUNT) card.style.display = 'none';
       wrapper.appendChild(card);
     });
+
+    canRevealPortfolios = portfolios.length > INITIAL_VISIBLE_COUNT;
+    if (viewAllButton && canRevealPortfolios) viewAllButton.style.display = '';
   });
 })();

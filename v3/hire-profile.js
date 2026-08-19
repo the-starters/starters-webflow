@@ -869,28 +869,6 @@
   })();
 })();
 
-/* ---- highlights view-all (was a separate footer <script>) ---- */
-(function () {
-  'use strict';
-
-  document.addEventListener('DOMContentLoaded', () => {
-      const highlights = document.querySelector('[data-highlights]');
-      const button = document.querySelector('[data-btn-view-all]');
-      if (!highlights || !button) return;
-
-      const getItems = () => highlights.querySelectorAll(':scope > *');
-
-      button.addEventListener('click', () => {
-          const items = getItems();
-          items.forEach((item) => {
-              item.style.display = '';
-          });
-
-          button.style.display = 'none';
-      });
-  });
-})();
-
 /* ---- portfolio see-more (was a separate footer <script>) ---- */
 (function () {
   'use strict';

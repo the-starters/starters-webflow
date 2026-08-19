@@ -21,7 +21,12 @@ function classList() {
   }
 }
 
-function makeEnv({ response = [], responseOk = true, memberstackId = 'mem_test_starter' } = {}) {
+function makeEnv({
+  response = [],
+  responseOk = true,
+  responsePromise,
+  memberstackId = 'mem_test_starter',
+} = {}) {
   const listeners = {}
   const requests = []
   const appendedIds = []
@@ -117,7 +122,7 @@ function makeEnv({ response = [], responseOk = true, memberstackId = 'mem_test_s
     document,
     fetch(url) {
       requests.push(url)
-      return Promise.resolve({ ok: responseOk, json: () => Promise.resolve(response) })
+      return responsePromise || Promise.resolve({ ok: responseOk, json: () => Promise.resolve(response) })
     },
   }
 
@@ -212,6 +217,33 @@ test('hides View all when the profile has three or fewer case studies', async ()
   await settle()
 
   assert.deepEqual(env.appendedCards.map((card) => card.style.display), ['', '', ''])
+  assert.equal(env.viewAllButton.style.display, 'none')
+})
+
+test('gates View all during a delayed read and ignores an early click', async () => {
+  let resolveResponse
+  const responsePromise = new Promise((resolve) => { resolveResponse = resolve })
+  const rows = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }]
+  const env = makeEnv({ responsePromise })
+
+  env.document.dispatch('DOMContentLoaded')
+
+  assert.equal(env.viewAllButton.style.display, 'none')
+  env.viewAllButton.click()
+  assert.deepEqual(env.appendedCards, [])
+
+  resolveResponse({ ok: true, json: () => Promise.resolve(rows) })
+  await settle()
+
+  assert.deepEqual(
+    env.appendedCards.map((card) => card.style.display),
+    ['', '', '', 'none', 'none'],
+  )
+  assert.equal(env.viewAllButton.style.display, '')
+
+  env.viewAllButton.click()
+
+  assert.deepEqual(env.appendedCards.map((card) => card.style.display), ['', '', '', '', ''])
   assert.equal(env.viewAllButton.style.display, 'none')
 })
 
