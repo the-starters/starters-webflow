@@ -87,13 +87,16 @@
 				// the flush, text-change fires later against the pre-restore baseline
 				// and reverts the member's own bio to empty.
 				isCleaning = true;
-				bioEditor.root.innerHTML = html;
-				bioEditor.update();
-				prevContents = bioEditor.getContents();
-				prevCharCount = getQuillCharCount(bioEditor);
-				// The restore is not a member edit; undo must not cross it.
-				bioEditor.history?.clear?.();
-				isCleaning = false;
+				try {
+					bioEditor.root.innerHTML = html;
+					bioEditor.update();
+				} finally {
+					prevContents = bioEditor.getContents();
+					prevCharCount = getQuillCharCount(bioEditor);
+					// The restore is not a member edit; undo must not cross it.
+					bioEditor.history?.clear?.();
+					isCleaning = false;
+				}
 
 				syncQuillValue();
 			}
@@ -116,18 +119,20 @@
 
 				isCleaning = true;
 
-				bioEditor.setContents(prevContents, 'silent');
+				try {
+					bioEditor.setContents(prevContents, 'silent');
 
-				if (selection) {
-					const safeIndex = Math.min(
-						Math.max(selection.index - 1, 0),
-						bioEditor.getLength() - 1
-					);
+					if (selection) {
+						const safeIndex = Math.min(
+							Math.max(selection.index - 1, 0),
+							bioEditor.getLength() - 1
+						);
 
-					bioEditor.setSelection(safeIndex, 0, 'silent');
+						bioEditor.setSelection(safeIndex, 0, 'silent');
+					}
+				} finally {
+					isCleaning = false;
 				}
-
-				isCleaning = false;
 
 				prevContents = bioEditor.getContents();
 				prevCharCount = getQuillCharCount(bioEditor);
@@ -191,16 +196,19 @@
 
 			isCleaning = true;
 
-			if (range.length > 0) {
-				bioEditor.deleteText(range.index, range.length, 'silent');
+			try {
+				if (range.length > 0) {
+					bioEditor.deleteText(range.index, range.length, 'silent');
+				}
+
+				bioEditor.insertText(range.index, allowedPaste, 'silent');
+
+				const newCursorPosition = range.index + allowedPaste.length;
+				bioEditor.setSelection(newCursorPosition, 0, 'silent');
+			} finally {
+				isCleaning = false;
 			}
 
-			bioEditor.insertText(range.index, allowedPaste, 'silent');
-
-			const newCursorPosition = range.index + allowedPaste.length;
-			bioEditor.setSelection(newCursorPosition, 0, 'silent');
-
-			isCleaning = false;
 			syncQuillValue();
 
 			prevContents = bioEditor.getContents();
