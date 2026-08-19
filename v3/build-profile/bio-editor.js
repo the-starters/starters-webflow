@@ -18,7 +18,7 @@
  * denominator text node next to `.count-input`, and writes the live character count
  * into that span after every sync, last, so no other listener's write survives.
  *
- * @release v1.59.310
+ * @release v1.59.312
  */
 	document.addEventListener('DOMContentLoaded', () => {
 		const outputPlain = qs('#bio-plain');
