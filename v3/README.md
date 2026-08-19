@@ -2024,8 +2024,11 @@ Webflow owns all call-section markup. Each section must provide:
 - card value slots using the existing `[booking-element]`, `[label-text]`,
   `[payment-status-wrap]`, and `[brand-status]` attributes. The status pill's
   authored `[booking-element-wrap="status"]` wrapper can start hidden in
-  Designer or Global Code CSS; painting the pill reveals only that exact wrapper
-  as a flex container, including when the authored hide rule uses `!important`.
+  Designer or Global Code CSS. Production's empty-value
+  `[booking-element-wrap]` is also supported when that wrapper owns the matched
+  `[booking-element="status"]` pill. Painting the pill reveals only the owned
+  wrapper as a flex container, including when the authored hide rule uses
+  `!important`.
 
 The script clones the authored item template in pages of six, deduplicates by
 canonical booking ID, and sorts newest first. Starter pending rows appear under

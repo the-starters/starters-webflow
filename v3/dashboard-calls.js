@@ -246,7 +246,17 @@
     text(pill, '[label-text]', statusLabel(status, role))
     if (!pill.querySelector('[label-text]')) pill.textContent = statusLabel(status, role)
     show(pill, true)
-    const group = pill.closest && pill.closest('[booking-element-wrap="status"]')
+    let group = pill.closest && pill.closest('[booking-element-wrap="status"]')
+    if (!group && pill.closest) {
+      const authoredGroup = pill.closest('[booking-element-wrap]')
+      if (
+        authoredGroup &&
+        clean(authoredGroup.getAttribute('booking-element-wrap')) === '' &&
+        authoredGroup.querySelector('[booking-element="status"]') === pill
+      ) {
+        group = authoredGroup
+      }
+    }
     if (group) {
       show(group, true)
       group.style.setProperty('display', 'flex', 'important')

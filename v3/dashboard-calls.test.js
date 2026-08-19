@@ -394,6 +394,54 @@ test('important CSS-hidden status wrappers become visible with the role-aware li
   )
 })
 
+test('production empty-value status wrapper becomes visible when it owns the status pill', () => {
+  const label = element()
+  const group = element({ 'booking-element-wrap': '' })
+  let inlineDisplay = ''
+  let inlineDisplayPriority = ''
+  group.style = {
+    get display() {
+      return inlineDisplay
+    },
+    set display(value) {
+      inlineDisplay = value
+      inlineDisplayPriority = ''
+    },
+    getPropertyPriority(name) {
+      return name === 'display' ? inlineDisplayPriority : ''
+    },
+    setProperty(name, value, priority) {
+      if (name !== 'display') return
+      inlineDisplay = value
+      inlineDisplayPriority = priority || ''
+    },
+  }
+  group.style.display = 'none'
+  const pill = element({ 'booking-element': 'status' })
+  group.querySelector = (selector) => (
+    selector === '[booking-element="status"]' ? pill : null
+  )
+  pill.querySelector = (selector) => selector === '[label-text]' ? label : null
+  pill.closest = (selector) => (
+    selector === '[booking-element-wrap]'
+      ? group
+      : null
+  )
+  const card = {
+    querySelector(selector) {
+      return selector === '[booking-element="status"]' ? pill : null
+    },
+  }
+
+  api.paintStatusPill(card, 'cancelled', 'starter')
+
+  assert.equal(group.hidden, false)
+  assert.equal(group.style.display, 'flex')
+  assert.equal(group.style.getPropertyPriority('display'), 'important')
+  assert.equal(label.textContent, 'Cancelled')
+  assert.equal(pill.hidden, false)
+})
+
 test('status pill painting does not force a non-status authored wrapper visible', () => {
   const label = element()
   const genericGroup = element({ 'booking-element-wrap': '' })
