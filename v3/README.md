@@ -2958,12 +2958,15 @@ The browser sends neither field. The controller uses this sequence:
 5. Retry the returned selection attempt through `.run()` with its captured key.
    Create a new attempt for every later intentional selection, including an
    A-to-B-to-A sequence.
-6. Read readiness again. Only a canonical `bookable=true` result opens the paid
-   calendar.
-7. On the Nylas `detailsConfirmed` event, call `preventDefault()` before any
-   asynchronous work. Submit the selected slot to
-   `brand/booking/request/v3`; never let the public component book the paid call
-   directly.
+6. Read readiness again. Only a canonical `bookable=true` result can continue.
+7. Read the next 14 days through authenticated
+   `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
+   the provider credential and private Scheduler session off the browser.
+8. Render the month calendar and time buttons inside the authored
+   `[nylas-container]` mount. The selected slot is advisory only.
+9. Submit the selected slot to `brand/booking/request/v3`. Xano rechecks the
+   exact slot, price, payment readiness, and configuration revision before it
+   creates the provider booking.
 
 `hire-profile.js` passes only Free configurations to the legacy shared modal
 initializer. It gives the exact active Paid configuration to this controller.
