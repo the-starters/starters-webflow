@@ -2941,6 +2941,7 @@ The scheduling auth bridge allowlists these paid-call paths:
 - `POST /brand/payment-method/setup/v3`
 - `POST /brand/payment-method/set-default/v3`
 - `GET /brand/payment-readiness/v3`
+- `GET /scheduler/get_availability/v3`
 - `POST /brand/booking/request/v3`
 
 Xano derives the Brand identity and payment environment from the Bearer token.
