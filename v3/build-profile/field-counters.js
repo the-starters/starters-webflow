@@ -7,7 +7,7 @@
  * A counter group whose wrapper holds a `[data-editor-id]` element belongs to the
  * rich-text editor that renders it, not to this generic counter. See bio-editor.js.
  *
- * @release v1.59.310
+ * @release v1.59.312
  */
 	function counterFields(wrapper = null) {
 		const inputs = qsa(
