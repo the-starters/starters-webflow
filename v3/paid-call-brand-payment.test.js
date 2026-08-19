@@ -178,6 +178,42 @@ test('booking retries reuse one key and omit identity, price, card, and environm
   }
 })
 
+test('canonical Paid price rejects stale or unsupported display authority', () => {
+  assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 500 }), '$5')
+  assert.equal(api.canonicalPaidPrice({ currency: 'USD', price_cents: 1250 }), '$12.50')
+  assert.equal(api.canonicalPaidPrice({ currency: 'eur', price_cents: 500 }), '')
+  assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 0 }), '')
+  assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 500.5 }), '')
+  assert.equal(api.canonicalPaidPrice({ currency: 'usd' }), '')
+})
+
+test('invalid canonical Paid price leaves the authored option hidden and unchanged', () => {
+  const previous = global.document
+  const price = { textContent: '$50' }
+  const item = {
+    style: { display: 'none' },
+    querySelector(selector) { return selector === '[call-type-price]' ? price : null },
+  }
+  const cta = {
+    getAttribute(name) { return name === 'data-config' ? 'config_paid' : null },
+    closest() { return item },
+  }
+  global.document = {
+    querySelector() { return null },
+    querySelectorAll() { return [cta] },
+  }
+  try {
+    assert.equal(api.installPaidBookingController({
+      config: { config_id: 'config_paid', is_paid: true, currency: 'usd', price_cents: 0 },
+      createScheduler() {},
+    }), false)
+    assert.equal(price.textContent, '$50')
+    assert.equal(item.style.display, 'none')
+  } finally {
+    global.document = previous
+  }
+})
+
 test('paid Scheduler final submit is prevented and owned by one canonical Xano command', async () => {
   const previous = {
     document: global.document,
@@ -185,7 +221,12 @@ test('paid Scheduler final submit is prevented and owned by one canonical Xano c
   }
   const requests = []
   let resolveReadiness
-  const item = { style: {}, setAttribute() {} }
+  const priceText = { textContent: '$50' }
+  const item = {
+    style: {},
+    setAttribute() {},
+    querySelector(selector) { return selector === '[call-type-price]' ? priceText : null },
+  }
   const cta = {
     attrs: { 'data-config': 'config_paid' },
     getAttribute(name) { return this.attrs[name] || null },
@@ -228,7 +269,7 @@ test('paid Scheduler final submit is prevented and owned by one canonical Xano c
   let schedulerCount = 0
   try {
     assert.equal(api.installPaidBookingController({
-      config: { config_id: 'config_paid', is_paid: true },
+      config: { config_id: 'config_paid', is_paid: true, currency: 'usd', price_cents: 500 },
       starterSlug: 'jp-testiz-d',
       brandName: 'Brand Test',
       brandEmail: 'brand@example.com',
@@ -238,6 +279,7 @@ test('paid Scheduler final submit is prevented and owned by one canonical Xano c
         return scheduler
       },
     }), true)
+    assert.equal(priceText.textContent, '$5')
     const firstClick = cta.onclick({ preventDefault() {} })
     const secondClick = cta.onclick({ preventDefault() {} })
     assert.equal(requests.filter(({ url }) => url.endsWith(api.READINESS_PATH)).length, 1)
@@ -285,7 +327,11 @@ test('card setup retries reuse the same setup and default-selection attempts', a
   }
   const requests = []
   const listeners = {}
-  const item = { style: {} }
+  const priceText = { textContent: '$50' }
+  const item = {
+    style: {},
+    querySelector(selector) { return selector === '[call-type-price]' ? priceText : null },
+  }
   const cta = {
     attrs: { 'data-config': 'config_paid' },
     getAttribute(name) { return this.attrs[name] || null },
@@ -351,10 +397,11 @@ test('card setup retries reuse the same setup and default-selection attempts', a
 
   try {
     assert.equal(api.installPaidBookingController({
-      config: { config_id: 'config_paid', is_paid: true },
+      config: { config_id: 'config_paid', is_paid: true, currency: 'USD', price_cents: 1250 },
       starterSlug: 'jp-testiz-d',
       createScheduler() { return { eventOverrides: {} } },
     }), true)
+    assert.equal(priceText.textContent, '$12.50')
     await cta.onclick({ preventDefault() {} })
     const saveEvent = {
       preventDefault() {},

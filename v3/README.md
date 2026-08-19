@@ -2968,6 +2968,12 @@ The browser sends neither field. The controller uses this sequence:
 `hire-profile.js` passes only Free configurations to the legacy shared modal
 initializer. It gives the exact active Paid configuration to this controller.
 The adapter blocks legacy Stripe provider routes on V3 scheduling surfaces.
+For every accepted Paid CTA, the authored `[call-type-item]` must contain a
+`[call-type-price]` node. The controller replaces that node's CMS or Designer
+text with the canonical USD value from `price_cents` before it reveals the Paid
+option. A missing price node, non-USD currency, non-integer price, or price below
+500 cents makes installation fail closed.
+
 The booking payload contains only the Starter slug, configuration ID, selected
 slot, timezone, optional topic/context, and a bounded idempotency key. Price,
 payment method, Brand identity, Starter ownership, and environment stay

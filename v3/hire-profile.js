@@ -97,8 +97,27 @@
       });
   }
 
+  function setBookingButtonAvailable(available) {
+      document.querySelectorAll('[booking-button-wrapper]').forEach(function (wrapper) {
+          wrapper.style.display = available ? 'flex' : 'none';
+          wrapper.setAttribute('aria-hidden', available ? 'false' : 'true');
+      });
+  }
+
+  function isBlockedProductionBookingSurface() {
+      const host = window.location && window.location.hostname;
+      const path = window.location && window.location.pathname
+          ? window.location.pathname.replace(/\/+$/, '') || '/'
+          : '';
+      const isProductionHost = host === 'thestarters.com' || host === 'www.thestarters.com';
+      return isProductionHost && path === '/hire/jp-dionisio';
+  }
+
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
+  // Webflow always authors the structural Book Call trigger. Canonical
+  // environment-scoped discovery is the only code path that may reveal it.
+  setBookingButtonAvailable(false);
 
   // Page-embed contract. This file is deferred, so all of these are already
   // defined in the normal case; stand down loudly rather than throwing if not.
@@ -182,7 +201,11 @@
           if (!record || !record.config_id || record.active !== true) return false;
           if (record.data_environment !== expectedDataEnvironment) return false;
           if (record.is_paid === true) {
-              return record.payment_environment === expectedPaymentEnvironment;
+              const priceCents = Number(record.price_cents);
+              return record.payment_environment === expectedPaymentEnvironment &&
+                  String(record.currency || '').toUpperCase() === 'USD' &&
+                  Number.isInteger(priceCents) &&
+                  priceCents >= 500;
           }
           return record.is_paid === false;
       });
@@ -231,6 +254,11 @@
 
       /* BOOKING (viewer-specific; stays behind the member gate) */
       (async function () {
+          if (isBlockedProductionBookingSurface()) {
+              console.warn('[hire-profile] TEST booking fixture stayed closed on production');
+              return;
+          }
+
           const brand_name = MEMBER.customFields['free-user'] + " " + MEMBER.customFields['last-name'];
           const brand_email = MEMBER['auth']['email'];
 
@@ -593,6 +621,7 @@
               const paidConfig = configs.find(function (record) {
                   return record.is_paid === true;
               }) || null;
+              let bookingSurfaceAvailable = false;
 
               // The shared initializer still owns Free. Remove Paid before it
               // scans [data-config], otherwise its legacy customer/Stripe branch
@@ -606,6 +635,7 @@
                       brand_name,
                       brand_email
                   );
+                  bookingSurfaceAvailable = true;
               }
 
               // Restore the complete canonical chooser after the Free-only
@@ -629,15 +659,15 @@
                           brandEmail: brand_email,
                           createScheduler: window.createScheduler,
                       });
+                  bookingSurfaceAvailable = bookingSurfaceAvailable || installed === true;
                   if (!installed) {
                       primeBookingModalOptions(freeConfigs);
                       console.warn('Paid Call controller is unavailable; Paid stayed closed.');
                   }
               }
 
-              qsa('[booking-button-wrapper]').forEach(function (wrapper) {
-                  wrapper.style.display = 'flex';
-              });
+              if (!bookingSurfaceAvailable) return;
+              setBookingButtonAvailable(true);
               const primaryConfigId = configs[0].config_id;
 
               /* Next Available Slot _ Handlers */

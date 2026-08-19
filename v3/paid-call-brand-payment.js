@@ -191,12 +191,22 @@
     })
   }
 
+  function canonicalPaidPrice(config) {
+    const cents = Number(config && config.price_cents)
+    const currency = String((config && config.currency) || '').toUpperCase()
+    if (!Number.isInteger(cents) || cents < 500 || currency !== 'USD') return ''
+    return cents % 100 === 0
+      ? '$' + String(cents / 100)
+      : '$' + (cents / 100).toFixed(2)
+  }
+
   function installPaidBookingController(options) {
     const settings = options || {}
     const config = settings.config
     const createScheduler = settings.createScheduler
     const document = global.document
-    if (!document || !config || config.is_paid !== true || !config.config_id || typeof createScheduler !== 'function') {
+    const priceText = canonicalPaidPrice(config)
+    if (!document || !config || config.is_paid !== true || !config.config_id || !priceText || typeof createScheduler !== 'function') {
       return false
     }
     const ctas = Array.from(document.querySelectorAll(
@@ -207,6 +217,12 @@
     const popup = document.querySelector('[popup-booking]')
     const container = popup && popup.querySelector('[nylas-container]')
     if (!ctas.length || !popup || !container) return false
+    const bindings = ctas.map(function (cta) {
+      const item = cta.closest('[call-type-item]')
+      const price = item && item.querySelector('[call-type-price]')
+      return { cta, item, price }
+    })
+    if (bindings.some(function (binding) { return !binding.item || !binding.price })) return false
 
     let scheduler = null
     let cardElement = null
@@ -361,11 +377,12 @@
       }
     }
 
-    ctas.forEach(function (cta) {
+    bindings.forEach(function (binding) {
+      const cta = binding.cta
       cta.onclick = paidClick
       cta.setAttribute('data-paid-call-v3', 'ready')
-      const item = cta.closest('[call-type-item]')
-      if (item) item.style.display = 'block'
+      binding.price.textContent = priceText
+      binding.item.style.display = 'block'
     })
     return true
   }
@@ -379,6 +396,7 @@
     authenticatedRequest,
     authenticatedPost,
     bookingPayload,
+    canonicalPaidPrice,
     createBookingAttempt,
     createAttemptKey,
     createDefaultSelectionAttempt,
