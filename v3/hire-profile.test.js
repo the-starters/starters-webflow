@@ -243,8 +243,18 @@ function makePage({
     'booking-popup-open': '',
     'data-type': 'paid',
   })
+  const paidModalPrice = makeElement('span', { 'call-type-price': '' })
+  paidModalPrice.textContent = '$50'
   paidModalOption.appendChild(paidModalCta)
+  paidModalOption.appendChild(paidModalPrice)
   root.appendChild(paidModalOption)
+
+  const bookingButtonWrapper = makeElement('div', { 'booking-button-wrapper': '' })
+  bookingButtonWrapper.style.display = 'none'
+  bookingButtonWrapper.setAttribute('aria-hidden', 'true')
+  const bookingButton = makeElement('button', { 'data-modal-trigger': 'popup-booking-main' })
+  bookingButtonWrapper.appendChild(bookingButton)
+  root.appendChild(bookingButtonWrapper)
 
   return {
     root,
@@ -261,6 +271,9 @@ function makePage({
     freeModalCta,
     paidModalOption,
     paidModalCta,
+    paidModalPrice,
+    bookingButtonWrapper,
+    bookingButton,
   }
 }
 
@@ -789,6 +802,8 @@ test('an empty canonical configuration response fails closed without booking act
   assert.equal(bookingComponentCalls, 0)
   assert.equal(schedulerCalls, 0)
   assert.equal(page.inlineWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
   assert.equal(
     page.servicesList.children.filter((card) =>
       card.hasAttribute('data-runtime-free-call-card'),
@@ -796,6 +811,85 @@ test('an empty canonical configuration response fails closed without booking act
     0,
   )
   assert.ok(context.warnings.some((line) => line.includes('No Configurations found')))
+})
+
+test('the TEST fixture uses canonical Free and Paid configs to reveal the authored Book Call trigger', async () => {
+  const page = makePage({ index: 'Freelancers3.0-staging-test' })
+  const configs = [
+    { config_id: 'config_free_test', is_paid: false, active: true, data_environment: 'test' },
+    {
+      config_id: 'config_paid_test',
+      is_paid: true,
+      active: true,
+      data_environment: 'test',
+      payment_environment: 'test',
+      price_cents: 500,
+      currency: 'usd',
+    },
+  ]
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_test_member',
+      auth: { email: 'brand-test@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Test' },
+      planConnections: [
+        { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+      ],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_test' }),
+    getConfigs: async () => configs,
+    getNearestSlot: async () => null,
+    initBookingComponents: () => {},
+    paidController: { installPaidBookingController: () => true },
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), 'popup-booking-main')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free_test')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), 'config_paid_test')
+})
+
+test('the TEST fixture booking surface stays hidden and inert on production', async () => {
+  const page = makePage()
+  let starterReads = 0
+  let configReads = 0
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_live_member',
+      auth: { email: 'brand-live@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Live' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => {
+      starterReads += 1
+      return { nylas_grant_id: 'grant_must_not_be_read' }
+    },
+    getConfigs: async () => {
+      configReads += 1
+      return [{ config_id: 'config_must_not_bind', is_paid: false, active: true, data_environment: 'production' }]
+    },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-dionisio/' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(starterReads, 0)
+  assert.equal(configReads, 0)
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), null)
+  assert.equal(page.paidModalCta.getAttribute('data-config'), null)
+  assert.ok(context.warnings.some((line) => line.includes('TEST booking fixture stayed closed')))
 })
 
 test('invalid, inactive, and cross-role plan records fail closed with a legacy Brand field', async () => {
@@ -971,21 +1065,21 @@ test('authored modal options hide synchronously without hiding Services call car
 test('booking discovery rejects inactive, mixed-environment, and duplicate configurations', async () => {
   const scenarios = [
     [{ config_id: 'inactive_free', is_paid: false, active: false, data_environment: 'production' }],
-    [{ config_id: 'inactive_paid', is_paid: true, active: false, data_environment: 'production', payment_environment: 'live' }],
+    [{ config_id: 'inactive_paid', is_paid: true, active: false, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500 }],
     [{ config_id: 'mixed_data', is_paid: false, active: true, data_environment: 'test' }],
-    [{ config_id: 'mixed_payment', is_paid: true, active: true, data_environment: 'production', payment_environment: 'test' }],
+    [{ config_id: 'mixed_payment', is_paid: true, active: true, data_environment: 'production', payment_environment: 'test', currency: 'USD', price_cents: 500 }],
     [{ config_id: 'unknown_payment', is_paid: null, active: true, data_environment: 'production' }],
     [
       { config_id: 'free_a', is_paid: false, active: true, data_environment: 'production' },
       { config_id: 'free_b', is_paid: false, active: true, data_environment: 'production' },
     ],
     [
-      { config_id: 'paid_a', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
-      { config_id: 'paid_b', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
+      { config_id: 'paid_a', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500 },
+      { config_id: 'paid_b', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500 },
     ],
     [
       { config_id: 'shared', is_paid: false, active: true, data_environment: 'production' },
-      { config_id: 'shared', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
+      { config_id: 'shared', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500 },
     ],
   ]
 
@@ -1025,7 +1119,7 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   const bookingCalls = []
   const paidCalls = []
   const configs = [
-    { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
+    { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'usd', price_cents: 1250 },
     { config_id: 'free_live', is_paid: false, active: true, data_environment: 'production', payment_environment: null },
   ]
   const context = makeContext({
@@ -1067,6 +1161,42 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   assert.equal(page.paidModalOption.getAttribute('aria-hidden'), null)
   assert.equal(page.freeModalOption.style.display, 'block')
   assert.equal(page.paidModalOption.style.display, 'none')
+})
+
+test('Paid-only discovery stays closed when the V3 controller is unavailable', async () => {
+  const page = makePage()
+  let nearestSlotCalls = 0
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getConfigs: async () => [{
+      config_id: 'paid_live',
+      is_paid: true,
+      active: true,
+      data_environment: 'production',
+      payment_environment: 'live',
+      currency: 'USD',
+      price_cents: 1250,
+    }],
+    getNearestSlot: async () => { nearestSlotCalls += 1 },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), null)
+  assert.equal(nearestSlotCalls, 0)
+  assert.ok(context.warnings.some((line) => line.includes('Paid Call controller is unavailable')))
 })
 
 test('signed-in Brand routes non-call services to Start a Project with a valid native service preset', async () => {
