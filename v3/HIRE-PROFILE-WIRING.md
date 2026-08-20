@@ -264,8 +264,8 @@ The released Webflow component still contains legacy JavaScript across its
 Global Code embeds. The scoped cutover removes only the Free behavior now owned
 by `free-call-booking.js`: Starter booking-profile reads, bookable configuration
 reads, nearest-slot reads, Free chooser handlers, and Free Nylas scheduler
-mounting. Keep the native chooser, modal, form fields, Nylas container, and
-success step in Designer.
+mounting. Keep the native chooser, modal shell, Nylas container, and success
+step in Designer.
 
 Do not port or remove the legacy Paid/Stripe branches, dashboard call lists,
 call details, confirmation, decline, cancel, reschedule, payment actions, or

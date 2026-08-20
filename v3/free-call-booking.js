@@ -1,9 +1,9 @@
 /**
  * GitHub-owned Free Call booking controller for /hire/<slug>.
  *
- * Webflow owns the chooser, modal, form rows, and success step. This module
- * only binds those authored elements, reads canonical V3 booking data, and
- * mounts the Nylas scheduling custom element after an explicit Free click.
+ * Webflow owns the chooser, modal shell, Nylas mount, and success step. This
+ * module only binds those authored elements, reads canonical V3 booking data,
+ * and mounts the Nylas scheduling custom element after an explicit Free click.
  */
 ;(function (global) {
   'use strict'
