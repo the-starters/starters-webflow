@@ -1,4 +1,7 @@
 
+	var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
+	if (!profileFormControllers.buildProfileFullLocations) {
+	profileFormControllers.buildProfileFullLocations = true;
 	document.addEventListener('DOMContentLoaded', function () {
 		const form = qs('[build-profile-form]');
 		if (!form) return;
@@ -364,4 +367,5 @@
 				this.optionsContainer.appendChild(noRes);
 			}
 		}
+	}
 	}

@@ -1,4 +1,7 @@
 
+    var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
+    if (!profileFormControllers.canonicalProfileLoader) {
+    profileFormControllers.canonicalProfileLoader = true;
     window.addEventListener('beforeunload', (event) => {
         event.preventDefault();
         event.returnValue = '';
@@ -448,4 +451,5 @@
             .split(/\s+/)
             .filter(Boolean)
             .length;
+    }
     }

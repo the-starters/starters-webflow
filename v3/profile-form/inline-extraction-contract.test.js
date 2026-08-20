@@ -80,31 +80,38 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({ 3: '  ', 81: ' ', 239: '      ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/profile-form/incremental-dropdowns.js': Object.freeze({
-    characters: 13961, sha256: '0f495d228696ab32ea19a07a3bf407ba2ad8d729d22505bbb0a927ddba76ca04',
+    characters: 14185, sha256: '29561e2bd4767535c3c8dada1af28523e0ddcdac2779bebcb2ddefcc9f2ab199',
+    guardKey: 'incrementalDropdowns',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/starter-edit-profile/locations.js': Object.freeze({
-    characters: 9625, sha256: 'f3f415341505d6fac9d901fd6e5c1a3937778ecb716927b0ca31e387886c5d87',
+    characters: 9847, sha256: '69794b67fd9359f16427ad36fae3e2dd5dca4dc8729b0eaab66ca6b4be5bd8de',
+    guardKey: 'editProfileLocations',
     restoreTrailingWhitespace: Object.freeze({ 4: '  ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/starter-edit-profile/canonical-profile-loader.js': Object.freeze({
-    characters: 18665, sha256: 'ca73e3b0341aed7564b0914e5f2b42f66475f5a25041a46cfbbd41d2bbb14b92',
+    characters: 18899, sha256: 'a3b5fc307df29dff801a2260a86b0c560752e56d7e71933569104d2f672741f0',
+    guardKey: 'canonicalProfileLoader',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/draft-state.js': Object.freeze({
-    characters: 11001, sha256: '6c6bdf2e7d12f6b4406e490e5a232ea62a00ecbe7868479da53fbf9593a8e103',
+    characters: 11227, sha256: '55c5308412459cc0222bbca420780a528e21c7ef0a2a8a45f07dd61010c73617',
+    guardKey: 'buildProfileDraftState',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 9159, sha256: 'aa3acd8b21ecbd0202a384b21e750f448c257e9a7f006a245180367ef070fc86',
+    characters: 9389, sha256: 'e0a77e784efd51a443d06a669bcabcb071da6a63f755f3fc17cd7ebbef03cbda',
+    guardKey: 'buildProfileSubmitWriter',
     restoreTrailingWhitespace: Object.freeze({ 214: '          ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/locations-consult.js': Object.freeze({
-    characters: 10831, sha256: '3c73ec5ba0639a0ce6b505ee76c3681ee56892a0ee14b868831c62387e3f342c',
+    characters: 11065, sha256: '3c2e09a3a55806e1f4a82af2c3e850c6f53120fc70c1506cbf6315d5f311f160',
+    guardKey: 'buildProfileConsultLocations',
     restoreTrailingWhitespace: Object.freeze({ 14: '\t\t' }), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/locations-full-profile.js': Object.freeze({
-    characters: 10528, sha256: '3ca51bc12dc590f02ffdb0c7bd104db1750dd21dfa8a06c7e2ebec42cb69da4a',
+    characters: 10756, sha256: 'baae2157ab304366ae707759d85edbe1fae999b8eef74fa6b140868df4637026',
+    guardKey: 'buildProfileFullLocations',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
 })
@@ -273,9 +280,14 @@ function sha256(value) {
 function restoreCapturedWhitespace(candidate, expected, asset) {
   assert.equal(candidate.endsWith('\n'), true, `${asset}: candidate must end with one newline`)
   assert.equal(candidate.endsWith('\n\n'), false, `${asset}: candidate has excess terminal newlines`)
-  assert.doesNotMatch(candidate, /[ \t]+$/m, `${asset}: candidate has trailing whitespace`)
+  let normalizedCandidate = candidate
+  if (expected.guardKey) {
+    const guardedLines = candidate.split('\n')
+    normalizedCandidate = [...guardedLines.slice(0, 1), ...guardedLines.slice(4, -2), ''].join('\n')
+  }
+  assert.doesNotMatch(normalizedCandidate, /[ \t]+$/m, `${asset}: candidate has trailing whitespace`)
 
-  const lines = candidate.split('\n')
+  const lines = normalizedCandidate.split('\n')
   for (const [lineNumber, suffix] of Object.entries(expected.restoreTrailingWhitespace)) {
     const index = Number(lineNumber) - 1
     assert.ok(index >= 0 && index < lines.length - 1, `${asset}: invalid restored line ${lineNumber}`)
@@ -304,14 +316,16 @@ function validateLiveCaptureContract(provenance, readAsset = source) {
   const restoredAssets = {}
   for (const [asset, expected] of Object.entries(EXPECTED_CANDIDATE_ASSETS)) {
     const record = provenance.candidateAssets[asset]
+    const transformation = {
+      kind: expected.guardKey ? 'whitespace_plus_idempotency_guard' : 'whitespace_only',
+      ...(expected.guardKey ? { guardKey: expected.guardKey } : {}),
+      restoreTrailingWhitespace: expected.restoreTrailingWhitespace,
+      terminalNewlinesRemoved: expected.terminalNewlinesRemoved,
+    }
     assert.deepEqual(record, {
       candidateCharacters: expected.characters,
       candidateSha256: expected.sha256,
-      transformation: {
-        kind: 'whitespace_only',
-        restoreTrailingWhitespace: expected.restoreTrailingWhitespace,
-        terminalNewlinesRemoved: expected.terminalNewlinesRemoved,
-      },
+      transformation,
     }, `${asset}: candidate manifest`)
 
     const candidate = readAsset(asset)
@@ -671,7 +685,9 @@ function createRouteHarness(route) {
 
 async function executeRouteLoaders(route, assets) {
   const harness = createRouteHarness(route)
-  for (const asset of assets) run(asset, harness.context)
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const asset of assets) run(asset, harness.context)
+  }
   const boots = [...(harness.document.listeners.get('DOMContentLoaded') || [])]
   for (const boot of boots) await boot()
   await settle()
@@ -890,6 +906,7 @@ test('each deferred controller registers one boot and never creates a replacemen
     context.window.addEventListener = () => {}
     context.window.intlTelInput = () => ({})
 
+    run(file, context)
     run(file, context)
     assert.equal(document.listeners.get('DOMContentLoaded').length, 1, file)
     await document.listeners.get('DOMContentLoaded')[0]()
@@ -1116,6 +1133,7 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
 })
 
 test('build submit writer sends one normalized payload through the authored form', async () => {
+  const updated = 1770000000123
   const listeners = new Map()
   const submit = new Element('button')
   const form = new Element('form')
@@ -1163,6 +1181,7 @@ test('build submit writer sends one normalized payload through the authored form
   const requests = []
   const loaderStates = []
   const context = createBaseContext({
+    Date: class extends Date { static now() { return updated } },
     FormData: TestFormData,
     MEMBER: {
       id: 'member-1',
@@ -1181,29 +1200,44 @@ test('build submit writer sends one normalized payload through the authored form
   context.window.intlTelInput = { getInstance() { return { getNumber() { return '+15550000000' } } } }
 
   run('v3/build-profile/submit-writer.js', context)
+  run('v3/build-profile/submit-writer.js', context)
   assert.equal(document.listeners.get('DOMContentLoaded').length, 1)
   await document.listeners.get('DOMContentLoaded')[0]()
   assert.equal(submit.listeners.get('click').length, 1)
   await submit.listeners.get('click')[0](event('click'))
 
   assert.equal(requests.length, 1)
-  const payload = JSON.parse(requests[0].options.body)
-  assert.equal(payload.member_id, 'member-1')
-  assert.equal(payload.type, 'consult')
-  assert.equal(payload.type_id, 'consult-id')
-  assert.equal(payload.country, 'United States')
-  assert.equal(payload.state, 'California')
-  assert.equal(payload.hourly_rate, 126)
-  assert.equal(payload.full_time, true)
-  assert.equal(payload.free_call, false)
-  assert.equal(payload.paid_call, true)
-  assert.equal(payload.paid_call_rate, 200)
-  assert.equal(payload.retainer_rate, 2500)
-  assert.deepEqual(payload.services['service-1'], { name: 'Audit', price: 500 })
-  assert.deepEqual(payload.reviewers['reviewer-1'], {
-    'first-name': 'Grace', 'last-name': 'Hopper', position: 'CTO', company: 'Navy', email: 'grace@example.com',
+  assert.deepEqual({
+    url: requests[0].url,
+    method: requests[0].options.method,
+    headers: JSON.parse(JSON.stringify(requests[0].options.headers)),
+    payload: JSON.parse(requests[0].options.body),
+  }, {
+    url: 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/update',
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    payload: {
+      member_id: 'member-1', type: 'consult', type_id: 'consult-id',
+      email: 'profile@example.com', first_name: 'Ada', last_name: 'Lovelace', phone: '+15550000000',
+      country: 'United States', state: 'California', city: 'Los Angeles',
+      category: 'Engineering', category_id: 'category-id', roles: 'Developer', roles_ids: 'role-id',
+      skills: 'JavaScript', skills_ids: 'skill-id', tools: 'Webflow', tools_ids: 'tool-id',
+      industries: 'SaaS', industries_ids: 'industry-id', subcategories: 'Automation', subcategories_ids: 'subcategory-id',
+      tagline: 'Profile tagline', pro_headline: 'Profile headline', bio: '<p>Bio</p>',
+      best_fit_1: 'Startups', best_fit_2: '', best_fit_3: '', hourly_rate: 126,
+      availability: '11-20', availability_id: 'availability-id', full_time: true,
+      free_call: false, free_call_desc: '', paid_call: true, paid_call_desc: 'Strategy call', paid_call_rate: 200,
+      retainer: true, retainer_desc: '', retainer_rate: 2500,
+      services: { 'service-1': { name: 'Audit', price: 500 }, 'service-2': null, 'service-3': null },
+      reviewers: {
+        'reviewer-1': { 'first-name': 'Grace', 'last-name': 'Hopper', position: 'CTO', company: 'Navy', email: 'grace@example.com' },
+        'reviewer-2': null,
+        'reviewer-3': null,
+      },
+      also_worked_with: { one: { name: 'Example' } },
+      updated,
+    },
   })
-  assert.deepEqual(payload.also_worked_with, { one: { name: 'Example' } })
   assert.deepEqual(loaderStates, [true, false])
   assert.equal(form.style.display, 'none')
   assert.equal(success.style.display, 'block')

@@ -1,4 +1,7 @@
 
+  var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
+  if (!profileFormControllers.incrementalDropdowns) {
+    profileFormControllers.incrementalDropdowns = true;
   document.addEventListener('DOMContentLoaded', () => {
     waitForMember(() => {
       if (!MEMBER.id) return;
@@ -422,3 +425,4 @@
     });
 
   });
+  }

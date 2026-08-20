@@ -121,64 +121,71 @@
       }
     },
     "v3/profile-form/incremental-dropdowns.js": {
-      "candidateCharacters": 13961,
-      "candidateSha256": "0f495d228696ab32ea19a07a3bf407ba2ad8d729d22505bbb0a927ddba76ca04",
+      "candidateCharacters": 14185,
+      "candidateSha256": "29561e2bd4767535c3c8dada1af28523e0ddcdac2779bebcb2ddefcc9f2ab199",
       "transformation": {
-        "kind": "whitespace_only",
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "incrementalDropdowns",
         "restoreTrailingWhitespace": {},
         "terminalNewlinesRemoved": 0
       }
     },
     "v3/starter-edit-profile/locations.js": {
-      "candidateCharacters": 9625,
-      "candidateSha256": "f3f415341505d6fac9d901fd6e5c1a3937778ecb716927b0ca31e387886c5d87",
+      "candidateCharacters": 9847,
+      "candidateSha256": "69794b67fd9359f16427ad36fae3e2dd5dca4dc8729b0eaab66ca6b4be5bd8de",
       "transformation": {
-        "kind": "whitespace_only",
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "editProfileLocations",
         "restoreTrailingWhitespace": { "4": "  " },
         "terminalNewlinesRemoved": 0
       }
     },
     "v3/starter-edit-profile/canonical-profile-loader.js": {
-      "candidateCharacters": 18665,
-      "candidateSha256": "ca73e3b0341aed7564b0914e5f2b42f66475f5a25041a46cfbbd41d2bbb14b92",
+      "candidateCharacters": 18899,
+      "candidateSha256": "a3b5fc307df29dff801a2260a86b0c560752e56d7e71933569104d2f672741f0",
       "transformation": {
-        "kind": "whitespace_only",
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "canonicalProfileLoader",
         "restoreTrailingWhitespace": {},
         "terminalNewlinesRemoved": 0
       }
     },
     "v3/build-profile/draft-state.js": {
-      "candidateCharacters": 11001,
-      "candidateSha256": "6c6bdf2e7d12f6b4406e490e5a232ea62a00ecbe7868479da53fbf9593a8e103",
+      "candidateCharacters": 11227,
+      "candidateSha256": "55c5308412459cc0222bbca420780a528e21c7ef0a2a8a45f07dd61010c73617",
       "transformation": {
-        "kind": "whitespace_only",
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "buildProfileDraftState",
         "restoreTrailingWhitespace": {},
         "terminalNewlinesRemoved": 1
       }
     },
     "v3/build-profile/submit-writer.js": {
-      "candidateCharacters": 9159,
-      "candidateSha256": "aa3acd8b21ecbd0202a384b21e750f448c257e9a7f006a245180367ef070fc86",
+      "candidateCharacters": 9389,
+      "candidateSha256": "e0a77e784efd51a443d06a669bcabcb071da6a63f755f3fc17cd7ebbef03cbda",
       "transformation": {
-        "kind": "whitespace_only",
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "buildProfileSubmitWriter",
         "restoreTrailingWhitespace": { "214": "          " },
         "terminalNewlinesRemoved": 0
       }
     },
     "v3/build-profile/locations-consult.js": {
-      "candidateCharacters": 10831,
-      "candidateSha256": "3c73ec5ba0639a0ce6b505ee76c3681ee56892a0ee14b868831c62387e3f342c",
+      "candidateCharacters": 11065,
+      "candidateSha256": "3c2e09a3a55806e1f4a82af2c3e850c6f53120fc70c1506cbf6315d5f311f160",
       "transformation": {
-        "kind": "whitespace_only",
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "buildProfileConsultLocations",
         "restoreTrailingWhitespace": { "14": "\t\t" },
         "terminalNewlinesRemoved": 1
       }
     },
     "v3/build-profile/locations-full-profile.js": {
-      "candidateCharacters": 10528,
-      "candidateSha256": "3ca51bc12dc590f02ffdb0c7bd104db1750dd21dfa8a06c7e2ebec42cb69da4a",
+      "candidateCharacters": 10756,
+      "candidateSha256": "baae2157ab304366ae707759d85edbe1fae999b8eef74fa6b140868df4637026",
       "transformation": {
-        "kind": "whitespace_only",
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "buildProfileFullLocations",
         "restoreTrailingWhitespace": {},
         "terminalNewlinesRemoved": 1
       }

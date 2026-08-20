@@ -1,4 +1,7 @@
 
+  var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
+  if (!profileFormControllers.buildProfileDraftState) {
+  profileFormControllers.buildProfileDraftState = true;
   document.addEventListener('DOMContentLoaded', function () {
     setLoader(true);
 
@@ -362,4 +365,5 @@
       .split(/\s+/)
       .filter(Boolean)
       .length;
+  }
   }

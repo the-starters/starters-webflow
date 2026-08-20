@@ -8,8 +8,9 @@ This directory owns browser logic shared by Build Profile and Starter Edit Profi
 `shared-foundation.js` and `incremental-dropdowns.js` are behavior-preserving extractions from the
 authenticated published pages. Route-specific extracted controllers remain in `v3/build-profile/`
 and `v3/starter-edit-profile/`. Deliverable files normalize trailing whitespace and excess terminal
-newlines. The manifest records separate immutable live identities and normalized candidate identities,
-plus the exact inverse whitespace transformation used to reconstruct each captured live body.
+newlines, and deferred controllers add one-time browser guards. The manifest records separate immutable
+live identities and candidate identities, plus the exact inverse transformation used to reconstruct
+each captured live body.
 
 `inline-extraction-cutover-candidate.json` binds each source body to its authenticated published body
 length, SHA-256, complete-embed SHA-256, script index, component instance, and node or complete
@@ -50,12 +51,13 @@ Run:
 node --test v3/profile-form/inline-extraction-contract.test.js
 ```
 
-The executable suite checks immutable live identities and normalized candidate identities against an
-oracle outside the cutover manifest. It reconstructs each live body through the recorded whitespace-only
-transformation, parses the loader templates, and rejects URL, defer, order, duplicate, late-anchor,
+The executable suite checks immutable live identities and candidate identities against an oracle
+outside the cutover manifest. It removes the recorded one-time guards and restores normalized
+whitespace to reconstruct each live body, parses the loader templates, and rejects URL, defer, order, duplicate, late-anchor,
 missed-removal, existing-loader, and route-owner drift. It executes each complete route sequence,
 including every existing profile controller at its captured position, in one browser-like context and
-pins the exact boot and handler registration order. It also proves one native-form handler owner and
+pins the exact boot and handler registration order. It evaluates each grouped route twice to prove
+one boot and one native-form handler owner, and
 checks the shared empty-profile model,
 country/state/city transitions, local-versus-member draft precedence, canonical edit hydration, the
 normalized final Build Profile payload, and that the controllers do not create a form element.

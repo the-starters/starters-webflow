@@ -1,4 +1,7 @@
 
+  var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
+  if (!profileFormControllers.editProfileLocations) {
+  profileFormControllers.editProfileLocations = true;
   var locationsReady = false;
 
 
@@ -304,4 +307,5 @@
         this.optionsContainer.appendChild(noRes);
       }
     }
+  }
   }

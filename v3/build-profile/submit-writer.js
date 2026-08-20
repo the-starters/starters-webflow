@@ -1,4 +1,7 @@
 
+  var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
+  if (!profileFormControllers.buildProfileSubmitWriter) {
+  profileFormControllers.buildProfileSubmitWriter = true;
   document.addEventListener('DOMContentLoaded', function () {
     waitForMember(() => {
       if (!MEMBER.id) return;
@@ -247,3 +250,4 @@
       }
     });
   });
+  }
