@@ -3,7 +3,7 @@
 The native `/starter-edit-profile` form, fields, and success/error elements stay authored in Webflow. This directory owns the published-form contract and the page-specific portfolio and company controllers. It reuses the reviewed profile-photo and work-date assets from `v3/build-profile/`.
 
 The remaining inline Starter Edit Profile bodies now also have GitHub-owned extraction candidates.
-The authoritative ownership, provenance, atomic grouped-cutover, loader-order, and verification
+The authoritative ownership, provenance, atomic page-Head-Code cutover, loader-order, and verification
 contract lives in [`../profile-form/README.md`](../profile-form/README.md). This repository change
 does not install or publish those candidates.
 
@@ -83,7 +83,7 @@ those systems.
 6. Publish staging only with approval. Test empty visible fields, empty mirrors,
    hydrated unchanged saves, full/consult branches, location transitions, reviewer
    tuples, and computed pointer behavior.
-7. For the shared-foundation extraction, use only the grouped route-anchor cutover in
+7. For the shared-foundation extraction, use only the atomic route page-Head-Code cutover in
    [`../profile-form/README.md`](../profile-form/README.md). Do not install one extracted loader at
    each former inline node. The six earlier provenance-locked controller replacements keep their
    existing positions and remain a separate scope.

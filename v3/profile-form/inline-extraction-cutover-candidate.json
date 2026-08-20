@@ -1,5 +1,5 @@
 {
-  "schema": "profile_form_inline_extraction_cutover_candidate_v2",
+  "schema": "profile_form_inline_extraction_cutover_candidate_v4",
   "capturedAt": "2026-08-20T08:46:36.631Z",
   "orderRecapturedAt": "2026-08-20T09:20:50Z",
   "orderEvidence": "authenticated staging HTML plus read-only Webflow component/page content",
@@ -7,7 +7,12 @@
   "publishAuthorized": false,
   "installAuthorized": false,
   "nativeFormOwnership": "webflow",
-  "cutoverModel": "grouped_route_anchor",
+  "cutoverModel": "install_all_page_heads_then_component_once_then_route_removals",
+  "executionOrder": [
+    "install_and_read_back_all_route_page_heads",
+    "remove_shared_component_bodies_once",
+    "remove_route_specific_bodies"
+  ],
   "sources": {
     "sharedFoundation": {
       "routes": [
@@ -191,23 +196,31 @@
       }
     }
   },
+  "componentWideRemovals": {
+    "scope": "shared-component",
+    "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64",
+    "action": "empty_each_exact_body_once_after_all_route_heads_are_saved_and_read_back",
+    "remove": [
+      { "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa65", "sourceKey": "sharedFoundation", "beforeEmbedSha256": "32d1e6687ec692197e18e6b8b9507b05b051b5311c86777cbe64eb2b997f1c92" },
+      { "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6a", "sourceKey": "buildDraftState", "beforeEmbedSha256": "073be43ebecc9e3a21c9f57275e2867c156a83cb187ace73fc1890071a0fb428" },
+      { "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6b", "sourceKey": "incrementalDropdowns", "beforeEmbedSha256": "5a9dc4899b2a24dc6bba5407db0a6c21b630dcc618f121f3c682f0cbb830302b" },
+      { "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6c", "sourceKey": "buildSubmitWriter", "beforeEmbedSha256": "9fc5e32ff783adf0e10f8bd407e67e9613587da268345a95a156e2f853f2f803" }
+    ]
+  },
   "routeCutovers": [
     {
       "route": "/starter-edit-profile",
       "pageId": "6a44b2477e93b2d11b905de0",
-      "anchor": {
-        "scope": "nested-shared-component",
+      "install": {
+        "scope": "page-head-freeform-code",
+        "action": "append_complete_route_loader_group_to_exact_saved_head"
+      },
+      "runtimePlacementEvidence": {
         "pageComponentInstanceId": "2c015b48-4ba6-2ec3-4876-c06707317e1c",
         "nestedComponentInstanceId": "2c015b48-4ba6-2ec3-4876-c06707317e1e",
-        "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64",
-        "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa65",
-        "publishedScriptIndex": 91,
-        "sourceKey": "sharedFoundation",
-        "beforeEmbedSha256": "32d1e6687ec692197e18e6b8b9507b05b051b5311c86777cbe64eb2b997f1c92",
-        "action": "replace_exact_embed_with_complete_route_loader_group"
+        "originalGroupedAnchorIndex": 91
       },
       "remove": [
-        { "scope": "shared-component", "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64", "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6b", "sourceKey": "incrementalDropdowns", "beforeEmbedSha256": "5a9dc4899b2a24dc6bba5407db0a6c21b630dcc618f121f3c682f0cbb830302b" },
         { "scope": "edit-component", "componentId": "2c015b48-4ba6-2ec3-4876-c06707317e1d", "nodeId": "2c015b48-4ba6-2ec3-4876-c06707317e1f", "sourceKey": "editLocationsReady", "beforeEmbedSha256": "495e7109aee3940071750fbd8d99d35501e829f40f3362b7fd8ea8c09f568f98" },
         { "scope": "edit-component", "componentId": "2c015b48-4ba6-2ec3-4876-c06707317e1d", "nodeId": "a55ba4c4-e5a5-7d3d-77a9-79cc31eb5698", "sourceKey": "editLocations", "beforeEmbedSha256": "f6280b0a1f0fbe9f7d717eb2924c6556d70e30b43edc25547afc99bed1a953aa" },
         { "scope": "edit-component", "componentId": "2c015b48-4ba6-2ec3-4876-c06707317e1d", "nodeId": "a6aa8d34-73aa-dc11-b5fb-78c2512bca23", "sourceKey": "editCanonicalProfileLoader", "beforeEmbedSha256": "7b8317d33369f8f5a5be69c248ae8fcaae0e49192a1e02a3f79bb1bd98d46322" }
@@ -233,20 +246,15 @@
     {
       "route": "/build-profile/consult",
       "pageId": "6a3e73ae5f60c547e5e9d041",
-      "anchor": {
-        "scope": "shared-component",
+      "install": {
+        "scope": "page-head-freeform-code",
+        "action": "append_complete_route_loader_group_to_exact_saved_head"
+      },
+      "runtimePlacementEvidence": {
         "pageComponentInstanceId": "b732e7f5-4c02-3273-f3df-90d6f623fa63",
-        "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64",
-        "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa65",
-        "publishedScriptIndex": 64,
-        "sourceKey": "sharedFoundation",
-        "beforeEmbedSha256": "32d1e6687ec692197e18e6b8b9507b05b051b5311c86777cbe64eb2b997f1c92",
-        "action": "replace_exact_embed_with_complete_route_loader_group"
+        "originalGroupedAnchorIndex": 64
       },
       "remove": [
-        { "scope": "shared-component", "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64", "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6a", "sourceKey": "buildDraftState", "beforeEmbedSha256": "073be43ebecc9e3a21c9f57275e2867c156a83cb187ace73fc1890071a0fb428" },
-        { "scope": "shared-component", "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64", "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6b", "sourceKey": "incrementalDropdowns", "beforeEmbedSha256": "5a9dc4899b2a24dc6bba5407db0a6c21b630dcc618f121f3c682f0cbb830302b" },
-        { "scope": "shared-component", "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64", "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6c", "sourceKey": "buildSubmitWriter", "beforeEmbedSha256": "9fc5e32ff783adf0e10f8bd407e67e9613587da268345a95a156e2f853f2f803" },
         { "scope": "page-footer-freeform-code", "pageId": "6a3e73ae5f60c547e5e9d041", "nodeId": null, "completeLocation": "footer/script[83]", "sourceKey": "buildConsultLocations", "beforeEmbedSha256": "5f469d5322dc08c161db8be2bed17ca9054f3874e084ce7343265598d21daa65" }
       ],
       "preserveNodeIds": [
@@ -274,20 +282,15 @@
     {
       "route": "/build-profile/full-profile",
       "pageId": "6a01b0ef0dd420942a5f964a",
-      "anchor": {
-        "scope": "shared-component",
+      "install": {
+        "scope": "page-head-freeform-code",
+        "action": "append_complete_route_loader_group_to_exact_saved_head"
+      },
+      "runtimePlacementEvidence": {
         "pageComponentInstanceId": "d7eff4d8-d2d0-9f00-759f-c7c52fff4a2f",
-        "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64",
-        "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa65",
-        "publishedScriptIndex": 66,
-        "sourceKey": "sharedFoundation",
-        "beforeEmbedSha256": "32d1e6687ec692197e18e6b8b9507b05b051b5311c86777cbe64eb2b997f1c92",
-        "action": "replace_exact_embed_with_complete_route_loader_group"
+        "originalGroupedAnchorIndex": 66
       },
       "remove": [
-        { "scope": "shared-component", "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64", "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6a", "sourceKey": "buildDraftState", "beforeEmbedSha256": "073be43ebecc9e3a21c9f57275e2867c156a83cb187ace73fc1890071a0fb428" },
-        { "scope": "shared-component", "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64", "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6b", "sourceKey": "incrementalDropdowns", "beforeEmbedSha256": "5a9dc4899b2a24dc6bba5407db0a6c21b630dcc618f121f3c682f0cbb830302b" },
-        { "scope": "shared-component", "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64", "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6c", "sourceKey": "buildSubmitWriter", "beforeEmbedSha256": "9fc5e32ff783adf0e10f8bd407e67e9613587da268345a95a156e2f853f2f803" },
         { "scope": "page-footer-freeform-code", "pageId": "6a01b0ef0dd420942a5f964a", "nodeId": null, "completeLocation": "footer/script[85]", "sourceKey": "buildFullProfileLocations", "beforeEmbedSha256": "24d60c2e43f944e3764d489872d0bad10b00c2375592fa17a426eb017b6d4225" }
       ],
       "preserveNodeIds": [

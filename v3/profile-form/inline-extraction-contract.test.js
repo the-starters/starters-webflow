@@ -202,24 +202,24 @@ const EXPECTED_ROUTE_BINDINGS = Object.freeze({
 
 const EXPECTED_REMOVAL_LOCATIONS = Object.freeze({
   '/starter-edit-profile': Object.freeze([
-    ['incrementalDropdowns', 'b732e7f5-4c02-3273-f3df-90d6f623fa6b'],
     ['editLocationsReady', '2c015b48-4ba6-2ec3-4876-c06707317e1f'],
     ['editLocations', 'a55ba4c4-e5a5-7d3d-77a9-79cc31eb5698'],
     ['editCanonicalProfileLoader', 'a6aa8d34-73aa-dc11-b5fb-78c2512bca23'],
   ]),
   '/build-profile/consult': Object.freeze([
-    ['buildDraftState', 'b732e7f5-4c02-3273-f3df-90d6f623fa6a'],
-    ['incrementalDropdowns', 'b732e7f5-4c02-3273-f3df-90d6f623fa6b'],
-    ['buildSubmitWriter', 'b732e7f5-4c02-3273-f3df-90d6f623fa6c'],
     ['buildConsultLocations', 'footer/script[83]'],
   ]),
   '/build-profile/full-profile': Object.freeze([
-    ['buildDraftState', 'b732e7f5-4c02-3273-f3df-90d6f623fa6a'],
-    ['incrementalDropdowns', 'b732e7f5-4c02-3273-f3df-90d6f623fa6b'],
-    ['buildSubmitWriter', 'b732e7f5-4c02-3273-f3df-90d6f623fa6c'],
     ['buildFullProfileLocations', 'footer/script[85]'],
   ]),
 })
+
+const EXPECTED_COMPONENT_REMOVAL_LOCATIONS = Object.freeze([
+  ['sharedFoundation', 'b732e7f5-4c02-3273-f3df-90d6f623fa65'],
+  ['buildDraftState', 'b732e7f5-4c02-3273-f3df-90d6f623fa6a'],
+  ['incrementalDropdowns', 'b732e7f5-4c02-3273-f3df-90d6f623fa6b'],
+  ['buildSubmitWriter', 'b732e7f5-4c02-3273-f3df-90d6f623fa6c'],
+])
 
 const EXPECTED_COMPLETE_REGISTRATIONS = Object.freeze({
   '/starter-edit-profile': Object.freeze([
@@ -356,8 +356,34 @@ function validateLiveCaptureContract(provenance, readAsset = source) {
 }
 
 function validateGroupedCutover(provenance, routeLoaders) {
-  assert.equal(provenance.schema, 'profile_form_inline_extraction_cutover_candidate_v2')
-  assert.equal(provenance.cutoverModel, 'grouped_route_anchor')
+  assert.equal(provenance.schema, 'profile_form_inline_extraction_cutover_candidate_v4')
+  assert.equal(provenance.cutoverModel, 'install_all_page_heads_then_component_once_then_route_removals')
+  assert.deepEqual(provenance.executionOrder, [
+    'install_and_read_back_all_route_page_heads',
+    'remove_shared_component_bodies_once',
+    'remove_route_specific_bodies',
+  ], 'wrong cutover execution order')
+
+  const componentRemovals = provenance.componentWideRemovals
+  assert.deepEqual({
+    scope: componentRemovals.scope,
+    componentId: componentRemovals.componentId,
+    action: componentRemovals.action,
+  }, {
+    scope: 'shared-component',
+    componentId: 'b732e7f5-4c02-3273-f3df-90d6f623fa64',
+    action: 'empty_each_exact_body_once_after_all_route_heads_are_saved_and_read_back',
+  }, 'wrong component-wide removal contract')
+  assert.deepEqual(
+    componentRemovals.remove.map((item) => [item.sourceKey, item.nodeId]),
+    EXPECTED_COMPONENT_REMOVAL_LOCATIONS,
+    'missed, extra, or moved component-wide removal',
+  )
+  for (const removal of componentRemovals.remove) {
+    assert.equal(removal.beforeEmbedSha256, EXPECTED_LIVE_CAPTURES[removal.sourceKey].embedSha256, `${removal.sourceKey}: component before hash`)
+    assert.match(removal.nodeId, /^[a-f0-9-]{36}$/)
+  }
+
   const byRoute = Object.fromEntries(provenance.routeCutovers.map((cutover) => [cutover.route, cutover]))
   assert.deepEqual(Object.keys(byRoute).sort(), Object.keys(EXPECTED_ROUTE_LOADERS).sort())
 
@@ -366,13 +392,13 @@ function validateGroupedCutover(provenance, routeLoaders) {
     const binding = EXPECTED_ROUTE_BINDINGS[route]
     assert.ok(cutover, `${route}: missing grouped cutover`)
     assert.equal(cutover.pageId, binding.pageId, `${route}: wrong page binding`)
-    assert.equal(cutover.anchor.pageComponentInstanceId, binding.pageComponentInstanceId, `${route}: wrong component instance`)
-    assert.equal(cutover.anchor.nestedComponentInstanceId, binding.nestedComponentInstanceId, `${route}: wrong nested instance`)
-    assert.equal(cutover.anchor.sourceKey, 'sharedFoundation', `${route}: wrong anchor source`)
-    assert.equal(cutover.anchor.nodeId, 'b732e7f5-4c02-3273-f3df-90d6f623fa65', `${route}: wrong anchor node`)
-    assert.equal(cutover.anchor.publishedScriptIndex, binding.anchorIndex, `${route}: wrong anchor index`)
-    assert.equal(cutover.anchor.beforeEmbedSha256, EXPECTED_LIVE_CAPTURES.sharedFoundation.embedSha256, `${route}: wrong anchor hash`)
-    assert.equal(cutover.anchor.action, 'replace_exact_embed_with_complete_route_loader_group')
+    assert.deepEqual(cutover.install, {
+      scope: 'page-head-freeform-code',
+      action: 'append_complete_route_loader_group_to_exact_saved_head',
+    }, `${route}: wrong page-head install contract`)
+    assert.equal(cutover.runtimePlacementEvidence.pageComponentInstanceId, binding.pageComponentInstanceId, `${route}: wrong component instance`)
+    assert.equal(cutover.runtimePlacementEvidence.nestedComponentInstanceId, binding.nestedComponentInstanceId, `${route}: wrong nested instance`)
+    assert.equal(cutover.runtimePlacementEvidence.originalGroupedAnchorIndex, binding.anchorIndex, `${route}: wrong anchor index`)
     assert.deepEqual(routeLoaders[route], expectedAssets, `${route}: grouped loader assets`)
     const removalLocations = cutover.remove.map((item) => [item.sourceKey, item.nodeId || item.completeLocation])
     assert.deepEqual(removalLocations, EXPECTED_REMOVAL_LOCATIONS[route], `${route}: missed, extra, or moved removal`)
@@ -380,6 +406,7 @@ function validateGroupedCutover(provenance, routeLoaders) {
     for (const removal of cutover.remove) {
       const expected = EXPECTED_LIVE_CAPTURES[removal.sourceKey]
       assert.equal(removal.beforeEmbedSha256, expected.embedSha256, `${route}/${removal.sourceKey}: before hash`)
+      assert.notEqual(removal.scope, 'shared-component', `${route}: shared removal must be component-wide`)
       if (removal.scope === 'page-footer-freeform-code') {
         assert.equal(removal.nodeId, null)
         assert.match(removal.completeLocation, /^footer\/script\[\d+\]$/)
@@ -394,8 +421,8 @@ function validateGroupedCutover(provenance, routeLoaders) {
       ...(metadata || {}),
     }))
     assert.deepEqual(cutover.preserveLoaders, expectedPreserved, `${route}: existing loader drift`)
-    const beforeAnchor = cutover.preserveLoaders.filter((loader) => loader.publishedScriptIndex < cutover.anchor.publishedScriptIndex)
-    const afterAnchor = cutover.preserveLoaders.filter((loader) => loader.publishedScriptIndex > cutover.anchor.publishedScriptIndex)
+    const beforeAnchor = cutover.preserveLoaders.filter((loader) => loader.publishedScriptIndex < binding.anchorIndex)
+    const afterAnchor = cutover.preserveLoaders.filter((loader) => loader.publishedScriptIndex > binding.anchorIndex)
     const runtime = provenance.runtimeAssets[route]
     assert.ok(runtime, `${route}: missing runtime asset sequence`)
     assert.equal(runtime.groupedAnchorIndex, binding.anchorIndex, `${route}: runtime anchor index`)
@@ -810,12 +837,26 @@ test('candidate loader contract fails bad URLs, missing defer, reorder, and both
   )
 })
 
-test('grouped cutover rejects a late anchor, missed removal, altered existing loader, and route mix', () => {
+test('page-head cutover rejects wrong phase order, repeated shared removal, wrong install, missed removal, altered loader, and route mix', () => {
   const routes = parseAndValidateLoaderContract(source(LOADER_CONTRACT_FILE))
 
-  const lateAnchor = structuredClone(PROVENANCE)
-  lateAnchor.routeCutovers[1].anchor.publishedScriptIndex = 66
-  assert.throws(() => validateGroupedCutover(lateAnchor, routes), /wrong anchor index|grouped anchor is after/)
+  const wrongPhaseOrder = structuredClone(PROVENANCE)
+  ;[wrongPhaseOrder.executionOrder[0], wrongPhaseOrder.executionOrder[1]] = [
+    wrongPhaseOrder.executionOrder[1], wrongPhaseOrder.executionOrder[0],
+  ]
+  assert.throws(() => validateGroupedCutover(wrongPhaseOrder, routes), /wrong cutover execution order/)
+
+  const repeatedSharedRemoval = structuredClone(PROVENANCE)
+  repeatedSharedRemoval.routeCutovers[0].remove.unshift({
+    scope: 'shared-component',
+    componentId: repeatedSharedRemoval.componentWideRemovals.componentId,
+    ...repeatedSharedRemoval.componentWideRemovals.remove[2],
+  })
+  assert.throws(() => validateGroupedCutover(repeatedSharedRemoval, routes), /missed, extra, or moved removal|shared removal must be component-wide/)
+
+  const wrongInstall = structuredClone(PROVENANCE)
+  wrongInstall.routeCutovers[1].install.scope = 'shared-component'
+  assert.throws(() => validateGroupedCutover(wrongInstall, routes), /wrong page-head install contract/)
 
   const missedRemoval = structuredClone(PROVENANCE)
   missedRemoval.routeCutovers[1].remove.pop()

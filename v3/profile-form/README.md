@@ -14,30 +14,34 @@ each captured live body.
 
 `inline-extraction-cutover-candidate.json` binds each source body to its authenticated published body
 length, SHA-256, complete-embed SHA-256, script index, component instance, and node or complete
-custom-code location. `inline-extraction-loaders.CANDIDATE.html` serializes one ordered grouped loader
+custom-code location. `inline-extraction-loaders.CANDIDATE.html` serializes one ordered page Head Code loader
 template per route. The template wrappers keep this candidate file inert. Neither file authorizes an
 install or publish.
 
-The cutover is atomic per route. At that route's shared-foundation anchor, replace the exact
-embed with the complete inner loader group. Then empty only the other audited inline bodies listed in
-the route manifest. Do not install one extracted loader at each former node. The live extracted bodies
+The cutover is atomic across all three routes. Follow the manifest phases in order: append each complete
+loader group to that route's exact saved page Head Code and read back all three saved blocks; empty the
+four audited shared-component bodies once, with one before-hash gate each; then empty only the Edit
+component and page-footer bodies under their route entries. Do not install one extracted loader at each
+former node. Do not put different loader groups into the shared component: all three routes use the
+same component definition. The live extracted bodies
 run during HTML parsing, before the existing deferred photo, company, portfolio, work-date, counter,
 bio, grouped-select, and diagnostic controllers. A per-node deferred replacement would move some
-extracted boots after those existing controllers. The grouped anchor preserves the supported
-controller order. On Edit and Consult, the extracted group registers before the preserved post-anchor
-profile controllers. Full Profile has one controlling exception before the anchor: pinned index 30
+extracted boots after those existing controllers. Page Head Code preserves the supported controller
+order. On Edit and Consult, the extracted group registers before the preserved body profile
+controllers. Full Profile has one controlling site-head exception before the page group: pinned index 30
 `starters-webflow@v1.56.14/profile-image-auth-shim.js` installs the authenticated image interception
-first. The grouped extracted controllers execute at index 66, then the remaining loaders keep their
+first. The grouped extracted controllers run from page Head Code, then the remaining loaders keep their
 DOM order. The later index 77 `@latest/profile-image-auth-shim.js` is an intentional no-op because
 the index 30 script already set `window.__tsProfileImageAuthShim`.
 `profile-image-auth-shim-v1.56.14.capture.txt` is the exact 16,265-byte Git-tag capture used to
 execute and hash that controlling historical asset in tests. It is evidence, not a new CDN loader.
 
-The shared component is used by all three routes, so a future operator must apply and read back the
-route-instance binding recorded in the manifest. Do not turn one route group into a site-wide or
-cross-route component edit. Replace only an anchor or removal whose exact complete-location hash
-matches the recorded before hash. Read every complete saved location back before an authorized
-publish. Existing profile-photo, Step 3 company, Step 4 portfolio, and later loaders stay unchanged.
+The shared component is used by all three routes. Its shared-foundation, draft, dropdown, and submit
+bodies therefore appear only in `componentWideRemovals`, not under a route. Apply that set once after
+all page Head Code readbacks pass. Then apply each route's Edit component or page-footer removals. Do
+not turn one route group into site-wide code. Remove only a body whose exact complete-location hash
+matches the recorded before hash. Read every complete saved location back before publish. Existing
+profile-photo, Step 3 company, Step 4 portfolio, and later loaders stay unchanged.
 
 The extraction does not move the form into JavaScript. It does not change the separate Step 3 company
 owner or Step 4 portfolio owner. A future `wf-xano` conversion requires a separate declarative contract
@@ -53,7 +57,7 @@ node --test v3/profile-form/inline-extraction-contract.test.js
 
 The executable suite checks immutable live identities and candidate identities against an oracle
 outside the cutover manifest. It removes the recorded one-time guards and restores normalized
-whitespace to reconstruct each live body, parses the loader templates, and rejects URL, defer, order, duplicate, late-anchor,
+whitespace to reconstruct each live body, parses the loader templates, and rejects URL, defer, order, duplicate, wrong-head,
 missed-removal, existing-loader, and route-owner drift. It executes each complete route sequence,
 including every existing profile controller at its captured position, in one browser-like context and
 pins the exact boot and handler registration order. It evaluates each grouped route twice to prove
