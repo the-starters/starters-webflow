@@ -1460,7 +1460,7 @@
     try {
       // OAuth returns to this same dashboard. Xano derives `state` from the
       // authenticated member id; the callback must round-trip that exact
-      // value and a recent same-session intent before any grant write.
+      // value and a recent member-scoped intent before any grant write.
       const memberId = await writeMemberId()
       await ensureTimezone()
       const redirectUri = oauthRedirectUri()
@@ -1481,7 +1481,7 @@
       }
       // A delayed window.open occurs after awaited requests and is blocked by
       // normal browser popup protection. Same-tab navigation is reliable and
-      // preserves the sessionStorage intent needed by the callback verifier.
+      // preserves the member-scoped intent needed by the callback verifier.
       window.location.assign(url)
     } catch (error) {
       publishCalendarConnectionError()

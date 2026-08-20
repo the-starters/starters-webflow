@@ -2324,8 +2324,10 @@ Selecting Google clears the previous grant, restores the disconnected state
 from the canonical scheduling row, prepares the authenticated hosted OAuth URL,
 and navigates the current tab without a second confirmation. The same-tab
 handoff intentionally avoids delayed `window.open`, which browsers block after
-asynchronous Xano requests, and preserves the sessionStorage intent required by
-the callback verifier.
+asynchronous Xano requests. Before navigation, it writes the member-scoped
+intent to both the current tab's `sessionStorage` and a same-origin
+`localStorage` fallback so a provider redirect that loses tab storage can still
+return to the verified flow.
 
 Only `setup-form`, `how-to-manage`, and `disconnect-calendar` carry a
 step-scoped `[data-custom-loader]`; `setLoader` is a safe no-op on the rest
@@ -2525,35 +2527,39 @@ node --test v3/scheduling-availability-section.test.js
 ## Calendar OAuth return (no separate page)
 
 There is no `/connect-success` page in V3. `grants/oauth/v3` returns the current
-tab to the same approved Starter scheduling page. The writer accepts both
-the authorization-code return (`?code&state`) and Nylas hosted-auth success
-return (`?success=true&grant_id&email&provider&state`). It captures and strips
-all OAuth parameters before fallible bootstrap work. The callback fields needed
-for validation (`code` or `grant_id`, `state`, and `success`) stay in the current
+tab to the same approved Starter scheduling page. The active availability
+controller accepts both the authorization-code return (`?code&state`) and Nylas
+hosted-auth success return
+(`?success=true&grant_id&email&provider&state`). It captures and strips all OAuth
+parameters before fallible bootstrap work. The callback fields needed for
+validation (`code` or `grant_id`, `state`, and `success`) stay in the current
 tab's `sessionStorage` for at most 15 minutes so a reload after Memberstack
 login, or a transient grant-save failure, can resume the same handoff. The
-writer clears the saved callback and member-scoped intent only after
+controller clears the saved callback and member-scoped intent only after
 `grants/add/v3` succeeds,
 or clears the callback immediately when validation fails; expired or malformed
-state is also discarded. Provider access tokens are never stored in the
-browser, and the returned `email` and `provider` are neither retained nor
-trusted.
+state is also discarded. Intent cleanup removes both storage copies. Provider
+access tokens are never stored in the browser, and the returned `email` and
+`provider` are neither retained nor trusted.
 
 Nylas-standard OAuth failures (`error`, `error_description`, `error_uri`, or
 `error_code`) are captured without retaining their provider text, stripped from
 the visible URL, and routed to `config-request-error`. They never reach
 `grants/add/v3`; the member can reopen the same native modal and try again.
 
-Before persisting anything, the writer verifies `state` (set server-side from
+Before persisting anything, the controller verifies `state` (set server-side from
 the caller's Bearer token) against the logged-in member and, on production,
-requires a recent, member-scoped same-session intent with the exact redirect
-URI. For hosted auth, `success` must be exactly `true`, and only the returned
+requires a recent, member-scoped intent with the exact redirect URI. It reads
+the current tab's copy first and uses the same-origin durable copy only while
+processing a captured OAuth callback; a normal page load in another tab does
+not consume or recover that fallback. Both copies keep the same 15-minute TTL.
+For hosted auth, `success` must be exactly `true`, and only the returned
 `grant_id` is forwarded as callback identity. `grants/add/v3` performs the
 authoritative server-side code exchange or grant verification and persists the
-result in one authenticated call. The writer then continues the existing
+result in one authenticated call. The controller then continues the existing
 configuration flow in the same tab. After the verified grant and scheduler
-configurations are created, the modal returns to its default dashboard state;
-the legacy `reload-page` step is not part of the current handoff.
+configurations are created, the interface returns to its default dashboard
+state; the legacy `reload-page` step is not part of the current handoff.
 Booking confirmation/reschedule/cancel links baked into scheduler configurations
 also point at this page, where the bookings embed owns `booking_ref` handling.
 
