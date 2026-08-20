@@ -4714,6 +4714,90 @@ test('each invoice success drains a reload after an active project refresh', asy
   assert.equal(instance.getState().data.items[0].invoice_status, 'paid-latest')
 })
 
+test('project reload ownership resets when the authenticated member changes', async () => {
+  const timeline = el('p', { 'wf-xano-bind': 'timeline_display' })
+  timeline.textContent = 'Authored timeline'
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [timeline])
+  const root = el('div', {
+    'wf-xano-instance': 'dash-projects',
+    'wf-xano-source': 'opp30:starter/projects/mine',
+  }, [card])
+  const oldRefresh = deferred()
+  const oldHandlers = new Set()
+  let oldState = {
+    status: 'success',
+    data: { items: [{ id: 746, lifecycle_state: 'active', start_date: '2026-08-01', end_date: '2026-08-01' }] },
+    query: { page: 1, perPage: 12 },
+  }
+  const oldInstance = {
+    getState: () => oldState,
+    refresh: () => oldRefresh.promise,
+    subscribe(handler) {
+      oldHandlers.add(handler)
+      handler(oldState)
+      return () => oldHandlers.delete(handler)
+    },
+  }
+  const newHandlers = new Set()
+  let newRefreshes = 0
+  const newState = {
+    status: 'success',
+    data: { items: [{ id: 746, lifecycle_state: 'active', start_date: '2026-08-20', end_date: '2026-08-20' }] },
+    query: { page: 1, perPage: 12 },
+  }
+  const newInstance = {
+    getState: () => newState,
+    refresh() {
+      newRefreshes += 1
+      newHandlers.forEach((handler) => handler(newState))
+      return Promise.resolve(newState)
+    },
+    subscribe(handler) {
+      newHandlers.add(handler)
+      handler(newState)
+      return () => newHandlers.delete(handler)
+    },
+  }
+  let currentInstance = oldInstance
+  const bridge = await loadBridge(
+    async (input) => {
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) { return key === 'dash-projects' ? currentInstance : null },
+      },
+    },
+  )
+  assert.ok(await waitFor(() => timeline.textContent === 'August 1, 2026'))
+
+  bridge.dispatchWindow('focus')
+  currentInstance = newInstance
+  bridge.authChange({ ...talentMember, id: 'm-talent-2' })
+  assert.ok(await waitFor(() => timeline.textContent === 'August 20, 2026'))
+
+  bridge.dispatchWindow('focus')
+  assert.ok(await waitFor(() => newRefreshes === 1))
+
+  oldState = {
+    ...oldState,
+    data: { items: [{ id: 746, lifecycle_state: 'active', start_date: '2026-09-01', end_date: '2026-09-01' }] },
+  }
+  oldRefresh.resolve(oldState)
+  await new Promise(setImmediate)
+  await new Promise(setImmediate)
+
+  assert.equal(timeline.textContent, 'August 20, 2026')
+  assert.equal(oldHandlers.size, 0)
+})
+
 test('project invoice links always open in a detached new tab', async () => {
   const bridge = await loadBridge(async () => response({}))
   const link = el('a', { 'wf-xano-link': 'payment_link', href: '#payment_link' })

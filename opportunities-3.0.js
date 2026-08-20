@@ -2380,7 +2380,9 @@
   let projectWorkflowRole = ''
   let projectWorkflowItems = new Map()
   let projectWorkflowRefresh = null
+  let projectWorkflowRefreshGeneration = -1
   let projectWorkflowQueuedReload = null
+  let projectWorkflowReloadGeneration = -1
   let projectWorkflowReloadDemand = 0
   let projectWorkflowObserver = null
   let projectWorkflowBinding = null
@@ -3216,13 +3218,16 @@
     projectWorkflowObserver.observe(root, { childList: true, subtree: true })
   }
 
-  async function startProjectWorkflowRefresh(role, reload) {
+  async function startProjectWorkflowRefresh(role, reload, generation) {
     const request = (async () => {
+      if (generation !== _memberScopeGeneration) return null
       const instance = await waitForProjectWorkflowInstance(role)
+      if (generation !== _memberScopeGeneration) return null
       let items
       if (instance) {
         bindProjectWorkflowProjection(role, instance)
         if (reload) await reloadProjectWorkflowInstance(instance)
+        if (generation !== _memberScopeGeneration) return null
         const state = await waitForProjectWorkflowState(role, instance)
         items = projectWorkflowStateItems(state)
       } else if (currentProjectWorkflowRoot(role)) {
@@ -3233,26 +3238,42 @@
         // projects endpoint has exactly one list owner and one request.
         items = await fetchProjectWorkflowItems(role)
       }
-      if (projectWorkflowRole !== role || projectRoleForPath() !== role) return null
+      if (
+        generation !== _memberScopeGeneration ||
+        projectWorkflowRole !== role ||
+        projectRoleForPath() !== role
+      ) return null
       projectWorkflowItems = projectWorkflowItemsMap(items)
       decorateProjectCards()
       observeProjectCards()
       return items
     })()
     projectWorkflowRefresh = request
+    projectWorkflowRefreshGeneration = generation
     try {
       return await request
     } finally {
-      if (projectWorkflowRefresh === request) projectWorkflowRefresh = null
+      if (projectWorkflowRefresh === request) {
+        projectWorkflowRefresh = null
+        projectWorkflowRefreshGeneration = -1
+      }
     }
   }
 
   function refreshProjectWorkflow(role = projectWorkflowRole, reload = false) {
     if (!role || projectRoleForPath() !== role) return Promise.resolve(null)
+    const generation = _memberScopeGeneration
     if (!reload) {
-      return projectWorkflowRefresh || startProjectWorkflowRefresh(role, false)
+      return projectWorkflowRefresh && projectWorkflowRefreshGeneration === generation
+        ? projectWorkflowRefresh
+        : startProjectWorkflowRefresh(role, false, generation)
     }
 
+    if (projectWorkflowReloadGeneration !== generation) {
+      projectWorkflowQueuedReload = null
+      projectWorkflowReloadDemand = 0
+      projectWorkflowReloadGeneration = generation
+    }
     projectWorkflowReloadDemand += 1
     if (projectWorkflowQueuedReload) return projectWorkflowQueuedReload
 
@@ -3262,13 +3283,13 @@
       while (processedDemand < projectWorkflowReloadDemand) {
         const demand = projectWorkflowReloadDemand
         const activeRefresh = projectWorkflowRefresh
-        if (activeRefresh) {
+        if (activeRefresh && projectWorkflowRefreshGeneration === generation) {
           try {
             await activeRefresh
           } catch {}
         }
-        if (projectRoleForPath() !== role) return null
-        result = await startProjectWorkflowRefresh(role, true)
+        if (generation !== _memberScopeGeneration || projectRoleForPath() !== role) return null
+        result = await startProjectWorkflowRefresh(role, true, generation)
         processedDemand = demand
       }
       return result
@@ -3287,24 +3308,31 @@
   }
 
   async function currentProjectContext(card, refresh = false) {
+    const generation = _memberScopeGeneration
     const cachedProject = projectContextFromCard(card)
     let project = refresh ? null : cachedProject
     if (project && (project.lifecycle_state || project.status)) return project
     try {
       await refreshProjectWorkflow(projectWorkflowRole, refresh)
     } catch (error) {
-      if (refresh) invalidateProjectWorkflowProjection(projectWorkflowRole)
+      if (refresh && generation === _memberScopeGeneration) {
+        invalidateProjectWorkflowProjection(projectWorkflowRole)
+      }
       throw error
     }
+    if (generation !== _memberScopeGeneration) return null
     project = projectContextFromCard(card)
     return project && (project.lifecycle_state || project.status) ? project : null
   }
 
   async function refreshProjectWorkflowBestEffort(role, operation) {
+    const generation = _memberScopeGeneration
     try {
       await refreshProjectWorkflow(role, true)
+      if (generation !== _memberScopeGeneration) return false
       return true
     } catch (error) {
+      if (generation !== _memberScopeGeneration) return false
       invalidateProjectWorkflowProjection(role)
       console.error('[opp30:project-action] ' + operation + ' projection refresh failed', error)
       return false
@@ -3888,6 +3916,10 @@
     projectWorkflowRole = ''
     projectWorkflowItems = new Map()
     projectWorkflowRefresh = null
+    projectWorkflowRefreshGeneration = -1
+    projectWorkflowQueuedReload = null
+    projectWorkflowReloadGeneration = -1
+    projectWorkflowReloadDemand = 0
     if (projectWorkflowProjectionUnsubscribe) projectWorkflowProjectionUnsubscribe()
     projectWorkflowProjectionUnsubscribe = null
     projectWorkflowProjectionInstance = null
