@@ -645,6 +645,38 @@
 
     let recentRequest = null
     let refreshQueued = false
+    let unreadSnapshotReceived = false
+    let initialSnapshotsReconciled = false
+
+    const reconcileInitialSnapshots = () => {
+      if (
+        initialSnapshotsReconciled ||
+        !state.recentSettled ||
+        !unreadSnapshotReceived
+      ) {
+        return
+      }
+
+      initialSnapshotsReconciled = true
+      const recentById = {}
+      state.recent.forEach((conversation) => {
+        if (conversation.id) recentById[conversation.id] = conversation
+      })
+      const mismatch = state.unreads.some((unread) => {
+        const id = unread.conversation && unread.conversation.id
+        if (!id) return false
+        const recent = recentById[id]
+        if (!recent) return true
+        const timestamp = unread.lastMessage && unread.lastMessage.timestamp
+        return (
+          timestamp !== null &&
+          timestamp !== undefined &&
+          Number(timestamp) !== Number(recent.last_message_at)
+        )
+      })
+      if (mismatch) refreshRecent()
+    }
+
     const refreshRecent = () => {
       if (recentRequest) {
         refreshQueued = true
@@ -657,18 +689,20 @@
           state.recent = items
           state.recentSettled = true
           rerender()
+          reconcileInitialSnapshots()
         })
         .catch((error) => {
-        console.warn(
+          console.warn(
             initial
               ? '[starter-dashboard] Recent conversations unavailable, hiding message cards'
               : '[starter-dashboard] Recent conversations unavailable, keeping current message cards',
-          error,
-        )
+            error,
+          )
           if (initial) {
             state.recent = []
             state.recentSettled = true
             rerender()
+            reconcileInitialSnapshots()
           }
         })
         .finally(() => {
@@ -705,7 +739,9 @@
         unreadActivitySignature !== nextSignature
       unreadActivitySignature = nextSignature
       state.unreads = nextUnreads
+      unreadSnapshotReceived = true
       rerender()
+      reconcileInitialSnapshots()
       if (activityChanged) refreshRecent()
     })
   }

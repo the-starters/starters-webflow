@@ -289,7 +289,7 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
           })(),
         }),
       }
-      if (!options.deferRecent) return response
+      if (!options.deferRecent || calls.fetches > 1) return response
       return new Promise((resolve) => {
         resolveRecentFetch = () => resolve(response)
       })
@@ -704,6 +704,79 @@ test('SDK activity refreshes cards in authoritative proxy order', async () => {
       lastMessage: { timestamp: 4, body: 'New activity' },
     },
   ])
+  await settle()
+
+  assert.equal(calls.fetches, 2)
+  assert.deepEqual(
+    list.children.map((card) => card.fields.name.textContent),
+    ['Newly Active Brand', 'First Brand', 'Second Brand'],
+  )
+})
+
+test('the first SDK snapshot reconciles a stale in-flight proxy snapshot', async () => {
+  const activeId = 'one:mem_me|mem_active_during_load'
+  const { calls, list, resolveRecent } = loadRenderedRecent(
+    [
+      {
+        id: 'one:mem_me|mem_first',
+        participant_name: 'First Brand',
+        last_message_text: 'First message',
+        last_message_at: 3,
+        unread: false,
+      },
+      {
+        id: 'one:mem_me|mem_second',
+        participant_name: 'Second Brand',
+        last_message_text: 'Second message',
+        last_message_at: 2,
+        unread: false,
+      },
+      {
+        id: 'one:mem_me|mem_third',
+        participant_name: 'Third Brand',
+        last_message_text: 'Third message',
+        last_message_at: 1,
+        unread: false,
+      },
+    ],
+    [
+      {
+        conversation: { id: activeId },
+        lastMessage: { timestamp: 4, body: 'Arrived during load' },
+      },
+    ],
+    {
+      deferRecent: true,
+      refreshedRecent: [
+        {
+          id: activeId,
+          participant_name: 'Newly Active Brand',
+          last_message_text: 'Arrived during load',
+          last_message_at: 4,
+          unread: true,
+        },
+        {
+          id: 'one:mem_me|mem_first',
+          participant_name: 'First Brand',
+          last_message_text: 'First message',
+          last_message_at: 3,
+          unread: false,
+        },
+        {
+          id: 'one:mem_me|mem_second',
+          participant_name: 'Second Brand',
+          last_message_text: 'Second message',
+          last_message_at: 2,
+          unread: false,
+        },
+      ],
+    },
+  )
+
+  await settle(5)
+  assert.equal(list.children.length, 0)
+
+  resolveRecent()
   await settle()
 
   assert.equal(calls.fetches, 2)
