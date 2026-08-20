@@ -535,9 +535,18 @@
       if (id) unreadsById[id] = unread
     })
 
-    const displays = state.recent.map((conv) => {
-      return displayFromRecent(conv, unreadsById)
-    })
+    // TalkJS Inbox does not list conversations that have no messages. Keep the
+    // dashboard on the same contract even if the REST proxy returns an empty
+    // conversation. An SDK unread snapshot can supply the timestamp when the
+    // bulk snapshot lags behind the live unread state.
+    const displays = state.recent
+      .map((conv) => {
+        return displayFromRecent(conv, unreadsById)
+      })
+      .filter(
+        (display) =>
+          display.timestamp !== null && display.timestamp !== undefined,
+      )
 
     const countedUnreadIds = {}
     let unreadCount = 0

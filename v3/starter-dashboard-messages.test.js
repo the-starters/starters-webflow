@@ -513,6 +513,50 @@ test('the dashboard renders at most the 3 newest conversations regardless of unr
   )
 })
 
+test('empty TalkJS conversations never displace conversations with messages', async () => {
+  const { list } = loadRenderedRecent([
+    {
+      id: 'empty:megan',
+      participant_name: 'Megan',
+      participant_photo_url: null,
+      last_message_text: null,
+      last_message_at: null,
+      unread: false,
+    },
+    {
+      id: 'active:jai',
+      participant_name: 'Jai',
+      participant_photo_url: null,
+      last_message_text: 'Paid consultation request',
+      last_message_at: 2,
+      unread: false,
+    },
+    {
+      id: 'empty:dominic',
+      participant_name: 'Dominic',
+      participant_photo_url: null,
+      last_message_text: null,
+      last_message_at: null,
+      unread: false,
+    },
+    {
+      id: 'active:kaeser',
+      participant_name: 'Kaeser',
+      participant_photo_url: null,
+      last_message_text: 'Free consultation request',
+      last_message_at: 1,
+      unread: false,
+    },
+  ])
+
+  await settle()
+
+  assert.deepEqual(
+    list.children.map((card) => card.fields.name.textContent),
+    ['Jai', 'Kaeser'],
+  )
+})
+
 test('participant without a photo ignores conversation artwork', async () => {
   const { list } = loadRenderedRecent({
     id: 'one:mem_me|mem_other',
@@ -680,6 +724,7 @@ test('a message card links to its focused conversation in a new tab', async () =
     id: 'one:mem_me|mem_other',
     participant_name: 'Acme Brand',
     last_message_text: 'Hello',
+    last_message_at: 1,
   })
 
   await settle()
