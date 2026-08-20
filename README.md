@@ -1097,9 +1097,10 @@ the signed-in Starter can bill the selected project.
 Before opening on the Starter dashboard, the controller resolves the selected
 id against the canonical project-list row, waiting for the current list load when
 needed. The opening banner and the success screen therefore show that row's
-project title (or service fallback) and `company_name`, not possibly stale card
-text. On the internal component-preview page only, authored card text remains the
-fallback because no authenticated project list exists.
+project title (or service fallback), `company_name`, and
+`hiring_manager_name`, not possibly stale card text. On the internal
+component-preview page only, authored card text remains the fallback because no
+authenticated project list exists.
 
 The modal keeps its authored Webflow form. The shared button component currently
 renders the visible Send Invoice control as `type="button"` even with its Button
@@ -1145,12 +1146,16 @@ through `modal.js` without navigation or a page reload.
 
 Keep these markup contracts in the modal:
 
-- `[data-wf-invoice-bind="brand|project|amount|status"]` receive the billed
-  brand, project title, formatted amount, and returned status (`unpaid` when the
-  response omits one). On the Starter dashboard, brand and project come from the
-  canonical project-list row as described above. The controller also stamps the
-  first two `.generate-invoice_banner p` elements as `project` and `brand` binds
-  when the current Webflow component has not authored those hooks yet.
+- `[data-wf-invoice-bind="brand|party|project|amount|status"]` receive the billed
+  company, hiring-manager or party name, project title, formatted amount, and
+  returned status (`unpaid` when the response omits one). On the Starter
+  dashboard, company, party, and project come from the canonical project-list
+  row as described above. When Designer authors a distinct `party` bind, the
+  company and party paint on separate rows. Without it, the existing `brand`
+  bind shows both values, separated by ` · `, and removes a duplicate party
+  name that matches the company. The controller also stamps the first two
+  `.generate-invoice_banner p` elements as `project` and `brand` binds when the
+  current Webflow component has not authored those hooks yet.
 - The pay CTA is the anchor whose authored placeholder href is
   `#invoice-payment-link`; the script stamps it with
   `data-wf-invoice="payment-link"` on first use and rewrites the href to the
