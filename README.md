@@ -1089,7 +1089,17 @@ trigger delegation and the mismatch is logged. The dialog itself stays the
 native `dialog[data-modal-target="generate-invoice"]` component, opened through
 `window.lumos.modal`'s registry so its paused GSAP entrance timeline, scroll
 lock, and focus restore all still run; direct `showModal()` remains only as a
-fallback for pages without `modal.js`.
+fallback for pages without `modal.js`. Completed project rows keep this invoice
+entry point: the browser does not hide or reject Generate Invoice because the
+project is in a terminal lifecycle state. Xano remains the authority for whether
+the signed-in Starter can bill the selected project.
+
+Before opening on the Starter dashboard, the controller resolves the selected
+id against the canonical project-list row, waiting for the current list load when
+needed. The opening banner and the success screen therefore show that row's
+project title (or service fallback) and `company_name`, not possibly stale card
+text. On the internal component-preview page only, authored card text remains the
+fallback because no authenticated project list exists.
 
 The modal keeps its authored Webflow form. The shared button component currently
 renders the visible Send Invoice control as `type="button"` even with its Button
@@ -1125,18 +1135,22 @@ design-system convention `form-validation.js` uses: the wrapper takes
 `aria-disabled="true"`; when it already has a `data-button-theme`, that theme is
 temporarily replaced with `disabled` and restored afterwards. The actionable
 element inside the wrapper takes the native `disabled` property, so a second
-click is visibly refused. After a success the
-wf-xano project list is refreshed best-effort; a failed refresh never reports a
-created invoice as failed.
+click is visibly refused. After a success the canonical wf-xano project list is
+reloaded and the affected card is repainted in place, including its current paid
+status. Reload demand is scoped to the current authenticated member and is
+drained after an already-running refresh, so an older account's response cannot
+repaint a new session. A failed repaint never reports a created invoice as
+failed. The success screen's authored Back to Dashboard link closes the modal
+through `modal.js` without navigation or a page reload.
 
 Keep these markup contracts in the modal:
 
 - `[data-wf-invoice-bind="brand|project|amount|status"]` receive the billed
   brand, project title, formatted amount, and returned status (`unpaid` when the
-  response omits one). Brand and project come from the card's usual field binds
-  (`wf-xano-bind`, `wf-algolia-text`, or `data-opp-bind`): `title`, plus the
-  first present of `brand`, `company`, and `company_name`, with the last segment
-  of a pipe-separated `heading_display` heading as the only fallback.
+  response omits one). On the Starter dashboard, brand and project come from the
+  canonical project-list row as described above. The controller also stamps the
+  first two `.generate-invoice_banner p` elements as `project` and `brand` binds
+  when the current Webflow component has not authored those hooks yet.
 - The pay CTA is the anchor whose authored placeholder href is
   `#invoice-payment-link`; the script stamps it with
   `data-wf-invoice="payment-link"` on first use and rewrites the href to the
@@ -1147,6 +1161,13 @@ Keep these markup contracts in the modal:
 - Errors need `[data-wf-invoice="error"]` (the Webflow `.w-form-fail` block is
   accepted) and optionally `[data-wf-invoice="error-message"]` inside it. With
   neither present the failure is only a console warning, invisible to the member.
+- Mark the success close control with `data-wf-invoice="close-success"`. Until
+  that hook is authored, the controller accepts and stamps the existing
+  `.w-form-done a[href="/starter-dashboard"]` control.
+
+Project-card invoice anchors bound as `[wf-xano-link="payment_link"]` receive
+`target="_blank"` and `rel="noopener noreferrer"` whenever the canonical card is
+decorated, so existing invoice links open in a detached new tab.
 
 A Xano refusal for a Talent member with no connected Stripe account is
 translated into the actionable message `Connect your Stripe account from the

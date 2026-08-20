@@ -34,12 +34,13 @@
     }
 
     /**
-     * Anchor the picker directly under its input. jQuery UI sets top/left as document
-     * (or viewport, when an ancestor is position:fixed) coordinates and may leave the
-     * picker position:fixed — once it's reparented into the modal both break: the picker
-     * drifts by the modal's offset and, if fixed, unsticks from the input on scroll.
-     * Force position:absolute and recompute top/left against the picker's real offset
-     * parent so it sits on the input and scrolls with the modal content.
+     * Anchor the picker beside its input, below when it fits and above when the lower
+     * edge would be clipped. jQuery UI sets top/left as document (or viewport, when an
+     * ancestor is position:fixed) coordinates and may leave the picker position:fixed —
+     * once it's reparented into the modal both break: the picker drifts by the modal's
+     * offset and, if fixed, unsticks from the input on scroll. Force position:absolute
+     * and recompute top/left against the picker's real offset parent so it stays with
+     * the input while the modal content scrolls.
      */
     var positionPicker = function (input) {
       var dp = document.getElementById('ui-datepicker-div')
