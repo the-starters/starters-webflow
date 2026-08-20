@@ -2683,11 +2683,13 @@ failed attempt is retried once; each attempt has a 15-second timeout and aborts
 if it stalls. When both attempts fail, the tile shows no message cards rather
 than rendering identity-incomplete SDK-only entries.
 
-The Xano proxy requests only conversations with a last message and explicitly
-orders them by latest activity. This matches TalkJS Inbox, which omits empty
-conversations. The browser also rejects any response row without a last-message
-timestamp, so an empty TalkJS conversation cannot consume one of the three
-dashboard card slots if the proxy contract drifts.
+The tracked XanoScript for endpoint #1298 is
+`v3/xano-workspace/api/opportunities_3_0/starter/messages/recent_POST.xs`. It
+requests only conversations with a last message and explicitly orders them by
+latest activity. This matches TalkJS Inbox, which omits empty conversations. The
+browser also rejects any response row without a last-message timestamp, so an
+empty TalkJS conversation cannot consume one of the three dashboard card slots
+if the proxy contract drifts.
 
 For one-on-one conversations, the bulk recent-conversations response supplies
 `participant_name` and `participant_photo_url`. When those properties are
