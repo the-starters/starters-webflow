@@ -4464,9 +4464,177 @@ test('invoiceProjectContext prefers a bound brand field over the pipe-split head
   assert.equal(authored.brand, 'Northwind Coffee')
   assert.equal(authored.title, 'Growth Marketing Lead')
 
+  const canonical = invoiceProjectContext(
+    invoiceCard({
+      heading_display: '#746 | Stale Brand',
+      company_name: 'Stale Brand',
+      title: 'Stale project title',
+    }, '746'),
+    {
+      id: 746,
+      title: 'Test Invoice',
+      company_name: 'The Starters',
+    },
+  )
+  assert.equal(canonical.title, 'Test Invoice')
+  assert.equal(canonical.brand, 'The Starters')
+
   assert.equal(invoiceProjectContext(invoiceCard({}, '0')), null)
   assert.equal(invoiceProjectContext(invoiceCard({}, '-4')), null)
   assert.equal(invoiceProjectContext(null), null)
+})
+
+test('the opening invoice banner receives the same project and company paint as success', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const project = el('p')
+  const company = el('p')
+  const banner = el('div', { class: 'generate-invoice_banner' }, [project, company])
+  const close = el('a', { href: '/starter-dashboard' })
+  const done = el('div', { class: 'w-form-done' }, [close])
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [banner, done])
+
+  bridge.window.Opp30.prepareInvoiceModal(modal, {
+    projectId: 746,
+    title: 'Test Invoice',
+    brand: 'The Starters',
+  })
+
+  assert.equal(project.getAttribute('data-wf-invoice-bind'), 'project')
+  assert.equal(project.textContent, 'Test Invoice')
+  assert.equal(company.getAttribute('data-wf-invoice-bind'), 'brand')
+  assert.equal(company.textContent, 'The Starters')
+  assert.equal(close.getAttribute('data-wf-invoice'), 'close-success')
+})
+
+test('a completed project card can still open Generate Invoice', async () => {
+  const title = el('p', { 'wf-xano-bind': 'title' })
+  title.textContent = 'Completed campaign'
+  const company = el('p', { 'wf-xano-bind': 'company_name' })
+  company.textContent = 'Acme Co'
+  const state = el('p', { 'wf-xano-bind': 'lifecycle_state' })
+  state.textContent = 'completed'
+  const action = el('a', { href: '#generate-invoice' })
+  const card = el('div', { 'data-wf-xano-id': '746' }, [title, company, state, action])
+  const form = el('form', { id: 'wf-form-Generate-Invoice' })
+  form.reset = () => {}
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [form])
+  let opened = 0
+  modal.showModal = () => { opened += 1 }
+  const roots = [card, modal]
+  const bridge = await loadBridge(async () => response({}), {
+    pathname: '/all-modals',
+    querySelector: (selector) => {
+      for (const root of roots) {
+        if (selectorMatches(root, selector)) return root
+        const match = root.querySelector(selector)
+        if (match) return match
+      }
+      return null
+    },
+    querySelectorAll: (selector) => roots.flatMap((root) =>
+      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector))),
+  })
+  const click = clickEvent(action)
+
+  bridge.dispatchDocument('click', click.event)
+
+  assert.equal(opened, 1)
+  assert.equal(click.counts.prevented, 1)
+  assert.equal(click.counts.stopped, 1)
+})
+
+test('the invoice datepicker opens above when the space below would clip it', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const input = { getBoundingClientRect: () => ({ top: 650, bottom: 690, left: 520 }) }
+  const popup = {
+    style: {},
+    getBoundingClientRect: () => ({ height: 280, width: 320 }),
+  }
+  const modal = {
+    scrollLeft: 0,
+    scrollTop: 40,
+    getBoundingClientRect: () => ({ top: 100, left: 200 }),
+  }
+
+  assert.equal(
+    bridge.window.Opp30.positionInvoiceDatepicker(
+      input,
+      popup,
+      modal,
+      { innerHeight: 720, innerWidth: 1000 },
+    ),
+    'above',
+  )
+  assert.equal(popup.style.top, '306px')
+  assert.equal(popup.style.left, '320px')
+})
+
+test('the authored shared datepicker input triggers the invoice clipping correction', async () => {
+  const input = el('input', { 'data-input-datepicker': '' })
+  input.getBoundingClientRect = () => ({ top: 650, bottom: 690, left: 520 })
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [input])
+  modal.scrollLeft = 0
+  modal.scrollTop = 40
+  modal.getBoundingClientRect = () => ({ top: 100, left: 200 })
+  const popup = el('div', { id: 'ui-datepicker-div' })
+  popup.style.display = 'block'
+  popup.getBoundingClientRect = () => ({ height: 280, width: 320 })
+  const roots = [modal, popup]
+  const bridge = await loadBridge(async () => response({}), {
+    pathname: '/all-modals',
+    querySelector: (selector) => {
+      for (const root of roots) {
+        if (selectorMatches(root, selector)) return root
+        const match = root.querySelector(selector)
+        if (match) return match
+      }
+      return null
+    },
+    querySelectorAll: (selector) => roots.flatMap((root) =>
+      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector))),
+  })
+  bridge.window.innerHeight = 720
+  bridge.window.innerWidth = 1000
+
+  bridge.dispatchDocument('focusin', { target: input })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(popup.style.top, '306px')
+  assert.equal(popup.style.left, '320px')
+})
+
+test('project invoice links always open in a detached new tab', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const link = el('a', { 'wf-xano-link': 'payment_link', href: '#payment_link' })
+  const card = el('div', { 'data-wf-xano-id': '746' }, [link])
+
+  bridge.window.Opp30.decorateProjectInvoiceLinks(card)
+
+  assert.equal(link.getAttribute('target'), '_blank')
+  assert.equal(link.getAttribute('rel'), 'noopener noreferrer')
+})
+
+test('Back to Dashboard closes the invoice success modal without navigation', async () => {
+  const close = el('a', {
+    'data-wf-invoice': 'close-success',
+    href: '/starter-dashboard',
+  })
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [close])
+  const bridge = await loadBridge(async () => response({}), {
+    pathname: '/all-modals',
+    querySelector: (selector) => selectorMatches(modal, selector) ? modal : modal.querySelector(selector),
+    querySelectorAll: (selector) =>
+      [modal, ...descendants(modal)].filter((node) => selectorMatches(node, selector)),
+  })
+  let closed = 0
+  bridge.window.lumos = { modal: { list: { 'generate-invoice': { close: () => { closed += 1 } } } } }
+  const click = clickEvent(close)
+
+  bridge.dispatchDocument('click', click.event)
+
+  assert.equal(closed, 1)
+  assert.equal(click.counts.prevented, 1)
+  assert.equal(click.counts.stopped, 1)
 })
 
 // The Generate Invoice modal's success screen as the authored Webflow component

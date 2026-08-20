@@ -1810,6 +1810,10 @@
   // wf-xano-rendered project card is whatever ancestor carries the row id.
   const INVOICE_CARD_SELECTOR = '[data-wf-xano-id]'
   const INVOICE_PAYMENT_LINK_PLACEHOLDER = '#invoice-payment-link'
+  const INVOICE_SUCCESS_CLOSE_SELECTOR =
+    '[data-wf-invoice="close-success"], .w-form-done a[href="/starter-dashboard"]'
+  const INVOICE_DATE_SELECTOR =
+    '[data-wf-invoice="start-date"], [data-wf-invoice="end-date"], [data-input-datepicker]'
   const INVOICE_MIN_AMOUNT = 0.01
   const INVOICE_MAX_AMOUNT = 1000000
   const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
@@ -1818,10 +1822,11 @@
   let activeInvoiceProject = null
   let invoiceWorkflowBinding = null
 
-  function invoiceProjectContext(card) {
+  function invoiceProjectContext(card, authoritativeProject = null) {
     if (!card) return null
     const projectId = parseInt(card.getAttribute('data-wf-xano-id') || '', 10)
     if (!(projectId > 0)) return null
+    const project = authoritativeProject || projectWorkflowItems.get(projectId) || {}
     // Prefer a bound brand/company field — on the authored V3 project card that
     // field is wf-xano-bind="company_name". The "Title | Brand" heading split is
     // only a fallback, and a title containing a pipe makes the last segment the
@@ -1831,8 +1836,11 @@
     return {
       card,
       projectId,
-      title: cardFieldText(card, 'title'),
+      title:
+        String(project.title || project.service || '').trim() ||
+        cardFieldText(card, 'title'),
       brand:
+        String(project.company_name || '').trim() ||
         cardFieldText(card, 'brand') ||
         cardFieldText(card, 'company') ||
         cardFieldText(card, 'company_name') ||
@@ -1854,6 +1862,67 @@
     $$('[data-wf-invoice-bind="' + field + '"]', modal).forEach((el) => {
       el.textContent = value == null ? '' : String(value)
     })
+  }
+
+  // The current Webflow component predates the data hooks on its opening
+  // banner. Stamp the same semantic hooks used by the success screen, so both
+  // states receive one authoritative project/company paint.
+  function prepareInvoiceModalBindings(modal) {
+    if (!modal) return
+    const banner = $$('.generate-invoice_banner p', modal)
+    if (banner[0] && !banner[0].hasAttribute('data-wf-invoice-bind')) {
+      banner[0].setAttribute('data-wf-invoice-bind', 'project')
+    }
+    if (banner[1] && !banner[1].hasAttribute('data-wf-invoice-bind')) {
+      banner[1].setAttribute('data-wf-invoice-bind', 'brand')
+    }
+    const close = $(INVOICE_SUCCESS_CLOSE_SELECTOR, modal)
+    if (close) close.setAttribute('data-wf-invoice', 'close-success')
+  }
+
+  function positionInvoiceDatepicker(input, popup, modal, viewport = window) {
+    if (!input || !popup || !modal || typeof input.getBoundingClientRect !== 'function') {
+      return false
+    }
+    const inputRect = input.getBoundingClientRect()
+    const popupRect = popup.getBoundingClientRect()
+    const modalRect = modal.getBoundingClientRect()
+    const viewportHeight = Number(viewport.innerHeight) || document.documentElement.clientHeight
+    const viewportWidth = Number(viewport.innerWidth) || document.documentElement.clientWidth
+    if (!(popupRect.height > 0) || !(popupRect.width > 0)) return false
+
+    const gap = 4
+    const edge = 8
+    const below = inputRect.bottom + gap
+    const above = inputRect.top - popupRect.height - gap
+    const viewportTop = below + popupRect.height > viewportHeight - edge && above >= edge
+      ? above
+      : Math.max(edge, Math.min(below, viewportHeight - popupRect.height - edge))
+    const viewportLeft = Math.max(
+      edge,
+      Math.min(inputRect.left, viewportWidth - popupRect.width - edge),
+    )
+
+    popup.style.position = 'absolute'
+    popup.style.top = viewportTop - modalRect.top + (modal.scrollTop || 0) + 'px'
+    popup.style.left = viewportLeft - modalRect.left + (modal.scrollLeft || 0) + 'px'
+    return viewportTop === above ? 'above' : 'below'
+  }
+
+  function scheduleInvoiceDatepickerPosition(input) {
+    window.setTimeout(() => {
+      const popup = $('#ui-datepicker-div')
+      const modal = input && input.closest ? input.closest(INVOICE_MODAL_SELECTOR) : null
+      if (!popup || !modal || popup.style.display === 'none') return
+      positionInvoiceDatepicker(input, popup, modal)
+    }, 0)
+  }
+
+  function closeInvoiceModal(modal) {
+    const list = window.lumos && window.lumos.modal ? window.lumos.modal.list : null
+    const entry = list ? list[INVOICE_MODAL_ID] : null
+    if (entry && typeof entry.close === 'function') entry.close()
+    else if (modal && typeof modal.close === 'function' && modal.open) modal.close()
   }
 
   // Single resolution for the authored error hook, so show and clear can never
@@ -1926,6 +1995,7 @@
   // without opening anything — the caller decides when the dialog appears.
   function prepareInvoiceModal(modal, context) {
     activeInvoiceProject = context
+    prepareInvoiceModalBindings(modal)
     invoiceBind(modal, 'brand', context.brand)
     invoiceBind(modal, 'project', context.title)
     const form = $('form', modal)
@@ -2123,6 +2193,7 @@
     invoiceWorkflowBinding = null
     document.removeEventListener('click', binding.click, true)
     document.removeEventListener('submit', binding.submit, true)
+    document.removeEventListener('focusin', binding.dateFocus, true)
     if (binding.submitControl) setInvoiceSubmitDisabled(binding.submitControl, false)
     activeInvoiceProject = null
     delete window.__opp30InvoicesWired
@@ -2160,6 +2231,18 @@
         return
       }
       const target = event.target
+      const successClose = target && target.closest
+        ? target.closest(INVOICE_SUCCESS_CLOSE_SELECTOR)
+        : null
+      if (successClose) {
+        const modal = successClose.closest(INVOICE_MODAL_SELECTOR)
+        if (modal) {
+          event.preventDefault()
+          event.stopPropagation()
+          closeInvoiceModal(modal)
+          return
+        }
+      }
       if (requestInvoiceSubmit(target)) {
         event.preventDefault()
         event.stopPropagation()
@@ -2182,6 +2265,15 @@
       event.stopPropagation()
       prepareInvoiceModal(modal, context)
       showInvoiceModal(modal)
+    }
+
+    binding.dateFocus = (event) => {
+      const input = event.target && event.target.closest
+        ? event.target.closest(INVOICE_DATE_SELECTOR)
+        : null
+      if (input && input.closest(INVOICE_MODAL_SELECTOR)) {
+        scheduleInvoiceDatepickerPosition(input)
+      }
     }
 
     binding.submit = async (event) => {
@@ -2237,14 +2329,10 @@
         // A stale project must never be billed by a later submit from a modal
         // that was reopened without a card.
         activeInvoiceProject = null
-        // Feed refresh is cosmetic; never report a created invoice as failed.
-        try {
-          if (window.WfXano && typeof window.WfXano.refresh === 'function') {
-            window.WfXano.refresh(context.card.closest('[wf-xano-source]') || undefined)
-          }
-        } catch (refreshError) {
-          /* non-fatal: the next page load repaints the card */
-        }
+        // Repaint the canonical project card in place. This remains cosmetic:
+        // the successful invoice response is never turned into a form error if
+        // the follow-up list read fails.
+        refreshProjectWorkflowBestEffort('starter', 'invoice').catch(() => {})
       } catch (err) {
         if (!invoiceWorkflowBindingCurrent(binding)) return
         const receipt = diagnosticForError(err)
@@ -2266,6 +2354,7 @@
     invoiceWorkflowBinding = binding
     document.addEventListener('click', binding.click, true)
     document.addEventListener('submit', binding.submit, true)
+    document.addEventListener('focusin', binding.dateFocus, true)
   }
 
   /* ================= PROJECT DASHBOARD ACTIONS ================ */
@@ -3059,10 +3148,19 @@
     if (label && target.textContent.trim() !== label) target.textContent = label
   }
 
+  function decorateProjectInvoiceLinks(card) {
+    if (!card) return
+    $$('[wf-xano-link="payment_link"]', card).forEach((link) => {
+      link.setAttribute('target', '_blank')
+      link.setAttribute('rel', 'noopener noreferrer')
+    })
+  }
+
   function decorateProjectCard(card) {
     const project = projectContextFromCard(card)
     paintProjectTimeline(card, project)
     paintProjectContractPanel(card, project)
+    decorateProjectInvoiceLinks(card)
     if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'contract') {
       currentProjectContractActions(projectIdFromCard(card)).forEach((contract) => {
         setOpportunityActionPending(projectActionWrap(contract), true)
@@ -6119,6 +6217,8 @@
     openInvoiceModal,
     prepareInvoiceModal,
     paintInvoiceSuccess,
+    positionInvoiceDatepicker,
+    decorateProjectInvoiceLinks,
     requestInvoiceSubmit,
     invoiceSubmitControl,
     setInvoiceSubmitDisabled,
