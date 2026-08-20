@@ -106,20 +106,82 @@ function guestQueryAll(ui, selector) {
   return []
 }
 
-test('the native guest Form Block cannot submit through Webflow handlers', () => {
-  const form = new EventTarget()
-  const wrapper = new EventTarget()
-  wrapper.querySelectorAll = function (selector) {
-    return selector === 'form' ? [form] : []
+class SubmitDomNode {
+  constructor(tagName) {
+    this.tagName = String(tagName || '').toUpperCase()
+    this.children = []
+    this.parentNode = null
+    this.listeners = {}
   }
+
+  appendChild(child) {
+    child.parentNode = this
+    this.children.push(child)
+    return child
+  }
+
+  addEventListener(name, listener, options) {
+    if (!this.listeners[name]) this.listeners[name] = []
+    this.listeners[name].push({ listener, capture: options === true || Boolean(options && options.capture) })
+  }
+
+  querySelectorAll(selector) {
+    const matches = []
+    function visit(node) {
+      if (selector === 'form' && node.tagName === 'FORM') matches.push(node)
+      node.children.forEach(visit)
+    }
+    this.children.forEach(visit)
+    return matches
+  }
+
+  dispatchSubmit() {
+    const path = []
+    for (let node = this.parentNode; node; node = node.parentNode) path.unshift(node)
+    const event = {
+      type: 'submit',
+      bubbles: true,
+      cancelable: true,
+      defaultPrevented: false,
+      propagationStopped: false,
+      preventDefault() { this.defaultPrevented = true },
+      stopImmediatePropagation() { this.propagationStopped = true },
+    }
+    const invoke = function (node, capture) {
+      const listeners = node.listeners.submit || []
+      for (const binding of listeners) {
+        if (binding.capture !== capture) continue
+        binding.listener(event)
+        if (event.propagationStopped) break
+      }
+    }
+    for (const node of path) {
+      invoke(node, true)
+      if (event.propagationStopped) return event
+    }
+    invoke(this, true)
+    if (!event.propagationStopped) invoke(this, false)
+    if (!event.propagationStopped && event.bubbles) {
+      for (const node of path.reverse()) {
+        invoke(node, false)
+        if (event.propagationStopped) break
+      }
+    }
+    return event
+  }
+}
+
+test('the native guest Form Block cannot submit through Webflow handlers', () => {
+  const wrapper = new SubmitDomNode('div')
+  const form = wrapper.appendChild(new SubmitDomNode('form'))
   let webflowSubmitCount = 0
 
-  assert.equal(api.installGuestFormSubmitGuard(wrapper), true)
   form.addEventListener('submit', function () { webflowSubmitCount += 1 })
+  assert.equal(api.installGuestFormSubmitGuard(wrapper), true)
 
-  const event = new Event('submit', { bubbles: true, cancelable: true })
-  assert.equal(form.dispatchEvent(event), false)
+  const event = form.dispatchSubmit()
   assert.equal(event.defaultPrevented, true)
+  assert.equal(event.propagationStopped, true)
   assert.equal(webflowSubmitCount, 0)
 })
 
@@ -297,6 +359,7 @@ test('paid calendar renders dates and times and submits only the selected slot',
   }
   const container = new CalendarElement('div')
   const submissions = []
+  const selections = []
   global.document = {
     createElement(tagName) { return new CalendarElement(tagName) },
   }
@@ -316,6 +379,7 @@ test('paid calendar renders dates and times and submits only the selected slot',
         grant_id: 'grant_test',
         duration: 15,
       },
+      onSelectionChange(slot) { selections.push(slot) },
       async onConfirm(slot) { submissions.push(slot) },
     })
     assert.equal(result.slots.length, 2)
@@ -325,8 +389,10 @@ test('paid calendar renders dates and times and submits only the selected slot',
       .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
     assert.equal(timeButtons.length, 2)
     assert.equal(confirm.disabled, true)
+    assert.deepEqual(selections, [null])
     timeButtons[1].listeners.click()
     assert.equal(confirm.disabled, false)
+    assert.deepEqual(selections[1], result.slots[1])
     await confirm.listeners.click()
     assert.equal(submissions.length, 1)
     assert.deepEqual(submissions[0], {
@@ -700,6 +766,22 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     resolveReadiness()
     await Promise.all([firstClick, secondClick])
     assert.equal(calendarCount, 1)
+    assert.equal(guestUi.wrapper.style.display, 'none')
+    assert.equal(guestUi.wrapper.getAttribute('aria-hidden'), 'true')
+    calendarOptions.onSelectionChange({
+      start: 1787000000000,
+      end: 1787001800000,
+    })
+    assert.equal(guestUi.wrapper.style.display, 'flex')
+    assert.equal(guestUi.wrapper.getAttribute('aria-hidden'), 'false')
+    guestField.value = 'discard-on-slot-clear@example.com'
+    calendarOptions.onSelectionChange(null)
+    assert.equal(guestUi.wrapper.style.display, 'none')
+    assert.equal(guestField.value, '')
+    calendarOptions.onSelectionChange({
+      start: 1787000000000,
+      end: 1787001800000,
+    })
     assert.equal(guestUi.wrapper.style.display, 'flex')
     guestField.value = 'not-an-email'
     await assert.rejects(
@@ -826,22 +908,13 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.rows[0].field.value, '')
     const pending = paid.onclick({ preventDefault() {} })
-    assert.equal(guestUi.wrapper.style.display, 'flex')
-    guestUi.add.listeners.click({ preventDefault() {} })
-    assert.equal(guestUi.rows[1].row.style.display, 'flex')
-    guestUi.rows[1].field.value = 'remove@example.com'
-    guestUi.rows[1].remove.listeners.click({ preventDefault() {} })
-    assert.equal(guestUi.rows[1].row.style.display, 'none')
-    assert.equal(guestUi.rows[1].field.value, '')
-    guestUi.add.listeners.click({ preventDefault() {} })
-    guestUi.rows[0].field.value = 'guest@example.com'
-    guestUi.rows[1].field.value = 'second@example.com'
+    assert.equal(guestUi.wrapper.style.display, 'none')
+    assert.equal(guestUi.wrapper.getAttribute('aria-hidden'), 'true')
     assert.equal(container.textContent, 'Loading available times...')
     assert.equal(container.getAttribute('data-paid-calendar-state'), 'loading')
     freeListeners.click()
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.rows[0].field.value, '')
-    assert.equal(guestUi.rows[1].field.value, '')
     container.textContent = 'Free scheduler'
     resolveReadiness()
     await pending

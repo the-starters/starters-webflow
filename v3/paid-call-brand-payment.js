@@ -378,6 +378,9 @@
     const container = settings.container
     const config = settings.config
     const onConfirm = settings.onConfirm
+    const onSelectionChange = typeof settings.onSelectionChange === 'function'
+      ? settings.onSelectionChange
+      : function () {}
     const isCurrent = typeof settings.isCurrent === 'function'
       ? settings.isCurrent
       : function () { return true }
@@ -445,6 +448,7 @@
     function renderTimes() {
       times.textContent = ''
       selectedSlot = null
+      onSelectionChange(null)
       confirm.disabled = true
       groups[selectedDate].forEach(function (slot) {
         const button = global.document.createElement('button')
@@ -472,6 +476,7 @@
             candidate.style.color = candidate === button ? '#ffffff' : '#1f211d'
           })
           selectedSlot = slot
+          onSelectionChange(slot)
           confirm.disabled = false
           status.textContent = ''
         })
@@ -630,7 +635,7 @@
       const generation = nextSurfaceGeneration()
       activePaidGeneration = generation
       resetGuestUi()
-      setGuestUiVisible(true)
+      setGuestUiVisible(false)
       container.textContent = 'Loading available times...'
       container.setAttribute('data-paid-calendar-state', 'loading')
       return generation
@@ -737,6 +742,16 @@
         container,
         config: availabilityConfig,
         onConfirm: submitBooking,
+        onSelectionChange: function (slot) {
+          if (!ownsSurface(generation)) return
+          if (!slot) {
+            resetGuestUi()
+            setGuestUiVisible(false)
+            return
+          }
+          if (guestWrapper.getAttribute('aria-hidden') === 'true') resetGuestUi()
+          setGuestUiVisible(true)
+        },
         isCurrent: function () { return ownsSurface(generation) },
       })
       return ownsSurface(generation) ? result : undefined

@@ -3092,12 +3092,14 @@ never a child of, `[nylas-container]`:
 ```
 
 All five rows and their controls are authored in Webflow. Row one becomes
-visible when Paid owns the shared booking surface. Add and Remove only reveal,
-hide, focus, clear, or disable those existing rows. Free selection, modal close,
-and Paid success clear all guest values and validation, restore the one-row
-state, and hide the Paid guest wrapper. Missing wrapper/list/error/add/remove
-hooks, a row count other than five, or any row missing its native input or
-remove control keeps Paid closed.
+visible only after the Brand selects a valid Paid slot in the final request
+step. The wrapper stays hidden and reset while the Brand chooses Paid and while
+availability loads. Add and Remove only reveal, hide, focus, clear, or disable
+those existing rows. Free selection, modal close, Paid success, and returning
+to a date with no selected slot clear all guest values and validation, restore
+the one-row state, and hide the Paid guest wrapper. Missing
+wrapper/list/error/add/remove hooks, a row count other than five, or any row
+missing its native input or remove control keeps Paid closed.
 
 The guest wrapper can remain a native Webflow Form Block for Designer ownership,
 but it is not an email form. The controller captures submit events on the
