@@ -2,6 +2,19 @@
 
 The native Webflow forms and their authored success/error elements stay in Webflow. Browser logic lives in this directory and is loaded from GitHub through jsDelivr.
 
+The remaining shared foundation, draft-state, incremental-dropdown, final-submit, and route-specific
+location bodies now also have GitHub-owned extraction candidates. See
+[`../profile-form/README.md`](../profile-form/README.md). They remain inline until an authorized
+whole-block cutover replaces the earliest shared-foundation anchor with the complete route loader
+group and empties only the other audited bodies. Do not replace these extracted bodies one at a time:
+that changes their boot order relative to the existing deferred controllers. This repository change
+does not install or publish the grouped candidates.
+
+Full Profile keeps its pinned index 30 `v1.56.14/profile-image-auth-shim.js` before the grouped
+anchor. That first load owns the image-auth interception. The later index 77 `@latest` shim stays in
+place and exits through `window.__tsProfileImageAuthShim`; the grouped cutover must not move, remove,
+or replace either loader.
+
 ## Scoped migration
 
 The files below are source-controlled candidates for self-contained controller blocks that are currently inline on both `/build-profile/consult` and `/build-profile/full-profile`. [`live-body-provenance.json`](./live-body-provenance.json) keeps the authenticated live-body capture separate from the instrumented Git candidate hashes. Its `pages` records are immutable readback evidence; its `candidateAssets` records identify the reviewed files that replace those blocks. Both pages produced the same nine captured body hashes.
