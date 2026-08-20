@@ -590,26 +590,36 @@
     const authoredGuestFields = typeof popup.querySelectorAll === 'function'
       ? Array.from(popup.querySelectorAll('[data-call-guest-email]'))
       : []
-    if (
-      !guestWrapper ||
-      !guestList ||
-      !guestError ||
-      !guestAdd ||
-      guestRows.length !== MAX_GUEST_EMAILS ||
-      authoredGuestFields.length !== MAX_GUEST_EMAILS ||
-      guestBindings.some(function (binding) { return !binding.field || !binding.remove }) ||
-      guestBindings.some(function (binding) { return !authoredGuestFields.includes(binding.field) }) ||
-      (typeof container.contains === 'function' && container.contains(guestWrapper))
-    ) {
+    const hasGuestMarkup = Boolean(
+      guestWrapper ||
+      guestList ||
+      guestError ||
+      guestAdd ||
+      guestRows.length ||
+      authoredGuestFields.length,
+    )
+    const hasCompleteGuestMarkup = Boolean(
+      guestWrapper &&
+      guestList &&
+      guestError &&
+      guestAdd &&
+      guestRows.length === MAX_GUEST_EMAILS &&
+      authoredGuestFields.length === MAX_GUEST_EMAILS &&
+      !guestBindings.some(function (binding) { return !binding.field || !binding.remove }) &&
+      !guestBindings.some(function (binding) { return !authoredGuestFields.includes(binding.field) }) &&
+      !(typeof container.contains === 'function' && container.contains(guestWrapper)),
+    )
+    if (hasGuestMarkup && !hasCompleteGuestMarkup) {
       return false
     }
+    const guestUiEnabled = hasCompleteGuestMarkup
     const bindings = ctas.map(function (cta) {
       const item = cta.closest('[call-type-item]')
       const price = item && item.querySelector('[call-type-price]')
       return { cta, item, price }
     })
     if (bindings.some(function (binding) { return !binding.item || !binding.price })) return false
-    installGuestFormSubmitGuard(guestWrapper)
+    if (guestUiEnabled) installGuestFormSubmitGuard(guestWrapper)
 
     let cardElement = null
     let cardSetupInstalled = false
@@ -647,16 +657,19 @@
     }
 
     function setGuestError(message) {
+      if (!guestUiEnabled) return
       guestError.textContent = String(message || '')
       guestError.style.display = message ? 'block' : 'none'
     }
 
     function setGuestUiVisible(visible) {
+      if (!guestUiEnabled) return
       guestWrapper.style.display = visible ? 'flex' : 'none'
       guestWrapper.setAttribute('aria-hidden', visible ? 'false' : 'true')
     }
 
     function updateGuestControls() {
+      if (!guestUiEnabled) return
       const visibleCount = guestBindings.filter(function (binding) {
         return binding.row.getAttribute('aria-hidden') !== 'true'
       }).length
@@ -665,6 +678,7 @@
     }
 
     function resetGuestUi() {
+      if (!guestUiEnabled) return
       guestBindings.forEach(function (binding, index) {
         binding.field.value = ''
         binding.field.disabled = index !== 0
@@ -695,7 +709,9 @@
       if (bookingLock) return
       let guestEmails
       try {
-        guestEmails = readGuestEmails(popup, [settings.brandEmail, settings.starterEmail])
+        guestEmails = guestUiEnabled
+          ? readGuestEmails(popup, [settings.brandEmail, settings.starterEmail])
+          : []
         setGuestError('')
       } catch (error) {
         setGuestError(error && error.message)
@@ -749,6 +765,7 @@
             setGuestUiVisible(false)
             return
           }
+          if (!guestUiEnabled) return
           if (guestWrapper.getAttribute('aria-hidden') === 'true') resetGuestUi()
           setGuestUiVisible(true)
         },
@@ -865,32 +882,34 @@
       }
     })
 
-    guestAdd.addEventListener('click', function (event) {
-      event.preventDefault()
-      const next = guestBindings.find(function (binding) {
-        return binding.row.getAttribute('aria-hidden') === 'true'
-      })
-      if (!next) return
-      next.row.style.display = 'flex'
-      next.row.setAttribute('aria-hidden', 'false')
-      next.field.disabled = false
-      if (typeof next.field.focus === 'function') next.field.focus()
-      updateGuestControls()
-    })
-
-    guestBindings.forEach(function (binding, index) {
-      binding.remove.addEventListener('click', function (event) {
+    if (guestUiEnabled) {
+      guestAdd.addEventListener('click', function (event) {
         event.preventDefault()
-        binding.field.value = ''
-        if (index !== 0) {
-          binding.field.disabled = true
-          binding.row.style.display = 'none'
-          binding.row.setAttribute('aria-hidden', 'true')
-        }
-        setGuestError('')
+        const next = guestBindings.find(function (binding) {
+          return binding.row.getAttribute('aria-hidden') === 'true'
+        })
+        if (!next) return
+        next.row.style.display = 'flex'
+        next.row.setAttribute('aria-hidden', 'false')
+        next.field.disabled = false
+        if (typeof next.field.focus === 'function') next.field.focus()
         updateGuestControls()
       })
-    })
+
+      guestBindings.forEach(function (binding, index) {
+        binding.remove.addEventListener('click', function (event) {
+          event.preventDefault()
+          binding.field.value = ''
+          if (index !== 0) {
+            binding.field.disabled = true
+            binding.row.style.display = 'none'
+            binding.row.setAttribute('aria-hidden', 'true')
+          }
+          setGuestError('')
+          updateGuestControls()
+        })
+      })
+    }
 
     Array.from(popup.querySelectorAll(
       '[data-modal-close], [booking-popup-close], [popup-booking-close]',
