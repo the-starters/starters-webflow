@@ -4464,9 +4464,372 @@ test('invoiceProjectContext prefers a bound brand field over the pipe-split head
   assert.equal(authored.brand, 'Northwind Coffee')
   assert.equal(authored.title, 'Growth Marketing Lead')
 
+  const canonical = invoiceProjectContext(
+    invoiceCard({
+      heading_display: '#746 | Stale Brand',
+      company_name: 'Stale Brand',
+      title: 'Stale project title',
+    }, '746'),
+    {
+      id: 746,
+      title: 'Test Invoice',
+      company_name: 'The Starters',
+    },
+  )
+  assert.equal(canonical.title, 'Test Invoice')
+  assert.equal(canonical.brand, 'The Starters')
+
   assert.equal(invoiceProjectContext(invoiceCard({}, '0')), null)
   assert.equal(invoiceProjectContext(invoiceCard({}, '-4')), null)
   assert.equal(invoiceProjectContext(null), null)
+})
+
+test('the opening invoice banner receives the same project and company paint as success', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const project = el('p')
+  const company = el('p')
+  const banner = el('div', { class: 'generate-invoice_banner' }, [project, company])
+  const close = el('a', { href: '/starter-dashboard' })
+  const done = el('div', { class: 'w-form-done' }, [close])
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [banner, done])
+
+  bridge.window.Opp30.prepareInvoiceModal(modal, {
+    projectId: 746,
+    title: 'Test Invoice',
+    brand: 'The Starters',
+  })
+
+  assert.equal(project.getAttribute('data-wf-invoice-bind'), 'project')
+  assert.equal(project.textContent, 'Test Invoice')
+  assert.equal(company.getAttribute('data-wf-invoice-bind'), 'brand')
+  assert.equal(company.textContent, 'The Starters')
+  assert.equal(close.getAttribute('data-wf-invoice'), 'close-success')
+})
+
+test('a completed project card can still open Generate Invoice', async () => {
+  const title = el('p', { 'wf-xano-bind': 'title' })
+  title.textContent = 'Completed campaign'
+  const company = el('p', { 'wf-xano-bind': 'company_name' })
+  company.textContent = 'Acme Co'
+  const state = el('p', { 'wf-xano-bind': 'lifecycle_state' })
+  state.textContent = 'completed'
+  const action = el('a', { href: '#generate-invoice' })
+  const card = el('div', { 'data-wf-xano-id': '746' }, [title, company, state, action])
+  const form = el('form', { id: 'wf-form-Generate-Invoice' })
+  form.reset = () => {}
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [form])
+  let opened = 0
+  modal.showModal = () => { opened += 1 }
+  const roots = [card, modal]
+  const bridge = await loadBridge(async () => response({}), {
+    pathname: '/all-modals',
+    querySelector: (selector) => {
+      for (const root of roots) {
+        if (selectorMatches(root, selector)) return root
+        const match = root.querySelector(selector)
+        if (match) return match
+      }
+      return null
+    },
+    querySelectorAll: (selector) => roots.flatMap((root) =>
+      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector))),
+  })
+  const click = clickEvent(action)
+
+  bridge.dispatchDocument('click', click.event)
+
+  assert.equal(opened, 1)
+  assert.equal(click.counts.prevented, 1)
+  assert.equal(click.counts.stopped, 1)
+})
+
+test('Generate Invoice waits for canonical project context before opening', async () => {
+  const title = el('p', { 'wf-xano-bind': 'title' })
+  title.textContent = 'Stale project title'
+  const company = el('p', { 'wf-xano-bind': 'company_name' })
+  company.textContent = 'Stale company'
+  const action = el('a', { href: '#generate-invoice' })
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [
+    title,
+    company,
+    action,
+  ])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const projectBind = el('p', { 'data-wf-invoice-bind': 'project' })
+  const companyBind = el('p', { 'data-wf-invoice-bind': 'brand' })
+  const form = el('form')
+  form.reset = () => {}
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [
+    projectBind,
+    companyBind,
+    form,
+  ])
+  modal.showModal = () => { modal.open = true }
+  const projectList = deferred()
+  let listRequested = false
+  const roots = [root, modal]
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        listRequested = true
+        return projectList.promise
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) => {
+        for (const candidate of roots) {
+          if (selectorMatches(candidate, selector)) return candidate
+          const match = candidate.querySelector(selector)
+          if (match) return match
+        }
+        return null
+      },
+      querySelectorAll: (selector) => roots.flatMap((candidate) =>
+        [candidate, ...descendants(candidate)].filter((node) => selectorMatches(node, selector))),
+      routeGuard: true,
+    },
+  )
+  assert.ok(await waitFor(() => listRequested))
+
+  const click = clickEvent(action)
+  bridge.dispatchDocument('click', click.event)
+  assert.equal(modal.open, undefined)
+  assert.equal(click.counts.prevented, 1)
+
+  projectList.resolve(response({
+    items: [{
+      id: 746,
+      lifecycle_state: 'completed',
+      title: 'Canonical project title',
+      company_name: 'Canonical company',
+    }],
+  }))
+
+  assert.ok(await waitFor(() => modal.open === true))
+  assert.equal(projectBind.textContent, 'Canonical project title')
+  assert.equal(companyBind.textContent, 'Canonical company')
+})
+
+test('each invoice success drains a reload after an active project refresh', async () => {
+  const dom = invoiceSubmitDom()
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [dom.modal])
+  const root = el('div', {
+    'wf-xano-instance': 'dash-projects',
+    'wf-xano-source': 'opp30:starter/projects/mine',
+  }, [card])
+  const handlers = new Set()
+  const firstRefresh = deferred()
+  const secondRefresh = deferred()
+  let refreshCount = 0
+  let state = {
+    status: 'success',
+    data: { items: [{ id: 746, lifecycle_state: 'completed', invoice_status: 'unpaid' }] },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh() {
+      refreshCount += 1
+      if (refreshCount === 1) return firstRefresh.promise
+      if (refreshCount === 2) return secondRefresh.promise
+      state = {
+        ...state,
+        data: { items: [{ id: 746, lifecycle_state: 'completed', invoice_status: 'paid-latest' }] },
+      }
+      handlers.forEach((handler) => handler(state))
+      return Promise.resolve(state)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  let invoiceRequests = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/create/v3')) {
+        invoiceRequests += 1
+        return response({ invoice_id: 901, status: 'unpaid' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) { return key === 'dash-projects' ? instance : null },
+      },
+    },
+  )
+  assert.ok(await waitFor(() => bridge.documentListenerCount('submit') > 0))
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+    card,
+    projectId: 746,
+    title: 'Canonical project title',
+    brand: 'Canonical company',
+  })
+
+  bridge.dispatchWindow('focus')
+  assert.ok(await waitFor(() => refreshCount === 1))
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  assert.ok(await waitFor(() => invoiceRequests === 1))
+  assert.equal(refreshCount, 1)
+
+  firstRefresh.resolve(state)
+  assert.ok(await waitFor(() => refreshCount === 2))
+
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+    card,
+    projectId: 746,
+    title: 'Canonical project title',
+    brand: 'Canonical company',
+  })
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  assert.ok(await waitFor(() => invoiceRequests === 2))
+  assert.equal(refreshCount, 2)
+
+  secondRefresh.resolve(state)
+  assert.ok(await waitFor(() => refreshCount === 3))
+  assert.equal(instance.getState().data.items[0].invoice_status, 'paid-latest')
+})
+
+test('project reload ownership resets when the authenticated member changes', async () => {
+  const timeline = el('p', { 'wf-xano-bind': 'timeline_display' })
+  timeline.textContent = 'Authored timeline'
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [timeline])
+  const root = el('div', {
+    'wf-xano-instance': 'dash-projects',
+    'wf-xano-source': 'opp30:starter/projects/mine',
+  }, [card])
+  const oldRefresh = deferred()
+  const oldHandlers = new Set()
+  let oldState = {
+    status: 'success',
+    data: { items: [{ id: 746, lifecycle_state: 'active', start_date: '2026-08-01', end_date: '2026-08-01' }] },
+    query: { page: 1, perPage: 12 },
+  }
+  const oldInstance = {
+    getState: () => oldState,
+    refresh: () => oldRefresh.promise,
+    subscribe(handler) {
+      oldHandlers.add(handler)
+      handler(oldState)
+      return () => oldHandlers.delete(handler)
+    },
+  }
+  const newHandlers = new Set()
+  let newRefreshes = 0
+  const newState = {
+    status: 'success',
+    data: { items: [{ id: 746, lifecycle_state: 'active', start_date: '2026-08-20', end_date: '2026-08-20' }] },
+    query: { page: 1, perPage: 12 },
+  }
+  const newInstance = {
+    getState: () => newState,
+    refresh() {
+      newRefreshes += 1
+      newHandlers.forEach((handler) => handler(newState))
+      return Promise.resolve(newState)
+    },
+    subscribe(handler) {
+      newHandlers.add(handler)
+      handler(newState)
+      return () => newHandlers.delete(handler)
+    },
+  }
+  let currentInstance = oldInstance
+  const bridge = await loadBridge(
+    async (input) => {
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) { return key === 'dash-projects' ? currentInstance : null },
+      },
+    },
+  )
+  assert.ok(await waitFor(() => timeline.textContent === 'August 1, 2026'))
+
+  bridge.dispatchWindow('focus')
+  currentInstance = newInstance
+  bridge.authChange({ ...talentMember, id: 'm-talent-2' })
+  assert.ok(await waitFor(() => timeline.textContent === 'August 20, 2026'))
+
+  bridge.dispatchWindow('focus')
+  assert.ok(await waitFor(() => newRefreshes === 1))
+
+  oldState = {
+    ...oldState,
+    data: { items: [{ id: 746, lifecycle_state: 'active', start_date: '2026-09-01', end_date: '2026-09-01' }] },
+  }
+  oldRefresh.resolve(oldState)
+  await new Promise(setImmediate)
+  await new Promise(setImmediate)
+
+  assert.equal(timeline.textContent, 'August 20, 2026')
+  assert.equal(oldHandlers.size, 0)
+})
+
+test('project invoice links always open in a detached new tab', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const link = el('a', { 'wf-xano-link': 'payment_link', href: '#payment_link' })
+  const card = el('div', { 'data-wf-xano-id': '746' }, [link])
+
+  bridge.window.Opp30.decorateProjectInvoiceLinks(card)
+
+  assert.equal(link.getAttribute('target'), '_blank')
+  assert.equal(link.getAttribute('rel'), 'noopener noreferrer')
+})
+
+test('Back to Dashboard closes the invoice success modal without navigation', async () => {
+  const close = el('a', {
+    'data-wf-invoice': 'close-success',
+    href: '/starter-dashboard',
+  })
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [close])
+  const bridge = await loadBridge(async () => response({}), {
+    pathname: '/all-modals',
+    querySelector: (selector) => selectorMatches(modal, selector) ? modal : modal.querySelector(selector),
+    querySelectorAll: (selector) =>
+      [modal, ...descendants(modal)].filter((node) => selectorMatches(node, selector)),
+  })
+  let closed = 0
+  bridge.window.lumos = { modal: { list: { 'generate-invoice': { close: () => { closed += 1 } } } } }
+  const click = clickEvent(close)
+
+  bridge.dispatchDocument('click', click.event)
+
+  assert.equal(closed, 1)
+  assert.equal(click.counts.prevented, 1)
+  assert.equal(click.counts.stopped, 1)
 })
 
 // The Generate Invoice modal's success screen as the authored Webflow component

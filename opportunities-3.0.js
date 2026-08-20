@@ -1810,6 +1810,8 @@
   // wf-xano-rendered project card is whatever ancestor carries the row id.
   const INVOICE_CARD_SELECTOR = '[data-wf-xano-id]'
   const INVOICE_PAYMENT_LINK_PLACEHOLDER = '#invoice-payment-link'
+  const INVOICE_SUCCESS_CLOSE_SELECTOR =
+    '[data-wf-invoice="close-success"], .w-form-done a[href="/starter-dashboard"]'
   const INVOICE_MIN_AMOUNT = 0.01
   const INVOICE_MAX_AMOUNT = 1000000
   const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
@@ -1818,10 +1820,11 @@
   let activeInvoiceProject = null
   let invoiceWorkflowBinding = null
 
-  function invoiceProjectContext(card) {
+  function invoiceProjectContext(card, authoritativeProject = null) {
     if (!card) return null
     const projectId = parseInt(card.getAttribute('data-wf-xano-id') || '', 10)
     if (!(projectId > 0)) return null
+    const project = authoritativeProject || projectWorkflowItems.get(projectId) || {}
     // Prefer a bound brand/company field — on the authored V3 project card that
     // field is wf-xano-bind="company_name". The "Title | Brand" heading split is
     // only a fallback, and a title containing a pipe makes the last segment the
@@ -1831,8 +1834,11 @@
     return {
       card,
       projectId,
-      title: cardFieldText(card, 'title'),
+      title:
+        String(project.title || project.service || '').trim() ||
+        cardFieldText(card, 'title'),
       brand:
+        String(project.company_name || '').trim() ||
         cardFieldText(card, 'brand') ||
         cardFieldText(card, 'company') ||
         cardFieldText(card, 'company_name') ||
@@ -1854,6 +1860,29 @@
     $$('[data-wf-invoice-bind="' + field + '"]', modal).forEach((el) => {
       el.textContent = value == null ? '' : String(value)
     })
+  }
+
+  // The current Webflow component predates the data hooks on its opening
+  // banner. Stamp the same semantic hooks used by the success screen, so both
+  // states receive one authoritative project/company paint.
+  function prepareInvoiceModalBindings(modal) {
+    if (!modal) return
+    const banner = $$('.generate-invoice_banner p', modal)
+    if (banner[0] && !banner[0].hasAttribute('data-wf-invoice-bind')) {
+      banner[0].setAttribute('data-wf-invoice-bind', 'project')
+    }
+    if (banner[1] && !banner[1].hasAttribute('data-wf-invoice-bind')) {
+      banner[1].setAttribute('data-wf-invoice-bind', 'brand')
+    }
+    const close = $(INVOICE_SUCCESS_CLOSE_SELECTOR, modal)
+    if (close) close.setAttribute('data-wf-invoice', 'close-success')
+  }
+
+  function closeInvoiceModal(modal) {
+    const list = window.lumos && window.lumos.modal ? window.lumos.modal.list : null
+    const entry = list ? list[INVOICE_MODAL_ID] : null
+    if (entry && typeof entry.close === 'function') entry.close()
+    else if (modal && typeof modal.close === 'function' && modal.open) modal.close()
   }
 
   // Single resolution for the authored error hook, so show and clear can never
@@ -1926,6 +1955,7 @@
   // without opening anything — the caller decides when the dialog appears.
   function prepareInvoiceModal(modal, context) {
     activeInvoiceProject = context
+    prepareInvoiceModalBindings(modal)
     invoiceBind(modal, 'brand', context.brand)
     invoiceBind(modal, 'project', context.title)
     const form = $('form', modal)
@@ -2154,12 +2184,24 @@
     const binding = { generation, submitting: false, submitControl: null }
     window.__opp30InvoicesWired = true
 
-    binding.click = (event) => {
+    binding.click = async (event) => {
       if (!invoiceWorkflowBindingCurrent(binding)) {
         unwireInvoiceWorkflow()
         return
       }
       const target = event.target
+      const successClose = target && target.closest
+        ? target.closest(INVOICE_SUCCESS_CLOSE_SELECTOR)
+        : null
+      if (successClose) {
+        const modal = successClose.closest(INVOICE_MODAL_SELECTOR)
+        if (modal) {
+          event.preventDefault()
+          event.stopPropagation()
+          closeInvoiceModal(modal)
+          return
+        }
+      }
       if (requestInvoiceSubmit(target)) {
         event.preventDefault()
         event.stopPropagation()
@@ -2170,16 +2212,38 @@
       // Only swallow the click once we know this workflow can handle it —
       // otherwise modal.js's own trigger delegation must stay reachable.
       const modal = $(INVOICE_MODAL_SELECTOR)
-      const context = invoiceProjectContext(action.closest(INVOICE_CARD_SELECTOR))
-      if (!modal || !context) {
+      const card = action.closest(INVOICE_CARD_SELECTOR)
+      const cardContext = invoiceProjectContext(card)
+      if (!modal || !cardContext) {
         console.error('[opp30:invoice] cannot prepare the Generate Invoice modal', {
           modal: !!modal,
-          project: context ? context.projectId : null,
+          project: cardContext ? cardContext.projectId : null,
         })
         return
       }
       event.preventDefault()
       event.stopPropagation()
+      let context = cardContext
+      if (projectRoleForPath() === 'starter') {
+        let project = projectWorkflowItems.get(cardContext.projectId)
+        if (!project) {
+          try {
+            await refreshProjectWorkflow('starter')
+          } catch (error) {
+            console.error('[opp30:invoice] cannot load canonical project context', error)
+            return
+          }
+          if (!invoiceWorkflowBindingCurrent(binding)) return
+          project = projectWorkflowItems.get(cardContext.projectId)
+        }
+        context = project ? invoiceProjectContext(card, project) : null
+        if (!context) {
+          console.error('[opp30:invoice] canonical project context is unavailable', {
+            project: cardContext.projectId,
+          })
+          return
+        }
+      }
       prepareInvoiceModal(modal, context)
       showInvoiceModal(modal)
     }
@@ -2237,14 +2301,10 @@
         // A stale project must never be billed by a later submit from a modal
         // that was reopened without a card.
         activeInvoiceProject = null
-        // Feed refresh is cosmetic; never report a created invoice as failed.
-        try {
-          if (window.WfXano && typeof window.WfXano.refresh === 'function') {
-            window.WfXano.refresh(context.card.closest('[wf-xano-source]') || undefined)
-          }
-        } catch (refreshError) {
-          /* non-fatal: the next page load repaints the card */
-        }
+        // Repaint the canonical project card in place. This remains cosmetic:
+        // the successful invoice response is never turned into a form error if
+        // the follow-up list read fails.
+        refreshProjectWorkflowBestEffort('starter', 'invoice').catch(() => {})
       } catch (err) {
         if (!invoiceWorkflowBindingCurrent(binding)) return
         const receipt = diagnosticForError(err)
@@ -2320,6 +2380,10 @@
   let projectWorkflowRole = ''
   let projectWorkflowItems = new Map()
   let projectWorkflowRefresh = null
+  let projectWorkflowRefreshGeneration = -1
+  let projectWorkflowQueuedReload = null
+  let projectWorkflowReloadGeneration = -1
+  let projectWorkflowReloadDemand = 0
   let projectWorkflowObserver = null
   let projectWorkflowBinding = null
   let projectWorkflowProjectionUnsubscribe = null
@@ -3059,10 +3123,19 @@
     if (label && target.textContent.trim() !== label) target.textContent = label
   }
 
+  function decorateProjectInvoiceLinks(card) {
+    if (!card) return
+    $$('[wf-xano-link="payment_link"]', card).forEach((link) => {
+      link.setAttribute('target', '_blank')
+      link.setAttribute('rel', 'noopener noreferrer')
+    })
+  }
+
   function decorateProjectCard(card) {
     const project = projectContextFromCard(card)
     paintProjectTimeline(card, project)
     paintProjectContractPanel(card, project)
+    decorateProjectInvoiceLinks(card)
     if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'contract') {
       currentProjectContractActions(projectIdFromCard(card)).forEach((contract) => {
         setOpportunityActionPending(projectActionWrap(contract), true)
@@ -3145,15 +3218,16 @@
     projectWorkflowObserver.observe(root, { childList: true, subtree: true })
   }
 
-  async function refreshProjectWorkflow(role = projectWorkflowRole, reload = false) {
-    if (!role || projectRoleForPath() !== role) return null
-    if (projectWorkflowRefresh) return projectWorkflowRefresh
+  async function startProjectWorkflowRefresh(role, reload, generation) {
     const request = (async () => {
+      if (generation !== _memberScopeGeneration) return null
       const instance = await waitForProjectWorkflowInstance(role)
+      if (generation !== _memberScopeGeneration) return null
       let items
       if (instance) {
         bindProjectWorkflowProjection(role, instance)
         if (reload) await reloadProjectWorkflowInstance(instance)
+        if (generation !== _memberScopeGeneration) return null
         const state = await waitForProjectWorkflowState(role, instance)
         items = projectWorkflowStateItems(state)
       } else if (currentProjectWorkflowRoot(role)) {
@@ -3164,18 +3238,67 @@
         // projects endpoint has exactly one list owner and one request.
         items = await fetchProjectWorkflowItems(role)
       }
-      if (projectWorkflowRole !== role || projectRoleForPath() !== role) return null
+      if (
+        generation !== _memberScopeGeneration ||
+        projectWorkflowRole !== role ||
+        projectRoleForPath() !== role
+      ) return null
       projectWorkflowItems = projectWorkflowItemsMap(items)
       decorateProjectCards()
       observeProjectCards()
       return items
     })()
     projectWorkflowRefresh = request
+    projectWorkflowRefreshGeneration = generation
     try {
       return await request
     } finally {
-      if (projectWorkflowRefresh === request) projectWorkflowRefresh = null
+      if (projectWorkflowRefresh === request) {
+        projectWorkflowRefresh = null
+        projectWorkflowRefreshGeneration = -1
+      }
     }
+  }
+
+  function refreshProjectWorkflow(role = projectWorkflowRole, reload = false) {
+    if (!role || projectRoleForPath() !== role) return Promise.resolve(null)
+    const generation = _memberScopeGeneration
+    if (!reload) {
+      return projectWorkflowRefresh && projectWorkflowRefreshGeneration === generation
+        ? projectWorkflowRefresh
+        : startProjectWorkflowRefresh(role, false, generation)
+    }
+
+    if (projectWorkflowReloadGeneration !== generation) {
+      projectWorkflowQueuedReload = null
+      projectWorkflowReloadDemand = 0
+      projectWorkflowReloadGeneration = generation
+    }
+    projectWorkflowReloadDemand += 1
+    if (projectWorkflowQueuedReload) return projectWorkflowQueuedReload
+
+    const drain = (async () => {
+      let processedDemand = 0
+      let result = null
+      while (processedDemand < projectWorkflowReloadDemand) {
+        const demand = projectWorkflowReloadDemand
+        const activeRefresh = projectWorkflowRefresh
+        if (activeRefresh && projectWorkflowRefreshGeneration === generation) {
+          try {
+            await activeRefresh
+          } catch {}
+        }
+        if (generation !== _memberScopeGeneration || projectRoleForPath() !== role) return null
+        result = await startProjectWorkflowRefresh(role, true, generation)
+        processedDemand = demand
+      }
+      return result
+    })()
+    const queuedReload = drain.finally(() => {
+      if (projectWorkflowQueuedReload === queuedReload) projectWorkflowQueuedReload = null
+    })
+    projectWorkflowQueuedReload = queuedReload
+    return queuedReload
   }
 
   function invalidateProjectWorkflowProjection(role) {
@@ -3185,24 +3308,31 @@
   }
 
   async function currentProjectContext(card, refresh = false) {
+    const generation = _memberScopeGeneration
     const cachedProject = projectContextFromCard(card)
     let project = refresh ? null : cachedProject
     if (project && (project.lifecycle_state || project.status)) return project
     try {
       await refreshProjectWorkflow(projectWorkflowRole, refresh)
     } catch (error) {
-      if (refresh) invalidateProjectWorkflowProjection(projectWorkflowRole)
+      if (refresh && generation === _memberScopeGeneration) {
+        invalidateProjectWorkflowProjection(projectWorkflowRole)
+      }
       throw error
     }
+    if (generation !== _memberScopeGeneration) return null
     project = projectContextFromCard(card)
     return project && (project.lifecycle_state || project.status) ? project : null
   }
 
   async function refreshProjectWorkflowBestEffort(role, operation) {
+    const generation = _memberScopeGeneration
     try {
       await refreshProjectWorkflow(role, true)
+      if (generation !== _memberScopeGeneration) return false
       return true
     } catch (error) {
+      if (generation !== _memberScopeGeneration) return false
       invalidateProjectWorkflowProjection(role)
       console.error('[opp30:project-action] ' + operation + ' projection refresh failed', error)
       return false
@@ -3786,6 +3916,10 @@
     projectWorkflowRole = ''
     projectWorkflowItems = new Map()
     projectWorkflowRefresh = null
+    projectWorkflowRefreshGeneration = -1
+    projectWorkflowQueuedReload = null
+    projectWorkflowReloadGeneration = -1
+    projectWorkflowReloadDemand = 0
     if (projectWorkflowProjectionUnsubscribe) projectWorkflowProjectionUnsubscribe()
     projectWorkflowProjectionUnsubscribe = null
     projectWorkflowProjectionInstance = null
@@ -6119,6 +6253,7 @@
     openInvoiceModal,
     prepareInvoiceModal,
     paintInvoiceSuccess,
+    decorateProjectInvoiceLinks,
     requestInvoiceSubmit,
     invoiceSubmitControl,
     setInvoiceSubmitDisabled,
