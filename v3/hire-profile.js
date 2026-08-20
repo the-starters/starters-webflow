@@ -661,6 +661,7 @@
                           ),
                           brandName: brand_name,
                           brandEmail: brand_email,
+                          starterEmail: starter.nylas_grant_email,
                       });
                   bookingSurfaceAvailable = bookingSurfaceAvailable || installed === true;
                   if (!installed) {

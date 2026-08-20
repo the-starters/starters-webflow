@@ -816,6 +816,20 @@
     return recovered
   }
 
+  function freeEventBookingSettings() {
+    return {
+      hide_participants: false,
+      notify_participants: true,
+      disable_emails: false,
+      booking_type: 'organizer-confirmation',
+      timezone: timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+      conferencing: {
+        provider: 'Google Meet',
+        autocreate: { conf_grant_id: grantId },
+      },
+    }
+  }
+
   async function setupConfigs(type) {
     if (type !== 'free') throw new Error('Paid configurations require the paid-call settings endpoint')
     await ensureTimezone()
@@ -846,18 +860,9 @@
           default_open_hours: openHours,
         },
       },
-      in_event_booking: {
+      in_event_booking: Object.assign({
         title: fullTitle,
-        hide_participants: false,
-        notify_participants: true,
-        disable_emails: false,
-        booking_type: 'organizer-confirmation',
-        timezone: timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || '',
-        conferencing: {
-          provider: 'Google Meet',
-          autocreate: { conf_grant_id: grantId },
-        },
-      },
+      }, freeEventBookingSettings()),
       in_participants: [
         {
           name: firstName + ' ' + lastName,
@@ -914,7 +919,7 @@
     if (!record || !record.config_id || !Number.isFinite(duration) || duration <= 0) {
       throw new Error('Canonical scheduler configuration is missing update fields')
     }
-    const res = await xanoPost('/scheduler/configurations/update/v3', {
+    const payload = {
       config_id: record.config_id,
       grant_id: grantId,
       in_availability: {
@@ -926,10 +931,43 @@
           default_open_hours: getAvailArray(),
         },
       },
-    })
+    }
+    if (record.is_paid === false) {
+      payload.in_event_booking = Object.assign({
+        title: 'Free Consultation Call - ' + duration + 'min',
+      }, freeEventBookingSettings())
+    }
+    const res = await xanoPost('/scheduler/configurations/update/v3', payload)
     if (res && res.response && res.response.status === 200) return true
     publishCalendarConnectionError()
     return null
+  }
+
+  async function migrateFreeConfigNotifications() {
+    const freeConfigs = configs.filter(function (record) {
+      if (!(record && record.config_id && record.is_paid === false && record.active !== false)) {
+        return false
+      }
+      const eventBooking = record.event_booking || record.in_event_booking || record
+      return eventBooking.hide_participants === true ||
+        eventBooking.notify_participants === false ||
+        eventBooking.disable_emails === true
+    })
+    if (!freeConfigs.length) return
+    await ensureTimezone()
+    for (const record of freeConfigs) {
+      const duration = Number(record.duration) || 30
+      const res = await xanoPost('/scheduler/configurations/update/v3', {
+        config_id: record.config_id,
+        grant_id: grantId,
+        in_event_booking: Object.assign({
+          title: 'Free Consultation Call - ' + duration + 'min',
+        }, freeEventBookingSettings()),
+      })
+      if (!(res && res.response && res.response.status === 200)) {
+        throw new Error('Free scheduler notification migration failed')
+      }
+    }
   }
 
   async function updateConfigs() {
@@ -2592,6 +2630,7 @@
 
       if (grantId) {
         configs = (await getConfigs(grantId, true)) || []
+        await migrateFreeConfigNotifications()
       }
 
       bindConnectButtons()

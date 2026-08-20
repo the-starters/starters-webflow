@@ -980,6 +980,35 @@ test('boots directly into connected state when the starter already has a grant/c
   assert.equal(dom.connectBtnWrapper.children[2].style.display, '') // disconnect-google visible
 })
 
+test('initialization repairs explicit stale Free notification settings', async () => {
+  const { calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [{
+        config_id: 'cfg-free',
+        duration: 30,
+        is_paid: false,
+        active: true,
+        notify_participants: false,
+        disable_emails: true,
+      }],
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  const updates = calls.filter((call) => call.path === '/scheduler/configurations/update/v3')
+  assert.equal(updates.length, 1)
+  assert.equal(updates[0].body.config_id, 'cfg-free')
+  assert.equal(updates[0].body.in_event_booking.notify_participants, true)
+  assert.equal(updates[0].body.in_event_booking.disable_emails, false)
+})
+
 test('switching straight from Google to Platform clears the existing Google grant first', async () => {
   const legacyClearCalls = []
   const { dom, calls } = loadSection({
@@ -1902,9 +1931,12 @@ test('open-item-remove updates all active configurations without replacing paid 
   const configUpdates = calls.filter((call) => call.path === '/scheduler/configurations/update/v3')
   assert.deepEqual(configUpdates.map((call) => call.body.config_id), ['cfg-free', 'cfg-paid'])
   assert.deepEqual(configUpdates.map((call) => call.body.in_availability.duration_minutes), [30, 60])
+  assert.equal(configUpdates[0].body.in_event_booking.hide_participants, false)
+  assert.equal(configUpdates[0].body.in_event_booking.notify_participants, true)
+  assert.equal(configUpdates[0].body.in_event_booking.disable_emails, false)
+  assert.equal(configUpdates[1].body.in_event_booking, undefined)
   configUpdates.forEach((call) => {
     assert.equal(call.body.in_config_name, undefined)
-    assert.equal(call.body.in_event_booking, undefined)
     assert.equal(call.body.in_scheduler, undefined)
   })
 })
