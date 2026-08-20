@@ -2,14 +2,10 @@
 
 The native `/starter-edit-profile` form, fields, and success/error elements stay authored in Webflow. This directory owns the published-form contract and the page-specific portfolio and company controllers. It reuses the reviewed profile-photo and work-date assets from `v3/build-profile/`.
 
-The shared foundation, incremental dropdowns, location controller, and canonical profile loader now
-also have GitHub-owned extraction candidates. See [`../profile-form/README.md`](../profile-form/README.md).
-They remain inline until an authorized whole-block cutover replaces the route's earliest shared-
-foundation anchor with the complete Edit Profile loader group and empties only the other audited
-bodies. Do not replace these extracted bodies one at a time: that changes their boot order relative
-to the existing deferred controllers. `locations.js` owns both the former `locationsReady`
-declaration and its location controller. This repository change does not install or publish the
-grouped candidate.
+The remaining inline Starter Edit Profile bodies now also have GitHub-owned extraction candidates.
+The authoritative ownership, provenance, atomic grouped-cutover, loader-order, and verification
+contract lives in [`../profile-form/README.md`](../profile-form/README.md). This repository change
+does not install or publish those candidates.
 
 ## In-place loader replacements
 

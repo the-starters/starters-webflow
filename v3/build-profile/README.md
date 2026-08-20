@@ -2,18 +2,10 @@
 
 The native Webflow forms and their authored success/error elements stay in Webflow. Browser logic lives in this directory and is loaded from GitHub through jsDelivr.
 
-The remaining shared foundation, draft-state, incremental-dropdown, final-submit, and route-specific
-location bodies now also have GitHub-owned extraction candidates. See
-[`../profile-form/README.md`](../profile-form/README.md). They remain inline until an authorized
-whole-block cutover replaces the earliest shared-foundation anchor with the complete route loader
-group and empties only the other audited bodies. Do not replace these extracted bodies one at a time:
-that changes their boot order relative to the existing deferred controllers. This repository change
-does not install or publish the grouped candidates.
-
-Full Profile keeps its pinned index 30 `v1.56.14/profile-image-auth-shim.js` before the grouped
-anchor. That first load owns the image-auth interception. The later index 77 `@latest` shim stays in
-place and exits through `window.__tsProfileImageAuthShim`; the grouped cutover must not move, remove,
-or replace either loader.
+The remaining inline Build Profile bodies now also have GitHub-owned extraction candidates. The
+authoritative ownership, provenance, atomic grouped-cutover, loader-order, and verification contract
+lives in [`../profile-form/README.md`](../profile-form/README.md). This repository change does not
+install or publish those candidates.
 
 ## Scoped migration
 
