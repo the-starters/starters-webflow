@@ -539,14 +539,9 @@
     // dashboard on the same contract even if the REST proxy returns an empty
     // conversation. An SDK unread snapshot can supply the timestamp when the
     // bulk snapshot lags behind the live unread state.
-    const displays = state.recent
-      .map((conv) => {
-        return displayFromRecent(conv, unreadsById)
-      })
-      .filter(
-        (display) =>
-          display.timestamp !== null && display.timestamp !== undefined,
-      )
+    const displays = state.recent.map((conv) => {
+      return displayFromRecent(conv, unreadsById)
+    })
 
     const countedUnreadIds = {}
     let unreadCount = 0
@@ -564,6 +559,11 @@
       countUnread(unread.conversation && unread.conversation.id)
     })
 
+    const cardDisplays = displays.filter(
+      (display) =>
+        display.timestamp !== null && display.timestamp !== undefined,
+    )
+
     if (refs.loadingCard) refs.loadingCard.style.display = 'none'
 
     if (refs.total) {
@@ -575,7 +575,7 @@
       .querySelectorAll(refs.itemSelector)
       .forEach((node) => node.remove())
 
-    if (displays.length === 0) {
+    if (cardDisplays.length === 0) {
       refs.list.style.display = 'none'
       if (refs.emptyCard) refs.emptyCard.style.display = ''
       return
@@ -584,7 +584,7 @@
     refs.list.style.display = ''
     if (refs.emptyCard) refs.emptyCard.style.display = 'none'
 
-    displays
+    cardDisplays
       .sort((a, b) => timestampValue(b.timestamp) - timestampValue(a.timestamp))
       .slice(0, refs.limit)
       .forEach((display) => {

@@ -557,6 +557,23 @@ test('empty TalkJS conversations never displace conversations with messages', as
   )
 })
 
+test('empty unread conversations stay in the badge but out of cards', async () => {
+  const { list, total } = loadRenderedRecent({
+    id: 'empty:unread',
+    participant_name: 'Unread Brand',
+    participant_photo_url: null,
+    last_message_text: null,
+    last_message_at: null,
+    unread: true,
+  })
+
+  await settle()
+
+  assert.equal(list.children.length, 0)
+  assert.equal(total.textContent, '1')
+  assert.equal(total.style.display, '')
+})
+
 test('participant without a photo ignores conversation artwork', async () => {
   const { list } = loadRenderedRecent({
     id: 'one:mem_me|mem_other',
