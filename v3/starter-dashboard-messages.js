@@ -643,24 +643,46 @@
       })
     }
 
-    // Start the read snapshot while TalkJS initializes. Attach the rejection
-    // handler immediately so a slower SDK load cannot produce an unhandled
-    // promise rejection.
-    const recentPromise = fetchRecentConversations(memberstack).catch(
-      (error) => {
+    let recentRequest = null
+    let refreshQueued = false
+    const refreshRecent = () => {
+      if (recentRequest) {
+        refreshQueued = true
+        return recentRequest
+      }
+
+      const initial = !state.recentSettled
+      recentRequest = fetchRecentConversations(memberstack)
+        .then((items) => {
+          state.recent = items
+          state.recentSettled = true
+          rerender()
+        })
+        .catch((error) => {
         console.warn(
-          '[starter-dashboard] Recent conversations unavailable, hiding message cards',
+            initial
+              ? '[starter-dashboard] Recent conversations unavailable, hiding message cards'
+              : '[starter-dashboard] Recent conversations unavailable, keeping current message cards',
           error,
         )
-        return []
-      },
-    )
+          if (initial) {
+            state.recent = []
+            state.recentSettled = true
+            rerender()
+          }
+        })
+        .finally(() => {
+          recentRequest = null
+          if (refreshQueued) {
+            refreshQueued = false
+            refreshRecent()
+          }
+        })
 
-    recentPromise.then((items) => {
-      state.recent = items
-      state.recentSettled = true
-      rerender()
-    })
+      return recentRequest
+    }
+
+    refreshRecent()
 
     const Talk = await waitForTalkJs()
     const me = new Talk.User(talkUserFields(member))
@@ -669,9 +691,22 @@
       me,
     })
 
+    let unreadActivitySignature = null
     session.unreads.onChange((unreads) => {
-      state.unreads = unreads || []
+      const nextUnreads = unreads || []
+      const nextSignature = JSON.stringify(
+        nextUnreads.map((unread) => [
+          unread.conversation && unread.conversation.id,
+          unread.lastMessage && unread.lastMessage.timestamp,
+        ]),
+      )
+      const activityChanged =
+        unreadActivitySignature !== null &&
+        unreadActivitySignature !== nextSignature
+      unreadActivitySignature = nextSignature
+      state.unreads = nextUnreads
       rerender()
+      if (activityChanged) refreshRecent()
     })
   }
 

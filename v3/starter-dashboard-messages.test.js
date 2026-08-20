@@ -119,6 +119,7 @@ function loadTile(options = {}) {
 function loadRenderedRecent(recent, unreads = [], options = {}) {
   const calls = { windows: [], conversations: 0, fetches: 0, aborts: 0 }
   let resolveRecentFetch
+  let unreadHandler
   const recentTimeouts = []
   let scheduledTimeouts = 0
   const makeClassList = () => ({
@@ -211,6 +212,7 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
       }
       this.unreads = {
         onChange(handler) {
+          unreadHandler = handler
           handler(unreads)
         },
       }
@@ -278,7 +280,13 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
       const response = {
         ok: true,
         json: async () => ({
-          items: Array.isArray(recent) ? recent : [recent],
+          items: (() => {
+            const snapshot =
+              calls.fetches > 1 && options.refreshedRecent !== undefined
+                ? options.refreshedRecent
+                : recent
+            return Array.isArray(snapshot) ? snapshot : [snapshot]
+          })(),
         }),
       }
       if (!options.deferRecent) return response
@@ -292,6 +300,9 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
   return {
     calls,
     empty,
+    emitUnreads(nextUnreads) {
+      unreadHandler(nextUnreads)
+    },
     list,
     loading,
     total,
@@ -629,6 +640,77 @@ test('live unread state preserves bulk participant identity', async () => {
   assert.equal(card.fields.name.textContent, 'Acme Brand')
   assert.equal(card.fields.avatar.src, 'https://cdn.example/acme.jpg')
   assert.equal(card.fields.preview.textContent, 'Latest preview')
+})
+
+test('SDK activity refreshes cards in authoritative proxy order', async () => {
+  const activeId = 'one:mem_me|mem_active'
+  const { calls, emitUnreads, list } = loadRenderedRecent(
+    [
+      {
+        id: 'one:mem_me|mem_first',
+        participant_name: 'First Brand',
+        last_message_text: 'First message',
+        last_message_at: 3,
+        unread: false,
+      },
+      {
+        id: 'one:mem_me|mem_second',
+        participant_name: 'Second Brand',
+        last_message_text: 'Second message',
+        last_message_at: 2,
+        unread: false,
+      },
+      {
+        id: 'one:mem_me|mem_third',
+        participant_name: 'Third Brand',
+        last_message_text: 'Third message',
+        last_message_at: 1,
+        unread: false,
+      },
+    ],
+    [],
+    {
+      refreshedRecent: [
+        {
+          id: activeId,
+          participant_name: 'Newly Active Brand',
+          last_message_text: 'New activity',
+          last_message_at: 4,
+          unread: true,
+        },
+        {
+          id: 'one:mem_me|mem_first',
+          participant_name: 'First Brand',
+          last_message_text: 'First message',
+          last_message_at: 3,
+          unread: false,
+        },
+        {
+          id: 'one:mem_me|mem_second',
+          participant_name: 'Second Brand',
+          last_message_text: 'Second message',
+          last_message_at: 2,
+          unread: false,
+        },
+      ],
+    },
+  )
+
+  await settle()
+
+  emitUnreads([
+    {
+      conversation: { id: activeId },
+      lastMessage: { timestamp: 4, body: 'New activity' },
+    },
+  ])
+  await settle()
+
+  assert.equal(calls.fetches, 2)
+  assert.deepEqual(
+    list.children.map((card) => card.fields.name.textContent),
+    ['Newly Active Brand', 'First Brand', 'Second Brand'],
+  )
 })
 
 test('SDK-only unread stays out of cards but remains in the badge', async () => {
