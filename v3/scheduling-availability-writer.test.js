@@ -758,33 +758,6 @@ test('existing schedule without a manager opens the how-to-manage step', async (
   assert.equal(result.dom.root.querySelector('[bookings-wrapper]').style.display, 'none')
 })
 
-test('initialization repairs explicit stale Free notification settings', async () => {
-  const result = loadWriter({
-    storage: TZ_CACHED,
-    routes: {
-      '/nylas_configurations/get_all/v3': () => ({
-        status: 200,
-        body: [{
-          config_id: 'cfg-free',
-          grant_id: 'grant-1',
-          duration: 30,
-          is_paid: false,
-          active: true,
-          notify_participants: false,
-          disable_emails: true,
-        }],
-      }),
-    },
-  })
-  await settle()
-
-  const updates = result.calls.filter((call) => call.path === '/scheduler/configurations/update/v3')
-  assert.equal(updates.length, 1)
-  assert.equal(updates[0].body.config_id, 'cfg-free')
-  assert.equal(updates[0].body.in_event_booking.notify_participants, true)
-  assert.equal(updates[0].body.in_event_booking.disable_emails, false)
-})
-
 test('form submit writes the authenticated member id and reaches the success step', async () => {
   let canonicalAvailability = defaultAvailability()
   const result = loadWriter({
@@ -1067,9 +1040,6 @@ test('choosing platform creates the virtual calendar chain and configs', async (
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
   assert.equal(creates.length, 1)
   assert.match(creates[0].body.in_config_name, /^Free Consultation Call/)
-  assert.equal(creates[0].body.in_event_booking.hide_participants, false)
-  assert.equal(creates[0].body.in_event_booking.notify_participants, true)
-  assert.equal(creates[0].body.in_event_booking.disable_emails, false)
   for (const create of creates) assert.equal(create.body.grant_id, 'vgrant-1')
 
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
@@ -1643,12 +1613,9 @@ test('removing an override returns its days to the general schedule', async () =
   const configUpdates = result.calls.filter((c) => c.path === '/scheduler/configurations/update/v3')
   assert.deepEqual(configUpdates.map((call) => call.body.config_id), ['cfg-free', 'cfg-paid'])
   assert.deepEqual(configUpdates.map((call) => call.body.in_availability.duration_minutes), [30, 60])
-  assert.equal(configUpdates[0].body.in_event_booking.hide_participants, false)
-  assert.equal(configUpdates[0].body.in_event_booking.notify_participants, true)
-  assert.equal(configUpdates[0].body.in_event_booking.disable_emails, false)
-  assert.equal(configUpdates[1].body.in_event_booking, undefined)
   configUpdates.forEach((call) => {
     assert.equal(call.body.in_config_name, undefined)
+    assert.equal(call.body.in_event_booking, undefined)
     assert.equal(call.body.in_scheduler, undefined)
   })
   const paths = result.calls.map((call) => call.path)
