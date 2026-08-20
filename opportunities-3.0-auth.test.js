@@ -4474,17 +4474,19 @@ test('invoiceProjectContext prefers a bound brand field over the pipe-split head
       id: 746,
       title: 'Test Invoice',
       company_name: 'The Starters',
+      hiring_manager_name: 'Jai Dolwani',
     },
   )
   assert.equal(canonical.title, 'Test Invoice')
   assert.equal(canonical.brand, 'The Starters')
+  assert.equal(canonical.party, 'Jai Dolwani')
 
   assert.equal(invoiceProjectContext(invoiceCard({}, '0')), null)
   assert.equal(invoiceProjectContext(invoiceCard({}, '-4')), null)
   assert.equal(invoiceProjectContext(null), null)
 })
 
-test('the opening invoice banner receives the same project and company paint as success', async () => {
+test('the opening invoice banner receives the same project, company and party paint as success', async () => {
   const bridge = await loadBridge(async () => response({}))
   const project = el('p')
   const company = el('p')
@@ -4497,13 +4499,33 @@ test('the opening invoice banner receives the same project and company paint as 
     projectId: 746,
     title: 'Test Invoice',
     brand: 'The Starters',
+    party: 'Jai Dolwani',
   })
 
   assert.equal(project.getAttribute('data-wf-invoice-bind'), 'project')
   assert.equal(project.textContent, 'Test Invoice')
   assert.equal(company.getAttribute('data-wf-invoice-bind'), 'brand')
-  assert.equal(company.textContent, 'The Starters')
+  assert.equal(company.textContent, 'The Starters · Jai Dolwani')
   assert.equal(close.getAttribute('data-wf-invoice'), 'close-success')
+})
+
+test('a separately authored invoice party bind keeps company and party on distinct rows', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const project = el('p', { 'data-wf-invoice-bind': 'project' })
+  const company = el('p', { 'data-wf-invoice-bind': 'brand' })
+  const party = el('p', { 'data-wf-invoice-bind': 'party' })
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [project, company, party])
+
+  bridge.window.Opp30.prepareInvoiceModal(modal, {
+    projectId: 746,
+    title: 'Test Invoice',
+    brand: 'The Starters',
+    party: 'Jai Dolwani',
+  })
+
+  assert.equal(project.textContent, 'Test Invoice')
+  assert.equal(company.textContent, 'The Starters')
+  assert.equal(party.textContent, 'Jai Dolwani')
 })
 
 test('a completed project card can still open Generate Invoice', async () => {
@@ -4607,12 +4629,13 @@ test('Generate Invoice waits for canonical project context before opening', asyn
       lifecycle_state: 'completed',
       title: 'Canonical project title',
       company_name: 'Canonical company',
+      hiring_manager_name: 'Canonical party',
     }],
   }))
 
   assert.ok(await waitFor(() => modal.open === true))
   assert.equal(projectBind.textContent, 'Canonical project title')
-  assert.equal(companyBind.textContent, 'Canonical company')
+  assert.equal(companyBind.textContent, 'Canonical company · Canonical party')
 })
 
 test('each invoice success drains a reload after an active project refresh', async () => {
