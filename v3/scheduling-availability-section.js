@@ -206,8 +206,8 @@
 
   // Outlook is not supported by the current calendar workflow. Keep the
   // existing Designer elements hidden until the provider path is implemented
-  // and verified. Also remove the stale success sentence shown before Google
-  // OAuth has started; availability is only saved after a successful return.
+  // and verified. Also remove the stale saved-state claim shown before Google
+  // OAuth has started.
   function applyCalendarUiCorrections() {
     qsa(
       '[' + ACTION + '="open-connect-outlook"],[' +

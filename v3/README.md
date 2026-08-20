@@ -2357,6 +2357,11 @@ then reads `nylas_configurations_v3` for the grant returned by that projection.
 If either canonical read fails, the UI remains in the authored error path rather
 than inferring readiness from a mutation response.
 
+Scheduler configuration create/update calls also inspect the nested provider
+response returned by Xano. Every provider HTTP status from 200 through 299 is a
+success; a missing, non-2xx, or malformed nested status uses the error path even
+when the outer Xano response is HTTP 200.
+
 Deliberately NOT ported from the legacy inline writer:
 
 - the hardcoded test member id and dashboard/onboarding redirects;
@@ -2434,9 +2439,9 @@ of living behind the `set-availability` modal, and each availability item now
 carries its own inline edit form instead of sharing one. It installs on the
 same host/path boundary as the writer and reuses its connect/disconnect,
 per-item CRUD, timezone, and Nylas scheduler-configuration logic without any
-step/modal machinery. Real result popups (create/edit/remove/connect/
-disconnect) are intentionally deferred for now — every action logs its
-outcome to the console instead.
+legacy availability-step machinery. Save, remove, connect, and disconnect
+results use the shared Designer-authored `availability-notification` modal;
+every action also logs its outcome to the console.
 
 It does not depend on `scheduling-availability-init.js`: that module's job
 (show/hide the legacy `[init-availability]`/`[update-availability]` hero
@@ -2458,6 +2463,13 @@ Designer markup contract (`data-availability-element="<name>"` unless noted):
 renders as 7 Labelv2 badges per item; selected/unselected is a Designer
 component-variant class swap (`w-variant-89402c65-…` default,
 `w-variant-ebea452c-…` selected), not a data attribute.
+
+Outlook is not a supported provider. Runtime hides Designer controls marked
+`data-availability-action="open-connect-outlook"` or
+`data-availability-action="open-disconnect-outlook"` and removes them from the
+accessibility tree. The `notification-type="pre-oauth"` Google message says
+only that the member will be taken to connect Google; it does not claim that
+availability has already been saved.
 
 Action buttons (connect-platform/connect-google/disconnect-google, item
 edit/remove, form cancel/submit) are Webflow Component Instances, which the
