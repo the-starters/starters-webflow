@@ -108,6 +108,13 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/onboarding-done-redirect.js` — read half of the `/starter-onboarding` completion pair: redirects an already-complete member to `/starter-dashboard` and fails open; it installs only with `v3/patch-onboarding-status.js`; authoritative wiring and QA live in [`v3/README.md`](v3/README.md#onboarding-done-redirect) and [`v3/ONBOARDING-DONE-REDIRECT-WIRING.md`](v3/ONBOARDING-DONE-REDIRECT-WIRING.md)
 - `v3/patch-onboarding-status.js` — write half of the same pair: detects Webflow form success, records `onboarding_done` in Xano with retries, emits the shared privacy-safe success/failure receipt, and routes to `/starter-dashboard`; authoritative wiring lives in [`v3/README.md`](v3/README.md#onboarding-patch-status) and [`v3/ONBOARDING-PATCH-STATUS-WIRING.md`](v3/ONBOARDING-PATCH-STATUS-WIRING.md)
 - `v3/build-profile/` — source-controlled Build Profile browser controllers; the authoritative migration scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/build-profile/README.md`](v3/build-profile/README.md)
+- `v3/profile-form/` — shared Build/Edit Profile inline-extraction candidates; the authoritative ownership, provenance, grouped cutover, loader order, and verification contract lives in [`v3/profile-form/README.md`](v3/profile-form/README.md)
+- `v3/profile-form/shared-foundation.js` — shared native-form model and helper foundation extracted from the authenticated Build/Edit Profile routes
+- `v3/profile-form/incremental-dropdowns.js` — shared incremental dropdown controller extracted from the authenticated Build/Edit Profile routes
+- `v3/build-profile/draft-state.js` — Build Profile local/member draft precedence and one-way draft synchronization controller
+- `v3/build-profile/submit-writer.js` — Build Profile native-form submit writer and normalized payload controller
+- `v3/build-profile/locations-consult.js` — Consult Build Profile country, state, and city controller
+- `v3/build-profile/locations-full-profile.js` — Full Profile country, state, and city controller
 - `v3/build-profile/profile-photo.js` — provenance-locked Build Profile photo controller
 - `v3/build-profile/canonical-profile-hydrator.js` — canonical Xano fallback for missing Memberstack/local Build Profile draft fields; loaded by the existing profile-photo asset without a Webflow block edit
 - `v3/build-profile/portfolio-crud.js` — provenance-locked Build Profile portfolio mutation controller
@@ -120,6 +127,8 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/build-profile/grouped-selects.js` — provenance-locked Build Profile grouped-select controller
 - `v3/build-profile/submit-diagnostics.js` — Build Profile submit outcome observer; it keeps diagnostics in the console, leaves the coupled writer unchanged, and never navigates: the authored success-state CTA owns the move to `/starter-onboarding`
 - `v3/starter-edit-profile/` — source-controlled Starter Edit Profile browser controllers; the authoritative extraction scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md)
+- `v3/starter-edit-profile/locations.js` — Starter Edit Profile country, state, and city controller
+- `v3/starter-edit-profile/canonical-profile-loader.js` — read-only canonical Xano hydration for authored Starter Edit Profile fields
 - `v3/starter-edit-profile/portfolio-crud.js` — provenance-locked Edit Profile portfolio mutation controller
 - `v3/starter-edit-profile/portfolio-list.js` — provenance-locked Edit Profile portfolio list controller
 - `v3/starter-edit-profile/company-autocomplete.js` — provenance-locked Edit Profile company autocomplete

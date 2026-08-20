@@ -2,6 +2,11 @@
 
 The native `/starter-edit-profile` form, fields, and success/error elements stay authored in Webflow. This directory owns the published-form contract and the page-specific portfolio and company controllers. It reuses the reviewed profile-photo and work-date assets from `v3/build-profile/`.
 
+The remaining inline Starter Edit Profile bodies now also have GitHub-owned extraction candidates.
+The authoritative ownership, provenance, atomic grouped-cutover, loader-order, and verification
+contract lives in [`../profile-form/README.md`](../profile-form/README.md). This repository change
+does not install or publish those candidates.
+
 ## In-place loader replacements
 
 Replace only an exact live inline body whose index and SHA-256 match the captured `page.scripts` records in `live-body-provenance.json`. The separate `candidateAssets` records identify the instrumented GitHub files. Keep each replacement in its existing Code Embed position.
@@ -78,8 +83,10 @@ those systems.
 6. Publish staging only with approval. Test empty visible fields, empty mirrors,
    hydrated unchanged saves, full/consult branches, location transitions, reviewer
    tuples, and computed pointer behavior.
-7. Replace the six provenance-locked controller bodies only when that extraction is
-   separately in scope, one exact loader at a time and without reordering.
+7. For the shared-foundation extraction, use only the grouped route-anchor cutover in
+   [`../profile-form/README.md`](../profile-form/README.md). Do not install one extracted loader at
+   each former inline node. The six earlier provenance-locked controller replacements keep their
+   existing positions and remain a separate scope.
 8. Verify current network responses, console-only diagnostics, and no unexpected
    Xano writes. Obtain separate approval before production publish and repeat QA.
 9. Scan every authorized published domain for Airtable, Make, and PAT exposure patterns.
