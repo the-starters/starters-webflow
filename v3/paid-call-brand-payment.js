@@ -25,6 +25,7 @@
   const MAX_GUEST_EMAILS = 5
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
+  const guardedGuestSubmitTargets = new WeakSet()
 
   function getBookingSurfaceOwnership() {
     const existing = global.StartersBookingSurfaceOwnership
@@ -377,6 +378,9 @@
     const container = settings.container
     const config = settings.config
     const onConfirm = settings.onConfirm
+    const onSelectionChange = typeof settings.onSelectionChange === 'function'
+      ? settings.onSelectionChange
+      : function () {}
     const isCurrent = typeof settings.isCurrent === 'function'
       ? settings.isCurrent
       : function () { return true }
@@ -444,6 +448,7 @@
     function renderTimes() {
       times.textContent = ''
       selectedSlot = null
+      onSelectionChange(null)
       confirm.disabled = true
       groups[selectedDate].forEach(function (slot) {
         const button = global.document.createElement('button')
@@ -471,6 +476,7 @@
             candidate.style.color = candidate === button ? '#ffffff' : '#1f211d'
           })
           selectedSlot = slot
+          onSelectionChange(slot)
           confirm.disabled = false
           status.textContent = ''
         })
@@ -603,6 +609,7 @@
       return { cta, item, price }
     })
     if (bindings.some(function (binding) { return !binding.item || !binding.price })) return false
+    installGuestFormSubmitGuard(guestWrapper)
 
     let cardElement = null
     let cardSetupInstalled = false
@@ -628,7 +635,7 @@
       const generation = nextSurfaceGeneration()
       activePaidGeneration = generation
       resetGuestUi()
-      setGuestUiVisible(true)
+      setGuestUiVisible(false)
       container.textContent = 'Loading available times...'
       container.setAttribute('data-paid-calendar-state', 'loading')
       return generation
@@ -735,6 +742,16 @@
         container,
         config: availabilityConfig,
         onConfirm: submitBooking,
+        onSelectionChange: function (slot) {
+          if (!ownsSurface(generation)) return
+          if (!slot) {
+            resetGuestUi()
+            setGuestUiVisible(false)
+            return
+          }
+          if (guestWrapper.getAttribute('aria-hidden') === 'true') resetGuestUi()
+          setGuestUiVisible(true)
+        },
         isCurrent: function () { return ownsSurface(generation) },
       })
       return ownsSurface(generation) ? result : undefined
@@ -895,6 +912,31 @@
     return true
   }
 
+  function installGuestFormSubmitGuard(guestWrapper) {
+    if (!guestWrapper || typeof guestWrapper.addEventListener !== 'function') return false
+
+    function guard(target) {
+      if (guardedGuestSubmitTargets.has(target)) return
+      target.addEventListener('submit', blockNativeGuestSubmit, true)
+      guardedGuestSubmitTargets.add(target)
+    }
+
+    guard(guestWrapper)
+    if (typeof guestWrapper.querySelectorAll === 'function') {
+      Array.from(guestWrapper.querySelectorAll('form')).forEach(function (form) {
+        if (form !== guestWrapper && typeof form.addEventListener === 'function') {
+          guard(form)
+        }
+      })
+    }
+    return true
+  }
+
+  function blockNativeGuestSubmit(event) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
   const api = {
     SETUP_PATH,
     SET_DEFAULT_PATH,
@@ -914,6 +956,7 @@
     availabilityQuery,
     getReadiness,
     getPaidAvailability,
+    installGuestFormSubmitGuard,
     installPaidBookingController,
     mountPaidCalendar,
     normalizeGuestEmails,
