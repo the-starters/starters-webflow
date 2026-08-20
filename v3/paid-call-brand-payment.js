@@ -24,7 +24,48 @@
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  const bookingSurfaceGenerations = new WeakMap()
+  const bookingSurfaceOwnership = getBookingSurfaceOwnership()
+
+  function getBookingSurfaceOwnership() {
+    const existing = global.StartersBookingSurfaceOwnership
+    if (
+      existing &&
+      typeof existing.claim === 'function' &&
+      typeof existing.owns === 'function'
+    ) return existing
+    const generations = new WeakMap()
+    const ownership = {
+      claim: function (container) {
+        const generation = (generations.get(container) || 0) + 1
+        generations.set(container, generation)
+        return generation
+      },
+      owns: function (container, generation) {
+        return generations.get(container) === generation
+      },
+    }
+    global.StartersBookingSurfaceOwnership = ownership
+    return ownership
+  }
+
+  function isValidGuestEmail(email) {
+    if (!GUEST_EMAIL_PATTERN.test(email) || email.length > 254) return false
+    const at = email.lastIndexOf('@')
+    const local = email.slice(0, at)
+    const domain = email.slice(at + 1)
+    if (
+      !local ||
+      local.length > 64 ||
+      local.startsWith('.') ||
+      local.endsWith('.') ||
+      local.includes('..')
+    ) return false
+    return domain.split('.').every(function (label) {
+      return label.length > 0 &&
+        label.length <= 63 &&
+        /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label)
+    })
+  }
 
   function createAttemptKey(prefix) {
     const safePrefix = String(prefix || 'attempt').replace(/[^a-z0-9_-]/gi, '-')
@@ -69,7 +110,7 @@
     ;(Array.isArray(values) ? values : []).forEach(function (value) {
       const email = String(value || '').trim().toLowerCase()
       if (!email) return
-      if (!GUEST_EMAIL_PATTERN.test(email)) {
+      if (!isValidGuestEmail(email)) {
         throw new Error('Enter a valid guest email address')
       }
       if (excluded.has(email) || seen.has(email)) return
@@ -86,12 +127,19 @@
     if (!popup || typeof popup.querySelectorAll !== 'function') {
       throw new Error('The authored guest email form is unavailable')
     }
-    const values = Array.from(popup.querySelectorAll('[data-call-guest-email]')).map(function (field) {
-      return field && field.value
-    })
-    if (values.length !== MAX_GUEST_EMAILS) {
+    const fields = Array.from(popup.querySelectorAll('[data-call-guest-email]'))
+    if (fields.length !== MAX_GUEST_EMAILS) {
       throw new Error('The authored guest email form is incomplete')
     }
+    const values = fields.map(function (field) {
+      if (
+        field &&
+        String(field.value || '').trim() &&
+        typeof field.checkValidity === 'function' &&
+        !field.checkValidity()
+      ) throw new Error('Enter a valid guest email address')
+      return field && field.value
+    })
     return normalizeGuestEmails(values, excludedEmails)
   }
 
@@ -569,13 +617,11 @@
     let queuedPaidGeneration = 0
 
     function nextSurfaceGeneration() {
-      const generation = (bookingSurfaceGenerations.get(container) || 0) + 1
-      bookingSurfaceGenerations.set(container, generation)
-      return generation
+      return bookingSurfaceOwnership.claim(container)
     }
 
     function ownsSurface(generation) {
-      return bookingSurfaceGenerations.get(container) === generation
+      return bookingSurfaceOwnership.owns(container, generation)
     }
 
     function claimPaidSurface() {

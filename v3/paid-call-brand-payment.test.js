@@ -424,6 +424,18 @@ test('guest emails are normalized, deduplicated, bounded, and exclude the call p
     () => api.normalizeGuestEmails(['not-an-email']),
     /valid guest email/,
   )
+  ;[
+    'guest@example..com',
+    'guest@-example.com',
+    'guest@example-.com',
+    '.guest@example.com',
+    'guest.@example.com',
+  ].forEach((email) => {
+    assert.throws(
+      () => api.normalizeGuestEmails([email]),
+      /valid guest email/,
+    )
+  })
   assert.throws(
     () => api.normalizeGuestEmails([
       'one@example.com',

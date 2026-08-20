@@ -254,6 +254,34 @@ test('each Free option click mounts one Nylas scheduler in the authored containe
   })
 })
 
+test('a newer shared-surface owner prevents a pending Free mount', async () => {
+  const fixture = chooserFixture()
+  const paidCalendar = new Element('div')
+
+  await withGlobals({
+    document: fixture.document,
+    location: { hostname: 'www.thestarters.com' },
+    customElements: { get: () => true },
+    setTimeout: (fn) => { fn(); return 1 },
+  }, async () => {
+    assert.equal(api.installFreeBookingController({
+      config: { config_id: 'free_prod', is_paid: false },
+      grantId: 'grant_prod',
+      brandName: 'Brand Member',
+      brandEmail: 'brand@example.com',
+    }), true)
+
+    const pending = fixture.cta.onclick(event())
+    global.StartersBookingSurfaceOwnership.claim(fixture.container)
+    fixture.container.replaceChildren(paidCalendar)
+    await pending
+
+    assert.deepEqual(fixture.container.children, [paidCalendar])
+    assert.equal(fixture.freeButtons.style.display, undefined)
+    assert.equal(fixture.paidButtons.style.display, undefined)
+  })
+})
+
 test('provider callbacks keep identity fields hidden and switch the native success step', async () => {
   const fixture = chooserFixture()
   const defaultStep = new Element('div', { 'schedule-step': 'default' })

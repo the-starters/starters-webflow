@@ -18,7 +18,30 @@
     'https://cdn.jsdelivr.net/npm/@nylas/web-elements@latest/dist/cdn/nylas-scheduling/nylas-scheduling.es.js'
   const SCHEDULER_API_URL = 'https://api.us.nylas.com'
   const chooserBindings = new WeakMap()
+  const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   let schedulerModulePromise = null
+
+  function getBookingSurfaceOwnership() {
+    const existing = global.StartersBookingSurfaceOwnership
+    if (
+      existing &&
+      typeof existing.claim === 'function' &&
+      typeof existing.owns === 'function'
+    ) return existing
+    const generations = new WeakMap()
+    const ownership = {
+      claim: function (container) {
+        const generation = (generations.get(container) || 0) + 1
+        generations.set(container, generation)
+        return generation
+      },
+      owns: function (container, generation) {
+        return generations.get(container) === generation
+      },
+    }
+    global.StartersBookingSurfaceOwnership = ownership
+    return ownership
+  }
 
   const SHADOW_STYLES = Object.freeze({
     main: `
@@ -398,7 +421,11 @@
     if (!configId || !name || !email || !container) {
       throw new Error('The Free Call scheduler contract is incomplete')
     }
+    const isCurrent = typeof settings.isCurrent === 'function'
+      ? settings.isCurrent
+      : function () { return true }
     await ensureSchedulerElement(settings.loadSchedulerModule)
+    if (!isCurrent()) return null
     container.replaceChildren()
     const scheduler = global.document.createElement('nylas-scheduling')
     scheduler.schedulerApiUrl = SCHEDULER_API_URL
@@ -427,6 +454,7 @@
       timeslotSelected: function () { styleTimeslotPicker(scheduler) },
     }
     appendStyle(scheduler.shadowRoot, 'starters-free-main', SHADOW_STYLES.main)
+    if (!isCurrent()) return null
     container.appendChild(scheduler)
     global.setTimeout(function () { styleFirstView(scheduler) }, 500)
     return scheduler
@@ -456,7 +484,11 @@
     const mainButtons = Array.from(global.document.querySelectorAll(
       '[data-modal-trigger="popup-booking-main"]',
     ))
-    if (!popup || !ctas.length || !mainButtons.length) return false
+    const container = popup && (
+      popup.querySelector('[nylas-container]') ||
+      global.document.querySelector('[nylas-container]')
+    )
+    if (!popup || !container || !ctas.length || !mainButtons.length) return false
 
     const state = {
       config,
@@ -471,7 +503,7 @@
     if (!state.brandName || !state.brandEmail) return false
 
     ctas.forEach(function (cta) {
-      const binding = chooserBindings.get(cta) || { state: null, schedulerLock: false }
+      const binding = chooserBindings.get(cta) || { state: null }
       binding.state = Object.assign({}, state, { cta })
       chooserBindings.set(cta, binding)
       cta.setAttribute('data-config', configId)
@@ -479,22 +511,24 @@
       if (item) item.style.display = 'block'
       cta.onclick = async function (event) {
         event.preventDefault()
-        if (binding.schedulerLock) return
-        binding.schedulerLock = true
+        const generation = bookingSurfaceOwnership.claim(container)
         try {
-          await createScheduler({
+          const scheduler = await createScheduler({
             configId: binding.state.configId,
             brandName: binding.state.brandName,
             brandEmail: binding.state.brandEmail,
             loadSchedulerModule: binding.state.loadSchedulerModule,
+            container,
+            isCurrent: function () {
+              return bookingSurfaceOwnership.owns(container, generation)
+            },
           })
+          if (!scheduler) return
           binding.state.popup.querySelectorAll('[success-call-buttons]').forEach(function (element) {
             element.style.display = element.getAttribute('data-type') === 'free' ? 'flex' : 'none'
           })
         } catch (error) {
           console.error('[free-call-booking] scheduler failed:', error)
-        } finally {
-          binding.schedulerLock = false
         }
       }
     })
