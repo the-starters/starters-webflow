@@ -46,6 +46,64 @@ class CalendarElement {
     this.children.forEach(visit)
     return matches
   }
+
+  contains() { return false }
+}
+
+function guestControl() {
+  return {
+    style: {},
+    attrs: {},
+    disabled: false,
+    listeners: {},
+    setAttribute(name, value) { this.attrs[name] = String(value) },
+    getAttribute(name) { return this.attrs[name] || null },
+    addEventListener(name, listener) { this.listeners[name] = listener },
+  }
+}
+
+function makeGuestUi(values = []) {
+  const error = guestControl()
+  error.textContent = ''
+  const add = guestControl()
+  const rows = Array.from({ length: 5 }, (_, index) => {
+    const field = guestControl()
+    field.value = values[index] || ''
+    field.focused = false
+    field.focus = function () { this.focused = true }
+    const remove = guestControl()
+    const row = guestControl()
+    row.querySelector = function (selector) {
+      if (selector === '[data-call-guest-email]') return field
+      if (selector === '[data-call-guest-remove]') return remove
+      return null
+    }
+    return { row, field, remove }
+  })
+  const list = {
+    querySelectorAll(selector) {
+      return selector === '[data-call-guest-row]' ? rows.map(({ row }) => row) : []
+    },
+  }
+  const wrapper = guestControl()
+  wrapper.querySelector = function (selector) {
+    if (selector === '[data-call-guest-list]') return list
+    if (selector === '[data-call-guest-error]') return error
+    if (selector === '[data-call-guest-add]') return add
+    return null
+  }
+  return { wrapper, list, error, add, rows }
+}
+
+function guestQuery(ui, selector) {
+  if (selector === '[data-call-guest-fields]') return ui.wrapper
+  if (selector === '[data-call-guest-error]') return ui.error
+  return null
+}
+
+function guestQueryAll(ui, selector) {
+  if (selector === '[data-call-guest-email]') return ui.rows.map(({ field }) => field)
+  return []
 }
 
 test('setup retries reuse one bounded attempt key', async () => {
@@ -414,6 +472,34 @@ test('paid booking sends only canonical guest emails and keeps them stable on re
   }
 })
 
+test('booking fingerprint changes with every captured request field but not equivalent guests', () => {
+  const base = {
+    starter_slug: 'jp-testiz-d',
+    config_id: 'config_paid',
+    start: 1787000000000,
+    end: 1787000900000,
+    timezone: 'Asia/Manila',
+    topic: 'Audit',
+    context: 'Review the account',
+    guest_emails: [' Guest@Example.com ', 'guest@example.com'],
+    brand_email: 'brand@example.com',
+    starter_email: 'starter@example.com',
+  }
+  const fingerprint = api.bookingRequestFingerprint(base)
+  assert.equal(api.bookingRequestFingerprint(Object.assign({}, base, {
+    guest_emails: ['guest@example.com'],
+  })), fingerprint)
+  ;['starter_slug', 'config_id', 'start', 'end', 'timezone', 'topic', 'context'].forEach(function (field) {
+    const changed = Object.assign({}, base, {
+      [field]: typeof base[field] === 'number' ? base[field] + 1 : base[field] + '-changed',
+    })
+    assert.notEqual(api.bookingRequestFingerprint(changed), fingerprint, field)
+  })
+  assert.notEqual(api.bookingRequestFingerprint(Object.assign({}, base, {
+    guest_emails: ['other@example.com'],
+  })), fingerprint)
+})
+
 test('canonical Paid price rejects stale or unsupported display authority', () => {
   assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 500 }), '$5')
   assert.equal(api.canonicalPaidPrice({ currency: 'USD', price_cents: 1250 }), '$12.50')
@@ -456,6 +542,48 @@ test('invalid canonical Paid price leaves the authored option hidden and unchang
   }
 })
 
+test('Paid installation fails closed when the five-row authored guest form is absent', () => {
+  const previous = global.document
+  const price = { textContent: '$50' }
+  const item = {
+    style: { display: 'none' },
+    querySelector(selector) { return selector === '[call-type-price]' ? price : null },
+  }
+  const cta = {
+    attrs: { 'data-config': 'config_paid' },
+    getAttribute(name) { return this.attrs[name] || null },
+    setAttribute(name, value) { this.attrs[name] = value },
+    closest() { return item },
+  }
+  const container = new CalendarElement('div')
+  const popup = {
+    querySelector(selector) {
+      return selector === '[nylas-container]' ? container : null
+    },
+  }
+  global.document = {
+    querySelector(selector) { return selector === '[popup-booking]' ? popup : null },
+    querySelectorAll() { return [cta] },
+  }
+  try {
+    assert.equal(api.installPaidBookingController({
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 30,
+        is_paid: true,
+        currency: 'usd',
+        price_cents: 500,
+      },
+    }), false)
+    assert.equal(price.textContent, '$50')
+    assert.equal(item.style.display, 'none')
+    assert.equal(cta.getAttribute('data-paid-call-v3'), null)
+  } finally {
+    global.document = previous
+  }
+})
+
 test('paid calendar selection is owned by one canonical Xano command', async () => {
   const previous = {
     document: global.document,
@@ -477,8 +605,9 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
   }
   const successText = { textContent: '' }
   const paidText = { textContent: '' }
-  const guestField = { value: 'not-an-email' }
-  const guestError = { textContent: '', style: {} }
+  const guestUi = makeGuestUi(['not-an-email'])
+  const guestField = guestUi.rows[0].field
+  const guestError = guestUi.error
   const steps = [
     { style: {}, getAttribute: () => 'default' },
     { style: {}, getAttribute: () => 'success' },
@@ -489,11 +618,11 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
       if (selector === '[nylas-container]') return container
       if (selector === '[booking-success-text]') return successText
       if (selector === '[paid-call-text]') return paidText
-      if (selector === '[data-call-guest-error]') return guestError
-      return null
+      return guestQuery(guestUi, selector)
     },
     querySelectorAll(selector) {
-      if (selector === '[data-call-guest-email]') return [guestField]
+      const guestNodes = guestQueryAll(guestUi, selector)
+      if (guestNodes.length) return guestNodes
       if (selector === '[schedule-step]') return steps
       return []
     },
@@ -542,6 +671,8 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     resolveReadiness()
     await Promise.all([firstClick, secondClick])
     assert.equal(calendarCount, 1)
+    assert.equal(guestUi.wrapper.style.display, 'flex')
+    guestField.value = 'not-an-email'
     await assert.rejects(
       calendarOptions.onConfirm({
         start: 1787000000000,
@@ -553,7 +684,17 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     assert.equal(guestError.textContent, 'Enter a valid guest email address')
     assert.equal(guestError.style.display, 'block')
     assert.equal(requests.filter(({ url }) => url.endsWith(api.BOOKING_PATH)).length, 0)
-    guestField.value = ' Guest@Example.com '
+    const guestValues = [
+      ' One@Example.com ',
+      'two@example.com',
+      'three@example.com',
+      'four@example.com',
+      'five@example.com',
+    ]
+    guestValues.forEach(function (value, index) {
+      if (index) guestUi.add.listeners.click({ preventDefault() {} })
+      guestUi.rows[index].field.value = value
+    })
     await Promise.all([
       calendarOptions.onConfirm({
         start: 1787000000000,
@@ -570,9 +711,17 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     assert.equal(bookingRequests.length, 1)
     const bookingPayload = JSON.parse(bookingRequests[0].options.body)
     assert.equal(bookingPayload.timezone, 'Pacific/Auckland')
-    assert.deepEqual(bookingPayload.guest_emails, ['guest@example.com'])
+    assert.deepEqual(bookingPayload.guest_emails, [
+      'five@example.com',
+      'four@example.com',
+      'one@example.com',
+      'three@example.com',
+      'two@example.com',
+    ])
     assert.equal(guestError.textContent, '')
     assert.equal(guestError.style.display, 'none')
+    assert.equal(guestField.value, '')
+    assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(successText.textContent.includes('paid call request was sent'), true)
     assert.equal(steps[1].style.display, 'flex')
   } finally {
@@ -588,6 +737,7 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
   }
   let resolveReadiness
   const container = new CalendarElement('div')
+  const guestUi = makeGuestUi()
   container.textContent = 'Free scheduler'
   const price = { textContent: '$50' }
   const item = {
@@ -601,13 +751,18 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
     closest() { return item },
   }
   const freeListeners = {}
+  const modalClose = guestControl()
   const free = {
     addEventListener(name, listener) { freeListeners[name] = listener },
   }
   const popup = {
     querySelector(selector) {
       if (selector === '[nylas-container]') return container
-      return null
+      return guestQuery(guestUi, selector)
+    },
+    querySelectorAll(selector) {
+      if (selector === '[data-modal-close], [booking-popup-close], [popup-booking-close]') return [modalClose]
+      return guestQueryAll(guestUi, selector)
     },
   }
   global.document = {
@@ -636,10 +791,28 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
       },
       mountCalendar() { mounts += 1 },
     }), true)
+    guestUi.wrapper.style.display = 'flex'
+    guestUi.rows[0].field.value = 'close@example.com'
+    modalClose.listeners.click()
+    assert.equal(guestUi.wrapper.style.display, 'none')
+    assert.equal(guestUi.rows[0].field.value, '')
     const pending = paid.onclick({ preventDefault() {} })
+    assert.equal(guestUi.wrapper.style.display, 'flex')
+    guestUi.add.listeners.click({ preventDefault() {} })
+    assert.equal(guestUi.rows[1].row.style.display, 'flex')
+    guestUi.rows[1].field.value = 'remove@example.com'
+    guestUi.rows[1].remove.listeners.click({ preventDefault() {} })
+    assert.equal(guestUi.rows[1].row.style.display, 'none')
+    assert.equal(guestUi.rows[1].field.value, '')
+    guestUi.add.listeners.click({ preventDefault() {} })
+    guestUi.rows[0].field.value = 'guest@example.com'
+    guestUi.rows[1].field.value = 'second@example.com'
     assert.equal(container.textContent, 'Loading available times...')
     assert.equal(container.getAttribute('data-paid-calendar-state'), 'loading')
     freeListeners.click()
+    assert.equal(guestUi.wrapper.style.display, 'none')
+    assert.equal(guestUi.rows[0].field.value, '')
+    assert.equal(guestUi.rows[1].field.value, '')
     container.textContent = 'Free scheduler'
     resolveReadiness()
     await pending
@@ -658,6 +831,7 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
   }
   const readinessResolvers = []
   const container = new CalendarElement('div')
+  const guestUi = makeGuestUi()
   const price = { textContent: '$50' }
   const item = {
     style: {},
@@ -676,8 +850,9 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
   const popup = {
     querySelector(selector) {
       if (selector === '[nylas-container]') return container
-      return null
+      return guestQuery(guestUi, selector)
     },
+    querySelectorAll(selector) { return guestQueryAll(guestUi, selector) },
   }
   global.document = {
     querySelector(selector) {
@@ -747,11 +922,14 @@ test('card setup retries reuse the same setup and default-selection attempts', a
     setAttribute(name, value) { this.attrs[name] = value },
     closest() { return item },
   }
+  const guestUi = makeGuestUi()
+  const calendarContainer = new CalendarElement('div')
   const popup = {
     querySelector(selector) {
-      if (selector === '[nylas-container]') return new CalendarElement('div')
-      return null
+      if (selector === '[nylas-container]') return calendarContainer
+      return guestQuery(guestUi, selector)
     },
+    querySelectorAll(selector) { return guestQueryAll(guestUi, selector) },
   }
   const save = {
     disabled: false,

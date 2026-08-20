@@ -3067,13 +3067,34 @@ the stale request settles.
 The booking payload contains only the Starter slug, configuration ID, selected
 slot, timezone, optional topic/context, optional canonical `guest_emails`, and a
 bounded idempotency key. Guest inputs stay Webflow-authored: JavaScript reads
-`[data-call-guest-email]` and writes validation copy only to the optional
-`[data-call-guest-error]`; it never generates the guest form. The client trims,
+`[data-call-guest-email]` and writes validation copy to the required
+`[data-call-guest-error]`; it never creates or clones guest-form HTML. The client trims,
 lowercases, validates, deduplicates, sorts, caps the list at five, and excludes
 the Brand and Starter emails. A retry for the same slot and normalized guests
-reuses the exact payload and idempotency key; changing the slot or guest set
-creates a new attempt. Price, payment method, Brand identity, Starter ownership,
+reuses the exact payload and idempotency key. Changing the slot, timezone,
+topic, context, or guest set creates a new attempt. Price, payment method, Brand identity, Starter ownership,
 booking authority, and environment stay server-owned.
+
+The Paid controller requires this native Designer structure as a sibling of,
+never a child of, `[nylas-container]`:
+
+```text
+[data-call-guest-fields]                 hidden initially
+  [data-call-guest-list]
+    [data-call-guest-row] x 5
+      input[type=email][data-call-guest-email]
+      button[type=button][data-call-guest-remove]
+  button[type=button][data-call-guest-add]
+  [data-call-guest-error][role=alert][aria-live=polite]
+```
+
+All five rows and their controls are authored in Webflow. Row one becomes
+visible when Paid owns the shared booking surface. Add and Remove only reveal,
+hide, focus, clear, or disable those existing rows. Free selection, modal close,
+and Paid success clear all guest values and validation, restore the one-row
+state, and hide the Paid guest wrapper. Missing wrapper/list/error/add/remove
+hooks, a row count other than five, or any row missing its native input or
+remove control keeps Paid closed.
 
 The client validates bounded keys and PaymentMethod IDs before network work.
 It uses `xanoAuthFetch` when the shared bridge is present and otherwise uses the

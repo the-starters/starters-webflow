@@ -246,6 +246,9 @@ change does not apply to Paid Consulting Call. The Paid flow is described in
 
 The Paid guest-field markup, validation, payload, and retry contract is owned by
 the [Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
+Its five native Designer-authored guest rows sit outside `[nylas-container]`.
+The Paid controller fails closed when that complete structure is absent and
+owns its Paid/Free/close/success visibility and reset lifecycle.
 
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code
