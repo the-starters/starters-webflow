@@ -1,9 +1,9 @@
 <!-- Candidate only. These route templates are serialized page Head Code snippets, not executable page markup. -->
-<!-- Append the complete inner group to the exact saved Head Code for that route, verify the saved block, then empty only the audited inline bodies in the manifest. -->
+<!-- Append and read back all three saved Head Code groups, apply componentWideRemovals once, then apply each route's removals. -->
 <!-- Do not install or publish without the authorized whole-block cutover. Existing photo, Step 3, Step 4, and later loaders stay untouched. -->
 
 <template data-profile-form-route="/starter-edit-profile">
-  <!-- page Head Code group; shared component anchor b732e7f5-4c02-3273-f3df-90d6f623fa65 is emptied only after all three saved-head readbacks pass -->
+  <!-- page Head Code group; the component-wide removal phase follows all three saved-head readbacks -->
   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/profile-form/shared-foundation.js"></script>
   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/profile-form/incremental-dropdowns.js"></script>
   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-edit-profile/locations.js"></script>
@@ -11,7 +11,7 @@
 </template>
 
 <template data-profile-form-route="/build-profile/consult">
-  <!-- page Head Code group; shared component anchor b732e7f5-4c02-3273-f3df-90d6f623fa65 is emptied only after all three saved-head readbacks pass -->
+  <!-- page Head Code group; the component-wide removal phase follows all three saved-head readbacks -->
   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/profile-form/shared-foundation.js"></script>
   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/draft-state.js"></script>
   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/profile-form/incremental-dropdowns.js"></script>
@@ -20,7 +20,7 @@
 </template>
 
 <template data-profile-form-route="/build-profile/full-profile">
-  <!-- page Head Code group; shared component anchor b732e7f5-4c02-3273-f3df-90d6f623fa65 is emptied only after all three saved-head readbacks pass -->
+  <!-- page Head Code group; the component-wide removal phase follows all three saved-head readbacks -->
   <!-- preserve controlling script[30] v1.56.14/profile-image-auth-shim.js before this group; script[77] @latest remains and must no-op through the first-load guard -->
   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/profile-form/shared-foundation.js"></script>
   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/draft-state.js"></script>

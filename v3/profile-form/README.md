@@ -18,9 +18,10 @@ custom-code location. `inline-extraction-loaders.CANDIDATE.html` serializes one 
 template per route. The template wrappers keep this candidate file inert. Neither file authorizes an
 install or publish.
 
-The cutover is atomic across all three routes. Append each complete loader group to that route's exact
-saved page Head Code and verify all three saved blocks. Then empty the shared-foundation embed and only
-the other audited inline bodies listed in the manifest. Do not install one extracted loader at each
+The cutover is atomic across all three routes. Follow the manifest phases in order: append each complete
+loader group to that route's exact saved page Head Code and read back all three saved blocks; empty the
+four audited shared-component bodies once, with one before-hash gate each; then empty only the Edit
+component and page-footer bodies under their route entries. Do not install one extracted loader at each
 former node. Do not put different loader groups into the shared component: all three routes use the
 same component definition. The live extracted bodies
 run during HTML parsing, before the existing deferred photo, company, portfolio, work-date, counter,
@@ -35,11 +36,12 @@ the index 30 script already set `window.__tsProfileImageAuthShim`.
 `profile-image-auth-shim-v1.56.14.capture.txt` is the exact 16,265-byte Git-tag capture used to
 execute and hash that controlling historical asset in tests. It is evidence, not a new CDN loader.
 
-The shared component is used by all three routes. Install and read back all three page Head Code groups
-before the single shared-component removal. Do not turn one route group into site-wide code. Remove
-only a body whose exact complete-location hash matches the recorded before hash. Read every complete
-saved location back before publish. Existing profile-photo, Step 3 company, Step 4 portfolio, and later
-loaders stay unchanged.
+The shared component is used by all three routes. Its shared-foundation, draft, dropdown, and submit
+bodies therefore appear only in `componentWideRemovals`, not under a route. Apply that set once after
+all page Head Code readbacks pass. Then apply each route's Edit component or page-footer removals. Do
+not turn one route group into site-wide code. Remove only a body whose exact complete-location hash
+matches the recorded before hash. Read every complete saved location back before publish. Existing
+profile-photo, Step 3 company, Step 4 portfolio, and later loaders stay unchanged.
 
 The extraction does not move the form into JavaScript. It does not change the separate Step 3 company
 owner or Step 4 portfolio owner. A future `wf-xano` conversion requires a separate declarative contract
