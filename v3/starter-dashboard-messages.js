@@ -584,20 +584,9 @@
     refs.list.style.display = ''
     if (refs.emptyCard) refs.emptyCard.style.display = 'none'
 
-    cardDisplays
-      .sort((a, b) => timestampValue(b.timestamp) - timestampValue(a.timestamp))
-      .slice(0, refs.limit)
-      .forEach((display) => {
+    cardDisplays.slice(0, refs.limit).forEach((display) => {
         refs.list.appendChild(renderItem(refs, display))
       })
-  }
-
-  function timestampValue(timestamp) {
-    if (!timestamp) return 0
-    const numeric = Number(timestamp)
-    if (Number.isFinite(numeric)) return numeric
-    const parsed = Date.parse(timestamp)
-    return Number.isNaN(parsed) ? 0 : parsed
   }
 
   async function mountTile() {

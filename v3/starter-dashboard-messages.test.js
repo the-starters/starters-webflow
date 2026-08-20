@@ -493,14 +493,19 @@ test('participant identity overrides conversation metadata', async () => {
   assert.equal(calls.conversations, 0)
 })
 
-test('the dashboard renders at most the 3 newest conversations regardless of unread state', async () => {
-  const recent = [1, 2, 3, 4].map((index) => ({
+test('the dashboard preserves proxy order and the 3-card maximum', async () => {
+  const recent = [
+    { name: 'Recently joined', timestamp: 1, unread: false },
+    { name: 'Newer message', timestamp: 4, unread: true },
+    { name: 'Third', timestamp: 3, unread: false },
+    { name: 'Fourth', timestamp: 2, unread: false },
+  ].map((conversation, index) => ({
     id: `one:mem_me|mem_other_${index}`,
-    participant_name: `Brand ${index}`,
+    participant_name: conversation.name,
     participant_photo_url: null,
     last_message_text: `Message ${index}`,
-    last_message_at: index,
-    unread: index === 1,
+    last_message_at: conversation.timestamp,
+    unread: conversation.unread,
   }))
   const { list } = loadRenderedRecent(recent)
 
@@ -509,7 +514,7 @@ test('the dashboard renders at most the 3 newest conversations regardless of unr
   assert.equal(list.children.length, 3)
   assert.deepEqual(
     list.children.map((card) => card.fields.name.textContent),
-    ['Brand 4', 'Brand 3', 'Brand 2'],
+    ['Recently joined', 'Newer message', 'Third'],
   )
 })
 

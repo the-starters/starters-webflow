@@ -65,10 +65,6 @@ query "starter/messages/recent" verb=POST {
           value = $other_participant_ids|first
         }
       
-        var $me {
-          value = $conv.participants[$member_id]
-        }
-      
         var.update $conversation_rows {
           value = $conversation_rows
             |push:```
@@ -77,7 +73,7 @@ query "starter/messages/recent" verb=POST {
                 subject: $conv.subject
                 photo_url: $conv.photoUrl
                 participant_id: $participant_id
-                unread: ($me.isUnread == true)
+                unread: ($conv.isUnread == true)
                 last_message_text: $conv.lastMessage.text
                 last_message_sender_id: $conv.lastMessage.senderId
                 last_message_at: $conv.lastMessage.createdAt
