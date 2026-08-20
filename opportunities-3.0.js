@@ -1843,6 +1843,11 @@
         cardFieldText(card, 'company') ||
         cardFieldText(card, 'company_name') ||
         headingBrand,
+      party:
+        String(project.hiring_manager_name || '').trim() ||
+        cardFieldText(card, 'hiring_manager_name') ||
+        cardFieldText(card, 'party') ||
+        cardFieldText(card, 'contact_name'),
     }
   }
 
@@ -1860,6 +1865,24 @@
     $$('[data-wf-invoice-bind="' + field + '"]', modal).forEach((el) => {
       el.textContent = value == null ? '' : String(value)
     })
+  }
+
+  function invoiceCounterpartyLabel(context) {
+    const company = String((context && context.brand) || '').trim()
+    const party = String((context && context.party) || '').trim()
+    if (!party || party.toLowerCase() === company.toLowerCase()) return company || party
+    if (!company) return party
+    return company + ' · ' + party
+  }
+
+  // Keep the current two-line native Webflow banner useful without generating
+  // markup. If Designer later adds a distinct party bind, each value paints its
+  // own row; until then the existing company row shows both counterparties.
+  function paintInvoiceProjectContext(modal, context) {
+    const hasPartyBind = $$('[data-wf-invoice-bind="party"]', modal).length > 0
+    invoiceBind(modal, 'brand', hasPartyBind ? context.brand : invoiceCounterpartyLabel(context))
+    invoiceBind(modal, 'party', context.party)
+    invoiceBind(modal, 'project', context.title)
   }
 
   // The current Webflow component predates the data hooks on its opening
@@ -1956,8 +1979,7 @@
   function prepareInvoiceModal(modal, context) {
     activeInvoiceProject = context
     prepareInvoiceModalBindings(modal)
-    invoiceBind(modal, 'brand', context.brand)
-    invoiceBind(modal, 'project', context.title)
+    paintInvoiceProjectContext(modal, context)
     const form = $('form', modal)
     const done = $('.w-form-done', modal)
     if (form) {
@@ -2025,8 +2047,7 @@
       const message = done.querySelector ? $('[data-workflow-diagnostic-message]', done) : null
       if (message && receipt) decorateWorkflowMessage(message, message.textContent, receipt)
     }
-    invoiceBind(modal, 'brand', context.brand)
-    invoiceBind(modal, 'project', context.title)
+    paintInvoiceProjectContext(modal, context)
     invoiceBind(modal, 'amount', formatInvoiceAmount(amount))
     invoiceBind(modal, 'status', (result && result.status) || 'unpaid')
     const link = invoicePaymentLinkEl(modal)
