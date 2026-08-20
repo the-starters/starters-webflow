@@ -9,7 +9,7 @@
  *     conversations including already-read ones.
  *   - TalkJS JS SDK → live unread state and the unread count badge.
  * If the Xano endpoint is unavailable the tile shows no message cards.
- * Shows the empty state when there are no conversations at all.
+ * Shows the empty state when there are no conversations with messages.
  *
  * Wiring (wf-xano-style, multi-instance): each `data-messages-element="wrapper"`
  * scopes one rendered instance containing `list`, `template` (first card),
@@ -18,9 +18,10 @@
  * `avatar` container inside the template. `data-messages-format="uppercase|
  * lowercase"` transforms a bound element's text. Optional
  * `data-messages-limit="<n>"` on the wrapper can lower the 3-card maximum.
- * All instances share one TalkJS session + one bulk recent-conversations load,
- * which allows two attempts with a 15-second timeout each. The original
- * class-based selectors remain as fallbacks (legacy wrapper: `#messages`).
+ * All instances share one TalkJS session and the same serialized bulk request.
+ * Each request allows two attempts with a 15-second timeout, and message or
+ * unread activity refreshes the proxy snapshot. The original class-based
+ * selectors remain as fallbacks (legacy wrapper: `#messages`).
  */
 ;(function () {
   'use strict'
@@ -585,8 +586,8 @@
     if (refs.emptyCard) refs.emptyCard.style.display = 'none'
 
     cardDisplays.slice(0, refs.limit).forEach((display) => {
-        refs.list.appendChild(renderItem(refs, display))
-      })
+      refs.list.appendChild(renderItem(refs, display))
+    })
   }
 
   async function mountTile() {

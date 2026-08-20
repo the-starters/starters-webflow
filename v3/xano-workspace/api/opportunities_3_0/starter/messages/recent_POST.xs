@@ -9,26 +9,26 @@ query "starter/messages/recent" verb=POST {
     precondition (($env.talkjs_api_secret != null) && ($env.talkjs_api_secret != "")) {
       error = "talkjs_api_secret env var not configured"
     }
-  
+
     db.get user_v3 {
       field_name = "id"
       field_value = $auth.id
     } as $user
-  
+
     precondition (($user == null) == false) {
       error_type = "notfound"
       error = "User not found"
     }
-  
+
     var $member_id {
       value = $user.memberstack_member_id
     }
-  
+
     precondition (($member_id != null) && ($member_id != "")) {
       error_type = "notfound"
       error = "Member id not found"
     }
-  
+
     api.request {
       url = "https://api.talkjs.com/v1/LmYV8DIA/users/"
         |concat:$member_id:""
@@ -37,34 +37,34 @@ query "starter/messages/recent" verb=POST {
       headers = []
         |push:("Authorization: Bearer "|concat:$env.talkjs_api_secret:"")
     } as $talkjs
-  
+
     precondition ($talkjs.response.status == 200) {
       error = "TalkJS request failed"
     }
-  
+
     var $conversation_rows {
       value = []
     }
-  
+
     var $participant_requests {
       value = []
     }
-  
+
     foreach ($talkjs.response.result.data) {
       each as $conv {
         object.keys {
           value = $conv.participants
         } as $participant_ids
-      
+
         array.difference ($participant_ids) {
           value = []|push:$member_id
           by = $this
         } as $other_participant_ids
-      
+
         var $participant_id {
           value = $other_participant_ids|first
         }
-      
+
         var.update $conversation_rows {
           value = $conversation_rows
             |push:```
@@ -80,7 +80,7 @@ query "starter/messages/recent" verb=POST {
               }
               ```
         }
-      
+
         conditional {
           if ($participant_id != null && $participant_id != "") {
             var $participant_request {
@@ -89,7 +89,7 @@ query "starter/messages/recent" verb=POST {
                 |push:"GET"
                 |push:("/users/"|concat:$participant_id:"")
             }
-          
+
             var.update $participant_requests {
               value = $participant_requests|push:$participant_request
             }
@@ -97,11 +97,11 @@ query "starter/messages/recent" verb=POST {
         }
       }
     }
-  
+
     var $participant_users {
       value = {}
     }
-  
+
     conditional {
       if (($participant_requests|count) > 0) {
         api.request {
@@ -112,11 +112,11 @@ query "starter/messages/recent" verb=POST {
             |push:("Authorization: Bearer "|concat:$env.talkjs_api_secret:"")
             |push:"Content-Type: application/json"
         } as $participant_batch
-      
+
         precondition ($participant_batch.response.status == 200) {
           error = "TalkJS participant request failed"
         }
-      
+
         foreach ($participant_batch.response.result) {
           each as $participant_result {
             conditional {
@@ -131,17 +131,17 @@ query "starter/messages/recent" verb=POST {
         }
       }
     }
-  
+
     var $items {
       value = []
     }
-  
+
     foreach ($conversation_rows) {
       each as $row {
         var $participant {
           value = $participant_users[$row.participant_id]
         }
-      
+
         var.update $items {
           value = $items
             |push:```

@@ -2681,7 +2681,10 @@ waits for the shared bulk recent-conversations load, with no per-card API
 requests, so SDK timing cannot bypass the participant-identity boundary. A
 failed attempt is retried once; each attempt has a 15-second timeout and aborts
 if it stalls. When both attempts fail, the tile shows no message cards rather
-than rendering identity-incomplete SDK-only entries.
+than rendering identity-incomplete SDK-only entries. All instances share one
+TalkJS session and the same serialized bulk request. The browser refreshes the
+proxy snapshot after the SDK subscriptions start and after message or unread
+activity; a failed refresh keeps the current cards.
 
 The tracked XanoScript for endpoint #1298 is
 `v3/xano-workspace/api/opportunities_3_0/starter/messages/recent_POST.xs`. It
@@ -2696,8 +2699,9 @@ For one-on-one conversations, the bulk recent-conversations response supplies
 present they are authoritative, including explicit empty values; conversation
 metadata and the SDK sender snapshot are only fallbacks for legacy responses
 that omit them. Live unread data overlays preview, timestamp, and unread state
-without replacing that participant identity. Cards are ordered by last activity
-and capped at the three newest conversations. Each rendered card opens
+without replacing that participant identity. Cards preserve the proxy's
+last-activity order and are capped at the three newest conversations. Each
+rendered card opens
 `/messages?conversation=<TalkJS conversation id>` in a new tab;
 `messages.js` selects that existing conversation after mounting the inbox
 without creating or mutating a conversation. The existing
@@ -2713,8 +2717,8 @@ element's text, an optional `data-messages-limit="<n>"` on the wrapper can lower
 the default and maximum of 3 rendered cards, and `data-messages-class-unread`
 — on the wrapper or on the template card — renames the class toggled on an
 unread card (default `is-new`). All instances share one TalkJS session and the
-same bulk recent-conversations load, including its single retry; the original
-class-based selectors (legacy wrapper `#messages`) remain as fallbacks.
+same serialized bulk recent-conversations request; the original class-based
+selectors (legacy wrapper `#messages`) remain as fallbacks.
 
 Run its focused test with:
 
