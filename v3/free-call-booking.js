@@ -416,9 +416,11 @@
     }
     scheduler.eventOverrides = {
       bookedEventInfo: function (event, connector) {
-        if (!event || !event.detail || event.detail.error) return
+        const bookingData = event && event.detail && event.detail.data
+        if (!event || !event.detail || event.detail.error ||
+          !bookingData || !clean(bookingData.booking_id)) return
         const timeslot = connector.schedulerStore.get('selectedTimeslot')
-        populateSuccess(container.closest('[popup-booking]'), event.detail.data, timeslot)
+        populateSuccess(container.closest('[popup-booking]'), bookingData, timeslot)
       },
       timeslotConfirmed: function () { styleBookingForm(scheduler) },
       backButtonClicked: function () { styleFirstView(scheduler) },

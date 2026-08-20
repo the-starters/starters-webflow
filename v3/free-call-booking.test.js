@@ -260,6 +260,9 @@ test('provider callbacks keep identity fields hidden and switch the native succe
   const successStep = new Element('div', { 'schedule-step': 'success' })
   const successText = new Element('p', { 'booking-success-text': '' })
   const callType = new Element('span', { 'booking-element': 'paid-meeting' })
+  defaultStep.style.display = 'block'
+  successStep.style.display = 'none'
+  successText.textContent = 'Authored success copy'
   fixture.popup.setQuery('[schedule-step]', [defaultStep, successStep])
   fixture.popup.setQuery('[booking-success-text]', successText)
   fixture.popup.setQuery('[booking-element]', callType)
@@ -302,8 +305,17 @@ test('provider callbacks keep identity fields hidden and switch the native succe
     assert.equal(context.parentElement.style.display, undefined)
 
     scheduler.eventOverrides.bookedEventInfo({
+      detail: { data: { booking_id: '   ' } },
+    })
+
+    assert.equal(defaultStep.style.display, 'block')
+    assert.equal(successStep.style.display, 'none')
+    assert.equal(successText.textContent, 'Authored success copy')
+
+    scheduler.eventOverrides.bookedEventInfo({
       detail: {
         data: {
+          booking_id: 'booking-free-1',
           additional_fields: {
             call_full_title: 'Free Call',
             call_context: 'Project fit',
