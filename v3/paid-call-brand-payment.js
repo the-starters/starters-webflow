@@ -573,7 +573,20 @@
     const popup = document.querySelector('[popup-booking]')
     const container = popup && popup.querySelector('[nylas-container]')
     if (!ctas.length || !popup || !container) return false
-    const guestWrapper = popup.querySelector('[data-call-guest-fields]')
+    const guestHookSelectors = [
+      '[data-call-guest-fields]',
+      '[data-call-guest-list]',
+      '[data-call-guest-error]',
+      '[data-call-guest-add]',
+      '[data-call-guest-row]',
+      '[data-call-guest-email]',
+      '[data-call-guest-remove]',
+    ]
+    const guestHooks = guestHookSelectors.reduce(function (hooks, selector) {
+      hooks[selector] = Array.from(popup.querySelectorAll(selector))
+      return hooks
+    }, {})
+    const guestWrapper = guestHooks['[data-call-guest-fields]'][0] || null
     const guestList = guestWrapper && guestWrapper.querySelector('[data-call-guest-list]')
     const guestError = guestWrapper && guestWrapper.querySelector('[data-call-guest-error]')
     const guestAdd = guestWrapper && guestWrapper.querySelector('[data-call-guest-add]')
@@ -587,26 +600,28 @@
         remove: row.querySelector('[data-call-guest-remove]'),
       }
     })
-    const authoredGuestFields = typeof popup.querySelectorAll === 'function'
-      ? Array.from(popup.querySelectorAll('[data-call-guest-email]'))
-      : []
-    const hasGuestMarkup = Boolean(
-      guestWrapper ||
-      guestList ||
-      guestError ||
-      guestAdd ||
-      guestRows.length ||
-      authoredGuestFields.length,
-    )
+    const authoredGuestFields = guestHooks['[data-call-guest-email]']
+    const authoredGuestRemoves = guestHooks['[data-call-guest-remove]']
+    const hasGuestMarkup = guestHookSelectors.some(function (selector) {
+      return guestHooks[selector].length > 0
+    })
     const hasCompleteGuestMarkup = Boolean(
-      guestWrapper &&
-      guestList &&
-      guestError &&
-      guestAdd &&
-      guestRows.length === MAX_GUEST_EMAILS &&
+      guestHooks['[data-call-guest-fields]'].length === 1 &&
+      guestHooks['[data-call-guest-list]'].length === 1 &&
+      guestHooks['[data-call-guest-error]'].length === 1 &&
+      guestHooks['[data-call-guest-add]'].length === 1 &&
+      guestHooks['[data-call-guest-row]'].length === MAX_GUEST_EMAILS &&
       authoredGuestFields.length === MAX_GUEST_EMAILS &&
+      authoredGuestRemoves.length === MAX_GUEST_EMAILS &&
+      guestWrapper &&
+      guestList === guestHooks['[data-call-guest-list]'][0] &&
+      guestError === guestHooks['[data-call-guest-error]'][0] &&
+      guestAdd === guestHooks['[data-call-guest-add]'][0] &&
+      guestRows.length === MAX_GUEST_EMAILS &&
+      guestRows.every(function (row) { return guestHooks['[data-call-guest-row]'].includes(row) }) &&
       !guestBindings.some(function (binding) { return !binding.field || !binding.remove }) &&
       !guestBindings.some(function (binding) { return !authoredGuestFields.includes(binding.field) }) &&
+      !guestBindings.some(function (binding) { return !authoredGuestRemoves.includes(binding.remove) }) &&
       !(typeof container.contains === 'function' && container.contains(guestWrapper)),
     )
     if (hasGuestMarkup && !hasCompleteGuestMarkup) {

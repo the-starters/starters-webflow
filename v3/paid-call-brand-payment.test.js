@@ -102,7 +102,13 @@ function guestQuery(ui, selector) {
 }
 
 function guestQueryAll(ui, selector) {
+  if (selector === '[data-call-guest-fields]') return [ui.wrapper]
+  if (selector === '[data-call-guest-list]') return [ui.list]
+  if (selector === '[data-call-guest-error]') return [ui.error]
+  if (selector === '[data-call-guest-add]') return [ui.add]
+  if (selector === '[data-call-guest-row]') return ui.rows.map(({ row }) => row)
   if (selector === '[data-call-guest-email]') return ui.rows.map(({ field }) => field)
+  if (selector === '[data-call-guest-remove]') return ui.rows.map(({ remove }) => remove)
   return []
 }
 
@@ -736,7 +742,9 @@ test('Paid installation fails closed when optional guest markup is incomplete', 
       if (selector === '[data-call-guest-fields]') return partialGuestWrapper
       return null
     },
-    querySelectorAll() { return [] },
+    querySelectorAll(selector) {
+      return selector === '[data-call-guest-fields]' ? [partialGuestWrapper] : []
+    },
   }
   global.document = {
     querySelector(selector) { return selector === '[popup-booking]' ? popup : null },
@@ -756,6 +764,66 @@ test('Paid installation fails closed when optional guest markup is incomplete', 
     assert.equal(price.textContent, '$50')
     assert.equal(item.style.display, 'none')
     assert.equal(cta.getAttribute('data-paid-call-v3'), null)
+  } finally {
+    global.document = previous
+  }
+})
+
+test('Paid installation fails closed for every stray guest hook outside the wrapper', () => {
+  const previous = global.document
+  const guestSelectors = [
+    '[data-call-guest-fields]',
+    '[data-call-guest-list]',
+    '[data-call-guest-error]',
+    '[data-call-guest-add]',
+    '[data-call-guest-row]',
+    '[data-call-guest-email]',
+    '[data-call-guest-remove]',
+  ]
+  try {
+    guestSelectors.forEach(function (guestSelector) {
+      const price = { textContent: '$50' }
+      const item = {
+        style: { display: 'none' },
+        querySelector(selector) { return selector === '[call-type-price]' ? price : null },
+      }
+      const cta = {
+        attrs: { 'data-config': 'config_paid' },
+        getAttribute(name) { return this.attrs[name] || null },
+        setAttribute(name, value) { this.attrs[name] = value },
+        closest() { return item },
+      }
+      const container = new CalendarElement('div')
+      const strayHook = guestSelector === '[data-call-guest-fields]'
+        ? { querySelector() { return null } }
+        : {}
+      const popup = {
+        querySelector(selector) {
+          if (selector === '[nylas-container]') return container
+          if (selector === guestSelector) return strayHook
+          return null
+        },
+        querySelectorAll(selector) { return selector === guestSelector ? [strayHook] : [] },
+      }
+      global.document = {
+        querySelector(selector) { return selector === '[popup-booking]' ? popup : null },
+        querySelectorAll() { return [cta] },
+      }
+
+      assert.equal(api.installPaidBookingController({
+        config: {
+          config_id: 'config_paid',
+          grant_id: 'grant_test',
+          duration: 30,
+          is_paid: true,
+          currency: 'usd',
+          price_cents: 500,
+        },
+      }), false, guestSelector)
+      assert.equal(price.textContent, '$50', guestSelector)
+      assert.equal(item.style.display, 'none', guestSelector)
+      assert.equal(cta.getAttribute('data-paid-call-v3'), null, guestSelector)
+    })
   } finally {
     global.document = previous
   }
