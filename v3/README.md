@@ -3072,8 +3072,9 @@ the stale request settles.
 The booking payload contains only the Starter slug, configuration ID, selected
 slot, timezone, optional topic/context, optional canonical `guest_emails`, and a
 bounded idempotency key. Guest inputs stay Webflow-authored: JavaScript reads
-`[data-call-guest-email]` and writes validation copy to the required
-`[data-call-guest-error]`; it never creates or clones guest-form HTML. The client trims,
+`[data-call-guest-email]` and writes validation copy to
+`[data-call-guest-error]` when the optional guest form is installed; it never
+creates or clones guest-form HTML. The client trims,
 lowercases, validates, deduplicates, sorts, caps the list at five, and excludes
 the Brand and Starter emails. A retry for the same slot and normalized guests
 reuses the exact payload and idempotency key. Changing the slot, timezone,
