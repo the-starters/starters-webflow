@@ -473,6 +473,7 @@ function loadWriter(options = {}) {
     localStorage: {
       getItem: (key) => (storage.has(key) ? storage.get(key) : null),
       setItem: (key, value) => storage.set(key, String(value)),
+      removeItem: (key) => storage.delete(key),
     },
     sessionStorage: {
       getItem: (key) => (sessionStorage.has(key) ? sessionStorage.get(key) : null),
@@ -1899,6 +1900,35 @@ test('production hosted OAuth callback verifies and persists the returned grant'
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
   assert.equal(creates.length, 1)
   assert.equal(creates[0].body.in_config_name, 'Free Consultation Call - 30min')
+})
+
+test('production hosted OAuth callback accepts a recent durable intent fallback', async () => {
+  const intentKey = 'starter-scheduling-oauth-intent:member-a'
+  const availability = defaultAvailability()
+  availability.manager = null
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    availability,
+    search: '?success=true&grant_id=hosted-grant-9&state=member-a',
+    storage: {
+      ...TZ_CACHED,
+      [intentKey]: JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: null,
+      }),
+    },
+    routes: {
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 1)
+  assert.equal(result.storage.has(intentKey), false)
+  assert.equal(result.sessionStorage.has('starter-scheduling-oauth-callback'), false)
 })
 
 test('OAuth callback is stripped before bootstrap failure and survives a login reload', async () => {
