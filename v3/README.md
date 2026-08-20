@@ -2394,13 +2394,12 @@ timezone can supply that value, but does not count as canonical persistence.
 
 Paid-call rate: the availability controllers do not read `#price`, `data-rate`,
 or `paid_call_rate` in localStorage. They create only the free-call
-configuration. New Free configurations show participants and enable provider
-email notifications, so the organizer and attendees receive invitations and
-later booking updates. Bootstrap repairs active Free configurations that still
-hide participants or suppress those emails. Availability edits refresh both
-availability and those event-booking settings for Free configurations; Paid
-configuration updates remain availability-only, so paid title and price fields
-stay under the paid-call settings endpoints.
+configuration. Availability edits send an availability-only update for every
+active canonical configuration, so paid title and price fields stay under the
+paid-call settings endpoints. Free Scheduler lifecycle emails remain disabled
+to prevent duplicate Brand and Starter messages. Guest calendar invitations
+belong to the canonical backend event lifecycle after organizer confirmation,
+not to the Scheduler configuration email flags.
 
 Runtime contract:
 
