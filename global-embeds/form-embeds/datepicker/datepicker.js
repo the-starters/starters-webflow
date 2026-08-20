@@ -49,8 +49,13 @@
       var op = dp.offsetParent || document.body
       var opr = op.getBoundingClientRect()
       var ir = input.getBoundingClientRect()
+      var pickerHeight = dp.offsetHeight || dp.getBoundingClientRect().height
+      var viewportHeight = window.innerHeight || document.documentElement.clientHeight
+      var below = ir.bottom
+      var above = ir.top - pickerHeight
+      var viewportTop = below + pickerHeight > viewportHeight && above >= 0 ? above : below
       var left = ir.left - opr.left - op.clientLeft + op.scrollLeft
-      var top = ir.bottom - opr.top - op.clientTop + op.scrollTop
+      var top = viewportTop - opr.top - op.clientTop + op.scrollTop
 
       var maxLeft = op.clientWidth - dp.offsetWidth
       if (left > maxLeft) left = maxLeft

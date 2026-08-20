@@ -1812,8 +1812,6 @@
   const INVOICE_PAYMENT_LINK_PLACEHOLDER = '#invoice-payment-link'
   const INVOICE_SUCCESS_CLOSE_SELECTOR =
     '[data-wf-invoice="close-success"], .w-form-done a[href="/starter-dashboard"]'
-  const INVOICE_DATE_SELECTOR =
-    '[data-wf-invoice="start-date"], [data-wf-invoice="end-date"], [data-input-datepicker]'
   const INVOICE_MIN_AMOUNT = 0.01
   const INVOICE_MAX_AMOUNT = 1000000
   const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
@@ -1878,44 +1876,6 @@
     }
     const close = $(INVOICE_SUCCESS_CLOSE_SELECTOR, modal)
     if (close) close.setAttribute('data-wf-invoice', 'close-success')
-  }
-
-  function positionInvoiceDatepicker(input, popup, modal, viewport = window) {
-    if (!input || !popup || !modal || typeof input.getBoundingClientRect !== 'function') {
-      return false
-    }
-    const inputRect = input.getBoundingClientRect()
-    const popupRect = popup.getBoundingClientRect()
-    const modalRect = modal.getBoundingClientRect()
-    const viewportHeight = Number(viewport.innerHeight) || document.documentElement.clientHeight
-    const viewportWidth = Number(viewport.innerWidth) || document.documentElement.clientWidth
-    if (!(popupRect.height > 0) || !(popupRect.width > 0)) return false
-
-    const gap = 4
-    const edge = 8
-    const below = inputRect.bottom + gap
-    const above = inputRect.top - popupRect.height - gap
-    const viewportTop = below + popupRect.height > viewportHeight - edge && above >= edge
-      ? above
-      : Math.max(edge, Math.min(below, viewportHeight - popupRect.height - edge))
-    const viewportLeft = Math.max(
-      edge,
-      Math.min(inputRect.left, viewportWidth - popupRect.width - edge),
-    )
-
-    popup.style.position = 'absolute'
-    popup.style.top = viewportTop - modalRect.top + (modal.scrollTop || 0) + 'px'
-    popup.style.left = viewportLeft - modalRect.left + (modal.scrollLeft || 0) + 'px'
-    return viewportTop === above ? 'above' : 'below'
-  }
-
-  function scheduleInvoiceDatepickerPosition(input) {
-    window.setTimeout(() => {
-      const popup = $('#ui-datepicker-div')
-      const modal = input && input.closest ? input.closest(INVOICE_MODAL_SELECTOR) : null
-      if (!popup || !modal || popup.style.display === 'none') return
-      positionInvoiceDatepicker(input, popup, modal)
-    }, 0)
   }
 
   function closeInvoiceModal(modal) {
@@ -2193,7 +2153,6 @@
     invoiceWorkflowBinding = null
     document.removeEventListener('click', binding.click, true)
     document.removeEventListener('submit', binding.submit, true)
-    document.removeEventListener('focusin', binding.dateFocus, true)
     if (binding.submitControl) setInvoiceSubmitDisabled(binding.submitControl, false)
     activeInvoiceProject = null
     delete window.__opp30InvoicesWired
@@ -2225,7 +2184,7 @@
     const binding = { generation, submitting: false, submitControl: null }
     window.__opp30InvoicesWired = true
 
-    binding.click = (event) => {
+    binding.click = async (event) => {
       if (!invoiceWorkflowBindingCurrent(binding)) {
         unwireInvoiceWorkflow()
         return
@@ -2253,27 +2212,40 @@
       // Only swallow the click once we know this workflow can handle it —
       // otherwise modal.js's own trigger delegation must stay reachable.
       const modal = $(INVOICE_MODAL_SELECTOR)
-      const context = invoiceProjectContext(action.closest(INVOICE_CARD_SELECTOR))
-      if (!modal || !context) {
+      const card = action.closest(INVOICE_CARD_SELECTOR)
+      const cardContext = invoiceProjectContext(card)
+      if (!modal || !cardContext) {
         console.error('[opp30:invoice] cannot prepare the Generate Invoice modal', {
           modal: !!modal,
-          project: context ? context.projectId : null,
+          project: cardContext ? cardContext.projectId : null,
         })
         return
       }
       event.preventDefault()
       event.stopPropagation()
+      let context = cardContext
+      if (projectRoleForPath() === 'starter') {
+        let project = projectWorkflowItems.get(cardContext.projectId)
+        if (!project) {
+          try {
+            await refreshProjectWorkflow('starter')
+          } catch (error) {
+            console.error('[opp30:invoice] cannot load canonical project context', error)
+            return
+          }
+          if (!invoiceWorkflowBindingCurrent(binding)) return
+          project = projectWorkflowItems.get(cardContext.projectId)
+        }
+        context = project ? invoiceProjectContext(card, project) : null
+        if (!context) {
+          console.error('[opp30:invoice] canonical project context is unavailable', {
+            project: cardContext.projectId,
+          })
+          return
+        }
+      }
       prepareInvoiceModal(modal, context)
       showInvoiceModal(modal)
-    }
-
-    binding.dateFocus = (event) => {
-      const input = event.target && event.target.closest
-        ? event.target.closest(INVOICE_DATE_SELECTOR)
-        : null
-      if (input && input.closest(INVOICE_MODAL_SELECTOR)) {
-        scheduleInvoiceDatepickerPosition(input)
-      }
     }
 
     binding.submit = async (event) => {
@@ -2354,7 +2326,6 @@
     invoiceWorkflowBinding = binding
     document.addEventListener('click', binding.click, true)
     document.addEventListener('submit', binding.submit, true)
-    document.addEventListener('focusin', binding.dateFocus, true)
   }
 
   /* ================= PROJECT DASHBOARD ACTIONS ================ */
@@ -2409,6 +2380,7 @@
   let projectWorkflowRole = ''
   let projectWorkflowItems = new Map()
   let projectWorkflowRefresh = null
+  let projectWorkflowQueuedReload = null
   let projectWorkflowObserver = null
   let projectWorkflowBinding = null
   let projectWorkflowProjectionUnsubscribe = null
@@ -3245,7 +3217,25 @@
 
   async function refreshProjectWorkflow(role = projectWorkflowRole, reload = false) {
     if (!role || projectRoleForPath() !== role) return null
-    if (projectWorkflowRefresh) return projectWorkflowRefresh
+    if (projectWorkflowRefresh) {
+      if (!reload) return projectWorkflowRefresh
+      if (projectWorkflowQueuedReload) return projectWorkflowQueuedReload
+      const activeRefresh = projectWorkflowRefresh
+      const queuedReload = (async () => {
+        try {
+          await activeRefresh
+        } catch {}
+        if (projectWorkflowRefresh === activeRefresh) projectWorkflowRefresh = null
+        if (projectRoleForPath() !== role) return null
+        return refreshProjectWorkflow(role, true)
+      })()
+      projectWorkflowQueuedReload = queuedReload
+      try {
+        return await queuedReload
+      } finally {
+        if (projectWorkflowQueuedReload === queuedReload) projectWorkflowQueuedReload = null
+      }
+    }
     const request = (async () => {
       const instance = await waitForProjectWorkflowInstance(role)
       let items
@@ -6217,7 +6207,6 @@
     openInvoiceModal,
     prepareInvoiceModal,
     paintInvoiceSuccess,
-    positionInvoiceDatepicker,
     decorateProjectInvoiceLinks,
     requestInvoiceSubmit,
     invoiceSubmitControl,

@@ -4543,64 +4543,156 @@ test('a completed project card can still open Generate Invoice', async () => {
   assert.equal(click.counts.stopped, 1)
 })
 
-test('the invoice datepicker opens above when the space below would clip it', async () => {
-  const bridge = await loadBridge(async () => response({}))
-  const input = { getBoundingClientRect: () => ({ top: 650, bottom: 690, left: 520 }) }
-  const popup = {
-    style: {},
-    getBoundingClientRect: () => ({ height: 280, width: 320 }),
-  }
-  const modal = {
-    scrollLeft: 0,
-    scrollTop: 40,
-    getBoundingClientRect: () => ({ top: 100, left: 200 }),
-  }
-
-  assert.equal(
-    bridge.window.Opp30.positionInvoiceDatepicker(
-      input,
-      popup,
-      modal,
-      { innerHeight: 720, innerWidth: 1000 },
-    ),
-    'above',
+test('Generate Invoice waits for canonical project context before opening', async () => {
+  const title = el('p', { 'wf-xano-bind': 'title' })
+  title.textContent = 'Stale project title'
+  const company = el('p', { 'wf-xano-bind': 'company_name' })
+  company.textContent = 'Stale company'
+  const action = el('a', { href: '#generate-invoice' })
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [
+    title,
+    company,
+    action,
+  ])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const projectBind = el('p', { 'data-wf-invoice-bind': 'project' })
+  const companyBind = el('p', { 'data-wf-invoice-bind': 'brand' })
+  const form = el('form')
+  form.reset = () => {}
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [
+    projectBind,
+    companyBind,
+    form,
+  ])
+  modal.showModal = () => { modal.open = true }
+  const projectList = deferred()
+  let listRequested = false
+  const roots = [root, modal]
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        listRequested = true
+        return projectList.promise
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) => {
+        for (const candidate of roots) {
+          if (selectorMatches(candidate, selector)) return candidate
+          const match = candidate.querySelector(selector)
+          if (match) return match
+        }
+        return null
+      },
+      querySelectorAll: (selector) => roots.flatMap((candidate) =>
+        [candidate, ...descendants(candidate)].filter((node) => selectorMatches(node, selector))),
+      routeGuard: true,
+    },
   )
-  assert.equal(popup.style.top, '306px')
-  assert.equal(popup.style.left, '320px')
+  assert.ok(await waitFor(() => listRequested))
+
+  const click = clickEvent(action)
+  bridge.dispatchDocument('click', click.event)
+  assert.equal(modal.open, undefined)
+  assert.equal(click.counts.prevented, 1)
+
+  projectList.resolve(response({
+    items: [{
+      id: 746,
+      lifecycle_state: 'completed',
+      title: 'Canonical project title',
+      company_name: 'Canonical company',
+    }],
+  }))
+
+  assert.ok(await waitFor(() => modal.open === true))
+  assert.equal(projectBind.textContent, 'Canonical project title')
+  assert.equal(companyBind.textContent, 'Canonical company')
 })
 
-test('the authored shared datepicker input triggers the invoice clipping correction', async () => {
-  const input = el('input', { 'data-input-datepicker': '' })
-  input.getBoundingClientRect = () => ({ top: 650, bottom: 690, left: 520 })
-  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [input])
-  modal.scrollLeft = 0
-  modal.scrollTop = 40
-  modal.getBoundingClientRect = () => ({ top: 100, left: 200 })
-  const popup = el('div', { id: 'ui-datepicker-div' })
-  popup.style.display = 'block'
-  popup.getBoundingClientRect = () => ({ height: 280, width: 320 })
-  const roots = [modal, popup]
-  const bridge = await loadBridge(async () => response({}), {
-    pathname: '/all-modals',
-    querySelector: (selector) => {
-      for (const root of roots) {
-        if (selectorMatches(root, selector)) return root
-        const match = root.querySelector(selector)
-        if (match) return match
+test('invoice success queues a forced reload behind an active project refresh', async () => {
+  const dom = invoiceSubmitDom()
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [dom.modal])
+  const root = el('div', {
+    'wf-xano-instance': 'dash-projects',
+    'wf-xano-source': 'opp30:starter/projects/mine',
+  }, [card])
+  const handlers = new Set()
+  const firstRefresh = deferred()
+  let refreshCount = 0
+  let state = {
+    status: 'success',
+    data: { items: [{ id: 746, lifecycle_state: 'completed', invoice_status: 'unpaid' }] },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh() {
+      refreshCount += 1
+      if (refreshCount === 1) return firstRefresh.promise
+      state = {
+        ...state,
+        data: { items: [{ id: 746, lifecycle_state: 'completed', invoice_status: 'paid' }] },
       }
-      return null
+      handlers.forEach((handler) => handler(state))
+      return Promise.resolve(state)
     },
-    querySelectorAll: (selector) => roots.flatMap((root) =>
-      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector))),
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  let invoiceRequests = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/create/v3')) {
+        invoiceRequests += 1
+        return response({ invoice_id: 901, status: 'unpaid' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) { return key === 'dash-projects' ? instance : null },
+      },
+    },
+  )
+  assert.ok(await waitFor(() => bridge.documentListenerCount('submit') > 0))
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+    card,
+    projectId: 746,
+    title: 'Canonical project title',
+    brand: 'Canonical company',
   })
-  bridge.window.innerHeight = 720
-  bridge.window.innerWidth = 1000
 
-  bridge.dispatchDocument('focusin', { target: input })
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  bridge.dispatchWindow('focus')
+  assert.ok(await waitFor(() => refreshCount === 1))
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  assert.ok(await waitFor(() => invoiceRequests === 1))
+  assert.equal(refreshCount, 1)
 
-  assert.equal(popup.style.top, '306px')
-  assert.equal(popup.style.left, '320px')
+  firstRefresh.resolve(state)
+  assert.ok(await waitFor(() => refreshCount === 2))
+  assert.equal(instance.getState().data.items[0].invoice_status, 'paid')
 })
 
 test('project invoice links always open in a detached new tab', async () => {

@@ -438,3 +438,79 @@ test('Weekly datepicker stays open when the focus click reaches project form syn
   assert.equal(jquery.isOpen(start), true)
   assert.equal(jquery.closeCount(start), 0)
 })
+
+test('shared modal datepicker stays above a clipped input after scroll', async () => {
+  const input = h('input', { 'data-input-datepicker': '' })
+  input.nodeType = 1
+  let inputTop = 650
+  input.getBoundingClientRect = () => ({ top: inputTop, bottom: inputTop + 40, left: 520 })
+  const modal = h('dialog', { class: 'modal_dialog' }, [input])
+  modal.nodeType = 1
+  modal.clientLeft = 0
+  modal.clientTop = 0
+  modal.clientWidth = 800
+  modal.scrollLeft = 0
+  modal.scrollTop = 40
+  modal.getBoundingClientRect = () => ({ top: 100, left: 200 })
+  const body = h('body', {}, [modal])
+  body.nodeType = 1
+  body.contains = (element) => element === input || body.descendants().includes(element)
+  const popup = h('div', { id: 'ui-datepicker-div' })
+  popup.style.display = 'block'
+  popup.offsetHeight = 280
+  popup.offsetWidth = 320
+  popup.offsetParent = modal
+  popup.getBoundingClientRect = () => ({ height: 280, width: 320 })
+  const states = new WeakMap()
+  const handlers = new Map()
+  const jquery = (element) => ({
+    appendTo(parent) {
+      popup.offsetParent = parent[0] || parent
+      return this
+    },
+    closest(selector) {
+      return selector === '.modal_dialog' ? { 0: modal, length: 1 } : { length: 0 }
+    },
+    data(key) {
+      return key === 'datepicker' ? states.get(element) : undefined
+    },
+    datepicker(options) {
+      states.set(element, options)
+      return this
+    },
+  })
+  jquery.fn = { datepicker() {} }
+  const document = {
+    body,
+    documentElement: { clientHeight: 720 },
+    getElementById: (id) => id === 'ui-datepicker-div' ? popup : null,
+    querySelectorAll: (selector) => body.querySelectorAll(selector),
+  }
+  const window = {
+    document,
+    innerHeight: 720,
+    jQuery: jquery,
+    addEventListener(type, handler) { handlers.set(type, handler) },
+    removeEventListener() {},
+  }
+  window.window = window
+
+  vm.runInNewContext(datepickerSource, {
+    Date,
+    cancelAnimationFrame: () => {},
+    clearInterval,
+    document,
+    requestAnimationFrame: (callback) => { callback(); return 1 },
+    setInterval,
+    setTimeout,
+    window,
+  }, { filename: 'datepicker.js' })
+
+  states.get(input).beforeShow(input)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(popup.style.top, '310px')
+
+  inputTop = 620
+  handlers.get('scroll')()
+  assert.equal(popup.style.top, '280px')
+})
