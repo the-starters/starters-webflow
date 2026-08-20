@@ -33,8 +33,7 @@
  *
  * DEPENDS ON (defined by earlier page/site embeds, not by this file):
  *   starter_memberstack_id, stripe_charges, waitForMember, memberReady, MEMBER,
- *   qs, qsa, getStarterByMemberId, getConfigs, getNearestSlot,
- *   initBookingComponents, createScheduler, formatWithTimezone,
+ *   qs, qsa, StartersFreeCallBooking,
  *   jQuery ($, two utility blocks),
  *   window.WfAlgolia (search record).
  *
@@ -125,6 +124,7 @@
   var qsa = window.qsa;
   var waitForMember = window.waitForMember;
   var memberReady = window.memberReady;
+  var freeCallBooking = window.StartersFreeCallBooking;
   if (typeof qs !== 'function' || typeof qsa !== 'function' || typeof waitForMember !== 'function') {
     console.warn('[hire-profile] page helpers (qs/qsa/waitForMember) missing; profile scripts stood down');
     return;
@@ -267,8 +267,12 @@
 
           // if it's not a brand
           if (!isBrandMember(MEMBER)) {
+              if (!freeCallBooking || typeof freeCallBooking.getStarterByMemberId !== 'function') {
+                  console.warn('[hire-profile] Free Call booking controller is unavailable');
+                  return;
+              }
               // check calendar\availability connections
-              const starter = await getStarterByMemberId(FREELANCER_ID);
+              const starter = await freeCallBooking.getStarterByMemberId(FREELANCER_ID);
               const grant_id = starter ? starter['nylas_grant_id'] : null;
               if (!grant_id) {
                   qsa('[no-connection="free"]').forEach((item) => item.style.display = "block");
@@ -603,13 +607,22 @@
 
   async function startersBooking_handler(freelancerId, brand_name, brand_email) {
 
+      if (
+          !freeCallBooking ||
+          typeof freeCallBooking.getStarterByMemberId !== 'function' ||
+          typeof freeCallBooking.getConfigs !== 'function'
+      ) {
+          console.warn('[hire-profile] Free Call booking controller is unavailable');
+          return;
+      }
+
       // GET STARTER
-      const starter = await getStarterByMemberId(freelancerId);
+      const starter = await freeCallBooking.getStarterByMemberId(freelancerId);
       const grant_id = starter ? starter['nylas_grant_id'] : null;
       if (grant_id) {
 
           // GET CONFIGS
-          const configs = selectBookableConfigurations(await getConfigs(grant_id));
+          const configs = selectBookableConfigurations(await freeCallBooking.getConfigs(grant_id));
           primeBookingModalOptions(configs);
           if (
               Array.isArray(configs) &&
@@ -625,30 +638,42 @@
                   return record.is_paid === true;
               }) || null;
               let bookingSurfaceAvailable = false;
+              let freeInstalled = false;
 
-              // The shared initializer still owns Free. Remove Paid before it
-              // scans [data-config], otherwise its legacy customer/Stripe branch
-              // can capture the authored Paid CTA and bypass the V3 controller.
+              // The GitHub Free controller owns only the accepted Free option.
+              // Remove Paid before it binds the authored chooser, then restore
+              // the complete canonical set for the separate Paid controller.
               primeBookingModalOptions(freeConfigs);
               if (freeConfigs.length) {
-                  initBookingComponents(
-                      freelancerId,
-                      grant_id,
-                      freeConfigs,
-                      brand_name,
-                      brand_email
-                  );
-                  bookingSurfaceAvailable = true;
+                  const installed =
+                      typeof freeCallBooking.installFreeBookingController === 'function' &&
+                      freeCallBooking.installFreeBookingController({
+                          config: freeConfigs[0],
+                          grantId: grant_id,
+                          starterMemberstackId: freelancerId,
+                          brandName: brand_name,
+                          brandEmail: brand_email,
+                      });
+                  freeInstalled = installed === true;
+                  bookingSurfaceAvailable = freeInstalled;
+                  if (!installed) {
+                      primeBookingModalOptions([]);
+                      console.warn('Free Call controller is unavailable; Free stayed closed.');
+                  }
               }
 
-              // Restore the complete canonical chooser after the Free-only
-              // initializer finishes, then give Paid to the authenticated V3
+              // Restore the complete canonical chooser after the Free
+              // controller installs, then give Paid to its authenticated V3
               // payment and booking controller.
-              primeBookingModalOptions(configs);
-              qsa('[call-type-item] [booking-popup-open][data-type="free"][data-config]').forEach(function (cta) {
-                  const item = cta.closest('[call-type-item]');
-                  if (item) item.style.display = 'block';
-              });
+              primeBookingModalOptions(freeInstalled ? configs : configs.filter(function (record) {
+                  return record.is_paid === true;
+              }));
+              if (freeInstalled) {
+                  qsa('[call-type-item] [booking-popup-open][data-type="free"][data-config]').forEach(function (cta) {
+                      const item = cta.closest('[call-type-item]');
+                      if (item) item.style.display = 'block';
+                  });
+              }
               if (paidConfig) {
                   const paidController = window.StartersPaidCallBrandPayment;
                   const installed = paidController &&
@@ -672,32 +697,6 @@
 
               if (!bookingSurfaceAvailable) return;
               setBookingButtonAvailable(true);
-              const primaryConfigId = configs[0].config_id;
-
-              /* Next Available Slot _ Handlers */
-              // loading state
-              nearestSlotSetup();
-
-              const nearestSlotTimestamp = await getNearestSlot(grant_id, primaryConfigId);
-              if (nearestSlotTimestamp) {
-                  const date = formatWithTimezone(nearestSlotTimestamp * 1000, { month: '2-digit' }).list;
-
-                  // ready state
-                  nearestSlotSetup(`${date.hour}:${date.minute}${date.dayPeriod} on ${date.month}/${date.day}`);
-              } else {
-
-                  // empty state
-                  nearestSlotSetup("No available slots");
-              }
-
-              function nearestSlotSetup(timeSlot = null) {
-                  qsa("[booking-popup-open][data-type]").forEach(async (item) => {
-                      const nextSlot = qs('[next-available-slot]', item);
-                      if (nextSlot) {
-                          nextSlot.textContent = timeSlot || "Loading...";
-                      }
-                  });
-              }
 
           } else {
               console.warn("No Configurations found for the current starter.");

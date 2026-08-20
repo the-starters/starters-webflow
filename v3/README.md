@@ -3047,8 +3047,12 @@ The browser sends neither field. The controller uses this sequence:
    readiness, configuration revision, and booking authority before it creates
    the provider booking.
 
-`hire-profile.js` passes only Free configurations to the legacy shared modal
-initializer. It gives the exact active Paid configuration and the canonical
+`hire-profile.js` passes only the exact Free configuration to the GitHub-owned
+`StartersFreeCallBooking.installFreeBookingController()` namespace. That module
+owns the authenticated Starter/configuration reads, one nearest-slot request
+per Book Call click, and one Nylas scheduler mount per Free option click. It
+binds the native Designer chooser and modal without creating form HTML. It gives
+the exact active Paid configuration and the canonical
 Starter Nylas grant to this controller. The controller uses that grant with the
 canonical Paid duration for availability and fails closed when either value is
 missing or invalid. The adapter blocks legacy Stripe provider routes on V3
@@ -3104,7 +3108,8 @@ environment, default-card, and readiness state.
 Run the focused contract tests with:
 
 ```sh
-node --test v3/scheduling-auth.test.js v3/paid-call-brand-payment.test.js
+node --test v3/scheduling-auth.test.js v3/free-call-booking.test.js \
+  v3/hire-profile.test.js v3/paid-call-brand-payment.test.js
 ```
 
 ## Dashboard Action Items panel

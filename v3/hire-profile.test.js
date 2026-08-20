@@ -287,6 +287,7 @@ function makeContext({
   getNearestSlot,
   initBookingComponents,
   createScheduler,
+  freeController,
   paidController,
   location = { hostname: 'www.thestarters.com', pathname: '/hire/ashna-rana' },
   schedulingBridge = false,
@@ -313,6 +314,28 @@ function makeContext({
     querySelectorAll: (s) => root.querySelectorAll(s),
     createElement: (tag) => makeElement(tag),
   }
+
+  const defaultFreeController = (
+    typeof getStarterByMemberId === 'function' ||
+    typeof getConfigs === 'function' ||
+    typeof initBookingComponents === 'function'
+  ) ? {
+      getStarterByMemberId,
+      getConfigs,
+      getNearestSlot,
+      installFreeBookingController: typeof initBookingComponents === 'function'
+        ? (options) => {
+            initBookingComponents(
+              options.starterMemberstackId,
+              options.grantId,
+              [options.config],
+              options.brandName,
+              options.brandEmail,
+            )
+            return true
+          }
+        : undefined,
+    } : undefined
 
   const context = {
     console: {
@@ -347,11 +370,7 @@ function makeContext({
     MEMBER: member,
     memberReady: Promise.resolve(member),
     waitForMember: (cb) => Promise.resolve().then(() => cb(member)),
-    getStarterByMemberId,
-    getConfigs,
-    getNearestSlot,
-    initBookingComponents,
-    createScheduler,
+    StartersFreeCallBooking: freeController || defaultFreeController,
     StartersPaidCallBrandPayment: paidController,
     formatWithTimezone: () => ({ list: {} }),
     starter_memberstack_id: 'mem_canary',
