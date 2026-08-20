@@ -22,7 +22,50 @@
     'pk_live_51MMhu4AW8v1kanawUQQjQTpTWBAsdVusIXoXSA26AcTHtZPYbJt6sr98ishd7cs5DXx4QeSMHw45QqrTuzftXaJm005MjZL3sz'
   const MAX_KEY_LENGTH = 128
   const MAX_PAYMENT_METHOD_LENGTH = 128
-  const bookingSurfaceGenerations = new WeakMap()
+  const MAX_GUEST_EMAILS = 5
+  const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  const bookingSurfaceOwnership = getBookingSurfaceOwnership()
+
+  function getBookingSurfaceOwnership() {
+    const existing = global.StartersBookingSurfaceOwnership
+    if (
+      existing &&
+      typeof existing.claim === 'function' &&
+      typeof existing.owns === 'function'
+    ) return existing
+    const generations = new WeakMap()
+    const ownership = {
+      claim: function (container) {
+        const generation = (generations.get(container) || 0) + 1
+        generations.set(container, generation)
+        return generation
+      },
+      owns: function (container, generation) {
+        return generations.get(container) === generation
+      },
+    }
+    global.StartersBookingSurfaceOwnership = ownership
+    return ownership
+  }
+
+  function isValidGuestEmail(email) {
+    if (!GUEST_EMAIL_PATTERN.test(email) || email.length > 254) return false
+    const at = email.lastIndexOf('@')
+    const local = email.slice(0, at)
+    const domain = email.slice(at + 1)
+    if (
+      !local ||
+      local.length > 64 ||
+      local.startsWith('.') ||
+      local.endsWith('.') ||
+      local.includes('..')
+    ) return false
+    return domain.split('.').every(function (label) {
+      return label.length > 0 &&
+        label.length <= 63 &&
+        /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label)
+    })
+  }
 
   function createAttemptKey(prefix) {
     const safePrefix = String(prefix || 'attempt').replace(/[^a-z0-9_-]/gi, '-')
@@ -56,6 +99,54 @@
       throw new Error('A valid Stripe PaymentMethod ID is required')
     }
     return value
+  }
+
+  function normalizeGuestEmails(values, excludedEmails) {
+    const excluded = new Set((excludedEmails || []).map(function (value) {
+      return String(value || '').trim().toLowerCase()
+    }).filter(Boolean))
+    const normalized = []
+    const seen = new Set()
+    ;(Array.isArray(values) ? values : []).forEach(function (value) {
+      const email = String(value || '').trim().toLowerCase()
+      if (!email) return
+      if (!isValidGuestEmail(email)) {
+        throw new Error('Enter a valid guest email address')
+      }
+      if (excluded.has(email) || seen.has(email)) return
+      if (normalized.length >= MAX_GUEST_EMAILS) {
+        throw new Error('You can add up to five guest email addresses')
+      }
+      seen.add(email)
+      normalized.push(email)
+    })
+    return normalized.sort()
+  }
+
+  function readGuestEmails(popup, excludedEmails) {
+    if (!popup || typeof popup.querySelectorAll !== 'function') {
+      throw new Error('The authored guest email form is unavailable')
+    }
+    const fields = Array.from(popup.querySelectorAll('[data-call-guest-email]'))
+    if (fields.length !== MAX_GUEST_EMAILS) {
+      throw new Error('The authored guest email form is incomplete')
+    }
+    const values = fields.map(function (field) {
+      if (
+        field &&
+        String(field.value || '').trim() &&
+        typeof field.checkValidity === 'function' &&
+        !field.checkValidity()
+      ) throw new Error('Enter a valid guest email address')
+      return field && field.value
+    })
+    return normalizeGuestEmails(values, excludedEmails)
+  }
+
+  function bookingRequestFingerprint(input) {
+    const payload = bookingPayload(input, 'fingerprint')
+    delete payload.idempotency_key
+    return JSON.stringify(payload)
   }
 
   async function authenticatedRequest(path, method, payload) {
@@ -192,6 +283,11 @@
     const context = String(source.context || '').trim()
     if (topic) payload.topic = topic
     if (context) payload.context = context
+    const guestEmails = normalizeGuestEmails(source.guest_emails, [
+      source.brand_email,
+      source.starter_email,
+    ])
+    if (guestEmails.length) payload.guest_emails = guestEmails
     return payload
   }
 
@@ -471,6 +567,36 @@
     const popup = document.querySelector('[popup-booking]')
     const container = popup && popup.querySelector('[nylas-container]')
     if (!ctas.length || !popup || !container) return false
+    const guestWrapper = popup.querySelector('[data-call-guest-fields]')
+    const guestList = guestWrapper && guestWrapper.querySelector('[data-call-guest-list]')
+    const guestError = guestWrapper && guestWrapper.querySelector('[data-call-guest-error]')
+    const guestAdd = guestWrapper && guestWrapper.querySelector('[data-call-guest-add]')
+    const guestRows = guestList
+      ? Array.from(guestList.querySelectorAll('[data-call-guest-row]'))
+      : []
+    const guestBindings = guestRows.map(function (row) {
+      return {
+        row,
+        field: row.querySelector('[data-call-guest-email]'),
+        remove: row.querySelector('[data-call-guest-remove]'),
+      }
+    })
+    const authoredGuestFields = typeof popup.querySelectorAll === 'function'
+      ? Array.from(popup.querySelectorAll('[data-call-guest-email]'))
+      : []
+    if (
+      !guestWrapper ||
+      !guestList ||
+      !guestError ||
+      !guestAdd ||
+      guestRows.length !== MAX_GUEST_EMAILS ||
+      authoredGuestFields.length !== MAX_GUEST_EMAILS ||
+      guestBindings.some(function (binding) { return !binding.field || !binding.remove }) ||
+      guestBindings.some(function (binding) { return !authoredGuestFields.includes(binding.field) }) ||
+      (typeof container.contains === 'function' && container.contains(guestWrapper))
+    ) {
+      return false
+    }
     const bindings = ctas.map(function (cta) {
       const item = cta.closest('[call-type-item]')
       const price = item && item.querySelector('[call-type-price]')
@@ -486,23 +612,23 @@
     let paidClickLock = false
     let bookingLock = false
     let bookingAttempt = null
-    let bookingFingerprint = ''
+    let activeBookingFingerprint = ''
     let activePaidGeneration = 0
     let queuedPaidGeneration = 0
 
     function nextSurfaceGeneration() {
-      const generation = (bookingSurfaceGenerations.get(container) || 0) + 1
-      bookingSurfaceGenerations.set(container, generation)
-      return generation
+      return bookingSurfaceOwnership.claim(container)
     }
 
     function ownsSurface(generation) {
-      return bookingSurfaceGenerations.get(container) === generation
+      return bookingSurfaceOwnership.owns(container, generation)
     }
 
     function claimPaidSurface() {
       const generation = nextSurfaceGeneration()
       activePaidGeneration = generation
+      resetGuestUi()
+      setGuestUiVisible(true)
       container.textContent = 'Loading available times...'
       container.setAttribute('data-paid-calendar-state', 'loading')
       return generation
@@ -511,6 +637,43 @@
     function fieldValue(selector) {
       const field = popup.querySelector(selector)
       return field ? String(field.value || '').trim() : ''
+    }
+
+    function setGuestError(message) {
+      guestError.textContent = String(message || '')
+      guestError.style.display = message ? 'block' : 'none'
+    }
+
+    function setGuestUiVisible(visible) {
+      guestWrapper.style.display = visible ? 'flex' : 'none'
+      guestWrapper.setAttribute('aria-hidden', visible ? 'false' : 'true')
+    }
+
+    function updateGuestControls() {
+      const visibleCount = guestBindings.filter(function (binding) {
+        return binding.row.getAttribute('aria-hidden') !== 'true'
+      }).length
+      guestAdd.disabled = visibleCount >= MAX_GUEST_EMAILS
+      guestAdd.style.display = guestAdd.disabled ? 'none' : ''
+    }
+
+    function resetGuestUi() {
+      guestBindings.forEach(function (binding, index) {
+        binding.field.value = ''
+        binding.field.disabled = index !== 0
+        binding.row.style.display = index === 0 ? 'flex' : 'none'
+        binding.row.setAttribute('aria-hidden', index === 0 ? 'false' : 'true')
+        binding.remove.style.display = index === 0 ? 'none' : ''
+      })
+      setGuestError('')
+      updateGuestControls()
+    }
+
+    function closeGuestUi() {
+      resetGuestUi()
+      setGuestUiVisible(false)
+      bookingAttempt = null
+      activeBookingFingerprint = ''
     }
 
     function showBookingError(error) {
@@ -523,18 +686,30 @@
 
     async function submitBooking(slot) {
       if (bookingLock) return
-      const fingerprint = String(slot.start) + '|' + String(slot.end)
-      if (!bookingAttempt || bookingFingerprint !== fingerprint) {
-        bookingFingerprint = fingerprint
-        bookingAttempt = createBookingAttempt({
-          starter_slug: settings.starterSlug,
-          config_id: config.config_id,
-          start: slot.start,
-          end: slot.end,
-          timezone: slot.timezone,
-          topic: fieldValue('[name="topic"], [booking-topic]'),
-          context: fieldValue('[name="context"], [booking-context]'),
-        })
+      let guestEmails
+      try {
+        guestEmails = readGuestEmails(popup, [settings.brandEmail, settings.starterEmail])
+        setGuestError('')
+      } catch (error) {
+        setGuestError(error && error.message)
+        throw error
+      }
+      const bookingInput = {
+        starter_slug: settings.starterSlug,
+        config_id: config.config_id,
+        start: slot.start,
+        end: slot.end,
+        timezone: slot.timezone,
+        topic: fieldValue('[name="topic"], [booking-topic]'),
+        context: fieldValue('[name="context"], [booking-context]'),
+        guest_emails: guestEmails,
+        brand_email: settings.brandEmail,
+        starter_email: settings.starterEmail,
+      }
+      const fingerprint = bookingRequestFingerprint(bookingInput)
+      if (!bookingAttempt || activeBookingFingerprint !== fingerprint) {
+        activeBookingFingerprint = fingerprint
+        bookingAttempt = createBookingAttempt(bookingInput)
       }
       bookingLock = true
       try {
@@ -543,6 +718,7 @@
         if (successText) {
           successText.textContent = 'Your paid call request was sent. We will notify you when the Starter confirms it.'
         }
+        closeGuestUi()
         switchStep(popup, 'success')
         return result
       } finally {
@@ -665,9 +841,49 @@
       '[call-type-item] [booking-popup-open][data-type="free"][data-config]',
     )).forEach(function (cta) {
       if (typeof cta.addEventListener === 'function') {
-        cta.addEventListener('click', nextSurfaceGeneration, true)
+        cta.addEventListener('click', function () {
+          closeGuestUi()
+          nextSurfaceGeneration()
+        }, true)
       }
     })
+
+    guestAdd.addEventListener('click', function (event) {
+      event.preventDefault()
+      const next = guestBindings.find(function (binding) {
+        return binding.row.getAttribute('aria-hidden') === 'true'
+      })
+      if (!next) return
+      next.row.style.display = 'flex'
+      next.row.setAttribute('aria-hidden', 'false')
+      next.field.disabled = false
+      if (typeof next.field.focus === 'function') next.field.focus()
+      updateGuestControls()
+    })
+
+    guestBindings.forEach(function (binding, index) {
+      binding.remove.addEventListener('click', function (event) {
+        event.preventDefault()
+        binding.field.value = ''
+        if (index !== 0) {
+          binding.field.disabled = true
+          binding.row.style.display = 'none'
+          binding.row.setAttribute('aria-hidden', 'true')
+        }
+        setGuestError('')
+        updateGuestControls()
+      })
+    })
+
+    Array.from(popup.querySelectorAll(
+      '[data-modal-close], [booking-popup-close], [popup-booking-close]',
+    )).forEach(function (control) {
+      if (typeof control.addEventListener === 'function') {
+        control.addEventListener('click', closeGuestUi)
+      }
+    })
+
+    closeGuestUi()
 
     bindings.forEach(function (binding) {
       const cta = binding.cta
@@ -689,6 +905,7 @@
     authenticatedRequest,
     authenticatedPost,
     bookingPayload,
+    bookingRequestFingerprint,
     canonicalPaidPrice,
     createBookingAttempt,
     createAttemptKey,
@@ -699,7 +916,9 @@
     getPaidAvailability,
     installPaidBookingController,
     mountPaidCalendar,
+    normalizeGuestEmails,
     normalizeAvailabilitySlots,
+    readGuestEmails,
     validateKey,
     validatePaymentMethodId,
   }

@@ -1,7 +1,7 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-19
-Status: Phase 2 native-CMS source cutover ready for release
+Last updated: 2026-08-20
+Status: Free Call GitHub ownership prepared locally; Webflow cutover pending
 
 ## What this is
 
@@ -32,12 +32,14 @@ Webflow → hire template → Page Settings → Custom Code → **Head**:
 ```html
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-v3-stage.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/free-call-booking.js"></script>
 ```
 
 Use [`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
-as the owned embed source. Both tags are intentionally synchronous. The adapter
-must own scheduling requests before the shared **Call Scheduling - Global Code**
-component can execute its legacy helpers.
+as the owned embed source. All three tags are intentionally synchronous. The
+adapter must own scheduling requests, and the Free controller must define its
+namespace, before the shared **Call Scheduling - Global Code** component can
+execute its legacy helpers.
 
 Webflow → hire template → Page Settings → Custom Code → **Footer**:
 
@@ -45,7 +47,7 @@ Webflow → hire template → Page Settings → Custom Code → **Footer**:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/hire-profile.js"></script>
 ```
 
-Nothing else belongs in that footer. The page **head** keeps the two synchronous
+Nothing else belongs in that footer. The page **head** keeps the three synchronous
 scheduling loads above before the shared component. Its other page scripts can
 remain deferred (`paid-call-brand-payment.js`,
 `freelancer-cms/stripe-connect.js`, `reviews.js`, `project-form.js`,
@@ -59,7 +61,7 @@ remain deferred (`paid-call-brand-payment.js`,
 | Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
 | Services call cards (Free / Paid Consulting) | owner: live connection state · anonymous + brand: public search record | this file / Nylas, Stripe, or Algolia |
 | Freelance / Retainer rate cards | everyone | this file / Algolia record, cloned from the section's Default card |
-| Free booking popup | signed-in Brand members | this file + shared Free initializer / Nylas |
+| Free booking popup | signed-in Brand members | this file + `free-call-booking.js` / authenticated Xano + Nylas |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
 | Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more |
 
@@ -77,13 +79,15 @@ The file reads the page-owned identity and shared helper globals from `window`.
 It stands down with a `[hire-profile]` warning when `qs`, `qsa`,
 `waitForMember`, or `starter_memberstack_id` is missing, because an uncaught
 `ReferenceError` would abort the whole file and take every section with it.
-The booking globals are guaranteed by the verified page install order below.
+The Free booking namespace is guaranteed by the page install order above.
 
 - Site head: `qs`, `qsa`, `MEMBER`, `memberReady`, `waitForMember`
 - Page embeds: `starter_memberstack_id`, `stripe_charges`, and the CMS-bound
   `[data-starter-xano-id]` carrier inside `.data-native-binding`
-- Booking embeds: `getStarterByMemberId`, `getConfigs`, `getNearestSlot`,
-  `initBookingComponents`, `formatWithTimezone`
+- GitHub module: `window.StartersFreeCallBooking`. It owns
+  `getStarterByMemberId`, `getConfigs`, `getNearestSlot`, the Free chooser,
+  and the Nylas Free scheduler. `hire-profile.js` does not use the old bare
+  booking globals.
 - jQuery `$` — used by the dropdown and anchor-scroll blocks only; each is
   individually guarded, so a missing jQuery costs those two behaviours and
   nothing else. The anchor utilities also ignore a bare `#` or an invalid hash
@@ -95,14 +99,15 @@ The booking globals are guaranteed by the verified page install order below.
   to re-evaluate the Services section and its TOC link. The call is guarded:
   a missing or failing cosmetic hook must not stop card rendering.
 
-### Dependency contract, verified on production
+### Dependency contract
 
 Checked on `www.thestarters.com/hire/ashna-rana` at `document.readyState:
 "complete"` — i.e. exactly the moment a deferred script runs — on 2026-08-16:
 
 | Global | At defer time |
 | --- | --- |
-| `qs`, `qsa`, `waitForMember`, `getStarterByMemberId`, `getConfigs`, `getNearestSlot`, `initBookingComponents`, `formatWithTimezone`, `$` | `function` |
+| `qs`, `qsa`, `waitForMember`, `$` | `function` |
+| `StartersFreeCallBooking` | required frozen object after the pending GitHub/Webflow cutover |
 | `MEMBER`, `memberReady`, `WfAlgolia` | `object` |
 | `starter_memberstack_id` | `string` |
 | `stripe_charges` | property present, value `undefined` |
@@ -174,12 +179,12 @@ The beside-services calendar markup remains authored for possible future use,
 but runtime keeps `[data-availability-element="wrapper"]` hidden. The live flow
 uses the existing modal sequence: Book Call opens `popup-booking-main`, and an
 eligible Free or Paid option opens `popup-booking`. Free uses the Nylas public
-component. Paid uses the authenticated calendar and booking flow owned by
+component through `StartersFreeCallBooking`. Paid uses the authenticated calendar and booking flow owned by
 [`README.md`](README.md#brand-paid-call-payment-method-client) inside the same
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
 production route map. The authored Book Call wrapper stays hidden and
 `aria-hidden="true"` until canonical discovery produces a Free option that the
-shared initializer can own or a Paid option that the V3 controller accepts.
+GitHub Free controller can own or a Paid option that the V3 controller accepts.
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
 
@@ -206,7 +211,7 @@ transactional email, or a booking submission by itself.
 
 `nylas_configurations/get_bookable/v3` owns the authoritative bookable-set
 filter. `hire-profile.js` applies a second, fail-closed check before it gives
-that set to the shared modal. Each record must have a `config_id`, `active ===
+that set to the two GitHub modal controllers. Each record must have a `config_id`, `active ===
 true`, and the host's exact `data_environment` (`test` on the Webflow test host,
 `production` on the production hosts). Free records must have `is_paid ===
 false`. Paid records must have `is_paid === true` and the matching
@@ -226,8 +231,11 @@ CTA. It also marks unavailable options with `data-booking-unavailable` and
 even if a delayed shared-initializer callback changes their inline display.
 After discovery accepts the canonical set, the controller assigns each accepted
 Free or Paid `config_id` and removes both unavailable markers for that option.
-The shared initializer receives only the accepted Free configuration and keeps
-the existing Free modal flow. `paid-call-brand-payment.js` receives the exact
+`free-call-booking.js` receives only the accepted Free configuration and keeps
+the existing Free modal flow. It replaces handlers instead of adding duplicate
+listeners. Each Book Call click makes one availability request, and each Free
+option click mounts one scheduler in the existing `[nylas-container]`.
+`paid-call-brand-payment.js` receives the exact
 accepted Paid configuration and owns that authored CTA, Stripe Card Element,
 and paid booking command. A call type without one exact accepted configuration
 keeps no `data-config` and retains the structural hide. This keeps an authored
@@ -243,6 +251,28 @@ in the Nylas booking payload for Xano environment routing and ownership checks.
 Name, Email, Add guest, and Call Context remain visible. This presentation-only
 change does not apply to Paid Consulting Call. The Paid flow is described in
 [`README.md`](README.md#brand-paid-call-payment-method-client).
+
+The Paid guest-field markup, validation, payload, and retry contract is owned by
+the [Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
+Its five native Designer-authored guest rows sit outside `[nylas-container]`.
+The Paid controller fails closed when that complete structure is absent and
+owns its Paid/Free/close/success visibility and reset lifecycle.
+
+## Inline Global Code cutover boundary
+
+The released Webflow component still contains legacy JavaScript across its
+Global Code embeds. The scoped cutover removes only the Free behavior now owned
+by `free-call-booking.js`: Starter booking-profile reads, bookable configuration
+reads, nearest-slot reads, Free chooser handlers, and Free Nylas scheduler
+mounting. Keep the native chooser, modal shell, Nylas container, and success
+step in Designer.
+
+Do not port or remove the legacy Paid/Stripe branches, dashboard call lists,
+call details, confirmation, decline, cancel, reschedule, payment actions, or
+unrelated component code as part of this change. Those areas have separate V3
+owners or require a separate cutover. Remove the old Free handlers only in the
+same authorized Webflow publish that installs the new script. This prevents two
+owners from binding the same click.
 
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code

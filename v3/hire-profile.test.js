@@ -287,6 +287,7 @@ function makeContext({
   getNearestSlot,
   initBookingComponents,
   createScheduler,
+  freeController,
   paidController,
   location = { hostname: 'www.thestarters.com', pathname: '/hire/ashna-rana' },
   schedulingBridge = false,
@@ -313,6 +314,28 @@ function makeContext({
     querySelectorAll: (s) => root.querySelectorAll(s),
     createElement: (tag) => makeElement(tag),
   }
+
+  const defaultFreeController = (
+    typeof getStarterByMemberId === 'function' ||
+    typeof getConfigs === 'function' ||
+    typeof initBookingComponents === 'function'
+  ) ? {
+      getStarterByMemberId,
+      getConfigs,
+      getNearestSlot,
+      installFreeBookingController: typeof initBookingComponents === 'function'
+        ? (options) => {
+            initBookingComponents(
+              options.starterMemberstackId,
+              options.grantId,
+              [options.config],
+              options.brandName,
+              options.brandEmail,
+            )
+            return true
+          }
+        : undefined,
+    } : undefined
 
   const context = {
     console: {
@@ -347,11 +370,7 @@ function makeContext({
     MEMBER: member,
     memberReady: Promise.resolve(member),
     waitForMember: (cb) => Promise.resolve().then(() => cb(member)),
-    getStarterByMemberId,
-    getConfigs,
-    getNearestSlot,
-    initBookingComponents,
-    createScheduler,
+    StartersFreeCallBooking: freeController || defaultFreeController,
     StartersPaidCallBrandPayment: paidController,
     formatWithTimezone: () => ({ list: {} }),
     starter_memberstack_id: 'mem_canary',
@@ -988,7 +1007,10 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
       planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
     },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getStarterByMemberId: async () => ({
+      nylas_grant_id: 'grant_prod',
+      nylas_grant_email: 'starter@example.com',
+    }),
     getConfigs: async () => configs,
     getNearestSlot: async () => null,
     initBookingComponents: (...args) => {
@@ -1132,7 +1154,10 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
       planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getStarterByMemberId: async () => ({
+      nylas_grant_id: 'grant_prod',
+      nylas_grant_email: 'starter@example.com',
+    }),
     getConfigs: async () => configs,
     getNearestSlot: async () => null,
     initBookingComponents: (...args) => bookingCalls.push(args),
@@ -1156,6 +1181,7 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   assert.equal(paidCalls[0].config.config_id, 'paid_live')
   assert.equal(paidCalls[0].grantId, 'grant_prod')
   assert.equal(paidCalls[0].starterSlug, 'ashna-rana')
+  assert.equal(paidCalls[0].starterEmail, 'starter@example.com')
   assert.equal(page.freeModalCta.getAttribute('data-config'), 'free_live')
   assert.equal(page.paidModalCta.getAttribute('data-config'), 'paid_live')
   assert.equal(page.freeModalOption.getAttribute('data-booking-unavailable'), null)
