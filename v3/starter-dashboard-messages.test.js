@@ -62,6 +62,7 @@ function loadTile(options = {}) {
     },
     Session: function Session(sessionOptions) {
       calls.sessions.push(sessionOptions)
+      this.onMessage = () => {}
       this.unreads = { onChange() {} }
     },
   }
@@ -118,6 +119,7 @@ function loadTile(options = {}) {
 
 function loadRenderedRecent(recent, unreads = [], options = {}) {
   const calls = { windows: [], conversations: 0, fetches: 0, aborts: 0 }
+  let messageHandler
   let resolveRecentFetch
   let unreadHandler
   const recentTimeouts = []
@@ -206,6 +208,9 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
       : Promise.resolve(),
     User: function User() {},
     Session: function Session() {
+      this.onMessage = (handler) => {
+        messageHandler = handler
+      }
       this.conversation = () => {
         calls.conversations += 1
         return {}
@@ -300,6 +305,9 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
   return {
     calls,
     empty,
+    emitMessage(message = {}) {
+      messageHandler(message)
+    },
     emitUnreads(nextUnreads) {
       unreadHandler(nextUnreads)
     },
@@ -710,6 +718,70 @@ test('SDK activity refreshes cards in authoritative proxy order', async () => {
   assert.deepEqual(
     list.children.map((card) => card.fields.name.textContent),
     ['Newly Active Brand', 'First Brand', 'Second Brand'],
+  )
+})
+
+test('message activity refreshes proxy order without an unread change', async () => {
+  const { calls, emitMessage, list } = loadRenderedRecent(
+    [
+      {
+        id: 'one:mem_me|mem_first',
+        participant_name: 'First Brand',
+        last_message_text: 'First message',
+        last_message_at: 3,
+        unread: false,
+      },
+      {
+        id: 'one:mem_me|mem_second',
+        participant_name: 'Second Brand',
+        last_message_text: 'Second message',
+        last_message_at: 2,
+        unread: false,
+      },
+      {
+        id: 'one:mem_me|mem_third',
+        participant_name: 'Third Brand',
+        last_message_text: 'Third message',
+        last_message_at: 1,
+        unread: false,
+      },
+    ],
+    [],
+    {
+      refreshedRecent: [
+        {
+          id: 'one:mem_me|mem_third',
+          participant_name: 'Third Brand',
+          last_message_text: 'Reply from me',
+          last_message_at: 4,
+          unread: false,
+        },
+        {
+          id: 'one:mem_me|mem_first',
+          participant_name: 'First Brand',
+          last_message_text: 'First message',
+          last_message_at: 3,
+          unread: false,
+        },
+        {
+          id: 'one:mem_me|mem_second',
+          participant_name: 'Second Brand',
+          last_message_text: 'Second message',
+          last_message_at: 2,
+          unread: false,
+        },
+      ],
+    },
+  )
+
+  await settle()
+  emitMessage({ senderId: MY_ID })
+  await settle()
+
+  assert.equal(calls.fetches, 2)
+  assert.deepEqual(
+    list.children.map((card) => card.fields.name.textContent),
+    ['Third Brand', 'First Brand', 'Second Brand'],
   )
 })
 

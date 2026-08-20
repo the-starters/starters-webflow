@@ -725,6 +725,10 @@
       me,
     })
 
+    session.onMessage(() => {
+      refreshRecent()
+    })
+
     let unreadActivitySignature = null
     session.unreads.onChange((unreads) => {
       const nextUnreads = unreads || []
