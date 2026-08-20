@@ -1826,9 +1826,10 @@ copy in page head/footer code.
 
 The live `detail_hire` template is the timing exception. Install
 [`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
-in its Page Settings head so `scheduling-auth.js` and
-`scheduling-v3-stage.js` execute synchronously before the shared scheduling
-component. A deferred adapter can lose the first legacy scheduling request.
+in its Page Settings head so `scheduling-auth.js`, `scheduling-v3-stage.js`, and
+`free-call-booking.js` execute synchronously before the shared scheduling
+component. A deferred adapter can lose the first legacy scheduling request, and
+a deferred Free controller can lose ownership of the first chooser binding.
 
 Current safety boundary:
 
@@ -3047,16 +3048,14 @@ The browser sends neither field. The controller uses this sequence:
    readiness, configuration revision, and booking authority before it creates
    the provider booking.
 
-`hire-profile.js` passes only the exact Free configuration to the GitHub-owned
-`StartersFreeCallBooking.installFreeBookingController()` namespace. That module
-owns the authenticated Starter/configuration reads, one nearest-slot request
-per Book Call click, and one Nylas scheduler mount per Free option click. It
-binds the native Designer chooser and modal without creating form HTML. It gives
-the exact active Paid configuration and the canonical
-Starter Nylas grant to this controller. The controller uses that grant with the
-canonical Paid duration for availability and fails closed when either value is
-missing or invalid. The adapter blocks legacy Stripe provider routes on V3
-scheduling surfaces. For every accepted Paid CTA, the authored
+The authoritative Free controller ownership and chooser contract lives in
+[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
+After that controller installs, `hire-profile.js` gives the exact active Paid
+configuration and the canonical Starter Nylas grant to this controller. The
+controller uses that grant with the canonical Paid duration for availability
+and fails closed when either value is missing or invalid. The adapter blocks
+legacy Stripe provider routes on V3 scheduling surfaces. For every accepted
+Paid CTA, the authored
 `[call-type-item]` must contain a `[call-type-price]` node. The controller
 replaces that node's CMS or Designer text with the canonical USD value from
 `price_cents` before it reveals the Paid option. A missing price node, non-USD

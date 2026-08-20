@@ -36,9 +36,10 @@ Webflow → hire template → Page Settings → Custom Code → **Head**:
 ```
 
 Use [`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
-as the owned embed source. Both tags are intentionally synchronous. The adapter
-must own scheduling requests before the shared **Call Scheduling - Global Code**
-component can execute its legacy helpers.
+as the owned embed source. All three tags are intentionally synchronous. The
+adapter must own scheduling requests, and the Free controller must define its
+namespace, before the shared **Call Scheduling - Global Code** component can
+execute its legacy helpers.
 
 Webflow → hire template → Page Settings → Custom Code → **Footer**:
 
