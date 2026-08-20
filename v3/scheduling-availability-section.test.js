@@ -635,12 +635,15 @@ function loadSection(options = {}) {
       assign: (url) => assigned.push(url),
     },
     localStorage: {
-      _map: new Map(),
+      _map: new Map(Object.entries(options.localStorage || {})),
       getItem(key) {
         return this._map.has(key) ? this._map.get(key) : null
       },
       setItem(key, value) {
         this._map.set(key, String(value))
+      },
+      removeItem(key) {
+        this._map.delete(key)
       },
     },
     sessionStorage: {
@@ -975,7 +978,7 @@ test('connect-google succeeds on a brand-new starter with no availability row ye
   // the empty {items:{}, manager:null} shape) — refreshCanonicalConnectionState()'s
   // strict isAvailability() check used to throw here and block the redirect
   // before the member ever reached Google.
-  const { dom, assigned, warnings } = loadSection({
+  const { dom, assigned, warnings, window } = loadSection({
     serverState: { availability: null },
   })
   await settle()
@@ -990,6 +993,8 @@ test('connect-google succeeds on a brand-new starter with no availability row ye
   assert.equal(assigned.length, 1, 'the OAuth redirect actually happened')
   assert.ok(assigned[0].includes('nylas.example/oauth'))
   assert.ok(!warnings.some((w) => w.includes('connect-google failed')))
+  assert.ok(window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'))
+  assert.ok(window.localStorage._map.has('starter-scheduling-oauth-intent:member-a'))
 })
 
 test('hides unsupported Outlook actions and removes premature Google OAuth success copy', async () => {
@@ -1143,6 +1148,64 @@ test('OAuth cancellation rebuilds platform scheduling and restores the saved pai
     result.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'),
     false,
   )
+})
+
+test('production OAuth callback uses the durable same-origin intent fallback', async () => {
+  let canonicalState = null
+  const intentKey = 'starter-scheduling-oauth-intent:member-a'
+  const result = loadSection({
+    search: '?success=true&grant_id=hosted-grant-9&state=member-a',
+    localStorage: {
+      [intentKey]: JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: null,
+      }),
+    },
+    serverState: {
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: null,
+      },
+    },
+    postRoutes: {
+      '/grants/add/v3': () => {
+        canonicalState.grantId = 'hosted-grant-9'
+        canonicalState.grantEmail = 'jp@hirethestarters.com'
+        canonicalState.calendarId = 'primary'
+        return { status: 200, body: { grant_id: 'hosted-grant-9' } }
+      },
+    },
+  })
+  canonicalState = result.state
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 1)
+  assert.equal(result.state.grantId, 'hosted-grant-9')
+  assert.equal(result.state.availability.manager, 'calendar')
+  assert.equal(result.window.localStorage._map.has(intentKey), false)
+  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-oauth-callback'), false)
+})
+
+test('another tab does not consume the durable OAuth intent without a callback', async () => {
+  const intentKey = 'starter-scheduling-oauth-intent:member-a'
+  const result = loadSection({
+    localStorage: {
+      [intentKey]: JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.window.localStorage._map.has(intentKey), true)
 })
 
 test('OAuth cancellation recovery reuses canonical resources after partial success', async () => {

@@ -314,55 +314,84 @@
       redirectUri: redirectUri,
       paidCallIntent: paidCallIntent || null,
     }
-    try {
-      window.sessionStorage.setItem(
-        OAUTH_INTENT_PREFIX + memberId,
-        JSON.stringify(intent),
-      )
-      return intent
-    } catch (error) {
-      return null
-    }
+    return writeOAuthIntent(memberId, intent) ? intent : null
   }
 
-  function readOAuthIntent(memberId) {
+  function oauthIntentStorages(storageNames) {
+    const storages = []
+    ;(storageNames || ['sessionStorage', 'localStorage']).forEach(function (storageName) {
+      try {
+        const storage = window[storageName]
+        if (storage && !storages.includes(storage)) storages.push(storage)
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
+    return storages
+  }
+
+  function writeOAuthIntent(memberId, intent) {
+    const key = OAUTH_INTENT_PREFIX + memberId
+    const value = JSON.stringify(intent)
+    let stored = false
+    oauthIntentStorages().forEach(function (storage) {
+      try {
+        storage.setItem(key, value)
+        stored = true
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
+    return stored
+  }
+
+  function readOAuthIntent(memberId, includeDurableFallback) {
     const redirectUri = oauthRedirectUri()
     const key = OAUTH_INTENT_PREFIX + memberId
-    try {
-      const raw = window.sessionStorage.getItem(key)
-      const intent = raw ? JSON.parse(raw) : null
-      if (
-        intent &&
+    const storageNames = includeDurableFallback
+      ? ['sessionStorage', 'localStorage']
+      : ['sessionStorage']
+    for (const storage of oauthIntentStorages(storageNames)) {
+      try {
+        const raw = storage.getItem(key)
+        const intent = raw ? JSON.parse(raw) : null
+        if (
+          intent &&
           Number.isFinite(intent.createdAt) &&
           Date.now() - intent.createdAt >= 0 &&
           Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
           intent.redirectUri === redirectUri
-      ) {
-        return intent
+        ) {
+          return intent
+        }
+        storage.removeItem(key)
+      } catch (error) {
+        try {
+          storage.removeItem(key)
+        } catch (storageError) {
+          /* storage unavailable */
+        }
       }
-      window.sessionStorage.removeItem(key)
-      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
-    } catch (error) {
-      try {
-        window.sessionStorage.removeItem(key)
-      } catch (storageError) {
-        /* storage unavailable */
-      }
-      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
     }
+    return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
   }
 
   function clearOAuthIntent(memberId) {
-    try {
-      window.sessionStorage.removeItem(OAUTH_INTENT_PREFIX + memberId)
-    } catch (error) {
-      /* storage unavailable */
-    }
+    const key = OAUTH_INTENT_PREFIX + memberId
+    oauthIntentStorages().forEach(function (storage) {
+      try {
+        storage.removeItem(key)
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
   }
 
   function persistOAuthIntent(memberId, intent) {
     if (!Number.isFinite(intent.createdAt)) intent.createdAt = Date.now()
-    window.sessionStorage.setItem(OAUTH_INTENT_PREFIX + memberId, JSON.stringify(intent))
+    if (!writeOAuthIntent(memberId, intent)) {
+      throw new Error('OAuth transition could not be retained')
+    }
     return intent
   }
 
@@ -1431,7 +1460,7 @@
     try {
       // OAuth returns to this same dashboard. Xano derives `state` from the
       // authenticated member id; the callback must round-trip that exact
-      // value and a recent same-session intent before any grant write.
+      // value and a recent member-scoped intent before any grant write.
       const memberId = await writeMemberId()
       await ensureTimezone()
       const redirectUri = oauthRedirectUri()
@@ -1452,7 +1481,7 @@
       }
       // A delayed window.open occurs after awaited requests and is blocked by
       // normal browser popup protection. Same-tab navigation is reliable and
-      // preserves the sessionStorage intent needed by the callback verifier.
+      // preserves the member-scoped intent needed by the callback verifier.
       window.location.assign(url)
     } catch (error) {
       publishCalendarConnectionError()
@@ -1691,7 +1720,7 @@
             throw invalidOAuthCallback('OAuth state does not match the logged-in member')
           }
           trustedState = true
-          oauthIntent = readOAuthIntent(memberId)
+          oauthIntent = readOAuthIntent(memberId, true)
           if (oauthCallback.hasError) {
             throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
           }

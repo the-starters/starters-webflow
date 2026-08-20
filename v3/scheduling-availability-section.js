@@ -390,55 +390,84 @@
       redirectUri: redirectUri,
       paidCallIntent: paidCallIntent || null,
     }
-    try {
-      window.sessionStorage.setItem(
-        OAUTH_INTENT_PREFIX + memberId,
-        JSON.stringify(intent),
-      )
-      return intent
-    } catch (error) {
-      return null
-    }
+    return writeOAuthIntent(memberId, intent) ? intent : null
   }
 
-  function readOAuthIntent(memberId) {
-    const redirectUri = oauthRedirectUri()
-    const key = OAUTH_INTENT_PREFIX + memberId
-    try {
-      const raw = window.sessionStorage.getItem(key)
-      const intent = raw ? JSON.parse(raw) : null
-      if (
-        intent &&
-        Number.isFinite(intent.createdAt) &&
-        Date.now() - intent.createdAt >= 0 &&
-        Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
-        intent.redirectUri === redirectUri
-      ) {
-        return intent
-      }
-      window.sessionStorage.removeItem(key)
-      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
-    } catch (error) {
+  function oauthIntentStorages(storageNames) {
+    const storages = []
+    ;(storageNames || ['sessionStorage', 'localStorage']).forEach(function (storageName) {
       try {
-        window.sessionStorage.removeItem(key)
-      } catch (storageError) {
+        const storage = window[storageName]
+        if (storage && !storages.includes(storage)) storages.push(storage)
+      } catch (error) {
         /* storage unavailable */
       }
-      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
+    })
+    return storages
+  }
+
+  function writeOAuthIntent(memberId, intent) {
+    const key = OAUTH_INTENT_PREFIX + memberId
+    const value = JSON.stringify(intent)
+    let stored = false
+    oauthIntentStorages().forEach(function (storage) {
+      try {
+        storage.setItem(key, value)
+        stored = true
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
+    return stored
+  }
+
+  function readOAuthIntent(memberId, includeDurableFallback) {
+    const redirectUri = oauthRedirectUri()
+    const key = OAUTH_INTENT_PREFIX + memberId
+    const storageNames = includeDurableFallback
+      ? ['sessionStorage', 'localStorage']
+      : ['sessionStorage']
+    for (const storage of oauthIntentStorages(storageNames)) {
+      try {
+        const raw = storage.getItem(key)
+        const intent = raw ? JSON.parse(raw) : null
+        if (
+          intent &&
+          Number.isFinite(intent.createdAt) &&
+          Date.now() - intent.createdAt >= 0 &&
+          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
+          intent.redirectUri === redirectUri
+        ) {
+          return intent
+        }
+        storage.removeItem(key)
+      } catch (error) {
+        try {
+          storage.removeItem(key)
+        } catch (storageError) {
+          /* storage unavailable */
+        }
+      }
     }
+    return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
   }
 
   function clearOAuthIntent(memberId) {
-    try {
-      window.sessionStorage.removeItem(OAUTH_INTENT_PREFIX + memberId)
-    } catch (error) {
-      /* storage unavailable */
-    }
+    const key = OAUTH_INTENT_PREFIX + memberId
+    oauthIntentStorages().forEach(function (storage) {
+      try {
+        storage.removeItem(key)
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
   }
 
   function persistOAuthIntent(memberId, intent) {
     if (!Number.isFinite(intent.createdAt)) intent.createdAt = Date.now()
-    window.sessionStorage.setItem(OAUTH_INTENT_PREFIX + memberId, JSON.stringify(intent))
+    if (!writeOAuthIntent(memberId, intent)) {
+      throw new Error('OAuth transition could not be retained')
+    }
     return intent
   }
 
@@ -1264,7 +1293,7 @@
         throw invalidOAuthCallback('OAuth state does not match the logged-in member')
       }
       trustedState = true
-      oauthIntent = readOAuthIntent(memberId)
+      oauthIntent = readOAuthIntent(memberId, true)
       if (oauthCallback.hasError) {
         throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
       }
