@@ -3,7 +3,7 @@
 The native `/starter-edit-profile` form, fields, and success/error elements stay authored in Webflow. This directory owns the published-form contract and the page-specific portfolio and company controllers. It reuses the reviewed profile-photo and work-date assets from `v3/build-profile/`.
 
 The remaining inline Starter Edit Profile bodies now also have GitHub-owned extraction candidates.
-The authoritative ownership, provenance, atomic grouped-cutover, loader-order, and verification
+The authoritative ownership, provenance, atomic page-Head-Code cutover, loader-order, and verification
 contract lives in [`../profile-form/README.md`](../profile-form/README.md). This repository change
 does not install or publish those candidates.
 
