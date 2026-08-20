@@ -22,6 +22,8 @@
     'pk_live_51MMhu4AW8v1kanawUQQjQTpTWBAsdVusIXoXSA26AcTHtZPYbJt6sr98ishd7cs5DXx4QeSMHw45QqrTuzftXaJm005MjZL3sz'
   const MAX_KEY_LENGTH = 128
   const MAX_PAYMENT_METHOD_LENGTH = 128
+  const MAX_GUEST_EMAILS = 5
+  const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   const bookingSurfaceGenerations = new WeakMap()
 
   function createAttemptKey(prefix) {
@@ -56,6 +58,36 @@
       throw new Error('A valid Stripe PaymentMethod ID is required')
     }
     return value
+  }
+
+  function normalizeGuestEmails(values, excludedEmails) {
+    const excluded = new Set((excludedEmails || []).map(function (value) {
+      return String(value || '').trim().toLowerCase()
+    }).filter(Boolean))
+    const normalized = []
+    const seen = new Set()
+    ;(Array.isArray(values) ? values : []).forEach(function (value) {
+      const email = String(value || '').trim().toLowerCase()
+      if (!email) return
+      if (!GUEST_EMAIL_PATTERN.test(email)) {
+        throw new Error('Enter a valid guest email address')
+      }
+      if (excluded.has(email) || seen.has(email)) return
+      if (normalized.length >= MAX_GUEST_EMAILS) {
+        throw new Error('You can add up to five guest email addresses')
+      }
+      seen.add(email)
+      normalized.push(email)
+    })
+    return normalized.sort()
+  }
+
+  function readGuestEmails(popup, excludedEmails) {
+    if (!popup || typeof popup.querySelectorAll !== 'function') return []
+    const values = Array.from(popup.querySelectorAll('[data-call-guest-email]')).map(function (field) {
+      return field && field.value
+    })
+    return normalizeGuestEmails(values, excludedEmails)
   }
 
   async function authenticatedRequest(path, method, payload) {
@@ -192,6 +224,11 @@
     const context = String(source.context || '').trim()
     if (topic) payload.topic = topic
     if (context) payload.context = context
+    const guestEmails = normalizeGuestEmails(source.guest_emails, [
+      source.brand_email,
+      source.starter_email,
+    ])
+    if (guestEmails.length) payload.guest_emails = guestEmails
     return payload
   }
 
@@ -513,6 +550,13 @@
       return field ? String(field.value || '').trim() : ''
     }
 
+    function setGuestError(message) {
+      const error = popup.querySelector('[data-call-guest-error]')
+      if (!error) return
+      error.textContent = String(message || '')
+      error.style.display = message ? 'block' : 'none'
+    }
+
     function showBookingError(error) {
       console.error('[paid-call] booking failed', error)
       container.setAttribute('data-paid-calendar-state', 'error')
@@ -523,7 +567,15 @@
 
     async function submitBooking(slot) {
       if (bookingLock) return
-      const fingerprint = String(slot.start) + '|' + String(slot.end)
+      let guestEmails
+      try {
+        guestEmails = readGuestEmails(popup, [settings.brandEmail, settings.starterEmail])
+        setGuestError('')
+      } catch (error) {
+        setGuestError(error && error.message)
+        throw error
+      }
+      const fingerprint = [String(slot.start), String(slot.end)].concat(guestEmails).join('|')
       if (!bookingAttempt || bookingFingerprint !== fingerprint) {
         bookingFingerprint = fingerprint
         bookingAttempt = createBookingAttempt({
@@ -534,6 +586,9 @@
           timezone: slot.timezone,
           topic: fieldValue('[name="topic"], [booking-topic]'),
           context: fieldValue('[name="context"], [booking-context]'),
+          guest_emails: guestEmails,
+          brand_email: settings.brandEmail,
+          starter_email: settings.starterEmail,
         })
       }
       bookingLock = true
@@ -699,7 +754,9 @@
     getPaidAvailability,
     installPaidBookingController,
     mountPaidCalendar,
+    normalizeGuestEmails,
     normalizeAvailabilitySlots,
+    readGuestEmails,
     validateKey,
     validatePaymentMethodId,
   }

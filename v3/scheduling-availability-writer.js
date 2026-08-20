@@ -901,9 +901,9 @@
       },
       in_event_booking: {
         title: fullTitle,
-        hide_participants: true,
-        notify_participants: false,
-        disable_emails: true,
+        hide_participants: false,
+        notify_participants: true,
+        disable_emails: false,
         booking_type: 'organizer-confirmation',
         timezone: timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || '',
         conferencing: {

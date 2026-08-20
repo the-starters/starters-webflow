@@ -1040,6 +1040,9 @@ test('choosing platform creates the virtual calendar chain and configs', async (
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
   assert.equal(creates.length, 1)
   assert.match(creates[0].body.in_config_name, /^Free Consultation Call/)
+  assert.equal(creates[0].body.in_event_booking.hide_participants, false)
+  assert.equal(creates[0].body.in_event_booking.notify_participants, true)
+  assert.equal(creates[0].body.in_event_booking.disable_emails, false)
   for (const create of creates) assert.equal(create.body.grant_id, 'vgrant-1')
 
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')

@@ -934,6 +934,9 @@ test('connecting for the first time (no items at all) seeds a default Mon-Fri 09
   assert.deepEqual(configCall.body.in_availability.availability_rules.default_open_hours, [
     { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' },
   ])
+  assert.equal(configCall.body.in_event_booking.hide_participants, false)
+  assert.equal(configCall.body.in_event_booking.notify_participants, true)
+  assert.equal(configCall.body.in_event_booking.disable_emails, false)
 })
 
 test('connect-google succeeds on a brand-new starter with no availability row yet', async () => {

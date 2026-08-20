@@ -351,6 +351,69 @@ test('booking retries reuse one key and omit identity, price, card, and environm
   }
 })
 
+test('guest emails are normalized, deduplicated, bounded, and exclude the call participants', () => {
+  assert.deepEqual(api.normalizeGuestEmails([
+    ' Guest.Two@Example.com ',
+    'guest.one@example.com',
+    'GUEST.ONE@example.com',
+    'brand@example.com',
+    '',
+  ], ['BRAND@example.com', 'starter@example.com']), [
+    'guest.one@example.com',
+    'guest.two@example.com',
+  ])
+  assert.throws(
+    () => api.normalizeGuestEmails(['not-an-email']),
+    /valid guest email/,
+  )
+  assert.throws(
+    () => api.normalizeGuestEmails([
+      'one@example.com',
+      'two@example.com',
+      'three@example.com',
+      'four@example.com',
+      'five@example.com',
+      'six@example.com',
+    ]),
+    /up to five/,
+  )
+})
+
+test('paid booking sends only canonical guest emails and keeps them stable on retry', async () => {
+  const previous = global.xanoAuthFetch
+  const requests = []
+  global.xanoAuthFetch = async (url, options) => {
+    requests.push({ url, options })
+    return response({ booking_id: 'booking_with_guest', status: 'pending' })
+  }
+  try {
+    const attempt = api.createBookingAttempt({
+      starter_slug: 'jp-testiz-d',
+      config_id: 'config_paid',
+      start: 1787000000000,
+      end: 1787000900000,
+      timezone: 'Asia/Manila',
+      guest_emails: [
+        ' Guest@example.com ',
+        'guest@example.com',
+        'brand@example.com',
+      ],
+      brand_email: 'brand@example.com',
+      starter_email: 'starter@example.com',
+    }, 'paid-booking-with-guest-123')
+    await attempt.run()
+    await attempt.run()
+    assert.equal(requests.length, 2)
+    const payload = JSON.parse(requests[0].options.body)
+    assert.deepEqual(payload.guest_emails, ['guest@example.com'])
+    assert.equal(Object.hasOwn(payload, 'brand_email'), false)
+    assert.equal(Object.hasOwn(payload, 'starter_email'), false)
+    assert.equal(requests[1].options.body, requests[0].options.body)
+  } finally {
+    global.xanoAuthFetch = previous
+  }
+})
+
 test('canonical Paid price rejects stale or unsupported display authority', () => {
   assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 500 }), '$5')
   assert.equal(api.canonicalPaidPrice({ currency: 'USD', price_cents: 1250 }), '$12.50')
@@ -414,6 +477,8 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
   }
   const successText = { textContent: '' }
   const paidText = { textContent: '' }
+  const guestField = { value: 'not-an-email' }
+  const guestError = { textContent: '', style: {} }
   const steps = [
     { style: {}, getAttribute: () => 'default' },
     { style: {}, getAttribute: () => 'success' },
@@ -424,9 +489,14 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
       if (selector === '[nylas-container]') return container
       if (selector === '[booking-success-text]') return successText
       if (selector === '[paid-call-text]') return paidText
+      if (selector === '[data-call-guest-error]') return guestError
       return null
     },
-    querySelectorAll() { return steps },
+    querySelectorAll(selector) {
+      if (selector === '[data-call-guest-email]') return [guestField]
+      if (selector === '[schedule-step]') return steps
+      return []
+    },
   }
   global.document = {
     querySelector(selector) {
@@ -472,6 +542,18 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     resolveReadiness()
     await Promise.all([firstClick, secondClick])
     assert.equal(calendarCount, 1)
+    await assert.rejects(
+      calendarOptions.onConfirm({
+        start: 1787000000000,
+        end: 1787001800000,
+        timezone: 'Pacific/Auckland',
+      }),
+      /valid guest email/,
+    )
+    assert.equal(guestError.textContent, 'Enter a valid guest email address')
+    assert.equal(guestError.style.display, 'block')
+    assert.equal(requests.filter(({ url }) => url.endsWith(api.BOOKING_PATH)).length, 0)
+    guestField.value = ' Guest@Example.com '
     await Promise.all([
       calendarOptions.onConfirm({
         start: 1787000000000,
@@ -486,7 +568,11 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     ])
     const bookingRequests = requests.filter(({ url }) => url.endsWith(api.BOOKING_PATH))
     assert.equal(bookingRequests.length, 1)
-    assert.equal(JSON.parse(bookingRequests[0].options.body).timezone, 'Pacific/Auckland')
+    const bookingPayload = JSON.parse(bookingRequests[0].options.body)
+    assert.equal(bookingPayload.timezone, 'Pacific/Auckland')
+    assert.deepEqual(bookingPayload.guest_emails, ['guest@example.com'])
+    assert.equal(guestError.textContent, '')
+    assert.equal(guestError.style.display, 'none')
     assert.equal(successText.textContent.includes('paid call request was sent'), true)
     assert.equal(steps[1].style.display, 'flex')
   } finally {
