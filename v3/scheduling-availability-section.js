@@ -393,9 +393,9 @@
     return writeOAuthIntent(memberId, intent) ? intent : null
   }
 
-  function oauthIntentStorages() {
+  function oauthIntentStorages(storageNames) {
     const storages = []
-    ;['sessionStorage', 'localStorage'].forEach(function (storageName) {
+    ;(storageNames || ['sessionStorage', 'localStorage']).forEach(function (storageName) {
       try {
         const storage = window[storageName]
         if (storage && !storages.includes(storage)) storages.push(storage)
@@ -421,10 +421,13 @@
     return stored
   }
 
-  function readOAuthIntent(memberId) {
+  function readOAuthIntent(memberId, includeDurableFallback) {
     const redirectUri = oauthRedirectUri()
     const key = OAUTH_INTENT_PREFIX + memberId
-    for (const storage of oauthIntentStorages()) {
+    const storageNames = includeDurableFallback
+      ? ['sessionStorage', 'localStorage']
+      : ['sessionStorage']
+    for (const storage of oauthIntentStorages(storageNames)) {
       try {
         const raw = storage.getItem(key)
         const intent = raw ? JSON.parse(raw) : null
@@ -1290,7 +1293,7 @@
         throw invalidOAuthCallback('OAuth state does not match the logged-in member')
       }
       trustedState = true
-      oauthIntent = readOAuthIntent(memberId)
+      oauthIntent = readOAuthIntent(memberId, true)
       if (oauthCallback.hasError) {
         throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
       }

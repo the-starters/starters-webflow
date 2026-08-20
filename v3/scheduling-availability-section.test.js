@@ -1187,6 +1187,27 @@ test('production OAuth callback uses the durable same-origin intent fallback', a
   assert.equal(result.window.sessionStorage._map.has('starter-scheduling-oauth-callback'), false)
 })
 
+test('another tab does not consume the durable OAuth intent without a callback', async () => {
+  const intentKey = 'starter-scheduling-oauth-intent:member-a'
+  const result = loadSection({
+    localStorage: {
+      [intentKey]: JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.window.localStorage._map.has(intentKey), true)
+})
+
 test('OAuth cancellation recovery reuses canonical resources after partial success', async () => {
   const result = loadSection({
     search: '?error=access_denied&error_description=cancelled&state=member-a',

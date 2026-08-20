@@ -1931,6 +1931,31 @@ test('production hosted OAuth callback accepts a recent durable intent fallback'
   assert.equal(result.sessionStorage.has('starter-scheduling-oauth-callback'), false)
 })
 
+test('another tab does not consume the durable OAuth intent without a callback', async () => {
+  const intentKey = 'starter-scheduling-oauth-intent:member-a'
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    storage: {
+      ...TZ_CACHED,
+      [intentKey]: JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.storage.has(intentKey), true)
+})
+
 test('OAuth callback is stripped before bootstrap failure and survives a login reload', async () => {
   const firstLoad = loadWriter({
     hostname: 'thestarters.com',
