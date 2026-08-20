@@ -333,7 +333,11 @@ function buildNotificationModal() {
   const switchConnectGoogleBtn = actionBtn('connect-google')
   addStep('switch-calendar', [closeBtn(), switchConnectGoogleBtn])
   const oauthRedirectBtn = actionBtn('open-oauth-redirect')
-  addStep('pre-oauth', [oauthRedirectBtn])
+  const preOAuthStep = addStep('pre-oauth', [oauthRedirectBtn])
+  const preOAuthCopy = new El('p')
+  preOAuthCopy.textContent =
+    'You’ll be taken to connect your Google calendar. Your availability settings have been saved.'
+  preOAuthStep.appendChild(preOAuthCopy)
   addStep('oauth-redirect')
   addStep('virtual-connect')
   addStep('virtual-connected')
@@ -347,6 +351,7 @@ function buildNotificationModal() {
     disconnectGoogleBtn,
     switchConnectGoogleBtn,
     oauthRedirectBtn,
+    preOAuthCopy,
     errorText,
   }
 }
@@ -399,6 +404,11 @@ function buildSectionDom(options = {}) {
   connectBtnWrapper.appendChild(connectGoogleBtn)
   connectBtnWrapper.appendChild(disconnectGoogleBtn)
 
+  const connectOutlookBtn = new El('div', { 'data-availability-action': 'open-connect-outlook' })
+  connectOutlookBtn.textContent = 'Connect Outlook Calendar'
+  const disconnectOutlookBtn = new El('div', { 'data-availability-action': 'open-disconnect-outlook' })
+  disconnectOutlookBtn.textContent = 'Disconnect Outlook Calendar'
+
   connectWrapper.appendChild(labelGroup)
   connectWrapper.appendChild(connectInfoWrapper)
   connectWrapper.appendChild(connectBtnWrapper)
@@ -433,6 +443,8 @@ function buildSectionDom(options = {}) {
 
   root.appendChild(loadingSection)
   root.appendChild(connectWrapper)
+  root.appendChild(connectOutlookBtn)
+  root.appendChild(disconnectOutlookBtn)
   root.appendChild(mainWrapper)
   root.appendChild(notif.modal)
 
@@ -443,6 +455,8 @@ function buildSectionDom(options = {}) {
     connectBtnWrapper,
     labelGroup,
     connectInfoWrapper,
+    connectOutlookBtn,
+    disconnectOutlookBtn,
     mainWrapper,
     listWrapper,
     list,
@@ -936,6 +950,25 @@ test('connecting for the first time (no items at all) seeds a default Mon-Fri 09
   ])
 })
 
+test('accepts any successful provider 2xx status when creating a scheduler configuration', async () => {
+  const { dom } = loadSection({
+    serverState: { availability: { items: {}, manager: null } },
+    postRoutes: {
+      '/scheduler/configurations/create/v3': () => ({
+        status: 200,
+        body: { response: { status: 201 } },
+      }),
+    },
+  })
+  await settle()
+
+  dom.connectBtnWrapper.children[0].click()
+  await settle()
+
+  assert.equal(dom.notif.steps['virtual-connected'].style.display, '')
+  assert.equal(dom.notif.steps['request-error'].style.display, 'none')
+})
+
 test('connect-google succeeds on a brand-new starter with no availability row yet', async () => {
   // Reproduces the reported bug: a starter who has never saved any
   // availability has no canonical availability row in Xano at all (not even
@@ -957,6 +990,50 @@ test('connect-google succeeds on a brand-new starter with no availability row ye
   assert.equal(assigned.length, 1, 'the OAuth redirect actually happened')
   assert.ok(assigned[0].includes('nylas.example/oauth'))
   assert.ok(!warnings.some((w) => w.includes('connect-google failed')))
+})
+
+test('hides unsupported Outlook actions and removes premature Google OAuth success copy', async () => {
+  const { dom } = loadSection()
+  await settle()
+
+  assert.equal(dom.connectOutlookBtn.style.display, 'none')
+  assert.equal(dom.disconnectOutlookBtn.style.display, 'none')
+  assert.equal(dom.connectOutlookBtn.getAttribute('aria-hidden'), 'true')
+  assert.equal(dom.disconnectOutlookBtn.getAttribute('aria-hidden'), 'true')
+  assert.equal(dom.notif.preOAuthCopy.textContent, 'You’ll be taken to connect your Google calendar.')
+})
+
+test('rejects a nested provider failure even when the Xano transport returns HTTP 200', async () => {
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [{ config_id: 'cfg-free', duration: 30, is_paid: false, active: true }],
+      availability: {
+        items: {
+          general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] },
+        },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/scheduler/configurations/update/v3': () => ({
+        status: 200,
+        body: { response: { status: 422 } },
+      }),
+    },
+  })
+  await settle()
+
+  const card = dom.list.children.find((el) => el.dataset.id === 'general')
+  card.children[0].children[2].children[0].click()
+  const formWrapper = card.children[2]
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  assert.equal(dom.notif.steps['request-error'].style.display, '')
+  assert.equal(dom.notif.steps['availability-saved'].style.display, 'none')
 })
 
 test('boots directly into connected state when the starter already has a grant/calendar/config', async () => {

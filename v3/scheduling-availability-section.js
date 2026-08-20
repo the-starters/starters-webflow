@@ -68,6 +68,9 @@
     "We couldn't connect your Google calendar. Please try again or contact support."
   const ERROR_TEXT_DISCONNECT_GOOGLE =
     "We couldn't disconnect your Google calendar. Please try again or contact support."
+  const PRE_OAUTH_GOOGLE_COPY = "You’ll be taken to connect your Google calendar."
+  const PRE_OAUTH_GOOGLE_COPY_STALE =
+    PRE_OAUTH_GOOGLE_COPY + ' Your availability settings have been saved.'
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const isStagingHost = window.location.hostname === STAGING_HOST
@@ -198,6 +201,29 @@
   function setElementVisible(name, visible) {
     qsa(elSel(name)).forEach(function (el) {
       el.style.display = visible ? '' : 'none'
+    })
+  }
+
+  // Outlook is not supported by the current calendar workflow. Keep the
+  // existing Designer elements hidden until the provider path is implemented
+  // and verified. Also remove the stale success sentence shown before Google
+  // OAuth has started; availability is only saved after a successful return.
+  function applyCalendarUiCorrections() {
+    qsa(
+      '[' + ACTION + '="open-connect-outlook"],[' +
+        ACTION +
+        '="open-disconnect-outlook"]',
+    ).forEach(function (el) {
+      el.style.display = 'none'
+      el.setAttribute('aria-hidden', 'true')
+    })
+
+    const preOAuthStep = qs('[' + NOTIFICATION_ATTR + '="pre-oauth"]', notificationModal())
+    if (!preOAuthStep) return
+    qsa('p', preOAuthStep).forEach(function (paragraph) {
+      if (paragraph.textContent.trim() === PRE_OAUTH_GOOGLE_COPY_STALE) {
+        paragraph.textContent = PRE_OAUTH_GOOGLE_COPY
+      }
     })
   }
 
@@ -464,6 +490,11 @@
       })
     }
     return data
+  }
+
+  function providerRequestSucceeded(result) {
+    const status = Number(result && result.response && result.response.status)
+    return Number.isFinite(status) && status >= 200 && status < 300
   }
 
   /* ------------------------------------------------------------------ */
@@ -897,7 +928,7 @@
         '/scheduler/configurations/create/v3',
         payload,
       )
-      if (res && res.response && res.response.status === 200) return true
+      if (providerRequestSucceeded(res)) return true
       publishCalendarConnectionError()
       console.warn('[scheduling-section] configuration request rejected')
       return null
@@ -927,7 +958,7 @@
         },
       },
     })
-    if (res && res.response && res.response.status === 200) return true
+    if (providerRequestSucceeded(res)) return true
     publishCalendarConnectionError()
     return null
   }
@@ -2594,6 +2625,7 @@
         configs = (await getConfigs(grantId, true)) || []
       }
 
+      applyCalendarUiCorrections()
       bindConnectButtons()
       bindNotificationModalActions()
       bindCreateTrigger()
