@@ -1826,9 +1826,10 @@ copy in page head/footer code.
 
 The live `detail_hire` template is the timing exception. Install
 [`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
-in its Page Settings head so `scheduling-auth.js` and
-`scheduling-v3-stage.js` execute synchronously before the shared scheduling
-component. A deferred adapter can lose the first legacy scheduling request.
+in its Page Settings head so `scheduling-auth.js`, `scheduling-v3-stage.js`, and
+`free-call-booking.js` execute synchronously before the shared scheduling
+component. A deferred adapter can lose the first legacy scheduling request, and
+a deferred Free controller can lose ownership of the first chooser binding.
 
 Current safety boundary:
 
@@ -2396,7 +2397,10 @@ Paid-call rate: the availability controllers do not read `#price`, `data-rate`,
 or `paid_call_rate` in localStorage. They create only the free-call
 configuration. Availability edits send an availability-only update for every
 active canonical configuration, so paid title and price fields stay under the
-paid-call settings endpoints.
+paid-call settings endpoints. Free Scheduler lifecycle emails remain disabled
+to prevent duplicate Brand and Starter messages. Guest calendar invitations
+belong to the canonical backend event lifecycle after organizer confirmation,
+not to the Scheduler configuration email flags.
 
 Runtime contract:
 
@@ -3036,16 +3040,22 @@ The browser sends neither field. The controller uses this sequence:
    the provider credential and private Scheduler session off the browser.
 8. Render the month calendar and time buttons inside the authored
    `[nylas-container]` mount. The selected slot is advisory only.
-9. Submit the selected slot to `brand/booking/request/v3`. Xano rechecks the
-   exact slot, price, payment readiness, and configuration revision before it
-   creates the provider booking.
+9. Read the native `[data-call-guest-email]` fields, normalize and validate at
+   most five guest addresses, and exclude duplicates plus the Brand and Starter
+   addresses. Invalid guest input stops before the request.
+10. Submit the selected slot and canonical guest list to
+   `brand/booking/request/v3`. Xano rechecks the exact slot, price, payment
+   readiness, configuration revision, and booking authority before it creates
+   the provider booking.
 
-`hire-profile.js` passes only Free configurations to the legacy shared modal
-initializer. It gives the exact active Paid configuration and the canonical
-Starter Nylas grant to this controller. The controller uses that grant with the
-canonical Paid duration for availability and fails closed when either value is
-missing or invalid. The adapter blocks legacy Stripe provider routes on V3
-scheduling surfaces. For every accepted Paid CTA, the authored
+The authoritative Free controller ownership and chooser contract lives in
+[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
+After that controller installs, `hire-profile.js` gives the exact active Paid
+configuration and the canonical Starter Nylas grant to this controller. The
+controller uses that grant with the canonical Paid duration for availability
+and fails closed when either value is missing or invalid. The adapter blocks
+legacy Stripe provider routes on V3 scheduling surfaces. For every accepted
+Paid CTA, the authored
 `[call-type-item]` must contain a `[call-type-price]` node. The controller
 replaces that node's CMS or Designer text with the canonical USD value from
 `price_cents` before it reveals the Paid option. A missing price node, non-USD
@@ -3058,9 +3068,36 @@ then chooses Paid again, the controller runs only that latest Paid choice after
 the stale request settles.
 
 The booking payload contains only the Starter slug, configuration ID, selected
-slot, timezone, optional topic/context, and a bounded idempotency key. Price,
-payment method, Brand identity, Starter ownership, and environment stay
-server-owned.
+slot, timezone, optional topic/context, optional canonical `guest_emails`, and a
+bounded idempotency key. Guest inputs stay Webflow-authored: JavaScript reads
+`[data-call-guest-email]` and writes validation copy to the required
+`[data-call-guest-error]`; it never creates or clones guest-form HTML. The client trims,
+lowercases, validates, deduplicates, sorts, caps the list at five, and excludes
+the Brand and Starter emails. A retry for the same slot and normalized guests
+reuses the exact payload and idempotency key. Changing the slot, timezone,
+topic, context, or guest set creates a new attempt. Price, payment method, Brand identity, Starter ownership,
+booking authority, and environment stay server-owned.
+
+The Paid controller requires this native Designer structure as a sibling of,
+never a child of, `[nylas-container]`:
+
+```text
+[data-call-guest-fields]                 hidden initially
+  [data-call-guest-list]
+    [data-call-guest-row] x 5
+      input[type=email][data-call-guest-email]
+      button[type=button][data-call-guest-remove]
+  button[type=button][data-call-guest-add]
+  [data-call-guest-error][role=alert][aria-live=polite]
+```
+
+All five rows and their controls are authored in Webflow. Row one becomes
+visible when Paid owns the shared booking surface. Add and Remove only reveal,
+hide, focus, clear, or disable those existing rows. Free selection, modal close,
+and Paid success clear all guest values and validation, restore the one-row
+state, and hide the Paid guest wrapper. Missing wrapper/list/error/add/remove
+hooks, a row count other than five, or any row missing its native input or
+remove control keeps Paid closed.
 
 The client validates bounded keys and PaymentMethod IDs before network work.
 It uses `xanoAuthFetch` when the shared bridge is present and otherwise uses the
@@ -3070,7 +3107,8 @@ environment, default-card, and readiness state.
 Run the focused contract tests with:
 
 ```sh
-node --test v3/scheduling-auth.test.js v3/paid-call-brand-payment.test.js
+node --test v3/scheduling-auth.test.js v3/free-call-booking.test.js \
+  v3/hire-profile.test.js v3/paid-call-brand-payment.test.js
 ```
 
 ## Dashboard Action Items panel
