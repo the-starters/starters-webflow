@@ -2394,9 +2394,13 @@ timezone can supply that value, but does not count as canonical persistence.
 
 Paid-call rate: the availability controllers do not read `#price`, `data-rate`,
 or `paid_call_rate` in localStorage. They create only the free-call
-configuration. Availability edits send an availability-only update for every
-active canonical configuration, so paid title and price fields stay under the
-paid-call settings endpoints.
+configuration. New Free configurations show participants and enable provider
+email notifications, so the organizer and attendees receive invitations and
+later booking updates. Bootstrap repairs active Free configurations that still
+hide participants or suppress those emails. Availability edits refresh both
+availability and those event-booking settings for Free configurations; Paid
+configuration updates remain availability-only, so paid title and price fields
+stay under the paid-call settings endpoints.
 
 Runtime contract:
 
@@ -3036,9 +3040,13 @@ The browser sends neither field. The controller uses this sequence:
    the provider credential and private Scheduler session off the browser.
 8. Render the month calendar and time buttons inside the authored
    `[nylas-container]` mount. The selected slot is advisory only.
-9. Submit the selected slot to `brand/booking/request/v3`. Xano rechecks the
-   exact slot, price, payment readiness, and configuration revision before it
-   creates the provider booking.
+9. Read the native `[data-call-guest-email]` fields, normalize and validate at
+   most five guest addresses, and exclude duplicates plus the Brand and Starter
+   addresses. Invalid guest input stops before the request.
+10. Submit the selected slot and canonical guest list to
+   `brand/booking/request/v3`. Xano rechecks the exact slot, price, payment
+   readiness, configuration revision, and booking authority before it creates
+   the provider booking.
 
 `hire-profile.js` passes only Free configurations to the legacy shared modal
 initializer. It gives the exact active Paid configuration and the canonical
@@ -3058,9 +3066,15 @@ then chooses Paid again, the controller runs only that latest Paid choice after
 the stale request settles.
 
 The booking payload contains only the Starter slug, configuration ID, selected
-slot, timezone, optional topic/context, and a bounded idempotency key. Price,
-payment method, Brand identity, Starter ownership, and environment stay
-server-owned.
+slot, timezone, optional topic/context, optional canonical `guest_emails`, and a
+bounded idempotency key. Guest inputs stay Webflow-authored: JavaScript reads
+`[data-call-guest-email]` and writes validation copy only to the optional
+`[data-call-guest-error]`; it never generates the guest form. The client trims,
+lowercases, validates, deduplicates, sorts, caps the list at five, and excludes
+the Brand and Starter emails. A retry for the same slot and normalized guests
+reuses the exact payload and idempotency key; changing the slot or guest set
+creates a new attempt. Price, payment method, Brand identity, Starter ownership,
+booking authority, and environment stay server-owned.
 
 The client validates bounded keys and PaymentMethod IDs before network work.
 It uses `xanoAuthFetch` when the shared bridge is present and otherwise uses the

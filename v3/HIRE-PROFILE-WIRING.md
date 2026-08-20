@@ -244,6 +244,9 @@ Name, Email, Add guest, and Call Context remain visible. This presentation-only
 change does not apply to Paid Consulting Call. The Paid flow is described in
 [`README.md`](README.md#brand-paid-call-payment-method-client).
 
+The Paid guest-field markup, validation, payload, and retry contract is owned by
+the [Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
+
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code
 fault. Card rendering is verified on production.
