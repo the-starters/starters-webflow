@@ -3099,6 +3099,12 @@ state, and hide the Paid guest wrapper. Missing wrapper/list/error/add/remove
 hooks, a row count other than five, or any row missing its native input or
 remove control keeps Paid closed.
 
+The guest wrapper can remain a native Webflow Form Block for Designer ownership,
+but it is not an email form. The controller captures submit events on the
+wrapper and its contained form, prevents the native submit, and stops later
+Webflow, Email Notification, or Zapier submit handlers. Paid booking still runs
+only from the calendar confirmation through `brand/booking/request/v3`.
+
 The client validates bounded keys and PaymentMethod IDs before network work.
 It uses `xanoAuthFetch` when the shared bridge is present and otherwise uses the
 shared Xano token helper. The backend remains authoritative for customer,

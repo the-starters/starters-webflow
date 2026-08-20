@@ -106,6 +106,23 @@ function guestQueryAll(ui, selector) {
   return []
 }
 
+test('the native guest Form Block cannot submit through Webflow handlers', () => {
+  const form = new EventTarget()
+  const wrapper = new EventTarget()
+  wrapper.querySelectorAll = function (selector) {
+    return selector === 'form' ? [form] : []
+  }
+  let webflowSubmitCount = 0
+
+  assert.equal(api.installGuestFormSubmitGuard(wrapper), true)
+  form.addEventListener('submit', function () { webflowSubmitCount += 1 })
+
+  const event = new Event('submit', { bubbles: true, cancelable: true })
+  assert.equal(form.dispatchEvent(event), false)
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(webflowSubmitCount, 0)
+})
+
 test('setup retries reuse one bounded attempt key', async () => {
   const previous = global.xanoAuthFetch
   const requests = []

@@ -25,6 +25,7 @@
   const MAX_GUEST_EMAILS = 5
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
+  const guardedGuestSubmitTargets = new WeakSet()
 
   function getBookingSurfaceOwnership() {
     const existing = global.StartersBookingSurfaceOwnership
@@ -603,6 +604,7 @@
       return { cta, item, price }
     })
     if (bindings.some(function (binding) { return !binding.item || !binding.price })) return false
+    installGuestFormSubmitGuard(guestWrapper)
 
     let cardElement = null
     let cardSetupInstalled = false
@@ -895,6 +897,31 @@
     return true
   }
 
+  function installGuestFormSubmitGuard(guestWrapper) {
+    if (!guestWrapper || typeof guestWrapper.addEventListener !== 'function') return false
+
+    function guard(target) {
+      if (guardedGuestSubmitTargets.has(target)) return
+      target.addEventListener('submit', blockNativeGuestSubmit, true)
+      guardedGuestSubmitTargets.add(target)
+    }
+
+    guard(guestWrapper)
+    if (typeof guestWrapper.querySelectorAll === 'function') {
+      Array.from(guestWrapper.querySelectorAll('form')).forEach(function (form) {
+        if (form !== guestWrapper && typeof form.addEventListener === 'function') {
+          guard(form)
+        }
+      })
+    }
+    return true
+  }
+
+  function blockNativeGuestSubmit(event) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
   const api = {
     SETUP_PATH,
     SET_DEFAULT_PATH,
@@ -914,6 +941,7 @@
     availabilityQuery,
     getReadiness,
     getPaidAvailability,
+    installGuestFormSubmitGuard,
     installPaidBookingController,
     mountPaidCalendar,
     normalizeGuestEmails,
