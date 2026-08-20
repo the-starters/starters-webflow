@@ -3,7 +3,7 @@
 The native Webflow forms and their authored success/error elements stay in Webflow. Browser logic lives in this directory and is loaded from GitHub through jsDelivr.
 
 The remaining inline Build Profile bodies now also have GitHub-owned extraction candidates. The
-authoritative ownership, provenance, atomic grouped-cutover, loader-order, and verification contract
+authoritative ownership, provenance, atomic page-Head-Code cutover, loader-order, and verification contract
 lives in [`../profile-form/README.md`](../profile-form/README.md). This repository change does not
 install or publish those candidates.
 

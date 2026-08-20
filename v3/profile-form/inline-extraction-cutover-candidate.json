@@ -1,5 +1,5 @@
 {
-  "schema": "profile_form_inline_extraction_cutover_candidate_v2",
+  "schema": "profile_form_inline_extraction_cutover_candidate_v3",
   "capturedAt": "2026-08-20T08:46:36.631Z",
   "orderRecapturedAt": "2026-08-20T09:20:50Z",
   "orderEvidence": "authenticated staging HTML plus read-only Webflow component/page content",
@@ -7,7 +7,7 @@
   "publishAuthorized": false,
   "installAuthorized": false,
   "nativeFormOwnership": "webflow",
-  "cutoverModel": "grouped_route_anchor",
+  "cutoverModel": "route_page_head_group_and_scoped_inline_removal",
   "sources": {
     "sharedFoundation": {
       "routes": [
@@ -195,6 +195,10 @@
     {
       "route": "/starter-edit-profile",
       "pageId": "6a44b2477e93b2d11b905de0",
+      "install": {
+        "scope": "page-head-freeform-code",
+        "action": "append_complete_route_loader_group_to_exact_saved_head"
+      },
       "anchor": {
         "scope": "nested-shared-component",
         "pageComponentInstanceId": "2c015b48-4ba6-2ec3-4876-c06707317e1c",
@@ -204,7 +208,7 @@
         "publishedScriptIndex": 91,
         "sourceKey": "sharedFoundation",
         "beforeEmbedSha256": "32d1e6687ec692197e18e6b8b9507b05b051b5311c86777cbe64eb2b997f1c92",
-        "action": "replace_exact_embed_with_complete_route_loader_group"
+        "action": "empty_exact_shared_foundation_embed_after_all_route_heads_are_saved"
       },
       "remove": [
         { "scope": "shared-component", "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64", "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6b", "sourceKey": "incrementalDropdowns", "beforeEmbedSha256": "5a9dc4899b2a24dc6bba5407db0a6c21b630dcc618f121f3c682f0cbb830302b" },
@@ -233,6 +237,10 @@
     {
       "route": "/build-profile/consult",
       "pageId": "6a3e73ae5f60c547e5e9d041",
+      "install": {
+        "scope": "page-head-freeform-code",
+        "action": "append_complete_route_loader_group_to_exact_saved_head"
+      },
       "anchor": {
         "scope": "shared-component",
         "pageComponentInstanceId": "b732e7f5-4c02-3273-f3df-90d6f623fa63",
@@ -241,7 +249,7 @@
         "publishedScriptIndex": 64,
         "sourceKey": "sharedFoundation",
         "beforeEmbedSha256": "32d1e6687ec692197e18e6b8b9507b05b051b5311c86777cbe64eb2b997f1c92",
-        "action": "replace_exact_embed_with_complete_route_loader_group"
+        "action": "empty_exact_shared_foundation_embed_after_all_route_heads_are_saved"
       },
       "remove": [
         { "scope": "shared-component", "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64", "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6a", "sourceKey": "buildDraftState", "beforeEmbedSha256": "073be43ebecc9e3a21c9f57275e2867c156a83cb187ace73fc1890071a0fb428" },
@@ -274,6 +282,10 @@
     {
       "route": "/build-profile/full-profile",
       "pageId": "6a01b0ef0dd420942a5f964a",
+      "install": {
+        "scope": "page-head-freeform-code",
+        "action": "append_complete_route_loader_group_to_exact_saved_head"
+      },
       "anchor": {
         "scope": "shared-component",
         "pageComponentInstanceId": "d7eff4d8-d2d0-9f00-759f-c7c52fff4a2f",
@@ -282,7 +294,7 @@
         "publishedScriptIndex": 66,
         "sourceKey": "sharedFoundation",
         "beforeEmbedSha256": "32d1e6687ec692197e18e6b8b9507b05b051b5311c86777cbe64eb2b997f1c92",
-        "action": "replace_exact_embed_with_complete_route_loader_group"
+        "action": "empty_exact_shared_foundation_embed_after_all_route_heads_are_saved"
       },
       "remove": [
         { "scope": "shared-component", "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64", "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6a", "sourceKey": "buildDraftState", "beforeEmbedSha256": "073be43ebecc9e3a21c9f57275e2867c156a83cb187ace73fc1890071a0fb428" },
