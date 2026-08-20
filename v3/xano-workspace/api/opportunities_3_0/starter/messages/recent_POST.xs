@@ -32,7 +32,7 @@ query "starter/messages/recent" verb=POST {
     api.request {
       url = "https://api.talkjs.com/v1/LmYV8DIA/users/"
         |concat:$member_id:""
-        |concat:"/conversations?limit=3&lastMessageAfter=0&orderBy=lastActivity&orderDirection=DESC":""
+        |concat:"/conversations?limit=3&lastMessageAfter=0&sortBy=lastActivity+DESC":""
       method = "GET"
       headers = []
         |push:("Authorization: Bearer "|concat:$env.talkjs_api_secret:"")
