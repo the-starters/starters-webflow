@@ -1003,6 +1003,19 @@ test('hides unsupported Outlook actions and removes premature Google OAuth succe
   assert.equal(dom.notif.preOAuthCopy.textContent, 'You’ll be taken to connect your Google calendar.')
 })
 
+test('applies calendar UI corrections when initialization fails', async () => {
+  const { dom } = loadSection({
+    postRoutes: {
+      '/starter/get_by_memberstack/v3': () => ({ status: 500, body: {} }),
+    },
+  })
+  await settle()
+
+  assert.equal(dom.connectOutlookBtn.style.display, 'none')
+  assert.equal(dom.disconnectOutlookBtn.style.display, 'none')
+  assert.equal(dom.notif.preOAuthCopy.textContent, 'You’ll be taken to connect your Google calendar.')
+})
+
 test('rejects a nested provider failure even when the Xano transport returns HTTP 200', async () => {
   const { dom } = loadSection({
     serverState: {

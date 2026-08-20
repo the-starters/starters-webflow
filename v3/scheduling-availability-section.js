@@ -2572,6 +2572,7 @@
       setStatus('not-applicable')
       return null
     }
+    applyCalendarUiCorrections()
     if (typeof window.xanoAuthFetch !== 'function') {
       setStatus('missing-auth')
       console.warn('[scheduling-section] xanoAuthFetch unavailable; section disabled')
@@ -2625,7 +2626,6 @@
         configs = (await getConfigs(grantId, true)) || []
       }
 
-      applyCalendarUiCorrections()
       bindConnectButtons()
       bindNotificationModalActions()
       bindCreateTrigger()
