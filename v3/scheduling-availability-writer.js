@@ -488,6 +488,11 @@
     if (close) close.click()
   }
 
+  function providerRequestSucceeded(result) {
+    const status = Number(result && result.response && result.response.status)
+    return Number.isFinite(status) && status >= 200 && status < 300
+  }
+
   function showManagerActions() {
     const managerActions = qs('[config-manager-element]')
     if (!managerActions) return
@@ -950,7 +955,7 @@
         '/scheduler/configurations/create/v3',
         payload,
       )
-      if (res && res.response && res.response.status === 200) return true
+      if (providerRequestSucceeded(res)) return true
       publishCalendarConnectionError()
       switchStep('config-request-error')
       console.warn('[scheduling-writer] configuration request rejected')
@@ -982,7 +987,7 @@
         },
       },
     })
-    if (res && res.response && res.response.status === 200) return true
+    if (providerRequestSucceeded(res)) return true
     publishCalendarConnectionError()
     switchStep('config-request-error')
     return null

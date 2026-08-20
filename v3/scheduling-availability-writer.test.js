@@ -810,6 +810,28 @@ test('form submit writes the authenticated member id and reaches the success ste
   assert.ok(result.events.some((e) => e.type === 'starterSchedulingWriteSuccess'))
 })
 
+test('form submit accepts provider 2xx statuses for configuration updates', async () => {
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: {
+      '/scheduler/configurations/update/v3': () => ({
+        status: 200,
+        body: { response: { status: 204 } },
+      }),
+    },
+  })
+  await settle()
+
+  result.dom.fields.days[1].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  assert.equal(result.dom.steps.success.style.display, 'block')
+  assert.notEqual(result.dom.steps['config-request-error'].style.display, 'block')
+})
+
 test('form submit recreates a free configuration when every canonical config is inactive', async () => {
   const result = loadWriter({
     storage: TZ_CACHED,
@@ -820,6 +842,10 @@ test('form submit recreates a free configuration when every canonical config is 
           { config_id: 'cfg-free-old', grant_id: 'grant-1', duration: 30, is_paid: false, active: false },
           { config_id: 'cfg-paid-old', grant_id: 'grant-1', duration: 60, is_paid: true, active: false },
         ],
+      }),
+      '/scheduler/configurations/create/v3': () => ({
+        status: 200,
+        body: { response: { status: 201 } },
       }),
     },
   })
@@ -835,6 +861,7 @@ test('form submit recreates a free configuration when every canonical config is 
     result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length,
     1,
   )
+  assert.notEqual(result.dom.steps['config-request-error'].style.display, 'block')
 })
 
 test('shows and hides the step loader around a submit', async () => {
