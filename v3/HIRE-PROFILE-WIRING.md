@@ -254,9 +254,11 @@ change does not apply to Paid Consulting Call. The Paid flow is described in
 
 The Paid guest-field markup, validation, payload, and retry contract is owned by
 the [Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
-Its five native Designer-authored guest rows sit outside `[nylas-container]`.
-The Paid controller fails closed when that complete structure is absent and
-owns its Paid/Free/close/success visibility and reset lifecycle.
+Zero guest hooks keep Paid bookable without `guest_emails`. When guest entry is
+installed, its complete five-row native Designer-authored tree sits outside
+`[nylas-container]` and enables Paid guests. Any partial guest tree or stray
+guest hook fails closed. The Paid controller owns the complete tree's
+Paid/Free/close/success visibility and reset lifecycle.
 
 ## Inline Global Code cutover boundary
 

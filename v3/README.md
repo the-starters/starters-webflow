@@ -3040,10 +3040,12 @@ The browser sends neither field. The controller uses this sequence:
    the provider credential and private Scheduler session off the browser.
 8. Render the month calendar and time buttons inside the authored
    `[nylas-container]` mount. The selected slot is advisory only.
-9. Read the native `[data-call-guest-email]` fields, normalize and validate at
-   most five guest addresses, and exclude duplicates plus the Brand and Starter
-   addresses. Invalid guest input stops before the request.
-10. Submit the selected slot and canonical guest list to
+9. When the optional native Paid guest form is installed, read its
+   `[data-call-guest-email]` fields, normalize and validate at most five guest
+   addresses, and exclude duplicates plus the Brand and Starter addresses.
+   Invalid guest input stops before the request. When no guest-form hook exists,
+   continue without Paid guests.
+10. Submit the selected slot and any canonical guest list to
    `brand/booking/request/v3`. Xano rechecks the exact slot, price, payment
    readiness, configuration revision, and booking authority before it creates
    the provider booking.
@@ -3070,16 +3072,18 @@ the stale request settles.
 The booking payload contains only the Starter slug, configuration ID, selected
 slot, timezone, optional topic/context, optional canonical `guest_emails`, and a
 bounded idempotency key. Guest inputs stay Webflow-authored: JavaScript reads
-`[data-call-guest-email]` and writes validation copy to the required
-`[data-call-guest-error]`; it never creates or clones guest-form HTML. The client trims,
+`[data-call-guest-email]` and writes validation copy to
+`[data-call-guest-error]` when the optional guest form is installed; it never
+creates or clones guest-form HTML. The client trims,
 lowercases, validates, deduplicates, sorts, caps the list at five, and excludes
 the Brand and Starter emails. A retry for the same slot and normalized guests
 reuses the exact payload and idempotency key. Changing the slot, timezone,
 topic, context, or guest set creates a new attempt. Price, payment method, Brand identity, Starter ownership,
 booking authority, and environment stay server-owned.
 
-The Paid controller requires this native Designer structure as a sibling of,
-never a child of, `[nylas-container]`:
+Paid guest entry is optional. When it is installed, the controller requires
+this complete native Designer structure as a sibling of, never a child of,
+`[nylas-container]`:
 
 ```text
 [data-call-guest-fields]                 hidden initially
@@ -3097,9 +3101,11 @@ step. The wrapper stays hidden and reset while the Brand chooses Paid and while
 availability loads. Add and Remove only reveal, hide, focus, clear, or disable
 those existing rows. Free selection, modal close, Paid success, and returning
 to a date with no selected slot clear all guest values and validation, restore
-the one-row state, and hide the Paid guest wrapper. Missing
-wrapper/list/error/add/remove hooks, a row count other than five, or any row
-missing its native input or remove control keeps Paid closed.
+the one-row state, and hide the Paid guest wrapper. With no guest hooks, Paid
+booking remains available and sends no `guest_emails`. Partial guest markup
+fails closed: a missing wrapper/list/error/add/remove hook, a row count other
+than five, or any row missing its native input or remove control keeps Paid
+closed.
 
 The guest wrapper can remain a native Webflow Form Block for Designer ownership,
 but it is not an email form. The controller captures submit events on the

@@ -102,7 +102,13 @@ function guestQuery(ui, selector) {
 }
 
 function guestQueryAll(ui, selector) {
+  if (selector === '[data-call-guest-fields]') return [ui.wrapper]
+  if (selector === '[data-call-guest-list]') return [ui.list]
+  if (selector === '[data-call-guest-error]') return [ui.error]
+  if (selector === '[data-call-guest-add]') return [ui.add]
+  if (selector === '[data-call-guest-row]') return ui.rows.map(({ row }) => row)
   if (selector === '[data-call-guest-email]') return ui.rows.map(({ field }) => field)
+  if (selector === '[data-call-guest-remove]') return ui.rows.map(({ remove }) => remove)
   return []
 }
 
@@ -637,8 +643,13 @@ test('invalid canonical Paid price leaves the authored option hidden and unchang
   }
 })
 
-test('Paid installation fails closed when the five-row authored guest form is absent', () => {
-  const previous = global.document
+test('Paid installation stays bookable without optional guest markup', async () => {
+  const previous = {
+    document: global.document,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const requests = []
+  let confirmSlot
   const price = { textContent: '$50' }
   const item = {
     style: { display: 'none' },
@@ -654,6 +665,85 @@ test('Paid installation fails closed when the five-row authored guest form is ab
   const popup = {
     querySelector(selector) {
       return selector === '[nylas-container]' ? container : null
+    },
+    querySelectorAll() { return [] },
+  }
+  global.document = {
+    querySelector(selector) { return selector === '[popup-booking]' ? popup : null },
+    querySelectorAll() { return [cta] },
+  }
+  global.xanoAuthFetch = async (url, options) => {
+    requests.push({ url, options })
+    if (url.endsWith(api.READINESS_PATH)) {
+      return response({ environment: 'test', bookable: true })
+    }
+    return response({ booking_id: 'booking_without_guest', status: 'pending' })
+  }
+  try {
+    assert.equal(api.installPaidBookingController({
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 30,
+        is_paid: true,
+        currency: 'usd',
+        price_cents: 500,
+      },
+      starterSlug: 'starter-one',
+      brandEmail: 'brand@example.com',
+      starterEmail: 'starter@example.com',
+      mountCalendar({ onConfirm, onSelectionChange }) {
+        confirmSlot = onConfirm
+        onSelectionChange({ start: 1000, end: 1900, timezone: 'Asia/Manila' })
+        return Promise.resolve({})
+      },
+    }), true)
+    assert.equal(price.textContent, '$5')
+    assert.equal(item.style.display, 'block')
+    assert.equal(cta.getAttribute('data-paid-call-v3'), 'ready')
+    await cta.onclick({ preventDefault() {} })
+    await confirmSlot({ start: 1000, end: 1900, timezone: 'Asia/Manila' })
+    assert.equal(requests.length, 2)
+    const bookingBody = JSON.parse(requests[1].options.body)
+    assert.deepEqual(bookingBody, {
+      starter_slug: 'starter-one',
+      config_id: 'config_paid',
+      start: 1000,
+      end: 1900,
+      timezone: 'Asia/Manila',
+      idempotency_key: bookingBody.idempotency_key,
+    })
+  } finally {
+    global.document = previous.document
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
+test('Paid installation fails closed when optional guest markup is incomplete', () => {
+  const previous = global.document
+  const price = { textContent: '$50' }
+  const item = {
+    style: { display: 'none' },
+    querySelector(selector) { return selector === '[call-type-price]' ? price : null },
+  }
+  const cta = {
+    attrs: { 'data-config': 'config_paid' },
+    getAttribute(name) { return this.attrs[name] || null },
+    setAttribute(name, value) { this.attrs[name] = value },
+    closest() { return item },
+  }
+  const container = new CalendarElement('div')
+  const partialGuestWrapper = {
+    querySelector() { return null },
+  }
+  const popup = {
+    querySelector(selector) {
+      if (selector === '[nylas-container]') return container
+      if (selector === '[data-call-guest-fields]') return partialGuestWrapper
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[data-call-guest-fields]' ? [partialGuestWrapper] : []
     },
   }
   global.document = {
@@ -674,6 +764,66 @@ test('Paid installation fails closed when the five-row authored guest form is ab
     assert.equal(price.textContent, '$50')
     assert.equal(item.style.display, 'none')
     assert.equal(cta.getAttribute('data-paid-call-v3'), null)
+  } finally {
+    global.document = previous
+  }
+})
+
+test('Paid installation fails closed for every stray guest hook outside the wrapper', () => {
+  const previous = global.document
+  const guestSelectors = [
+    '[data-call-guest-fields]',
+    '[data-call-guest-list]',
+    '[data-call-guest-error]',
+    '[data-call-guest-add]',
+    '[data-call-guest-row]',
+    '[data-call-guest-email]',
+    '[data-call-guest-remove]',
+  ]
+  try {
+    guestSelectors.forEach(function (guestSelector) {
+      const price = { textContent: '$50' }
+      const item = {
+        style: { display: 'none' },
+        querySelector(selector) { return selector === '[call-type-price]' ? price : null },
+      }
+      const cta = {
+        attrs: { 'data-config': 'config_paid' },
+        getAttribute(name) { return this.attrs[name] || null },
+        setAttribute(name, value) { this.attrs[name] = value },
+        closest() { return item },
+      }
+      const container = new CalendarElement('div')
+      const strayHook = guestSelector === '[data-call-guest-fields]'
+        ? { querySelector() { return null } }
+        : {}
+      const popup = {
+        querySelector(selector) {
+          if (selector === '[nylas-container]') return container
+          if (selector === guestSelector) return strayHook
+          return null
+        },
+        querySelectorAll(selector) { return selector === guestSelector ? [strayHook] : [] },
+      }
+      global.document = {
+        querySelector(selector) { return selector === '[popup-booking]' ? popup : null },
+        querySelectorAll() { return [cta] },
+      }
+
+      assert.equal(api.installPaidBookingController({
+        config: {
+          config_id: 'config_paid',
+          grant_id: 'grant_test',
+          duration: 30,
+          is_paid: true,
+          currency: 'usd',
+          price_cents: 500,
+        },
+      }), false, guestSelector)
+      assert.equal(price.textContent, '$50', guestSelector)
+      assert.equal(item.style.display, 'none', guestSelector)
+      assert.equal(cta.getAttribute('data-paid-call-v3'), null, guestSelector)
+    })
   } finally {
     global.document = previous
   }
