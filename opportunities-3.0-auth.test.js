@@ -4615,7 +4615,7 @@ test('Generate Invoice waits for canonical project context before opening', asyn
   assert.equal(companyBind.textContent, 'Canonical company')
 })
 
-test('invoice success queues a forced reload behind an active project refresh', async () => {
+test('each invoice success drains a reload after an active project refresh', async () => {
   const dom = invoiceSubmitDom()
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [dom.modal])
   const root = el('div', {
@@ -4624,6 +4624,7 @@ test('invoice success queues a forced reload behind an active project refresh', 
   }, [card])
   const handlers = new Set()
   const firstRefresh = deferred()
+  const secondRefresh = deferred()
   let refreshCount = 0
   let state = {
     status: 'success',
@@ -4635,9 +4636,10 @@ test('invoice success queues a forced reload behind an active project refresh', 
     refresh() {
       refreshCount += 1
       if (refreshCount === 1) return firstRefresh.promise
+      if (refreshCount === 2) return secondRefresh.promise
       state = {
         ...state,
-        data: { items: [{ id: 746, lifecycle_state: 'completed', invoice_status: 'paid' }] },
+        data: { items: [{ id: 746, lifecycle_state: 'completed', invoice_status: 'paid-latest' }] },
       }
       handlers.forEach((handler) => handler(state))
       return Promise.resolve(state)
@@ -4692,7 +4694,24 @@ test('invoice success queues a forced reload behind an active project refresh', 
 
   firstRefresh.resolve(state)
   assert.ok(await waitFor(() => refreshCount === 2))
-  assert.equal(instance.getState().data.items[0].invoice_status, 'paid')
+
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+    card,
+    projectId: 746,
+    title: 'Canonical project title',
+    brand: 'Canonical company',
+  })
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  assert.ok(await waitFor(() => invoiceRequests === 2))
+  assert.equal(refreshCount, 2)
+
+  secondRefresh.resolve(state)
+  assert.ok(await waitFor(() => refreshCount === 3))
+  assert.equal(instance.getState().data.items[0].invoice_status, 'paid-latest')
 })
 
 test('project invoice links always open in a detached new tab', async () => {

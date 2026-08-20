@@ -2381,6 +2381,7 @@
   let projectWorkflowItems = new Map()
   let projectWorkflowRefresh = null
   let projectWorkflowQueuedReload = null
+  let projectWorkflowReloadDemand = 0
   let projectWorkflowObserver = null
   let projectWorkflowBinding = null
   let projectWorkflowProjectionUnsubscribe = null
@@ -3215,27 +3216,7 @@
     projectWorkflowObserver.observe(root, { childList: true, subtree: true })
   }
 
-  async function refreshProjectWorkflow(role = projectWorkflowRole, reload = false) {
-    if (!role || projectRoleForPath() !== role) return null
-    if (projectWorkflowRefresh) {
-      if (!reload) return projectWorkflowRefresh
-      if (projectWorkflowQueuedReload) return projectWorkflowQueuedReload
-      const activeRefresh = projectWorkflowRefresh
-      const queuedReload = (async () => {
-        try {
-          await activeRefresh
-        } catch {}
-        if (projectWorkflowRefresh === activeRefresh) projectWorkflowRefresh = null
-        if (projectRoleForPath() !== role) return null
-        return refreshProjectWorkflow(role, true)
-      })()
-      projectWorkflowQueuedReload = queuedReload
-      try {
-        return await queuedReload
-      } finally {
-        if (projectWorkflowQueuedReload === queuedReload) projectWorkflowQueuedReload = null
-      }
-    }
+  async function startProjectWorkflowRefresh(role, reload) {
     const request = (async () => {
       const instance = await waitForProjectWorkflowInstance(role)
       let items
@@ -3264,6 +3245,39 @@
     } finally {
       if (projectWorkflowRefresh === request) projectWorkflowRefresh = null
     }
+  }
+
+  function refreshProjectWorkflow(role = projectWorkflowRole, reload = false) {
+    if (!role || projectRoleForPath() !== role) return Promise.resolve(null)
+    if (!reload) {
+      return projectWorkflowRefresh || startProjectWorkflowRefresh(role, false)
+    }
+
+    projectWorkflowReloadDemand += 1
+    if (projectWorkflowQueuedReload) return projectWorkflowQueuedReload
+
+    const drain = (async () => {
+      let processedDemand = 0
+      let result = null
+      while (processedDemand < projectWorkflowReloadDemand) {
+        const demand = projectWorkflowReloadDemand
+        const activeRefresh = projectWorkflowRefresh
+        if (activeRefresh) {
+          try {
+            await activeRefresh
+          } catch {}
+        }
+        if (projectRoleForPath() !== role) return null
+        result = await startProjectWorkflowRefresh(role, true)
+        processedDemand = demand
+      }
+      return result
+    })()
+    const queuedReload = drain.finally(() => {
+      if (projectWorkflowQueuedReload === queuedReload) projectWorkflowQueuedReload = null
+    })
+    projectWorkflowQueuedReload = queuedReload
+    return queuedReload
   }
 
   function invalidateProjectWorkflowProjection(role) {
