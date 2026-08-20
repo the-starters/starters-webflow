@@ -9,7 +9,7 @@
  *     conversations including already-read ones.
  *   - TalkJS JS SDK → live unread state and the unread count badge.
  * If the Xano endpoint is unavailable the tile shows no message cards.
- * Shows the empty state when there are no conversations at all.
+ * Shows the empty state when there are no conversations with messages.
  *
  * Wiring (wf-xano-style, multi-instance): each `data-messages-element="wrapper"`
  * scopes one rendered instance containing `list`, `template` (first card),
@@ -18,9 +18,10 @@
  * `avatar` container inside the template. `data-messages-format="uppercase|
  * lowercase"` transforms a bound element's text. Optional
  * `data-messages-limit="<n>"` on the wrapper can lower the 3-card maximum.
- * All instances share one TalkJS session + one bulk recent-conversations load,
- * which allows two attempts with a 15-second timeout each. The original
- * class-based selectors remain as fallbacks (legacy wrapper: `#messages`).
+ * All instances share one TalkJS session and the same serialized bulk request.
+ * Each request allows two attempts with a 15-second timeout, and message or
+ * unread activity refreshes the proxy snapshot. The original class-based
+ * selectors remain as fallbacks (legacy wrapper: `#messages`).
  */
 ;(function () {
   'use strict'
@@ -535,6 +536,10 @@
       if (id) unreadsById[id] = unread
     })
 
+    // TalkJS Inbox does not list conversations that have no messages. Keep the
+    // dashboard on the same contract even if the REST proxy returns an empty
+    // conversation. An SDK unread snapshot can supply the timestamp when the
+    // bulk snapshot lags behind the live unread state.
     const displays = state.recent.map((conv) => {
       return displayFromRecent(conv, unreadsById)
     })
@@ -555,6 +560,11 @@
       countUnread(unread.conversation && unread.conversation.id)
     })
 
+    const cardDisplays = displays.filter(
+      (display) =>
+        display.timestamp !== null && display.timestamp !== undefined,
+    )
+
     if (refs.loadingCard) refs.loadingCard.style.display = 'none'
 
     if (refs.total) {
@@ -566,7 +576,7 @@
       .querySelectorAll(refs.itemSelector)
       .forEach((node) => node.remove())
 
-    if (displays.length === 0) {
+    if (cardDisplays.length === 0) {
       refs.list.style.display = 'none'
       if (refs.emptyCard) refs.emptyCard.style.display = ''
       return
@@ -575,20 +585,9 @@
     refs.list.style.display = ''
     if (refs.emptyCard) refs.emptyCard.style.display = 'none'
 
-    displays
-      .sort((a, b) => timestampValue(b.timestamp) - timestampValue(a.timestamp))
-      .slice(0, refs.limit)
-      .forEach((display) => {
-        refs.list.appendChild(renderItem(refs, display))
-      })
-  }
-
-  function timestampValue(timestamp) {
-    if (!timestamp) return 0
-    const numeric = Number(timestamp)
-    if (Number.isFinite(numeric)) return numeric
-    const parsed = Date.parse(timestamp)
-    return Number.isNaN(parsed) ? 0 : parsed
+    cardDisplays.slice(0, refs.limit).forEach((display) => {
+      refs.list.appendChild(renderItem(refs, display))
+    })
   }
 
   async function mountTile() {
@@ -645,24 +644,46 @@
       })
     }
 
-    // Start the read snapshot while TalkJS initializes. Attach the rejection
-    // handler immediately so a slower SDK load cannot produce an unhandled
-    // promise rejection.
-    const recentPromise = fetchRecentConversations(memberstack).catch(
-      (error) => {
-        console.warn(
-          '[starter-dashboard] Recent conversations unavailable, hiding message cards',
-          error,
-        )
-        return []
-      },
-    )
+    let recentRequest = null
+    let refreshQueued = false
+    const refreshRecent = () => {
+      if (recentRequest) {
+        refreshQueued = true
+        return recentRequest
+      }
 
-    recentPromise.then((items) => {
-      state.recent = items
-      state.recentSettled = true
-      rerender()
-    })
+      const initial = !state.recentSettled
+      recentRequest = fetchRecentConversations(memberstack)
+        .then((items) => {
+          state.recent = items
+          state.recentSettled = true
+          rerender()
+        })
+        .catch((error) => {
+          console.warn(
+            initial
+              ? '[starter-dashboard] Recent conversations unavailable, hiding message cards'
+              : '[starter-dashboard] Recent conversations unavailable, keeping current message cards',
+            error,
+          )
+          if (initial) {
+            state.recent = []
+            state.recentSettled = true
+            rerender()
+          }
+        })
+        .finally(() => {
+          recentRequest = null
+          if (refreshQueued) {
+            refreshQueued = false
+            refreshRecent()
+          }
+        })
+
+      return recentRequest
+    }
+
+    refreshRecent()
 
     const Talk = await waitForTalkJs()
     const me = new Talk.User(talkUserFields(member))
@@ -671,10 +692,29 @@
       me,
     })
 
-    session.unreads.onChange((unreads) => {
-      state.unreads = unreads || []
-      rerender()
+    session.onMessage(() => {
+      refreshRecent()
     })
+
+    let unreadActivitySignature = null
+    session.unreads.onChange((unreads) => {
+      const nextUnreads = unreads || []
+      const nextSignature = JSON.stringify(
+        nextUnreads.map((unread) => [
+          unread.conversation && unread.conversation.id,
+          unread.lastMessage && unread.lastMessage.timestamp,
+        ]),
+      )
+      const activityChanged =
+        unreadActivitySignature !== null &&
+        unreadActivitySignature !== nextSignature
+      unreadActivitySignature = nextSignature
+      state.unreads = nextUnreads
+      rerender()
+      if (activityChanged) refreshRecent()
+    })
+
+    refreshRecent()
   }
 
   function start() {
