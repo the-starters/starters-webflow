@@ -797,6 +797,74 @@ test('Cancel restores canonical Paid values and makes no write', async () => {
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
 })
 
+// Models browser constraint validation for the authored native Webflow form: a
+// required radio group is satisfied only when one member of the group is checked,
+// and any other required control is satisfied only when it holds a value.
+function withNativeConstraintValidation(form) {
+  const reports = []
+  form.reportValidity = () => {
+    const inputs = form.querySelectorAll('input')
+    const invalid = inputs.filter((input) => {
+      if (input.getAttribute('required') === null) return false
+      if (input.getAttribute('type') === 'radio') {
+        const group = input.getAttribute('name')
+        return !inputs.some((peer) => peer.getAttribute('name') === group && peer.checked)
+      }
+      return !String(input.value || '').trim()
+    })
+    reports.push(invalid.map((input) => input.getAttribute('name')))
+    return invalid.length === 0
+  }
+  return reports
+}
+
+test('an Update click is still gated by native form validation before any write', async () => {
+  const savedService = service({ price_cents: 35000, revision: 1 })
+  const result = load({
+    cardMode: true,
+    initial: canonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ setState }) => {
+        setState(canonical({
+          services: [savedService],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: savedService }) }
+      },
+    },
+  })
+  await settle()
+
+  // The authored Paid card renders Yes/No as required radios, and the native form
+  // may carry other required controls this controller never reads.
+  result.dom.enabled.setAttribute('type', 'radio')
+  result.dom.enabled.setAttribute('required', '')
+  result.dom.disabled.setAttribute('type', 'radio')
+  result.dom.disabled.setAttribute('required', '')
+  const terms = new El('input', { name: 'call-terms', required: '' })
+  result.dom.form.append(terms)
+  const reports = withNativeConstraintValidation(result.dom.form)
+
+  result.dom.enabled.checked = true
+  result.dom.disabled.checked = false
+  result.dom.title.value = 'Paid Consultation Call'
+  result.dom.price.value = '350'
+
+  const upserts = () =>
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+
+  await result.dom.save.dispatch('click')
+  await settle(2)
+  assert.deepEqual(reports, [['call-terms']])
+  assert.equal(upserts().length, 0)
+
+  terms.value = 'agreed'
+  await result.dom.save.dispatch('click')
+  await settle(2)
+  assert.deepEqual(reports[1], [])
+  assert.equal(upserts().length, 1)
+})
+
 test('native submit and Update click share one in-flight write lock', async () => {
   const pending = deferred()
   const result = load({

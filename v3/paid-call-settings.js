@@ -718,6 +718,12 @@
     if (saveButton) {
       saveButton.addEventListener('click', function (event) {
         event.preventDefault()
+        // The authored Update control is wired either as a plain element this
+        // controller intercepts or as the native form's own submit control. The
+        // native shape is gated by browser constraint validation, so gate the
+        // intercepted shape the same way: the native Webflow form still owns
+        // which fields are required and still shows its own validation UI.
+        if (form && typeof form.reportValidity === 'function' && !form.reportValidity()) return
         submitIntent().catch(function () {})
       })
     }

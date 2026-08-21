@@ -110,8 +110,10 @@ Automated tests cover the controller in a synthetic DOM only: the delayed-insert
 recovery and duplicate-initialization dedup are executable regressions in
 `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a
 live Xano TEST configuration, and an asset that only exists once the tag is published,
-so they are not runnable from CI or from a local test phase. The release owner runs
-them by hand, in this order, after the PR merges:
+so they are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io`
+and `thestarters.com` answer `401` behind the site password, so a local phase cannot even
+read the live authored DOM. The release owner runs them by hand, in this order, after the
+PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
    the served asset is the new build: the served file must contain the Paid radio-group
@@ -120,7 +122,12 @@ them by hand, in this order, after the PR merges:
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
    card reaches `data-paid-call-settings="ready"` with canonical values, including a
    reload where Webflow or Memberstack inserts the Paid card late.
-3. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
+3. On that same card, pick Yes, fill the title and rate, and click Update by hand. The
+   browser must no longer block the click on the No radio, and the card must reach the
+   canonical readback state. Confirm this on whichever way the authored Update control is
+   wired: the controller now runs the native form's own validation before writing, so a
+   still-required empty field must block the write in both wiring shapes.
+4. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
    it in the paid-call dry run. Never run a live-money production charge.
 
 Record the served-asset check and the TEST booking reconciliation result before the
