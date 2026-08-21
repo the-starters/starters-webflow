@@ -114,8 +114,9 @@ so they are not runnable from CI or from a local test phase. The release owner r
 them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
-   the served asset is the new build: the served file must contain the root-wait recovery,
-   not the previous immediate `not-applicable` bail.
+   the served asset is the new build: the served file must contain the Paid radio-group
+   normalization (`normalizeCardRadioGroup`, which joins the legacy `consulting-calls` No
+   field into the `paid-consulting-calls` group), not only the earlier root-wait recovery.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
    card reaches `data-paid-call-settings="ready"` with canonical values, including a
    reload where Webflow or Memberstack inserts the Paid card late.

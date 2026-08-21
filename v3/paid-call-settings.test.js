@@ -188,6 +188,11 @@ function load(options = {}) {
     options.cardMode === true || options.stableCardMode === true,
     options.sharedCallItem === true,
   )
+  if (options.cardRadioValues && dom.root) {
+    Object.keys(options.cardRadioValues).forEach((key) => {
+      if (dom[key]) dom[key].setAttribute('value', options.cardRadioValues[key])
+    })
+  }
   if (options.stableCardMode === true && dom.root) {
     dom.root.setAttribute('data-call-settings-service', 'paid')
     dom.form.setAttribute('data-call-settings-element', 'form')
@@ -529,6 +534,71 @@ test('the native Paid card treats No plus Update as the guarded disable action',
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 1)
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
   assert.equal(result.dom.formWrapper.style.display, 'none')
+})
+
+test('No plus Update still disables when the Yes radio carries a non-yes value', async () => {
+  const result = load({
+    cardMode: true,
+    cardRadioValues: { enabled: 'on' },
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.notEqual(
+    result.dom.enabled.getAttribute('data-call-settings-input'),
+    result.dom.disabled.getAttribute('data-call-settings-input'),
+  )
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.enabled.checked, false)
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 1)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+})
+
+test('a legacy No radio spelled other than no still joins the Paid group and disables', async () => {
+  const result = load({
+    cardMode: true,
+    cardRadioValues: { disabled: 'No thanks' },
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.disabled.getAttribute('name'), 'paid-consulting-calls')
+  assert.equal(result.dom.enabled.getAttribute('name'), 'paid-consulting-calls')
+  assert.equal(result.dom.disabled.checked, false)
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.enabled.checked, false)
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 1)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
 })
 
 test('the native Paid card can disable an active service when prerequisites are stale', async () => {

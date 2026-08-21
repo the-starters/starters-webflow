@@ -255,23 +255,38 @@
       price: '[name="call-rate"]',
     }
     if (name === 'enabled') {
-      return namedRadio('paid-consulting-calls', 'yes') || qs('[name="paid-consulting-calls"]', root)
+      return (
+        namedRadio('paid-consulting-calls', 'yes') ||
+        namedRadioExcept('paid-consulting-calls', 'no')
+      )
     }
     return selectors[name] ? qs(selectors[name], root) : null
   }
 
+  function radioValue(item) {
+    return String(item.value || item.getAttribute('value') || '').toLowerCase()
+  }
+
   function namedRadio(name, value) {
     return Array.prototype.find.call(qsa('[name="' + name + '"]', root), function (item) {
-      return String(item.value || item.getAttribute('value') || '').toLowerCase() === value
+      return radioValue(item) === value
+    }) || null
+  }
+
+  function namedRadioExcept(name, value) {
+    return Array.prototype.find.call(qsa('[name="' + name + '"]', root), function (item) {
+      return radioValue(item) !== value
     }) || null
   }
 
   function disabledField() {
-    return cardMode
-      ? qs('[data-call-settings-input="disabled"]', root) ||
-          namedRadio('paid-consulting-calls', 'no') ||
-          namedRadio('consulting-calls', 'no')
-      : null
+    if (!cardMode) return null
+    return (
+      qs('[data-call-settings-input="disabled"]', root) ||
+      namedRadio('paid-consulting-calls', 'no') ||
+      namedRadio('consulting-calls', 'no') ||
+      namedRadioExcept('consulting-calls', 'yes')
+    )
   }
 
   // The first native Paid card shipped with Yes and No under different Webflow
@@ -279,12 +294,19 @@
   // field makes the otherwise valid native form fail browser validation before
   // its submit event can reach this controller. Join that legacy No field to the
   // Paid radio group at runtime; the authored form remains native Webflow HTML.
+  // Stamp the canonical input hooks first: once both radios share one field name,
+  // name-and-value lookups can no longer tell them apart, so every later
+  // field('enabled')/disabledField() call must resolve by that stable hook.
   function normalizeCardRadioGroup() {
     if (!cardMode) return
     const enabledInput = field('enabled')
     const disabledInput = disabledField()
-    const enabledName = enabledInput && enabledInput.getAttribute('name')
-    const disabledName = disabledInput && disabledInput.getAttribute('name')
+    if (enabledInput === disabledInput) return
+    if (enabledInput) enabledInput.setAttribute('data-call-settings-input', 'enabled')
+    if (disabledInput) disabledInput.setAttribute('data-call-settings-input', 'disabled')
+    if (!enabledInput || !disabledInput) return
+    const enabledName = enabledInput.getAttribute('name')
+    const disabledName = disabledInput.getAttribute('name')
     if (enabledName && disabledName && enabledName !== disabledName) {
       disabledInput.setAttribute('name', enabledName)
     }
