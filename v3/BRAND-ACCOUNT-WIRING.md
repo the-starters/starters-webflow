@@ -293,6 +293,19 @@ projection.
 - Build Account writes ordinary fields, any changed login email, and the
   completion marker. It attempts one reset/set-password email only when the
   login email changed; normal onboarding with the authenticated email sends none.
+- A changed login-email write can land server-side and still report failure.
+  Build Account reconciles that ambiguity in two places, and only for its own
+  form. A 409 or 422 from the write triggers one member re-read: when the same
+  stable member ID already carries the requested target as its login email, the
+  write is treated as applied and the same submit continues to completion and its
+  one ownership-proof email; any other reading keeps the conflict and its
+  choose-another-address copy. A write that stays ambiguous without a conflict
+  status, such as repeated timeouts, leaves a per-form marker holding the
+  pre-change baseline and the intended target, so a same-page resubmit that
+  finds the target already installed still sends that one email without issuing
+  a second `updateMemberAuth`. That marker is per form and lives only for the
+  page: after a reload the login email is already the target, nothing is
+  attempted, and Forgot Password is the recovery path.
 - Account Security and the guarded Talent edit-profile form attempt that email
   only after a changed login email has been saved successfully.
 - An independent Talent login-email save requires the authored email input to
@@ -343,9 +356,14 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
 8. Change to the approved canary email; prove one reset/set-password message and
    matching Xano values.
 9. Submit Build Account with unchanged and changed login-email fixtures. Prove
-   the unchanged path calls no reset-email API. Simulate an ambiguous email
-   response on the changed path; prove a same-page resubmit performs no second
-   email attempt, preserves the completed account, and can reach the dashboard.
+   the unchanged path calls no reset-email API. Simulate a changed-email write
+   that lands and then answers 409; prove the same submit completes and sends
+   exactly one message with no second `updateMemberAuth`. Simulate a
+   changed-email write that lands and then times out; prove the first submit
+   fails without a message and a same-page resubmit completes and sends exactly
+   one. Simulate an ambiguous email response on the changed path; prove a
+   same-page resubmit performs no second email attempt, preserves the completed
+   account, and can reach the dashboard.
 10. Simulate an ambiguous Account Security email response after the auth
    mutation; prove the saved email remains authoritative and a same-page
    resubmit performs no second email attempt. Prove Forgot Password can issue a

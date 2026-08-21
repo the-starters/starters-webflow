@@ -293,6 +293,11 @@
     return Number.isFinite(value) ? value : 0
   }
 
+  function emailConflict(error) {
+    var status = statusOf(error)
+    return status === 409 || status === 422
+  }
+
   function retryable(error) {
     var status = statusOf(error)
     return (
@@ -402,9 +407,12 @@
   /**
    * Records the authenticated baseline and the intended login email before the
    * auth write is attempted, because that write can land while its own response
-   * is lost. Returns the pending intent when the changed target is already the
-   * member's login email, so an ambiguous write is reconciled as a real email
-   * change instead of reading as an unchanged onboarding submit.
+   * is lost. An intent is only ever constructed for a real change, so every
+   * stored intent has `baseline !== target`: a later submit that finds the
+   * target already installed as the login email is therefore proof the write
+   * landed, and returning the intent keeps its one ownership-proof message
+   * instead of reading as an unchanged onboarding submit. The marker lives for
+   * the page, so a reload leaves Forgot Password as the recovery path.
    */
   function recordBuildEmailIntent(form, member, email) {
     var current = memberEmail(member)
@@ -414,7 +422,7 @@
       return intent
     }
     var pending = pendingBuildPasswordEmails.get(form)
-    if (pending && pending.target === email && pending.baseline !== current) return pending
+    if (pending && pending.target === email) return pending
     return null
   }
 
@@ -432,6 +440,32 @@
     }
 
     return { changed: changed, email: email }
+  }
+
+  /**
+   * Build-only reconciliation for the write Memberstack reports as a conflict.
+   * The first attempt can claim the address server-side and lose its response,
+   * so the retry comes back 409/422 for an address this member now owns. One
+   * re-read settles it: the change counts as applied only when the same member's
+   * login email already equals the requested target. Anything else keeps the
+   * original conflict, including the copy that sends the member to a different
+   * address. Account Security and Talent keep the plain `updateEmailIfChanged`
+   * semantics.
+   */
+  async function applyBuildEmailChange(client, member, email) {
+    try {
+      return await updateEmailIfChanged(client, member, email)
+    } catch (error) {
+      if (!emailConflict(error)) throw error
+      var settled = null
+      try {
+        settled = await currentMember(client)
+      } catch (unreadable) {
+        throw error
+      }
+      if (settled.id !== member.id || memberEmail(settled) !== email) throw error
+      return { changed: true, email: email }
+    }
   }
 
   async function sendResetPasswordEmailOnce(form, client, email) {
@@ -529,8 +563,7 @@
     if (error && error.passwordEmailAttempted) {
       return 'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.'
     }
-    var status = statusOf(error)
-    if (status === 409 || status === 422) {
+    if (emailConflict(error)) {
       return 'That email is already in use. Choose another email address.'
     }
     return trim(error && error.message) || 'Your account could not be updated. Please try again.'
@@ -558,7 +591,7 @@
     // target on this form so the safe retry still sends its one ownership-proof
     // message after completion succeeds.
     var emailIntent = recordBuildEmailIntent(form, member, values.email)
-    await updateEmailIfChanged(client, member, values.email)
+    await applyBuildEmailChange(client, member, values.email)
     await markBuildComplete(client)
     // Only reached once completion is durable. The marker stops the routers
     // from bouncing this member back onto the form during the webhook's

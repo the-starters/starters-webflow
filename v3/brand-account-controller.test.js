@@ -831,9 +831,19 @@ test('email collision leaves completion unset and reports a stable user-facing e
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMember', 'getCurrentMember', 'updateMemberAuth'],
+    [
+      'getCurrentMember',
+      'updateMember',
+      'getCurrentMember',
+      'updateMemberAuth',
+      'getCurrentMember',
+    ],
   )
   assert.equal(buildForm.wrapper.failText.textContent, 'That email is already in use. Choose another email address.')
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
   assert.equal(environment.redirects.length, 0)
   assert.deepEqual(plain(environment.tracked), [
     { name: 'bridge_error', payload: { path: 'brand/account/build', status: 409 } },
@@ -1019,10 +1029,10 @@ test('non-Error changed-email rejection still produces stable recovery copy', as
   assert.deepEqual(environment.redirects, [])
 })
 
-test('an auth write that lands but reports failure still sends one security email', async () => {
-  // The reported write is ambiguous: Memberstack claimed the address, then the
-  // retry came back 409, so the changed login email is only observable on the
-  // next read of the member.
+test('a landed auth write answered with 409 completes on the same submit', async () => {
+  // The reported ambiguity: Memberstack claimed the address, the retry came back
+  // 409 for an address this member now owns, so the change is only observable on
+  // a fresh read of the member.
   let authAttempts = 0
   const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
   const buildForm = makeForm('build', { email: 'moved@example.com' })
@@ -1041,7 +1051,112 @@ test('an auth write that lands but reports failure still sends one security emai
   buildForm.submitEvent()
   await settle()
 
+  const emails = environment.calls.filter(
+    (call) => call.method === 'sendMemberResetPasswordEmail',
+  )
   assert.equal(authAttempts, 1)
+  assert.equal(emails.length, 1)
+  assert.deepEqual(plain(emails[0].payload), { email: 'moved@example.com' })
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    1,
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.equal(buildForm.wrapper.fail.style.display, 'none')
+})
+
+test('a 409 from an address this member does not own keeps the conflict', async () => {
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'taken@example.com' })
+  const environment = loadController({
+    buildForm,
+    member,
+    updateMemberAuth: async () => {
+      const conflict = new Error('raw provider conflict')
+      conflict.status = 409
+      throw conflict
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    0,
+  )
+  assert.equal(
+    buildForm.wrapper.failText.textContent,
+    'That email is already in use. Choose another email address.',
+  )
+  assert.deepEqual(environment.redirects, [])
+})
+
+test('a 409 after the signed-in member changed keeps the conflict', async () => {
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'moved@example.com' })
+  let reads = 0
+  const environment = loadController({
+    buildForm,
+    member,
+    getCurrentMember: async () => {
+      reads += 1
+      // The re-read that settles the ambiguity lands in a different session.
+      if (reads > 2) return { data: { id: 'mem_sb_other', auth: { email: 'moved@example.com' } } }
+      return { data: member }
+    },
+    updateMemberAuth: async (payload) => {
+      member.auth.email = payload.email
+      const conflict = new Error('That email is already in use.')
+      conflict.status = 409
+      throw conflict
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    0,
+  )
+  assert.deepEqual(environment.redirects, [])
+})
+
+test('a landed auth write that keeps timing out sends one email on resubmit', async () => {
+  let authAttempts = 0
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'moved@example.com' })
+  const environment = loadController({
+    buildForm,
+    member,
+    updateMemberAuth: async (payload) => {
+      authAttempts += 1
+      member.auth.email = payload.email
+      const lost = new Error('Account update timed out. Please try again.')
+      lost.status = 408
+      throw lost
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(authAttempts, 2)
   assert.deepEqual(environment.redirects, [])
   assert.equal(
     environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
@@ -1060,7 +1175,7 @@ test('an auth write that lands but reports failure still sends one security emai
   const emails = environment.calls.filter(
     (call) => call.method === 'sendMemberResetPasswordEmail',
   )
-  assert.equal(authAttempts, 1)
+  assert.equal(authAttempts, 2)
   assert.equal(emails.length, 1)
   assert.deepEqual(plain(emails[0].payload), { email: 'moved@example.com' })
   assert.equal(
