@@ -1816,9 +1816,9 @@ node --test v3/xano-grabber/xano-grabber.test.js
 ## Scheduling auth
 
 `scheduling-auth.js` owns the Bearer-token adapter for the V3 availability,
-scheduling configuration, and Brand paid-call payment-method calls. Webflow
-should load it with a small `defer` script tag instead of carrying a duplicate
-copy in page head/footer code.
+scheduling configuration, dashboard free-call and paid-call settings, and Brand
+paid-call payment-method calls. Webflow should load it with a small `defer`
+script tag instead of carrying a duplicate copy in page head/footer code.
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
@@ -1921,9 +1921,10 @@ follows the
 On every installed surface, the adapter owns both `window.fetch` and direct
 `window.xanoAuthFetch` calls. It reclaims the auth bridge retained by
 `scheduling-auth.js` if another page bundle replaced the public global, so
-dashboard paid-call settings and shared scheduling helpers cannot bypass the
-route map. Valid Hire booking surfaces add the Brand-safe discovery overrides
-described below; the other installed surfaces keep the standard route map.
+the dashboard free-call and paid-call settings controllers and shared
+scheduling helpers cannot bypass the route map. Valid Hire booking surfaces add
+the Brand-safe discovery overrides described below; the other installed surfaces
+keep the standard route map.
 
 On valid Hire paths, the two public booking-discovery helpers use
 Brand-safe contracts instead of Talent-owner contracts. Both the unversioned

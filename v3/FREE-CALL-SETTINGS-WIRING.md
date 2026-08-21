@@ -24,6 +24,8 @@ The current Designer form works without generated IDs or styling selectors:
 - Radio group: `name="consulting-calls-free"`
 - Yes/No values: `yes` and `no`
 - Edit, Cancel, Update: `data-availability-action="item-form-open|item-form-close|item-form-submit"`
+- Editor panel: `data-availability-element="call-form-wrapper"`; this wrapper is also the scope
+  anchor that keeps the controller off the Paid card, so keep one per card
 
 The controller stamps `data-call-settings-input="enabled|disabled"` on the verified radio pair at
 runtime. It never renames the group and never binds the Paid form.
@@ -85,6 +87,10 @@ clears the session or resets an in-progress Yes/No selection.
 - Enable or normalize: `starter/free-call-settings/upsert/v3`
 - Disable: `starter/free-call-settings/disable/v3`
 
+The controller calls those exact `/v3` paths through `window.xanoAuthFetch`. For this flow,
+`scheduling-auth.js` authenticates only those three paths, and `scheduling-v3-stage.js` maps their
+reviewed unversioned names to them and blocks lookalikes.
+
 The endpoints derive the exact TEST or production environment from the authenticated Memberstack
 mode and the approved page origin. They reject duplicate active Free services, foreign or stale
 configurations, and mismatched grants. Disable blocks while a future pending, confirmed, or
@@ -93,7 +99,9 @@ idempotency receipts.
 
 ## Loader order
 
-Load the controller after `scheduling-auth.js`:
+Load the controller after `scheduling-auth.js`. `scheduling-v3-stage-component.html` already
+includes it and remains the authoritative script order for the dashboard surfaces; add the tag by
+hand only on a surface that does not use that loader:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/free-call-settings.js"></script>
