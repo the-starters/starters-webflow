@@ -3235,11 +3235,14 @@ node --test v3/dashboard-action-items.test.js
 ## Invited Starter review form
 
 `starter-review-form.js` binds the native `/review-starter` Designer form to
-the V3 invited-review endpoints. Paste `v3/starter-review-form-webflow.html`
+the V3 invited-review endpoints. Paste
+[`v3/starter-review-form-webflow.html`](starter-review-form-webflow.html)
 into the page head, before the site PostHog initialization: that snippet pairs
-the anti-flash pre-hide style with the script tag. Load the controller
-synchronously — no `defer`, no `async` — so the token leaves the URL before
-first paint. The tag alone is:
+the anti-flash pre-hide style and its watchdog with the script tag. Load the
+controller synchronously — no `defer`, no `async` — so the token leaves the URL
+before first paint (the live embed predating the snippet carried `defer`; swap
+it for the snippet). The bare tag inside the snippet, for reference only — the
+snippet is the unit to paste:
 
 ```html
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>
@@ -3295,9 +3298,9 @@ than dropping the pre-hide — an unattended native form would let Webflow's own
 handler swallow submissions that never reach Xano, and the success copy would
 claim a review was recorded when none was. That degrade rule stays gated on the
 same root attribute, so a controller that boots late still recovers: its first
-`setState` disarms the rule and takes over. The same rule covers
-the headline, photo, and profile-link nodes: never give them a class-level
-`Display: None`, including one scoped to a breakpoint. Keep those nodes inside
+`setState` disarms the rule and takes over. The visible-by-default requirement
+also covers the headline, photo, and profile-link nodes: never give them a
+class-level `Display: None`, including one scoped to a breakpoint. Keep those nodes inside
 the `form` state block, where the live page nests them: the controller only
 normalizes them after a successful context resolve. Each `data-starter-review-*`
 attribute must appear exactly once per page — the controller binds the first

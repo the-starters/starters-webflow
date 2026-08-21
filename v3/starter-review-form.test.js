@@ -404,8 +404,14 @@ test('injects the preflight pre-hide style once', () => {
         fresh.headChildren[0].textContent,
         /:not\(\[data-starter-review-state="loading"\]\)/,
     )
-    // The watchdog degrades to the unavailable block, never to the native form.
-    assert.match(snippet, /:not\(\[data-starter-review-state="unavailable"\]\)/)
+    // The watchdog degrades to the unavailable block, never to the native form,
+    // and the degrade rule keeps the root gate so a late boot still recovers.
+    const degradeRule = snippet.match(
+        /preflight\.textContent =\s*'([^']+)'/,
+    )
+    assert.ok(degradeRule, 'the watchdog must swap in a degrade rule')
+    assert.match(degradeRule[1], /:not\(\[data-starter-review-state="unavailable"\]\)/)
+    assert.match(degradeRule[1], /:not\(\[data-starter-review-current-state\]\)/)
 
     const embedded = { id: 'starter-review-preflight', textContent: '' }
     const withPageEmbed = load({ headChildren: [embedded] })
