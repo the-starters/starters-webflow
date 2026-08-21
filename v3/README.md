@@ -3266,6 +3266,8 @@ form contract is:
 | `data-starter-review` | One page root |
 | `data-starter-review-state="loading\|form\|success\|unavailable\|error"` | State blocks. `error` is reserved: the controller never activates it today, because a failed submit re-shows `form` with the inline error copy by design |
 | `data-starter-review-current-state` | Controller-owned marker written on the root. Never author it in the Designer |
+| `data-starter-review-profile-bound` | Controller-owned marker on the wired profile trigger. Never author it in the Designer |
+| `data-starter-review-profile-url` | Controller-owned destination on the wired profile trigger, read at click time. Never author it in the Designer |
 | `form[data-starter-review-form]` | Native Webflow form |
 | `rating` | Required 1–5 radio group |
 | `review_text` | Required 10–4,000 character review |
@@ -3273,7 +3275,7 @@ form contract is:
 | `data-starter-review-name` | Safe Starter display name |
 | `data-starter-review-photo` | Public HTTPS Starter image |
 | `data-starter-review-headline` | Safe Starter headline |
-| `data-starter-review-profile-link` | Optional `/hire/<slug>` link |
+| `data-starter-review-profile-link` | Optional `/hire/<slug>` link. May sit on a plain anchor or on the design-system Button component instance |
 | `data-starter-review-error` | Inline validation or submission error |
 
 The controller owns the inline `display` of every `[data-starter-review-state]`
@@ -3311,6 +3313,32 @@ exactly once per page — the controller binds the first match only. The control
 also strips `srcset` and `sizes` from the photo node before setting `src`, because
 the Designer's placeholder `srcset` outranks it; do not rely on responsive-image
 settings on that element.
+
+The profile link may be a plain anchor or the design-system Button component. Put
+`data-starter-review-profile-link` on the component *instance* as a regular
+element custom attribute — on the outer `div.button_main-wrap`, where
+instance-level attributes do publish. Do not put it in the component's
+attribute-property panel: those do not publish to the live page, verified.
+
+The controller adapts to what it finds, because the Button component ships in two
+flavors. The link flavor nests an absolutely-positioned `a.clickable_link` inside
+`div.button_main-wrap`; the button flavor nests `div.clickable_wrap >
+button.clickable_btn` with no anchor at all. When the marked node is itself an
+anchor, or contains an `a.clickable_link`, the controller sets `href`, `target`,
+and `rel` on that anchor. Only `a.clickable_link` counts, so a decorative anchor
+elsewhere in the subtree cannot absorb the destination. When there is no anchor,
+an `href` would go nowhere, so the controller binds a capture-phase click that
+opens the profile itself, guarded by `data-starter-review-profile-bound` against
+stacking listeners and reading its destination from
+`data-starter-review-profile-url` at click time, so a re-resolve retargets the
+existing listener.
+
+Both flavors open the profile in a new tab. A same-tab navigation would discard
+the page's capability-token history entry along with any review already typed. If
+the browser refuses the tab — popup blockers, in-app webviews — the click falls
+back to a same-tab trip, on the grounds that a lost draft beats a button that does
+nothing. Either way the `/hire/<slug>` allowlist gates it first: a `profile_url`
+that fails the pattern hides the whole node and binds nothing.
 
 Pass the controller's redaction hook at the site-level PostHog initialization
 boundary. If the site already has a `before_send` callback, assign that callback

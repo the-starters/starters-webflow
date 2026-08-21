@@ -15,6 +15,8 @@ function load(options = {}) {
     const listeners = new Map()
     const historyCalls = []
     const fetchCalls = []
+    const openCalls = []
+    const locationAssigns = []
     const context = {
         URL,
         URLSearchParams,
@@ -26,6 +28,9 @@ function load(options = {}) {
             location: {
                 href: options.href || 'https://thestarters.com/review-starter',
                 origin: 'https://thestarters.com',
+                assign(url) {
+                    locationAssigns.push(url)
+                },
             },
             history: {
                 state: null,
@@ -34,6 +39,12 @@ function load(options = {}) {
                 },
             },
             crypto: { randomUUID: () => '00000000-0000-4000-8000-000000000000' },
+            // Real window.open returns null when a popup blocker or an in-app
+            // webview refuses the tab; options.blockPopups models that.
+            open(...args) {
+                openCalls.push(args)
+                return options.blockPopups ? null : { closed: false }
+            },
             posthog: options.posthog,
         },
         document: {
@@ -75,6 +86,8 @@ function load(options = {}) {
         headChildren: context.document.head.children,
         historyCalls,
         init: listeners.get('DOMContentLoaded'),
+        locationAssigns,
+        openCalls,
         posthogHook: context.window.__startersV3ReviewPosthogBeforeSend,
     }
 }
@@ -180,18 +193,25 @@ const boundNode = () => ({
     attributes: {},
     setAttributeCalls: [],
     removeAttributeCalls: [],
+    // setAttribute/removeAttribute round-trip through the attributes map because
+    // the profile once-guard reads back what it writes.
     setAttribute(name, value) {
         this.setAttributeCalls.push([name, value])
+        this.attributes[name] = value
     },
     removeAttribute(name) {
         this.removeAttributeCalls.push(name)
+        delete this.attributes[name]
     },
     getAttribute(name) {
         return name in this.attributes ? this.attributes[name] : null
     },
 })
 
-function makeFormHarness() {
+// options.profileTagName / options.profileAnchor model the three shapes the
+// profile link ships in: a plain anchor (default), the design-system Button
+// component with no anchor inside, or a wrapper with a nested anchor.
+function makeFormHarness(options = {}) {
     const states = [
         'loading',
         'form',
@@ -212,7 +232,18 @@ function makeFormHarness() {
     const errorNode = { textContent: '' }
     const photoNode = boundNode()
     const headlineNode = boundNode()
-    const profileNode = boundNode()
+    const profileAnchor = options.profileAnchor || null
+    const profileNode = Object.assign(boundNode(), {
+        tagName: options.profileTagName || 'A',
+        clickListeners: [],
+        // Only the component's documented link element answers, so a controller
+        // looking for a bare 'a' would find nothing here.
+        querySelector: (selector) =>
+            selector === 'a.clickable_link' ? profileAnchor : null,
+        addEventListener(type, handler, capture) {
+            if (type === 'click') this.clickListeners.push({ handler, capture })
+        },
+    })
     let submit
     const form = {
         addEventListener(name, callback) {
@@ -252,6 +283,7 @@ function makeFormHarness() {
         fields,
         headlineNode,
         photoNode,
+        profileAnchor,
         profileNode,
         root,
         states,
@@ -447,20 +479,24 @@ test('the boot guard survives a second controller script tag', () => {
     )
 })
 
+function resolvedContext() {
+    return {
+        available: true,
+        starter: {
+            name: 'Starter',
+            headline: 'Fractional growth operator',
+            photo_url: 'https://example.com/p.jpg',
+            profile_url: '/hire/test-starter',
+        },
+    }
+}
+
 test('a resolved context shows the Starter nodes and strips the placeholder art', async () => {
     const formHarness = makeFormHarness()
     const harness = load({
         href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
         root: formHarness.root,
-        fetch: async () => response({
-            available: true,
-            starter: {
-                name: 'Starter',
-                headline: 'Fractional growth operator',
-                photo_url: 'https://example.com/p.jpg',
-                profile_url: '/hire/test-starter',
-            },
-        }),
+        fetch: async () => response(resolvedContext()),
     })
 
     await harness.init()
@@ -479,7 +515,158 @@ test('a resolved context shows the Starter nodes and strips the placeholder art'
 
     assert.equal(formHarness.profileNode.hidden, false)
     assert.equal(formHarness.profileNode.style.display, '')
+    // An anchor navigates on its own, but must open a new tab: a same-tab trip
+    // would destroy the token-bearing history entry and any typed review.
     assert.deepEqual(formHarness.profileNode.setAttributeCalls, [
         ['href', '/hire/test-starter'],
+        ['target', '_blank'],
+        ['rel', 'noopener'],
     ])
+    assert.deepEqual(formHarness.profileNode.clickListeners, [])
+    assert.deepEqual(harness.openCalls, [])
+})
+
+test('the component link flavor gets the href on a.clickable_link', async () => {
+    const formHarness = makeFormHarness({
+        profileTagName: 'DIV',
+        profileAnchor: boundNode(),
+    })
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async () => response(resolvedContext()),
+    })
+
+    await harness.init()
+
+    assert.deepEqual(formHarness.profileAnchor.setAttributeCalls, [
+        ['href', '/hire/test-starter'],
+        ['target', '_blank'],
+        ['rel', 'noopener'],
+    ])
+    assert.deepEqual(formHarness.profileNode.setAttributeCalls, [])
+    assert.deepEqual(formHarness.profileNode.clickListeners, [])
+    assert.deepEqual(harness.openCalls, [])
+})
+
+test('the anchorless Button component opens the profile in a new tab, bound once', async () => {
+    // The button-flavored component renders div.button_main-wrap >
+    // div.clickable_wrap > button.clickable_btn, with no a.clickable_link inside,
+    // so setAttribute('href') would go nowhere.
+    const formHarness = makeFormHarness({ profileTagName: 'DIV' })
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async () => response(resolvedContext()),
+    })
+
+    await harness.init()
+    // Re-binding against the same DOM must not stack a second listener. Calling
+    // init twice on one load cannot show this — the capability token is consumed
+    // on the first run, so a second call bails at the token check — so drive a
+    // second controller instance over the same nodes. In one window the boot guard
+    // already prevents that; the attribute guard is the defense behind it.
+    const second = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async () => response(resolvedContext()),
+    })
+    await second.init()
+
+    assert.equal(formHarness.profileNode.hidden, false)
+    assert.equal(formHarness.profileNode.clickListeners.length, 1)
+    assert.equal(formHarness.profileNode.clickListeners[0].capture, true)
+    // The url is stored per resolve; the bound marker is written only once.
+    assert.deepEqual(formHarness.profileNode.setAttributeCalls, [
+        ['data-starter-review-profile-url', '/hire/test-starter'],
+        ['data-starter-review-profile-bound', 'true'],
+        ['data-starter-review-profile-url', '/hire/test-starter'],
+    ])
+
+    let prevented = 0
+    let stopped = 0
+    formHarness.profileNode.clickListeners[0].handler({
+        preventDefault() {
+            prevented += 1
+        },
+        stopPropagation() {
+            stopped += 1
+        },
+    })
+    assert.equal(prevented, 1)
+    assert.equal(stopped, 1)
+    assert.deepEqual(harness.openCalls, [
+        ['/hire/test-starter', '_blank', 'noopener'],
+    ])
+    assert.deepEqual(harness.locationAssigns, [])
+})
+
+test('a re-resolve with a new profile url retargets the bound listener', async () => {
+    const formHarness = makeFormHarness({ profileTagName: 'DIV' })
+    const first = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async () => response(resolvedContext()),
+    })
+    await first.init()
+
+    const moved = resolvedContext()
+    moved.starter.profile_url = '/hire/renamed-starter'
+    const second = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async () => response(moved),
+    })
+    await second.init()
+
+    // Still one listener, but it must follow the newer destination.
+    assert.equal(formHarness.profileNode.clickListeners.length, 1)
+    formHarness.profileNode.clickListeners[0].handler({
+        preventDefault() {},
+        stopPropagation() {},
+    })
+    assert.deepEqual(first.openCalls, [
+        ['/hire/renamed-starter', '_blank', 'noopener'],
+    ])
+})
+
+test('a blocked popup falls back to a same-tab trip', async () => {
+    const formHarness = makeFormHarness({ profileTagName: 'DIV' })
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        blockPopups: true,
+        fetch: async () => response(resolvedContext()),
+    })
+    await harness.init()
+
+    formHarness.profileNode.clickListeners[0].handler({
+        preventDefault() {},
+        stopPropagation() {},
+    })
+
+    assert.deepEqual(harness.openCalls, [
+        ['/hire/test-starter', '_blank', 'noopener'],
+    ])
+    // window.open handed back null, so the button must still go somewhere.
+    assert.deepEqual(harness.locationAssigns, ['/hire/test-starter'])
+})
+
+test('a profile url outside the /hire allowlist binds nothing', async () => {
+    const formHarness = makeFormHarness({ profileTagName: 'DIV' })
+    const context = resolvedContext()
+    context.starter.profile_url = 'https://evil.example.com/hire/test-starter'
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async () => response(context),
+    })
+
+    await harness.init()
+
+    assert.equal(formHarness.profileNode.hidden, true)
+    assert.equal(formHarness.profileNode.style.display, 'none')
+    assert.deepEqual(formHarness.profileNode.clickListeners, [])
+    assert.deepEqual(formHarness.profileNode.setAttributeCalls, [])
+    assert.deepEqual(harness.openCalls, [])
 })
