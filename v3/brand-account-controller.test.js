@@ -997,6 +997,111 @@ test('changed-email reset failure keeps durable completion and provides recovery
   )
 })
 
+test('non-Error changed-email rejection still produces stable recovery copy', async () => {
+  const buildForm = makeForm('build', { email: 'next@example.com' })
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'old@example.com',
+    sendMemberResetPasswordEmail: async () => Promise.reject('response lost'),
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    1,
+  )
+  assert.equal(
+    buildForm.wrapper.failText.textContent,
+    'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.',
+  )
+  assert.deepEqual(environment.redirects, [])
+})
+
+test('an auth write that lands but reports failure still sends one security email', async () => {
+  // The reported write is ambiguous: Memberstack claimed the address, then the
+  // retry came back 409, so the changed login email is only observable on the
+  // next read of the member.
+  let authAttempts = 0
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'moved@example.com' })
+  const environment = loadController({
+    buildForm,
+    member,
+    updateMemberAuth: async (payload) => {
+      authAttempts += 1
+      member.auth.email = payload.email
+      const conflict = new Error('That email is already in use.')
+      conflict.status = 409
+      throw conflict
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(authAttempts, 1)
+  assert.deepEqual(environment.redirects, [])
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    0,
+  )
+
+  buildForm.submitEvent()
+  await settle()
+
+  const emails = environment.calls.filter(
+    (call) => call.method === 'sendMemberResetPasswordEmail',
+  )
+  assert.equal(authAttempts, 1)
+  assert.equal(emails.length, 1)
+  assert.deepEqual(plain(emails[0].payload), { email: 'moved@example.com' })
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    1,
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+})
+
+test('a reconciled ambiguous auth write sends no second security email', async () => {
+  let deliveries = 0
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'moved@example.com' })
+  const environment = loadController({
+    buildForm,
+    member,
+    updateMemberAuth: async (payload) => {
+      member.auth.email = payload.email
+      const conflict = new Error('That email is already in use.')
+      conflict.status = 409
+      throw conflict
+    },
+    sendMemberResetPasswordEmail: async () => {
+      deliveries += 1
+      throw new Error('response lost after delivery')
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+  buildForm.submitEvent()
+  await settle()
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(deliveries, 1)
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+})
+
 test('Account Security interception remains off until explicitly configured', () => {
   const environment = loadController({ buildForm: null })
   assert.equal(environment.securityForm.listeners.has('submit'), false)

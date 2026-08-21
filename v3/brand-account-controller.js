@@ -399,6 +399,25 @@
     })
   }
 
+  /**
+   * Records the authenticated baseline and the intended login email before the
+   * auth write is attempted, because that write can land while its own response
+   * is lost. Returns the pending intent when the changed target is already the
+   * member's login email, so an ambiguous write is reconciled as a real email
+   * change instead of reading as an unchanged onboarding submit.
+   */
+  function recordBuildEmailIntent(form, member, email) {
+    var current = memberEmail(member)
+    if (current !== email) {
+      var intent = { baseline: current, target: email }
+      pendingBuildPasswordEmails.set(form, intent)
+      return intent
+    }
+    var pending = pendingBuildPasswordEmails.get(form)
+    if (pending && pending.target === email && pending.baseline !== current) return pending
+    return null
+  }
+
   async function updateEmailIfChanged(client, member, email) {
     var changed = memberEmail(member) !== email
     if (changed) {
@@ -534,20 +553,20 @@
     // keeps the authenticated login email and sends no password email. A real
     // email change keeps the existing ownership-proof email after completion.
     await updateOrdinaryFields(client, values)
-    var emailResult = await updateEmailIfChanged(client, member, values.email)
-    // The auth change can succeed before a later completion write fails. Keep
-    // that changed target on this form so the safe retry still sends its one
-    // ownership-proof message after completion succeeds.
-    if (emailResult.changed) pendingBuildPasswordEmails.set(form, emailResult.email)
+    // The auth change can succeed before a later completion write fails, and it
+    // can land while its own response is lost. Keep the baseline and the changed
+    // target on this form so the safe retry still sends its one ownership-proof
+    // message after completion succeeds.
+    var emailIntent = recordBuildEmailIntent(form, member, values.email)
+    await updateEmailIfChanged(client, member, values.email)
     await markBuildComplete(client)
     // Only reached once completion is durable. The marker stops the routers
     // from bouncing this member back onto the form during the webhook's
     // catch-up window.
     markBrandProfileCompletedLocally()
-    var pendingPasswordEmail = pendingBuildPasswordEmails.get(form)
-    if (pendingPasswordEmail) {
+    if (emailIntent) {
       pendingBuildPasswordEmails.delete(form)
-      await sendResetPasswordEmailOnce(form, client, pendingPasswordEmail)
+      await sendResetPasswordEmailOnce(form, client, emailIntent.target)
     }
 
     return { memberId: member.id }
