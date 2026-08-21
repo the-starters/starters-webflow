@@ -267,17 +267,7 @@
       title: '[name="call-description"]',
       price: '[name="call-rate"]',
     }
-    if (name === 'enabled') {
-      for (const groupName of PAID_RADIO_GROUP_NAMES) {
-        const candidate = namedRadio(groupName, 'yes')
-        if (candidate) return candidate
-      }
-      for (const groupName of PAID_RADIO_GROUP_NAMES) {
-        const candidate = namedRadioExcept(groupName, 'no')
-        if (candidate) return candidate
-      }
-      return null
-    }
+    if (name === 'enabled') return cardRadioPair().enabled
     return selectors[name] ? qs(selectors[name], root) : null
   }
 
@@ -285,31 +275,66 @@
     return String(item.value || item.getAttribute('value') || '').toLowerCase()
   }
 
-  function namedRadio(name, value) {
-    return Array.prototype.find.call(qsa('[name="' + name + '"]', root), function (item) {
-      return radioValue(item) === value
-    }) || null
+  function findRadio(name, predicate) {
+    return Array.prototype.find.call(qsa('[name="' + name + '"]', root), predicate) || null
   }
 
-  function namedRadioExcept(name, value) {
-    return Array.prototype.find.call(qsa('[name="' + name + '"]', root), function (item) {
-      return radioValue(item) !== value
-    }) || null
+  function namedRadio(name, value) {
+    return findRadio(name, function (item) {
+      return radioValue(item) === value
+    })
+  }
+
+  // Webflow labels a radio's value from its authored copy, so a Yes or No answer
+  // often reads as "Yes please" or "No thanks". Treat a leading yes or no word as
+  // that answer, but never a longer word that merely starts with those letters.
+  function namedRadioAnswering(name, word, exclude) {
+    return findRadio(name, function (item) {
+      if (item === exclude) return false
+      const value = radioValue(item)
+      if (value.indexOf(word) !== 0) return false
+      const next = value.charAt(word.length)
+      return next === '' || /[^a-z0-9]/.test(next)
+    })
+  }
+
+  function namedRadioOther(name, exclude) {
+    if (!exclude) return null
+    return findRadio(name, function (item) {
+      return item !== exclude
+    })
+  }
+
+  // Yes and No resolve as one pair, never independently. Every step either
+  // matches a distinct value or is anchored to the already-identified sibling, so
+  // one radio can never bind as both answers even when both values are
+  // non-canonical and both live in the same field name. With neither answer
+  // identifiable the pair stays unresolved: the card takes no radio-driven action
+  // rather than guessing an answer from DOM order.
+  function cardRadioPair() {
+    let enabledInput = qs('[data-call-settings-input="enabled"]', root)
+    let disabledInput = qs('[data-call-settings-input="disabled"]', root)
+    for (const groupName of PAID_RADIO_GROUP_NAMES) {
+      if (!enabledInput) enabledInput = namedRadio(groupName, 'yes')
+      if (!disabledInput) disabledInput = namedRadio(groupName, 'no')
+    }
+    for (const groupName of PAID_RADIO_GROUP_NAMES) {
+      if (!enabledInput) enabledInput = namedRadioAnswering(groupName, 'yes', disabledInput)
+      if (!disabledInput) disabledInput = namedRadioAnswering(groupName, 'no', enabledInput)
+    }
+    for (const groupName of PAID_RADIO_GROUP_NAMES) {
+      if (!enabledInput) enabledInput = namedRadioOther(groupName, disabledInput)
+      if (!disabledInput) disabledInput = namedRadioOther(groupName, enabledInput)
+    }
+    if (enabledInput && enabledInput === disabledInput) return { enabled: null, disabled: null }
+    return { enabled: enabledInput || null, disabled: disabledInput || null }
   }
 
   function disabledField() {
     if (!cardMode) return null
     const canonical = qs('[data-call-settings-input="disabled"]', root)
     if (canonical) return canonical
-    for (const groupName of PAID_RADIO_GROUP_NAMES) {
-      const candidate = namedRadio(groupName, 'no')
-      if (candidate) return candidate
-    }
-    for (const groupName of PAID_RADIO_GROUP_NAMES) {
-      const candidate = namedRadioExcept(groupName, 'yes')
-      if (candidate) return candidate
-    }
-    return null
+    return cardRadioPair().disabled
   }
 
   // The first native Paid card shipped with Yes and No under different Webflow
@@ -397,10 +422,7 @@
     })
     if (!nextBusy && settings) {
       const service = canonicalService(settings)
-      setActionEnabled(
-        action('save'),
-        cardMode ? canSaveSettings(settings) : prerequisitesReady(settings),
-      )
+      setActionEnabled(action('save'), canSaveSettings(settings))
       setActionEnabled(action('disable'), Boolean(service))
     }
   }
@@ -445,6 +467,7 @@
     if (code !== 'MEMBER_SESSION_MISSING' && code !== 'MEMBER_SCOPE_CHANGED') return false
     refreshVersion += 1
     clearRenderedState('Sign in to manage paid calls.')
+    setBusy(false)
     setStatus('error')
     return true
   }
@@ -484,10 +507,7 @@
 
     root.setAttribute('data-paid-call-enabled', service ? 'true' : 'false')
     root.setAttribute('data-paid-call-bookable', bookable ? 'true' : 'false')
-    setActionEnabled(
-      action('save'),
-      cardMode ? canSaveSettings(value) : prerequisitesReady(value),
-    )
+    setActionEnabled(action('save'), canSaveSettings(value))
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
     if (priceOutput) priceOutput.textContent = formatUsd(service ? service.price_cents : 0)

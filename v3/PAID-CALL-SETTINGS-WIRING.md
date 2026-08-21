@@ -51,6 +51,12 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
 
+Yes and No are resolved as one pair, never independently, so a single radio can never be bound as
+both answers. Canonical `yes` and `no` values match first, then a leading `yes` or `no` word such as
+`No thanks`, then the remaining radio next to whichever answer was already identified. If neither
+answer can be identified from its value the pair stays unbound and the card takes no radio-driven
+action, so a Yes click is never read as a turn-off.
+
 The controller scopes every compatibility selector to the Paid card. It anchors on the Paid Form
 Block's own enclosing form wrapper and only widens to the Call Item that owns that wrapper. If the
 Call Item also holds another card's form wrapper, the controller stays inside the Paid wrapper, so it
@@ -94,6 +100,17 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - Save uses revision-guarded `POST starter/paid-call-settings/upsert/v3` (`#2925`).
 - Turn off uses guarded `POST starter/paid-call-settings/disable/v3` (`#2923`).
 - Each mutation gets a new idempotency key and is followed by canonical GET readback.
+- Save is offered whenever an active canonical service exists, even while Stripe or calendar
+  readiness is stale, so the fixed-duration repair described above stays reachable. Xano still
+  revision-guards that write and canonical readback still decides the rendered state. With no active
+  service, save stays blocked until every prerequisite reads ready. The Save control and the write
+  guard use this same rule in both the panel and the Call Item card wiring.
+- A missing or changed Memberstack session fails closed. An upsert, a turn off, or a readiness
+  refresh that reports `MEMBER_SESSION_MISSING` or `MEMBER_SCOPE_CHANGED` clears the cached Paid
+  state instead of leaving stale enabled controls: inputs reset, both actions disable,
+  `data-paid-call-settings` becomes `error`, and the status reads `Sign in to manage paid calls.`
+  No `starterPaidCallWriteError` event is emitted for that class of failure, because nothing was
+  written and the card is inert until the next auth change or reload.
 - The native Webflow form still owns which fields are required and still shows its own
   validation UI. An authored Update control wired as a plain element is intercepted, so the
   controller runs that form's constraint validation before writing; an invalid form blocks the
