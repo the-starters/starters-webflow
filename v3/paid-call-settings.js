@@ -7,8 +7,17 @@
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
   const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
   const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
+  const CALL_SETTINGS_ROOT_SELECTOR = '[data-call-settings-service="paid"]'
   const ROOT_SELECTOR = '[data-paid-call-element="settings"]'
+  const CARD_ROOT_SELECTOR = '[data-availability-element="call-paid-form"]'
   const STATUS_ATTRIBUTE = 'data-paid-call-settings'
+  const PANEL_SELECTOR =
+    '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"]'
+  const OPEN_ACTION_SELECTOR =
+    '[data-call-settings-action="open"], [data-availability-action="item-form-open"]'
+  const FOREIGN_CARD_SELECTOR =
+    '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"], [data-call-settings-service], [data-availability-element="call-paid-form"]'
+  const FIXED_DURATION_MINUTES = 60
 
   const hostname = window.location.hostname
   if (hostname !== STAGING_HOST && !PRODUCTION_HOSTS.has(hostname)) return
@@ -16,6 +25,8 @@
   window.__tsPaidCallSettings = true
 
   let root = null
+  let uiScope = null
+  let cardMode = false
   let sessionMemberId = null
   let settings = null
   let busy = false
@@ -30,6 +41,56 @@
 
   function qsa(selector, scope) {
     return (scope || document).querySelectorAll(selector)
+  }
+
+  function containsElement(ancestor, node) {
+    let current = node
+    while (current) {
+      if (current === ancestor) return true
+      current = current.parentElement
+    }
+    return false
+  }
+
+  function closestMatch(element, selector) {
+    let candidate = element
+    while (candidate && candidate !== document) {
+      if (candidate.matches && candidate.matches(selector)) return candidate
+      candidate = candidate.parentElement
+    }
+    return null
+  }
+
+  function ownsElement(item, panel) {
+    if (item === root || item === panel) return true
+    if (panel && (containsElement(panel, item) || containsElement(item, panel))) return true
+    return containsElement(root, item) || containsElement(item, root)
+  }
+
+  function hasForeignCard(candidate, panel) {
+    return Array.prototype.some.call(qsa(FOREIGN_CARD_SELECTOR, candidate), function (item) {
+      return !ownsElement(item, panel)
+    })
+  }
+
+  function cardPanel() {
+    return (
+      closestMatch(root, PANEL_SELECTOR) ||
+      qs('[data-call-settings-element="panel"]', uiScope || root) ||
+      qs('[data-availability-element="call-form-wrapper"]', uiScope || root)
+    )
+  }
+
+  function findCallCardScope(element) {
+    const panel = closestMatch(element, PANEL_SELECTOR)
+    const anchor = panel || element
+    let candidate = anchor
+    while (candidate && candidate !== document) {
+      if (hasForeignCard(candidate, panel)) return anchor
+      if (qs(OPEN_ACTION_SELECTOR, candidate)) return candidate
+      candidate = candidate.parentElement
+    }
+    return anchor
   }
 
   function setStatus(value) {
@@ -125,21 +186,78 @@
   }
 
   function field(name) {
-    return qs('[data-paid-call-input="' + name + '"]', root)
+    const canonical =
+      qs('[data-call-settings-input="' + name + '"]', root) ||
+      qs('[data-paid-call-input="' + name + '"]', root)
+    if (canonical || !cardMode) return canonical
+    const selectors = {
+      enabled: '[name="paid-consulting-calls"]',
+      title: '[name="call-description"]',
+      price: '[name="call-rate"]',
+    }
+    return selectors[name] ? qs(selectors[name], root) : null
+  }
+
+  function disabledField() {
+    return cardMode
+      ? qs('[data-call-settings-input="disabled"]', root) ||
+          qs('[name="consulting-calls"]', root)
+      : null
   }
 
   function action(name) {
-    return qs('[data-paid-call-action="' + name + '"]', root)
+    const stableName = name === 'save' ? 'submit' : name
+    const canonical =
+      qs('[data-call-settings-action="' + stableName + '"]', uiScope || root) ||
+      qs('[data-paid-call-action="' + name + '"]', root)
+    if (canonical || !cardMode) return canonical
+    const selectors = {
+      open: '[data-availability-action="item-form-open"]',
+      close: '[data-availability-action="item-form-close"]',
+      save: '[data-availability-action="item-form-submit"]',
+    }
+    return selectors[name] ? qs(selectors[name], uiScope || root) : null
   }
 
   function setMessage(message) {
-    const target = qs('[data-paid-call-element="status"]', root)
+    const target =
+      qs('[data-call-settings-output="status"]', uiScope || root) ||
+      qs('[data-paid-call-element="status"]', root)
     if (target) target.textContent = message || ''
+  }
+
+  function output(name) {
+    return qs('[data-call-settings-output="' + name + '"]', uiScope || root)
+  }
+
+  function formatUsd(cents) {
+    const amount = Number(cents || 0) / 100
+    const safeAmount = Number.isFinite(amount) ? amount : 0
+    if (typeof Intl !== 'undefined' && Intl && typeof Intl.NumberFormat === 'function') {
+      try {
+        return new Intl.NumberFormat('en-US', {
+          style: 'currency',
+          currency: 'USD',
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(safeAmount)
+      } catch (error) {
+        return '$' + safeAmount.toFixed(2)
+      }
+    }
+    return '$' + safeAmount.toFixed(2)
+  }
+
+  function show(element, visible) {
+    if (!element) return
+    element.hidden = !visible
+    element.style.display = visible ? '' : 'none'
   }
 
   function setBusy(nextBusy) {
     busy = nextBusy
-    qsa('[data-paid-call-action]', root).forEach(function (button) {
+    const buttons = ['open', 'close', 'save', 'disable'].map(action).filter(Boolean)
+    buttons.forEach(function (button) {
       button.style.pointerEvents = nextBusy ? 'none' : ''
       button.style.opacity = nextBusy ? '0.6' : ''
       const nativeButton = button.matches && button.matches('button, input')
@@ -148,8 +266,12 @@
       if (nativeButton) nativeButton.disabled = nextBusy
     })
     if (!nextBusy && settings) {
-      setActionEnabled(action('save'), prerequisitesReady(settings))
-      setActionEnabled(action('disable'), Boolean(canonicalService(settings)))
+      const service = canonicalService(settings)
+      setActionEnabled(
+        action('save'),
+        cardMode ? Boolean(service) || prerequisitesReady(settings) : prerequisitesReady(settings),
+      )
+      setActionEnabled(action('disable'), Boolean(service))
     }
   }
 
@@ -166,7 +288,7 @@
 
   function clearRenderedState(message) {
     settings = null
-    busy = false
+    setBusy(false)
     sessionMemberId = null
     const enabledInput = field('enabled')
     const titleInput = field('title')
@@ -175,8 +297,10 @@
     if (enabledInput) enabledInput.checked = false
     if (titleInput) titleInput.value = ''
     if (priceInput) priceInput.value = ''
-    if (durationInput) durationInput.value = '60'
-    qsa('[data-paid-call-prerequisite]', root).forEach(function (item) {
+    if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
+    const disabledInput = disabledField()
+    if (disabledInput) disabledInput.checked = true
+    qsa('[data-paid-call-prerequisite]', uiScope || root).forEach(function (item) {
       item.setAttribute('data-ready', 'false')
     })
     root.setAttribute('data-paid-call-enabled', 'false')
@@ -194,29 +318,47 @@
     settings = value
     const service = canonicalService(value)
     const readiness = readinessState(value)
+    const durationMatches = !service || Number(service.duration) === FIXED_DURATION_MINUTES
+    const bookable = readiness.bookable && durationMatches
     const enabledInput = field('enabled')
     const titleInput = field('title')
     const priceInput = field('price')
     const durationInput = field('duration')
 
     if (enabledInput) enabledInput.checked = Boolean(service)
+    const disabledInput = disabledField()
+    if (disabledInput) disabledInput.checked = !service
     if (titleInput) titleInput.value = service ? service.title || '' : 'Paid Consultation Call'
     if (priceInput) priceInput.value = service ? Number(service.price_cents || 0) / 100 : ''
-    if (durationInput) durationInput.value = String(service ? service.duration || 60 : 60)
+    if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
+    root.setAttribute(
+      'data-paid-call-duration-current',
+      service ? String(Number(service.duration || 0)) : '',
+    )
+    root.setAttribute('data-paid-call-duration-required', String(FIXED_DURATION_MINUTES))
 
     Object.keys(readiness).forEach(function (name) {
-      qsa('[data-paid-call-prerequisite="' + name + '"]', root).forEach(function (item) {
+      qsa('[data-paid-call-prerequisite="' + name + '"]', uiScope || root).forEach(function (item) {
         item.setAttribute('data-ready', readiness[name] ? 'true' : 'false')
       })
     })
 
     root.setAttribute('data-paid-call-enabled', service ? 'true' : 'false')
-    root.setAttribute('data-paid-call-bookable', readiness.bookable ? 'true' : 'false')
-    setActionEnabled(action('save'), prerequisitesReady(value))
+    root.setAttribute('data-paid-call-bookable', bookable ? 'true' : 'false')
+    setActionEnabled(
+      action('save'),
+      cardMode ? Boolean(service) || prerequisitesReady(value) : prerequisitesReady(value),
+    )
     setActionEnabled(action('disable'), Boolean(service))
+    const priceOutput = output('price')
+    if (priceOutput) priceOutput.textContent = formatUsd(service ? service.price_cents : 0)
+    show(output('on'), Boolean(service))
+    show(output('off'), !service)
     setMessage(
       service
-        ? readiness.bookable
+        ? Number(service.duration) !== FIXED_DURATION_MINUTES
+          ? 'Update this service to the required 60-minute Paid Call duration.'
+          : readiness.bookable
           ? 'Paid calls are on and bookable.'
           : 'Paid calls are saved, but a prerequisite needs attention.'
         : prerequisitesReady(value)
@@ -226,7 +368,7 @@
     setStatus('ready')
     emit('starterPaidCallSettingsChanged', {
       active: Boolean(service),
-      bookable: readiness.bookable,
+      bookable: bookable,
       readiness: readiness,
     })
     return value
@@ -251,17 +393,36 @@
   function readIntent() {
     const title = String((field('title') && field('title').value) || '').trim()
     const price = Number((field('price') && field('price').value) || 0)
-    const duration = Number((field('duration') && field('duration').value) || 0)
+    const duration = FIXED_DURATION_MINUTES
     if (title.length < 3 || title.length > 80) {
       throw new Error('Use a title between 3 and 80 characters.')
     }
     if (!Number.isInteger(price) || price < 5 || price > 999999) {
       throw new Error('Use a whole-dollar rate from $5 to $999,999.')
     }
-    if ([15, 30, 45, 60].indexOf(duration) === -1) {
-      throw new Error('Choose a 15, 30, 45, or 60 minute call.')
-    }
     return { title: title, price_cents: price * 100, duration_minutes: duration }
+  }
+
+  function setCardEditorOpen(open) {
+    if (!cardMode) return
+    const wrapper = cardPanel()
+    if (wrapper) wrapper.style.display = open ? 'flex' : 'none'
+    root.setAttribute('data-paid-call-editor-open', open ? 'true' : 'false')
+  }
+
+  async function submitIntent() {
+    if (cardMode) {
+      const enabledInput = field('enabled')
+      const disabledInput = disabledField()
+      if (disabledInput && disabledInput.checked && (!enabledInput || !enabledInput.checked)) {
+        const result = await disable()
+        if (result) setCardEditorOpen(false)
+        return result
+      }
+    }
+    const result = await save()
+    if (result) setCardEditorOpen(false)
+    return result
   }
 
   async function save() {
@@ -435,18 +596,21 @@
   function bind() {
     if (bound) return
     bound = true
-    const form = qs('[data-paid-call-element="form"]', root)
+    const form =
+      qs('[data-call-settings-element="form"]', root) ||
+      qs('[data-paid-call-element="form"]', root) ||
+      (cardMode ? qs('[data-availability-element="availability-form"]', root) : null)
     if (form) {
       form.addEventListener('submit', function (event) {
         event.preventDefault()
-        save().catch(function () {})
+        submitIntent().catch(function () {})
       })
     }
     const saveButton = action('save')
     if (saveButton) {
       saveButton.addEventListener('click', function (event) {
         event.preventDefault()
-        save().catch(function () {})
+        submitIntent().catch(function () {})
       })
     }
     const disableButton = action('disable')
@@ -459,9 +623,32 @@
     const enabledInput = field('enabled')
     if (enabledInput) {
       enabledInput.addEventListener('change', function () {
+        const disabledInput = disabledField()
+        if (cardMode && enabledInput.checked && disabledInput) disabledInput.checked = false
         if (!enabledInput.checked && canonicalService(settings)) {
           setMessage('Use Turn off paid calls to disable the active service safely.')
         }
+      })
+    }
+    const disabledInput = disabledField()
+    if (disabledInput) {
+      disabledInput.addEventListener('change', function () {
+        if (disabledInput.checked && enabledInput) enabledInput.checked = false
+      })
+    }
+    const openButton = action('open')
+    if (openButton) {
+      openButton.addEventListener('click', function (event) {
+        event.preventDefault()
+        setCardEditorOpen(root.getAttribute('data-paid-call-editor-open') !== 'true')
+      })
+    }
+    const closeButton = action('close')
+    if (closeButton) {
+      closeButton.addEventListener('click', function (event) {
+        event.preventDefault()
+        if (settings) render(settings)
+        setCardEditorOpen(false)
       })
     }
     ;['starterSchedulingConnectionStateChanged', 'starterStripeConnectReady'].forEach(function (name) {
@@ -473,11 +660,22 @@
   }
 
   async function initialize() {
-    root = qs(ROOT_SELECTOR)
+    root = qs(CALL_SETTINGS_ROOT_SELECTOR)
+    cardMode = Boolean(root)
+    if (!root) {
+      root = qs(ROOT_SELECTOR)
+      cardMode = false
+    }
+    if (!root) {
+      root = qs(CARD_ROOT_SELECTOR)
+      cardMode = Boolean(root)
+    }
     if (!root) {
       setStatus('not-applicable')
       return null
     }
+    uiScope = cardMode ? findCallCardScope(root) : root
+    if (cardMode) setCardEditorOpen(false)
     bind()
     await waitForMemberstack()
     return loadSession(undefined, false)

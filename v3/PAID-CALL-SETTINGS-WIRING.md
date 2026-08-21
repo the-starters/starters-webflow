@@ -2,6 +2,11 @@
 
 Place one native Webflow form inside the always-visible `Dashboard / Calendar` section. Do not put the setup in a modal and do not generate the form in JavaScript.
 
+Paid Call duration is fixed at `60` minutes. The controller ignores any editable duration value and
+always sends `duration_minutes: 60`. Duration choices can be added in a later product change. An
+active canonical service stored at any other duration reads as not bookable and shows the
+update-the-duration message until it is saved again at 60 minutes.
+
 ## Script
 
 Load `v3/paid-call-settings.js` after `v3/scheduling-auth.js`. The local stage component loader already includes it.
@@ -22,9 +27,42 @@ Use these attributes on existing native Webflow elements:
 | Save button wrapper | `data-paid-call-action` | `save` |
 | Disable button wrapper | `data-paid-call-action` | `disable` |
 
-The title must contain 3 to 80 characters. The duration select must use `15`, `30`, `45`, and `60` as option values. The rate field accepts whole US dollars from 5 to 999999.
+The title must contain 3 to 80 characters. A legacy duration select can remain in Designer, but its
+value is ignored while the product duration is fixed. The rate field accepts whole US dollars from 5
+to 999999.
 
-Optional prerequisite rows use `data-paid-call-prerequisite` with one of these values:
+The current native `Dashboard / Call Item` Paid instance is also supported without generated markup:
+
+| Element | Existing authored contract |
+| --- | --- |
+| Paid Form Block | `data-availability-element="call-paid-form"` |
+| Native form | `data-availability-element="availability-form"` |
+| Yes radio | `name="paid-consulting-calls"` |
+| No radio | `name="consulting-calls"` within the Paid Form Block |
+| Description/title input | `name="call-description"` |
+| Rate input | `name="call-rate"` |
+| Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
+
+The controller scopes every compatibility selector to the Paid card. It anchors on the Paid Form
+Block's own enclosing form wrapper and only widens to the Call Item that owns that wrapper. If the
+Call Item also holds another card's form wrapper, the controller stays inside the Paid wrapper, so it
+never binds or toggles the Free card. Give the Paid card its own `item-form-open` inside that Call
+Item so Edit stays wired. It does not use styling classes, generated element IDs, or the duplicate
+Form Block ID.
+
+For new Designer wiring, use the stable contract instead of the compatibility names:
+
+- Paid card root: `data-call-settings-service="paid"`
+- Native form: `data-call-settings-element="form"`
+- Edit panel: `data-call-settings-element="panel"`
+- Inputs: `data-call-settings-input="enabled|disabled|title|price"`
+- Actions: `data-call-settings-action="open|close|submit"`
+- Optional outputs: `data-call-settings-output="status|on|off|price"`
+
+Keep the form native to Webflow. The controller binds behavior and does not create form HTML.
+
+Optional prerequisite rows use `data-paid-call-prerequisite` with one of these values (authorable
+anywhere inside the Paid card scope, including the Call Item header):
 
 - `calendar`
 - `availability`
@@ -37,7 +75,10 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 
 - `data-paid-call-state="loading|ready|saving|disabling|error"`
 - `data-paid-call-enabled="true|false"`
-- `data-paid-call-bookable="true|false"`
+- `data-paid-call-bookable="true|false"` (also `false` when the stored duration is not `60`)
+- `data-paid-call-duration-required="60"`
+- `data-paid-call-duration-current` — the stored duration in minutes, empty with no active service
+- `data-paid-call-editor-open="true|false"` — card and stable-contract wiring only
 
 ## Authority and behavior
 
