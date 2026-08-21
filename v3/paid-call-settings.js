@@ -18,6 +18,7 @@
   const FOREIGN_CARD_SELECTOR =
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"], [data-call-settings-service], [data-availability-element="call-paid-form"]'
   const FIXED_DURATION_MINUTES = 60
+  const ROOT_WAIT_TIMEOUT_MS = 10000
 
   const hostname = window.location.hostname
   if (hostname !== STAGING_HOST && !PRODUCTION_HOSTS.has(hostname)) return
@@ -34,9 +35,57 @@
   let bound = false
   let wiredMemberstack = null
   let memberstackReadyResolvers = []
+  let rootObserver = null
+  let rootWaitTimer = null
+  let initializationPromise = null
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
+  }
+
+  function locateRoot() {
+    root = qs(CALL_SETTINGS_ROOT_SELECTOR)
+    cardMode = Boolean(root)
+    if (!root) {
+      root = qs(ROOT_SELECTOR)
+      cardMode = false
+    }
+    if (!root) {
+      root = qs(CARD_ROOT_SELECTOR)
+      cardMode = Boolean(root)
+    }
+    return root
+  }
+
+  function stopRootWait() {
+    if (rootObserver) rootObserver.disconnect()
+    rootObserver = null
+    if (rootWaitTimer && typeof window.clearTimeout === 'function') {
+      window.clearTimeout(rootWaitTimer)
+    }
+    rootWaitTimer = null
+  }
+
+  function waitForRoot() {
+    if (rootObserver) return
+    setStatus('waiting-for-ui')
+    if (typeof MutationObserver !== 'function') {
+      setStatus('not-applicable')
+      return
+    }
+    const resume = function () {
+      if (!locateRoot()) return
+      stopRootWait()
+      initialize().catch(function () {})
+    }
+    rootObserver = new MutationObserver(resume)
+    rootObserver.observe(document.documentElement, { childList: true, subtree: true })
+    rootWaitTimer = window.setTimeout(function () {
+      stopRootWait()
+      if (!locateRoot()) setStatus('not-applicable')
+      else initialize().catch(function () {})
+    }, ROOT_WAIT_TIMEOUT_MS)
+    resume()
   }
 
   function qsa(selector, scope) {
@@ -660,25 +709,25 @@
   }
 
   async function initialize() {
-    root = qs(CALL_SETTINGS_ROOT_SELECTOR)
-    cardMode = Boolean(root)
+    locateRoot()
     if (!root) {
-      root = qs(ROOT_SELECTOR)
-      cardMode = false
-    }
-    if (!root) {
-      root = qs(CARD_ROOT_SELECTOR)
-      cardMode = Boolean(root)
-    }
-    if (!root) {
-      setStatus('not-applicable')
+      waitForRoot()
       return null
     }
-    uiScope = cardMode ? findCallCardScope(root) : root
-    if (cardMode) setCardEditorOpen(false)
-    bind()
-    await waitForMemberstack()
-    return loadSession(undefined, false)
+    if (initializationPromise) return initializationPromise
+    initializationPromise = (async function () {
+      stopRootWait()
+      uiScope = cardMode ? findCallCardScope(root) : root
+      if (cardMode) setCardEditorOpen(false)
+      bind()
+      await waitForMemberstack()
+      return loadSession(undefined, false)
+    })()
+    try {
+      return await initializationPromise
+    } finally {
+      initializationPromise = null
+    }
   }
 
   window.StarterPaidCallSettings = {

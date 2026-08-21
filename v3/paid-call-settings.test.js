@@ -205,7 +205,9 @@ function load(options = {}) {
   const events = []
   const windowListeners = new Map()
   const timers = []
+  const observers = []
   const warnings = []
+  let rootAvailable = options.withRoot !== false && options.rootDelayed !== true
   let state = options.initial || canonical()
   let activeMember = { id: options.memberId || 'member-a' }
   let authChange = null
@@ -216,13 +218,17 @@ function load(options = {}) {
     documentElement: html,
     querySelector(selector) {
       if (selector === '[data-call-settings-service="paid"]') {
-        return options.stableCardMode === true ? dom.root : null
+        return rootAvailable && options.stableCardMode === true ? dom.root : null
       }
       if (selector === '[data-paid-call-element="settings"]') {
-        return options.cardMode === true || options.stableCardMode === true ? null : dom.root
+        return rootAvailable && options.cardMode !== true && options.stableCardMode !== true
+          ? dom.root
+          : null
       }
       if (selector === '[data-availability-element="call-paid-form"]') {
-        return options.cardMode === true || options.stableCardMode === true ? dom.root : null
+        return rootAvailable && (options.cardMode === true || options.stableCardMode === true)
+          ? dom.root
+          : null
       }
       return null
     },
@@ -238,7 +244,12 @@ function load(options = {}) {
     location: { hostname: options.hostname || 'thestarters.com' },
     crypto: { randomUUID: () => 'uuid-fixed' },
     memberReady: options.memberReady,
-    setTimeout(callback, delay) { timers.push({ callback, delay }) },
+    setTimeout(callback, delay) {
+      const timer = { callback, delay, cancelled: false }
+      timers.push(timer)
+      return timer
+    },
+    clearTimeout(timer) { timer.cancelled = true },
     addEventListener(name, listener) {
       const listeners = windowListeners.get(name) || []
       listeners.push(listener)
@@ -271,10 +282,21 @@ function load(options = {}) {
     constructor(type, init) { this.type = type; this.detail = init && init.detail }
   }
 
+  class MutationObserver {
+    constructor(callback) {
+      this.callback = callback
+      this.active = false
+      observers.push(this)
+    }
+    observe() { this.active = true }
+    disconnect() { this.active = false }
+  }
+
   vm.runInNewContext(SOURCE, {
     CustomEvent,
     Date,
     Math,
+    MutationObserver,
     console: { warn: (...args) => warnings.push(args.join(' ')) },
     document,
     window,
@@ -296,7 +318,14 @@ function load(options = {}) {
     installMemberstack: () => { window.$memberstackDom = memberstack },
     flushTimers: () => {
       const pending = timers.splice(0)
-      pending.forEach((timer) => timer.callback())
+      pending.forEach((timer) => { if (!timer.cancelled) timer.callback() })
+    },
+    revealRoot: () => {
+      rootAvailable = true
+      observers.filter((observer) => observer.active).forEach((observer) => observer.callback())
+    },
+    notifyMutation: () => {
+      observers.filter((observer) => observer.active).forEach((observer) => observer.callback())
     },
     getState: () => state,
     dispatchWindow: async (name, detail) => {
@@ -313,8 +342,43 @@ async function settle(iterations = 20) {
 test('is inert when the native Webflow settings form is absent', async () => {
   const result = load({ withRoot: false })
   await settle()
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'waiting-for-ui')
+  result.flushTimers()
+  await settle()
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'not-applicable')
   assert.equal(result.calls.length, 0)
+})
+
+test('boots when the native Paid card is inserted after the controller starts', async () => {
+  const active = service({ duration: 15, price_cents: 500, revision: 1 })
+  const result = load({
+    cardMode: true,
+    rootDelayed: true,
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'waiting-for-ui')
+  assert.equal(result.calls.length, 0)
+
+  result.revealRoot()
+  const manualInitializeA = result.window.StarterPaidCallSettings.initialize()
+  const manualInitializeB = result.window.StarterPaidCallSettings.initialize()
+  await Promise.all([manualInitializeA, manualInitializeB])
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+  assert.equal(result.calls.length, 1)
+  assert.equal(result.dom.price.value, 5)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-duration-current'), '15')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-duration-required'), '60')
+
+  result.notifyMutation()
+  await settle()
+  assert.equal(result.calls.length, 1)
 })
 
 test('renders the active service and prerequisite state from canonical GET', async () => {
