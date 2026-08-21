@@ -153,6 +153,13 @@
         } catch (error) {}
     }
 
+    // Designer classes (`display: flex`, the base `img { display: inline-block }`)
+    // outrank the UA `[hidden] { display: none }` rule, so hide inline as well.
+    var setHidden = function (node, hide) {
+        node.hidden = hide
+        node.style.display = hide ? 'none' : ''
+    }
+
     var init = async function () {
         var root = document.querySelector('[data-starter-review]')
         if (!root) {
@@ -165,7 +172,7 @@
         var setState = function (name) {
             root.setAttribute('data-starter-review-current-state', name)
             root.querySelectorAll('[data-starter-review-state]').forEach(function (node) {
-                node.hidden = node.getAttribute('data-starter-review-state') !== name
+                setHidden(node, node.getAttribute('data-starter-review-state') !== name)
             })
         }
         var setError = function (message) {
@@ -198,16 +205,16 @@
             if (nameNode) nameNode.textContent = normalize(context.starter.name) || 'Starter'
             if (headlineNode) {
                 headlineNode.textContent = normalize(context.starter.headline)
-                headlineNode.hidden = !normalize(context.starter.headline)
+                setHidden(headlineNode, !normalize(context.starter.headline))
             }
             if (photoNode) {
                 var photoUrl = normalize(context.starter.photo_url)
-                photoNode.hidden = !/^https:\/\//i.test(photoUrl)
+                setHidden(photoNode, !/^https:\/\//i.test(photoUrl))
                 if (!photoNode.hidden) photoNode.setAttribute('src', photoUrl)
             }
             if (profileNode) {
                 var profileUrl = normalize(context.starter.profile_url)
-                profileNode.hidden = !/^\/hire\/[a-z0-9-]+$/i.test(profileUrl)
+                setHidden(profileNode, !/^\/hire\/[a-z0-9-]+$/i.test(profileUrl))
                 if (!profileNode.hidden) profileNode.setAttribute('href', profileUrl)
             }
 

@@ -157,7 +157,9 @@ function makeFormHarness() {
         'error',
     ].map((name) => ({
         hidden: false,
-        getAttribute: () => name,
+        style: { display: '' },
+        getAttribute: (attribute) =>
+            attribute === 'data-starter-review-state' ? name : null,
     }))
     const fields = {
         rating: { value: '5', disabled: false },
@@ -166,6 +168,11 @@ function makeFormHarness() {
     }
     const submitButton = { disabled: false }
     const errorNode = { textContent: '' }
+    const photoNode = {
+        hidden: false,
+        style: { display: '' },
+        setAttribute() {},
+    }
     let submit
     const form = {
         addEventListener(name, callback) {
@@ -187,16 +194,20 @@ function makeFormHarness() {
         setAttribute(name, value) {
             if (name === 'data-starter-review-current-state') this.state = value
         },
-        querySelectorAll: () => states,
+        querySelectorAll: (selector) =>
+            selector === '[data-starter-review-state]' ? states : [],
         querySelector(selector) {
             if (selector === 'form[data-starter-review-form]') return form
             if (selector === '[data-starter-review-error]') return errorNode
+            if (selector === '[data-starter-review-photo]') return photoNode
             return null
         },
     }
     return {
         fields,
+        photoNode,
         root,
+        states,
         submit: (event) => submit(event),
         submitButton,
     }
@@ -275,4 +286,48 @@ test('ambiguous retries preserve the first payload and idempotency key', async (
     assert.equal(formHarness.fields.review_text.disabled, true)
     assert.deepEqual(payloads[0], payloads[1])
     assert.equal(formHarness.root.state, 'success')
+})
+
+// This unit seam cannot exercise the real CSS cascade, so it locks the inline-style
+// contract that defeats authored display rules instead: the `hidden` attribute alone
+// loses to a Designer class such as `display: flex` or the base `img` rule, so every
+// hidden node must also carry an inline `display: none`, and a shown node must have
+// that inline value cleared.
+test('state switching hides inactive blocks with inline display, not hidden alone', async () => {
+    const formHarness = makeFormHarness()
+    const displays = () => Object.fromEntries(
+        formHarness.states.map((node) => [
+            node.getAttribute('data-starter-review-state'),
+            { hidden: node.hidden, display: node.style.display },
+        ]),
+    )
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async (url) => response(
+            url.endsWith('/context/resolve')
+                ? { available: true, starter: { name: 'Starter' } }
+                : { accepted: true, duplicate: false },
+        ),
+    })
+
+    await harness.init()
+    assert.deepEqual(displays(), {
+        loading: { hidden: true, display: 'none' },
+        form: { hidden: false, display: '' },
+        success: { hidden: true, display: 'none' },
+        unavailable: { hidden: true, display: 'none' },
+        error: { hidden: true, display: 'none' },
+    })
+    assert.equal(formHarness.photoNode.hidden, true)
+    assert.equal(formHarness.photoNode.style.display, 'none')
+
+    await formHarness.submit({ preventDefault() {}, stopImmediatePropagation() {} })
+    assert.deepEqual(displays(), {
+        loading: { hidden: true, display: 'none' },
+        form: { hidden: true, display: 'none' },
+        success: { hidden: false, display: '' },
+        unavailable: { hidden: true, display: 'none' },
+        error: { hidden: true, display: 'none' },
+    })
 })

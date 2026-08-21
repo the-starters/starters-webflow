@@ -3266,6 +3266,13 @@ form contract is:
 | `data-starter-review-profile-link` | Optional `/hire/<slug>` link |
 | `data-starter-review-error` | Inline validation or submission error |
 
+The controller owns the inline `display` of every `[data-starter-review-state]`
+block and of the headline, photo, and profile-link nodes: it sets `display: none`
+when it hides one and clears the inline value when it shows one, because Designer
+classes such as `display: flex` and the base `img` rule outrank the browser's own
+`[hidden]` styling. Do not author an inline `display` on those elements, and do
+not attach interactions that animate or override their `display`.
+
 Pass the controller's redaction hook at the site-level PostHog initialization
 boundary. If the site already has a `before_send` callback, assign that callback
 to the hook name before loading this controller. The controller replaces it
