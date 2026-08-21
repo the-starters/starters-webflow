@@ -26,19 +26,21 @@ function load(options = {}) {
         Date,
         Math,
         console,
-        setTimeout(handler, delay) {
-            const id = nextTimerId
-            nextTimerId += 1
-            timers.push({ id, handler, delay, cleared: false })
-            return id
-        },
-        clearTimeout(id) {
-            clearedTimers.push(id)
-            const timer = timers.find((entry) => entry.id === id)
-            if (timer) timer.cleared = true
-        },
         window: {
             __STARTERS_TEST__: true,
+            // The controller reads these off window, matching the sibling
+            // fetchWithTimeout convention, so the stubs live there too.
+            setTimeout(handler, delay) {
+                const id = nextTimerId
+                nextTimerId += 1
+                timers.push({ id, handler, delay, cleared: false })
+                return id
+            },
+            clearTimeout(id) {
+                clearedTimers.push(id)
+                const timer = timers.find((entry) => entry.id === id)
+                if (timer) timer.cleared = true
+            },
             location: {
                 href: options.href || 'https://thestarters.com/review-starter',
                 origin: 'https://thestarters.com',
@@ -88,9 +90,20 @@ function load(options = {}) {
             return options.fetch(...args)
         },
     }
-    // options.abortController === false models a browser without the global, where
-    // the controller must fall back to an unbounded request rather than throw.
-    if (options.abortController !== false) context.AbortController = AbortController
+    // options.abortController === false models a browser without the global. The
+    // deadline must still fire there — that is the point of arming it regardless.
+    if (options.abortThrows) {
+        // A hostile polyfill: constructing works, aborting throws. The throw would
+        // happen inside the timer callback, where nothing can catch it.
+        context.window.AbortController = function () {
+            this.signal = { addEventListener() {} }
+            this.abort = () => {
+                throw new Error('abort is not implemented')
+            }
+        }
+    } else if (options.abortController !== false) {
+        context.window.AbortController = AbortController
+    }
     vm.createContext(context)
     // options.runs > 1 models a page that loads the controller twice.
     for (let run = 0; run < (options.runs || 1); run += 1) {
@@ -99,13 +112,9 @@ function load(options = {}) {
     return {
         api: context.window.__startersReviewFormTest,
         booted: context.window.__startersV3ReviewFormBooted,
-        fetchCalls,
-        headChildren: context.document.head.children,
-        historyCalls,
-        init: listeners.get('DOMContentLoaded'),
-        locationAssigns,
         clearedTimers,
-        // Fire every armed, uncleared timer — the stand-in for 15 seconds passing.
+        fetchCalls,
+        // Fire every armed, uncleared timer — the stand-in for the deadline passing.
         fireTimers() {
             timers
                 .filter((timer) => !timer.cleared)
@@ -114,6 +123,10 @@ function load(options = {}) {
                     timer.handler()
                 })
         },
+        headChildren: context.document.head.children,
+        historyCalls,
+        init: listeners.get('DOMContentLoaded'),
+        locationAssigns,
         openCalls,
         posthogHook: context.window.__startersV3ReviewPosthogBeforeSend,
         timers,
@@ -321,8 +334,10 @@ function makeFormHarness(options = {}) {
     }
 }
 
-// A request that never answers on its own, like a stalled connection: it settles
-// only when the caller aborts it, exactly as real fetch does.
+// A request that never answers on its own, like a stalled connection. It rejects
+// when aborted, as real fetch does — and stays pending forever when there is no
+// signal, which models both a missing AbortController and a signal-ignoring
+// polyfill. The controller's deadline must reject without either.
 function hangingFetch(url, requestOptions) {
     return new Promise((resolve, reject) => {
         if (!requestOptions || !requestOptions.signal) return
@@ -332,6 +347,15 @@ function hangingFetch(url, requestOptions) {
             reject(error)
         })
     })
+}
+
+// Each fire lets the pending attempt reject; a retry arms a fresh timer on a later
+// tick, so drain one deadline at a time.
+async function fireDeadlines(harness, times) {
+    for (let round = 0; round < times; round += 1) {
+        harness.fireTimers()
+        await new Promise((resolve) => setImmediate(resolve))
+    }
 }
 
 // Bounded wait, so a test asserting a hang can never itself hang: if the abort is
@@ -731,7 +755,7 @@ test('a profile url outside the /hire allowlist binds nothing', async () => {
     assert.deepEqual(harness.openCalls, [])
 })
 
-test('a hung context request times out into the unavailable state', async () => {
+test('a hung context resolve times out, retries once, then goes unavailable', async () => {
     const formHarness = makeFormHarness()
     const captures = []
     const harness = load({
@@ -746,11 +770,13 @@ test('a hung context request times out into the unavailable state', async () => 
     assert.equal(harness.timers.length, 1)
     assert.equal(harness.timers[0].delay, 15000)
 
-    harness.fireTimers()
+    // Two deadlines: the first attempt and its one automatic retry.
+    await fireDeadlines(harness, 2)
     assert.equal(await settle(running), 'settled')
 
+    assert.equal(harness.fetchCalls.length, 2)
     assert.equal(formHarness.root.state, 'unavailable')
-    // Status 0, not 404, so the reason must be load_failed.
+    // Status 0, not 404, so the reason stays load_failed — plus the timeout flag.
     const unavailable = captures.find(
         ([name]) => name === 'v3_starter_review_unavailable',
     )
@@ -758,8 +784,102 @@ test('a hung context request times out into the unavailable state', async () => 
     // prototype differs from the host's and deepStrictEqual would reject it.
     assert.deepEqual(JSON.parse(JSON.stringify(unavailable)), [
         'v3_starter_review_unavailable',
-        { reason: 'load_failed' },
+        { reason: 'load_failed', timed_out: true },
     ])
+})
+
+test('a context resolve that times out once succeeds on the retry', async () => {
+    const formHarness = makeFormHarness()
+    let attempts = 0
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: (url, requestOptions) => {
+            attempts += 1
+            if (attempts === 1) return hangingFetch(url, requestOptions)
+            return Promise.resolve(
+                response({ available: true, starter: { name: 'Starter' } }),
+            )
+        },
+    })
+
+    const running = harness.init()
+    await fireDeadlines(harness, 1)
+    assert.equal(await settle(running), 'settled')
+
+    assert.equal(attempts, 2)
+    assert.equal(formHarness.root.state, 'form')
+    // Both attempts carry the same capability token.
+    const tokens = harness.fetchCalls.map(
+        ([, requestOptions]) => JSON.parse(requestOptions.body).token,
+    )
+    assert.deepEqual(tokens, [
+        'private-capability-token-12345',
+        'private-capability-token-12345',
+    ])
+})
+
+test('the deadline still fires without AbortController', async () => {
+    // The whole point of arming the timer unconditionally: with no controller the
+    // signal never exists, so only the deadline itself can end the request.
+    const formHarness = makeFormHarness()
+    const captures = []
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        abortController: false,
+        posthog: { capture: (name, properties) => captures.push([name, properties]) },
+        fetch: hangingFetch,
+    })
+
+    const running = harness.init()
+    // The deadline is armed synchronously; the fetch itself is dispatched a
+    // microtask later, so read the request options only after draining.
+    assert.equal(harness.timers.length, 1)
+
+    await fireDeadlines(harness, 2)
+    assert.equal(await settle(running), 'settled')
+
+    assert.equal(harness.fetchCalls[0][1].signal, undefined)
+
+    assert.equal(formHarness.root.state, 'unavailable')
+    assert.deepEqual(
+        JSON.parse(
+            JSON.stringify(
+                captures.find(([name]) => name === 'v3_starter_review_unavailable'),
+            ),
+        ),
+        [
+            'v3_starter_review_unavailable',
+            { reason: 'load_failed', timed_out: true },
+        ],
+    )
+})
+
+test('a real status error near the deadline keeps its status', async () => {
+    const formHarness = makeFormHarness()
+    const captures = []
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        posthog: { capture: (name, properties) => captures.push([name, properties]) },
+        fetch: async () => response({}, false, 404),
+    })
+
+    await harness.init()
+
+    assert.equal(formHarness.root.state, 'unavailable')
+    // A 404 must never be reshaped into a timeout.
+    assert.deepEqual(
+        JSON.parse(
+            JSON.stringify(
+                captures.find(([name]) => name === 'v3_starter_review_unavailable'),
+            ),
+        ),
+        ['v3_starter_review_unavailable', { reason: 'not_found' }],
+    )
+    // Read-only retries are for timeouts only.
+    assert.equal(harness.fetchCalls.length, 1)
 })
 
 test('a completed request clears its timeout', async () => {
@@ -779,10 +899,12 @@ test('a completed request clears its timeout', async () => {
 
 test('a timed-out submit shows the error and retries the same payload', async () => {
     const formHarness = makeFormHarness()
+    const captures = []
     let submitAttempts = 0
     const harness = load({
         href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
         root: formHarness.root,
+        posthog: { capture: (name, properties) => captures.push([name, properties]) },
         fetch: (url, requestOptions) => {
             if (url.endsWith('/context/resolve')) {
                 return Promise.resolve(
@@ -798,7 +920,7 @@ test('a timed-out submit shows the error and retries the same payload', async ()
 
     const event = { preventDefault() {}, stopImmediatePropagation() {} }
     const firstSubmit = formHarness.submit(event)
-    harness.fireTimers()
+    await fireDeadlines(harness, 1)
     assert.equal(await settle(firstSubmit), 'settled')
 
     assert.equal(
@@ -807,6 +929,16 @@ test('a timed-out submit shows the error and retries the same payload', async ()
     )
     assert.equal(formHarness.fields.review_text.disabled, true)
     assert.equal(formHarness.root.state, 'form')
+    // A timed-out submit is never retried automatically, so exactly one attempt.
+    assert.equal(submitAttempts, 1)
+    assert.deepEqual(
+        JSON.parse(
+            JSON.stringify(
+                captures.find(([name]) => name === 'v3_starter_review_submit_failed'),
+            ),
+        ),
+        ['v3_starter_review_submit_failed', { status: 0, timed_out: true }],
+    )
 
     // The locked payload survives the timeout, key included.
     formHarness.fields.review_text.value = 'A different review after the timeout.'
@@ -819,18 +951,49 @@ test('a timed-out submit shows the error and retries the same payload', async ()
     assert.equal(formHarness.root.state, 'success')
 })
 
-test('an environment without AbortController sends an untimed request', async () => {
+test('a polyfill whose abort() throws cannot strand the deadline', async () => {
+    // The abort happens inside the timer callback: an unguarded throw there is
+    // uncatchable and would leave the request pending forever.
     const formHarness = makeFormHarness()
     const harness = load({
         href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
         root: formHarness.root,
-        abortController: false,
-        fetch: async () => response({ available: true, starter: { name: 'Starter' } }),
+        abortThrows: true,
+        fetch: hangingFetch,
+    })
+
+    const running = harness.init()
+    await fireDeadlines(harness, 2)
+    assert.equal(await settle(running), 'settled')
+
+    assert.equal(formHarness.root.state, 'unavailable')
+})
+
+test('a network failure is not reported as a timeout', async () => {
+    // Only the deadline sets timed_out. A dropped connection is a different
+    // diagnosis, and conflating them would poison the analytics contract.
+    const formHarness = makeFormHarness()
+    const captures = []
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        posthog: { capture: (name, properties) => captures.push([name, properties]) },
+        fetch: async () => {
+            throw new TypeError('Failed to fetch')
+        },
     })
 
     await harness.init()
 
-    assert.equal(formHarness.root.state, 'form')
-    assert.equal(harness.timers.length, 0)
-    assert.equal(harness.fetchCalls[0][1].signal, undefined)
+    assert.equal(formHarness.root.state, 'unavailable')
+    assert.deepEqual(
+        JSON.parse(
+            JSON.stringify(
+                captures.find(([name]) => name === 'v3_starter_review_unavailable'),
+            ),
+        ),
+        ['v3_starter_review_unavailable', { reason: 'load_failed' }],
+    )
+    // Not a timeout, so no automatic retry either.
+    assert.equal(harness.fetchCalls.length, 1)
 })
