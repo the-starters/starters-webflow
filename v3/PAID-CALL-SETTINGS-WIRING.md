@@ -45,6 +45,7 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | --- | --- |
 | Paid Form Block | `data-availability-element="call-paid-form"` |
 | Native form | `data-availability-element="availability-form"` |
+| Editor panel | `data-availability-element="call-form-wrapper"`; this wrapper is also the scope anchor that keeps the controller off the Free card, so keep one per card |
 | Yes radio | Published: `name="consulting-calls-paid"` and `value="yes"`; the legacy `paid-consulting-calls` group remains supported |
 | No radio | Published: `name="consulting-calls-paid"` and `value="no"`; the controller still normalizes the older split `consulting-calls` / `paid-consulting-calls` fields at runtime |
 | Description/title input | `name="call-description"` |

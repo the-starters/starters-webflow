@@ -1,0 +1,155 @@
+# V3 Free Call settings wiring
+
+The Starter dashboard keeps the Free Call form native to Webflow. The page-specific
+`free-call-settings.js` controller only binds behavior, submits product intent, and paints canonical
+state. Xano owns the service title, fixed duration, price, calendar identity, environment, and Nylas
+payload.
+
+## Fixed product contract
+
+- Free Call duration: `30` minutes.
+- Price: `$0`.
+- Nylas service type: public Free Call configuration.
+- The browser mutation payload contains only `config_id`, `expected_revision`, and
+  `idempotency_key`.
+- Initial and terminal UI state always comes from
+  `GET starter/free-call-settings/get/v3`.
+
+## Published compatibility contract
+
+The current Designer form works without generated IDs or styling selectors:
+
+- Form Block root: `data-availability-element="call-free-form"`
+- Native form: `data-name="Call Free Form"`
+- Radio group: `name="consulting-calls-free"`
+- Yes/No values: `yes` and `no`
+- Edit, Cancel, Update: `data-availability-action="item-form-open|item-form-close|item-form-submit"`
+- Editor panel: `data-availability-element="call-form-wrapper"`; this wrapper is also the scope
+  anchor that keeps the controller off the Paid card, so keep one per card
+
+The controller stamps `data-call-settings-input="enabled|disabled"` on the verified radio pair at
+runtime. It never renames the group and never binds the Paid form.
+
+For future Designer edits, prefer the stable contract:
+
+- Card root: `data-call-settings-service="free"`
+- Native form: `data-call-settings-element="form"`
+- Editor panel: `data-call-settings-element="panel"`
+- Radios: `data-call-settings-input="enabled|disabled"`
+- Actions: `data-call-settings-action="open|close|submit"`
+- Optional outputs: `data-call-settings-output="status|on|off|price"`
+
+## Painted state contract
+
+Optional prerequisite rows use `data-free-call-prerequisite` with one of these values (authorable
+anywhere inside the Free card scope, including the Call Item header):
+
+- `calendar`
+- `availability`
+- `enabled`
+- `bookable`
+
+The controller sets `data-ready="true|false"` on each row and resets every row to `false` whenever
+the cached Free state is cleared. It also sets these attributes:
+
+- `data-free-call-settings` on `<html>` —
+  `waiting-for-ui|not-applicable|loading|ready|saving|disabling|error`
+- `data-free-call-state` on the card root — the same values
+- `data-free-call-enabled="true|false"`
+- `data-free-call-bookable="true|false"` (also `false` when the stored duration is not `30` or the
+  stored price is not `0`)
+- `data-free-call-duration-required="30"`
+- `data-free-call-duration-current` — the stored duration in minutes, empty with no active service
+- `data-free-call-price-cents` — the stored price in cents, `0` with no active service
+- `data-free-call-editor-open="true|false"`
+
+The canonical reader supplies `duration` on each service record, the same field every other
+scheduling reader in this repository uses; `duration_minutes` stays an outbound request field only.
+An absent price on a Free service reads as `0` because the product contract fixes it there.
+
+The controller emits these window events:
+
+- `starterFreeCallSettingsChanged` — `{ active, bookable, readiness }` on every render
+- `starterFreeCallWriteSuccess` — `{ action: 'upsert'|'disable', configId }`
+- `starterFreeCallWriteError` — `{ action: 'upsert'|'disable', message }`; never emitted for a
+  missing or changed Memberstack session, because nothing was written
+
+A missing or changed Memberstack session fails closed: the cached Free state clears, the title,
+duration, price, and prerequisite paint reset, save disables, `data-free-call-settings` becomes
+`error`, and the status reads `Sign in to manage free calls.`
+
+`starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read. It never
+clears the session or resets an in-progress Yes/No selection.
+
+## Xano authority
+
+- Read: `starter/free-call-settings/get/v3`
+- Enable or normalize: `starter/free-call-settings/upsert/v3`
+- Disable: `starter/free-call-settings/disable/v3`
+
+The controller calls those exact `/v3` paths through `window.xanoAuthFetch`. For this flow,
+`scheduling-auth.js` authenticates only those three paths, and `scheduling-v3-stage.js` maps their
+reviewed unversioned names to them and blocks lookalikes.
+
+The endpoints derive the exact TEST or production environment from the authenticated Memberstack
+mode and the approved page origin. They reject duplicate active Free services, foreign or stale
+configurations, and mismatched grants. Disable blocks while a future pending, confirmed, or
+rescheduled booking exists. Mutations write Nylas first, then canonical Xano state, and use durable
+idempotency receipts.
+
+## Loader order
+
+Load the controller after `scheduling-auth.js`. `scheduling-v3-stage-component.html` already
+includes it and remains the authoritative script order for the dashboard surfaces; add the tag by
+hand only on a surface that does not use that loader:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/free-call-settings.js"></script>
+```
+
+The existing Paid controller remains separate. Both can coexist on the dashboard because their roots,
+radio groups, status attributes, events, and Xano endpoints are distinct.
+
+## Release gate
+
+Free calls never charge, so no payment canary and no live-money step applies to this card. Activate
+it only after the checks below pass against a Xano TEST configuration. Repair writes, provider
+calls, reminders, and email canaries stay under the separate-approval rule owned by the
+[Paid release gate](PAID-CALL-SETTINGS-WIRING.md#release-gate).
+
+## Post-release live verification
+
+Automated tests cover the controller in a synthetic DOM only: the delayed-insertion boot, the
+published `consulting-calls-free` hydration, Free/Paid card isolation in both directions, the
+three-field upsert and guarded disable payloads, the in-flight double-Update dedup, the
+off-contract duration or price paint, and the expired-session fail-closed writes are executable
+regressions in `v3/free-call-settings.test.js`. The remaining legs need a live Memberstack session,
+a live Xano TEST configuration, and an asset that only exists once the tag is published, so they
+are not runnable from CI or from a local test phase; both `the-starters-3-0.webflow.io` and
+`thestarters.com` answer `401` behind the site password, so a local phase cannot read the live
+authored DOM either. The release owner runs them by hand, in this order, after the PR merges:
+
+1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm the served
+   assets are the new build. `v3/free-call-settings.js` is new here, so the file resolving at all on
+   the jsDelivr path proves it; the served `v3/scheduling-auth.js` must also contain
+   `starter/free-call-settings/get/v3`, because the previous build authenticated only the Paid
+   paths.
+2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Free card reaches
+   `data-free-call-settings="ready"` with canonical values, including a reload where Webflow or
+   Memberstack inserts the card late.
+3. With both cards present, confirm isolation by hand in both directions: Edit, Cancel, and Update
+   on the Free card must never move the Paid card's controls, and the reverse, and each card must
+   keep its own editor-open attribute.
+4. On the Free card, pick Yes and click Update by hand. The request body must carry only `config_id`,
+   `expected_revision`, and `idempotency_key`, and the card must reach the canonical readback state
+   with `data-free-call-duration-current="30"` and `data-free-call-price-cents="0"`.
+5. On a TEST fixture stored at a duration other than `30` or a price other than `0`, confirm the
+   card reads `data-free-call-bookable="false"` and shows the real stored price, and that an Update
+   whose readback is still off contract leaves the editor open and reports the error instead of
+   painting success. This controller never repairs an off-contract service; Xano owns that.
+6. On an active TEST Free service, pick No and click Update, and confirm canonical readback reports
+   no active Free service. With a future pending, confirmed, or rescheduled booking on that service,
+   confirm Xano blocks the disable instead, per [Xano authority](#xano-authority).
+
+Record the served-asset check and the TEST enable and disable results before the Free card is
+activated for any Starter outside TEST.
