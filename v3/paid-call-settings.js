@@ -19,6 +19,11 @@
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"], [data-call-settings-service], [data-availability-element="call-paid-form"]'
   const FIXED_DURATION_MINUTES = 60
   const ROOT_WAIT_TIMEOUT_MS = 10000
+  const PAID_RADIO_GROUP_NAMES = [
+    'consulting-calls-paid',
+    'paid-consulting-calls',
+    'consulting-calls',
+  ]
 
   const hostname = window.location.hostname
   if (hostname !== STAGING_HOST && !PRODUCTION_HOSTS.has(hostname)) return
@@ -173,7 +178,11 @@
     }
     const result = await memberstack.getCurrentMember()
     const member = result && result.data
-    if (!member || !member.id) throw new Error('No logged-in member')
+    if (!member || !member.id) {
+      throw Object.assign(new Error('No logged-in member'), {
+        code: 'MEMBER_SESSION_MISSING',
+      })
+    }
     return member
   }
 
@@ -245,6 +254,10 @@
     )
   }
 
+  function canSaveSettings(value) {
+    return Boolean(canonicalService(value)) || prerequisitesReady(value)
+  }
+
   function field(name) {
     const canonical =
       qs('[data-call-settings-input="' + name + '"]', root) ||
@@ -255,10 +268,15 @@
       price: '[name="call-rate"]',
     }
     if (name === 'enabled') {
-      return (
-        namedRadio('paid-consulting-calls', 'yes') ||
-        namedRadioExcept('paid-consulting-calls', 'no')
-      )
+      for (const groupName of PAID_RADIO_GROUP_NAMES) {
+        const candidate = namedRadio(groupName, 'yes')
+        if (candidate) return candidate
+      }
+      for (const groupName of PAID_RADIO_GROUP_NAMES) {
+        const candidate = namedRadioExcept(groupName, 'no')
+        if (candidate) return candidate
+      }
+      return null
     }
     return selectors[name] ? qs(selectors[name], root) : null
   }
@@ -281,12 +299,17 @@
 
   function disabledField() {
     if (!cardMode) return null
-    return (
-      qs('[data-call-settings-input="disabled"]', root) ||
-      namedRadio('paid-consulting-calls', 'no') ||
-      namedRadio('consulting-calls', 'no') ||
-      namedRadioExcept('consulting-calls', 'yes')
-    )
+    const canonical = qs('[data-call-settings-input="disabled"]', root)
+    if (canonical) return canonical
+    for (const groupName of PAID_RADIO_GROUP_NAMES) {
+      const candidate = namedRadio(groupName, 'no')
+      if (candidate) return candidate
+    }
+    for (const groupName of PAID_RADIO_GROUP_NAMES) {
+      const candidate = namedRadioExcept(groupName, 'yes')
+      if (candidate) return candidate
+    }
+    return null
   }
 
   // The first native Paid card shipped with Yes and No under different Webflow
@@ -376,7 +399,7 @@
       const service = canonicalService(settings)
       setActionEnabled(
         action('save'),
-        cardMode ? Boolean(service) || prerequisitesReady(settings) : prerequisitesReady(settings),
+        cardMode ? canSaveSettings(settings) : prerequisitesReady(settings),
       )
       setActionEnabled(action('disable'), Boolean(service))
     }
@@ -417,6 +440,15 @@
     setMessage(message)
   }
 
+  function failClosedSession(error) {
+    const code = error && error.code
+    if (code !== 'MEMBER_SESSION_MISSING' && code !== 'MEMBER_SCOPE_CHANGED') return false
+    refreshVersion += 1
+    clearRenderedState('Sign in to manage paid calls.')
+    setStatus('error')
+    return true
+  }
+
   function currentRender(version, memberId) {
     return version === refreshVersion && memberId === sessionMemberId
   }
@@ -454,7 +486,7 @@
     root.setAttribute('data-paid-call-bookable', bookable ? 'true' : 'false')
     setActionEnabled(
       action('save'),
-      cardMode ? Boolean(service) || prerequisitesReady(value) : prerequisitesReady(value),
+      cardMode ? canSaveSettings(value) : prerequisitesReady(value),
     )
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
@@ -539,7 +571,7 @@
       setMessage('Turn on paid calls before you save these settings.')
       return null
     }
-    if (!prerequisitesReady(settings)) {
+    if (!canSaveSettings(settings)) {
       setMessage('Complete the calendar and Stripe setup before you turn on paid calls.')
       return null
     }
@@ -574,9 +606,11 @@
       return canonical
     } catch (error) {
       if (currentRender(version, memberId)) {
-        setStatus('error')
-        setMessage(error && error.message ? error.message : 'Paid-call settings could not be saved.')
-        emit('starterPaidCallWriteError', { action: 'upsert', message: error && error.message })
+        if (!failClosedSession(error)) {
+          setStatus('error')
+          setMessage(error && error.message ? error.message : 'Paid-call settings could not be saved.')
+          emit('starterPaidCallWriteError', { action: 'upsert', message: error && error.message })
+        }
       }
       throw error
     } finally {
@@ -594,8 +628,10 @@
       return canonical
     } catch (error) {
       if (currentRender(version, memberId) && !busy) {
-        setStatus('error')
-        setMessage('Paid-call readiness could not be refreshed. Your account was not changed.')
+        if (!failClosedSession(error)) {
+          setStatus('error')
+          setMessage('Paid-call readiness could not be refreshed. Your account was not changed.')
+        }
       }
       throw error
     }
@@ -626,9 +662,11 @@
       return canonical
     } catch (error) {
       if (currentRender(version, memberId)) {
-        setStatus('error')
-        setMessage(error && error.message ? error.message : 'Paid calls could not be turned off.')
-        emit('starterPaidCallWriteError', { action: 'disable', message: error && error.message })
+        if (!failClosedSession(error)) {
+          setStatus('error')
+          setMessage(error && error.message ? error.message : 'Paid calls could not be turned off.')
+          emit('starterPaidCallWriteError', { action: 'disable', message: error && error.message })
+        }
       }
       throw error
     } finally {

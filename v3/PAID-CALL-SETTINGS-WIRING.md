@@ -45,8 +45,8 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | --- | --- |
 | Paid Form Block | `data-availability-element="call-paid-form"` |
 | Native form | `data-availability-element="availability-form"` |
-| Yes radio | `name="paid-consulting-calls"` and `value="yes"`; any other value in that group is taken as Yes as long as it is not `no` |
-| No radio | Preferred: `name="paid-consulting-calls"` and `value="no"`; the controller normalizes the shipped legacy `name="consulting-calls"` field into that native radio group at runtime |
+| Yes radio | Published: `name="consulting-calls-paid"` and `value="yes"`; the legacy `paid-consulting-calls` group remains supported |
+| No radio | Published: `name="consulting-calls-paid"` and `value="no"`; the controller still normalizes the older split `consulting-calls` / `paid-consulting-calls` fields at runtime |
 | Description/title input | `name="call-description"` |
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
@@ -122,8 +122,9 @@ PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
    the served asset is the new build: the served file must contain the Paid radio-group
-   normalization (`normalizeCardRadioGroup`, which joins the legacy `consulting-calls` No
-   field into the `paid-consulting-calls` group), not only the earlier root-wait recovery.
+   normalization (`normalizeCardRadioGroup`, which accepts the published
+   `consulting-calls-paid` group and joins the older split radio fields), not only the
+   earlier root-wait recovery.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
    card reaches `data-paid-call-settings="ready"` with canonical values, including a
    reload where Webflow or Memberstack inserts the Paid card late.
