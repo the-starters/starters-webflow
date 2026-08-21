@@ -14,6 +14,7 @@
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
   const BOOKINGS_PATH = '/booking_record/get/v3'
   const CONFIRM_PATH = '/booking/confirm/v3'
+  const CONFIRM_ATTEMPT_STORAGE_PREFIX = 'starters:dashboard-confirm:v1:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
@@ -51,6 +52,65 @@
 
   function clean(value) {
     return String(value == null ? '' : value).trim()
+  }
+
+  function stableScopeHash(value) {
+    const input = clean(value)
+    if (!input) return ''
+    let hash = 0x811c9dc5
+    for (let index = 0; index < input.length; index += 1) {
+      hash ^= input.charCodeAt(index)
+      hash = Math.imul(hash, 0x01000193)
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0')
+  }
+
+  function confirmAttemptStorageKey(booking) {
+    const bookingId = clean(booking && booking.booking_id)
+    const actorId = clean(booking && booking.starter_data && booking.starter_data.memberstack_id)
+    const environment = clean(booking && booking.data_environment).toLowerCase()
+    const actorScope = stableScopeHash(actorId)
+    if (!bookingId || !actorScope || !['test', 'production'].includes(environment)) return ''
+    return CONFIRM_ATTEMPT_STORAGE_PREFIX + environment + ':' + actorScope + ':' + bookingId
+  }
+
+  function validConfirmAttemptKey(value) {
+    return /^dashboard-confirm:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean(value))
+  }
+
+  function storedConfirmAttemptKey(booking) {
+    const storageKey = confirmAttemptStorageKey(booking)
+    const storage = global.sessionStorage
+    if (!storageKey || !storage || typeof storage.getItem !== 'function') return ''
+    try {
+      const value = clean(storage.getItem(storageKey))
+      if (validConfirmAttemptKey(value)) return value
+      if (value && typeof storage.removeItem === 'function') storage.removeItem(storageKey)
+    } catch (_error) {
+      return ''
+    }
+    return ''
+  }
+
+  function createConfirmAttemptKey(booking) {
+    const randomUUID = global.crypto && global.crypto.randomUUID
+    if (typeof randomUUID !== 'function') return ''
+    const value = 'dashboard-confirm:' + randomUUID.call(global.crypto)
+    const storageKey = confirmAttemptStorageKey(booking)
+    const storage = global.sessionStorage
+    if (storageKey && storage && typeof storage.setItem === 'function') {
+      try { storage.setItem(storageKey, value) } catch (_error) {}
+    }
+    return value
+  }
+
+  function clearConfirmAttemptKey(booking, value) {
+    const storageKey = confirmAttemptStorageKey(booking)
+    const storage = global.sessionStorage
+    if (!storageKey || !storage || typeof storage.getItem !== 'function' || typeof storage.removeItem !== 'function') return
+    try {
+      if (clean(storage.getItem(storageKey)) === clean(value)) storage.removeItem(storageKey)
+    } catch (_error) {}
   }
 
   function normalizeTimestamp(value) {
@@ -1069,9 +1129,7 @@
       if (!booking || !canConfirmBooking(role, booking)) return
 
       if (!button.__startersBookingActionKey) {
-        const randomUUID = global.crypto && global.crypto.randomUUID
-        if (typeof randomUUID !== 'function') return
-        button.__startersBookingActionKey = 'dashboard-confirm:' + randomUUID.call(global.crypto)
+        button.__startersBookingActionKey = storedConfirmAttemptKey(booking) || createConfirmAttemptKey(booking)
       }
       const payload = confirmPayload(booking, button.__startersBookingActionKey)
       if (
@@ -1091,6 +1149,7 @@
         })
         const body = await response.json().catch(function () { return null })
         if (!response.ok || !body) throw new Error('Canonical booking confirmation failed')
+        clearConfirmAttemptKey(booking, button.__startersBookingActionKey)
         button.__startersBookingActionKey = ''
         await restart()
       } catch (error) {
@@ -1247,6 +1306,10 @@
     wireBookingDetails,
     resetDetailModal,
     configureActionButtons,
+    confirmAttemptStorageKey,
+    storedConfirmAttemptKey,
+    createConfirmAttemptKey,
+    clearConfirmAttemptKey,
     confirmPayload,
     decodeBookingRef,
     memberOwnsBooking,

@@ -2060,7 +2060,10 @@ The Starter pending card and details dialog expose only the Designer-authored
 Accept control while the canonical response window remains open. Before the
 controller calls `booking/confirm/v3`, it decodes the
 canonical `booking_ref`, requires its booking and configuration IDs to match the
-row, and supplies a per-attempt idempotency key. A successful response refreshes
+row, and supplies an idempotency key scoped to the canonical booking,
+environment, and a non-reversible hash of the Starter identity. The key stays in
+tab-scoped `sessionStorage` after an ambiguous failure so a refresh retries the
+same backend command. A successful response removes it before refreshing
 the canonical list, which moves the accepted row from Starter Call Requests to
 Starter Calls while it remains in Brand Calls. All other legacy mutation
 controls stay hidden until they have current V3-safe endpoint contracts.
@@ -2082,8 +2085,10 @@ rows, so the member can always switch filters. Each status change continues
 through wf-xano's normal Xano request path. Missing-instance, unresolved
 unfiltered, confirmed-unfiltered-empty, and auth-transition states remain hidden.
 Xano remains authoritative for every filter result, and every fetch uses
-`cache: 'no-store'`. Nothing is persisted to localStorage or shared across
-members, tabs, or page loads.
+`cache: 'no-store'`. No booking data or member PII is persisted to browser
+storage. Only an opaque confirmation key is kept in `sessionStorage`; it is not
+shared across tabs, accounts, environments, or bookings, and is removed after a
+definitive success.
 The existing Designer-owned project `Show more` control follows wf-xano's
 authoritative `hasMore` state and appends the next 12-item server page. When a
 Projects wrapper has no authored control, the controller clones an existing
