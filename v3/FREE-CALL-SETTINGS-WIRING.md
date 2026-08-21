@@ -37,6 +37,48 @@ For future Designer edits, prefer the stable contract:
 - Actions: `data-call-settings-action="open|close|submit"`
 - Optional outputs: `data-call-settings-output="status|on|off|price"`
 
+## Painted state contract
+
+Optional prerequisite rows use `data-free-call-prerequisite` with one of these values (authorable
+anywhere inside the Free card scope, including the Call Item header):
+
+- `calendar`
+- `availability`
+- `enabled`
+- `bookable`
+
+The controller sets `data-ready="true|false"` on each row and resets every row to `false` whenever
+the cached Free state is cleared. It also sets these attributes:
+
+- `data-free-call-settings` on `<html>` —
+  `waiting-for-ui|not-applicable|loading|ready|saving|disabling|error`
+- `data-free-call-state` on the card root — the same values
+- `data-free-call-enabled="true|false"`
+- `data-free-call-bookable="true|false"` (also `false` when the stored duration is not `30` or the
+  stored price is not `0`)
+- `data-free-call-duration-required="30"`
+- `data-free-call-duration-current` — the stored duration in minutes, empty with no active service
+- `data-free-call-price-cents` — the stored price in cents, `0` with no active service
+- `data-free-call-editor-open="true|false"`
+
+The canonical reader supplies `duration` on each service record, the same field every other
+scheduling reader in this repository uses; `duration_minutes` stays an outbound request field only.
+An absent price on a Free service reads as `0` because the product contract fixes it there.
+
+The controller emits these window events:
+
+- `starterFreeCallSettingsChanged` — `{ active, bookable, readiness }` on every render
+- `starterFreeCallWriteSuccess` — `{ action: 'upsert'|'disable', configId }`
+- `starterFreeCallWriteError` — `{ action: 'upsert'|'disable', message }`; never emitted for a
+  missing or changed Memberstack session, because nothing was written
+
+A missing or changed Memberstack session fails closed: the cached Free state clears, the title,
+duration, price, and prerequisite paint reset, save disables, `data-free-call-settings` becomes
+`error`, and the status reads `Sign in to manage free calls.`
+
+`starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read. It never
+clears the session or resets an in-progress Yes/No selection.
+
 ## Xano authority
 
 - Read: `starter/free-call-settings/get/v3`

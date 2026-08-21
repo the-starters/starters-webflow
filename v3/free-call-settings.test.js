@@ -88,7 +88,7 @@ function service(overrides = {}) {
     title: 'Free Consultation Call - 30min',
     price_cents: 0,
     currency: 'usd',
-    duration_minutes: 30,
+    duration: 30,
     active: true,
     revision: 4,
     ...overrides,
@@ -117,11 +117,29 @@ function buildDom(withRoot = true, publishedRoot = false) {
   const title = new El('input', { 'data-call-settings-input': 'title' })
   const close = new El('div', { 'data-call-settings-action': 'close' })
   const save = new El('div', { 'data-call-settings-action': 'submit' })
+  const prerequisites = ['calendar', 'availability', 'enabled', 'bookable']
+    .map((name) => new El('div', { 'data-free-call-prerequisite': name }))
   form.append(no, yes, title, close, save)
   root.append(form)
   panel.append(root)
-  card.append(open, status, price, on, off, panel)
-  return { card, root, form, no, yes, title, close, save, open, status, price, on, off, panel }
+  card.append(open, status, price, on, off, ...prerequisites, panel)
+  return {
+    card,
+    root,
+    form,
+    no,
+    yes,
+    title,
+    close,
+    save,
+    open,
+    status,
+    price,
+    on,
+    off,
+    panel,
+    prerequisites,
+  }
 }
 
 function buildPublishedSiblingDom() {
@@ -295,6 +313,10 @@ function load(options = {}) {
       const pending = timers.splice(0)
       pending.forEach((timer) => { if (!timer.cancelled) timer.callback() })
     },
+    dispatchWindowEvent: async (name) => {
+      const listeners = windowListeners.get(name) || []
+      await Promise.all(listeners.map((listener) => listener({ type: name })))
+    },
   }
 }
 
@@ -430,7 +452,7 @@ test('published sibling Paid actions never bind the Free controller and Free act
 })
 
 test('upsert sends only config, revision, and idempotency then requires 30-minute/$0 readback', async () => {
-  const legacy = service({ duration_minutes: 15, price_cents: 100, revision: 2 })
+  const legacy = service({ duration: 15, price_cents: 100, revision: 2 })
   const result = load({
     initial: canonical({ services: [legacy], readiness: { free_call_enabled: true, bookable: true } }),
     routes: {
@@ -597,7 +619,7 @@ test('a noncanonical upsert readback leaves the editor open and reports an error
     initial: canonical({ services: [service()], readiness: { free_call_enabled: true, bookable: true } }),
     routes: {
       '/starter/free-call-settings/upsert/v3': ({ setState }) => {
-        setState(canonical({ services: [service({ duration_minutes: 60 })] }))
+        setState(canonical({ services: [service({ duration: 60 })] }))
         return { ok: true, status: 200, json: async () => ({ ok: true }) }
       },
     },
@@ -619,4 +641,139 @@ test('production hosts run but unrelated hosts remain inert', async () => {
   await settle()
   assert.equal(unrelated.calls.length, 0)
   assert.equal(unrelated.window.StarterFreeCallSettings, undefined)
+})
+
+test('a canonical Xano record keyed on duration reads bookable and upserts without a readback error', async () => {
+  const stored = service({ duration: 30, revision: 7 })
+  delete stored.price_cents
+  const result = load({
+    initial: canonical({
+      services: [stored],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ setState }) => {
+        const saved = service({ duration: 30, revision: 8 })
+        delete saved.price_cents
+        setState(canonical({
+          services: [saved],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.root.getAttribute('data-free-call-duration-current'), '30')
+  assert.equal(result.dom.root.getAttribute('data-free-call-price-cents'), '0')
+  assert.equal(result.dom.root.getAttribute('data-free-call-bookable'), 'true')
+  assert.equal(result.dom.status.textContent, 'Free calls are on and bookable.')
+
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.find((call) => call.method === 'POST').body.expected_revision, 7)
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+  assert.equal(result.dom.status.textContent, 'Free calls are on and bookable.')
+  assert.equal(result.dom.panel.style.display, 'none')
+})
+
+test('a stored duration or price outside the fixed contract stays unbookable and shows the real price', async () => {
+  const result = load({
+    initial: canonical({
+      services: [service({ duration: 45, price_cents: 2500 })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.root.getAttribute('data-free-call-duration-current'), '45')
+  assert.equal(result.dom.root.getAttribute('data-free-call-price-cents'), '2500')
+  assert.equal(result.dom.root.getAttribute('data-free-call-bookable'), 'false')
+  assert.equal(result.dom.price.textContent, '$25.00')
+  assert.equal(
+    result.dom.status.textContent,
+    'Update this service to the required 30-minute Free Call settings.',
+  )
+})
+
+test('a lost session clears the whole canonical paint, not just the radios', async () => {
+  const result = load({
+    initial: canonical({
+      services: [service({ title: 'Member A Free Call' })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+  assert.equal(result.dom.title.value, 'Member A Free Call')
+  assert.deepEqual(
+    result.dom.prerequisites.map((row) => row.getAttribute('data-ready')),
+    ['true', 'true', 'true', 'true'],
+  )
+
+  result.expireMember()
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.')
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.root.getAttribute('data-free-call-duration-current'), '')
+  assert.equal(result.dom.root.getAttribute('data-free-call-price-cents'), '0')
+  assert.equal(result.dom.price.textContent, '$0')
+  assert.deepEqual(
+    result.dom.prerequisites.map((row) => row.getAttribute('data-ready')),
+    ['false', 'false', 'false', 'false'],
+  )
+})
+
+test('a connection-state refresh repaints canonically and survives a transient failure', async () => {
+  let failNextRead = false
+  const result = load({
+    initial: canonical({
+      services: [service({ title: 'Member A Free Call' })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ state }) => {
+        if (failNextRead) {
+          failNextRead = false
+          return { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+        }
+        return { ok: true, status: 200, json: async () => state }
+      },
+    },
+  })
+  await settle()
+  await result.dom.open.dispatch('click')
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+  assert.equal(result.dom.title.value, 'Member A Free Call')
+  assert.equal(result.dom.root.getAttribute('data-free-call-editor-open'), 'true')
+  assert.deepEqual(
+    result.dom.prerequisites.map((row) => row.getAttribute('data-ready')),
+    ['true', 'true', 'true', 'true'],
+  )
+
+  failNextRead = true
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+  assert.equal(
+    result.dom.status.textContent,
+    'Free-call readiness could not be refreshed. Your account was not changed.',
+  )
+  assert.notEqual(result.dom.status.textContent, 'Sign in to manage free calls.')
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+  assert.equal(result.dom.title.value, 'Member A Free Call')
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/free-call-settings/get/v3').length,
+    4,
+  )
 })

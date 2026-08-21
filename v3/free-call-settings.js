@@ -321,8 +321,20 @@
     const pair = radioPair()
     if (pair.enabled) pair.enabled.checked = false
     if (pair.disabled) pair.disabled.checked = true
+    const titleInput = field('title')
+    if (titleInput) titleInput.value = ''
+    qsa('[data-free-call-prerequisite]', uiScope || root).forEach(function (item) {
+      item.setAttribute('data-ready', 'false')
+    })
+    root.setAttribute('data-free-call-duration-current', '')
+    root.setAttribute('data-free-call-duration-required', String(FIXED_DURATION_MINUTES))
+    root.setAttribute('data-free-call-price-cents', '0')
     root.setAttribute('data-free-call-enabled', 'false')
     root.setAttribute('data-free-call-bookable', 'false')
+    const priceOutput = output('price')
+    if (priceOutput) priceOutput.textContent = formatFreePrice(0)
+    show(output('on'), false)
+    show(output('off'), true)
     setActionEnabled(action('save'), false)
     setMessage(message)
   }
@@ -341,9 +353,29 @@
     return version === refreshVersion && memberId === sessionMemberId
   }
 
+  function serviceDuration(service) {
+    if (!service) return NaN
+    const raw = service.duration === undefined || service.duration === null
+      ? service.duration_minutes
+      : service.duration
+    return Number(raw)
+  }
+
+  function servicePriceCents(service) {
+    const raw = service && service.price_cents
+    if (raw === undefined || raw === null || raw === '') return 0
+    return Number(raw)
+  }
+
+  function formatFreePrice(cents) {
+    const amount = Number(cents || 0) / 100
+    const safeAmount = Number.isFinite(amount) ? amount : 0
+    return safeAmount === 0 ? '$0' : '$' + safeAmount.toFixed(2)
+  }
+
   function validateService(service) {
     if (!service) return true
-    return Number(service.duration_minutes) === FIXED_DURATION_MINUTES && Number(service.price_cents) === 0
+    return serviceDuration(service) === FIXED_DURATION_MINUTES && servicePriceCents(service) === 0
   }
 
   function render(value) {
@@ -361,9 +393,15 @@
       titleInput.readOnly = true
       titleInput.setAttribute('aria-readonly', 'true')
     }
-    root.setAttribute('data-free-call-duration-current', service ? String(Number(service.duration_minutes || 0)) : '')
+    root.setAttribute(
+      'data-free-call-duration-current',
+      service ? String(serviceDuration(service) || 0) : '',
+    )
     root.setAttribute('data-free-call-duration-required', String(FIXED_DURATION_MINUTES))
-    root.setAttribute('data-free-call-price-cents', service ? String(Number(service.price_cents || 0)) : '0')
+    root.setAttribute(
+      'data-free-call-price-cents',
+      service ? String(servicePriceCents(service) || 0) : '0',
+    )
     root.setAttribute('data-free-call-enabled', service ? 'true' : 'false')
     root.setAttribute('data-free-call-bookable', bookable ? 'true' : 'false')
     Object.keys(readiness).forEach(function (name) {
@@ -373,7 +411,7 @@
     })
     setActionEnabled(action('save'), canSaveSettings(value))
     const priceOutput = output('price')
-    if (priceOutput) priceOutput.textContent = '$0'
+    if (priceOutput) priceOutput.textContent = formatFreePrice(service ? servicePriceCents(service) : 0)
     show(output('on'), Boolean(service))
     show(output('off'), !service)
     setMessage(
@@ -416,6 +454,25 @@
     const wrapper = cardPanel()
     if (wrapper) wrapper.style.display = open ? 'flex' : 'none'
     root.setAttribute('data-free-call-editor-open', open ? 'true' : 'false')
+  }
+
+  async function refreshFromPrerequisite() {
+    if (!root || !sessionMemberId || busy) return settings
+    const version = ++refreshVersion
+    const memberId = sessionMemberId
+    try {
+      const canonical = await readCanonicalSettings()
+      if (currentRender(version, memberId) && !busy) render(canonical)
+      return canonical
+    } catch (error) {
+      if (currentRender(version, memberId) && !busy) {
+        if (!failClosedSession(error)) {
+          setStatus('error')
+          setMessage('Free-call readiness could not be refreshed. Your account was not changed.')
+        }
+      }
+      throw error
+    }
   }
 
   async function save() {
@@ -622,8 +679,7 @@
       })
     }
     window.addEventListener('starterSchedulingConnectionStateChanged', function () {
-      if (!root || !sessionMemberId || busy) return
-      loadSession({ id: sessionMemberId }, false).catch(function () {})
+      refreshFromPrerequisite().catch(function () {})
     })
     wireAuthChanges()
   }
