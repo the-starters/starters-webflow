@@ -45,8 +45,8 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | --- | --- |
 | Paid Form Block | `data-availability-element="call-paid-form"` |
 | Native form | `data-availability-element="availability-form"` |
-| Yes radio | `name="paid-consulting-calls"` |
-| No radio | `name="consulting-calls"` within the Paid Form Block |
+| Yes radio | `name="paid-consulting-calls"` and `value="yes"`; any other value in that group is taken as Yes as long as it is not `no` |
+| No radio | Preferred: `name="paid-consulting-calls"` and `value="no"`; the controller normalizes the shipped legacy `name="consulting-calls"` field into that native radio group at runtime |
 | Description/title input | `name="call-description"` |
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
@@ -94,6 +94,11 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - Save uses revision-guarded `POST starter/paid-call-settings/upsert/v3` (`#2925`).
 - Turn off uses guarded `POST starter/paid-call-settings/disable/v3` (`#2923`).
 - Each mutation gets a new idempotency key and is followed by canonical GET readback.
+- The native Webflow form still owns which fields are required and still shows its own
+  validation UI. An authored Update control wired as a plain element is intercepted, so the
+  controller runs that form's constraint validation before writing; an invalid form blocks the
+  write in that shape exactly as the browser already blocks it when Update is the form's own
+  submit control.
 - The browser sends product intent only. It never sends a member ID, grant ID, calendar ID, Stripe account ID, or payment environment.
 - Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`.
 - Calendar transitions carry a one-use intent captured from canonical paid-call GET through the existing OAuth session envelope, then recreate it through paid-call upsert and canonical readback.
@@ -110,16 +115,24 @@ Automated tests cover the controller in a synthetic DOM only: the delayed-insert
 recovery and duplicate-initialization dedup are executable regressions in
 `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a
 live Xano TEST configuration, and an asset that only exists once the tag is published,
-so they are not runnable from CI or from a local test phase. The release owner runs
-them by hand, in this order, after the PR merges:
+so they are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io`
+and `thestarters.com` answer `401` behind the site password, so a local phase cannot even
+read the live authored DOM. The release owner runs them by hand, in this order, after the
+PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
-   the served asset is the new build: the served file must contain the root-wait recovery,
-   not the previous immediate `not-applicable` bail.
+   the served asset is the new build: the served file must contain the Paid radio-group
+   normalization (`normalizeCardRadioGroup`, which joins the legacy `consulting-calls` No
+   field into the `paid-consulting-calls` group), not only the earlier root-wait recovery.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
    card reaches `data-paid-call-settings="ready"` with canonical values, including a
    reload where Webflow or Memberstack inserts the Paid card late.
-3. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
+3. On that same card, pick Yes, fill the title and rate, and click Update by hand. The
+   browser must no longer block the click on the No radio, and the card must reach the
+   canonical readback state. Confirm this on whichever way the authored Update control is
+   wired, and confirm a still-required empty field still blocks the write, per the native
+   validation rule in [Authority and behavior](#authority-and-behavior).
+4. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
    it in the paid-call dry run. Never run a live-money production charge.
 
 Record the served-asset check and the TEST booking reconciliation result before the
