@@ -18,6 +18,11 @@ const PAID_CALL_SETTINGS_URLS = [
   `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/upsert/v3`,
   `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/disable/v3`,
 ]
+const FREE_CALL_SETTINGS_URLS = [
+  `${XANO_ORIGIN}/api:tCpV3oqd/starter/free-call-settings/get/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/starter/free-call-settings/upsert/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/starter/free-call-settings/disable/v3`,
+]
 
 function response(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -294,6 +299,43 @@ test('paid-call settings lookalike paths are not authenticated', async () => {
   const { window } = loadBridge(nativeFetch)
 
   await window.xanoAuthFetch(PAID_CALL_SETTINGS_URLS[0] + '-debug')
+
+  assert.equal(tradeCount, 0)
+  assert.equal(receivedRequest.headers.has('Authorization'), false)
+})
+
+test('free-call settings endpoints receive the shared Bearer token', async () => {
+  const requests = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-free-call-settings' })
+    }
+    requests.push(request)
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  for (const url of FREE_CALL_SETTINGS_URLS) {
+    await window.xanoAuthFetch(url, { method: 'POST', body: '{}' })
+  }
+
+  assert.equal(requests.length, FREE_CALL_SETTINGS_URLS.length)
+  for (const request of requests) {
+    assert.equal(request.headers.get('Authorization'), 'Bearer xano-free-call-settings')
+  }
+})
+
+test('free-call settings lookalike paths are not authenticated', async () => {
+  let tradeCount = 0
+  let receivedRequest
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) tradeCount += 1
+    receivedRequest = request
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  await window.xanoAuthFetch(FREE_CALL_SETTINGS_URLS[0] + '-debug')
 
   assert.equal(tradeCount, 0)
   assert.equal(receivedRequest.headers.has('Authorization'), false)
