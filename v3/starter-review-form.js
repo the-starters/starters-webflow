@@ -86,11 +86,13 @@
     if (window.__startersV3ReviewFormBooted) return
     window.__startersV3ReviewFormBooted = true
 
-    // Pre-hide every non-loading state block so a synchronously loaded controller
-    // converges before body parse even when the page embed is missing. The rule is
-    // gated on the root lacking data-starter-review-current-state, so the first
-    // setState disarms it and setHidden's inline writes own visibility from there.
-    // Failure to inject degrades to those inline writes alone.
+    // Pre-hide every non-loading state block. A synchronous head tag runs before
+    // the body parses, so this lands before any block can paint. The rule is gated
+    // on the root lacking data-starter-review-current-state, so the first setState
+    // disarms it and setHidden's inline writes own visibility from there.
+    // The id check defers to a legacy page paste that still ships its own
+    // starter-review-preflight style; failure to inject degrades to the inline
+    // writes alone.
     try {
         if (!document.getElementById(PREFLIGHT_ID)) {
             var preflight = document.createElement('style')
