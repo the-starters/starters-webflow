@@ -14,6 +14,8 @@
     var REVIEW_MIN = 10
     var REVIEW_MAX = 4000
     var FEEDBACK_MAX = 2000
+    var REQUEST_TIMEOUT_MS = 15000
+    var CONTEXT_ATTEMPTS = 2
     var PREFLIGHT_ID = 'starter-review-preflight'
     var PROFILE_BOUND_ATTRIBUTE = 'data-starter-review-profile-bound'
     var PROFILE_URL_ATTRIBUTE = 'data-starter-review-profile-url'
@@ -149,25 +151,112 @@
         }
     }
 
-    var postJson = async function (path, body) {
-        var response = await fetch(API_BASE + path, {
+    var requestError = function (status) {
+        var error = new Error('The review request could not be completed.')
+        error.status = status
+        return error
+    }
+
+    var timedOutError = function () {
+        var error = requestError(0)
+        error.timedOut = true
+        return error
+    }
+
+    // A hung request would spin the loading state forever: by then the pre-hide
+    // rule is disarmed and only a rejection can move the UI on. The deadline is
+    // armed unconditionally and rejects on its own — gating it on AbortController
+    // would drop the timeout in exactly the environments that need it most, and a
+    // signal-ignoring polyfill would leave the request hanging regardless.
+    // Aborting the socket is best-effort on top. Same shape as fetchWithTimeout in
+    // v3/onboarding-done-redirect.js.
+    var postJson = function (path, body) {
+        var options = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
             credentials: 'omit',
             referrerPolicy: 'no-referrer',
-        })
-        var payload = await response.json().catch(function () {
-            return {}
-        })
-
-        if (!response.ok) {
-            var error = new Error('The review request could not be completed.')
-            error.status = response.status
-            throw error
         }
 
-        return payload
+        var controller =
+            typeof window.AbortController === 'function'
+                ? new window.AbortController()
+                : null
+        if (controller) options.signal = controller.signal
+
+        return new Promise(function (resolve, reject) {
+            var settled = false
+            var timer = window.setTimeout(function () {
+                if (settled) return
+                settled = true
+                if (controller) {
+                    try {
+                        controller.abort()
+                    } catch (error) {}
+                }
+                reject(timedOutError())
+            }, REQUEST_TIMEOUT_MS)
+
+            Promise.resolve()
+                .then(function () {
+                    return fetch(API_BASE + path, options)
+                })
+                .then(function (response) {
+                    return response
+                        .json()
+                        .catch(function () {
+                            return {}
+                        })
+                        .then(function (payload) {
+                            if (!response.ok) throw requestError(response.status)
+                            return payload
+                        })
+                })
+                .then(
+                    function (payload) {
+                        if (settled) return
+                        settled = true
+                        window.clearTimeout(timer)
+                        resolve(payload)
+                    },
+                    function (error) {
+                        if (settled) return
+                        settled = true
+                        window.clearTimeout(timer)
+                        // Never mask a real failure. An error that already carries
+                        // a numeric status keeps it, even when it lands next to the
+                        // deadline; only a status-free abort becomes a timeout.
+                        if (
+                            error &&
+                            typeof error.status !== 'number' &&
+                            error.name === 'AbortError'
+                        ) {
+                            reject(timedOutError())
+                            return
+                        }
+                        reject(error)
+                    },
+                )
+        })
+    }
+
+    // The context resolve is read-only and idempotent, so one automatic retry on a
+    // timeout is worth it: a single stalled connection stops costing the member the
+    // whole page. Only timeouts retry, and only here — a submit retry stays the
+    // member's own decision, by design.
+    var resolveContext = async function (token) {
+        var attempt = 0
+        for (;;) {
+            attempt += 1
+            try {
+                return await postJson(CONTEXT_PATH, { token: token })
+            } catch (error) {
+                if (attempt >= CONTEXT_ATTEMPTS || !(error && error.timedOut)) {
+                    throw error
+                }
+            }
+        }
     }
 
     var capture = function (name, properties) {
@@ -265,7 +354,7 @@
         setState('loading')
 
         try {
-            var context = await postJson(CONTEXT_PATH, { token: capabilityToken })
+            var context = await resolveContext(capabilityToken)
             if (!context || context.available !== true || !context.starter) {
                 throw new Error('Review context is unavailable.')
             }
@@ -364,9 +453,13 @@
                     if (submitButton) submitButton.disabled = false
                     setError('We could not submit your review. Try again.')
                     setState('form')
-                    capture('v3_starter_review_submit_failed', {
+                    var failedProperties = {
                         status: Number(error && error.status) || 0,
-                    })
+                    }
+                    if (error && error.timedOut === true) {
+                        failedProperties.timed_out = true
+                    }
+                    capture('v3_starter_review_submit_failed', failedProperties)
                 }
             }, true)
 
@@ -375,9 +468,13 @@
         } catch (error) {
             capabilityToken = ''
             setState('unavailable')
-            capture('v3_starter_review_unavailable', {
+            var unavailableProperties = {
                 reason: Number(error && error.status) === 404 ? 'not_found' : 'load_failed',
-            })
+            }
+            if (error && error.timedOut === true) {
+                unavailableProperties.timed_out = true
+            }
+            capture('v3_starter_review_unavailable', unavailableProperties)
         }
     }
 

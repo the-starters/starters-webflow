@@ -3256,7 +3256,15 @@ immediately removes the fragment with `history.replaceState`, and keeps the
 token only in a function closure. It never writes the token to the DOM,
 storage, PostHog properties, or a query string. Context resolves through
 `POST /starter/reviews/invited/context/resolve`; submission uses
-`POST /starter/reviews/invited/submit`. Both calls omit credentials and referrer
+`POST /starter/reviews/invited/submit`. Both requests carry a 15-second deadline
+that does not depend on `AbortController`: the timer is armed unconditionally and
+rejects on its own, so the request is always bounded even where the global is
+missing or a polyfill ignores the signal. Aborting the socket on top is
+best-effort. Because the context resolve is read-only and idempotent, a timed-out
+resolve retries once automatically with the same token before landing on the
+`unavailable` state; a timed-out submit is never retried automatically and follows
+the manual retry design below, keeping the locked payload and its idempotency key.
+Both calls omit credentials and referrer
 data. URL cleanup removes a legacy `token` query value and preserves every other
 query field unchanged, including the one manually authored UTM set. The native
 form contract is:
