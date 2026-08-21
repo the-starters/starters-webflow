@@ -479,6 +479,7 @@ test('the native Paid card binds without generated IDs and upgrades a legacy dur
   assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
   assert.equal(result.dom.enabled.checked, true)
   assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.disabled.getAttribute('name'), 'paid-consulting-calls')
   assert.equal(result.dom.title.value, 'Paid Consultation Call')
   assert.equal(result.dom.price.value, 5)
   assert.equal(result.dom.formWrapper.style.display, 'none')

@@ -251,18 +251,43 @@
       qs('[data-paid-call-input="' + name + '"]', root)
     if (canonical || !cardMode) return canonical
     const selectors = {
-      enabled: '[name="paid-consulting-calls"]',
       title: '[name="call-description"]',
       price: '[name="call-rate"]',
     }
+    if (name === 'enabled') {
+      return namedRadio('paid-consulting-calls', 'yes') || qs('[name="paid-consulting-calls"]', root)
+    }
     return selectors[name] ? qs(selectors[name], root) : null
+  }
+
+  function namedRadio(name, value) {
+    return Array.prototype.find.call(qsa('[name="' + name + '"]', root), function (item) {
+      return String(item.value || item.getAttribute('value') || '').toLowerCase() === value
+    }) || null
   }
 
   function disabledField() {
     return cardMode
       ? qs('[data-call-settings-input="disabled"]', root) ||
-          qs('[name="consulting-calls"]', root)
+          namedRadio('paid-consulting-calls', 'no') ||
+          namedRadio('consulting-calls', 'no')
       : null
+  }
+
+  // The first native Paid card shipped with Yes and No under different Webflow
+  // field names. Because both radios are required, the unchecked standalone No
+  // field makes the otherwise valid native form fail browser validation before
+  // its submit event can reach this controller. Join that legacy No field to the
+  // Paid radio group at runtime; the authored form remains native Webflow HTML.
+  function normalizeCardRadioGroup() {
+    if (!cardMode) return
+    const enabledInput = field('enabled')
+    const disabledInput = disabledField()
+    const enabledName = enabledInput && enabledInput.getAttribute('name')
+    const disabledName = disabledInput && disabledInput.getAttribute('name')
+    if (enabledName && disabledName && enabledName !== disabledName) {
+      disabledInput.setAttribute('name', enabledName)
+    }
   }
 
   function action(name) {
@@ -656,6 +681,7 @@
   function bind() {
     if (bound) return
     bound = true
+    normalizeCardRadioGroup()
     const form =
       qs('[data-call-settings-element="form"]', root) ||
       qs('[data-paid-call-element="form"]', root) ||

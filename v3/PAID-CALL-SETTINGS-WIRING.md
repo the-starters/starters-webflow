@@ -46,7 +46,7 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | Paid Form Block | `data-availability-element="call-paid-form"` |
 | Native form | `data-availability-element="availability-form"` |
 | Yes radio | `name="paid-consulting-calls"` |
-| No radio | `name="consulting-calls"` within the Paid Form Block |
+| No radio | Preferred: `name="paid-consulting-calls"` and `value="no"`; the controller normalizes the shipped legacy `name="consulting-calls"` field into that native radio group at runtime |
 | Description/title input | `name="call-description"` |
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
