@@ -342,6 +342,7 @@ test('state switching hides inactive blocks with inline display, not hidden alon
         assert.equal(node.hidden, true)
         assert.equal(node.style.display, 'none')
         assert.deepEqual(node.setAttributeCalls, [])
+        assert.deepEqual(node.removeAttributeCalls, [])
     }
 
     await formHarness.submit({ preventDefault() {}, stopImmediatePropagation() {} })

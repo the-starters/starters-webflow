@@ -204,8 +204,9 @@
 
             if (nameNode) nameNode.textContent = normalize(context.starter.name) || 'Starter'
             if (headlineNode) {
-                headlineNode.textContent = normalize(context.starter.headline)
-                setHidden(headlineNode, !normalize(context.starter.headline))
+                var headline = normalize(context.starter.headline)
+                headlineNode.textContent = headline
+                setHidden(headlineNode, !headline)
             }
             if (photoNode) {
                 var photoUrl = normalize(context.starter.photo_url)
