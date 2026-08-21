@@ -17,12 +17,26 @@ function load(options = {}) {
     const fetchCalls = []
     const openCalls = []
     const locationAssigns = []
+    const timers = []
+    const clearedTimers = []
+    let nextTimerId = 1
     const context = {
         URL,
         URLSearchParams,
         Date,
         Math,
         console,
+        setTimeout(handler, delay) {
+            const id = nextTimerId
+            nextTimerId += 1
+            timers.push({ id, handler, delay, cleared: false })
+            return id
+        },
+        clearTimeout(id) {
+            clearedTimers.push(id)
+            const timer = timers.find((entry) => entry.id === id)
+            if (timer) timer.cleared = true
+        },
         window: {
             __STARTERS_TEST__: true,
             location: {
@@ -68,12 +82,15 @@ function load(options = {}) {
                 return options.root || null
             },
         },
-        fetch: async (...args) => {
+        fetch: (...args) => {
             fetchCalls.push(args)
-            if (!options.fetch) throw new Error('unexpected fetch')
+            if (!options.fetch) return Promise.reject(new Error('unexpected fetch'))
             return options.fetch(...args)
         },
     }
+    // options.abortController === false models a browser without the global, where
+    // the controller must fall back to an unbounded request rather than throw.
+    if (options.abortController !== false) context.AbortController = AbortController
     vm.createContext(context)
     // options.runs > 1 models a page that loads the controller twice.
     for (let run = 0; run < (options.runs || 1); run += 1) {
@@ -87,8 +104,19 @@ function load(options = {}) {
         historyCalls,
         init: listeners.get('DOMContentLoaded'),
         locationAssigns,
+        clearedTimers,
+        // Fire every armed, uncleared timer — the stand-in for 15 seconds passing.
+        fireTimers() {
+            timers
+                .filter((timer) => !timer.cleared)
+                .forEach((timer) => {
+                    timer.cleared = true
+                    timer.handler()
+                })
+        },
         openCalls,
         posthogHook: context.window.__startersV3ReviewPosthogBeforeSend,
+        timers,
     }
 }
 
@@ -280,6 +308,7 @@ function makeFormHarness(options = {}) {
         },
     }
     return {
+        errorNode,
         fields,
         headlineNode,
         photoNode,
@@ -290,6 +319,37 @@ function makeFormHarness(options = {}) {
         submit: (event) => submit(event),
         submitButton,
     }
+}
+
+// A request that never answers on its own, like a stalled connection: it settles
+// only when the caller aborts it, exactly as real fetch does.
+function hangingFetch(url, requestOptions) {
+    return new Promise((resolve, reject) => {
+        if (!requestOptions || !requestOptions.signal) return
+        requestOptions.signal.addEventListener('abort', () => {
+            const error = new Error('The operation was aborted.')
+            error.name = 'AbortError'
+            reject(error)
+        })
+    })
+}
+
+// Bounded wait, so a test asserting a hang can never itself hang: if the abort is
+// not wired through, this reports 'pending' and the assertion fails instead.
+async function settle(promise) {
+    let state = 'pending'
+    promise.then(
+        () => {
+            state = 'settled'
+        },
+        () => {
+            state = 'settled'
+        },
+    )
+    for (let tick = 0; tick < 20 && state === 'pending'; tick += 1) {
+        await new Promise((resolve) => setImmediate(resolve))
+    }
+    return state
 }
 
 function response(payload, ok = true, status = 200) {
@@ -669,4 +729,108 @@ test('a profile url outside the /hire allowlist binds nothing', async () => {
     assert.deepEqual(formHarness.profileNode.clickListeners, [])
     assert.deepEqual(formHarness.profileNode.setAttributeCalls, [])
     assert.deepEqual(harness.openCalls, [])
+})
+
+test('a hung context request times out into the unavailable state', async () => {
+    const formHarness = makeFormHarness()
+    const captures = []
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        posthog: { capture: (name, properties) => captures.push([name, properties]) },
+        fetch: hangingFetch,
+    })
+
+    const running = harness.init()
+    assert.equal(formHarness.root.state, 'loading')
+    assert.equal(harness.timers.length, 1)
+    assert.equal(harness.timers[0].delay, 15000)
+
+    harness.fireTimers()
+    assert.equal(await settle(running), 'settled')
+
+    assert.equal(formHarness.root.state, 'unavailable')
+    // Status 0, not 404, so the reason must be load_failed.
+    const unavailable = captures.find(
+        ([name]) => name === 'v3_starter_review_unavailable',
+    )
+    // JSON round-trip: the properties object is built inside the vm realm, so its
+    // prototype differs from the host's and deepStrictEqual would reject it.
+    assert.deepEqual(JSON.parse(JSON.stringify(unavailable)), [
+        'v3_starter_review_unavailable',
+        { reason: 'load_failed' },
+    ])
+})
+
+test('a completed request clears its timeout', async () => {
+    const formHarness = makeFormHarness()
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async () => response({ available: true, starter: { name: 'Starter' } }),
+    })
+
+    await harness.init()
+
+    assert.equal(formHarness.root.state, 'form')
+    assert.equal(harness.timers.length, 1)
+    assert.deepEqual(harness.clearedTimers, [harness.timers[0].id])
+})
+
+test('a timed-out submit shows the error and retries the same payload', async () => {
+    const formHarness = makeFormHarness()
+    let submitAttempts = 0
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: (url, requestOptions) => {
+            if (url.endsWith('/context/resolve')) {
+                return Promise.resolve(
+                    response({ available: true, starter: { name: 'Starter' } }),
+                )
+            }
+            submitAttempts += 1
+            if (submitAttempts === 1) return hangingFetch(url, requestOptions)
+            return Promise.resolve(response({ accepted: true, duplicate: true }))
+        },
+    })
+    await harness.init()
+
+    const event = { preventDefault() {}, stopImmediatePropagation() {} }
+    const firstSubmit = formHarness.submit(event)
+    harness.fireTimers()
+    assert.equal(await settle(firstSubmit), 'settled')
+
+    assert.equal(
+        formHarness.errorNode.textContent,
+        'We could not submit your review. Try again.',
+    )
+    assert.equal(formHarness.fields.review_text.disabled, true)
+    assert.equal(formHarness.root.state, 'form')
+
+    // The locked payload survives the timeout, key included.
+    formHarness.fields.review_text.value = 'A different review after the timeout.'
+    await formHarness.submit(event)
+
+    const payloads = harness.fetchCalls
+        .slice(1)
+        .map(([, requestOptions]) => JSON.parse(requestOptions.body))
+    assert.deepEqual(payloads[0], payloads[1])
+    assert.equal(formHarness.root.state, 'success')
+})
+
+test('an environment without AbortController sends an untimed request', async () => {
+    const formHarness = makeFormHarness()
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        abortController: false,
+        fetch: async () => response({ available: true, starter: { name: 'Starter' } }),
+    })
+
+    await harness.init()
+
+    assert.equal(formHarness.root.state, 'form')
+    assert.equal(harness.timers.length, 0)
+    assert.equal(harness.fetchCalls[0][1].signal, undefined)
 })

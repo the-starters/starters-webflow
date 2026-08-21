@@ -14,6 +14,7 @@
     var REVIEW_MIN = 10
     var REVIEW_MAX = 4000
     var FEEDBACK_MAX = 2000
+    var TIMEOUT_MS = 15000
     var PREFLIGHT_ID = 'starter-review-preflight'
     var PROFILE_BOUND_ATTRIBUTE = 'data-starter-review-profile-bound'
     var PROFILE_URL_ATTRIBUTE = 'data-starter-review-profile-url'
@@ -150,24 +151,56 @@
     }
 
     var postJson = async function (path, body) {
-        var response = await fetch(API_BASE + path, {
+        var options = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
             credentials: 'omit',
             referrerPolicy: 'no-referrer',
-        })
-        var payload = await response.json().catch(function () {
-            return {}
-        })
-
-        if (!response.ok) {
-            var error = new Error('The review request could not be completed.')
-            error.status = response.status
-            throw error
         }
 
-        return payload
+        // A hung request would spin the loading state forever: by then the
+        // pre-hide rule is disarmed and only a rejection can move the UI on. Abort
+        // so the existing catch paths run. Environments without AbortController
+        // keep the old unbounded behavior rather than losing the request.
+        var controller =
+            typeof AbortController === 'function' ? new AbortController() : null
+        var timer = null
+        if (controller) {
+            options.signal = controller.signal
+            timer = setTimeout(function () {
+                controller.abort()
+            }, TIMEOUT_MS)
+        }
+
+        try {
+            var response = await fetch(API_BASE + path, options)
+            var payload = await response.json().catch(function () {
+                return {}
+            })
+
+            if (!response.ok) {
+                var error = new Error('The review request could not be completed.')
+                error.status = response.status
+                throw error
+            }
+
+            return payload
+        } catch (error) {
+            // An abort surfaces as a DOMException, so reshape it into the error
+            // this function already contracts for. Status 0 keeps the context
+            // catch on 'load_failed' instead of 'not_found'.
+            if (controller && controller.signal.aborted) {
+                var timeoutError = new Error(
+                    'The review request could not be completed.',
+                )
+                timeoutError.status = 0
+                throw timeoutError
+            }
+            throw error
+        } finally {
+            if (timer !== null) clearTimeout(timer)
+        }
     }
 
     var capture = function (name, properties) {
