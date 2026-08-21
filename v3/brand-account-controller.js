@@ -13,14 +13,13 @@
  * fields, updates ordinary Memberstack fields first, updates login email only
  * when it changed, and sets the completion marker as its last durable member
  * write. Durable assignments are replay-safe; a failed retry repeats
- * assignments rather than creating another account or Brand row. The password
- * email is deliberately not retried.
+ * assignments rather than creating another account or Brand row.
  *
- * Build Account makes the completion marker its last durable member write,
- * then attempts one Memberstack reset/set-password email. Account Security
- * attempts that email only after a changed login email succeeds. Password
- * email calls are never automatically retried; Memberstack's Forgot Password
- * flow is the recovery path when delivery cannot be confirmed.
+ * Build Account does not send a password email when the member keeps the login
+ * email they already authenticated with. If that email changes, Build Account
+ * and Account Security attempt one reset email after the auth update succeeds.
+ * Password email calls are never automatically retried; Memberstack's Forgot
+ * Password flow is the recovery path when delivery cannot be confirmed.
  *
  * COMPLETION CONTRACT, SECOND HALF (2026-08-06). The durable answer is the
  * member field plus its Xano mirror, but the Memberstack webhook needs a moment
@@ -77,6 +76,7 @@
   var passwordEmailAttempts = new WeakMap()
   var workflowDiagnosticsControllerScript = document.currentScript
   var brandSignupPlanObserver = null
+  var pendingBuildPasswordEmails = new WeakMap()
 
   function boundedWorkflowDiagnostics(promise) {
     return new Promise(function (resolve) {
@@ -530,18 +530,25 @@
     diagnosticRequestStarted(form)
     var member = await currentMember(client)
 
-    // Completion is the last durable member write. The password email follows
-    // it as a single, non-retried side effect, so a lost acknowledgement cannot
-    // cause an automatic replay to emit a duplicate message.
+    // Completion is the last durable member write. A normal onboarding submit
+    // keeps the authenticated login email and sends no password email. A real
+    // email change keeps the existing ownership-proof email after completion.
     await updateOrdinaryFields(client, values)
-    await updateEmailIfChanged(client, member, values.email)
+    var emailResult = await updateEmailIfChanged(client, member, values.email)
+    // The auth change can succeed before a later completion write fails. Keep
+    // that changed target on this form so the safe retry still sends its one
+    // ownership-proof message after completion succeeds.
+    if (emailResult.changed) pendingBuildPasswordEmails.set(form, emailResult.email)
     await markBuildComplete(client)
-    // Only reached once completion is durable, and deliberately before the
-    // non-retried password email: the marker is what stops the routers from
-    // bouncing this member back onto the form during the webhook's catch-up
-    // window, so nothing that can fail afterwards is allowed to precede it.
+    // Only reached once completion is durable. The marker stops the routers
+    // from bouncing this member back onto the form during the webhook's
+    // catch-up window.
     markBrandProfileCompletedLocally()
-    await sendResetPasswordEmailOnce(form, client, values.email)
+    var pendingPasswordEmail = pendingBuildPasswordEmails.get(form)
+    if (pendingPasswordEmail) {
+      pendingBuildPasswordEmails.delete(form)
+      await sendResetPasswordEmailOnce(form, client, pendingPasswordEmail)
+    }
 
     return { memberId: member.id }
   }
