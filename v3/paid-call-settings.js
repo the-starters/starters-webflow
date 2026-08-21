@@ -11,6 +11,12 @@
   const ROOT_SELECTOR = '[data-paid-call-element="settings"]'
   const CARD_ROOT_SELECTOR = '[data-availability-element="call-paid-form"]'
   const STATUS_ATTRIBUTE = 'data-paid-call-settings'
+  const PANEL_SELECTOR =
+    '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"]'
+  const OPEN_ACTION_SELECTOR =
+    '[data-call-settings-action="open"], [data-availability-action="item-form-open"]'
+  const FOREIGN_CARD_SELECTOR =
+    '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"], [data-call-settings-service], [data-availability-element="call-paid-form"]'
   const FIXED_DURATION_MINUTES = 60
 
   const hostname = window.location.hostname
@@ -37,18 +43,54 @@
     return (scope || document).querySelectorAll(selector)
   }
 
-  function findCallCardScope(element) {
+  function containsElement(ancestor, node) {
+    let current = node
+    while (current) {
+      if (current === ancestor) return true
+      current = current.parentElement
+    }
+    return false
+  }
+
+  function closestMatch(element, selector) {
     let candidate = element
     while (candidate && candidate !== document) {
-      if (
-        qs('[data-availability-element="call-form-wrapper"]', candidate) &&
-        qs('[data-availability-action="item-form-open"]', candidate)
-      ) {
-        return candidate
-      }
+      if (candidate.matches && candidate.matches(selector)) return candidate
       candidate = candidate.parentElement
     }
-    return element
+    return null
+  }
+
+  function ownsElement(item, panel) {
+    if (item === root || item === panel) return true
+    if (panel && (containsElement(panel, item) || containsElement(item, panel))) return true
+    return containsElement(root, item) || containsElement(item, root)
+  }
+
+  function hasForeignCard(candidate, panel) {
+    return Array.prototype.some.call(qsa(FOREIGN_CARD_SELECTOR, candidate), function (item) {
+      return !ownsElement(item, panel)
+    })
+  }
+
+  function cardPanel() {
+    return (
+      closestMatch(root, PANEL_SELECTOR) ||
+      qs('[data-call-settings-element="panel"]', uiScope || root) ||
+      qs('[data-availability-element="call-form-wrapper"]', uiScope || root)
+    )
+  }
+
+  function findCallCardScope(element) {
+    const panel = closestMatch(element, PANEL_SELECTOR)
+    const anchor = panel || element
+    let candidate = anchor
+    while (candidate && candidate !== document) {
+      if (hasForeignCard(candidate, panel)) return anchor
+      if (qs(OPEN_ACTION_SELECTOR, candidate)) return candidate
+      candidate = candidate.parentElement
+    }
+    return anchor
   }
 
   function setStatus(value) {
@@ -188,6 +230,24 @@
     return qs('[data-call-settings-output="' + name + '"]', uiScope || root)
   }
 
+  function formatUsd(cents) {
+    const amount = Number(cents || 0) / 100
+    const safeAmount = Number.isFinite(amount) ? amount : 0
+    if (typeof Intl !== 'undefined' && Intl && typeof Intl.NumberFormat === 'function') {
+      try {
+        return new Intl.NumberFormat('en-US', {
+          style: 'currency',
+          currency: 'USD',
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(safeAmount)
+      } catch (error) {
+        return '$' + safeAmount.toFixed(2)
+      }
+    }
+    return '$' + safeAmount.toFixed(2)
+  }
+
   function show(element, visible) {
     if (!element) return
     element.hidden = !visible
@@ -228,7 +288,7 @@
 
   function clearRenderedState(message) {
     settings = null
-    busy = false
+    setBusy(false)
     sessionMemberId = null
     const enabledInput = field('enabled')
     const titleInput = field('title')
@@ -240,7 +300,7 @@
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
     const disabledInput = disabledField()
     if (disabledInput) disabledInput.checked = true
-    qsa('[data-paid-call-prerequisite]', root).forEach(function (item) {
+    qsa('[data-paid-call-prerequisite]', uiScope || root).forEach(function (item) {
       item.setAttribute('data-ready', 'false')
     })
     root.setAttribute('data-paid-call-enabled', 'false')
@@ -278,7 +338,7 @@
     root.setAttribute('data-paid-call-duration-required', String(FIXED_DURATION_MINUTES))
 
     Object.keys(readiness).forEach(function (name) {
-      qsa('[data-paid-call-prerequisite="' + name + '"]', root).forEach(function (item) {
+      qsa('[data-paid-call-prerequisite="' + name + '"]', uiScope || root).forEach(function (item) {
         item.setAttribute('data-ready', readiness[name] ? 'true' : 'false')
       })
     })
@@ -291,7 +351,7 @@
     )
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
-    if (priceOutput) priceOutput.textContent = service ? '$' + Number(service.price_cents || 0) / 100 : '$0'
+    if (priceOutput) priceOutput.textContent = formatUsd(service ? service.price_cents : 0)
     show(output('on'), Boolean(service))
     show(output('off'), !service)
     setMessage(
@@ -345,9 +405,7 @@
 
   function setCardEditorOpen(open) {
     if (!cardMode) return
-    const wrapper =
-      qs('[data-call-settings-element="panel"]', uiScope || root) ||
-      qs('[data-availability-element="call-form-wrapper"]', uiScope || root)
+    const wrapper = cardPanel()
     if (wrapper) wrapper.style.display = open ? 'flex' : 'none'
     root.setAttribute('data-paid-call-editor-open', open ? 'true' : 'false')
   }

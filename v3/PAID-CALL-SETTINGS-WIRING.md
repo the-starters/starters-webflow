@@ -41,8 +41,12 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
 
-The controller scopes every compatibility selector to the Paid card. It does not use styling classes,
-generated element IDs, or the duplicate Form Block ID.
+The controller scopes every compatibility selector to the Paid card. It anchors on the Paid Form
+Block's own enclosing form wrapper and only widens to the Call Item that owns that wrapper. If the
+Call Item also holds another card's form wrapper, the controller stays inside the Paid wrapper, so it
+never binds or toggles the Free card. Give the Paid card its own `item-form-open` inside that Call
+Item so Edit stays wired. It does not use styling classes, generated element IDs, or the duplicate
+Form Block ID.
 
 For new Designer wiring, use the stable contract instead of the compatibility names:
 
@@ -55,7 +59,8 @@ For new Designer wiring, use the stable contract instead of the compatibility na
 
 Keep the form native to Webflow. The controller binds behavior and does not create form HTML.
 
-Optional prerequisite rows use `data-paid-call-prerequisite` with one of these values:
+Optional prerequisite rows use `data-paid-call-prerequisite` with one of these values (authorable
+anywhere inside the Paid card scope, including the Call Item header):
 
 - `calendar`
 - `availability`

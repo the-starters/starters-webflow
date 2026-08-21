@@ -96,7 +96,7 @@ function service(overrides = {}) {
   }
 }
 
-function buildDom(withRoot = true, cardMode = false) {
+function buildDom(withRoot = true, cardMode = false, shared = false) {
   if (withRoot && cardMode) {
     const card = new El('section', { 'data-id': '' })
     const open = new El('div', { 'data-availability-action': 'item-form-open' })
@@ -111,12 +111,35 @@ function buildDom(withRoot = true, cardMode = false) {
     const buttonRow = new El('div')
     const close = new El('div', { 'data-availability-action': 'item-form-close' })
     const save = new El('div', { 'data-availability-action': 'item-form-submit' })
+    const statusOutput = new El('p', { 'data-call-settings-output': 'status' })
+    const priceOutput = new El('p', { 'data-call-settings-output': 'price' })
+    const onOutput = new El('div', { 'data-call-settings-output': 'on' })
+    const offOutput = new El('div', { 'data-call-settings-output': 'off' })
+    const prerequisites = ['calendar', 'availability', 'stripe', 'charges', 'fresh', 'bookable']
+      .map((name) => new El('div', { 'data-paid-call-prerequisite': name }))
     buttonRow.append(close, save)
     form.append(disabled, enabled, title, price, buttonRow)
     root.append(form)
     editInner.append(root)
     formWrapper.append(editInner)
-    card.append(open, formWrapper)
+    const freeWrapper = new El('div', { 'data-availability-element': 'call-form-wrapper' })
+    const freeOpen = new El('div', { 'data-availability-action': 'item-form-open' })
+    const freeForm = new El('form', { 'data-availability-element': 'availability-form' })
+    const freeClose = new El('div', { 'data-availability-action': 'item-form-close' })
+    const freeSave = new El('div', { 'data-availability-action': 'item-form-submit' })
+    const freeEnabled = new El('input', { name: 'free-consulting-calls', value: 'yes' })
+    freeForm.append(freeEnabled, freeClose, freeSave)
+    freeWrapper.append(freeForm)
+    const header = shared ? [freeOpen, freeWrapper] : [open]
+    card.append(
+      ...header,
+      statusOutput,
+      priceOutput,
+      onOutput,
+      offOutput,
+      ...prerequisites,
+      formWrapper,
+    )
     return {
       card,
       root,
@@ -126,12 +149,20 @@ function buildDom(withRoot = true, cardMode = false) {
       title,
       price,
       duration: null,
-      open,
+      open: shared ? null : open,
       close,
       save,
       status: null,
+      statusOutput,
+      priceOutput,
+      onOutput,
+      offOutput,
       formWrapper,
-      prerequisites: [],
+      freeOpen,
+      freeWrapper,
+      freeClose,
+      freeSave,
+      prerequisites,
     }
   }
   const root = withRoot ? new El('section', { 'data-paid-call-element': 'settings' }) : null
@@ -151,9 +182,11 @@ function buildDom(withRoot = true, cardMode = false) {
 }
 
 function load(options = {}) {
+  if (options.sharedCallItem === true) options = { ...options, cardMode: true }
   const dom = buildDom(
     options.withRoot !== false,
     options.cardMode === true || options.stableCardMode === true,
+    options.sharedCallItem === true,
   )
   if (options.stableCardMode === true && dom.root) {
     dom.root.setAttribute('data-call-settings-service', 'paid')
@@ -402,7 +435,9 @@ test('the native Paid card can disable an active service when prerequisites are 
   })
   await settle()
 
-  assert.equal(result.dom.save.disabled, false)
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  assert.equal(result.dom.save.style.pointerEvents, '')
+  assert.equal(result.dom.save.style.opacity, '')
   result.dom.disabled.checked = true
   await result.dom.disabled.dispatch('change')
   await result.dom.save.dispatch('click')
@@ -422,6 +457,132 @@ test('the native Paid card makes No while already off a zero-write close', async
 
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
   assert.equal(result.dom.formWrapper.style.display, 'none')
+})
+
+test('a Call Item shared with the Free card never binds the Free controls', async () => {
+  const result = load({
+    sharedCallItem: true,
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.formWrapper.style.display, 'none')
+  assert.equal(result.dom.freeWrapper.style.display, undefined)
+
+  await result.dom.freeOpen.dispatch('click')
+  await result.dom.freeSave.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.dom.formWrapper.style.display, 'none')
+  assert.equal(result.dom.freeWrapper.style.display, undefined)
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 1)
+  assert.equal(result.dom.enabled.checked, false)
+})
+
+test('an auth change during an in-flight Paid write leaves the card controls usable', async () => {
+  const pending = deferred()
+  const result = load({
+    cardMode: true,
+    initial: canonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': () => pending.promise,
+    },
+  })
+  await settle()
+
+  await result.dom.open.dispatch('click')
+  result.dom.enabled.checked = true
+  result.dom.disabled.checked = false
+  result.dom.title.value = 'Paid Consultation Call'
+  result.dom.price.value = '150'
+  await result.dom.save.dispatch('click')
+  await settle(2)
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 1)
+  assert.equal(result.dom.open.style.pointerEvents, 'none')
+  assert.equal(result.dom.open.style.opacity, '0.6')
+
+  await result.changeMember({ id: 'member-b' })
+  await settle()
+
+  assert.equal(result.dom.open.style.pointerEvents, '')
+  assert.equal(result.dom.open.style.opacity, '')
+  assert.equal(result.dom.close.style.pointerEvents, '')
+  assert.equal(result.dom.close.style.opacity, '')
+
+  assert.equal(result.dom.formWrapper.style.display, 'flex')
+  await result.dom.open.dispatch('click')
+  assert.equal(result.dom.formWrapper.style.display, 'none')
+  await result.dom.open.dispatch('click')
+  assert.equal(result.dom.formWrapper.style.display, 'flex')
+
+  pending.resolve({ ok: true, status: 200, json: async () => ({ service: service() }) })
+  await settle()
+})
+
+test('the Paid card price output renders grouped two-decimal USD', async () => {
+  const grouped = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ price_cents: 150000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+  assert.equal(grouped.dom.priceOutput.textContent, '$1,500.00')
+  assert.equal(grouped.dom.onOutput.style.display, '')
+  assert.equal(grouped.dom.offOutput.style.display, 'none')
+
+  const legacyCents = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ price_cents: 1050 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+  assert.equal(legacyCents.dom.priceOutput.textContent, '$10.50')
+
+  const off = load({ cardMode: true, initial: canonical() })
+  await settle()
+  assert.equal(off.dom.priceOutput.textContent, '$0.00')
+  assert.equal(off.dom.onOutput.style.display, 'none')
+  assert.equal(off.dom.offOutput.style.display, '')
+})
+
+test('optional prerequisite rows authored in the Paid Call Item header are painted', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({ readiness: { stripe_charges_enabled: false } }),
+  })
+  await settle()
+
+  const ready = {}
+  result.dom.prerequisites.forEach((item) => {
+    ready[item.getAttribute('data-paid-call-prerequisite')] = item.getAttribute('data-ready')
+  })
+  assert.equal(ready.calendar, 'true')
+  assert.equal(ready.availability, 'true')
+  assert.equal(ready.stripe, 'true')
+  assert.equal(ready.charges, 'false')
+  assert.equal(ready.fresh, 'true')
+  assert.equal(ready.bookable, 'false')
 })
 
 test('the stable call-settings attribute grammar binds the native Paid card', async () => {
