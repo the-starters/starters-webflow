@@ -209,13 +209,21 @@
             }
             if (photoNode) {
                 var photoUrl = normalize(context.starter.photo_url)
-                setHidden(photoNode, !/^https:\/\//i.test(photoUrl))
-                if (!photoNode.hidden) photoNode.setAttribute('src', photoUrl)
+                var hasPhoto = /^https:\/\//i.test(photoUrl)
+                setHidden(photoNode, !hasPhoto)
+                if (hasPhoto) {
+                    // Designer imgs carry a placeholder srcset/sizes pair, and a
+                    // w-descriptor srcset outranks the src we set below.
+                    photoNode.removeAttribute('srcset')
+                    photoNode.removeAttribute('sizes')
+                    photoNode.setAttribute('src', photoUrl)
+                }
             }
             if (profileNode) {
                 var profileUrl = normalize(context.starter.profile_url)
-                setHidden(profileNode, !/^\/hire\/[a-z0-9-]+$/i.test(profileUrl))
-                if (!profileNode.hidden) profileNode.setAttribute('href', profileUrl)
+                var hasProfile = /^\/hire\/[a-z0-9-]+$/i.test(profileUrl)
+                setHidden(profileNode, !hasProfile)
+                if (hasProfile) profileNode.setAttribute('href', profileUrl)
             }
 
             var form = root.querySelector('form[data-starter-review-form]')

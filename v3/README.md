@@ -3271,7 +3271,12 @@ block and of the headline, photo, and profile-link nodes: it sets `display: none
 when it hides one and clears the inline value when it shows one, because Designer
 classes such as `display: flex` and the base `img` rule outrank the browser's own
 `[hidden]` styling. Do not author an inline `display` on those elements, and do
-not attach interactions that animate or override their `display`.
+not attach interactions that animate or override their `display`. Every state
+block must stay visible by default in the Designer, never carrying a class-level
+`Display: None`, because the controller reveals a block only by clearing that
+block's inline value, which cannot defeat a class rule. Keep the headline, photo,
+and profile-link nodes inside the `form` state block, where the live page nests
+them: the controller only normalizes them after a successful context resolve.
 
 Pass the controller's redaction hook at the site-level PostHog initialization
 boundary. If the site already has a `before_send` callback, assign that callback

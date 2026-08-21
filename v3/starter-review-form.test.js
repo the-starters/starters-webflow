@@ -168,11 +168,22 @@ function makeFormHarness() {
     }
     const submitButton = { disabled: false }
     const errorNode = { textContent: '' }
-    const photoNode = {
+    const boundNode = () => ({
         hidden: false,
         style: { display: '' },
-        setAttribute() {},
-    }
+        textContent: '',
+        setAttributeCalls: [],
+        removeAttributeCalls: [],
+        setAttribute(name, value) {
+            this.setAttributeCalls.push([name, value])
+        },
+        removeAttribute(name) {
+            this.removeAttributeCalls.push(name)
+        },
+    })
+    const photoNode = boundNode()
+    const headlineNode = boundNode()
+    const profileNode = boundNode()
     let submit
     const form = {
         addEventListener(name, callback) {
@@ -185,8 +196,11 @@ function makeFormHarness() {
             if (selector === '[type="submit"]') return submitButton
             return null
         },
-        querySelectorAll() {
-            return Object.values(fields)
+        querySelectorAll(selector) {
+            return selector ===
+                '[name="rating"], [name="review_text"], [name="private_feedback"]'
+                ? Object.values(fields)
+                : []
         },
     }
     const root = {
@@ -200,12 +214,16 @@ function makeFormHarness() {
             if (selector === 'form[data-starter-review-form]') return form
             if (selector === '[data-starter-review-error]') return errorNode
             if (selector === '[data-starter-review-photo]') return photoNode
+            if (selector === '[data-starter-review-headline]') return headlineNode
+            if (selector === '[data-starter-review-profile-link]') return profileNode
             return null
         },
     }
     return {
         fields,
+        headlineNode,
         photoNode,
+        profileNode,
         root,
         states,
         submit: (event) => submit(event),
@@ -288,11 +306,8 @@ test('ambiguous retries preserve the first payload and idempotency key', async (
     assert.equal(formHarness.root.state, 'success')
 })
 
-// This unit seam cannot exercise the real CSS cascade, so it locks the inline-style
-// contract that defeats authored display rules instead: the `hidden` attribute alone
-// loses to a Designer class such as `display: flex` or the base `img` rule, so every
-// hidden node must also carry an inline `display: none`, and a shown node must have
-// that inline value cleared.
+// This seam cannot exercise the real CSS cascade, so it locks the inline-style
+// contract that defeats authored display rules instead.
 test('state switching hides inactive blocks with inline display, not hidden alone', async () => {
     const formHarness = makeFormHarness()
     const displays = () => Object.fromEntries(
@@ -319,8 +334,15 @@ test('state switching hides inactive blocks with inline display, not hidden alon
         unavailable: { hidden: true, display: 'none' },
         error: { hidden: true, display: 'none' },
     })
-    assert.equal(formHarness.photoNode.hidden, true)
-    assert.equal(formHarness.photoNode.style.display, 'none')
+    for (const node of [
+        formHarness.photoNode,
+        formHarness.headlineNode,
+        formHarness.profileNode,
+    ]) {
+        assert.equal(node.hidden, true)
+        assert.equal(node.style.display, 'none')
+        assert.deepEqual(node.setAttributeCalls, [])
+    }
 
     await formHarness.submit({ preventDefault() {}, stopImmediatePropagation() {} })
     assert.deepEqual(displays(), {
@@ -330,4 +352,41 @@ test('state switching hides inactive blocks with inline display, not hidden alon
         unavailable: { hidden: true, display: 'none' },
         error: { hidden: true, display: 'none' },
     })
+})
+
+test('a resolved context shows the Starter nodes and strips the placeholder art', async () => {
+    const formHarness = makeFormHarness()
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async () => response({
+            available: true,
+            starter: {
+                name: 'Starter',
+                headline: 'Fractional growth operator',
+                photo_url: 'https://example.com/p.jpg',
+                profile_url: '/hire/test-starter',
+            },
+        }),
+    })
+
+    await harness.init()
+
+    assert.equal(formHarness.photoNode.hidden, false)
+    assert.equal(formHarness.photoNode.style.display, '')
+    assert.deepEqual(formHarness.photoNode.setAttributeCalls, [
+        ['src', 'https://example.com/p.jpg'],
+    ])
+    // A w-descriptor srcset outranks the src, so the placeholder must be stripped.
+    assert.deepEqual(formHarness.photoNode.removeAttributeCalls, ['srcset', 'sizes'])
+
+    assert.equal(formHarness.headlineNode.hidden, false)
+    assert.equal(formHarness.headlineNode.style.display, '')
+    assert.equal(formHarness.headlineNode.textContent, 'Fractional growth operator')
+
+    assert.equal(formHarness.profileNode.hidden, false)
+    assert.equal(formHarness.profileNode.style.display, '')
+    assert.deepEqual(formHarness.profileNode.setAttributeCalls, [
+        ['href', '/hire/test-starter'],
+    ])
 })
