@@ -365,9 +365,6 @@ test('boots when the native Paid card is inserted after the controller starts', 
   assert.equal(result.calls.length, 0)
 
   result.revealRoot()
-  const manualInitializeA = result.window.StarterPaidCallSettings.initialize()
-  const manualInitializeB = result.window.StarterPaidCallSettings.initialize()
-  await Promise.all([manualInitializeA, manualInitializeB])
   await settle()
 
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
@@ -379,6 +376,56 @@ test('boots when the native Paid card is inserted after the controller starts', 
   result.notifyMutation()
   await settle()
   assert.equal(result.calls.length, 1)
+})
+
+test('collapses concurrent initialize calls into one canonical read', async () => {
+  const active = service({ duration: 15, price_cents: 500, revision: 1 })
+  const result = load({
+    cardMode: true,
+    rootDelayed: true,
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+  result.revealRoot()
+  await settle()
+  assert.equal(result.calls.length, 1)
+
+  const manualInitializeA = result.window.StarterPaidCallSettings.initialize()
+  const manualInitializeB = result.window.StarterPaidCallSettings.initialize()
+  await Promise.all([manualInitializeA, manualInitializeB])
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+  assert.equal(result.calls.length, 2)
+})
+
+test('keeps waiting for the native Paid card after the root deadline expires', async () => {
+  const active = service({ duration: 15, price_cents: 500, revision: 1 })
+  const result = load({
+    cardMode: true,
+    rootDelayed: true,
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'waiting-for-ui')
+
+  result.flushTimers()
+  await settle()
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'not-applicable')
+  assert.equal(result.calls.length, 0)
+
+  result.revealRoot()
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+  assert.equal(result.calls.length, 1)
+  assert.equal(result.dom.price.value, 5)
 })
 
 test('renders the active service and prerequisite state from canonical GET', async () => {

@@ -57,13 +57,17 @@
     return root
   }
 
-  function stopRootWait() {
-    if (rootObserver) rootObserver.disconnect()
-    rootObserver = null
+  function clearRootWaitTimer() {
     if (rootWaitTimer && typeof window.clearTimeout === 'function') {
       window.clearTimeout(rootWaitTimer)
     }
     rootWaitTimer = null
+  }
+
+  function stopRootWait() {
+    if (rootObserver) rootObserver.disconnect()
+    rootObserver = null
+    clearRootWaitTimer()
   }
 
   function waitForRoot() {
@@ -81,11 +85,14 @@
     rootObserver = new MutationObserver(resume)
     rootObserver.observe(document.documentElement, { childList: true, subtree: true })
     rootWaitTimer = window.setTimeout(function () {
+      clearRootWaitTimer()
+      if (!locateRoot()) {
+        setStatus('not-applicable')
+        return
+      }
       stopRootWait()
-      if (!locateRoot()) setStatus('not-applicable')
-      else initialize().catch(function () {})
+      initialize().catch(function () {})
     }, ROOT_WAIT_TIMEOUT_MS)
-    resume()
   }
 
   function qsa(selector, scope) {
@@ -709,12 +716,12 @@
   }
 
   async function initialize() {
+    if (initializationPromise) return initializationPromise
     locateRoot()
     if (!root) {
       waitForRoot()
       return null
     }
-    if (initializationPromise) return initializationPromise
     initializationPromise = (async function () {
       stopRootWait()
       uiScope = cardMode ? findCallCardScope(root) : root
