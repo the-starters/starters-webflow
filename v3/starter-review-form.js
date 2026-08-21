@@ -16,6 +16,7 @@
     var FEEDBACK_MAX = 2000
     var PREFLIGHT_ID = 'starter-review-preflight'
     var PROFILE_BOUND_ATTRIBUTE = 'data-starter-review-profile-bound'
+    var PROFILE_URL_ATTRIBUTE = 'data-starter-review-profile-url'
     var PREFLIGHT_CSS =
         '[data-starter-review]:not([data-starter-review-current-state])' +
         ' [data-starter-review-state]' +
@@ -183,31 +184,50 @@
         node.style.display = hide ? 'none' : ''
     }
 
-    // The marked node is either a plain anchor or the design-system Button
-    // component — div.button_main-wrap > div.clickable_wrap > button.clickable_btn,
-    // with no anchor anywhere inside. Only an anchor can carry an href, so on the
-    // component we open the profile ourselves, in a new tab, matching the authored
-    // target intent. Callers must gate this on the /hire/<slug> allowlist first.
+    // The marked node is a plain anchor, or the design-system Button component.
+    // That component ships in two flavors: an absolutely-positioned
+    // `a.clickable_link` inside `div.button_main-wrap`, or a `button.clickable_btn`
+    // with no anchor at all. Anchors carry the destination as an href; the button
+    // flavor needs a click handler. Both open a new tab, so this page's
+    // token-bearing history entry — and any review already typed — survive.
+    // Callers must gate this on the /hire/<slug> allowlist first.
     var bindProfileLink = function (node, profileUrl) {
+        // Only the component's own link element counts. A decorative anchor
+        // elsewhere in the subtree must not absorb the destination.
         var anchor =
             String(node.tagName || '').toUpperCase() === 'A'
                 ? node
-                : node.querySelector('a')
+                : node.querySelector('a.clickable_link')
 
         if (anchor) {
             anchor.setAttribute('href', profileUrl)
+            anchor.setAttribute('target', '_blank')
+            anchor.setAttribute('rel', 'noopener')
             return
         }
 
+        // The handler reads the destination at click time, so a re-resolve that
+        // returns a different profile updates it even though the listener binds
+        // only once. Write it before the guard for that reason.
+        node.setAttribute(PROFILE_URL_ATTRIBUTE, profileUrl)
         if (node.getAttribute(PROFILE_BOUND_ATTRIBUTE) === 'true') return
         node.setAttribute(PROFILE_BOUND_ATTRIBUTE, 'true')
-        // Capture phase, so this runs before any component-level handler, and
-        // preventDefault so a nested <button> can never submit a surrounding form.
+        // Capture phase plus stopPropagation so this owns the click before any
+        // component-level or delegated handler sees it, and preventDefault so a
+        // nested <button> can never submit a surrounding form.
         node.addEventListener(
             'click',
             function (event) {
                 event.preventDefault()
-                window.open(profileUrl, '_blank', 'noopener')
+                event.stopPropagation()
+                var url = node.getAttribute(PROFILE_URL_ATTRIBUTE)
+                if (!url) return
+                // Popup blockers and in-app webviews hand back null. A same-tab
+                // trip costs this page's history entry, but it beats a button
+                // that does nothing at all.
+                if (!window.open(url, '_blank', 'noopener')) {
+                    window.location.assign(url)
+                }
             },
             true,
         )
