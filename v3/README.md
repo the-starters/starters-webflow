@@ -3235,18 +3235,21 @@ node --test v3/dashboard-action-items.test.js
 ## Invited Starter review form
 
 `starter-review-form.js` binds the native `/review-starter` Designer form to
-the V3 invited-review endpoints. Paste
-[`v3/starter-review-form-webflow.html`](starter-review-form-webflow.html)
-into the page head, before the site PostHog initialization: that snippet pairs
-the anti-flash pre-hide style and its watchdog with the script tag. Load the
-controller synchronously — no `defer`, no `async` — so the token leaves the URL
-before first paint (the live embed predating the snippet carried `defer`; swap
-it for the snippet). The bare tag inside the snippet, for reference only — the
-snippet is the unit to paste:
+the V3 invited-review endpoints. The Webflow paste is one tag, in the page head,
+above the site PostHog initialization — everything else lives in this repo:
 
 ```html
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>
 ```
+
+Keep it synchronous — no `defer`, no `async` — and in the head slot. Both the
+anti-flash behavior and the token stripping depend on it: a synchronous head tag
+executes before the body parses, so the controller runs before any state block
+paints. A deferred, async, or body-placed tag loses both. Production pastes
+should pin an immutable `@vX.Y.Z` tag rather than `@latest`; the live embed
+predating this contract carries `defer`, which is drift to correct at the next
+embed swap. [`v3/starter-review-form-webflow.html`](starter-review-form-webflow.html)
+holds the same tag with the reasoning inline, ready to copy.
 
 The controller reads the private capability token from the URL fragment,
 immediately removes the fragment with `history.replaceState`, and keeps the
@@ -3281,32 +3284,33 @@ classes such as `display: flex` and the base `img` rule outrank the browser's ow
 not attach interactions that animate or override their `display`. Every state
 block must stay visible by default in the Designer, never carrying a class-level
 `Display: None`, because the controller reveals a block only by clearing that
-block's inline value, which cannot defeat a class rule. Nothing flashes before
-the controller runs even so: the page-head snippet pre-hides every state block
-except `loading`, so only the spinner paints until the controller's first
-`setState` stamps `data-starter-review-current-state` on the root. That stamp
-disarms the rule, and the inline writes own visibility from then on, which is why
-the visible-by-default requirement still stands. The controller injects the same
-rule itself, as a `starter-review-preflight` style element skipped when the
-snippet is already present — but that self-injection only beats first paint when
-the script tag is synchronous in the page head, so a `defer`, `async`, or body
-placement leaves the pasted snippet as the only flash protection. The snippet
-also carries a watchdog whose 8-second timer starts at head parse, above the
-script tag: if the controller has not booted by then, it swaps the pre-hide for a
-rule that reveals the `unavailable` block alone and keeps the rest hidden, rather
-than dropping the pre-hide — an unattended native form would let Webflow's own
-handler swallow submissions that never reach Xano, and the success copy would
-claim a review was recorded when none was. That degrade rule stays gated on the
-same root attribute, so a controller that boots late still recovers: its first
-`setState` disarms the rule and takes over. The visible-by-default requirement
-also covers the headline, photo, and profile-link nodes: never give them a
-class-level `Display: None`, including one scoped to a breakpoint. Keep those nodes inside
-the `form` state block, where the live page nests them: the controller only
-normalizes them after a successful context resolve. Each `data-starter-review-*`
-attribute must appear exactly once per page — the controller binds the first
-match only. The controller also strips `srcset` and `sizes` from the photo node
-before setting `src`, because the Designer's placeholder `srcset` outranks it;
-do not rely on responsive-image settings on that element.
+block's inline value, which cannot defeat a class rule. The visible-by-default
+requirement also covers the headline, photo, and profile-link nodes: never give
+them a class-level `Display: None`, including one scoped to a breakpoint.
+
+Nothing flashes before the controller runs, even though every block is authored
+visible. At evaluation time the controller injects a `starter-review-preflight`
+style that hides every state block except `loading`, so only the spinner paints
+until the first `setState` stamps `data-starter-review-current-state` on the
+root. That stamp disarms the rule, and the inline writes own visibility from
+then on. The injection beats first paint only because the tag is synchronous and
+in the head — that is the whole reason the placement is a contract rather than a
+preference. If the CDN never answers, the page falls back to its authored form,
+all blocks stacked and visible, where the `unavailable` and `error` copy is at
+least readable; that is the accepted trade for keeping the Webflow paste to one
+line. Pages still carrying the older multi-part paste (a `starter-review-preflight`
+style block plus its watchdog script) stay correct — the controller detects that
+id and defers to the pasted style instead of injecting its own, and the watchdog
+behaves as it always did — so swapping those pages to the one-line tag can happen
+lazily.
+
+Keep the headline, photo, and profile-link nodes inside the `form` state block,
+where the live page nests them: the controller only normalizes them after a
+successful context resolve. Each `data-starter-review-*` attribute must appear
+exactly once per page — the controller binds the first match only. The controller
+also strips `srcset` and `sizes` from the photo node before setting `src`, because
+the Designer's placeholder `srcset` outranks it; do not rely on responsive-image
+settings on that element.
 
 Pass the controller's redaction hook at the site-level PostHog initialization
 boundary. If the site already has a `before_send` callback, assign that callback

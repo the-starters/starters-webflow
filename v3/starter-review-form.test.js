@@ -390,38 +390,41 @@ test('injects the preflight pre-hide style once', () => {
     assert.equal(fresh.headChildren[0].tag, 'style')
     assert.equal(fresh.headChildren[0].id, 'starter-review-preflight')
 
-    // The snippet's rule and the injected fallback must stay identical once
-    // whitespace is normalized, in both directions — otherwise a page with the
-    // snippet pre-hides differently from a page relying on the injection.
-    const snippetRule = snippet.match(
-        /<style id="starter-review-preflight">([\s\S]*?)<\/style>/,
-    )
-    assert.ok(snippetRule, 'the snippet must carry a #starter-review-preflight style')
-    assert.equal(squash(snippetRule[1]), squash(fresh.headChildren[0].textContent))
-
     // The loading block paints from first paint, so the rule must exclude it.
     assert.match(
         fresh.headChildren[0].textContent,
         /:not\(\[data-starter-review-state="loading"\]\)/,
     )
-    // The watchdog degrades to the unavailable block, never to the native form,
-    // and the degrade rule keeps the root gate so a late boot still recovers.
-    const degradeRule = snippet.match(
-        /preflight\.textContent =\s*'([^']+)'/,
+    // The rule self-disarms on the root attribute setState writes.
+    assert.match(
+        fresh.headChildren[0].textContent,
+        /:not\(\[data-starter-review-current-state\]\)/,
     )
-    assert.ok(degradeRule, 'the watchdog must swap in a degrade rule')
-    assert.match(degradeRule[1], /:not\(\[data-starter-review-state="unavailable"\]\)/)
-    assert.match(degradeRule[1], /:not\(\[data-starter-review-current-state\]\)/)
 
+    // A legacy page paste that still ships its own preflight style keeps working:
+    // the controller defers to it instead of adding a second element.
     const embedded = { id: 'starter-review-preflight', textContent: '' }
     const withPageEmbed = load({ headChildren: [embedded] })
     assert.equal(withPageEmbed.headChildren.length, 1)
     assert.equal(embedded.textContent, '')
 })
 
+// The Webflow paste is one script tag and must stay that way: every rule the page
+// needs is injected by the controller, so a style block or inline script creeping
+// back into the snippet means logic escaped the repo into the Designer.
+test('the Webflow snippet stays a single script tag', () => {
+    assert.doesNotMatch(snippet, /<style[\s>]/i)
+    const scripts = snippet.match(/<script\b[^>]*>/gi) || []
+    assert.equal(scripts.length, 1)
+    assert.match(scripts[0], /\ssrc="https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\//)
+    // Synchronous on purpose: flash protection and token stripping both need it.
+    assert.doesNotMatch(scripts[0], /\s(defer|async)[\s=>]/i)
+    assert.equal(squash(snippet.replace(/<!--[\s\S]*?-->/g, '')), squash(scripts[0] + '</script>'))
+})
+
 test('the boot guard survives a second controller script tag', () => {
     const twice = load({ runs: 2 })
-    // The snippet's watchdog keys on this flag, so booting must set it.
+    // The guard's own re-entry check keys on this flag, so booting must set it.
     assert.equal(twice.booted, true)
     assert.equal(twice.headChildren.length, 1)
     // URL sanitizing sits above the guard by design, so it runs per evaluation.
