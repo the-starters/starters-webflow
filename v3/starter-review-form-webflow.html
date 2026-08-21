@@ -1,0 +1,18 @@
+<!-- Invited Starter review form page-head embed. Paste into the /review-starter
+     page head, above the site PostHog initialization.
+
+     The style pre-hides every non-loading state block so nothing flashes before
+     the controller runs; the loading block is excluded on purpose so the spinner
+     paints from first paint. The controller marks the live block with
+     data-starter-review-active, and injects this same rule itself when the style
+     below is missing.
+
+     The script tag is intentionally synchronous: no defer, no async. The README
+     contract requires it in the page head so the token leaves the URL before
+     first paint. The live embed currently carries defer — drift to correct at the
+     next embed swap. -->
+<style id="starter-review-preflight">
+  [data-starter-review] [data-starter-review-state]:not([data-starter-review-state="loading"]):not([data-starter-review-active]) { display: none !important; }
+</style>
+
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>

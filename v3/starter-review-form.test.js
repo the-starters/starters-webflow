@@ -32,6 +32,18 @@ function load(options = {}) {
         },
         document: {
             readyState: 'loading',
+            head: {
+                children: options.headChildren || [],
+                appendChild(node) {
+                    this.children.push(node)
+                },
+            },
+            createElement(tag) {
+                return { tag, id: '', textContent: '' }
+            },
+            getElementById(id) {
+                return this.head.children.find((node) => node.id === id) || null
+            },
             addEventListener(name, callback) {
                 listeners.set(name, callback)
             },
@@ -49,6 +61,7 @@ function load(options = {}) {
     return {
         api: context.window.__startersReviewFormTest,
         fetchCalls,
+        headChildren: context.document.head.children,
         historyCalls,
         init: listeners.get('DOMContentLoaded'),
     }
@@ -148,6 +161,26 @@ test('redacts token values and URLs before analytics sends them', () => {
     })
 })
 
+const boundNode = () => ({
+    hidden: false,
+    style: { display: '' },
+    textContent: '',
+    attributes: {},
+    setAttributeCalls: [],
+    removeAttributeCalls: [],
+    setAttribute(name, value) {
+        this.setAttributeCalls.push([name, value])
+        this.attributes[name] = value
+    },
+    removeAttribute(name) {
+        this.removeAttributeCalls.push(name)
+        delete this.attributes[name]
+    },
+    getAttribute(name) {
+        return name in this.attributes ? this.attributes[name] : null
+    },
+})
+
 function makeFormHarness() {
     const states = [
         'loading',
@@ -155,12 +188,16 @@ function makeFormHarness() {
         'success',
         'unavailable',
         'error',
-    ].map((name) => ({
-        hidden: false,
-        style: { display: '' },
-        getAttribute: (attribute) =>
-            attribute === 'data-starter-review-state' ? name : null,
-    }))
+    ].map((name) =>
+        Object.assign(boundNode(), {
+            getAttribute(attribute) {
+                if (attribute === 'data-starter-review-state') return name
+                return attribute in this.attributes
+                    ? this.attributes[attribute]
+                    : null
+            },
+        }),
+    )
     const fields = {
         rating: { value: '5', disabled: false },
         review_text: { value: 'Excellent partner and operator.', disabled: false },
@@ -168,19 +205,6 @@ function makeFormHarness() {
     }
     const submitButton = { disabled: false }
     const errorNode = { textContent: '' }
-    const boundNode = () => ({
-        hidden: false,
-        style: { display: '' },
-        textContent: '',
-        setAttributeCalls: [],
-        removeAttributeCalls: [],
-        setAttribute(name, value) {
-            this.setAttributeCalls.push([name, value])
-        },
-        removeAttribute(name) {
-            this.removeAttributeCalls.push(name)
-        },
-    })
     const photoNode = boundNode()
     const headlineNode = boundNode()
     const profileNode = boundNode()
@@ -316,6 +340,11 @@ test('state switching hides inactive blocks with inline display, not hidden alon
             { hidden: node.hidden, display: node.style.display },
         ]),
     )
+    // The page-head pre-hide rule only stops matching once the block is marked
+    // active, so exactly one block may carry the attribute at a time.
+    const activeStates = () => formHarness.states
+        .filter((node) => node.getAttribute('data-starter-review-active') !== null)
+        .map((node) => node.getAttribute('data-starter-review-state'))
     const harness = load({
         href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
         root: formHarness.root,
@@ -334,6 +363,7 @@ test('state switching hides inactive blocks with inline display, not hidden alon
         unavailable: { hidden: true, display: 'none' },
         error: { hidden: true, display: 'none' },
     })
+    assert.deepEqual(activeStates(), ['form'])
     for (const node of [
         formHarness.photoNode,
         formHarness.headlineNode,
@@ -353,6 +383,29 @@ test('state switching hides inactive blocks with inline display, not hidden alon
         unavailable: { hidden: true, display: 'none' },
         error: { hidden: true, display: 'none' },
     })
+    assert.deepEqual(activeStates(), ['success'])
+})
+
+test('injects the preflight pre-hide style once', () => {
+    const fresh = load()
+    assert.equal(fresh.headChildren.length, 1)
+    assert.equal(fresh.headChildren[0].tag, 'style')
+    assert.equal(fresh.headChildren[0].id, 'starter-review-preflight')
+    assert.match(fresh.headChildren[0].textContent, /display: none !important/)
+    assert.match(
+        fresh.headChildren[0].textContent,
+        /:not\(\[data-starter-review-active\]\)/,
+    )
+    // The loading block paints from first paint, so the rule must skip it.
+    assert.match(
+        fresh.headChildren[0].textContent,
+        /:not\(\[data-starter-review-state="loading"\]\)/,
+    )
+
+    const embedded = { id: 'starter-review-preflight', textContent: '' }
+    const withPageEmbed = load({ headChildren: [embedded] })
+    assert.deepEqual(withPageEmbed.headChildren, [embedded])
+    assert.equal(embedded.textContent, '')
 })
 
 test('a resolved context shows the Starter nodes and strips the placeholder art', async () => {

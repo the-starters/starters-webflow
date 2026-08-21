@@ -14,6 +14,11 @@
     var REVIEW_MIN = 10
     var REVIEW_MAX = 4000
     var FEEDBACK_MAX = 2000
+    var PREFLIGHT_ID = 'starter-review-preflight'
+    var PREFLIGHT_CSS =
+        '[data-starter-review] [data-starter-review-state]' +
+        ':not([data-starter-review-state="loading"])' +
+        ':not([data-starter-review-active]) { display: none !important; }'
 
     var normalize = function (value) {
         return String(value == null ? '' : value).trim()
@@ -79,6 +84,18 @@
 
     if (window.__startersV3ReviewFormBooted) return
     window.__startersV3ReviewFormBooted = true
+
+    // Pre-hide every non-loading state block so a synchronously loaded controller
+    // converges before body parse even when the page embed is missing. Failure
+    // degrades to the inline writes setHidden makes once init runs.
+    try {
+        if (!document.getElementById(PREFLIGHT_ID)) {
+            var preflight = document.createElement('style')
+            preflight.id = PREFLIGHT_ID
+            preflight.textContent = PREFLIGHT_CSS
+            document.head.appendChild(preflight)
+        }
+    } catch (error) {}
 
     var makeIdempotencyKey = function () {
         if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -172,7 +189,13 @@
         var setState = function (name) {
             root.setAttribute('data-starter-review-current-state', name)
             root.querySelectorAll('[data-starter-review-state]').forEach(function (node) {
-                setHidden(node, node.getAttribute('data-starter-review-state') !== name)
+                var inactive = node.getAttribute('data-starter-review-state') !== name
+                setHidden(node, inactive)
+                if (inactive) {
+                    node.removeAttribute('data-starter-review-active')
+                } else {
+                    node.setAttribute('data-starter-review-active', '')
+                }
             })
         }
         var setError = function (message) {

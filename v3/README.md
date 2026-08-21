@@ -3235,8 +3235,11 @@ node --test v3/dashboard-action-items.test.js
 ## Invited Starter review form
 
 `starter-review-form.js` binds the native `/review-starter` Designer form to
-the V3 invited-review endpoints. Load it synchronously in the page head, before
-the site PostHog initialization:
+the V3 invited-review endpoints. Paste `v3/starter-review-form-webflow.html`
+into the page head, before the site PostHog initialization: that snippet pairs
+the anti-flash pre-hide style with the script tag. Load the controller
+synchronously — no `defer`, no `async` — so the token leaves the URL before
+first paint. The tag alone is:
 
 ```html
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>
@@ -3256,6 +3259,7 @@ form contract is:
 | --- | --- |
 | `data-starter-review` | One page root |
 | `data-starter-review-state="loading|form|success|unavailable|error"` | State blocks |
+| `data-starter-review-active` | Controller-owned marker on the live state block. Never author it in the Designer |
 | `form[data-starter-review-form]` | Native Webflow form |
 | `rating` | Required 1–5 radio group |
 | `review_text` | Required 10–4,000 character review |
@@ -3274,9 +3278,16 @@ classes such as `display: flex` and the base `img` rule outrank the browser's ow
 not attach interactions that animate or override their `display`. Every state
 block must stay visible by default in the Designer, never carrying a class-level
 `Display: None`, because the controller reveals a block only by clearing that
-block's inline value, which cannot defeat a class rule. The same rule covers the
-headline, photo, and profile-link nodes: never give them a class-level
-`Display: None`, including one scoped to a breakpoint. Keep those nodes inside
+block's inline value, which cannot defeat a class rule. Nothing flashes before
+the controller runs even so: the page-head snippet pre-hides every state block
+except `loading`, and the controller injects the same rule itself (as a
+`starter-review-preflight` style element, skipped when the snippet is already
+present) in case a page ships without it. A block stops matching that rule only
+when the controller marks it with `data-starter-review-active`, so the
+visible-by-default requirement stands — activation still reveals through the
+authored class. The same rule covers the headline, photo, and profile-link
+nodes: never give them a class-level `Display: None`, including one scoped to a
+breakpoint. Keep those nodes inside
 the `form` state block, where the live page nests them: the controller only
 normalizes them after a successful context resolve. Each `data-starter-review-*`
 attribute must appear exactly once per page — the controller binds the first
