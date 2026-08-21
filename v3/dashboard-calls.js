@@ -54,22 +54,27 @@
     return String(value == null ? '' : value).trim()
   }
 
-  function stableScopeHash(value) {
+  async function stableScopeHash(value) {
     const input = clean(value)
     if (!input) return ''
-    let hash = 0x811c9dc5
-    for (let index = 0; index < input.length; index += 1) {
-      hash ^= input.charCodeAt(index)
-      hash = Math.imul(hash, 0x01000193)
+    const crypto = global.crypto
+    const TextEncoder = global.TextEncoder
+    if (!crypto || !crypto.subtle || typeof crypto.subtle.digest !== 'function' || typeof TextEncoder !== 'function') return ''
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
+      return Array.from(new Uint8Array(digest), function (byte) {
+        return byte.toString(16).padStart(2, '0')
+      }).join('')
+    } catch (_error) {
+      return ''
     }
-    return (hash >>> 0).toString(16).padStart(8, '0')
   }
 
-  function confirmAttemptStorageKey(booking) {
+  async function confirmAttemptStorageKey(booking) {
     const bookingId = clean(booking && booking.booking_id)
     const actorId = clean(booking && booking.starter_data && booking.starter_data.memberstack_id)
     const environment = clean(booking && booking.data_environment).toLowerCase()
-    const actorScope = stableScopeHash(actorId)
+    const actorScope = await stableScopeHash(actorId)
     if (!bookingId || !actorScope || !['test', 'production'].includes(environment)) return ''
     return CONFIRM_ATTEMPT_STORAGE_PREFIX + environment + ':' + actorScope + ':' + bookingId
   }
@@ -78,8 +83,8 @@
     return /^dashboard-confirm:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean(value))
   }
 
-  function storedConfirmAttemptKey(booking) {
-    const storageKey = confirmAttemptStorageKey(booking)
+  async function storedConfirmAttemptKey(booking) {
+    const storageKey = await confirmAttemptStorageKey(booking)
     const storage = global.sessionStorage
     if (!storageKey || !storage || typeof storage.getItem !== 'function') return ''
     try {
@@ -92,25 +97,34 @@
     return ''
   }
 
-  function createConfirmAttemptKey(booking) {
+  async function createConfirmAttemptKey(booking) {
     const randomUUID = global.crypto && global.crypto.randomUUID
     if (typeof randomUUID !== 'function') return ''
     const value = 'dashboard-confirm:' + randomUUID.call(global.crypto)
-    const storageKey = confirmAttemptStorageKey(booking)
+    if (!validConfirmAttemptKey(value)) return ''
+    const storageKey = await confirmAttemptStorageKey(booking)
     const storage = global.sessionStorage
-    if (storageKey && storage && typeof storage.setItem === 'function') {
-      try { storage.setItem(storageKey, value) } catch (_error) {}
+    if (!storageKey || !storage || typeof storage.getItem !== 'function' || typeof storage.setItem !== 'function') return ''
+    try {
+      storage.setItem(storageKey, value)
+      if (clean(storage.getItem(storageKey)) !== value) return ''
+    } catch (_error) {
+      return ''
     }
     return value
   }
 
-  function clearConfirmAttemptKey(booking, value) {
-    const storageKey = confirmAttemptStorageKey(booking)
+  async function clearConfirmAttemptKey(booking, value) {
+    const storageKey = await confirmAttemptStorageKey(booking)
     const storage = global.sessionStorage
     if (!storageKey || !storage || typeof storage.getItem !== 'function' || typeof storage.removeItem !== 'function') return
     try {
       if (clean(storage.getItem(storageKey)) === clean(value)) storage.removeItem(storageKey)
     } catch (_error) {}
+  }
+
+  function confirmSucceeded(body) {
+    return clean(body && body.status).toLowerCase() === 'confirmed'
   }
 
   function normalizeTimestamp(value) {
@@ -1128,28 +1142,27 @@
       })
       if (!booking || !canConfirmBooking(role, booking)) return
 
-      if (!button.__startersBookingActionKey) {
-        button.__startersBookingActionKey = storedConfirmAttemptKey(booking) || createConfirmAttemptKey(booking)
-      }
-      const payload = confirmPayload(booking, button.__startersBookingActionKey)
-      if (
-        !payload ||
-        typeof global.xanoAuthFetch !== 'function' ||
-        !canConfirmBooking(role, booking)
-      ) return
-
       button.__startersBookingActionBusy = true
       button.setAttribute('aria-busy', 'true')
       button.setAttribute('aria-disabled', 'true')
       try {
+        if (!button.__startersBookingActionKey) {
+          button.__startersBookingActionKey = await storedConfirmAttemptKey(booking) || await createConfirmAttemptKey(booking)
+        }
+        const payload = confirmPayload(booking, button.__startersBookingActionKey)
+        if (
+          !payload ||
+          typeof global.xanoAuthFetch !== 'function' ||
+          !canConfirmBooking(role, booking)
+        ) return
         const response = await global.xanoAuthFetch(XANO_SCHEDULING_BASE + CONFIRM_PATH, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
         const body = await response.json().catch(function () { return null })
-        if (!response.ok || !body) throw new Error('Canonical booking confirmation failed')
-        clearConfirmAttemptKey(booking, button.__startersBookingActionKey)
+        if (!response.ok || !confirmSucceeded(body)) throw new Error('Canonical booking confirmation failed')
+        await clearConfirmAttemptKey(booking, button.__startersBookingActionKey)
         button.__startersBookingActionKey = ''
         await restart()
       } catch (error) {
@@ -1310,6 +1323,7 @@
     storedConfirmAttemptKey,
     createConfirmAttemptKey,
     clearConfirmAttemptKey,
+    confirmSucceeded,
     confirmPayload,
     decodeBookingRef,
     memberOwnsBooking,
