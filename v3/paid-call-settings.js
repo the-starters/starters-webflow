@@ -70,6 +70,10 @@
     clearRootWaitTimer()
   }
 
+  // Webflow and Memberstack can insert the Paid card after this deferred script has
+  // already run, so a missing root at boot is not proof the card will never exist.
+  // The deadline below only downgrades the published status to `not-applicable`; it
+  // deliberately leaves the observer connected so an even later insert still boots.
   function waitForRoot() {
     if (rootObserver) return
     setStatus('waiting-for-ui')

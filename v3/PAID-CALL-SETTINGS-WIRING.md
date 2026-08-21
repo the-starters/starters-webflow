@@ -11,6 +11,14 @@ update-the-duration message until it is saved again at 60 minutes.
 
 Load `v3/paid-call-settings.js` after `v3/scheduling-auth.js`. The local stage component loader already includes it.
 
+Boot does not require the Paid card to exist yet. The controller publishes its own progress on
+`<html>` as `data-paid-call-settings`, one of `waiting-for-ui`, `loading`, `ready`, `saving`,
+`disabling`, `error`, or `not-applicable`. With no Paid card root on the page it stays in
+`waiting-for-ui` and watches the document, so a card that Webflow or Memberstack inserts after the
+deferred script has already run still boots and still loads canonical Xano configuration. After ten
+seconds with no card it reports `not-applicable` but keeps watching, so an even later insertion
+still recovers. Initialization is not re-entrant: overlapping boots collapse into one canonical GET.
+
 ## Native Designer attributes
 
 Use these attributes on existing native Webflow elements:
@@ -105,9 +113,9 @@ live Xano TEST configuration, and an asset that only exists once the tag is publ
 so they are not runnable from CI or from a local test phase. The release owner runs
 them by hand, in this order, after the PR merges:
 
-1. Tag the release, then purge the jsDelivr path the page loads and confirm the served
-   asset is the new build (the served file must contain the root-wait recovery, not the
-   previous immediate `not-applicable` bail).
+1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
+   the served asset is the new build: the served file must contain the root-wait recovery,
+   not the previous immediate `not-applicable` bail.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
    card reaches `data-paid-call-settings="ready"` with canonical values, including a
    reload where Webflow or Memberstack inserts the Paid card late.
