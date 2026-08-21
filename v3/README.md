@@ -3266,6 +3266,24 @@ form contract is:
 | `data-starter-review-profile-link` | Optional `/hire/<slug>` link |
 | `data-starter-review-error` | Inline validation or submission error |
 
+The controller owns the inline `display` of every `[data-starter-review-state]`
+block and of the headline, photo, and profile-link nodes: it sets `display: none`
+when it hides one and clears the inline value when it shows one, because Designer
+classes such as `display: flex` and the base `img` rule outrank the browser's own
+`[hidden]` styling. Do not author an inline `display` on those elements, and do
+not attach interactions that animate or override their `display`. Every state
+block must stay visible by default in the Designer, never carrying a class-level
+`Display: None`, because the controller reveals a block only by clearing that
+block's inline value, which cannot defeat a class rule. The same rule covers the
+headline, photo, and profile-link nodes: never give them a class-level
+`Display: None`, including one scoped to a breakpoint. Keep those nodes inside
+the `form` state block, where the live page nests them: the controller only
+normalizes them after a successful context resolve. Each `data-starter-review-*`
+attribute must appear exactly once per page — the controller binds the first
+match only. The controller also strips `srcset` and `sizes` from the photo node
+before setting `src`, because the Designer's placeholder `srcset` outranks it;
+do not rely on responsive-image settings on that element.
+
 Pass the controller's redaction hook at the site-level PostHog initialization
 boundary. If the site already has a `before_send` callback, assign that callback
 to the hook name before loading this controller. The controller replaces it
