@@ -14,6 +14,12 @@
     var REVIEW_MIN = 10
     var REVIEW_MAX = 4000
     var FEEDBACK_MAX = 2000
+    var PREFLIGHT_ID = 'starter-review-preflight'
+    var PREFLIGHT_CSS =
+        '[data-starter-review]:not([data-starter-review-current-state])' +
+        ' [data-starter-review-state]' +
+        ':not([data-starter-review-state="loading"])' +
+        ' { display: none !important; }'
 
     var normalize = function (value) {
         return String(value == null ? '' : value).trim()
@@ -79,6 +85,20 @@
 
     if (window.__startersV3ReviewFormBooted) return
     window.__startersV3ReviewFormBooted = true
+
+    // Pre-hide every non-loading state block so a synchronously loaded controller
+    // converges before body parse even when the page embed is missing. The rule is
+    // gated on the root lacking data-starter-review-current-state, so the first
+    // setState disarms it and setHidden's inline writes own visibility from there.
+    // Failure to inject degrades to those inline writes alone.
+    try {
+        if (!document.getElementById(PREFLIGHT_ID)) {
+            var preflight = document.createElement('style')
+            preflight.id = PREFLIGHT_ID
+            preflight.textContent = PREFLIGHT_CSS
+            document.head.appendChild(preflight)
+        }
+    } catch (error) {}
 
     var makeIdempotencyKey = function () {
         if (window.crypto && typeof window.crypto.randomUUID === 'function') {

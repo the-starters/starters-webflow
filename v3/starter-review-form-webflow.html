@@ -1,0 +1,53 @@
+<!-- Invited Starter review form page-head embed. Paste into the /review-starter
+     page head, above the site PostHog initialization.
+
+     Page-head slot ONLY. Never paste this into "Before </body>" or a body Code
+     Embed: a body paste still yields one preflight element, but it arrives after
+     the state blocks have already painted, so every block flashes — the exact
+     defect this snippet exists to prevent — and the watchdog below cannot help,
+     because the controller it waits on is in the body too. (Pasting the snippet
+     in both slots additionally leaves two elements sharing the preflight id.)
+
+     The style pre-hides every non-loading state block so nothing flashes before
+     the controller runs; the loading block is excluded on purpose so the spinner
+     paints from first paint. The rule is gated on the root NOT yet carrying
+     data-starter-review-current-state, so the controller's first setState
+     disarms it and its inline writes own visibility from then on. The style keeps
+     the id the controller looks for, so the controller skips its own injection
+     here and the watchdog below can find this element.
+
+     The script tag is intentionally synchronous: no defer, no async. The README
+     contract requires it in the page head so the token leaves the URL before
+     first paint. -->
+<style id="starter-review-preflight">
+  [data-starter-review]:not([data-starter-review-current-state]) [data-starter-review-state]:not([data-starter-review-state="loading"]) { display: none !important; }
+</style>
+
+<!-- Never-runs watchdog. It sits ABOVE the script tag on purpose, so the 8-second
+     timer starts at head parse rather than after a stalled CDN request finally
+     settles.
+
+     If the controller has not booted by then, swap the pre-hide for a degrade rule
+     that reveals the unavailable block and keeps every other block hidden. Do not
+     simply drop the pre-hide: revealing the native form with no controller
+     attached lets Webflow's own form handler swallow submissions that never reach
+     Xano, and the success copy would claim a review was recorded when none was.
+     The unavailable block is the only honest thing to show.
+
+     The degrade rule stays gated on the root lacking
+     data-starter-review-current-state, so a controller that boots late still wins
+     — its first setState disarms the rule and takes over cleanly. -->
+<script>
+  window.setTimeout(function () {
+    try {
+      if (window.__startersV3ReviewFormBooted === true) return
+      var preflight = document.getElementById('starter-review-preflight')
+      if (preflight) {
+        preflight.textContent =
+          '[data-starter-review]:not([data-starter-review-current-state]) [data-starter-review-state]:not([data-starter-review-state="unavailable"]) { display: none !important; }'
+      }
+    } catch (error) {}
+  }, 8000)
+</script>
+
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>

@@ -1,9 +1,15 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./starter-review-form.js'), 'utf8')
+const snippet = fs.readFileSync(
+    path.join(__dirname, 'starter-review-form-webflow.html'),
+    'utf8',
+)
+const squash = (value) => value.replace(/\s+/g, ' ').trim()
 
 function load(options = {}) {
     const listeners = new Map()
@@ -32,6 +38,18 @@ function load(options = {}) {
         },
         document: {
             readyState: 'loading',
+            head: {
+                children: options.headChildren || [],
+                appendChild(node) {
+                    this.children.push(node)
+                },
+            },
+            createElement(tag) {
+                return { tag, id: '', textContent: '' }
+            },
+            getElementById(id) {
+                return this.head.children.find((node) => node.id === id) || null
+            },
             addEventListener(name, callback) {
                 listeners.set(name, callback)
             },
@@ -45,12 +63,19 @@ function load(options = {}) {
             return options.fetch(...args)
         },
     }
-    vm.runInNewContext(source, context)
+    vm.createContext(context)
+    // options.runs > 1 models a page that loads the controller twice.
+    for (let run = 0; run < (options.runs || 1); run += 1) {
+        vm.runInContext(source, context)
+    }
     return {
         api: context.window.__startersReviewFormTest,
+        booted: context.window.__startersV3ReviewFormBooted,
         fetchCalls,
+        headChildren: context.document.head.children,
         historyCalls,
         init: listeners.get('DOMContentLoaded'),
+        posthogHook: context.window.__startersV3ReviewPosthogBeforeSend,
     }
 }
 
@@ -148,6 +173,24 @@ test('redacts token values and URLs before analytics sends them', () => {
     })
 })
 
+const boundNode = () => ({
+    hidden: false,
+    style: { display: '' },
+    textContent: '',
+    attributes: {},
+    setAttributeCalls: [],
+    removeAttributeCalls: [],
+    setAttribute(name, value) {
+        this.setAttributeCalls.push([name, value])
+    },
+    removeAttribute(name) {
+        this.removeAttributeCalls.push(name)
+    },
+    getAttribute(name) {
+        return name in this.attributes ? this.attributes[name] : null
+    },
+})
+
 function makeFormHarness() {
     const states = [
         'loading',
@@ -155,12 +198,11 @@ function makeFormHarness() {
         'success',
         'unavailable',
         'error',
-    ].map((name) => ({
-        hidden: false,
-        style: { display: '' },
-        getAttribute: (attribute) =>
-            attribute === 'data-starter-review-state' ? name : null,
-    }))
+    ].map((name) =>
+        Object.assign(boundNode(), {
+            attributes: { 'data-starter-review-state': name },
+        }),
+    )
     const fields = {
         rating: { value: '5', disabled: false },
         review_text: { value: 'Excellent partner and operator.', disabled: false },
@@ -168,19 +210,6 @@ function makeFormHarness() {
     }
     const submitButton = { disabled: false }
     const errorNode = { textContent: '' }
-    const boundNode = () => ({
-        hidden: false,
-        style: { display: '' },
-        textContent: '',
-        setAttributeCalls: [],
-        removeAttributeCalls: [],
-        setAttribute(name, value) {
-            this.setAttributeCalls.push([name, value])
-        },
-        removeAttribute(name) {
-            this.removeAttributeCalls.push(name)
-        },
-    })
     const photoNode = boundNode()
     const headlineNode = boundNode()
     const profileNode = boundNode()
@@ -353,6 +382,66 @@ test('state switching hides inactive blocks with inline display, not hidden alon
         unavailable: { hidden: true, display: 'none' },
         error: { hidden: true, display: 'none' },
     })
+})
+
+test('injects the preflight pre-hide style once', () => {
+    const fresh = load()
+    assert.equal(fresh.headChildren.length, 1)
+    assert.equal(fresh.headChildren[0].tag, 'style')
+    assert.equal(fresh.headChildren[0].id, 'starter-review-preflight')
+
+    // The snippet's rule and the injected fallback must stay identical once
+    // whitespace is normalized, in both directions — otherwise a page with the
+    // snippet pre-hides differently from a page relying on the injection.
+    const snippetRule = snippet.match(
+        /<style id="starter-review-preflight">([\s\S]*?)<\/style>/,
+    )
+    assert.ok(snippetRule, 'the snippet must carry a #starter-review-preflight style')
+    assert.equal(squash(snippetRule[1]), squash(fresh.headChildren[0].textContent))
+
+    // The loading block paints from first paint, so the rule must exclude it.
+    assert.match(
+        fresh.headChildren[0].textContent,
+        /:not\(\[data-starter-review-state="loading"\]\)/,
+    )
+    // The watchdog degrades to the unavailable block, never to the native form,
+    // and the degrade rule keeps the root gate so a late boot still recovers.
+    const degradeRule = snippet.match(
+        /preflight\.textContent =\s*'([^']+)'/,
+    )
+    assert.ok(degradeRule, 'the watchdog must swap in a degrade rule')
+    assert.match(degradeRule[1], /:not\(\[data-starter-review-state="unavailable"\]\)/)
+    assert.match(degradeRule[1], /:not\(\[data-starter-review-current-state\]\)/)
+
+    const embedded = { id: 'starter-review-preflight', textContent: '' }
+    const withPageEmbed = load({ headChildren: [embedded] })
+    assert.equal(withPageEmbed.headChildren.length, 1)
+    assert.equal(embedded.textContent, '')
+})
+
+test('the boot guard survives a second controller script tag', () => {
+    const twice = load({ runs: 2 })
+    // The snippet's watchdog keys on this flag, so booting must set it.
+    assert.equal(twice.booted, true)
+    assert.equal(twice.headChildren.length, 1)
+    // URL sanitizing sits above the guard by design, so it runs per evaluation.
+    assert.equal(twice.historyCalls.length, 2)
+
+    // The redaction hook also installs above the guard, so a second tag wraps it
+    // again. That is safe only while redaction stays idempotent: the doubled
+    // chain must redact exactly like a single one.
+    const event = () => ({
+        properties: {
+            token: 'private-capability-token-12345',
+            $current_url:
+                'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        },
+    })
+    const once = load()
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(twice.posthogHook(event()))),
+        JSON.parse(JSON.stringify(once.posthogHook(event()))),
+    )
 })
 
 test('a resolved context shows the Starter nodes and strips the placeholder art', async () => {
