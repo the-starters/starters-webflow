@@ -23,12 +23,28 @@ class El {
     this.textContent = ''
     this.listeners = new Map()
     this.children = []
+    this.parentElement = null
     Object.entries(attrs).forEach(([name, value]) => this.setAttribute(name, value))
   }
 
   setAttribute(name, value) { this.attributes[name] = String(value) }
   getAttribute(name) { return this.attributes[name] ?? null }
-  matches(selector) { return selector.split(',').some((part) => part.trim().toUpperCase() === this.tagName) }
+  matches(selector) {
+    return selector.split(',').some((part) => {
+      const candidate = part.trim()
+      const attr = candidate.match(/^\[([^=\]]+)(?:="([^"]+)")?\]$/)
+      if (attr) {
+        return this.getAttribute(attr[1]) !== null && (!attr[2] || this.getAttribute(attr[1]) === attr[2])
+      }
+      return candidate.toUpperCase() === this.tagName
+    })
+  }
+  append(...children) {
+    children.forEach((child) => {
+      child.parentElement = this
+      this.children.push(child)
+    })
+  }
   addEventListener(name, listener) {
     const listeners = this.listeners.get(name) || []
     listeners.push(listener)
@@ -40,11 +56,12 @@ class El {
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null }
   querySelectorAll(selector) {
-    return this.children.filter((child) => {
-      const match = selector.match(/^\[([^=\]]+)(?:="([^"]+)")?\]$/)
-      if (!match) return selector.split(',').some((part) => part.trim().toUpperCase() === child.tagName)
-      return child.getAttribute(match[1]) !== null && (!match[2] || child.getAttribute(match[1]) === match[2])
+    const matches = []
+    this.children.forEach((child) => {
+      if (child.matches(selector)) matches.push(child)
+      matches.push(...child.querySelectorAll(selector))
     })
+    return matches
   }
 }
 
@@ -79,7 +96,44 @@ function service(overrides = {}) {
   }
 }
 
-function buildDom(withRoot = true) {
+function buildDom(withRoot = true, cardMode = false) {
+  if (withRoot && cardMode) {
+    const card = new El('section', { 'data-id': '' })
+    const open = new El('div', { 'data-availability-action': 'item-form-open' })
+    const formWrapper = new El('div', { 'data-availability-element': 'call-form-wrapper' })
+    const editInner = new El('div')
+    const root = new El('div', { 'data-availability-element': 'call-paid-form' })
+    const form = new El('form', { 'data-availability-element': 'availability-form' })
+    const disabled = new El('input', { name: 'consulting-calls', value: 'no' })
+    const enabled = new El('input', { name: 'paid-consulting-calls', value: 'yes' })
+    const title = new El('input', { name: 'call-description' })
+    const price = new El('input', { name: 'call-rate' })
+    const buttonRow = new El('div')
+    const close = new El('div', { 'data-availability-action': 'item-form-close' })
+    const save = new El('div', { 'data-availability-action': 'item-form-submit' })
+    buttonRow.append(close, save)
+    form.append(disabled, enabled, title, price, buttonRow)
+    root.append(form)
+    editInner.append(root)
+    formWrapper.append(editInner)
+    card.append(open, formWrapper)
+    return {
+      card,
+      root,
+      form,
+      disabled,
+      enabled,
+      title,
+      price,
+      duration: null,
+      open,
+      close,
+      save,
+      status: null,
+      formWrapper,
+      prerequisites: [],
+    }
+  }
   const root = withRoot ? new El('section', { 'data-paid-call-element': 'settings' }) : null
   if (!root) return { root: null }
   const form = new El('form', { 'data-paid-call-element': 'form' })
@@ -92,12 +146,27 @@ function buildDom(withRoot = true) {
   const status = new El('p', { 'data-paid-call-element': 'status' })
   const prerequisites = ['calendar', 'availability', 'stripe', 'charges', 'fresh', 'bookable']
     .map((name) => new El('div', { 'data-paid-call-prerequisite': name }))
-  root.children.push(form, enabled, title, price, duration, save, disable, status, ...prerequisites)
+  root.append(form, enabled, title, price, duration, save, disable, status, ...prerequisites)
   return { root, form, enabled, title, price, duration, save, disable, status, prerequisites }
 }
 
 function load(options = {}) {
-  const dom = buildDom(options.withRoot !== false)
+  const dom = buildDom(
+    options.withRoot !== false,
+    options.cardMode === true || options.stableCardMode === true,
+  )
+  if (options.stableCardMode === true && dom.root) {
+    dom.root.setAttribute('data-call-settings-service', 'paid')
+    dom.form.setAttribute('data-call-settings-element', 'form')
+    dom.formWrapper.setAttribute('data-call-settings-element', 'panel')
+    dom.enabled.setAttribute('data-call-settings-input', 'enabled')
+    dom.disabled.setAttribute('data-call-settings-input', 'disabled')
+    dom.title.setAttribute('data-call-settings-input', 'title')
+    dom.price.setAttribute('data-call-settings-input', 'price')
+    dom.open.setAttribute('data-call-settings-action', 'open')
+    dom.close.setAttribute('data-call-settings-action', 'close')
+    dom.save.setAttribute('data-call-settings-action', 'submit')
+  }
   const html = new El('html')
   const calls = []
   const events = []
@@ -113,7 +182,15 @@ function load(options = {}) {
     readyState: 'complete',
     documentElement: html,
     querySelector(selector) {
-      if (selector === '[data-paid-call-element="settings"]') return dom.root
+      if (selector === '[data-call-settings-service="paid"]') {
+        return options.stableCardMode === true ? dom.root : null
+      }
+      if (selector === '[data-paid-call-element="settings"]') {
+        return options.cardMode === true || options.stableCardMode === true ? null : dom.root
+      }
+      if (selector === '[data-availability-element="call-paid-form"]') {
+        return options.cardMode === true || options.stableCardMode === true ? dom.root : null
+      }
       return null
     },
     querySelectorAll() { return [] },
@@ -224,6 +301,182 @@ test('renders the active service and prerequisite state from canonical GET', asy
   assert.equal(result.dom.duration.value, '60')
   assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
   assert.ok(result.dom.prerequisites.every((item) => item.getAttribute('data-ready') === 'true'))
+})
+
+test('the native Paid card binds without generated IDs and upgrades a legacy duration to fixed 60', async () => {
+  const legacy = service({ duration: 15, price_cents: 500, revision: 1 })
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [legacy],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          duration: body.duration_minutes,
+          price_cents: body.price_cents,
+          title: body.title,
+          revision: 2,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-duration-current'), '15')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-duration-required'), '60')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.title.value, 'Paid Consultation Call')
+  assert.equal(result.dom.price.value, 5)
+  assert.equal(result.dom.formWrapper.style.display, 'none')
+
+  await result.dom.open.dispatch('click')
+  assert.equal(result.dom.formWrapper.style.display, 'flex')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.deepEqual(upsert.body, {
+    config_id: 'cfg-paid-1',
+    title: 'Paid Consultation Call',
+    price_cents: 500,
+    duration_minutes: 60,
+    expected_revision: 1,
+    idempotency_key: 'paid-call-upsert:uuid-fixed',
+  })
+  assert.equal(result.dom.root.getAttribute('data-paid-call-duration-current'), '60')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
+  assert.equal(result.dom.formWrapper.style.display, 'none')
+})
+
+test('the native Paid card treats No plus Update as the guarded disable action', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.enabled.checked, false)
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 1)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.dom.formWrapper.style.display, 'none')
+})
+
+test('the native Paid card can disable an active service when prerequisites are stale', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service()],
+      readiness: { stripe_readiness_fresh: false, paid_call_enabled: true, bookable: false },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical({ readiness: { stripe_readiness_fresh: false } }))
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.save.disabled, false)
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 1)
+})
+
+test('the native Paid card makes No while already off a zero-write close', async () => {
+  const result = load({ cardMode: true, initial: canonical() })
+  await settle()
+
+  await result.dom.open.dispatch('click')
+  assert.equal(result.dom.formWrapper.style.display, 'flex')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.dom.formWrapper.style.display, 'none')
+})
+
+test('the stable call-settings attribute grammar binds the native Paid card', async () => {
+  const result = load({
+    stableCardMode: true,
+    initial: canonical({ services: [service()], readiness: { bookable: true } }),
+  })
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length, 1)
+})
+
+test('Cancel restores canonical Paid values and makes no write', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({ services: [service({ price_cents: 15000 })] }),
+  })
+  await settle()
+
+  await result.dom.open.dispatch('click')
+  result.dom.title.value = 'Unsaved draft'
+  result.dom.price.value = '999'
+  await result.dom.close.dispatch('click')
+
+  assert.equal(result.dom.title.value, 'Paid Consultation Call')
+  assert.equal(result.dom.price.value, 150)
+  assert.equal(result.dom.formWrapper.style.display, 'none')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+})
+
+test('native submit and Update click share one in-flight write lock', async () => {
+  const pending = deferred()
+  const result = load({
+    cardMode: true,
+    initial: canonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': () => pending.promise,
+    },
+  })
+  await settle()
+  result.dom.enabled.checked = true
+  result.dom.disabled.checked = false
+  result.dom.title.value = 'Paid Consultation Call'
+  result.dom.price.value = '150'
+
+  await result.dom.save.dispatch('click')
+  await result.dom.form.dispatch('submit')
+  await settle(2)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 1)
+
+  const saved = service({ price_cents: 15000, revision: 1 })
+  pending.resolve({ ok: true, status: 200, json: async () => ({ service: saved }) })
+  await settle()
 })
 
 test('upsert sends product intent and revision, then trusts canonical readback', async () => {
