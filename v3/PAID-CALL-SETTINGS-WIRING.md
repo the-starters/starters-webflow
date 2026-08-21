@@ -129,19 +129,20 @@ Do not activate this form until the paid-call reconciliation dry run has zero un
 ## Post-release live verification
 
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion
-recovery and duplicate-initialization dedup are executable regressions in
-`v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a
-live Xano TEST configuration, and an asset that only exists once the tag is published,
-so they are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io`
-and `thestarters.com` answer `401` behind the site password, so a local phase cannot even
-read the live authored DOM. The release owner runs them by hand, in this order, after the
-PR merges:
+recovery, the duplicate-initialization dedup, the published `consulting-calls-paid`
+binding, the stale-readiness save of an active service, and the expired-session
+fail-closed writes are executable regressions in `v3/paid-call-settings.test.js`. The
+remaining legs need a live Memberstack session, a live Xano TEST configuration, and an
+asset that only exists once the tag is published, so they are not runnable from CI or
+from a local test phase. Both `the-starters-3-0.webflow.io` and `thestarters.com` answer
+`401` behind the site password, so a local phase cannot even read the live authored DOM.
+The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
-   the served asset is the new build: the served file must contain the Paid radio-group
-   normalization (`normalizeCardRadioGroup`, which accepts the published
-   `consulting-calls-paid` group and joins the older split radio fields), not only the
-   earlier root-wait recovery.
+   the served asset is the new build: the served file must contain the published Paid
+   group name `consulting-calls-paid` and the joint pair resolver `cardRadioPair`. Neither
+   the earlier root-wait recovery nor `normalizeCardRadioGroup` alone proves the new
+   build, because the previous build already shipped both.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
    card reaches `data-paid-call-settings="ready"` with canonical values, including a
    reload where Webflow or Memberstack inserts the Paid card late.
@@ -150,7 +151,12 @@ PR merges:
    canonical readback state. Confirm this on whichever way the authored Update control is
    wired, and confirm a still-required empty field still blocks the write, per the native
    validation rule in [Authority and behavior](#authority-and-behavior).
-4. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
+4. On the TEST fixture still stored at a duration other than `60`, pick Yes and click
+   Update while calendar or Stripe readiness is stale, and confirm the write is accepted
+   and canonical readback reports `data-paid-call-duration-current="60"`.
+   `data-paid-call-bookable` turns `true` only once Xano readiness itself reports
+   bookable, so re-check it after the readiness prerequisites pass.
+5. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
    it in the paid-call dry run. Never run a live-money production charge.
 
 Record the served-asset check and the TEST booking reconciliation result before the
