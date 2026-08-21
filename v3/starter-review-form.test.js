@@ -1,9 +1,15 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./starter-review-form.js'), 'utf8')
+const snippet = fs.readFileSync(
+    path.join(__dirname, 'starter-review-form-webflow.html'),
+    'utf8',
+)
+const squash = (value) => value.replace(/\s+/g, ' ').trim()
 
 function load(options = {}) {
     const listeners = new Map()
@@ -57,13 +63,19 @@ function load(options = {}) {
             return options.fetch(...args)
         },
     }
-    vm.runInNewContext(source, context)
+    vm.createContext(context)
+    // options.runs > 1 models a page that loads the controller twice.
+    for (let run = 0; run < (options.runs || 1); run += 1) {
+        vm.runInContext(source, context)
+    }
     return {
         api: context.window.__startersReviewFormTest,
+        booted: context.window.__startersV3ReviewFormBooted,
         fetchCalls,
         headChildren: context.document.head.children,
         historyCalls,
         init: listeners.get('DOMContentLoaded'),
+        posthogHook: context.window.__startersV3ReviewPosthogBeforeSend,
     }
 }
 
@@ -170,11 +182,9 @@ const boundNode = () => ({
     removeAttributeCalls: [],
     setAttribute(name, value) {
         this.setAttributeCalls.push([name, value])
-        this.attributes[name] = value
     },
     removeAttribute(name) {
         this.removeAttributeCalls.push(name)
-        delete this.attributes[name]
     },
     getAttribute(name) {
         return name in this.attributes ? this.attributes[name] : null
@@ -190,12 +200,7 @@ function makeFormHarness() {
         'error',
     ].map((name) =>
         Object.assign(boundNode(), {
-            getAttribute(attribute) {
-                if (attribute === 'data-starter-review-state') return name
-                return attribute in this.attributes
-                    ? this.attributes[attribute]
-                    : null
-            },
+            attributes: { 'data-starter-review-state': name },
         }),
     )
     const fields = {
@@ -340,11 +345,6 @@ test('state switching hides inactive blocks with inline display, not hidden alon
             { hidden: node.hidden, display: node.style.display },
         ]),
     )
-    // The page-head pre-hide rule only stops matching once the block is marked
-    // active, so exactly one block may carry the attribute at a time.
-    const activeStates = () => formHarness.states
-        .filter((node) => node.getAttribute('data-starter-review-active') !== null)
-        .map((node) => node.getAttribute('data-starter-review-state'))
     const harness = load({
         href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
         root: formHarness.root,
@@ -363,7 +363,6 @@ test('state switching hides inactive blocks with inline display, not hidden alon
         unavailable: { hidden: true, display: 'none' },
         error: { hidden: true, display: 'none' },
     })
-    assert.deepEqual(activeStates(), ['form'])
     for (const node of [
         formHarness.photoNode,
         formHarness.headlineNode,
@@ -383,7 +382,6 @@ test('state switching hides inactive blocks with inline display, not hidden alon
         unavailable: { hidden: true, display: 'none' },
         error: { hidden: true, display: 'none' },
     })
-    assert.deepEqual(activeStates(), ['success'])
 })
 
 test('injects the preflight pre-hide style once', () => {
@@ -391,21 +389,53 @@ test('injects the preflight pre-hide style once', () => {
     assert.equal(fresh.headChildren.length, 1)
     assert.equal(fresh.headChildren[0].tag, 'style')
     assert.equal(fresh.headChildren[0].id, 'starter-review-preflight')
-    assert.match(fresh.headChildren[0].textContent, /display: none !important/)
-    assert.match(
-        fresh.headChildren[0].textContent,
-        /:not\(\[data-starter-review-active\]\)/,
+
+    // The snippet's rule and the injected fallback must stay identical once
+    // whitespace is normalized, in both directions — otherwise a page with the
+    // snippet pre-hides differently from a page relying on the injection.
+    const snippetRule = snippet.match(
+        /<style id="starter-review-preflight">([\s\S]*?)<\/style>/,
     )
-    // The loading block paints from first paint, so the rule must skip it.
+    assert.ok(snippetRule, 'the snippet must carry a #starter-review-preflight style')
+    assert.equal(squash(snippetRule[1]), squash(fresh.headChildren[0].textContent))
+
+    // The loading block paints from first paint, so the rule must exclude it.
     assert.match(
         fresh.headChildren[0].textContent,
         /:not\(\[data-starter-review-state="loading"\]\)/,
     )
+    // The watchdog degrades to the unavailable block, never to the native form.
+    assert.match(snippet, /:not\(\[data-starter-review-state="unavailable"\]\)/)
 
     const embedded = { id: 'starter-review-preflight', textContent: '' }
     const withPageEmbed = load({ headChildren: [embedded] })
-    assert.deepEqual(withPageEmbed.headChildren, [embedded])
+    assert.equal(withPageEmbed.headChildren.length, 1)
     assert.equal(embedded.textContent, '')
+})
+
+test('the boot guard survives a second controller script tag', () => {
+    const twice = load({ runs: 2 })
+    // The snippet's watchdog keys on this flag, so booting must set it.
+    assert.equal(twice.booted, true)
+    assert.equal(twice.headChildren.length, 1)
+    // URL sanitizing sits above the guard by design, so it runs per evaluation.
+    assert.equal(twice.historyCalls.length, 2)
+
+    // The redaction hook also installs above the guard, so a second tag wraps it
+    // again. That is safe only while redaction stays idempotent: the doubled
+    // chain must redact exactly like a single one.
+    const event = () => ({
+        properties: {
+            token: 'private-capability-token-12345',
+            $current_url:
+                'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        },
+    })
+    const once = load()
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(twice.posthogHook(event()))),
+        JSON.parse(JSON.stringify(once.posthogHook(event()))),
+    )
 })
 
 test('a resolved context shows the Starter nodes and strips the placeholder art', async () => {

@@ -3258,8 +3258,8 @@ form contract is:
 | Attribute or name | Purpose |
 | --- | --- |
 | `data-starter-review` | One page root |
-| `data-starter-review-state="loading|form|success|unavailable|error"` | State blocks |
-| `data-starter-review-active` | Controller-owned marker on the live state block. Never author it in the Designer |
+| `data-starter-review-state="loading\|form\|success\|unavailable\|error"` | State blocks. `error` is reserved: the controller never activates it today, because a failed submit re-shows `form` with the inline error copy by design |
+| `data-starter-review-current-state` | Controller-owned marker written on the root. Never author it in the Designer |
 | `form[data-starter-review-form]` | Native Webflow form |
 | `rating` | Required 1–5 radio group |
 | `review_text` | Required 10–4,000 character review |
@@ -3280,14 +3280,24 @@ block must stay visible by default in the Designer, never carrying a class-level
 `Display: None`, because the controller reveals a block only by clearing that
 block's inline value, which cannot defeat a class rule. Nothing flashes before
 the controller runs even so: the page-head snippet pre-hides every state block
-except `loading`, and the controller injects the same rule itself (as a
-`starter-review-preflight` style element, skipped when the snippet is already
-present) in case a page ships without it. A block stops matching that rule only
-when the controller marks it with `data-starter-review-active`, so the
-visible-by-default requirement stands — activation still reveals through the
-authored class. The same rule covers the headline, photo, and profile-link
-nodes: never give them a class-level `Display: None`, including one scoped to a
-breakpoint. Keep those nodes inside
+except `loading`, so only the spinner paints until the controller's first
+`setState` stamps `data-starter-review-current-state` on the root. That stamp
+disarms the rule, and the inline writes own visibility from then on, which is why
+the visible-by-default requirement still stands. The controller injects the same
+rule itself, as a `starter-review-preflight` style element skipped when the
+snippet is already present — but that self-injection only beats first paint when
+the script tag is synchronous in the page head, so a `defer`, `async`, or body
+placement leaves the pasted snippet as the only flash protection. The snippet
+also carries a watchdog whose 8-second timer starts at head parse, above the
+script tag: if the controller has not booted by then, it swaps the pre-hide for a
+rule that reveals the `unavailable` block alone and keeps the rest hidden, rather
+than dropping the pre-hide — an unattended native form would let Webflow's own
+handler swallow submissions that never reach Xano, and the success copy would
+claim a review was recorded when none was. That degrade rule stays gated on the
+same root attribute, so a controller that boots late still recovers: its first
+`setState` disarms the rule and takes over. The same rule covers
+the headline, photo, and profile-link nodes: never give them a class-level
+`Display: None`, including one scoped to a breakpoint. Keep those nodes inside
 the `form` state block, where the live page nests them: the controller only
 normalizes them after a successful context resolve. Each `data-starter-review-*`
 attribute must appear exactly once per page — the controller binds the first

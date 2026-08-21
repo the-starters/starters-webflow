@@ -16,9 +16,10 @@
     var FEEDBACK_MAX = 2000
     var PREFLIGHT_ID = 'starter-review-preflight'
     var PREFLIGHT_CSS =
-        '[data-starter-review] [data-starter-review-state]' +
+        '[data-starter-review]:not([data-starter-review-current-state])' +
+        ' [data-starter-review-state]' +
         ':not([data-starter-review-state="loading"])' +
-        ':not([data-starter-review-active]) { display: none !important; }'
+        ' { display: none !important; }'
 
     var normalize = function (value) {
         return String(value == null ? '' : value).trim()
@@ -86,8 +87,10 @@
     window.__startersV3ReviewFormBooted = true
 
     // Pre-hide every non-loading state block so a synchronously loaded controller
-    // converges before body parse even when the page embed is missing. Failure
-    // degrades to the inline writes setHidden makes once init runs.
+    // converges before body parse even when the page embed is missing. The rule is
+    // gated on the root lacking data-starter-review-current-state, so the first
+    // setState disarms it and setHidden's inline writes own visibility from there.
+    // Failure to inject degrades to those inline writes alone.
     try {
         if (!document.getElementById(PREFLIGHT_ID)) {
             var preflight = document.createElement('style')
@@ -189,13 +192,7 @@
         var setState = function (name) {
             root.setAttribute('data-starter-review-current-state', name)
             root.querySelectorAll('[data-starter-review-state]').forEach(function (node) {
-                var inactive = node.getAttribute('data-starter-review-state') !== name
-                setHidden(node, inactive)
-                if (inactive) {
-                    node.removeAttribute('data-starter-review-active')
-                } else {
-                    node.setAttribute('data-starter-review-active', '')
-                }
+                setHidden(node, node.getAttribute('data-starter-review-state') !== name)
             })
         }
         var setError = function (message) {
