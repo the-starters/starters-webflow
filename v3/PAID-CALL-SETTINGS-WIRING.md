@@ -3,7 +3,9 @@
 Place one native Webflow form inside the always-visible `Dashboard / Calendar` section. Do not put the setup in a modal and do not generate the form in JavaScript.
 
 Paid Call duration is fixed at `60` minutes. The controller ignores any editable duration value and
-always sends `duration_minutes: 60`. Duration choices can be added in a later product change.
+always sends `duration_minutes: 60`. Duration choices can be added in a later product change. An
+active canonical service stored at any other duration reads as not bookable and shows the
+update-the-duration message until it is saved again at 60 minutes.
 
 ## Script
 
@@ -73,7 +75,10 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 
 - `data-paid-call-state="loading|ready|saving|disabling|error"`
 - `data-paid-call-enabled="true|false"`
-- `data-paid-call-bookable="true|false"`
+- `data-paid-call-bookable="true|false"` (also `false` when the stored duration is not `60`)
+- `data-paid-call-duration-required="60"`
+- `data-paid-call-duration-current` — the stored duration in minutes, empty with no active service
+- `data-paid-call-editor-open="true|false"` — card and stable-contract wiring only
 
 ## Authority and behavior
 
