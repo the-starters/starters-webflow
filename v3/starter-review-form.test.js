@@ -157,7 +157,9 @@ function makeFormHarness() {
         'error',
     ].map((name) => ({
         hidden: false,
-        getAttribute: () => name,
+        style: { display: '' },
+        getAttribute: (attribute) =>
+            attribute === 'data-starter-review-state' ? name : null,
     }))
     const fields = {
         rating: { value: '5', disabled: false },
@@ -166,6 +168,22 @@ function makeFormHarness() {
     }
     const submitButton = { disabled: false }
     const errorNode = { textContent: '' }
+    const boundNode = () => ({
+        hidden: false,
+        style: { display: '' },
+        textContent: '',
+        setAttributeCalls: [],
+        removeAttributeCalls: [],
+        setAttribute(name, value) {
+            this.setAttributeCalls.push([name, value])
+        },
+        removeAttribute(name) {
+            this.removeAttributeCalls.push(name)
+        },
+    })
+    const photoNode = boundNode()
+    const headlineNode = boundNode()
+    const profileNode = boundNode()
     let submit
     const form = {
         addEventListener(name, callback) {
@@ -178,8 +196,11 @@ function makeFormHarness() {
             if (selector === '[type="submit"]') return submitButton
             return null
         },
-        querySelectorAll() {
-            return Object.values(fields)
+        querySelectorAll(selector) {
+            return selector ===
+                '[name="rating"], [name="review_text"], [name="private_feedback"]'
+                ? Object.values(fields)
+                : []
         },
     }
     const root = {
@@ -187,16 +208,24 @@ function makeFormHarness() {
         setAttribute(name, value) {
             if (name === 'data-starter-review-current-state') this.state = value
         },
-        querySelectorAll: () => states,
+        querySelectorAll: (selector) =>
+            selector === '[data-starter-review-state]' ? states : [],
         querySelector(selector) {
             if (selector === 'form[data-starter-review-form]') return form
             if (selector === '[data-starter-review-error]') return errorNode
+            if (selector === '[data-starter-review-photo]') return photoNode
+            if (selector === '[data-starter-review-headline]') return headlineNode
+            if (selector === '[data-starter-review-profile-link]') return profileNode
             return null
         },
     }
     return {
         fields,
+        headlineNode,
+        photoNode,
+        profileNode,
         root,
+        states,
         submit: (event) => submit(event),
         submitButton,
     }
@@ -275,4 +304,90 @@ test('ambiguous retries preserve the first payload and idempotency key', async (
     assert.equal(formHarness.fields.review_text.disabled, true)
     assert.deepEqual(payloads[0], payloads[1])
     assert.equal(formHarness.root.state, 'success')
+})
+
+// This seam cannot exercise the real CSS cascade, so it locks the inline-style
+// contract that defeats authored display rules instead.
+test('state switching hides inactive blocks with inline display, not hidden alone', async () => {
+    const formHarness = makeFormHarness()
+    const displays = () => Object.fromEntries(
+        formHarness.states.map((node) => [
+            node.getAttribute('data-starter-review-state'),
+            { hidden: node.hidden, display: node.style.display },
+        ]),
+    )
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async (url) => response(
+            url.endsWith('/context/resolve')
+                ? { available: true, starter: { name: 'Starter' } }
+                : { accepted: true, duplicate: false },
+        ),
+    })
+
+    await harness.init()
+    assert.deepEqual(displays(), {
+        loading: { hidden: true, display: 'none' },
+        form: { hidden: false, display: '' },
+        success: { hidden: true, display: 'none' },
+        unavailable: { hidden: true, display: 'none' },
+        error: { hidden: true, display: 'none' },
+    })
+    for (const node of [
+        formHarness.photoNode,
+        formHarness.headlineNode,
+        formHarness.profileNode,
+    ]) {
+        assert.equal(node.hidden, true)
+        assert.equal(node.style.display, 'none')
+        assert.deepEqual(node.setAttributeCalls, [])
+        assert.deepEqual(node.removeAttributeCalls, [])
+    }
+
+    await formHarness.submit({ preventDefault() {}, stopImmediatePropagation() {} })
+    assert.deepEqual(displays(), {
+        loading: { hidden: true, display: 'none' },
+        form: { hidden: true, display: 'none' },
+        success: { hidden: false, display: '' },
+        unavailable: { hidden: true, display: 'none' },
+        error: { hidden: true, display: 'none' },
+    })
+})
+
+test('a resolved context shows the Starter nodes and strips the placeholder art', async () => {
+    const formHarness = makeFormHarness()
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async () => response({
+            available: true,
+            starter: {
+                name: 'Starter',
+                headline: 'Fractional growth operator',
+                photo_url: 'https://example.com/p.jpg',
+                profile_url: '/hire/test-starter',
+            },
+        }),
+    })
+
+    await harness.init()
+
+    assert.equal(formHarness.photoNode.hidden, false)
+    assert.equal(formHarness.photoNode.style.display, '')
+    assert.deepEqual(formHarness.photoNode.setAttributeCalls, [
+        ['src', 'https://example.com/p.jpg'],
+    ])
+    // A w-descriptor srcset outranks the src, so the placeholder must be stripped.
+    assert.deepEqual(formHarness.photoNode.removeAttributeCalls, ['srcset', 'sizes'])
+
+    assert.equal(formHarness.headlineNode.hidden, false)
+    assert.equal(formHarness.headlineNode.style.display, '')
+    assert.equal(formHarness.headlineNode.textContent, 'Fractional growth operator')
+
+    assert.equal(formHarness.profileNode.hidden, false)
+    assert.equal(formHarness.profileNode.style.display, '')
+    assert.deepEqual(formHarness.profileNode.setAttributeCalls, [
+        ['href', '/hire/test-starter'],
+    ])
 })
