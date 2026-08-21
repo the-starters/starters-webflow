@@ -69,6 +69,21 @@ function element(attributes = {}) {
   }
 }
 
+function memoryStorage() {
+  const values = new Map()
+  return {
+    getItem(key) {
+      return values.has(key) ? values.get(key) : null
+    },
+    removeItem(key) {
+      values.delete(key)
+    },
+    setItem(key, value) {
+      values.set(key, String(value))
+    },
+  }
+}
+
 async function until(predicate) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     if (predicate()) return
@@ -133,6 +148,164 @@ test('builds the current confirm payload only when booking_ref identities match'
   }, 'dashboard-confirm:one'), null)
 })
 
+test('confirmation attempt storage scopes omit identity data and isolate account and environment', async () => {
+  const base = {
+    booking_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    data_environment: 'production',
+    starter_data: { memberstack_id: 'mem_starter-one', email: 'private@example.com' },
+  }
+  const first = await api.confirmAttemptStorageKey(base)
+  const otherAccount = await api.confirmAttemptStorageKey({
+    ...base,
+    starter_data: { memberstack_id: 'mem_starter-two', email: 'other@example.com' },
+  })
+  const otherEnvironment = await api.confirmAttemptStorageKey({ ...base, data_environment: 'test' })
+
+  assert.match(first, /^starters:dashboard-confirm:v1:production:[0-9a-f]{64}:aaaaaaaa-/)
+  assert.equal(first.includes('mem_starter-one'), false)
+  assert.equal(first.includes('private@example.com'), false)
+  assert.notEqual(first, otherAccount)
+  assert.notEqual(first, otherEnvironment)
+  assert.equal(await api.confirmAttemptStorageKey({ ...base, data_environment: '' }), '')
+})
+
+test('confirmation attempt creation fails closed without durable storage readback', async () => {
+  const booking = {
+    booking_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    data_environment: 'production',
+    starter_data: { memberstack_id: 'mem_starter-one' },
+  }
+  const originalCrypto = global.crypto
+  const originalStorage = global.sessionStorage
+
+  try {
+    global.crypto = {
+      subtle: originalCrypto && originalCrypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000001',
+    }
+    global.sessionStorage = {
+      getItem() { return null },
+      setItem() {},
+    }
+    assert.equal(await api.createConfirmAttemptKey(booking), '')
+
+    global.sessionStorage = {
+      getItem() { return null },
+      setItem() { throw new Error('storage unavailable') },
+    }
+    assert.equal(await api.createConfirmAttemptKey(booking), '')
+
+    global.sessionStorage = undefined
+    assert.equal(await api.createConfirmAttemptKey(booking), '')
+  } finally {
+    global.crypto = originalCrypto
+    global.sessionStorage = originalStorage
+  }
+})
+
+test('ambiguous confirmation survives a page rebuild and clears only after success', async () => {
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const bookingRef = Buffer.concat([
+    uuidBytes(configId),
+    uuidBytes(bookingId),
+    Buffer.from('bounded-salt'),
+  ]).toString('base64url')
+  const booking = {
+    booking_id: bookingId,
+    config_id: configId,
+    booking_ref: bookingRef,
+    data_environment: 'production',
+    starter_data: { memberstack_id: 'mem_starter-one' },
+    status: 'pending',
+  }
+  const storage = memoryStorage()
+  const bodies = []
+  let responseOk = false
+  let restartCount = 0
+  const originalDocument = global.document
+  const originalCrypto = global.crypto
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalConsoleError = console.error
+
+  async function clickFreshButton() {
+    const listeners = []
+    const card = {
+      getAttribute(name) {
+        return name === 'data-booking-id' ? bookingId : null
+      },
+    }
+    const button = {
+      attributes: {},
+      closest(selector) {
+        return selector === '[data-booking-id]' ? card : this
+      },
+      setAttribute(name, value) {
+        this.attributes[name] = value
+      },
+    }
+    global.document = {
+      addEventListener(_type, listener) {
+        listeners.push(listener)
+      },
+    }
+    api.wireBookingActions([{ rows: [booking] }], 'starter', async () => {
+      restartCount += 1
+    })
+    await listeners[0]({
+      target: button,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    })
+  }
+
+  try {
+    global.crypto = {
+      subtle: originalCrypto && originalCrypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000001',
+    }
+    global.sessionStorage = storage
+    global.xanoAuthFetch = async (_url, options) => {
+      bodies.push(JSON.parse(options.body))
+      return { ok: responseOk, json: async () => responseOk ? { status: 'confirmed' } : { code: 'ambiguous' } }
+    }
+    console.error = () => {}
+
+    await clickFreshButton()
+    assert.equal(bodies.length, 1)
+    assert.equal(await api.storedConfirmAttemptKey(booking), bodies[0].idempotency_key)
+
+    responseOk = true
+    global.xanoAuthFetch = async (_url, options) => {
+      bodies.push(JSON.parse(options.body))
+      return { ok: true, json: async () => ({ status: 'pending' }) }
+    }
+    await clickFreshButton()
+    assert.equal(bodies.length, 2)
+    assert.equal(bodies[1].idempotency_key, bodies[0].idempotency_key)
+    assert.equal(await api.storedConfirmAttemptKey(booking), bodies[0].idempotency_key)
+    assert.equal(restartCount, 0)
+
+    global.xanoAuthFetch = async (_url, options) => {
+      bodies.push(JSON.parse(options.body))
+      return { ok: true, json: async () => ({ status: 'confirmed' }) }
+    }
+    await clickFreshButton()
+    assert.equal(bodies.length, 3)
+    assert.equal(bodies[2].idempotency_key, bodies[0].idempotency_key)
+    assert.equal(await api.storedConfirmAttemptKey(booking), '')
+    assert.equal(restartCount, 1)
+  } finally {
+    global.document = originalDocument
+    global.crypto = originalCrypto
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    console.error = originalConsoleError
+  }
+})
+
 test('Starter Accept sends one canonical request and blocks a double click', async () => {
   const configId = '11111111-2222-3333-4444-555555555555'
   const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -146,6 +319,8 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
     booking_id: bookingId,
     config_id: configId,
     booking_ref: bookingRef,
+    data_environment: 'production',
+    starter_data: { memberstack_id: 'mem_starter-one' },
     status: 'pending',
   }
   const listeners = []
@@ -155,6 +330,7 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
   const originalDocument = global.document
   const originalCrypto = global.crypto
   const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
   const card = {
     getAttribute(name) {
       return name === 'data-booking-id' ? bookingId : null
@@ -181,7 +357,11 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
         listeners.push({ type, listener, capture })
       },
     }
-    global.crypto = { randomUUID: () => 'one-action' }
+    global.crypto = {
+      subtle: originalCrypto && originalCrypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000002',
+    }
+    global.sessionStorage = memoryStorage()
     global.xanoAuthFetch = async (url, options) => {
       requests.push({ url, options })
       await new Promise((resolve) => { releaseRequest = resolve })
@@ -217,6 +397,7 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
     global.document = originalDocument
     global.crypto = originalCrypto
     global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
   }
 })
 
