@@ -364,15 +364,33 @@
     return client
   }
 
-  async function currentMember(client) {
+  function memberReader(client) {
     if (typeof client.getCurrentMember !== 'function') {
       throw new Error('Memberstack member lookup is unavailable.')
     }
-    var member = unwrapMember(await runWithRetry(function () {
+    return function () {
       return client.getCurrentMember()
-    }))
+    }
+  }
+
+  function identifiedMember(result) {
+    var member = unwrapMember(result)
     if (!member || !member.id) throw new Error('Please log in again to update your account.')
     return member
+  }
+
+  async function currentMember(client) {
+    return identifiedMember(await runWithRetry(memberReader(client)))
+  }
+
+  /**
+   * One bounded read with no retry, for the reconciliation probe. A retry cannot
+   * make a stale answer fresher, and a member waiting on a genuine conflict
+   * should not wait out the retry ladder before the copy that tells them to pick
+   * another address.
+   */
+  async function readMemberOnce(client) {
+    return identifiedMember(await withTimeout(memberReader(client)))
   }
 
   function memberScopeChangedError() {
@@ -405,19 +423,18 @@
   }
 
   /**
-   * Records the authenticated baseline and the intended login email before the
-   * auth write is attempted, because that write can land while its own response
-   * is lost. An intent is only ever constructed for a real change, so every
-   * stored intent has `baseline !== target`: a later submit that finds the
-   * target already installed as the login email is therefore proof the write
-   * landed, and returning the intent keeps its one ownership-proof message
-   * instead of reading as an unchanged onboarding submit. The marker lives for
-   * the page, so a reload leaves Forgot Password as the recovery path.
+   * Records the intended login email before the auth write is attempted, because
+   * that write can land while its own response is lost. An intent is only ever
+   * recorded for a real change, so a later submit that finds the target already
+   * installed as the login email is proof the write landed: returning the intent
+   * keeps its one ownership-proof message instead of reading as an unchanged
+   * onboarding submit. The marker lives for the page, so a reload leaves Forgot
+   * Password as the recovery path.
    */
   function recordBuildEmailIntent(form, member, email) {
     var current = memberEmail(member)
     if (current !== email) {
-      var intent = { baseline: current, target: email }
+      var intent = { target: email }
       pendingBuildPasswordEmails.set(form, intent)
       return intent
     }
@@ -446,11 +463,12 @@
    * Build-only reconciliation for the write Memberstack reports as a conflict.
    * The first attempt can claim the address server-side and lose its response,
    * so the retry comes back 409/422 for an address this member now owns. One
-   * re-read settles it: the change counts as applied only when the same member's
-   * login email already equals the requested target. Anything else keeps the
-   * original conflict, including the copy that sends the member to a different
-   * address. Account Security and Talent keep the plain `updateEmailIfChanged`
-   * semantics.
+   * unretried re-read settles it: the change counts as applied only when the same
+   * stable member's login email already equals the requested target. A read that
+   * lands in a different session is the account-scope change this controller
+   * already has copy for; anything else keeps the original conflict and the copy
+   * that sends the member to a different address. Account Security and Talent
+   * keep the plain `updateEmailIfChanged` semantics.
    */
   async function applyBuildEmailChange(client, member, email) {
     try {
@@ -459,11 +477,12 @@
       if (!emailConflict(error)) throw error
       var settled = null
       try {
-        settled = await currentMember(client)
+        settled = await readMemberOnce(client)
       } catch (unreadable) {
         throw error
       }
-      if (settled.id !== member.id || memberEmail(settled) !== email) throw error
+      if (settled.id !== member.id) throw memberScopeChangedError()
+      if (memberEmail(settled) !== email) throw error
       return { changed: true, email: email }
     }
   }
@@ -587,9 +606,9 @@
     // email change keeps the existing ownership-proof email after completion.
     await updateOrdinaryFields(client, values)
     // The auth change can succeed before a later completion write fails, and it
-    // can land while its own response is lost. Keep the baseline and the changed
-    // target on this form so the safe retry still sends its one ownership-proof
-    // message after completion succeeds.
+    // can land while its own response is lost. Keep the changed target on this
+    // form so the safe retry still sends its one ownership-proof message after
+    // completion succeeds.
     var emailIntent = recordBuildEmailIntent(form, member, values.email)
     await applyBuildEmailChange(client, member, values.email)
     await markBuildComplete(client)

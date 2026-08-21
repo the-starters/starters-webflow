@@ -1100,7 +1100,7 @@ test('a 409 from an address this member does not own keeps the conflict', async 
   assert.deepEqual(environment.redirects, [])
 })
 
-test('a 409 after the signed-in member changed keeps the conflict', async () => {
+test('a 409 after the signed-in member changed reports the account-scope change', async () => {
   const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
   const buildForm = makeForm('build', { email: 'moved@example.com' })
   let reads = 0
@@ -1124,6 +1124,56 @@ test('a 409 after the signed-in member changed keeps the conflict', async () => 
   buildForm.submitEvent()
   await settle()
 
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    0,
+  )
+  assert.equal(
+    buildForm.wrapper.failText.textContent,
+    'Your signed-in account changed. Refresh and try again.',
+  )
+  assert.deepEqual(environment.redirects, [])
+})
+
+test('a failed reconciliation read keeps the conflict without retrying the read', async () => {
+  // The probe exists to settle one ambiguity, so it gets one bounded look: a
+  // member facing a genuine conflict must not wait out the retry ladder first.
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'taken@example.com' })
+  let reads = 0
+  const environment = loadController({
+    buildForm,
+    member,
+    getCurrentMember: async () => {
+      reads += 1
+      if (reads > 2) {
+        const unreadable = new Error('member lookup unavailable')
+        unreadable.status = 503
+        throw unreadable
+      }
+      return { data: member }
+    },
+    updateMemberAuth: async () => {
+      const conflict = new Error('raw provider conflict')
+      conflict.status = 409
+      throw conflict
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(reads, 3)
+  assert.equal(
+    buildForm.wrapper.failText.textContent,
+    'That email is already in use. Choose another email address.',
+  )
   assert.equal(
     environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
     0,
