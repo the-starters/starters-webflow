@@ -45,11 +45,17 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | --- | --- |
 | Paid Form Block | `data-availability-element="call-paid-form"` |
 | Native form | `data-availability-element="availability-form"` |
-| Yes radio | `name="paid-consulting-calls"` and `value="yes"`; any other value in that group is taken as Yes as long as it is not `no` |
-| No radio | Preferred: `name="paid-consulting-calls"` and `value="no"`; the controller normalizes the shipped legacy `name="consulting-calls"` field into that native radio group at runtime |
+| Yes radio | Published: `name="consulting-calls-paid"` and `value="yes"`; the legacy `paid-consulting-calls` group remains supported |
+| No radio | Published: `name="consulting-calls-paid"` and `value="no"`; the controller still normalizes the older split `consulting-calls` / `paid-consulting-calls` fields at runtime |
 | Description/title input | `name="call-description"` |
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
+
+Yes and No are resolved as one pair, never independently, so a single radio can never be bound as
+both answers. Canonical `yes` and `no` values match first, then a leading `yes` or `no` word such as
+`No thanks`, then the remaining radio next to whichever answer was already identified. If neither
+answer can be identified from its value the pair stays unbound and the card takes no radio-driven
+action, so a Yes click is never read as a turn-off.
 
 The controller scopes every compatibility selector to the Paid card. It anchors on the Paid Form
 Block's own enclosing form wrapper and only widens to the Call Item that owns that wrapper. If the
@@ -94,6 +100,17 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - Save uses revision-guarded `POST starter/paid-call-settings/upsert/v3` (`#2925`).
 - Turn off uses guarded `POST starter/paid-call-settings/disable/v3` (`#2923`).
 - Each mutation gets a new idempotency key and is followed by canonical GET readback.
+- Save is offered whenever an active canonical service exists, even while Stripe or calendar
+  readiness is stale, so the fixed-duration repair described above stays reachable. Xano still
+  revision-guards that write and canonical readback still decides the rendered state. With no active
+  service, save stays blocked until every prerequisite reads ready. The Save control and the write
+  guard use this same rule in both the panel and the Call Item card wiring.
+- A missing or changed Memberstack session fails closed. An upsert, a turn off, or a readiness
+  refresh that reports `MEMBER_SESSION_MISSING` or `MEMBER_SCOPE_CHANGED` clears the cached Paid
+  state instead of leaving stale enabled controls: inputs reset, both actions disable,
+  `data-paid-call-settings` becomes `error`, and the status reads `Sign in to manage paid calls.`
+  No `starterPaidCallWriteError` event is emitted for that class of failure, because nothing was
+  written and the card is inert until the next auth change or reload.
 - The native Webflow form still owns which fields are required and still shows its own
   validation UI. An authored Update control wired as a plain element is intercepted, so the
   controller runs that form's constraint validation before writing; an invalid form blocks the
@@ -112,18 +129,20 @@ Do not activate this form until the paid-call reconciliation dry run has zero un
 ## Post-release live verification
 
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion
-recovery and duplicate-initialization dedup are executable regressions in
-`v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a
-live Xano TEST configuration, and an asset that only exists once the tag is published,
-so they are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io`
-and `thestarters.com` answer `401` behind the site password, so a local phase cannot even
-read the live authored DOM. The release owner runs them by hand, in this order, after the
-PR merges:
+recovery, the duplicate-initialization dedup, the published `consulting-calls-paid`
+binding, the stale-readiness save of an active service, and the expired-session
+fail-closed writes are executable regressions in `v3/paid-call-settings.test.js`. The
+remaining legs need a live Memberstack session, a live Xano TEST configuration, and an
+asset that only exists once the tag is published, so they are not runnable from CI or
+from a local test phase. Both `the-starters-3-0.webflow.io` and `thestarters.com` answer
+`401` behind the site password, so a local phase cannot even read the live authored DOM.
+The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
-   the served asset is the new build: the served file must contain the Paid radio-group
-   normalization (`normalizeCardRadioGroup`, which joins the legacy `consulting-calls` No
-   field into the `paid-consulting-calls` group), not only the earlier root-wait recovery.
+   the served asset is the new build: the served file must contain the published Paid
+   group name `consulting-calls-paid` and the joint pair resolver `cardRadioPair`. Neither
+   the earlier root-wait recovery nor `normalizeCardRadioGroup` alone proves the new
+   build, because the previous build already shipped both.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
    card reaches `data-paid-call-settings="ready"` with canonical values, including a
    reload where Webflow or Memberstack inserts the Paid card late.
@@ -132,7 +151,12 @@ PR merges:
    canonical readback state. Confirm this on whichever way the authored Update control is
    wired, and confirm a still-required empty field still blocks the write, per the native
    validation rule in [Authority and behavior](#authority-and-behavior).
-4. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
+4. On the TEST fixture still stored at a duration other than `60`, pick Yes and click
+   Update while calendar or Stripe readiness is stale, and confirm the write is accepted
+   and canonical readback reports `data-paid-call-duration-current="60"`.
+   `data-paid-call-bookable` turns `true` only once Xano readiness itself reports
+   bookable, so re-check it after the readiness prerequisites pass.
+5. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
    it in the paid-call dry run. Never run a live-money production charge.
 
 Record the served-asset check and the TEST booking reconciliation result before the

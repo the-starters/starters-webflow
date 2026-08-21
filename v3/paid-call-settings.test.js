@@ -193,6 +193,11 @@ function load(options = {}) {
       if (dom[key]) dom[key].setAttribute('value', options.cardRadioValues[key])
     })
   }
+  if (options.cardRadioNames && dom.root) {
+    Object.keys(options.cardRadioNames).forEach((key) => {
+      if (dom[key]) dom[key].setAttribute('name', options.cardRadioNames[key])
+    })
+  }
   if (options.stableCardMode === true && dom.root) {
     dom.root.setAttribute('data-call-settings-service', 'paid')
     dom.form.setAttribute('data-call-settings-element', 'form')
@@ -320,6 +325,7 @@ function load(options = {}) {
       if (authChange) return authChange(nextMember)
       return null
     },
+    expireMemberSilently: () => { activeMember = null },
     installMemberstack: () => { window.$memberstackDom = memberstack },
     flushTimers: () => {
       const pending = timers.splice(0)
@@ -506,6 +512,151 @@ test('the native Paid card binds without generated IDs and upgrades a legacy dur
   assert.equal(result.dom.root.getAttribute('data-paid-call-duration-current'), '60')
   assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
   assert.equal(result.dom.formWrapper.style.display, 'none')
+})
+
+test('the published consulting-calls-paid group binds without runtime renaming', async () => {
+  const result = load({
+    cardMode: true,
+    cardRadioNames: {
+      disabled: 'consulting-calls-paid',
+      enabled: 'consulting-calls-paid',
+    },
+    initial: canonical({
+      services: [service({ duration: 15, price_cents: 500, revision: 1 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.disabled.getAttribute('name'), 'consulting-calls-paid')
+  assert.equal(result.dom.enabled.getAttribute('name'), 'consulting-calls-paid')
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.enabled.getAttribute('data-call-settings-input'), 'enabled')
+  assert.equal(result.dom.disabled.getAttribute('data-call-settings-input'), 'disabled')
+})
+
+test('an active legacy service can update to 60 minutes while readiness is stale', async () => {
+  const legacy = service({ duration: 15, price_cents: 500, revision: 1 })
+  const staleReadiness = {
+    stripe_readiness_fresh: false,
+    paid_call_enabled: true,
+    bookable: false,
+  }
+  const result = load({
+    cardMode: true,
+    cardRadioNames: {
+      disabled: 'consulting-calls-paid',
+      enabled: 'consulting-calls-paid',
+    },
+    initial: canonical({ services: [legacy], readiness: staleReadiness }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          duration: body.duration_minutes,
+          price_cents: body.price_cents,
+          title: body.title,
+          revision: 2,
+        })
+        setState(canonical({ services: [saved], readiness: staleReadiness }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  const upserts = result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.equal(upserts.length, 1)
+  assert.deepEqual(upserts[0].body, {
+    config_id: 'cfg-paid-1',
+    title: 'Paid Consultation Call',
+    price_cents: 500,
+    duration_minutes: 60,
+    expected_revision: 1,
+    idempotency_key: 'paid-call-upsert:uuid-fixed',
+  })
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length, 2)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-duration-current'), '60')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are saved, but a prerequisite needs attention.')
+})
+
+test('one published group with two non-canonical values still binds Yes and No apart', async () => {
+  const result = load({
+    cardMode: true,
+    cardRadioNames: {
+      disabled: 'consulting-calls-paid',
+      enabled: 'consulting-calls-paid',
+    },
+    cardRadioValues: { disabled: 'No thanks', enabled: 'Yes please' },
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.getAttribute('data-call-settings-input'), 'enabled')
+  assert.equal(result.dom.disabled.getAttribute('data-call-settings-input'), 'disabled')
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.enabled.checked, false)
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 1)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+})
+
+test('one published group of unreadable answers binds neither radio instead of guessing', async () => {
+  const result = load({
+    cardMode: true,
+    cardRadioNames: {
+      disabled: 'consulting-calls-paid',
+      enabled: 'consulting-calls-paid',
+    },
+    cardRadioValues: { disabled: '0', enabled: '1' },
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ setState }) => {
+        const saved = service({ revision: 5 })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.getAttribute('data-call-settings-input'), null)
+  assert.equal(result.dom.disabled.getAttribute('data-call-settings-input'), null)
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(result.dom.disabled.checked, false)
+
+  result.dom.enabled.checked = true
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 1)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 0)
 })
 
 test('the native Paid card treats No plus Update as the guarded disable action', async () => {
@@ -716,6 +867,54 @@ test('an auth change during an in-flight Paid write leaves the card controls usa
 
   pending.resolve({ ok: true, status: 200, json: async () => ({ service: service() }) })
   await settle()
+})
+
+test('an expired session fails a Paid update closed before any POST', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+  result.expireMemberSilently()
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'false')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
+})
+
+test('an expired session fails a Paid disable closed before any POST', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  result.expireMemberSilently()
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'false')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
 })
 
 test('the Paid card price output renders grouped two-decimal USD', async () => {
@@ -1142,6 +1341,47 @@ test('blocks enable when a canonical prerequisite is missing', async () => {
   assert.equal(saved, null)
   assert.equal(result.calls.some((call) => call.path.includes('/upsert/')), false)
   assert.equal(result.dom.save.disabled, true)
+})
+
+test('the panel wiring offers Save for an active service while readiness is stale', async () => {
+  const staleReadiness = {
+    stripe_readiness_fresh: false,
+    paid_call_enabled: true,
+    bookable: false,
+  }
+  const result = load({
+    initial: canonical({
+      services: [service({ duration: 15, revision: 1 })],
+      readiness: staleReadiness,
+    }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          duration: body.duration_minutes,
+          price_cents: body.price_cents,
+          title: body.title,
+          revision: 2,
+        })
+        setState(canonical({ services: [saved], readiness: staleReadiness }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  assert.equal(result.dom.save.disabled, false)
+
+  const saved = await result.window.StarterPaidCallSettings.save()
+  await settle()
+
+  assert.ok(saved)
+  const upserts = result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.equal(upserts.length, 1)
+  assert.equal(upserts[0].body.duration_minutes, 60)
+  assert.equal(upserts[0].body.expected_revision, 1)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-duration-current'), '60')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
 })
 
 test('fails closed when canonical state has duplicate active paid services', async () => {
