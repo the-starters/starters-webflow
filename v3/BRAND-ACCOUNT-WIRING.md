@@ -68,7 +68,8 @@ Do not add `data-ms-form="profile"` to this form while
 `brand-account-controller.js` owns submit. Two Memberstack submit owners would
 race. The hidden completion field remains authored for visibility and backward
 compatibility, but the controller writes its value explicitly as the final
-durable member write, before the non-retried password-email attempt.
+durable member write, before any non-retried password-email attempt. Build
+Account only attempts that email when the login email changed.
 
 The upload link stays outside any Memberstack profile-form contract and is
 bound by `complete-profile-photo.js` to:
@@ -186,11 +187,13 @@ remain required before publishing the frontend install.
 
 ## Configuration switch
 
-Memberstack's browser SDK owns the reset/set-password email call. Its Admin API
-does not expose a server-side reset-email action, so this controller deliberately
-does not depend on or claim a durable email outbox. Do not add an automatic retry
-around `sendMemberResetPasswordEmail`; a lost response is ambiguous and retrying
-could send a second message.
+Memberstack's browser SDK owns reset-password emails for explicit recovery and
+changed login-email security. Build Account sends none when the member keeps the
+email they already authenticated with. Memberstack's Admin API does not expose a
+server-side reset-email action, so this controller deliberately does not depend
+on or claim a durable email outbox. Do not add an automatic retry around
+`sendMemberResetPasswordEmail`; a lost response is ambiguous and retrying could
+send a second message.
 
 Use identity-scoped ownership in production when the controller is installed
 sitewide:
@@ -288,15 +291,32 @@ projection.
   ID with the member that initiated the workflow. An account change aborts with
   `MEMBER_SCOPE_CHANGED` before `updateMemberAuth` can write into the new session.
 - Build Account writes ordinary fields, any changed login email, and the
-  completion marker before attempting one reset/set-password email.
+  completion marker. It attempts one reset/set-password email only when the
+  login email changed; normal onboarding with the authenticated email sends none.
+- A changed login-email write can land server-side and still report failure.
+  Build Account reconciles that ambiguity in two places, and only for its own
+  form. A 409 or 422 from the write triggers one member read, bounded by the
+  operation timeout and deliberately not retried, so a genuine conflict still
+  surfaces promptly: when the same stable member ID already carries the requested
+  target as its login email, the write is treated as applied and the same submit
+  continues to completion and its one ownership-proof email. A read that returns
+  a different stable member ID fails as `MEMBER_SCOPE_CHANGED` with the
+  refresh-and-retry copy; every other reading, including an unreadable member,
+  keeps the original conflict and its choose-another-address copy. A write that
+  stays ambiguous without a conflict status, such as repeated timeouts, leaves a
+  per-form marker holding the intended target, so a same-page resubmit that finds
+  the target already installed still sends that one email without issuing a
+  second `updateMemberAuth`. That marker is per form and lives only for the page:
+  after a reload the login email is already the target, nothing is attempted, and
+  Forgot Password is the recovery path.
 - Account Security and the guarded Talent edit-profile form attempt that email
   only after a changed login email has been saved successfully.
 - An independent Talent login-email save requires the authored email input to
   pass native constraint validation and the normalized email to differ from the
   current Memberstack login email. It does not bypass or submit unrelated
   invalid profile fields.
-- No separate verification email is sent. Successful redemption of the one
-  reset/set-password link is the email-ownership proof.
+- No separate verification email is sent. For a changed login email, successful
+  redemption of the one reset/set-password link is the email-ownership proof.
 - Reset-email delivery is an external, non-idempotent browser side effect. The
   controller records the normalized target in an in-memory per-form marker
   before calling Memberstack and will not attempt that target again during the
@@ -329,6 +349,7 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
    form carry the live Brand Free plan. Creating a production member requires
    the separate approval described below.
 3. Existing incomplete Brand submits unchanged email plus ordinary fields.
+   Prove onboarding completes with zero reset/set-password emails.
 4. Read Memberstack, `user_v3`, and `brands_v3` back by Memberstack member ID.
 5. Replay the identical submission; prove one Brand row and unchanged final
    values.
@@ -337,9 +358,15 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
    and no partial Xano email drift.
 8. Change to the approved canary email; prove one reset/set-password message and
    matching Xano values.
-9. Simulate an ambiguous Build Account email response after the completion
-   write; prove a same-page resubmit performs no second email attempt, preserves
-   the completed account, and can continue to the dashboard.
+9. Submit Build Account with unchanged and changed login-email fixtures. Prove
+   the unchanged path calls no reset-email API. Simulate a changed-email write
+   that lands and then answers 409; prove the same submit completes and sends
+   exactly one message with no second `updateMemberAuth`. Simulate a
+   changed-email write that lands and then times out; prove the first submit
+   fails without a message and a same-page resubmit completes and sends exactly
+   one. Simulate an ambiguous email response on the changed path; prove a
+   same-page resubmit performs no second email attempt, preserves the completed
+   account, and can reach the dashboard.
 10. Simulate an ambiguous Account Security email response after the auth
    mutation; prove the saved email remains authoritative and a same-page
    resubmit performs no second email attempt. Prove Forgot Password can issue a

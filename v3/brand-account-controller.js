@@ -13,14 +13,13 @@
  * fields, updates ordinary Memberstack fields first, updates login email only
  * when it changed, and sets the completion marker as its last durable member
  * write. Durable assignments are replay-safe; a failed retry repeats
- * assignments rather than creating another account or Brand row. The password
- * email is deliberately not retried.
+ * assignments rather than creating another account or Brand row.
  *
- * Build Account makes the completion marker its last durable member write,
- * then attempts one Memberstack reset/set-password email. Account Security
- * attempts that email only after a changed login email succeeds. Password
- * email calls are never automatically retried; Memberstack's Forgot Password
- * flow is the recovery path when delivery cannot be confirmed.
+ * Build Account does not send a password email when the member keeps the login
+ * email they already authenticated with. If that email changes, Build Account
+ * and Account Security attempt one reset email after the auth update succeeds.
+ * Password email calls are never automatically retried; Memberstack's Forgot
+ * Password flow is the recovery path when delivery cannot be confirmed.
  *
  * COMPLETION CONTRACT, SECOND HALF (2026-08-06). The durable answer is the
  * member field plus its Xano mirror, but the Memberstack webhook needs a moment
@@ -77,6 +76,7 @@
   var passwordEmailAttempts = new WeakMap()
   var workflowDiagnosticsControllerScript = document.currentScript
   var brandSignupPlanObserver = null
+  var pendingBuildPasswordEmails = new WeakMap()
 
   function boundedWorkflowDiagnostics(promise) {
     return new Promise(function (resolve) {
@@ -293,6 +293,11 @@
     return Number.isFinite(value) ? value : 0
   }
 
+  function emailConflict(error) {
+    var status = statusOf(error)
+    return status === 409 || status === 422
+  }
+
   function retryable(error) {
     var status = statusOf(error)
     return (
@@ -359,15 +364,33 @@
     return client
   }
 
-  async function currentMember(client) {
+  function memberReader(client) {
     if (typeof client.getCurrentMember !== 'function') {
       throw new Error('Memberstack member lookup is unavailable.')
     }
-    var member = unwrapMember(await runWithRetry(function () {
+    return function () {
       return client.getCurrentMember()
-    }))
+    }
+  }
+
+  function identifiedMember(result) {
+    var member = unwrapMember(result)
     if (!member || !member.id) throw new Error('Please log in again to update your account.')
     return member
+  }
+
+  async function currentMember(client) {
+    return identifiedMember(await runWithRetry(memberReader(client)))
+  }
+
+  /**
+   * One bounded read with no retry, for the reconciliation probe. A retry cannot
+   * make a stale answer fresher, and a member waiting on a genuine conflict
+   * should not wait out the retry ladder before the copy that tells them to pick
+   * another address.
+   */
+  async function readMemberOnce(client) {
+    return identifiedMember(await withTimeout(memberReader(client)))
   }
 
   function memberScopeChangedError() {
@@ -399,6 +422,27 @@
     })
   }
 
+  /**
+   * Records the intended login email before the auth write is attempted, because
+   * that write can land while its own response is lost. An intent is only ever
+   * recorded for a real change, so a later submit that finds the target already
+   * installed as the login email is proof the write landed: returning the intent
+   * keeps its one ownership-proof message instead of reading as an unchanged
+   * onboarding submit. The marker lives for the page, so a reload leaves Forgot
+   * Password as the recovery path.
+   */
+  function recordBuildEmailIntent(form, member, email) {
+    var current = memberEmail(member)
+    if (current !== email) {
+      var intent = { target: email }
+      pendingBuildPasswordEmails.set(form, intent)
+      return intent
+    }
+    var pending = pendingBuildPasswordEmails.get(form)
+    if (pending && pending.target === email) return pending
+    return null
+  }
+
   async function updateEmailIfChanged(client, member, email) {
     var changed = memberEmail(member) !== email
     if (changed) {
@@ -413,6 +457,34 @@
     }
 
     return { changed: changed, email: email }
+  }
+
+  /**
+   * Build-only reconciliation for the write Memberstack reports as a conflict.
+   * The first attempt can claim the address server-side and lose its response,
+   * so the retry comes back 409/422 for an address this member now owns. One
+   * unretried re-read settles it: the change counts as applied only when the same
+   * stable member's login email already equals the requested target. A read that
+   * lands in a different session is the account-scope change this controller
+   * already has copy for; anything else keeps the original conflict and the copy
+   * that sends the member to a different address. Account Security and Talent
+   * keep the plain `updateEmailIfChanged` semantics.
+   */
+  async function applyBuildEmailChange(client, member, email) {
+    try {
+      return await updateEmailIfChanged(client, member, email)
+    } catch (error) {
+      if (!emailConflict(error)) throw error
+      var settled = null
+      try {
+        settled = await readMemberOnce(client)
+      } catch (unreadable) {
+        throw error
+      }
+      if (settled.id !== member.id) throw memberScopeChangedError()
+      if (memberEmail(settled) !== email) throw error
+      return { changed: true, email: email }
+    }
   }
 
   async function sendResetPasswordEmailOnce(form, client, email) {
@@ -510,8 +582,7 @@
     if (error && error.passwordEmailAttempted) {
       return 'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.'
     }
-    var status = statusOf(error)
-    if (status === 409 || status === 422) {
+    if (emailConflict(error)) {
       return 'That email is already in use. Choose another email address.'
     }
     return trim(error && error.message) || 'Your account could not be updated. Please try again.'
@@ -530,18 +601,25 @@
     diagnosticRequestStarted(form)
     var member = await currentMember(client)
 
-    // Completion is the last durable member write. The password email follows
-    // it as a single, non-retried side effect, so a lost acknowledgement cannot
-    // cause an automatic replay to emit a duplicate message.
+    // Completion is the last durable member write. A normal onboarding submit
+    // keeps the authenticated login email and sends no password email. A real
+    // email change keeps the existing ownership-proof email after completion.
     await updateOrdinaryFields(client, values)
-    await updateEmailIfChanged(client, member, values.email)
+    // The auth change can succeed before a later completion write fails, and it
+    // can land while its own response is lost. Keep the changed target on this
+    // form so the safe retry still sends its one ownership-proof message after
+    // completion succeeds.
+    var emailIntent = recordBuildEmailIntent(form, member, values.email)
+    await applyBuildEmailChange(client, member, values.email)
     await markBuildComplete(client)
-    // Only reached once completion is durable, and deliberately before the
-    // non-retried password email: the marker is what stops the routers from
-    // bouncing this member back onto the form during the webhook's catch-up
-    // window, so nothing that can fail afterwards is allowed to precede it.
+    // Only reached once completion is durable. The marker stops the routers
+    // from bouncing this member back onto the form during the webhook's
+    // catch-up window.
     markBrandProfileCompletedLocally()
-    await sendResetPasswordEmailOnce(form, client, values.email)
+    if (emailIntent) {
+      pendingBuildPasswordEmails.delete(form)
+      await sendResetPasswordEmailOnce(form, client, emailIntent.target)
+    }
 
     return { memberId: member.id }
   }
