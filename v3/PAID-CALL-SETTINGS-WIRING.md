@@ -45,7 +45,7 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | --- | --- |
 | Paid Form Block | `data-availability-element="call-paid-form"` |
 | Native form | `data-availability-element="availability-form"` |
-| Yes radio | `name="paid-consulting-calls"` |
+| Yes radio | `name="paid-consulting-calls"` and `value="yes"`; any other value in that group is taken as Yes as long as it is not `no` |
 | No radio | Preferred: `name="paid-consulting-calls"` and `value="no"`; the controller normalizes the shipped legacy `name="consulting-calls"` field into that native radio group at runtime |
 | Description/title input | `name="call-description"` |
 | Rate input | `name="call-rate"` |
@@ -94,6 +94,11 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - Save uses revision-guarded `POST starter/paid-call-settings/upsert/v3` (`#2925`).
 - Turn off uses guarded `POST starter/paid-call-settings/disable/v3` (`#2923`).
 - Each mutation gets a new idempotency key and is followed by canonical GET readback.
+- The native Webflow form still owns which fields are required and still shows its own
+  validation UI. An authored Update control wired as a plain element is intercepted, so the
+  controller runs that form's constraint validation before writing; an invalid form blocks the
+  write in that shape exactly as the browser already blocks it when Update is the form's own
+  submit control.
 - The browser sends product intent only. It never sends a member ID, grant ID, calendar ID, Stripe account ID, or payment environment.
 - Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`.
 - Calendar transitions carry a one-use intent captured from canonical paid-call GET through the existing OAuth session envelope, then recreate it through paid-call upsert and canonical readback.
@@ -125,8 +130,8 @@ PR merges:
 3. On that same card, pick Yes, fill the title and rate, and click Update by hand. The
    browser must no longer block the click on the No radio, and the card must reach the
    canonical readback state. Confirm this on whichever way the authored Update control is
-   wired: the controller now runs the native form's own validation before writing, so a
-   still-required empty field must block the write in both wiring shapes.
+   wired, and confirm a still-required empty field still blocks the write, per the native
+   validation rule in [Authority and behavior](#authority-and-behavior).
 4. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
    it in the paid-call dry run. Never run a live-money production charge.
 
