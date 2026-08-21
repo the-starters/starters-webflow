@@ -15,6 +15,7 @@
     var REVIEW_MAX = 4000
     var FEEDBACK_MAX = 2000
     var PREFLIGHT_ID = 'starter-review-preflight'
+    var PROFILE_BOUND_ATTRIBUTE = 'data-starter-review-profile-bound'
     var PREFLIGHT_CSS =
         '[data-starter-review]:not([data-starter-review-current-state])' +
         ' [data-starter-review-state]' +
@@ -182,6 +183,36 @@
         node.style.display = hide ? 'none' : ''
     }
 
+    // The marked node is either a plain anchor or the design-system Button
+    // component — div.button_main-wrap > div.clickable_wrap > button.clickable_btn,
+    // with no anchor anywhere inside. Only an anchor can carry an href, so on the
+    // component we open the profile ourselves, in a new tab, matching the authored
+    // target intent. Callers must gate this on the /hire/<slug> allowlist first.
+    var bindProfileLink = function (node, profileUrl) {
+        var anchor =
+            String(node.tagName || '').toUpperCase() === 'A'
+                ? node
+                : node.querySelector('a')
+
+        if (anchor) {
+            anchor.setAttribute('href', profileUrl)
+            return
+        }
+
+        if (node.getAttribute(PROFILE_BOUND_ATTRIBUTE) === 'true') return
+        node.setAttribute(PROFILE_BOUND_ATTRIBUTE, 'true')
+        // Capture phase, so this runs before any component-level handler, and
+        // preventDefault so a nested <button> can never submit a surrounding form.
+        node.addEventListener(
+            'click',
+            function (event) {
+                event.preventDefault()
+                window.open(profileUrl, '_blank', 'noopener')
+            },
+            true,
+        )
+    }
+
     var init = async function () {
         var root = document.querySelector('[data-starter-review]')
         if (!root) {
@@ -246,7 +277,7 @@
                 var profileUrl = normalize(context.starter.profile_url)
                 var hasProfile = /^\/hire\/[a-z0-9-]+$/i.test(profileUrl)
                 setHidden(profileNode, !hasProfile)
-                if (hasProfile) profileNode.setAttribute('href', profileUrl)
+                if (hasProfile) bindProfileLink(profileNode, profileUrl)
             }
 
             var form = root.querySelector('form[data-starter-review-form]')

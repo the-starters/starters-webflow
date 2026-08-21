@@ -3273,7 +3273,7 @@ form contract is:
 | `data-starter-review-name` | Safe Starter display name |
 | `data-starter-review-photo` | Public HTTPS Starter image |
 | `data-starter-review-headline` | Safe Starter headline |
-| `data-starter-review-profile-link` | Optional `/hire/<slug>` link |
+| `data-starter-review-profile-link` | Optional `/hire/<slug>` link. May sit on a plain anchor or on the design-system Button component instance |
 | `data-starter-review-error` | Inline validation or submission error |
 
 The controller owns the inline `display` of every `[data-starter-review-state]`
@@ -3311,6 +3311,20 @@ exactly once per page — the controller binds the first match only. The control
 also strips `srcset` and `sizes` from the photo node before setting `src`, because
 the Designer's placeholder `srcset` outranks it; do not rely on responsive-image
 settings on that element.
+
+The profile link may be a plain anchor or the design-system Button component. Put
+`data-starter-review-profile-link` on the component *instance* as a regular
+element custom attribute — on the outer `div.button_main-wrap`, where
+instance-level attributes do publish. Do not put it in the component's
+attribute-property panel: those do not publish to the live page, verified. The
+controller adapts to what it finds. If the marked node is an anchor, or contains
+one, it sets `href` as before. If it does not — the Button component renders
+`div.button_main-wrap > div.clickable_wrap > button.clickable_btn` with no anchor
+at all, so an `href` would go nowhere — the controller binds a capture-phase click
+that opens the profile in a new tab, guarded by
+`data-starter-review-profile-bound` so a re-resolve cannot stack listeners. Either
+way the `/hire/<slug>` allowlist gates it first: a `profile_url` that fails the
+pattern hides the whole node and binds nothing.
 
 Pass the controller's redaction hook at the site-level PostHog initialization
 boundary. If the site already has a `before_send` callback, assign that callback
