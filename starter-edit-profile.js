@@ -35,22 +35,21 @@ function memberScopeChangedError() {
 	return error;
 }
 
-// Memberstack immediately replays its auth state when this listener subscribes.
-// Ignore that first replay and bracket subscription with two current-member reads.
-// Every later notification invalidates in-flight work, including logout followed by
-// reauthentication as the same member.
-function observeMemberstackAuth(client) {
+// Memberstack immediately replays its auth state when this listener subscribes, and
+// that replay can arrive empty while getCurrentMember() already has the live member.
+// Ignore the first notification only when it is empty or reports the member read just
+// before subscribing. Every other notification invalidates in-flight work, including
+// logout followed by reauthentication as the same member.
+function observeMemberstackAuth(client, subscribedMemberId) {
 	if (observedMemberstackClient === client) return;
 	observedMemberstackClient = client;
 	let awaitingInitialNotification = true;
 	if (typeof client?.onAuthChange === 'function') {
-		client.onAuthChange(() => {
+		client.onAuthChange((result) => {
+			const nextMemberId = memberFromResult(result)?.id || '';
 			if (awaitingInitialNotification) {
 				awaitingInitialNotification = false;
-				// Memberstack replays its current auth state on subscribe. The replay can
-				// briefly be empty while getCurrentMember() already has the live member.
-				// A second member read below closes that race before any request starts.
-				return;
+				if (!nextMemberId || nextMemberId === subscribedMemberId) return;
 			}
 			memberAuthGeneration += 1;
 		});
@@ -62,14 +61,19 @@ async function captureMemberScope() {
 	if (!client || typeof client.getCurrentMember !== 'function') {
 		throw new Error('Memberstack member lookup is unavailable.');
 	}
-	const initialMember = memberFromResult(await client.getCurrentMember());
-	if (!initialMember?.id) throw memberScopeChangedError();
-	observeMemberstackAuth(client);
+	// The pre-subscribe read brackets the subscription window that no generation guard
+	// can cover yet, so it is only needed on the capture that installs the listener.
+	let subscribedMemberId = '';
+	if (observedMemberstackClient !== client) {
+		subscribedMemberId = memberFromResult(await client.getCurrentMember())?.id || '';
+		if (!subscribedMemberId) throw memberScopeChangedError();
+		observeMemberstackAuth(client, subscribedMemberId);
+	}
 	const generation = memberAuthGeneration;
 	const member = memberFromResult(await client.getCurrentMember());
 	if (
 		!member?.id ||
-		member.id !== initialMember.id ||
+		(subscribedMemberId && member.id !== subscribedMemberId) ||
 		generation !== memberAuthGeneration
 	) throw memberScopeChangedError();
 	return { client, generation, member };

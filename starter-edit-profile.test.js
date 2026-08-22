@@ -430,12 +430,24 @@ async function testInitialEmptyAuthNotificationDoesNotRejectCurrentMemberSave() 
   assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
 }
 
-async function testMemberSwitchBetweenBracketingReadsDoesNotWrite() {
-  let requests = 0
+async function testInitialAuthNotificationForDifferentMemberInvalidatesSave() {
   const environment = createEnvironment(async () => {
-    requests += 1
-    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+    throw new Error('fetch must not run')
   }, {
+    initialAuthNotification: { id: 'mem_other', auth: { email: 'other@example.com' }, customFields: {} },
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+}
+
+async function testMemberSwitchBetweenBracketingReadsFailsBeforeRequestStage() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    workflowDiagnostics: true,
     memberReadSequence: [
       { id: 'mem_test', auth: { email: 'old@example.com' }, customFields: {} },
       { id: 'mem_other', auth: { email: 'other@example.com' }, customFields: {} },
@@ -444,8 +456,44 @@ async function testMemberSwitchBetweenBracketingReadsDoesNotWrite() {
 
   await submit(environment)
 
-  assert.equal(requests, 0)
+  assert.equal(environment.requests.length, 0)
   assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.deepEqual(
+    environment.tracked.map((event) => event.name),
+    ['workflow_form_submit_failed'],
+  )
+  const receipt = environment.window.__startersWorkflowDiagnosticLast
+  assert.equal(receipt.stage, 'auth')
+  assert.equal(receipt.error_code, 'MEMBER_SCOPE_CHANGED')
+  assert.equal(receipt.request_started, false)
+}
+
+async function testSecondSaveStillFailsClosedWhenMemberSwitchesMidRequest() {
+  const firstResponse = deferred()
+  const secondResponse = deferred()
+  const responses = [firstResponse.promise, secondResponse.promise]
+  const environment = createEnvironment(() => responses.shift())
+  environment.window.MEMBER.customFields.phone = ''
+
+  const firstSubmission = submit(environment)
+  firstResponse.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  await firstSubmission
+
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+  assert.equal(environment.memberUpdates.length, 1)
+
+  const secondSubmission = submit(environment)
+  await new Promise(setImmediate)
+  environment.switchMember({
+    id: 'mem_other',
+    auth: { email: 'other@example.com' },
+    customFields: {},
+  })
+  secondResponse.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  await secondSubmission
+
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 1 })
+  assert.equal(environment.memberUpdates.length, 1)
 }
 
 async function testEarlyLoadInitializesCountersAfterParsing() {
@@ -879,7 +927,9 @@ Promise.all([
   testLateLoadInitializesImmediately(),
   testInitialSameMemberAuthNotificationDoesNotRejectSave(),
   testInitialEmptyAuthNotificationDoesNotRejectCurrentMemberSave(),
-  testMemberSwitchBetweenBracketingReadsDoesNotWrite(),
+  testInitialAuthNotificationForDifferentMemberInvalidatesSave(),
+  testMemberSwitchBetweenBracketingReadsFailsBeforeRequestStage(),
+  testSecondSaveStillFailsClosedWhenMemberSwitchesMidRequest(),
   testEarlyLoadInitializesCountersAfterParsing(),
   testNon2xx(),
   testEveryOwnedSectionOpensSuccessModal(),
