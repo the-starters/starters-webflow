@@ -289,7 +289,7 @@ test('ambiguous confirmation survives a page rebuild and clears only after succe
     responseOk = true
     global.xanoAuthFetch = async (_url, options) => {
       bodies.push(JSON.parse(options.body))
-      return { ok: true, json: async () => ({ status: 'pending' }) }
+      return { ok: true, json: async () => ({ confirmation: { status: 'pending' } }) }
     }
     await clickFreshButton()
     assert.equal(bodies.length, 2)
@@ -299,7 +299,7 @@ test('ambiguous confirmation survives a page rebuild and clears only after succe
 
     global.xanoAuthFetch = async (_url, options) => {
       bodies.push(JSON.parse(options.body))
-      return { ok: true, json: async () => ({ status: 'confirmed' }) }
+      return { ok: true, json: async () => ({ confirmation: { status: 'confirmed' }, duplicate: false }) }
     }
     await clickFreshButton()
     assert.equal(bodies.length, 3)
