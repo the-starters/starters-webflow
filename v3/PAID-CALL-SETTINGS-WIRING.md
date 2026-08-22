@@ -51,7 +51,7 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | Description/title input | `name="call-description"` |
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
-| Authored price tile | Preferred: `data-call-settings-output="price"`; the current component fallback resolves, inside `data-service-card-element="price-card"`, the leaf element whose authored text is already a complete currency amount such as `$150` |
+| Authored price tile | Preferred: `data-call-settings-output="price"`; the current component fallback resolves, inside `data-service-card-element="price-card"`, either one leaf containing a complete amount such as `$150` or the published adjacent sibling spans `$` + `150` |
 
 Yes and No are resolved as one pair, never independently, so a single radio can never be bound as
 both answers. Canonical `yes` and `no` values match first, then a leading `yes` or `no` word such as
@@ -85,9 +85,13 @@ The fallback runs in the card and stable-contract wiring only; the
 `data-paid-call-element="settings"` panel renders a price through its canonical output alone.
 The authored tile is borrowed, not owned, so the fallback is deliberately narrow:
 
-- Only a leaf whose authored text is already a complete currency amount is bound. A caption, a `/hr`
-  unit, or a bare number completed by a separate currency symbol is never rewritten, and a tile with
-  no such leaf is left entirely to Designer.
+- Exactly two authored shapes are bound. Either one unique leaf whose text is already a complete
+  currency amount such as `$150`, or one unique pair of adjacent sibling leaves holding `$` and a
+  bare number, where only the numeric leaf is painted and the authored currency leaf is preserved.
+  In both shapes the amount must also end the price: a sibling that continues it with more digits or
+  a cents fragment such as `.00` disqualifies the tile, so the amount is never half-rewritten into a
+  doubled price. A caption, a `/hr` unit, more than one candidate, and any other shape are never
+  rewritten, and such a tile is left entirely to Designer.
 - Only a canonical `data-call-settings-output="price"` element, which exists solely as controller
   output, shows the `$0.00` zero state. With no active canonical service — including paid calls off,
   a signed-out member, and an expired session — the authored tile is restored to its Designer copy.
@@ -148,20 +152,22 @@ Do not activate this form until the paid-call reconciliation dry run has zero un
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion
 recovery, the duplicate-initialization dedup, the published `consulting-calls-paid`
 binding, the stale-readiness save of an active service, the expired-session
-fail-closed writes, and the authored price tile fallback — canonical precedence, leaf
-selection, Designer-copy restore, and Free-sibling isolation — are executable regressions
-in `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a
-live Xano TEST configuration, and an asset that only exists once the tag is published, so
-they are not runnable from CI or from a local test phase. Both
-`the-starters-3-0.webflow.io` and `thestarters.com` answer `401` behind the site
-password, so a local phase cannot even read the live authored DOM.
+fail-closed writes, and the authored price tile fallback — canonical precedence,
+single-leaf and split `$` + number selection, the continued-amount guard that leaves a
+tile with a trailing cents fragment alone, Designer-copy restore, and Free-sibling
+isolation — are executable regressions in `v3/paid-call-settings.test.js`. The remaining
+legs need a live Memberstack session, a live Xano TEST configuration, and an asset that
+only exists once the tag is published, so they are not runnable from CI or from a local
+test phase. Both `the-starters-3-0.webflow.io` and `thestarters.com` answer `401` behind
+the site password, so a local phase cannot even read the live authored DOM.
 The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
-   the served asset is the new build: the served file must contain the published Paid
-   group name `consulting-calls-paid` and the joint pair resolver `cardRadioPair`. Neither
-   the earlier root-wait recovery nor `normalizeCardRadioGroup` alone proves the new
-   build, because the previous build already shipped both.
+   the served asset is the new build: the served file must contain the split-span price
+   resolver, `AUTHORED_PRICE_NUMBER` together with `endsAuthoredAmount`. The previous build
+   already shipped `consulting-calls-paid`, `cardRadioPair`, the root-wait recovery, and
+   `normalizeCardRadioGroup`, so none of those markers can tell this release from the one
+   before it; always check a marker this release introduced.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
    card reaches `data-paid-call-settings="ready"` with canonical values, including a
    reload where Webflow or Memberstack inserts the Paid card late.
@@ -179,9 +185,10 @@ The release owner runs them by hand, in this order, after the PR merges:
    service it must read the canonical Xano rate as `$1,500.00`-style USD in the amount
    element only, with any authored caption and unit untouched and no doubled currency
    symbol; after turning paid calls off it must return to the Designer copy rather than
-   showing `$0.00`. If the tile does not change at all, its amount element does not author
-   a complete currency amount — report the real structure instead of widening the fallback
-   by guess, and prefer adding `data-call-settings-output="price"` in Designer.
+   showing `$0.00`. If the tile does not change at all, its markup is neither of the two
+   bound shapes — most often the amount is split across more than the `$` and number pair,
+   such as a separate cents span — so report the real structure instead of widening the
+   fallback by guess, and prefer adding `data-call-settings-output="price"` in Designer.
 6. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
    it in the paid-call dry run. Never run a live-money production charge.
 

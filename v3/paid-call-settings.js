@@ -12,6 +12,7 @@
   const CARD_ROOT_SELECTOR = '[data-availability-element="call-paid-form"]'
   const AUTHORED_PRICE_CARD_SELECTOR = '[data-service-card-element="price-card"]'
   const AUTHORED_PRICE_AMOUNT = /^\$\s*[\d.,]+$/
+  const AUTHORED_PRICE_NUMBER = /^[\d.,]+$/
   const STATUS_ATTRIBUTE = 'data-paid-call-settings'
   const PANEL_SELECTOR =
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"]'
@@ -397,33 +398,68 @@
     }, [])
   }
 
+  // An amount only owns the whole price when no sibling continues it, so a
+  // trailing cents or digit fragment leaves the tile Designer-owned instead of
+  // being painted over into a doubled amount.
+  function endsAuthoredAmount(leaves, index) {
+    const leaf = leaves[index]
+    const next = leaves[index + 1]
+    if (!leaf || !next) return true
+    if (leaf.parentElement !== next.parentElement) return true
+    return !AUTHORED_PRICE_NUMBER.test(String(next.textContent || '').trim())
+  }
+
   // The current native Webflow Paid card predates the canonical price output, so
   // the canonical hook always wins and this resolves the existing tile only as a
-  // fallback. Bind the leaf that already displays a complete currency amount:
-  // that is proof the node owns the whole price, so the controller can never
-  // rewrite a caption, a unit, or a bare number that a sibling symbol completes.
-  // With no such leaf the tile stays Designer-owned and nothing is painted.
+  // fallback. Prefer the leaf that already displays a complete currency amount.
+  // The published Webflow component splits "$" and "150" into adjacent sibling
+  // spans, so that exact shape is also safe: paint only the numeric sibling and
+  // preserve the authored currency span. With no unique amount the tile stays
+  // Designer-owned and nothing is painted.
   function authoredPriceTarget() {
     if (!cardMode) return null
     const card = qs(AUTHORED_PRICE_CARD_SELECTOR, uiScope || root)
     if (!card) return null
-    return (
-      leafElements(card).find(function (leaf) {
-        return AUTHORED_PRICE_AMOUNT.test(String(leaf.textContent || '').trim())
-      }) || null
-    )
+    const leaves = leafElements(card)
+    const complete = leaves.filter(function (leaf) {
+      return AUTHORED_PRICE_AMOUNT.test(String(leaf.textContent || '').trim())
+    })
+    if (complete.length > 1) return null
+    if (complete.length === 1) {
+      const index = leaves.indexOf(complete[0])
+      return endsAuthoredAmount(leaves, index) ? { target: complete[0], mode: 'currency' } : null
+    }
+
+    const split = []
+    leaves.forEach(function (leaf, index) {
+      const number = leaves[index + 1]
+      if (
+        String(leaf.textContent || '').trim() === '$' &&
+        number &&
+        leaf.parentElement === number.parentElement &&
+        AUTHORED_PRICE_NUMBER.test(String(number.textContent || '').trim()) &&
+        endsAuthoredAmount(leaves, index + 1)
+      ) {
+        split.push(number)
+      }
+    })
+    return split.length === 1 ? { target: split[0], mode: 'number' } : null
   }
 
   // Only a canonical output element is controller-owned and may show a zero
   // state. The authored tile is borrowed, so it carries a canonical price while
   // one exists and returns to its authored copy on every reset path.
   function paintAuthoredPrice(service) {
-    const target = authoredPriceTarget()
-    if (!target) return
-    if (!authoredPrice || authoredPrice.target !== target) {
-      authoredPrice = { target: target, text: String(target.textContent || '') }
+    const resolved = authoredPriceTarget()
+    if (!resolved) return
+    const target = resolved.target
+    if (!authoredPrice || authoredPrice.target !== target || authoredPrice.mode !== resolved.mode) {
+      authoredPrice = { target: target, text: String(target.textContent || ''), mode: resolved.mode }
     }
-    target.textContent = service ? formatUsd(service.price_cents) : authoredPrice.text
+    const formatted = service ? formatUsd(service.price_cents) : authoredPrice.text
+    target.textContent = service && resolved.mode === 'number'
+      ? formatted.replace(/^\$\s*/, '')
+      : formatted
   }
 
   function restoreAuthoredPrice() {
