@@ -174,6 +174,8 @@ Successful Brand Build Account completion also emits the privacy-safe
 `brand_account_email_decision` event. It contains only `controller_version`,
 `email_change_required`, and `security_email_attempted`. It must never contain
 the submitted email, the authenticated email, a member ID, or form values.
+Emission is best-effort: a missing, blocked, or throwing `StartersTrack` leaves
+the completed account workflow and its user-facing result unchanged.
 
 ## Brand controller cache key
 
@@ -185,10 +187,12 @@ key. For release `v1.59.339`, use:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=1.59.339"></script>
 ```
 
-Update this query value for every Brand account controller release, and bump
-`CONTROLLER_VERSION` in `brand-account-controller.js` to the same release in the
-same change, so the diagnostic receipt and the `brand_account_email_decision`
-event identify which build actually served the member. Then publish Webflow and
+Update this query value for every Brand account controller release, and in the
+same change bump `CONTROLLER_VERSION` in `brand-account-controller.js` to the
+next build identifier (`brand-account-controller-v2` at this release, following
+the repository's `<controller>-vN` receipt convention rather than the semver
+tag), so the diagnostic receipt and the `brand_account_email_decision` event
+identify which build actually served the member. Then publish Webflow and
 verify the complete saved block and all published domains.
 
 The query key forces *browsers* to request the new controller while preserving
@@ -203,9 +207,9 @@ curl -s "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/bra
   | grep -c "brand-account-controller-v2"
 ```
 
-The released `CONTROLLER_VERSION` must be present. If the served file is still
-the previous build, do not run the production test on `@latest`: publish the
-version-pinned path for that release
+The released `CONTROLLER_VERSION` must be present in that output. If the served
+file is still the previous build, do not run the production test on `@latest`:
+publish the version-pinned path for that release
 (`@v1.59.339/v3/brand-account-controller.js`), which is resolved per ref and
 cannot be answered from a stale `@latest` resolution, and re-run the check. The
 live confirmation is a `brand_account_email_decision` event carrying the
@@ -341,6 +345,12 @@ projection.
 - Build Account writes ordinary fields, any changed login email, and the
   completion marker. It attempts one reset/set-password email only when the
   login email changed; normal onboarding with the authenticated email sends none.
+- If the authenticated login email is unreadable on the submitting member, Build
+  Account treats the change as not required: it skips the `updateMemberAuth`
+  write and the reset/set-password email, and still completes the account. An
+  empty current email is indistinguishable from a changed one, so comparing
+  against it would send an unsolicited ownership email; completion stays durable
+  and Account Security remains the deliberate path for a later email change.
 - A changed login-email write can land server-side and still report failure.
   Build Account reconciles that ambiguity in two places, and only for its own
   form. A 409 or 422 from the write triggers one member read, bounded by the
@@ -381,9 +391,11 @@ projection.
   earlier account-write failure leaves the member on onboarding for a safe
   idempotent replay; an email failure occurs only after completion is durable.
 - Existing account error telemetry still carries only operation path and HTTP
-  status. Shared workflow receipts add only the README-owned allowlisted fields;
-  neither channel carries member ID, email, name, company, tokens, headers, or
-  request/response bodies.
+  status. Shared workflow receipts add only the README-owned allowlisted fields,
+  and the `brand_account_email_decision` event adds only the three flags listed
+  under [Support diagnostic receipts](#support-diagnostic-receipts); no channel
+  carries member ID, email, name, company, tokens, headers, or request/response
+  bodies.
 
 ## Brand canary matrix
 
