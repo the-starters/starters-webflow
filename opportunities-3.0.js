@@ -3471,10 +3471,6 @@
     }
   }
 
-  function projectLifecycleWaitingOn(project, role) {
-    return projectLifecycleActionState(project, role).waitingOn
-  }
-
   function projectActionIntent(
     project,
     confirmAction = window.confirm,
@@ -6344,8 +6340,6 @@
     invoiceSubmitControl,
     setInvoiceSubmitDisabled,
     projectActionIntent,
-    projectPartyRequested,
-    projectLifecycleWaitingOn,
     projectLifecycleActionState,
     projectContractIsViewable,
     projectContractIsDownloadable,

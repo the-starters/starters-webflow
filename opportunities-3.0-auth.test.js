@@ -849,7 +849,8 @@ test('project lifecycle requests fail closed when the canonical timestamps are m
 
 test('project lifecycle waiting labels are role-aware for either request order', async () => {
   const bridge = await loadBridge(async () => response({}))
-  const waitingOn = bridge.window.Opp30.projectLifecycleWaitingOn
+  const waitingOn = (project, role) =>
+    bridge.window.Opp30.projectLifecycleActionState(project, role).waitingOn
 
   assert.equal(
     waitingOn({
