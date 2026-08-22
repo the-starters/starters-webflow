@@ -152,13 +152,14 @@ Do not activate this form until the paid-call reconciliation dry run has zero un
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion
 recovery, the duplicate-initialization dedup, the published `consulting-calls-paid`
 binding, the stale-readiness save of an active service, the expired-session
-fail-closed writes, and the authored price tile fallback — canonical precedence, leaf
-selection, Designer-copy restore, and Free-sibling isolation — are executable regressions
-in `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a
-live Xano TEST configuration, and an asset that only exists once the tag is published, so
-they are not runnable from CI or from a local test phase. Both
-`the-starters-3-0.webflow.io` and `thestarters.com` answer `401` behind the site
-password, so a local phase cannot even read the live authored DOM.
+fail-closed writes, and the authored price tile fallback — canonical precedence,
+single-leaf and split `$` + number selection, the continued-amount guard that leaves a
+tile with a trailing cents fragment alone, Designer-copy restore, and Free-sibling
+isolation — are executable regressions in `v3/paid-call-settings.test.js`. The remaining
+legs need a live Memberstack session, a live Xano TEST configuration, and an asset that
+only exists once the tag is published, so they are not runnable from CI or from a local
+test phase. Both `the-starters-3-0.webflow.io` and `thestarters.com` answer `401` behind
+the site password, so a local phase cannot even read the live authored DOM.
 The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
