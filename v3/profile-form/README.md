@@ -12,6 +12,13 @@ newlines, and deferred controllers add one-time browser guards. The manifest rec
 live identities and candidate identities, plus the exact inverse transformation used to reconstruct
 each captured live body.
 
+`draft-state.js` is the one candidate that no longer reconstructs to its published body: it carries the
+member-bound hydration fix, so its transformation is recorded as
+`whitespace_plus_idempotency_guard_plus_behavior_change` and names
+`build-draft-state-published.capture.txt` as the immutable 11,002-character published body. Tests still
+pin the candidate length and SHA-256, still prove the published length, body hash, and complete-embed
+hash from that capture, and fail if the declared change ever stops diverging from it.
+
 `inline-extraction-cutover-candidate.json` binds each source body to its authenticated published body
 length, SHA-256, complete-embed SHA-256, script index, component instance, and node or complete
 custom-code location. `inline-extraction-loaders.CANDIDATE.html` serializes one ordered page Head Code loader
@@ -57,11 +64,14 @@ node --test v3/profile-form/inline-extraction-contract.test.js
 
 The executable suite checks immutable live identities and candidate identities against an oracle
 outside the cutover manifest. It removes the recorded one-time guards and restores normalized
-whitespace to reconstruct each live body, parses the loader templates, and rejects URL, defer, order, duplicate, wrong-head,
+whitespace to reconstruct each live body, reads the published capture for the one candidate that
+declares a behavior change, parses the loader templates, and rejects URL, defer, order, duplicate, wrong-head,
 missed-removal, existing-loader, and route-owner drift. It executes each complete route sequence,
 including every existing profile controller at its captured position, in one browser-like context and
 pins the exact boot and handler registration order. It evaluates each grouped route twice to prove
 one boot and one native-form handler owner, and
 checks the shared empty-profile model,
-country/state/city transitions, local-versus-member draft precedence, canonical edit hydration, the
+country/state/city transitions, local-versus-member draft precedence, blank member-bound draft
+hydration from the signed-in member and its write-back into the synchronized draft, canonical edit
+hydration, the
 normalized final Build Profile payload, and that the controllers do not create a form element.
