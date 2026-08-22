@@ -2364,6 +2364,8 @@
     '[wf-xano-link="review_starter"], [data-project-action="review"]'
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
+  const PROJECT_REQUEST_PARTIES = ['brand', 'starter']
+  const PROJECT_LIFECYCLE_UNAVAILABLE_LABEL = 'Status Unavailable'
   // Sent documents use recipient view/sign sessions. Completed documents use
   // a separate protected-PDF route and never mint a signing session.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
@@ -3194,21 +3196,8 @@
     })
 
     if (end) {
-      const waiting = projectLifecycleWaitingOn(project, projectWorkflowRole)
-      const label =
-        state === 'pending'
-          ? 'Cancel Project'
-          : state === 'completion_requested'
-            ? waiting
-              ? 'Waiting for ' + waiting
-              : 'Confirm Completion'
-            : state === 'termination_requested'
-              ? waiting
-                ? 'Waiting for ' + waiting
-                : 'Confirm End'
-              : 'End Project'
-      setProjectActionLabel(end, label)
-      setProjectActionWaiting(end, Boolean(waiting))
+      setProjectActionLabel(end, projectLifecycleActionLabel(project, projectWorkflowRole))
+      setProjectActionWaiting(end, projectLifecycleActionBlocked(project, projectWorkflowRole))
       if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'lifecycle') {
         setOpportunityActionPending(projectActionWrap(end), true)
       }
@@ -3446,15 +3435,48 @@
     return project[field] != null && String(project[field]).trim() !== ''
   }
 
-  function projectLifecycleWaitingOn(project, role) {
+  function projectLifecycleRequestAction(project) {
     const state = lifecycleState(project)
-    const actionName = state === 'completion_requested'
-      ? 'completion'
-      : state === 'termination_requested'
-        ? 'termination'
-        : ''
-    if (!actionName || !projectPartyRequested(project, role, actionName)) return ''
+    if (state === 'completion_requested') return 'completion'
+    if (state === 'termination_requested') return 'termination'
+    return ''
+  }
+
+  function projectLifecycleRequesterUnknown(project, role) {
+    const actionName = projectLifecycleRequestAction(project)
+    if (!actionName) return false
+    if (role !== 'brand' && role !== 'starter') return true
+    return PROJECT_REQUEST_PARTIES.some(
+      (party) => project[party + '_' + actionName + '_requested_at'] === undefined,
+    )
+  }
+
+  function projectLifecycleWaitingOn(project, role) {
+    const actionName = projectLifecycleRequestAction(project)
+    if (!actionName) return ''
+    if (projectLifecycleRequesterUnknown(project, role)) return ''
+    if (!projectPartyRequested(project, role, actionName)) return ''
     return role === 'brand' ? 'Starter' : 'Brand'
+  }
+
+  function projectLifecycleActionLabel(project, role) {
+    if (projectLifecycleRequesterUnknown(project, role)) {
+      return PROJECT_LIFECYCLE_UNAVAILABLE_LABEL
+    }
+    const state = lifecycleState(project)
+    if (state === 'pending') return 'Cancel Project'
+    const waiting = projectLifecycleWaitingOn(project, role)
+    if (waiting) return 'Waiting for ' + waiting
+    if (state === 'completion_requested') return 'Confirm Completion'
+    if (state === 'termination_requested') return 'Confirm End'
+    return 'End Project'
+  }
+
+  function projectLifecycleActionBlocked(project, role) {
+    return (
+      projectLifecycleRequesterUnknown(project, role) ||
+      Boolean(projectLifecycleWaitingOn(project, role))
+    )
   }
 
   function projectActionIntent(
@@ -3465,13 +3487,13 @@
   ) {
     const state = lifecycleState(project)
     if (!state || PROJECT_TERMINAL_STATES.has(state)) return null
+    if (projectLifecycleActionBlocked(project, role)) return null
     if (state === 'pending') {
       return confirmAction('Cancel this project before it starts?')
         ? { action: 'cancel', reason: 'canceled_before_activation' }
         : null
     }
     if (state === 'completion_requested') {
-      if (projectPartyRequested(project, role, 'completion')) return null
       return confirmAction(
         'Confirm that the project is complete? The project closes after both sides confirm.',
       )
@@ -3479,7 +3501,6 @@
         : null
     }
     if (state === 'termination_requested') {
-      if (projectPartyRequested(project, role, 'termination')) return null
       const reason = String(project.end_reason || '').trim()
       return confirmAction('Confirm ending this project early?')
         ? { action: 'terminate', reason }
@@ -3610,7 +3631,7 @@
         )
         return
       }
-      const intent = projectActionIntent(project, window.confirm, window.prompt, projectWorkflowRole)
+      const intent = projectActionIntent(project)
       if (!intent) return
       if (intent.action === 'terminate' && !intent.reason) {
         showProjectLifecycleFeedback(projectId, 'A reason is required to end early', true)
@@ -3648,6 +3669,7 @@
       projectWorkflowActionLocks.delete(projectId)
       setProjectLifecyclePending(projectId, false, action)
       setOpportunityActionPending(projectActionWrap(action), false)
+      decorateProjectCard(card)
     }
   }
 
@@ -6328,6 +6350,8 @@
     projectActionIntent,
     projectPartyRequested,
     projectLifecycleWaitingOn,
+    projectLifecycleActionLabel,
+    projectLifecycleRequesterUnknown,
     projectContractIsViewable,
     projectContractIsDownloadable,
     projectContractPanelState,
