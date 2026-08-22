@@ -124,7 +124,8 @@
   }
 
   function confirmSucceeded(body) {
-    return clean(body && body.status).toLowerCase() === 'confirmed'
+    const confirmation = body && body.confirmation ? body.confirmation : body
+    return clean(confirmation && confirmation.status).toLowerCase() === 'confirmed'
   }
 
   function normalizeTimestamp(value) {

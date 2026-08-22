@@ -148,6 +148,15 @@ test('builds the current confirm payload only when booking_ref identities match'
   }, 'dashboard-confirm:one'), null)
 })
 
+test('accepts the canonical nested confirmation response and fails closed otherwise', () => {
+  assert.equal(api.confirmSucceeded({ confirmation: { status: 'confirmed' }, duplicate: false }), true)
+  assert.equal(api.confirmSucceeded({ confirmation: { status: 'confirmed' }, duplicate: true }), true)
+  assert.equal(api.confirmSucceeded({ status: 'confirmed' }), true)
+  assert.equal(api.confirmSucceeded({ confirmation: { status: 'pending' } }), false)
+  assert.equal(api.confirmSucceeded({ confirmation: null }), false)
+  assert.equal(api.confirmSucceeded(null), false)
+})
+
 test('confirmation attempt storage scopes omit identity data and isolate account and environment', async () => {
   const base = {
     booking_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
