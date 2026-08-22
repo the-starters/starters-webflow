@@ -487,6 +487,13 @@
     }
   }
 
+  async function applyBuildLoginEmail(form, client, member, email) {
+    if (!memberEmail(member)) return null
+    var emailIntent = recordBuildEmailIntent(form, member, email)
+    await applyBuildEmailChange(client, member, email)
+    return emailIntent
+  }
+
   async function sendResetPasswordEmailOnce(form, client, email) {
     var normalizedEmail = trim(email).toLowerCase()
     var attemptedEmails = passwordEmailAttempts.get(form)
@@ -580,11 +587,13 @@
 
   function trackBuildEmailDecision(emailChangeRequired, securityEmailAttempted) {
     if (!window.StartersTrack || typeof window.StartersTrack.track !== 'function') return
-    window.StartersTrack.track('brand_account_email_decision', {
-      controller_version: CONTROLLER_VERSION,
-      email_change_required: Boolean(emailChangeRequired),
-      security_email_attempted: Boolean(securityEmailAttempted),
-    })
+    try {
+      window.StartersTrack.track('brand_account_email_decision', {
+        controller_version: CONTROLLER_VERSION,
+        email_change_required: Boolean(emailChangeRequired),
+        security_email_attempted: Boolean(securityEmailAttempted),
+      })
+    } catch (error) {}
   }
 
   function friendlyError(error) {
@@ -618,8 +627,7 @@
     // can land while its own response is lost. Keep the changed target on this
     // form so the safe retry still sends its one ownership-proof message after
     // completion succeeds.
-    var emailIntent = recordBuildEmailIntent(form, member, values.email)
-    await applyBuildEmailChange(client, member, values.email)
+    var emailIntent = await applyBuildLoginEmail(form, client, member, values.email)
     await markBuildComplete(client)
     // Only reached once completion is durable. The marker stops the routers
     // from bouncing this member back onto the form during the webhook's

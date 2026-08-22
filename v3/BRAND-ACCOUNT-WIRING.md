@@ -126,11 +126,18 @@ initialization, so it can align both native signup forms with Test or Live Data:
     guardSecurityForm: 'identity'
   }
 </script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=1.59.339"></script>
 ```
 
 The `identity` setting is the production activation for Starter login-email
-changes. Keep the configuration block before the controller script.
+changes. Keep the configuration block before the controller script. The
+`?v=` value is the release cache key described under
+[Brand controller cache key](#brand-controller-cache-key): the versioned tag
+replaces the previous controller tag. Never leave a second, un-versioned
+`brand-account-controller.js` tag in the block. The controller self-guards on
+`window.__startersBrandAccountControllerBooted`, so a stale cached copy that
+boots first makes the freshly requested copy a no-op and the release only looks
+published.
 
 On `/complete-profile`, after the sitewide Memberstack and route-guard installs,
 keep the photo and redirect scripts after that sitewide controller:
@@ -178,10 +185,31 @@ key. For release `v1.59.339`, use:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=1.59.339"></script>
 ```
 
-Update this query value for every Brand account controller release, then
-publish Webflow and verify the complete saved block and all published domains.
-This forces browsers to request the new controller while preserving the
-repository's `@latest` release contract.
+Update this query value for every Brand account controller release, and bump
+`CONTROLLER_VERSION` in `brand-account-controller.js` to the same release in the
+same change, so the diagnostic receipt and the `brand_account_email_decision`
+event identify which build actually served the member. Then publish Webflow and
+verify the complete saved block and all published domains.
+
+The query key forces *browsers* to request the new controller while preserving
+the repository's `@latest` release contract. It does not defeat jsDelivr's own
+edge cache: jsDelivr resolves `@latest` for a GitHub ref and can keep serving
+that resolved file for hours, and it does not treat the query string as part of
+its cache key. So the query bump alone is not proof that members are served the
+new code. Before the bounded production test, verify the served content:
+
+```bash
+curl -s "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=1.59.339" \
+  | grep -c "brand-account-controller-v2"
+```
+
+The released `CONTROLLER_VERSION` must be present. If the served file is still
+the previous build, do not run the production test on `@latest`: publish the
+version-pinned path for that release
+(`@v1.59.339/v3/brand-account-controller.js`), which is resolved per ref and
+cannot be answered from a stale `@latest` resolution, and re-run the check. The
+live confirmation is a `brand_account_email_decision` event carrying the
+released `controller_version`.
 
 ## Executed endpoint #1513 replay results
 
