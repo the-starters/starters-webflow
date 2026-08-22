@@ -51,6 +51,7 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | Description/title input | `name="call-description"` |
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
+| Authored price tile | Preferred: `data-call-settings-output="price"`; the current component fallback resolves the `p` inside `data-service-card-element="price-card"` |
 
 Yes and No are resolved as one pair, never independently, so a single radio can never be bound as
 both answers. Canonical `yes` and `no` values match first, then a leading `yes` or `no` word such as
@@ -75,6 +76,9 @@ For new Designer wiring, use the stable contract instead of the compatibility na
 - Optional outputs: `data-call-settings-output="status|on|off|price"`
 
 Keep the form native to Webflow. The controller binds behavior and does not create form HTML.
+The price fallback changes only the existing tile's text. It does not replace the tile, add markup,
+or use a styling class. Add the canonical output attribute in Designer when that element becomes
+available through the approved element-edit path; the canonical marker always wins.
 
 Optional prerequisite rows use `data-paid-call-prerequisite` with one of these values (authorable
 anywhere inside the Paid card scope, including the Call Item header):

@@ -382,7 +382,14 @@
   }
 
   function output(name) {
-    return qs('[data-call-settings-output="' + name + '"]', uiScope || root)
+    const canonical = qs('[data-call-settings-output="' + name + '"]', uiScope || root)
+    if (canonical || name !== 'price' || !cardMode) return canonical
+
+    // The current native Webflow Paid card predates the canonical price-output
+    // hook. Keep its authored structure intact and bind through the component's
+    // existing semantic marker until Designer can add the canonical attribute.
+    const priceCard = qs('[data-service-card-element="price-card"]', uiScope || root)
+    return priceCard ? qs('p', priceCard) : null
   }
 
   function formatUsd(cents) {

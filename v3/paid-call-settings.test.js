@@ -96,7 +96,7 @@ function service(overrides = {}) {
   }
 }
 
-function buildDom(withRoot = true, cardMode = false, shared = false) {
+function buildDom(withRoot = true, cardMode = false, shared = false, authoredPriceFallback = false) {
   if (withRoot && cardMode) {
     const card = new El('section', { 'data-id': '' })
     const open = new El('div', { 'data-availability-action': 'item-form-open' })
@@ -112,7 +112,17 @@ function buildDom(withRoot = true, cardMode = false, shared = false) {
     const close = new El('div', { 'data-availability-action': 'item-form-close' })
     const save = new El('div', { 'data-availability-action': 'item-form-submit' })
     const statusOutput = new El('p', { 'data-call-settings-output': 'status' })
-    const priceOutput = new El('p', { 'data-call-settings-output': 'price' })
+    const priceOutput = authoredPriceFallback
+      ? null
+      : new El('p', { 'data-call-settings-output': 'price' })
+    const authoredPriceCard = authoredPriceFallback
+      ? new El('div', { 'data-service-card-element': 'price-card' })
+      : null
+    const authoredPriceText = authoredPriceFallback ? new El('p') : null
+    if (authoredPriceText) {
+      authoredPriceText.textContent = '$150'
+      authoredPriceCard.append(authoredPriceText)
+    }
     const onOutput = new El('div', { 'data-call-settings-output': 'on' })
     const offOutput = new El('div', { 'data-call-settings-output': 'off' })
     const prerequisites = ['calendar', 'availability', 'stripe', 'charges', 'fresh', 'bookable']
@@ -134,7 +144,8 @@ function buildDom(withRoot = true, cardMode = false, shared = false) {
     card.append(
       ...header,
       statusOutput,
-      priceOutput,
+      ...(priceOutput ? [priceOutput] : []),
+      ...(authoredPriceCard ? [authoredPriceCard] : []),
       onOutput,
       offOutput,
       ...prerequisites,
@@ -155,6 +166,8 @@ function buildDom(withRoot = true, cardMode = false, shared = false) {
       status: null,
       statusOutput,
       priceOutput,
+      authoredPriceCard,
+      authoredPriceText,
       onOutput,
       offOutput,
       formWrapper,
@@ -187,6 +200,7 @@ function load(options = {}) {
     options.withRoot !== false,
     options.cardMode === true || options.stableCardMode === true,
     options.sharedCallItem === true,
+    options.authoredPriceFallback === true,
   )
   if (options.cardRadioValues && dom.root) {
     Object.keys(options.cardRadioValues).forEach((key) => {
@@ -945,6 +959,21 @@ test('the Paid card price output renders grouped two-decimal USD', async () => {
   assert.equal(off.dom.priceOutput.textContent, '$0.00')
   assert.equal(off.dom.onOutput.style.display, 'none')
   assert.equal(off.dom.offOutput.style.display, '')
+})
+
+test('the current native Paid card price marker renders canonical USD without a new Webflow hook', async () => {
+  const result = load({
+    cardMode: true,
+    authoredPriceFallback: true,
+    initial: canonical({
+      services: [service({ price_cents: 500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.priceOutput, null)
+  assert.equal(result.dom.authoredPriceText.textContent, '$5.00')
 })
 
 test('optional prerequisite rows authored in the Paid Call Item header are painted', async () => {
