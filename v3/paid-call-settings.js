@@ -601,11 +601,17 @@
     qsa('[data-paid-call-prerequisite]', uiScope || root).forEach(function (item) {
       item.setAttribute('data-ready', 'false')
     })
+    root.setAttribute('data-paid-call-duration-current', '')
+    root.setAttribute('data-paid-call-duration-required', String(FIXED_DURATION_MINUTES))
     root.setAttribute('data-paid-call-enabled', 'false')
     root.setAttribute('data-paid-call-bookable', 'false')
     setActionEnabled(action('save'), false)
     setActionEnabled(action('disable'), false)
+    const priceOutput = output('price')
+    if (priceOutput) priceOutput.textContent = formatUsd(0)
     restoreAuthoredPrice()
+    show(output('on'), false)
+    show(output('off'), true)
     setMessage(message)
   }
 
@@ -708,13 +714,11 @@
     if (title.length < 3 || title.length > 80) {
       const message = 'Use a title between 3 and 80 characters.'
       reportFieldInvalid(titleInput, message)
-      setMessage(message)
       throw new Error(message)
     }
     if (!Number.isInteger(price) || price < 1 || price > 999999) {
       const message = 'Use a whole-dollar rate from $1 to $999,999.'
       reportFieldInvalid(priceInput, message)
-      setMessage(message)
       throw new Error(message)
     }
     return { title: title, price_cents: price * 100, duration_minutes: duration }

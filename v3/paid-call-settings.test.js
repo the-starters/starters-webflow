@@ -1162,6 +1162,61 @@ test('an expired session fails a Paid disable closed before any POST', async () 
   assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
 })
 
+test('a fail-closed Paid reset leaves exactly one OFF status pill', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.onOutput.style.display, '')
+  assert.equal(result.dom.offOutput.style.display, 'none')
+
+  result.expireMemberSilently()
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.dom.onOutput.hidden, true)
+  assert.equal(result.dom.onOutput.style.display, 'none')
+  assert.equal(result.dom.offOutput.hidden, false)
+  assert.equal(result.dom.offOutput.style.display, '')
+  assert.equal(result.dom.priceOutput.textContent, '$0.00')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-duration-current'), '')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-duration-required'), '60')
+})
+
+test('the Paid card shows only the OFF pill while canonical settings load', async () => {
+  const initialRead = deferred()
+  const result = load({
+    cardMode: true,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () =>
+        initialRead.promise.then((value) => ({ ok: true, status: 200, json: async () => value })),
+    },
+  })
+  await settle(2)
+
+  assert.equal(result.dom.statusOutput.textContent, 'Loading paid-call settings…')
+  assert.equal(result.dom.onOutput.hidden, true)
+  assert.equal(result.dom.onOutput.style.display, 'none')
+  assert.equal(result.dom.offOutput.hidden, false)
+  assert.equal(result.dom.offOutput.style.display, '')
+
+  initialRead.resolve(
+    canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  )
+  await settle(2)
+
+  assert.equal(result.dom.onOutput.style.display, '')
+  assert.equal(result.dom.offOutput.style.display, 'none')
+})
+
 test('the Paid card price output renders grouped two-decimal USD', async () => {
   const grouped = load({
     cardMode: true,
