@@ -3196,8 +3196,9 @@
     })
 
     if (end) {
-      setProjectActionLabel(end, projectLifecycleActionLabel(project, projectWorkflowRole))
-      setProjectActionWaiting(end, projectLifecycleActionBlocked(project, projectWorkflowRole))
+      const endState = projectLifecycleActionState(project, projectWorkflowRole)
+      setProjectActionLabel(end, endState.label)
+      setProjectActionWaiting(end, endState.blocked)
       if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'lifecycle') {
         setOpportunityActionPending(projectActionWrap(end), true)
       }
@@ -3435,48 +3436,43 @@
     return project[field] != null && String(project[field]).trim() !== ''
   }
 
-  function projectLifecycleRequestAction(project) {
-    const state = lifecycleState(project)
+  function projectLifecycleRequestAction(state) {
     if (state === 'completion_requested') return 'completion'
     if (state === 'termination_requested') return 'termination'
     return ''
   }
 
-  function projectLifecycleRequesterUnknown(project, role) {
-    const actionName = projectLifecycleRequestAction(project)
-    if (!actionName) return false
-    if (role !== 'brand' && role !== 'starter') return true
-    return PROJECT_REQUEST_PARTIES.some(
-      (party) => project[party + '_' + actionName + '_requested_at'] === undefined,
-    )
+  function projectLifecycleActionState(project, role) {
+    const state = lifecycleState(project)
+    const actionName = projectLifecycleRequestAction(state)
+    if (!actionName) {
+      return {
+        waitingOn: '',
+        blocked: false,
+        label: state === 'pending' ? 'Cancel Project' : 'End Project',
+      }
+    }
+    const requesterUnknown =
+      (role !== 'brand' && role !== 'starter') ||
+      PROJECT_REQUEST_PARTIES.some(
+        (party) => project[party + '_' + actionName + '_requested_at'] === undefined,
+      )
+    if (requesterUnknown) {
+      return { waitingOn: '', blocked: true, label: PROJECT_LIFECYCLE_UNAVAILABLE_LABEL }
+    }
+    if (projectPartyRequested(project, role, actionName)) {
+      const waitingOn = role === 'brand' ? 'Starter' : 'Brand'
+      return { waitingOn, blocked: true, label: 'Waiting for ' + waitingOn }
+    }
+    return {
+      waitingOn: '',
+      blocked: false,
+      label: actionName === 'completion' ? 'Confirm Completion' : 'Confirm End',
+    }
   }
 
   function projectLifecycleWaitingOn(project, role) {
-    const actionName = projectLifecycleRequestAction(project)
-    if (!actionName) return ''
-    if (projectLifecycleRequesterUnknown(project, role)) return ''
-    if (!projectPartyRequested(project, role, actionName)) return ''
-    return role === 'brand' ? 'Starter' : 'Brand'
-  }
-
-  function projectLifecycleActionLabel(project, role) {
-    if (projectLifecycleRequesterUnknown(project, role)) {
-      return PROJECT_LIFECYCLE_UNAVAILABLE_LABEL
-    }
-    const state = lifecycleState(project)
-    if (state === 'pending') return 'Cancel Project'
-    const waiting = projectLifecycleWaitingOn(project, role)
-    if (waiting) return 'Waiting for ' + waiting
-    if (state === 'completion_requested') return 'Confirm Completion'
-    if (state === 'termination_requested') return 'Confirm End'
-    return 'End Project'
-  }
-
-  function projectLifecycleActionBlocked(project, role) {
-    return (
-      projectLifecycleRequesterUnknown(project, role) ||
-      Boolean(projectLifecycleWaitingOn(project, role))
-    )
+    return projectLifecycleActionState(project, role).waitingOn
   }
 
   function projectActionIntent(
@@ -3487,7 +3483,7 @@
   ) {
     const state = lifecycleState(project)
     if (!state || PROJECT_TERMINAL_STATES.has(state)) return null
-    if (projectLifecycleActionBlocked(project, role)) return null
+    if (projectLifecycleActionState(project, role).blocked) return null
     if (state === 'pending') {
       return confirmAction('Cancel this project before it starts?')
         ? { action: 'cancel', reason: 'canceled_before_activation' }
@@ -6350,8 +6346,7 @@
     projectActionIntent,
     projectPartyRequested,
     projectLifecycleWaitingOn,
-    projectLifecycleActionLabel,
-    projectLifecycleRequesterUnknown,
+    projectLifecycleActionState,
     projectContractIsViewable,
     projectContractIsDownloadable,
     projectContractPanelState,

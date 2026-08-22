@@ -784,7 +784,9 @@ test('project lifecycle intent covers cancellation, completion and early termina
 test('project lifecycle requests fail closed when the canonical timestamps are missing', async () => {
   const bridge = await loadBridge(async () => response({}))
   const intent = bridge.window.Opp30.projectActionIntent
-  const label = bridge.window.Opp30.projectLifecycleActionLabel
+  const rawActionState = bridge.window.Opp30.projectLifecycleActionState
+  const actionState = (project, role) =>
+    JSON.parse(JSON.stringify(rawActionState(project, role)))
   let confirms = 0
   const confirmAction = () => {
     confirms += 1
@@ -804,7 +806,11 @@ test('project lifecycle requests fail closed when the canonical timestamps are m
   ]) {
     for (const role of ['brand', 'starter']) {
       assert.equal(intent(project, confirmAction, () => 'COMPLETE', role), null)
-      assert.equal(label(project, role), 'Status Unavailable')
+      assert.deepEqual(actionState(project, role), {
+        waitingOn: '',
+        blocked: true,
+        label: 'Status Unavailable',
+      })
     }
   }
   assert.equal(confirms, 0)
@@ -816,7 +822,11 @@ test('project lifecycle requests fail closed when the canonical timestamps are m
     starter_completion_requested_at: null,
   }
   assert.equal(intent(canonical, confirmAction, () => 'COMPLETE', null), null)
-  assert.equal(label(canonical, null), 'Status Unavailable')
+  assert.deepEqual(actionState(canonical, null), {
+    waitingOn: '',
+    blocked: true,
+    label: 'Status Unavailable',
+  })
   assert.equal(confirms, 0)
 
   // The canonical row still resolves to a live counterparty action.
@@ -824,7 +834,16 @@ test('project lifecycle requests fail closed when the canonical timestamps are m
     JSON.parse(JSON.stringify(intent(canonical, confirmAction, () => '', 'starter'))),
     { action: 'complete', reason: '' },
   )
-  assert.equal(label(canonical, 'starter'), 'Confirm Completion')
+  assert.deepEqual(actionState(canonical, 'starter'), {
+    waitingOn: '',
+    blocked: false,
+    label: 'Confirm Completion',
+  })
+  assert.deepEqual(actionState(canonical, 'brand'), {
+    waitingOn: 'Starter',
+    blocked: true,
+    label: 'Waiting for Starter',
+  })
   assert.equal(confirms, 1)
 })
 
@@ -2443,12 +2462,14 @@ test('Brand requester sees a waiting state and cannot repeat a completion reques
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '743' }, [wrap])
   const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
   let actionCount = 0
+  let listCount = 0
 
   const bridge = await loadBridge(
     async (input) => {
       const url = String(input)
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
       if (url.includes('/brand/projects/mine')) {
+        listCount += 1
         return response({
           items: [{
             id: 743,
@@ -2486,10 +2507,13 @@ test('Brand requester sees a waiting state and cannot repeat a completion reques
   assert.equal(end.getAttribute('aria-disabled'), 'true')
   assert.equal(end.getAttribute('data-project-action-waiting'), 'true')
 
+  // A refused click never reaches the pre-mutation canonical refresh.
+  const listRequests = listCount
   bridge.dispatchDocument('click', clickEvent(end).event)
-  await new Promise(setImmediate)
+  assert.equal(await waitFor(() => listCount > listRequests || actionCount > 0), false)
   assert.equal(confirms, 0)
   assert.equal(actionCount, 0)
+  assert.equal(listCount, listRequests)
 })
 
 test('Starter counterparty can confirm a Brand completion request', async () => {
