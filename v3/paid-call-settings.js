@@ -398,6 +398,17 @@
     }, [])
   }
 
+  // An amount only owns the whole price when no sibling continues it, so a
+  // trailing cents or digit fragment leaves the tile Designer-owned instead of
+  // being painted over into a doubled amount.
+  function endsAuthoredAmount(leaves, index) {
+    const leaf = leaves[index]
+    const next = leaves[index + 1]
+    if (!leaf || !next) return true
+    if (leaf.parentElement !== next.parentElement) return true
+    return !AUTHORED_PRICE_NUMBER.test(String(next.textContent || '').trim())
+  }
+
   // The current native Webflow Paid card predates the canonical price output, so
   // the canonical hook always wins and this resolves the existing tile only as a
   // fallback. Prefer the leaf that already displays a complete currency amount.
@@ -413,8 +424,11 @@
     const complete = leaves.filter(function (leaf) {
       return AUTHORED_PRICE_AMOUNT.test(String(leaf.textContent || '').trim())
     })
-    if (complete.length === 1) return { target: complete[0], mode: 'currency' }
     if (complete.length > 1) return null
+    if (complete.length === 1) {
+      const index = leaves.indexOf(complete[0])
+      return endsAuthoredAmount(leaves, index) ? { target: complete[0], mode: 'currency' } : null
+    }
 
     const split = []
     leaves.forEach(function (leaf, index) {
@@ -423,7 +437,8 @@
         String(leaf.textContent || '').trim() === '$' &&
         number &&
         leaf.parentElement === number.parentElement &&
-        AUTHORED_PRICE_NUMBER.test(String(number.textContent || '').trim())
+        AUTHORED_PRICE_NUMBER.test(String(number.textContent || '').trim()) &&
+        endsAuthoredAmount(leaves, index + 1)
       ) {
         split.push(number)
       }
