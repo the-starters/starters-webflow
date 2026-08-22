@@ -5,7 +5,7 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
  *
- * @release v1.59.312
+ * @release v1.59.346
  */
 
 (() => {
@@ -24,7 +24,6 @@ const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
 let observedMemberstackClient = null;
-let observedMemberstackMemberId = '';
 
 function memberFromResult(result) {
 	return result?.data || result?.member || result || null;
@@ -36,22 +35,22 @@ function memberScopeChangedError() {
 	return error;
 }
 
-// Memberstack immediately replays the current member when this listener subscribes.
-// Ignore only that same-member replay; every later notification invalidates in-flight work,
-// including logout followed by reauthentication as the same member.
-function observeMemberstackAuth(client) {
+// Memberstack immediately replays its auth state when this listener subscribes, and
+// that replay can arrive empty while getCurrentMember() already has the live member.
+// Ignore the first notification only when it is empty or reports the member read just
+// before subscribing. Every other notification invalidates in-flight work, including
+// logout followed by reauthentication as the same member.
+function observeMemberstackAuth(client, subscribedMemberId) {
 	if (observedMemberstackClient === client) return;
 	observedMemberstackClient = client;
-	observedMemberstackMemberId = memberFromResult(window.MEMBER)?.id || '';
 	let awaitingInitialNotification = true;
 	if (typeof client?.onAuthChange === 'function') {
 		client.onAuthChange((result) => {
 			const nextMemberId = memberFromResult(result)?.id || '';
 			if (awaitingInitialNotification) {
 				awaitingInitialNotification = false;
-				if (nextMemberId && nextMemberId === observedMemberstackMemberId) return;
+				if (!nextMemberId || nextMemberId === subscribedMemberId) return;
 			}
-			observedMemberstackMemberId = nextMemberId;
 			memberAuthGeneration += 1;
 		});
 	}
@@ -62,10 +61,21 @@ async function captureMemberScope() {
 	if (!client || typeof client.getCurrentMember !== 'function') {
 		throw new Error('Memberstack member lookup is unavailable.');
 	}
-	observeMemberstackAuth(client);
+	// The pre-subscribe read brackets the subscription window that no generation guard
+	// can cover yet, so it is only needed on the capture that installs the listener.
+	let subscribedMemberId = '';
+	if (observedMemberstackClient !== client) {
+		subscribedMemberId = memberFromResult(await client.getCurrentMember())?.id || '';
+		if (!subscribedMemberId) throw memberScopeChangedError();
+		observeMemberstackAuth(client, subscribedMemberId);
+	}
 	const generation = memberAuthGeneration;
 	const member = memberFromResult(await client.getCurrentMember());
-	if (!member?.id || generation !== memberAuthGeneration) throw memberScopeChangedError();
+	if (
+		!member?.id ||
+		(subscribedMemberId && member.id !== subscribedMemberId) ||
+		generation !== memberAuthGeneration
+	) throw memberScopeChangedError();
 	return { client, generation, member };
 }
 
