@@ -15,6 +15,7 @@
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"]'
   const OPEN_ACTION_SELECTOR =
     '[data-call-settings-action="open"], [data-availability-action="item-form-open"]'
+  const AUTHORED_STATUS_PILL_SELECTOR = '[data-availability-element="call-pill-on"]'
   const FOREIGN_CARD_SELECTOR =
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"], [data-call-settings-service], [data-availability-element="call-free-form"], [data-availability-element="call-paid-form"]'
   const STATUS_ATTRIBUTE = 'data-free-call-settings'
@@ -37,6 +38,7 @@
   let wiredMemberstack = null
   let memberstackReadyResolvers = []
   let rootObserver = null
+  let statusPillWarned = false
   let rootWaitTimer = null
   let initializationPromise = null
 
@@ -279,8 +281,50 @@
     if (target) target.textContent = message || ''
   }
 
+  function pillLabel(item) {
+    return String(item.textContent || '')
+      .replace(/\u00a0/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase()
+  }
+
+  function warnUnresolvedStatusPill(name, candidates) {
+    if (!candidates.length || statusPillWarned) return
+    if (hostname !== STAGING_HOST && window.STARTERS_DEBUG !== true) return
+    statusPillWarned = true
+    console.warn(
+      '[free-call-settings] no authored status pill reads "' + name + '", so the canonical ' + name +
+        ' state cannot be shown. Authored pill copy: ' +
+        (Array.prototype.map.call(candidates, pillLabel).join(' | ') || '(empty)'),
+    )
+  }
+
   function output(name) {
-    return qs('[data-call-settings-output="' + name + '"]', uiScope || root)
+    const canonical = qs('[data-call-settings-output="' + name + '"]', uiScope || root)
+    if (canonical || (name !== 'on' && name !== 'off')) return canonical
+    const candidates = qsa(AUTHORED_STATUS_PILL_SELECTOR, uiScope || root)
+    const authored = Array.prototype.find.call(candidates, function (item) {
+      return pillLabel(item) === name
+    }) || null
+    if (authored) authored.setAttribute('data-call-settings-output', name)
+    else warnUnresolvedStatusPill(name, candidates)
+    return authored
+  }
+
+  function setRadioChecked(item, checked) {
+    if (!item) return
+    item.checked = Boolean(checked)
+    const label = closestMatch(item, 'label')
+    if (!label) return
+    const visual = Array.prototype.find.call(qsa('[class]', label), function (candidate) {
+      return String(candidate.getAttribute('class') || '').split(/\s+/).includes('w-radio-input')
+    })
+    if (!visual) return
+    const classes = String(visual.getAttribute('class') || '').split(/\s+/).filter(Boolean)
+    const next = classes.filter(function (name) { return name !== 'w--redirected-checked' })
+    if (checked) next.push('w--redirected-checked')
+    visual.setAttribute('class', next.join(' '))
   }
 
   function show(element, visible) {
@@ -319,8 +363,8 @@
     setBusy(false)
     sessionMemberId = null
     const pair = radioPair()
-    if (pair.enabled) pair.enabled.checked = false
-    if (pair.disabled) pair.disabled.checked = true
+    setRadioChecked(pair.enabled, false)
+    setRadioChecked(pair.disabled, true)
     const titleInput = field('title')
     if (titleInput) titleInput.value = ''
     qsa('[data-free-call-prerequisite]', uiScope || root).forEach(function (item) {
@@ -385,8 +429,8 @@
     const contractMatches = validateService(service)
     const bookable = readiness.bookable && contractMatches
     const pair = radioPair()
-    if (pair.enabled) pair.enabled.checked = Boolean(service)
-    if (pair.disabled) pair.disabled.checked = !service
+    setRadioChecked(pair.enabled, Boolean(service))
+    setRadioChecked(pair.disabled, !service)
     const titleInput = field('title')
     if (titleInput) {
       titleInput.value = service ? service.title || '' : ''
@@ -655,12 +699,14 @@
     const pair = radioPair()
     if (pair.enabled) {
       pair.enabled.addEventListener('change', function () {
-        if (pair.enabled.checked && pair.disabled) pair.disabled.checked = false
+        setRadioChecked(pair.enabled, pair.enabled.checked)
+        if (pair.enabled.checked) setRadioChecked(pair.disabled, false)
       })
     }
     if (pair.disabled) {
       pair.disabled.addEventListener('change', function () {
-        if (pair.disabled.checked && pair.enabled) pair.enabled.checked = false
+        setRadioChecked(pair.disabled, pair.disabled.checked)
+        if (pair.disabled.checked) setRadioChecked(pair.enabled, false)
       })
     }
     const openButton = action('open')
