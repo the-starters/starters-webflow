@@ -168,6 +168,14 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   the controller normalizes its three hidden JSON slots to the same canonical
   `Reviewers` object used by Build Profile before the authenticated Xano PATCH.
   If that native step is absent, the controller does not send `Reviewers`.
+  On the Services and Rates step, a blank rate whose owning control is off —
+  Hourly Rate while the authored `[name="rate"]` control is not required, Paid
+  Call Rate with paid calls disabled, Retainer Rate with retainers disabled — is
+  sent as the canonical integer `0` rather than an empty string, because those
+  controls clear their visible value when their toggle turns off. A blank rate
+  whose control is still live is sent unchanged, so an empty required rate keeps
+  failing instead of silently persisting a zero rate. Non-blank rate values are
+  never rewritten.
   The site-wide Webflow Head Code still initializes
   `MEMBER`, `memberReady`, and the matching helper aliases before deferred page
   scripts. Load `intl-tel-input`, Quill, then this deferred `@latest` asset.
