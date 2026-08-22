@@ -39,6 +39,15 @@ The title must contain 3 to 80 characters. A legacy duration select can remain i
 value is ignored while the product duration is fixed. The rate field accepts whole US dollars from 1
 to 999999.
 
+A rate under `$5` saves and reads back canonically here, but the Brand-side surfaces still gate at
+`500` cents and are unchanged: the fail-closed bookable-set filter in
+[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing) drops the
+record, the canonical price renderer in
+[`README.md`](README.md#brand-paid-call-payment-method-client) refuses to reveal it, and the
+calendar-transition intent capture under [Authority and behavior](#authority-and-behavior) refuses
+to preserve it. So a `$1` to `$4` rate turns paid calls on in the dashboard without making them
+bookable. Lowering those three floors is a separate product decision, not part of this wiring.
+
 The current native `Dashboard / Call Item` Paid instance is also supported without generated markup:
 
 | Element | Existing authored contract |
