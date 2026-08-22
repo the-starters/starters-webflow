@@ -22,6 +22,7 @@
   const FOREIGN_CARD_SELECTOR =
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"], [data-call-settings-service], [data-availability-element="call-paid-form"]'
   const FIXED_DURATION_MINUTES = 60
+  const VALIDATED_FIELD_NAMES = ['title', 'price']
   const ROOT_WAIT_TIMEOUT_MS = 10000
   const PAID_RADIO_GROUP_NAMES = [
     'consulting-calls-paid',
@@ -48,6 +49,7 @@
   let rootWaitTimer = null
   let initializationPromise = null
   let authoredPrice = null
+  let statusPillWarned = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -386,6 +388,24 @@
     if (target) target.textContent = message || ''
   }
 
+  function setFieldValidity(input, message) {
+    if (!input) return
+    if (typeof input.setCustomValidity === 'function') input.setCustomValidity(message || '')
+    input.setAttribute('aria-invalid', message ? 'true' : 'false')
+  }
+
+  function reportFieldInvalid(input, message) {
+    if (!input) return
+    setFieldValidity(input, message)
+    if (typeof input.reportValidity === 'function') input.reportValidity()
+  }
+
+  function clearFieldValidity() {
+    VALIDATED_FIELD_NAMES.forEach(function (name) {
+      setFieldValidity(field(name), '')
+    })
+  }
+
   function setRadioChecked(item, checked) {
     if (!item) return
     item.checked = Boolean(checked)
@@ -401,14 +421,34 @@
     visual.setAttribute('class', next.join(' '))
   }
 
+  function pillLabel(item) {
+    return String(item.textContent || '')
+      .replace(/\u00a0/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase()
+  }
+
+  function warnUnresolvedStatusPill(name, candidates) {
+    if (!candidates.length || statusPillWarned) return
+    if (hostname !== STAGING_HOST && window.STARTERS_DEBUG !== true) return
+    statusPillWarned = true
+    console.warn(
+      '[paid-call-settings] no authored status pill reads "' + name + '", so the canonical ' + name +
+        ' state cannot be shown. Authored pill copy: ' +
+        (Array.prototype.map.call(candidates, pillLabel).join(' | ') || '(empty)'),
+    )
+  }
+
   function output(name) {
     const canonical = qs('[data-call-settings-output="' + name + '"]', uiScope || root)
     if (canonical || (name !== 'on' && name !== 'off')) return canonical
-    const authored = Array.prototype.find.call(
-      qsa(AUTHORED_STATUS_PILL_SELECTOR, uiScope || root),
-      function (item) { return String(item.textContent || '').trim().toLowerCase() === name },
-    ) || null
+    const candidates = qsa(AUTHORED_STATUS_PILL_SELECTOR, uiScope || root)
+    const authored = Array.prototype.find.call(candidates, function (item) {
+      return pillLabel(item) === name
+    }) || null
     if (authored) authored.setAttribute('data-call-settings-output', name)
+    else warnUnresolvedStatusPill(name, candidates)
     return authored
   }
 
@@ -557,6 +597,7 @@
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
     const disabledInput = disabledField()
     setRadioChecked(disabledInput, true)
+    clearFieldValidity()
     qsa('[data-paid-call-prerequisite]', uiScope || root).forEach(function (item) {
       item.setAttribute('data-ready', 'false')
     })
@@ -599,6 +640,7 @@
     if (titleInput) titleInput.value = service ? service.title || '' : 'Paid Consultation Call'
     if (priceInput) priceInput.value = service ? Number(service.price_cents || 0) / 100 : ''
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
+    clearFieldValidity()
     root.setAttribute(
       'data-paid-call-duration-current',
       service ? String(Number(service.duration || 0)) : '',
@@ -662,28 +704,16 @@
     const title = String((titleInput && titleInput.value) || '').trim()
     const price = Number((priceInput && priceInput.value) || 0)
     const duration = FIXED_DURATION_MINUTES
-    ;[titleInput, priceInput].forEach(function (input) {
-      if (!input) return
-      if (typeof input.setCustomValidity === 'function') input.setCustomValidity('')
-      input.setAttribute('aria-invalid', 'false')
-    })
+    clearFieldValidity()
     if (title.length < 3 || title.length > 80) {
       const message = 'Use a title between 3 and 80 characters.'
-      if (titleInput && typeof titleInput.setCustomValidity === 'function') {
-        titleInput.setCustomValidity(message)
-        titleInput.setAttribute('aria-invalid', 'true')
-        if (typeof titleInput.reportValidity === 'function') titleInput.reportValidity()
-      }
+      reportFieldInvalid(titleInput, message)
       setMessage(message)
       throw new Error(message)
     }
     if (!Number.isInteger(price) || price < 1 || price > 999999) {
       const message = 'Use a whole-dollar rate from $1 to $999,999.'
-      if (priceInput && typeof priceInput.setCustomValidity === 'function') {
-        priceInput.setCustomValidity(message)
-        priceInput.setAttribute('aria-invalid', 'true')
-        if (typeof priceInput.reportValidity === 'function') priceInput.reportValidity()
-      }
+      reportFieldInvalid(priceInput, message)
       setMessage(message)
       throw new Error(message)
     }
@@ -909,6 +939,7 @@
         // native shape is gated by browser constraint validation, so gate the
         // intercepted shape the same way: the native Webflow form still owns
         // which fields are required and still shows its own validation UI.
+        clearFieldValidity()
         if (form && typeof form.reportValidity === 'function' && !form.reportValidity()) return
         submitIntent().catch(function () {})
       })
@@ -926,6 +957,7 @@
         const disabledInput = disabledField()
         setRadioChecked(enabledInput, enabledInput.checked)
         if (cardMode && enabledInput.checked) setRadioChecked(disabledInput, false)
+        clearFieldValidity()
         if (!enabledInput.checked && canonicalService(settings)) {
           setMessage('Use Turn off paid calls to disable the active service safely.')
         }
@@ -936,14 +968,14 @@
       disabledInput.addEventListener('change', function () {
         setRadioChecked(disabledInput, disabledInput.checked)
         if (disabledInput.checked) setRadioChecked(enabledInput, false)
+        clearFieldValidity()
       })
     }
-    ;['title', 'price'].forEach(function (name) {
+    VALIDATED_FIELD_NAMES.forEach(function (name) {
       const input = field(name)
       if (!input) return
       input.addEventListener('input', function () {
-        if (typeof input.setCustomValidity === 'function') input.setCustomValidity('')
-        input.setAttribute('aria-invalid', 'false')
+        setFieldValidity(input, '')
       })
     })
     const openButton = action('open')

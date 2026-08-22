@@ -38,6 +38,7 @@
   let wiredMemberstack = null
   let memberstackReadyResolvers = []
   let rootObserver = null
+  let statusPillWarned = false
   let rootWaitTimer = null
   let initializationPromise = null
 
@@ -280,14 +281,34 @@
     if (target) target.textContent = message || ''
   }
 
+  function pillLabel(item) {
+    return String(item.textContent || '')
+      .replace(/\u00a0/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase()
+  }
+
+  function warnUnresolvedStatusPill(name, candidates) {
+    if (!candidates.length || statusPillWarned) return
+    if (hostname !== STAGING_HOST && window.STARTERS_DEBUG !== true) return
+    statusPillWarned = true
+    console.warn(
+      '[free-call-settings] no authored status pill reads "' + name + '", so the canonical ' + name +
+        ' state cannot be shown. Authored pill copy: ' +
+        (Array.prototype.map.call(candidates, pillLabel).join(' | ') || '(empty)'),
+    )
+  }
+
   function output(name) {
     const canonical = qs('[data-call-settings-output="' + name + '"]', uiScope || root)
     if (canonical || (name !== 'on' && name !== 'off')) return canonical
-    const authored = Array.prototype.find.call(
-      qsa(AUTHORED_STATUS_PILL_SELECTOR, uiScope || root),
-      function (item) { return String(item.textContent || '').trim().toLowerCase() === name },
-    ) || null
+    const candidates = qsa(AUTHORED_STATUS_PILL_SELECTOR, uiScope || root)
+    const authored = Array.prototype.find.call(candidates, function (item) {
+      return pillLabel(item) === name
+    }) || null
     if (authored) authored.setAttribute('data-call-settings-output', name)
+    else warnUnresolvedStatusPill(name, candidates)
     return authored
   }
 

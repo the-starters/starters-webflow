@@ -95,7 +95,7 @@ function service(overrides = {}) {
   }
 }
 
-function buildDom(withRoot = true, publishedRoot = false, authoredPills = false) {
+function buildDom(withRoot = true, publishedRoot = false, authoredPills = false, pillLabels = {}) {
   if (!withRoot) return { root: null }
   const card = new El('section')
   const open = new El('div', { 'data-call-settings-action': 'open' })
@@ -106,8 +106,8 @@ function buildDom(withRoot = true, publishedRoot = false, authoredPills = false)
     : null
   const on = new El('div', pillAttrs || { 'data-call-settings-output': 'on' })
   const off = new El('div', pillAttrs || { 'data-call-settings-output': 'off' })
-  on.textContent = 'ON'
-  off.textContent = 'OFF'
+  on.textContent = pillLabels.on || 'ON'
+  off.textContent = pillLabels.off || 'OFF'
   const panel = new El('div', { 'data-call-settings-element': 'panel' })
   const root = new El('div', publishedRoot
     ? { 'data-availability-element': 'call-free-form' }
@@ -205,7 +205,12 @@ function buildPublishedSiblingDom() {
 function load(options = {}) {
   const dom = options.publishedSiblings === true
     ? buildPublishedSiblingDom()
-    : buildDom(options.withRoot !== false, options.publishedRoot === true, options.authoredPills === true)
+    : buildDom(
+      options.withRoot !== false,
+      options.publishedRoot === true,
+      options.authoredPills === true,
+      options.pillLabels || {},
+    )
   if (dom.root && options.radioNames) {
     dom.no.setAttribute('name', options.radioNames.no)
     dom.yes.setAttribute('name', options.radioNames.yes)
@@ -223,6 +228,7 @@ function load(options = {}) {
   const events = []
   const timers = []
   const observers = []
+  const warnings = []
   const windowListeners = new Map()
   let rootAvailable = options.withRoot !== false && options.rootDelayed !== true
   let state = options.initial || canonical()
@@ -302,7 +308,7 @@ function load(options = {}) {
     Date,
     Math,
     MutationObserver,
-    console: { warn() {} },
+    console: { warn: (...args) => warnings.push(args.join(' ')) },
     document,
     window,
   })
@@ -311,6 +317,7 @@ function load(options = {}) {
     dom,
     calls,
     events,
+    warnings,
     window,
     document,
     expireMember: () => { activeMember = null },
@@ -400,6 +407,39 @@ test('production-shaped pills show only canonical Free status', async () => {
   await settle()
   assert.equal(inactive.dom.on.hidden, true)
   assert.equal(inactive.dom.off.hidden, false)
+})
+
+test('drifted authored Free pill copy is reported on staging instead of failing silently', async () => {
+  const result = load({
+    authoredPills: true,
+    pillLabels: { on: 'Live', off: 'Paused' },
+    initial: canonical({
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.on.getAttribute('data-call-settings-output'), null)
+  assert.equal(result.warnings.length, 1)
+  assert.match(result.warnings[0], /no authored status pill reads "on"/)
+  assert.match(result.warnings[0], /live \| paused/)
+})
+
+test('authored Free pill copy padded with a non-breaking space still resolves', async () => {
+  const result = load({
+    authoredPills: true,
+    pillLabels: { on: '\u00a0On\u00a0', off: 'Off' },
+    initial: canonical({
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.on.hidden, false)
+  assert.equal(result.dom.off.hidden, true)
+  assert.equal(result.warnings.length, 0)
 })
 
 test('boots from the published call-free-form compatibility root', async () => {

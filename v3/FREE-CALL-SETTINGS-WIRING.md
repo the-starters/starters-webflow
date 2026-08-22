@@ -26,6 +26,14 @@ The current Designer form works without generated IDs or styling selectors:
 - Edit, Cancel, Update: `data-availability-action="item-form-open|item-form-close|item-form-submit"`
 - Editor panel: `data-availability-element="call-form-wrapper"`; this wrapper is also the scope
   anchor that keeps the controller off the Paid card, so keep one per card
+- Status pills: the two `data-availability-element="call-pill-on"` pills, resolved by their authored
+  `On` and `Off` copy and then stamped with the canonical `data-call-settings-output` attribute.
+  Matching ignores case, surrounding whitespace, and non-breaking spaces, but renamed copy resolves
+  neither pill, shows both pills at once, and warns once in the console on staging (see
+  [Staging-only console diagnostics](../README.md#staging-only-console-diagnostics))
+- Radio visual: Webflow's own `w-radio-input` element inside each radio's `label`; the controller
+  adds and removes `w--redirected-checked` on it so the authored visual follows canonical state
+  instead of the last click
 
 The controller stamps `data-call-settings-input="enabled|disabled"` on the verified radio pair at
 runtime. It never renames the group and never binds the Paid form.
@@ -37,7 +45,8 @@ For future Designer edits, prefer the stable contract:
 - Editor panel: `data-call-settings-element="panel"`
 - Radios: `data-call-settings-input="enabled|disabled"`
 - Actions: `data-call-settings-action="open|close|submit"`
-- Optional outputs: `data-call-settings-output="status|on|off|price"`
+- Optional outputs: `data-call-settings-output="status|on|off|price"`; a canonical `on` or `off`
+  marker always wins over the authored pill copy above
 
 ## Painted state contract
 

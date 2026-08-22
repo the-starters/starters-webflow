@@ -36,7 +36,7 @@ Use these attributes on existing native Webflow elements:
 | Disable button wrapper | `data-paid-call-action` | `disable` |
 
 The title must contain 3 to 80 characters. A legacy duration select can remain in Designer, but its
-value is ignored while the product duration is fixed. The rate field accepts whole US dollars from 5
+value is ignored while the product duration is fixed. The rate field accepts whole US dollars from 1
 to 999999.
 
 The current native `Dashboard / Call Item` Paid instance is also supported without generated markup:
@@ -52,6 +52,15 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
 | Authored price tile | Preferred: `data-call-settings-output="price"`; the current component fallback resolves, inside `data-service-card-element="price-card"`, either one leaf containing a complete amount such as `$150` or the published adjacent sibling spans `$` + `150` |
+| Status pills | Preferred: `data-call-settings-output="on"` and `data-call-settings-output="off"`; the current component fallback resolves the two `data-availability-element="call-pill-on"` pills by their authored `On` and `Off` copy, then stamps the canonical output attribute on the pill it matched |
+| Radio visual | Webflow's own `w-radio-input` element inside each radio's `label`; the controller adds and removes `w--redirected-checked` on it so the authored visual follows canonical state instead of the last click |
+
+Both authored pills carry the same `call-pill-on` attribute, so the fallback can only tell them
+apart by copy. Matching ignores case, surrounding whitespace, and non-breaking spaces, but the pill
+text itself must still read `On` or `Off`. Rename that copy in Designer and neither pill resolves,
+both pills render at once again, and the controller says so once in the console on staging (see
+[Staging-only console diagnostics](../README.md#staging-only-console-diagnostics)). Add the canonical
+output attributes in Designer to make the copy irrelevant.
 
 Yes and No are resolved as one pair, never independently, so a single radio can never be bound as
 both answers. Canonical `yes` and `no` values match first, then a leading `yes` or `no` word such as
@@ -73,7 +82,8 @@ For new Designer wiring, use the stable contract instead of the compatibility na
 - Edit panel: `data-call-settings-element="panel"`
 - Inputs: `data-call-settings-input="enabled|disabled|title|price"`
 - Actions: `data-call-settings-action="open|close|submit"`
-- Optional outputs: `data-call-settings-output="status|on|off|price"`
+- Optional outputs: `data-call-settings-output="status|on|off|price"`; a canonical `on` or `off`
+  marker always wins over the authored pill copy above
 
 Keep the form native to Webflow. The controller binds behavior and does not create form HTML.
 The price fallback changes only the existing tile's text. It does not replace the tile, add markup,
@@ -137,6 +147,12 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   controller runs that form's constraint validation before writing; an invalid form blocks the
   write in that shape exactly as the browser already blocks it when Update is the form's own
   submit control.
+- A rejected title or rate is reported on the field itself, through
+  `setCustomValidity` plus `aria-invalid`, so the native form shows the browser's own message. The
+  controller owns clearing that state as well as setting it: typing in the field, answering Yes or
+  No, pressing Update again, and every canonical render or cleared-state reset clear it first. A
+  rejected rate therefore never keeps the form invalid afterwards, and turning paid calls off with
+  No plus Update stays reachable even though the disable path never reads the rate.
 - The browser sends product intent only. It never sends a member ID, grant ID, calendar ID, Stripe account ID, or payment environment.
 - Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`.
 - Calendar transitions carry a one-use intent captured from canonical paid-call GET through the existing OAuth session envelope, then recreate it through paid-call upsert and canonical readback.
@@ -155,18 +171,21 @@ binding, the stale-readiness save of an active service, the expired-session
 fail-closed writes, and the authored price tile fallback — canonical precedence,
 single-leaf and split `$` + number selection, the continued-amount guard that leaves a
 tile with a trailing cents fragment alone, Designer-copy restore, and Free-sibling
-isolation — are executable regressions in `v3/paid-call-settings.test.js`. The remaining
-legs need a live Memberstack session, a live Xano TEST configuration, and an asset that
-only exists once the tag is published, so they are not runnable from CI or from a local
-test phase. Both `the-starters-3-0.webflow.io` and `thestarters.com` answer `401` behind
+isolation — plus the authored status-pill resolution and its drifted-copy diagnostic, the
+`w--redirected-checked` radio sync, and the field validation lifecycle, including that a
+rejected rate never blocks a later turn-off — are executable regressions in
+`v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a live
+Xano TEST configuration, and an asset that only exists once the tag is published, so they
+are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io` and `thestarters.com` answer `401` behind
 the site password, so a local phase cannot even read the live authored DOM.
 The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
-   the served asset is the new build: the served file must contain the split-span price
-   resolver, `AUTHORED_PRICE_NUMBER` together with `endsAuthoredAmount`. The previous build
-   already shipped `consulting-calls-paid`, `cardRadioPair`, the root-wait recovery, and
-   `normalizeCardRadioGroup`, so none of those markers can tell this release from the one
+   the served asset is the new build: the served file must contain the status-pill and radio
+   sync, `AUTHORED_STATUS_PILL_SELECTOR` together with `setRadioChecked` and
+   `clearFieldValidity`. The previous build already shipped `consulting-calls-paid`,
+   `cardRadioPair`, the root-wait recovery, `normalizeCardRadioGroup`, `AUTHORED_PRICE_NUMBER`,
+   and `endsAuthoredAmount`, so none of those markers can tell this release from the one
    before it; always check a marker this release introduced.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
    card reaches `data-paid-call-settings="ready"` with canonical values, including a
@@ -176,6 +195,11 @@ The release owner runs them by hand, in this order, after the PR merges:
    canonical readback state. Confirm this on whichever way the authored Update control is
    wired, and confirm a still-required empty field still blocks the write, per the native
    validation rule in [Authority and behavior](#authority-and-behavior).
+   Then confirm the validation lifecycle by hand: enter a sub-dollar rate such as `0.5`,
+   click Update, and confirm the browser shows the rate message and no write happens; then
+   pick No and click Update, and confirm paid calls actually turn off rather than the stale
+   rate message blocking the click. Confirm exactly one status pill renders in each state,
+   and that the authored radio visual matches the canonical answer after a reload.
 4. On the TEST fixture still stored at a duration other than `60`, pick Yes and click
    Update while calendar or Stripe readiness is stale, and confirm the write is accepted
    and canonical readback reports `data-paid-call-duration-current="60"`.

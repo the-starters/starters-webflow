@@ -53,8 +53,16 @@ class El {
     this.listeners.set(name, listeners)
   }
   setCustomValidity(message) { this.validationMessage = String(message || '') }
+  descendants() {
+    return this.children.reduce((found, child) => found.concat(child, child.descendants()), [])
+  }
+  // A real <form> aggregates the validity of its submittable descendants; an
+  // input reports only its own.
   reportValidity() {
     this.reportValidityCalls += 1
+    if (this.tagName === 'FORM') {
+      return this.descendants().every((node) => node.validationMessage === '')
+    }
     return this.validationMessage === ''
   }
   async dispatch(name) {
@@ -103,7 +111,7 @@ function service(overrides = {}) {
   }
 }
 
-function buildDom(withRoot = true, cardMode = false, shared = false, priceTile = {}, authoredPills = false) {
+function buildDom(withRoot = true, cardMode = false, shared = false, priceTile = {}, authoredPills = false, pillLabels = {}) {
   if (withRoot && cardMode) {
     const card = new El('section', { 'data-id': '' })
     const open = new El('div', { 'data-availability-action': 'item-form-open' })
@@ -160,8 +168,8 @@ function buildDom(withRoot = true, cardMode = false, shared = false, priceTile =
     const pillAttrs = authoredPills ? { 'data-availability-element': 'call-pill-on' } : null
     const onOutput = new El('div', pillAttrs || { 'data-call-settings-output': 'on' })
     const offOutput = new El('div', pillAttrs || { 'data-call-settings-output': 'off' })
-    onOutput.textContent = 'ON'
-    offOutput.textContent = 'OFF'
+    onOutput.textContent = pillLabels.on || 'ON'
+    offOutput.textContent = pillLabels.off || 'OFF'
     const prerequisites = ['calendar', 'availability', 'stripe', 'charges', 'fresh', 'bookable']
       .map((name) => new El('div', { 'data-paid-call-prerequisite': name }))
     buttonRow.append(close, save)
@@ -248,6 +256,7 @@ function load(options = {}) {
     options.sharedCallItem === true,
     options.priceTile || {},
     options.authoredPills === true,
+    options.pillLabels || {},
   )
   if (options.cardRadioValues && dom.root) {
     Object.keys(options.cardRadioValues).forEach((key) => {
@@ -659,6 +668,117 @@ test('a sub-dollar published Paid rate uses native validation instead of failing
   await result.dom.price.dispatch('input')
   assert.equal(result.dom.price.validationMessage, '')
   assert.equal(result.dom.price.getAttribute('aria-invalid'), 'false')
+})
+
+test('a rejected rate never blocks turning published Paid calls off', async () => {
+  const result = load({
+    cardMode: true,
+    cardRadioNames: {
+      disabled: 'consulting-calls-paid',
+      enabled: 'consulting-calls-paid',
+    },
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.price.value = '0.5'
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $999,999.')
+  assert.equal(result.dom.form.reportValidity(), false)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 1)
+  assert.equal(result.dom.price.validationMessage, '')
+  assert.equal(result.dom.price.getAttribute('aria-invalid'), 'false')
+  assert.equal(result.dom.form.reportValidity(), true)
+  assert.equal(result.dom.offOutput.hidden, false)
+})
+
+test('a canonical readback clears a stale field validation state', async () => {
+  const result = load({
+    cardMode: true,
+    cardRadioNames: {
+      disabled: 'consulting-calls-paid',
+      enabled: 'consulting-calls-paid',
+    },
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  result.dom.title.value = 'no'
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.dom.title.getAttribute('aria-invalid'), 'true')
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Paid Consultation Call')
+  assert.equal(result.dom.title.validationMessage, '')
+  assert.equal(result.dom.title.getAttribute('aria-invalid'), 'false')
+})
+
+test('drifted authored pill copy is reported on staging instead of failing silently', async () => {
+  const result = load({
+    cardMode: true,
+    authoredPills: true,
+    pillLabels: { on: 'Live', off: 'Paused' },
+    hostname: 'the-starters-3-0.webflow.io',
+    cardRadioNames: {
+      disabled: 'consulting-calls-paid',
+      enabled: 'consulting-calls-paid',
+    },
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.onOutput.getAttribute('data-call-settings-output'), null)
+  assert.equal(result.warnings.length, 1)
+  assert.match(result.warnings[0], /no authored status pill reads "on"/)
+  assert.match(result.warnings[0], /live \| paused/)
+})
+
+test('authored pill copy padded with a non-breaking space still resolves', async () => {
+  const result = load({
+    cardMode: true,
+    authoredPills: true,
+    pillLabels: { on: '\u00a0On\u00a0', off: 'Off' },
+    hostname: 'the-starters-3-0.webflow.io',
+    cardRadioNames: {
+      disabled: 'consulting-calls-paid',
+      enabled: 'consulting-calls-paid',
+    },
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.onOutput.hidden, false)
+  assert.equal(result.dom.offOutput.hidden, true)
+  assert.equal(result.warnings.length, 0)
 })
 
 test('an active legacy service can update to 60 minutes while readiness is stale', async () => {
