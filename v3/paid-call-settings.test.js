@@ -121,13 +121,30 @@ function buildDom(withRoot = true, cardMode = false, shared = false, priceTile =
       : null
     const authoredPriceCaption = authored && priceTile.caption === true ? new El('p') : null
     const authoredPriceText = authored ? new El('p') : null
+    const authoredPriceSymbol = authored && priceTile.split === true ? new El('span') : null
+    const authoredPriceNumber = authored && priceTile.split === true ? new El('span') : null
+    const authoredPriceCents = authored && priceTile.cents === true ? new El('span') : null
     if (authoredPriceCard) {
       if (authoredPriceCaption) {
         authoredPriceCaption.textContent = 'Rate'
         authoredPriceCard.append(authoredPriceCaption)
       }
-      authoredPriceText.textContent = priceTile.authoredText ?? '$150'
+      if (authoredPriceSymbol && authoredPriceNumber) {
+        authoredPriceSymbol.textContent = '$'
+        authoredPriceNumber.textContent = priceTile.authoredNumber ?? '150'
+        authoredPriceText.append(authoredPriceSymbol, authoredPriceNumber)
+        if (authoredPriceCents) {
+          authoredPriceCents.textContent = '.00'
+          authoredPriceText.append(authoredPriceCents)
+        }
+      } else {
+        authoredPriceText.textContent = priceTile.authoredText ?? '$150'
+      }
       authoredPriceCard.append(authoredPriceText)
+      if (authoredPriceCents && !authoredPriceNumber) {
+        authoredPriceCents.textContent = '.00'
+        authoredPriceCard.append(authoredPriceCents)
+      }
     }
     const onOutput = new El('div', { 'data-call-settings-output': 'on' })
     const offOutput = new El('div', { 'data-call-settings-output': 'off' })
@@ -176,6 +193,9 @@ function buildDom(withRoot = true, cardMode = false, shared = false, priceTile =
       authoredPriceCard,
       authoredPriceCaption,
       authoredPriceText,
+      authoredPriceSymbol,
+      authoredPriceNumber,
+      authoredPriceCents,
       onOutput,
       offOutput,
       formWrapper,
@@ -982,6 +1002,59 @@ test('the current native Paid card price marker renders canonical USD without a 
 
   assert.equal(result.dom.priceOutput, null)
   assert.equal(result.dom.authoredPriceText.textContent, '$5.00')
+})
+
+test('the published split-span Paid price tile renders and restores the canonical amount', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true, split: true },
+    initial: canonical({
+      services: [service({ price_cents: 500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceSymbol.textContent, '$')
+  assert.equal(result.dom.authoredPriceNumber.textContent, '5.00')
+
+  result.expireMemberSilently()
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.dom.authoredPriceSymbol.textContent, '$')
+  assert.equal(result.dom.authoredPriceNumber.textContent, '150')
+})
+
+test('a split-span Paid price tile continued by a cents span stays Designer-owned', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true, split: true, cents: true },
+    initial: canonical({
+      services: [service({ price_cents: 500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceSymbol.textContent, '$')
+  assert.equal(result.dom.authoredPriceNumber.textContent, '150')
+  assert.equal(result.dom.authoredPriceCents.textContent, '.00')
+})
+
+test('an authored Paid amount continued by a cents sibling stays Designer-owned', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true, cents: true },
+    initial: canonical({
+      services: [service({ price_cents: 500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceText.textContent, '$150')
+  assert.equal(result.dom.authoredPriceCents.textContent, '.00')
 })
 
 test('the authored Paid price tile keeps its Designer copy with paid calls off', async () => {
