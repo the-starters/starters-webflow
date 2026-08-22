@@ -280,6 +280,7 @@ function loadController(options = {}) {
     StartersTrack: {
       track(name, payload) {
         tracked.push({ name, payload })
+        if (options.trackThrows) throw new Error('analytics transport unavailable')
       },
     },
     setTimeout(fn, ms) {
@@ -335,7 +336,8 @@ function loadController(options = {}) {
   const appendedScripts = []
   if (options.captureNativeDiagnosticsLoader) {
     document.currentScript = {
-      src: 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/v3/brand-account-controller.js',
+      src: options.controllerScriptSrc
+        || 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/v3/brand-account-controller.js',
     }
     document.createElement = () => makeElement()
     document.head = { appendChild(script) { appendedScripts.push(script) } }
@@ -576,13 +578,18 @@ test('Build Account refuses an email write after the signed-in member changes', 
 
 test('Build Account success records a privacy-safe console receipt without page diagnostics', async () => {
   const buildForm = makeForm('build', { email: 'private@example.com' })
-  const environment = loadController({ buildForm, diagnostics: true })
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'private@example.com',
+    diagnostics: true,
+  })
 
   buildForm.submitEvent()
   await settle()
 
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v2')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -590,6 +597,45 @@ test('Build Account success records a privacy-safe console receipt without page 
   assert.equal(buildForm.wrapper.done.textContent, 'Your authored success message.')
   assert.equal(buildForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.ok(environment.tracked.some((event) => event.name === 'workflow_form_submit_succeeded'))
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: false,
+        security_email_attempted: false,
+      },
+    }],
+  )
+})
+
+test('Build Account changed-email success keeps the receipt free of identity fields', async () => {
+  const buildForm = makeForm('build', { email: 'private@example.com' })
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'old@example.com',
+    diagnostics: true,
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'updateMemberAuth').length,
+    1,
+  )
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    1,
+  )
+  const receipt = buildForm.__startersAccountDiagnostic
+  assert.equal(receipt.workflow, 'brand_account_build')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v2')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.request_started, true)
+  assert.equal(Object.hasOwn(receipt, 'email'), false)
+  assert.equal(Object.hasOwn(receipt, 'firstName'), false)
 })
 
 test('Build Account validation receipt truthfully records that no request started', async () => {
@@ -935,7 +981,107 @@ test('Build Account sends one security email only after changing login email', a
   )
   assert.deepEqual(plain(environment.calls[3].payload), { email: 'verified-next@example.com' })
   assert.deepEqual(plain(environment.calls[5].payload), { email: 'verified-next@example.com' })
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: true,
+        security_email_attempted: true,
+      },
+    }],
+  )
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+})
+
+test('a throwing tracker cannot cost an unchanged-email submit its redirect', async () => {
+  const buildForm = makeForm('build', { email: 'ada@example.com' })
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'ada@example.com',
+    trackThrows: true,
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.equal(buildForm.wrapper.done.style.display, 'block')
+  assert.equal(buildForm.wrapper.fail.style.display, 'none')
+  assert.equal(
+    environment.tracked.filter((event) => event.name === 'brand_account_email_decision').length,
+    1,
+  )
+})
+
+test('a throwing tracker cannot cost a changed-email submit its ownership email or redirect', async () => {
+  const buildForm = makeForm('build', { email: 'next@example.com' })
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'old@example.com',
+    trackThrows: true,
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    [
+      'getCurrentMember',
+      'updateMember',
+      'getCurrentMember',
+      'updateMemberAuth',
+      'updateMember',
+      'sendMemberResetPasswordEmail',
+    ],
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.equal(buildForm.wrapper.done.style.display, 'block')
+  assert.equal(buildForm.wrapper.fail.style.display, 'none')
+})
+
+test('Build Account with an unreadable login email writes no auth email and sends none', async () => {
+  const buildForm = makeForm('build', { email: 'next@example.com' })
+  const environment = loadController({
+    buildForm,
+    member: { id: 'mem_sb_brand' },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    [
+      'getCurrentMember',
+      'updateMember',
+      'updateMember',
+    ],
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    1,
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: false,
+        security_email_attempted: false,
+      },
+    }],
+  )
 })
 
 test('unavailable reset-email API does not affect onboarding with an unchanged email', async () => {
@@ -1004,6 +1150,17 @@ test('changed-email reset failure keeps durable completion and provides recovery
   assert.equal(
     buildForm.wrapper.failText.textContent,
     'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.',
+  )
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: true,
+        security_email_attempted: true,
+      },
+    }],
   )
 })
 
@@ -2181,6 +2338,22 @@ test('Account Security suppresses an A-B-A replay after ambiguous email sends', 
 test('controller does not bind on an unapproved host', () => {
   const environment = loadController({ hostname: 'lookalike.example' })
   assert.equal(environment.buildForm.listeners.has('submit'), false)
+})
+
+test('sibling diagnostics loaders resolve through a release cache-key controller src', () => {
+  const environment = loadController({
+    buildForm: null,
+    captureNativeDiagnosticsLoader: true,
+    controllerScriptSrc:
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=1.59.339',
+  })
+  assert.deepEqual(
+    environment.appendedScripts.map((script) => script.src),
+    [
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/utils/workflow-diagnostics.js',
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/native-form-diagnostics.js',
+    ],
+  )
 })
 
 test('native form diagnostics inherit the controller CDN ref and use one loader sentinel', () => {

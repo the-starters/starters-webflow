@@ -70,7 +70,7 @@
   // by which time the Memberstack webhook has stamped brands_v3 for real.
   var BRAND_PROFILE_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
   var BRAND_PROFILE_MARKER_VALUE = '1'
-  var CONTROLLER_VERSION = 'brand-account-controller-v1'
+  var CONTROLLER_VERSION = 'brand-account-controller-v2'
   var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
   var NATIVE_FORM_DIAGNOSTICS_SCRIPT = 'native-form-diagnostics.js'
   var passwordEmailAttempts = new WeakMap()
@@ -487,6 +487,13 @@
     }
   }
 
+  async function applyBuildLoginEmail(form, client, member, email) {
+    if (!memberEmail(member)) return null
+    var emailIntent = recordBuildEmailIntent(form, member, email)
+    await applyBuildEmailChange(client, member, email)
+    return emailIntent
+  }
+
   async function sendResetPasswordEmailOnce(form, client, email) {
     var normalizedEmail = trim(email).toLowerCase()
     var attemptedEmails = passwordEmailAttempts.get(form)
@@ -578,6 +585,21 @@
     })
   }
 
+  // Funnel event (platform-ops/architecture/posthog-funnel-events-plan.md):
+  // brand_account_email_decision. Build identifier plus two booleans only —
+  // adding the submitted or authenticated email, the member ID, or any form
+  // value here would leak identity into the funnel stream.
+  function trackBuildEmailDecision(emailChangeRequired, securityEmailAttempted) {
+    if (!window.StartersTrack || typeof window.StartersTrack.track !== 'function') return
+    try {
+      window.StartersTrack.track('brand_account_email_decision', {
+        controller_version: CONTROLLER_VERSION,
+        email_change_required: Boolean(emailChangeRequired),
+        security_email_attempted: Boolean(securityEmailAttempted),
+      })
+    } catch (error) {}
+  }
+
   function friendlyError(error) {
     if (error && error.passwordEmailAttempted) {
       return 'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.'
@@ -609,8 +631,7 @@
     // can land while its own response is lost. Keep the changed target on this
     // form so the safe retry still sends its one ownership-proof message after
     // completion succeeds.
-    var emailIntent = recordBuildEmailIntent(form, member, values.email)
-    await applyBuildEmailChange(client, member, values.email)
+    var emailIntent = await applyBuildLoginEmail(form, client, member, values.email)
     await markBuildComplete(client)
     // Only reached once completion is durable. The marker stops the routers
     // from bouncing this member back onto the form during the webhook's
@@ -618,7 +639,15 @@
     markBrandProfileCompletedLocally()
     if (emailIntent) {
       pendingBuildPasswordEmails.delete(form)
-      await sendResetPasswordEmailOnce(form, client, emailIntent.target)
+      try {
+        var emailResult = await sendResetPasswordEmailOnce(form, client, emailIntent.target)
+        trackBuildEmailDecision(true, Boolean(emailResult && emailResult.attempted))
+      } catch (error) {
+        trackBuildEmailDecision(true, Boolean(error && error.passwordEmailAttempted))
+        throw error
+      }
+    } else {
+      trackBuildEmailDecision(false, false)
     }
 
     return { memberId: member.id }
