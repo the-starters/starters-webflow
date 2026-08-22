@@ -111,7 +111,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/profile-form/` — shared Build/Edit Profile inline-extraction candidates; the authoritative ownership, provenance, page-Head-Code cutover, loader order, and verification contract lives in [`v3/profile-form/README.md`](v3/profile-form/README.md)
 - `v3/profile-form/shared-foundation.js` — shared native-form model and helper foundation extracted from the authenticated Build/Edit Profile routes
 - `v3/profile-form/incremental-dropdowns.js` — shared incremental dropdown controller extracted from the authenticated Build/Edit Profile routes
-- `v3/build-profile/draft-state.js` — Build Profile local/member draft precedence and one-way draft synchronization controller
+- `v3/build-profile/draft-state.js` — Build Profile local/member draft precedence and one-way draft synchronization controller; blank member-bound draft fields hydrate from the signed-in member while non-empty draft edits keep precedence
 - `v3/build-profile/submit-writer.js` — Build Profile native-form submit writer and normalized payload controller
 - `v3/build-profile/locations-consult.js` — Consult Build Profile country, state, and city controller
 - `v3/build-profile/locations-full-profile.js` — Full Profile country, state, and city controller

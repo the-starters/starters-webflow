@@ -157,29 +157,21 @@
 
           const fields = qsa('[data-input-capture]', step);
           fields.forEach((field) => {
-            if (field.hasAttribute('data-ms-member')) {
-              setTimeout(() => {
-                field.dispatchEvent(new Event('input', { bubbles: true }));
-                field.dispatchEvent(new Event('change', { bubbles: true }));
-              }, 50);
-
-              if (
-                field.name !== 'email' &&
-                activeProfile?.data?.["step_1"]?.[field.name]?.trim() === MEMBER.customFields?.[memberFieldsMapping[field.name]]?.trim()
-              ) {
-                return;
-              }
-
-              if (
-                field.name === 'email' &&
-                activeProfile?.data?.["step_1"]?.["email"]?.trim() === MEMBER.auth.email?.trim()
-              ) {
-                return;
-              }
-            }
-
             const fieldName = field.name;
             if (!fieldName || !(fieldName in stepData)) return;
+
+            if (field.hasAttribute('data-ms-member')) {
+              const draftValue = stepData[fieldName];
+              const memberValue = fieldName === 'email'
+                ? MEMBER.auth?.email
+                : MEMBER.customFields?.[memberFieldsMapping[fieldName]];
+              const preferredValue = String(draftValue ?? '').trim()
+                ? draftValue
+                : memberValue ?? draftValue;
+
+              setFieldValue(field, preferredValue);
+              return;
+            }
 
             setFieldValue(field, stepData[fieldName]);
           });
