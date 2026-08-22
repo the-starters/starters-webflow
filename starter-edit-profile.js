@@ -572,16 +572,7 @@ onDomReady(function () {
 
 			const payload = getStepPayload(stepIndex);
 
-			// Disabled optional rate controls clear their visible values during hydration.
-			// Preserve the canonical integer contract by sending the existing zero sentinel.
-			['Paid_Call_Rate', 'Retainer_Rate'].forEach((field) => {
-				if (
-					Object.prototype.hasOwnProperty.call(payload, field)
-					&& String(payload[field] ?? '').trim() === ''
-				) {
-					payload[field] = 0;
-				}
-			});
+			normalizeOptionalCanonicalRates(payload, stepIndex);
 
 			// Country, State
 			if (payload.Country && payload.State_Province) {
@@ -773,6 +764,28 @@ onDomReady(function () {
 			} finally {
 				setSubmitLoading(submitButton, false);
 			}
+		}
+
+		// Optional rate controls clear their visible values when their owning toggle is
+		// off, so the canonical integer contract needs the existing zero sentinel instead
+		// of a blank string. A rate whose control is live stays blank so an empty value
+		// keeps failing instead of silently persisting a zero rate.
+		const OPTIONAL_CANONICAL_RATES = Object.freeze([
+			{ field: 'Hourly_Rate', isOptional: (payload, step) => qs('[name="rate"]', step)?.required === false },
+			{ field: 'Paid_Call_Rate', isOptional: (payload) => payload.Paid_Call_Enabled === false },
+			{ field: 'Retainer_Rate', isOptional: (payload) => payload.Retainer_Enabled === false },
+		]);
+
+		function normalizeOptionalCanonicalRates(payload, stepIndex) {
+			const step = stepElement(stepIndex);
+
+			OPTIONAL_CANONICAL_RATES.forEach(({ field, isOptional }) => {
+				if (!Object.prototype.hasOwnProperty.call(payload, field)) return;
+				if (String(payload[field] ?? '').trim() !== '') return;
+				if (!isOptional(payload, step)) return;
+
+				payload[field] = 0;
+			});
 		}
 
 		function getStepPayload(stepIndex) {

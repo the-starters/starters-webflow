@@ -539,44 +539,84 @@ async function testEveryOwnedSectionOpensSuccessModal() {
   }
 }
 
-async function testOptionalRatesPreserveCanonicalZeroSentinel() {
-  const blankRates = createEnvironment(async () => ({
+async function submittedStepPayload(environment) {
+  await submit(environment)
+  assert.equal(environment.requests.length, 1)
+  const [, options] = environment.requests[0]
+  return JSON.parse(options.body)
+}
+
+function saved(overrides) {
+  return createEnvironment(async () => ({
     ok: true,
     status: 200,
     json: async () => ({ saved: true }),
-  }), {
+  }), overrides)
+}
+
+async function testOptionalRatesPreserveCanonicalZeroSentinel() {
+  const disabledPayload = await submittedStepPayload(saved({
     stepIndex: 6,
     additionalFormValues: [
+      ['paid-consulting-calls', 'no'],
+      ['offer-monthly-retainers', 'no'],
       ['paid-call-rate', ''],
       ['rate-retainer', '   '],
     ],
-  })
+  }))
+  assert.equal(disabledPayload.Paid_Call_Enabled, false)
+  assert.equal(disabledPayload.Retainer_Enabled, false)
+  assert.equal(disabledPayload.Paid_Call_Rate, 0)
+  assert.equal(disabledPayload.Retainer_Rate, 0)
 
-  await submit(blankRates)
-
-  const [, blankOptions] = blankRates.requests[0]
-  const blankPayload = JSON.parse(blankOptions.body)
-  assert.equal(blankPayload.Paid_Call_Rate, 0)
-  assert.equal(blankPayload.Retainer_Rate, 0)
-
-  const configuredRates = createEnvironment(async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ saved: true }),
-  }), {
+  const configuredPayload = await submittedStepPayload(saved({
     stepIndex: 6,
     additionalFormValues: [
+      ['paid-consulting-calls', 'yes'],
+      ['offer-monthly-retainers', 'yes'],
       ['paid-call-rate', '250.00'],
       ['rate-retainer', '500'],
     ],
-  })
-
-  await submit(configuredRates)
-
-  const [, configuredOptions] = configuredRates.requests[0]
-  const configuredPayload = JSON.parse(configuredOptions.body)
+  }))
   assert.equal(configuredPayload.Paid_Call_Rate, '250.00')
   assert.equal(configuredPayload.Retainer_Rate, '500')
+}
+
+async function testEnabledOptionalRatesNeverSilentlyPersistZero() {
+  const enabledBlankPayload = await submittedStepPayload(saved({
+    stepIndex: 6,
+    additionalFormValues: [
+      ['paid-consulting-calls', 'yes'],
+      ['offer-monthly-retainers', 'yes'],
+      ['paid-call-rate', ''],
+      ['rate-retainer', '   '],
+    ],
+  }))
+  assert.equal(enabledBlankPayload.Paid_Call_Enabled, true)
+  assert.equal(enabledBlankPayload.Retainer_Enabled, true)
+  assert.equal(enabledBlankPayload.Paid_Call_Rate, '')
+  assert.equal(enabledBlankPayload.Retainer_Rate, '   ')
+}
+
+async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
+  const consultPayload = await submittedStepPayload(saved({
+    stepIndex: 6,
+    profileType: 'consult',
+    fieldOverrides: { '[name="rate"]': { value: '', required: false, valid: true } },
+  }))
+  assert.equal(consultPayload.Hourly_Rate, 0)
+
+  const fullPayload = await submittedStepPayload(saved({ stepIndex: 6 }))
+  assert.equal(fullPayload.Hourly_Rate, '125')
+
+  const requiredBlank = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    stepIndex: 6,
+    fieldOverrides: { '[name="rate"]': { value: '' } },
+  })
+  await submit(requiredBlank)
+  assert.equal(requiredBlank.requests.length, 0)
 }
 
 async function testReviewerStepUsesCanonicalBuildProfileShape() {
@@ -976,6 +1016,8 @@ Promise.all([
   testNon2xx(),
   testEveryOwnedSectionOpensSuccessModal(),
   testOptionalRatesPreserveCanonicalZeroSentinel(),
+  testEnabledOptionalRatesNeverSilentlyPersistZero(),
+  testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
   testRejectedFetch(),
