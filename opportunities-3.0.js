@@ -2771,6 +2771,22 @@
     wrap.setAttribute('aria-hidden', visible ? 'false' : 'true')
   }
 
+  function setProjectActionWaiting(action, waiting) {
+    const wrap = projectActionWrap(action)
+    if (!action || !wrap) return
+    if (waiting) {
+      action.setAttribute('aria-disabled', 'true')
+      action.setAttribute('data-project-action-waiting', 'true')
+      wrap.setAttribute('data-project-action-waiting', 'true')
+      if ('disabled' in action) action.disabled = true
+    } else {
+      action.removeAttribute('aria-disabled')
+      action.removeAttribute('data-project-action-waiting')
+      wrap.removeAttribute('data-project-action-waiting')
+      if ('disabled' in action) action.disabled = false
+    }
+  }
+
   function projectActionLabel(action) {
     const wrap = projectActionWrap(action)
     return wrap && $('.button_main-text', wrap)
@@ -3178,15 +3194,21 @@
     })
 
     if (end) {
+      const waiting = projectLifecycleWaitingOn(project, projectWorkflowRole)
       const label =
         state === 'pending'
           ? 'Cancel Project'
           : state === 'completion_requested'
-            ? 'Confirm Completion'
+            ? waiting
+              ? 'Waiting for ' + waiting
+              : 'Confirm Completion'
             : state === 'termination_requested'
-              ? 'Confirm End'
+              ? waiting
+                ? 'Waiting for ' + waiting
+                : 'Confirm End'
               : 'End Project'
       setProjectActionLabel(end, label)
+      setProjectActionWaiting(end, Boolean(waiting))
       if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'lifecycle') {
         setOpportunityActionPending(projectActionWrap(end), true)
       }
@@ -3418,7 +3440,29 @@
     return action.dataset.projectActionKey
   }
 
-  function projectActionIntent(project, confirmAction = window.confirm, promptAction = window.prompt) {
+  function projectPartyRequested(project, role, actionName) {
+    if (!project || (role !== 'brand' && role !== 'starter')) return false
+    const field = role + '_' + actionName + '_requested_at'
+    return project[field] != null && String(project[field]).trim() !== ''
+  }
+
+  function projectLifecycleWaitingOn(project, role) {
+    const state = lifecycleState(project)
+    const actionName = state === 'completion_requested'
+      ? 'completion'
+      : state === 'termination_requested'
+        ? 'termination'
+        : ''
+    if (!actionName || !projectPartyRequested(project, role, actionName)) return ''
+    return role === 'brand' ? 'Starter' : 'Brand'
+  }
+
+  function projectActionIntent(
+    project,
+    confirmAction = window.confirm,
+    promptAction = window.prompt,
+    role = projectWorkflowRole,
+  ) {
     const state = lifecycleState(project)
     if (!state || PROJECT_TERMINAL_STATES.has(state)) return null
     if (state === 'pending') {
@@ -3427,6 +3471,7 @@
         : null
     }
     if (state === 'completion_requested') {
+      if (projectPartyRequested(project, role, 'completion')) return null
       return confirmAction(
         'Confirm that the project is complete? The project closes after both sides confirm.',
       )
@@ -3434,6 +3479,7 @@
         : null
     }
     if (state === 'termination_requested') {
+      if (projectPartyRequested(project, role, 'termination')) return null
       const reason = String(project.end_reason || '').trim()
       return confirmAction('Confirm ending this project early?')
         ? { action: 'terminate', reason }
@@ -3564,7 +3610,7 @@
         )
         return
       }
-      const intent = projectActionIntent(project)
+      const intent = projectActionIntent(project, window.confirm, window.prompt, projectWorkflowRole)
       if (!intent) return
       if (intent.action === 'terminate' && !intent.reason) {
         showProjectLifecycleFeedback(projectId, 'A reason is required to end early', true)
@@ -4005,6 +4051,7 @@
       if (!card) return
       event.preventDefault()
       event.stopPropagation()
+      if (action.getAttribute('data-project-action-waiting') === 'true') return
       if (action.matches(PROJECT_CONTRACT_SELECTOR)) await openProjectContract(action, card)
       else if (action.matches(PROJECT_END_SELECTOR)) await mutateProjectLifecycle(action, card)
       else if (binding.role === 'brand') await openProjectReview(action, card)
@@ -6279,6 +6326,8 @@
     invoiceSubmitControl,
     setInvoiceSubmitDisabled,
     projectActionIntent,
+    projectPartyRequested,
+    projectLifecycleWaitingOn,
     projectContractIsViewable,
     projectContractIsDownloadable,
     projectContractPanelState,

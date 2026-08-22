@@ -725,18 +725,91 @@ test('project lifecycle intent covers cancellation, completion and early termina
     { action: 'terminate', reason: 'Scope changed' },
   )
   assert.deepEqual(
-    plain(intent({ lifecycle_state: 'completion_requested' }, () => true, () => '')),
+    plain(intent(
+      { lifecycle_state: 'completion_requested', brand_completion_requested_at: null },
+      () => true,
+      () => '',
+      'brand',
+    )),
     { action: 'complete', reason: '' },
+  )
+  assert.equal(
+    intent(
+      {
+        lifecycle_state: 'completion_requested',
+        brand_completion_requested_at: '2026-08-23T01:00:00Z',
+      },
+      () => true,
+      () => '',
+      'brand',
+    ),
+    null,
   )
   assert.deepEqual(
     plain(intent(
-      { lifecycle_state: 'termination_requested', end_reason: 'Scope changed' },
+      {
+        lifecycle_state: 'termination_requested',
+        end_reason: 'Scope changed',
+        starter_termination_requested_at: null,
+      },
       () => true,
       () => '',
+      'starter',
     )),
     { action: 'terminate', reason: 'Scope changed' },
   )
+  assert.equal(
+    intent(
+      {
+        lifecycle_state: 'termination_requested',
+        end_reason: 'Scope changed',
+        starter_termination_requested_at: '2026-08-23T01:00:00Z',
+      },
+      () => true,
+      () => '',
+      'starter',
+    ),
+    null,
+  )
   assert.equal(intent({ lifecycle_state: 'completed' }, () => true, () => 'COMPLETE'), null)
+})
+
+test('project lifecycle waiting labels are role-aware for either request order', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const waitingOn = bridge.window.Opp30.projectLifecycleWaitingOn
+
+  assert.equal(
+    waitingOn({
+      lifecycle_state: 'completion_requested',
+      brand_completion_requested_at: '2026-08-23T01:00:00Z',
+      starter_completion_requested_at: null,
+    }, 'brand'),
+    'Starter',
+  )
+  assert.equal(
+    waitingOn({
+      lifecycle_state: 'completion_requested',
+      brand_completion_requested_at: null,
+      starter_completion_requested_at: '2026-08-23T01:00:00Z',
+    }, 'starter'),
+    'Brand',
+  )
+  assert.equal(
+    waitingOn({
+      lifecycle_state: 'completion_requested',
+      brand_completion_requested_at: '2026-08-23T01:00:00Z',
+      starter_completion_requested_at: null,
+    }, 'starter'),
+    '',
+  )
+  assert.equal(
+    waitingOn({
+      lifecycle_state: 'completion_requested',
+      brand_completion_requested_at: null,
+      starter_completion_requested_at: '2026-08-23T01:00:00Z',
+    }, 'brand'),
+    '',
+  )
 })
 
 test('project timelines use compact readable calendar ranges without timezone shifts', async () => {
@@ -2306,6 +2379,109 @@ test('pending project cards suppress the request-era duplicate and keep one cano
   assert.equal(end.getAttribute('data-project-action'), 'end')
   assert.equal(endWrap.style.display, '')
   assert.equal(endLabel.textContent, 'Cancel Project')
+})
+
+test('Brand requester sees a waiting state and cannot repeat a completion request', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '743' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  let actionCount = 0
+
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 743,
+            lifecycle_state: 'completion_requested',
+            lifecycle_version: 4,
+            brand_completion_requested_at: '2026-08-20T09:00:00Z',
+            starter_completion_requested_at: null,
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionCount += 1
+        return response({})
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => label.textContent === 'Waiting for Starter'))
+  assert.equal(end.getAttribute('aria-disabled'), 'true')
+  assert.equal(end.getAttribute('data-project-action-waiting'), 'true')
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  await new Promise(setImmediate)
+  assert.equal(actionCount, 0)
+})
+
+test('Starter counterparty can confirm a Brand completion request', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '743' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const actionBodies = []
+
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{
+            id: 743,
+            lifecycle_state: 'completion_requested',
+            lifecycle_version: 4,
+            brand_completion_requested_at: '2026-08-20T09:00:00Z',
+            starter_completion_requested_at: null,
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBodies.push(JSON.parse(init.body))
+        return response({
+          project: { id: 743, lifecycle_state: 'completed', lifecycle_version: 5 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  bridge.window.confirm = () => true
+
+  assert.ok(await waitFor(() => label.textContent === 'Confirm Completion'))
+  assert.equal(end.getAttribute('aria-disabled'), null)
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  assert.ok(await waitFor(() => actionBodies.length === 1))
+  assert.equal(actionBodies[0].action, 'complete')
+  assert.equal(actionBodies[0].expected_version, 4)
 })
 
 test('Starter project cards keep completed contracts off the signing-session route', async () => {
