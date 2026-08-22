@@ -585,6 +585,10 @@
     })
   }
 
+  // Funnel event (platform-ops/architecture/posthog-funnel-events-plan.md):
+  // brand_account_email_decision. Build identifier plus two booleans only —
+  // adding the submitted or authenticated email, the member ID, or any form
+  // value here would leak identity into the funnel stream.
   function trackBuildEmailDecision(emailChangeRequired, securityEmailAttempted) {
     if (!window.StartersTrack || typeof window.StartersTrack.track !== 'function') return
     try {

@@ -126,14 +126,14 @@ initialization, so it can align both native signup forms with Test or Live Data:
     guardSecurityForm: 'identity'
   }
 </script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=1.59.339"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE"></script>
 ```
 
 The `identity` setting is the production activation for Starter login-email
-changes. Keep the configuration block before the controller script. The
-`?v=` value is the release cache key described under
-[Brand controller cache key](#brand-controller-cache-key): the versioned tag
-replaces the previous controller tag. Never leave a second, un-versioned
+changes. Keep the configuration block before the controller script.
+[Brand controller cache key](#brand-controller-cache-key) owns the `?v=RELEASE`
+substitution and its verification; the versioned tag replaces the previous
+controller tag. Never leave a second, un-versioned
 `brand-account-controller.js` tag in the block. The controller self-guards on
 `window.__startersBrandAccountControllerBooted`, so a stale cached copy that
 boots first makes the freshly requested copy a no-op and the release only looks
@@ -181,11 +181,18 @@ the completed account workflow and its user-facing result unchanged.
 
 The Brand account controller keeps the `@latest` jsDelivr loader, but its
 Webflow script URL must include the released version as a query-string cache
-key. For release `v1.59.339`, use:
+key:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=1.59.339"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE"></script>
 ```
+
+`RELEASE` is the semver of the release that actually published the current
+controller build, without the leading `v`: tag `v1.59.339` gives `?v=1.59.339`.
+Read it from the published release rather than from an expected next version —
+an unpublished number in this URL cache-busts browsers onto a build jsDelivr
+cannot serve yet. Substitute the same release everywhere `RELEASE` appears
+below, including the version-pinned fallback path.
 
 Update this query value for every Brand account controller release, and in the
 same change bump `CONTROLLER_VERSION` in `brand-account-controller.js` to the
@@ -203,14 +210,14 @@ its cache key. So the query bump alone is not proof that members are served the
 new code. Before the bounded production test, verify the served content:
 
 ```bash
-curl -s "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=1.59.339" \
+curl -s "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE" \
   | grep -c "brand-account-controller-v2"
 ```
 
 The released `CONTROLLER_VERSION` must be present in that output. If the served
 file is still the previous build, do not run the production test on `@latest`:
 publish the version-pinned path for that release
-(`@v1.59.339/v3/brand-account-controller.js`), which is resolved per ref and
+(`@vRELEASE/v3/brand-account-controller.js`), which is resolved per ref and
 cannot be answered from a stale `@latest` resolution, and re-run the check. The
 live confirmation is a `brand_account_email_decision` event carrying the
 released `controller_version`.
