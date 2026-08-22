@@ -219,6 +219,7 @@ function load(options = {}) {
   const calls = { options: [], profile: [], submit: [] }
   const events = []
   const tracks = []
+  const debugLogs = []
   const mutationObservers = []
   const serializedPayload = {
     starter_memberstack_id: 'mem_starter',
@@ -249,6 +250,8 @@ function load(options = {}) {
   Object.values(form.fields).forEach((element) => { element.eventDocument = document })
   const window = {
     document: options.noDocument ? null : document,
+    location: { search: options.debug ? '?starterProjectDebug=1' : '' },
+    console: { info() { debugLogs.push(Array.from(arguments)) } },
     crypto: { randomUUID: () => 'project-key-123' },
     Event: class Event {
       constructor(type, init = {}) { this.type = type; this.bubbles = Boolean(init.bubbles) }
@@ -300,6 +303,7 @@ function load(options = {}) {
     context,
     document,
     events,
+    debugLogs,
     form,
     tracks,
     window,
@@ -311,6 +315,117 @@ function load(options = {}) {
     },
   }
 }
+
+test('diagnostics stay off by default and emit only the safe options-to-submit trace when opted in', async () => {
+  const quiet = load({
+    noDocument: true,
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+  })
+
+  await quiet.api.loadOptions(quiet.form, quiet.window)
+  assert.equal(await quiet.api.submit(quiet.form, quiet.window, quiet.document), true)
+  assert.deepEqual(quiet.debugLogs, [])
+
+  let submittedPayload
+  const loaded = load({
+    noDocument: true,
+    debug: true,
+    projectOptions: async () => ({
+      counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+      blocked_reason: 'starter mem_starter cannot use sample@example.com for project_scope',
+    }),
+    projectSubmit: async (payload) => {
+      submittedPayload = payload
+      return {
+        project: { id: 81, lifecycle_state: 'contract_create_pending' },
+        replayed: false,
+        member_id: 'mem_starter',
+        email: 'sample@example.com',
+        token: 'secret-token',
+        idempotency_key: 'project-key-123',
+        contract_payload: { private: true },
+        project_scope: 'Build the retention program.',
+      }
+    },
+  })
+
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+
+  assert.deepEqual(JSON.parse(JSON.stringify(loaded.debugLogs)), [
+    ['[StarterProjectV3]', 'options_request', { force_refresh: false }],
+    ['[StarterProjectV3]', 'options_response', { eligible_count: 1 }],
+    ['[StarterProjectV3]', 'submit_request', { selected_brand_id: 31 }],
+    ['[StarterProjectV3]', 'submit_success', {
+      project_id: 81,
+      lifecycle_state: 'contract_create_pending',
+      replayed: false,
+    }],
+  ])
+
+  if (process.env.STARTER_PROJECT_EVIDENCE === '1') {
+    console.log(JSON.stringify({
+      debug_disabled_console: quiet.debugLogs,
+      debug_enabled_console: loaded.debugLogs,
+      final_form_status: loaded.form.getAttribute('data-starter-project-status'),
+      submitted_payload_fields: Object.keys(submittedPayload).sort(),
+    }, null, 2))
+  }
+})
+
+test('diagnostic logger failures do not interrupt options or submit', async () => {
+  const loaded = load({
+    noDocument: true,
+    debug: true,
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+  })
+  loaded.window.console.info = () => { throw new Error('console unavailable') }
+
+  assert.equal((await loaded.api.loadOptions(loaded.form, loaded.window)).length, 1)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'success')
+})
+
+test('diagnostic error entries expose status only and omit free-form server details', async () => {
+  const optionsFailure = load({
+    noDocument: true,
+    debug: true,
+    projectOptions: async () => {
+      throw Object.assign(new Error('mem_starter sample@example.com secret-token project_scope'), {
+        status: 502,
+        response: { idempotency_key: 'project-key-123', contract_payload: { private: true } },
+      })
+    },
+  })
+
+  await optionsFailure.api.loadOptions(optionsFailure.form, optionsFailure.window)
+  assert.deepEqual(JSON.parse(JSON.stringify(optionsFailure.debugLogs)), [
+    ['[StarterProjectV3]', 'options_request', { force_refresh: false }],
+    ['[StarterProjectV3]', 'options_error', { status: 502 }],
+  ])
+
+  const submitFailure = load({
+    noDocument: true,
+    debug: true,
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+    projectSubmit: async () => {
+      throw Object.assign(new Error('mem_starter sample@example.com secret-token project_scope'), {
+        status: 422,
+        response: { idempotency_key: 'project-key-123', contract_payload: { private: true } },
+      })
+    },
+  })
+
+  await submitFailure.api.loadOptions(submitFailure.form, submitFailure.window)
+  assert.equal(await submitFailure.api.submit(submitFailure.form, submitFailure.window, submitFailure.document), false)
+  assert.deepEqual(JSON.parse(JSON.stringify(submitFailure.debugLogs)), [
+    ['[StarterProjectV3]', 'options_request', { force_refresh: false }],
+    ['[StarterProjectV3]', 'options_response', { eligible_count: 1 }],
+    ['[StarterProjectV3]', 'submit_request', { selected_brand_id: 31 }],
+    ['[StarterProjectV3]', 'submit_error', { status: 422 }],
+  ])
+})
 
 test('normalizes and renders the authenticated Starter profile into scoped bindings', async () => {
   const loaded = load({ noDocument: true, profile: {
