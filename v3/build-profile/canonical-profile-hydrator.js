@@ -1,13 +1,17 @@
 /**
  * Canonical Build Profile fallback hydration.
  *
- * The legacy Build Profile draft controller restores only Memberstack JSON and
- * member-scoped localStorage. A completed Starter with neither draft therefore
- * sees an empty wizard even when freelancers_v3 is populated. This controller
- * reads the existing `starter/get` compatibility endpoint, maps its canonical
- * profile shape to the wizard's step shape, and fills only keys that are absent
- * from the active draft. Existing draft keys always win, including intentional
- * empty strings and false values.
+ * The legacy Build Profile draft controller restores Memberstack JSON and
+ * member-scoped localStorage, plus the signed-in member's own identity for the
+ * member-bound `step_1` keys (`first-name`, `last-name`, `email`, `phone`)
+ * whenever that identity value is non-empty. A completed Starter with neither
+ * draft therefore still sees an otherwise empty wizard even when
+ * freelancers_v3 is populated. This controller reads the existing
+ * `starter/get` compatibility endpoint, maps its canonical profile shape to
+ * the wizard's step shape, and fills only keys that are absent from the active
+ * draft. Existing draft keys always win, including intentional empty strings
+ * and false values, so a hydrated member identity keeps precedence over the
+ * canonical name, email, and phone.
  *
  * It does not persist Memberstack JSON, localStorage, or Xano data. The native
  * wizard continues to own capture and persistence after a human changes a field

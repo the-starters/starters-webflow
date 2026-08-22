@@ -52,7 +52,8 @@ profile-photo, Step 3 company, Step 4 portfolio, and later loaders stay unchange
 
 The extraction does not move the form into JavaScript. It does not change the separate Step 3 company
 owner or Step 4 portfolio owner. A future `wf-xano` conversion requires a separate declarative contract
-and must not be combined with this behavior-preserving ownership cutover.
+and must not be combined with this ownership cutover, which changes no behavior beyond the
+declared `draft-state.js` hydration fix recorded above.
 
 ## Verification
 
