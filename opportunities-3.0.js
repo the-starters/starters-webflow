@@ -3452,6 +3452,10 @@
         label: state === 'pending' ? 'Cancel Project' : 'End Project',
       }
     }
+    // A present-but-empty timestamp means that party has not requested; an
+    // absent key means the projection dropped the field, so the requester
+    // cannot be identified and the control must fail closed rather than offer
+    // the requester a second request.
     const requesterUnknown =
       (role !== 'brand' && role !== 'starter') ||
       PROJECT_REQUEST_PARTIES.some(

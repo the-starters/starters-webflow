@@ -1032,13 +1032,16 @@ the canonical `brand_completion_requested_at`, `starter_completion_requested_at`
 that `starter/projects/mine` and `brand/projects/mine` return on every project
 row. While a request is pending, the party whose timestamp is set reads
 `Waiting for Starter` or `Waiting for Brand`, carries `aria-disabled` plus
-`data-project-action-waiting="true"`, and is refused again at the intent boundary
-after the pre-mutation refresh, so a stale card cannot replay the request. The
-same control fails closed when either party timestamp for the pending action is
-absent from the projection, or before the dashboard role resolves: the label
-reads `Status Unavailable`, the control carries the same disabled state, and no
-mutation is posted. A projection contract drift therefore degrades to no action
-instead of an unguarded repeat request.
+`data-project-action-waiting="true"`, drops its own clicks before any refresh or
+prompt, and is refused again at the intent boundary after the pre-mutation
+refresh, so a stale card cannot replay the request. The same control fails closed
+when either party timestamp for the pending action is absent from the projection,
+or before the dashboard role resolves: the label reads `Status Unavailable`, the
+control carries the same disabled state, and no mutation is posted. A projection
+contract drift therefore degrades to no action instead of an unguarded repeat
+request. Every lifecycle mutation repaints its own card once it settles, so a
+successful request flips that card to its waiting label without a second
+interaction.
 Immediately before every mutation, the controller refreshes the canonical project
 and requires a nonnegative `lifecycle_version`. It then posts `project_id`,
 `expected_version`, `action`, `reason`, and a retry-stable idempotency key to
