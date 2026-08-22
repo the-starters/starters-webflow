@@ -5,7 +5,7 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
  *
- * @release v1.59.312
+ * @release v1.59.346
  */
 
 (() => {
