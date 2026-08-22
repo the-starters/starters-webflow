@@ -572,6 +572,17 @@ onDomReady(function () {
 
 			const payload = getStepPayload(stepIndex);
 
+			// Disabled optional rate controls clear their visible values during hydration.
+			// Preserve the canonical integer contract by sending the existing zero sentinel.
+			['Paid_Call_Rate', 'Retainer_Rate'].forEach((field) => {
+				if (
+					Object.prototype.hasOwnProperty.call(payload, field)
+					&& String(payload[field] ?? '').trim() === ''
+				) {
+					payload[field] = 0;
+				}
+			});
+
 			// Country, State
 			if (payload.Country && payload.State_Province) {
 				const countrySelect = qs('#country');

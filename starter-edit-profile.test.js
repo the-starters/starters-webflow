@@ -60,6 +60,7 @@ function createEnvironment(fetchImpl, {
   fieldOverrides = {},
   missingSelectors = [],
   requiredCaptureFields = [],
+  additionalFormValues = [],
 } = {}) {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
@@ -191,6 +192,7 @@ function createEnvironment(fetchImpl, {
       ['reviewer-2', stepFields['[name="reviewer-2"]'].value],
       ['reviewer-3', stepFields['[name="reviewer-3"]'].value],
     ] : []),
+    ...additionalFormValues,
   ]
 
   const successModal = new Target()
@@ -535,6 +537,46 @@ async function testEveryOwnedSectionOpensSuccessModal() {
     assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
     assert.deepEqual(environment.modalApiCalls, ['edit-form-success'])
   }
+}
+
+async function testOptionalRatesPreserveCanonicalZeroSentinel() {
+  const blankRates = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }), {
+    stepIndex: 6,
+    additionalFormValues: [
+      ['paid-call-rate', ''],
+      ['rate-retainer', '   '],
+    ],
+  })
+
+  await submit(blankRates)
+
+  const [, blankOptions] = blankRates.requests[0]
+  const blankPayload = JSON.parse(blankOptions.body)
+  assert.equal(blankPayload.Paid_Call_Rate, 0)
+  assert.equal(blankPayload.Retainer_Rate, 0)
+
+  const configuredRates = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }), {
+    stepIndex: 6,
+    additionalFormValues: [
+      ['paid-call-rate', '250.00'],
+      ['rate-retainer', '500'],
+    ],
+  })
+
+  await submit(configuredRates)
+
+  const [, configuredOptions] = configuredRates.requests[0]
+  const configuredPayload = JSON.parse(configuredOptions.body)
+  assert.equal(configuredPayload.Paid_Call_Rate, '250.00')
+  assert.equal(configuredPayload.Retainer_Rate, '500')
 }
 
 async function testReviewerStepUsesCanonicalBuildProfileShape() {
@@ -933,6 +975,7 @@ Promise.all([
   testEarlyLoadInitializesCountersAfterParsing(),
   testNon2xx(),
   testEveryOwnedSectionOpensSuccessModal(),
+  testOptionalRatesPreserveCanonicalZeroSentinel(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
   testRejectedFetch(),
