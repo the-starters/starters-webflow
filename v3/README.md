@@ -3090,7 +3090,7 @@ Paid CTA, the authored
 `[call-type-item]` must contain a `[call-type-price]` node. The controller
 replaces that node's CMS or Designer text with the canonical USD value from
 `price_cents` before it reveals the Paid option. A missing price node, non-USD
-currency, non-integer price, or price below 500 cents makes installation fail
+currency, non-integer price, or price below 100 cents makes installation fail
 closed.
 
 While a Paid readiness request is pending, another click on the same current

@@ -1298,7 +1298,7 @@ test('an ambiguous grant deletion immediately restores the paid service', async 
       paidService: {
         config_id: 'cfg-paid-old',
         title: 'Paid Strategy Call',
-        price_cents: 42500,
+        price_cents: 100,
         duration: 45,
         active: true,
       },
@@ -1332,7 +1332,7 @@ test('an ambiguous grant deletion immediately restores the paid service', async 
   assert.deepEqual(result.state.paidService, {
     config_id: 'cfg-paid-restored',
     title: 'Paid Strategy Call',
-    price_cents: 42500,
+    price_cents: 100,
     duration: 45,
     active: true,
   })

@@ -335,7 +335,7 @@
   function canonicalPaidPrice(config) {
     const cents = Number(config && config.price_cents)
     const currency = String((config && config.currency) || '').toUpperCase()
-    if (!Number.isInteger(cents) || cents < 500 || currency !== 'USD') return ''
+    if (!Number.isInteger(cents) || cents < 100 || currency !== 'USD') return ''
     return cents % 100 === 0
       ? '$' + String(cents / 100)
       : '$' + (cents / 100).toFixed(2)

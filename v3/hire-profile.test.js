@@ -842,7 +842,7 @@ test('the TEST fixture uses canonical Free and Paid configs to reveal the author
       active: true,
       data_environment: 'test',
       payment_environment: 'test',
-      price_cents: 500,
+      price_cents: 100,
       currency: 'usd',
       duration: 15,
     },
@@ -1092,6 +1092,7 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
     [{ config_id: 'mixed_data', is_paid: false, active: true, data_environment: 'test' }],
     [{ config_id: 'mixed_payment', is_paid: true, active: true, data_environment: 'production', payment_environment: 'test', currency: 'USD', price_cents: 500 }],
     [{ config_id: 'missing_duration', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500 }],
+    [{ config_id: 'sub_minimum', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 99, duration: 60 }],
     [{ config_id: 'unknown_payment', is_paid: null, active: true, data_environment: 'production' }],
     [
       { config_id: 'free_a', is_paid: false, active: true, data_environment: 'production' },
