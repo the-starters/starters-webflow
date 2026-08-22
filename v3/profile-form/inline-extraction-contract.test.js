@@ -95,8 +95,9 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/draft-state.js': Object.freeze({
-    characters: 11227, sha256: '55c5308412459cc0222bbca420780a528e21c7ef0a2a8a45f07dd61010c73617',
+    characters: 11151, sha256: 'f5311c42114ae706587bf0abe9738b80dbb798319b049781766a490df4936f7a',
     guardKey: 'buildProfileDraftState',
+    liveCaptureAsset: 'v3/profile-form/build-draft-state-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
@@ -317,10 +318,13 @@ function validateLiveCaptureContract(provenance, readAsset = source) {
   for (const [asset, expected] of Object.entries(EXPECTED_CANDIDATE_ASSETS)) {
     const record = provenance.candidateAssets[asset]
     const transformation = {
-      kind: expected.guardKey ? 'whitespace_plus_idempotency_guard' : 'whitespace_only',
+      kind: expected.liveCaptureAsset
+        ? 'whitespace_plus_idempotency_guard_plus_behavior_change'
+        : (expected.guardKey ? 'whitespace_plus_idempotency_guard' : 'whitespace_only'),
       ...(expected.guardKey ? { guardKey: expected.guardKey } : {}),
       restoreTrailingWhitespace: expected.restoreTrailingWhitespace,
       terminalNewlinesRemoved: expected.terminalNewlinesRemoved,
+      ...(expected.liveCaptureAsset ? { liveCaptureAsset: expected.liveCaptureAsset } : {}),
     }
     assert.deepEqual(record, {
       candidateCharacters: expected.characters,
@@ -331,7 +335,18 @@ function validateLiveCaptureContract(provenance, readAsset = source) {
     const candidate = readAsset(asset)
     assert.equal(candidate.length, expected.characters, `${asset}: candidate length`)
     assert.equal(sha256(candidate), expected.sha256, `${asset}: candidate hash`)
-    restoredAssets[asset] = restoreCapturedWhitespace(candidate, expected, asset)
+    const reconstructed = restoreCapturedWhitespace(candidate, expected, asset)
+
+    if (!expected.liveCaptureAsset) {
+      restoredAssets[asset] = reconstructed
+      continue
+    }
+
+    restoredAssets[asset] = readAsset(expected.liveCaptureAsset)
+    assert.notEqual(
+      reconstructed, restoredAssets[asset],
+      `${asset}: declared behavior change no longer diverges from its published capture`,
+    )
   }
 
   for (const key of [
@@ -340,6 +355,7 @@ function validateLiveCaptureContract(provenance, readAsset = source) {
   ]) {
     const expected = EXPECTED_LIVE_CAPTURES[key]
     const restored = restoredAssets[expected.asset]
+    assert.ok(restored, `${key}: missing reconstructed live body`)
     assert.equal(restored.length, expected.characters, `${key}: reconstructed live length`)
     assert.equal(sha256(restored), expected.sha256, `${key}: reconstructed live hash`)
     assert.equal(sha256(`<script>${restored}</script>`), expected.embedSha256, `${key}: reconstructed embed hash`)
@@ -759,7 +775,7 @@ function executeCompleteRouteSequence(route, groupedAssets) {
   return { ...harness, registrations, runtimeAssets, controllingShimFetch, fetchAfterGrouped, laterShimWasNoOp }
 }
 
-test('immutable live captures and normalized candidates retain their ownership contract', () => {
+test('immutable live captures and cutover candidates retain their ownership contract', () => {
   assert.equal(PROVENANCE.publishAuthorized, false)
   assert.equal(PROVENANCE.installAuthorized, false)
   assert.equal(PROVENANCE.nativeFormOwnership, 'webflow')
@@ -775,6 +791,16 @@ test('Full Profile pinned controlling shim retains its immutable served capture'
   assert.equal(bytes.length, PINNED_FULL_PROFILE_SHIM.bytes)
   assert.equal(sha256(bytes), PINNED_FULL_PROFILE_SHIM.sha256)
   assert.doesNotThrow(() => new vm.Script(body, { filename: PINNED_FULL_PROFILE_SHIM.asset }))
+})
+
+test('build draft state keeps its published body as an immutable capture', () => {
+  const candidate = EXPECTED_CANDIDATE_ASSETS['v3/build-profile/draft-state.js']
+  const live = EXPECTED_LIVE_CAPTURES.buildDraftState
+  const capture = source(candidate.liveCaptureAsset)
+  assert.equal(capture.length, live.characters)
+  assert.equal(sha256(capture), live.sha256)
+  assert.equal(sha256(`<script>${capture}</script>`), live.embedSha256)
+  assert.doesNotThrow(() => new vm.Script(capture, { filename: candidate.liveCaptureAsset }))
 })
 
 test('the immutable live oracle rejects coordinated source and manifest drift', () => {
@@ -1067,14 +1093,34 @@ test('edit locations boot once and preserve country, state, and city transitions
   assert.equal(document.createdTags.includes('form'), false)
 })
 
-async function runDraftCase({ localProfile, memberProfile }) {
+const HYDRATED_IDENTITY = Object.freeze({
+  'first-name': 'Ada', 'last-name': 'Lovelace', email: 'profile@example.com', phone: '+15550000000',
+})
+
+function memberBoundFields() {
+  return ['first-name', 'last-name', 'email', 'phone'].map((name) => {
+    const field = new Element('input')
+    field.name = name
+    field.hasAttribute = (attribute) => attribute === 'data-ms-member'
+    return field
+  })
+}
+
+async function runDraftCase({ localProfile, memberProfile, member, stepFields = [] }) {
   const values = new Map([
     ['ts:build_profile:member:member-1', JSON.stringify(localProfile)],
   ])
   const memberUpdates = []
-  const document = createDocument({ '[data-form="step"]': [], 'input.with-count, textarea.with-count': [] })
+  const steps = []
+  if (stepFields.length) {
+    const step = new Element('div')
+    step.getAttribute = (name) => name === 'data-index' ? '1' : null
+    step.querySelectorAll = (selector) => selector === '[data-input-capture]' ? stepFields : []
+    steps.push(step)
+  }
+  const document = createDocument({ '[data-form="step"]': steps, 'input.with-count, textarea.with-count': [] })
   const context = createBaseContext({
-    MEMBER: { id: 'member-1', auth: { email: 'profile@example.com' }, customFields: {} },
+    MEMBER: member || { id: 'member-1', auth: { email: 'profile@example.com' }, customFields: {} },
     document,
     localStorage: {
       getItem(key) { return values.get(key) || null },
@@ -1113,6 +1159,100 @@ test('build draft state keeps a newer member draft without a reverse sync', asyn
   assert.equal(context.activeProfile.type, 'full')
   assert.equal(context.activeProfile.data.step_1.tagline, 'member')
   assert.equal(memberUpdates.length, 0)
+})
+
+test('build draft state hydrates blank member-bound fields from the signed-in member', async () => {
+  const fields = memberBoundFields()
+  const localProfile = {
+    type: 'full', type_id: 'full-id', last_update: 200,
+    data: { step_1: { 'first-name': '', 'last-name': '', email: '', phone: '' } },
+  }
+  const memberProfile = {
+    type: 'full', type_id: 'full-id', last_update: 100,
+    data: { step_1: { 'first-name': '', 'last-name': '', email: '', phone: '' } },
+  }
+
+  const { context, memberUpdates, values } = await runDraftCase({
+    localProfile,
+    memberProfile,
+    stepFields: fields,
+    member: {
+      id: 'member-1',
+      auth: { email: 'profile@example.com' },
+      customFields: { 'free-user': 'Ada', 'last-name': 'Lovelace', phone: '+15550000000' },
+    },
+  })
+
+  assert.deepEqual(fields.map((field) => field.value), [
+    'Ada', 'Lovelace', 'profile@example.com', '+15550000000',
+  ])
+  assert.deepEqual(context.activeProfile.data.step_1, HYDRATED_IDENTITY)
+  assert.deepEqual(
+    JSON.parse(values.get('ts:build_profile:member:member-1')).data.step_1,
+    HYDRATED_IDENTITY,
+  )
+  assert.equal(memberUpdates.length, 1)
+  assert.deepEqual(memberUpdates[0].json.build_profile.data.step_1, HYDRATED_IDENTITY)
+})
+
+test('build draft state hydrates a first-visit draft that has no member-bound keys', async () => {
+  const fields = memberBoundFields()
+
+  const { context, values } = await runDraftCase({
+    localProfile: null,
+    memberProfile: null,
+    stepFields: fields,
+    member: {
+      id: 'member-1',
+      auth: { email: 'profile@example.com' },
+      customFields: { 'free-user': 'Ada', 'last-name': 'Lovelace', phone: '+15550000000' },
+    },
+  })
+
+  assert.deepEqual(fields.map((field) => field.value), [
+    'Ada', 'Lovelace', 'profile@example.com', '+15550000000',
+  ])
+  assert.deepEqual({ ...context.activeProfile.data.step_1 }, HYDRATED_IDENTITY)
+  assert.deepEqual(
+    JSON.parse(values.get('ts:build_profile:member:member-1')).data.step_1,
+    HYDRATED_IDENTITY,
+  )
+})
+
+test('build draft state leaves an unmapped member-bound field untouched', async () => {
+  const field = new Element('input')
+  field.name = 'company'
+  field.value = 'Memberstack prefill'
+  field.hasAttribute = (attribute) => attribute === 'data-ms-member'
+
+  const { context } = await runDraftCase({
+    localProfile: null,
+    memberProfile: null,
+    stepFields: [field],
+    member: { id: 'member-1', auth: { email: 'profile@example.com' }, customFields: {} },
+  })
+
+  assert.equal(field.value, 'Memberstack prefill')
+  assert.deepEqual({ ...context.activeProfile.data.step_1 }, {})
+})
+
+test('build draft state preserves non-empty member-bound draft edits', async () => {
+  const email = new Element('input')
+  email.name = 'email'
+  email.hasAttribute = (attribute) => attribute === 'data-ms-member'
+  const localProfile = {
+    type: 'full', type_id: 'full-id', last_update: 200,
+    data: { step_1: { email: 'draft@example.com' } },
+  }
+
+  await runDraftCase({
+    localProfile,
+    memberProfile: { type: 'full', type_id: 'full-id', last_update: 100, data: { step_1: {} } },
+    stepFields: [email],
+    member: { id: 'member-1', auth: { email: 'profile@example.com' }, customFields: {} },
+  })
+
+  assert.equal(email.value, 'draft@example.com')
 })
 
 test('edit canonical loader hydrates authored fields without a load-time mutation', async () => {

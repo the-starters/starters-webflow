@@ -1,7 +1,4 @@
 
-  var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
-  if (!profileFormControllers.buildProfileDraftState) {
-  profileFormControllers.buildProfileDraftState = true;
   document.addEventListener('DOMContentLoaded', function () {
     setLoader(true);
 
@@ -157,26 +154,29 @@
 
           const fields = qsa('[data-input-capture]', step);
           fields.forEach((field) => {
-            const fieldName = field.name;
-            if (!fieldName) return;
-
             if (field.hasAttribute('data-ms-member')) {
-              const draftValue = stepData[fieldName];
-              const memberValue = fieldName === 'email'
-                ? MEMBER.auth?.email
-                : MEMBER.customFields?.[memberFieldsMapping[fieldName]];
-              const preferredValue = String(draftValue ?? '').trim()
-                ? draftValue
-                : (String(memberValue ?? '').trim() ? memberValue : draftValue);
+              setTimeout(() => {
+                field.dispatchEvent(new Event('input', { bubbles: true }));
+                field.dispatchEvent(new Event('change', { bubbles: true }));
+              }, 50);
 
-              if (preferredValue === undefined) return;
+              if (
+                field.name !== 'email' &&
+                activeProfile?.data?.["step_1"]?.[field.name]?.trim() === MEMBER.customFields?.[memberFieldsMapping[field.name]]?.trim()
+              ) {
+                return;
+              }
 
-              stepData[fieldName] = preferredValue;
-              setFieldValue(field, preferredValue);
-              return;
+              if (
+                field.name === 'email' &&
+                activeProfile?.data?.["step_1"]?.["email"]?.trim() === MEMBER.auth.email?.trim()
+              ) {
+                return;
+              }
             }
 
-            if (!(fieldName in stepData)) return;
+            const fieldName = field.name;
+            if (!fieldName || !(fieldName in stepData)) return;
 
             setFieldValue(field, stepData[fieldName]);
           });
@@ -363,4 +363,4 @@
       .filter(Boolean)
       .length;
   }
-  }
+

@@ -156,13 +156,14 @@
       }
     },
     "v3/build-profile/draft-state.js": {
-      "candidateCharacters": 11227,
-      "candidateSha256": "55c5308412459cc0222bbca420780a528e21c7ef0a2a8a45f07dd61010c73617",
+      "candidateCharacters": 11151,
+      "candidateSha256": "f5311c42114ae706587bf0abe9738b80dbb798319b049781766a490df4936f7a",
       "transformation": {
-        "kind": "whitespace_plus_idempotency_guard",
+        "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileDraftState",
         "restoreTrailingWhitespace": {},
-        "terminalNewlinesRemoved": 1
+        "terminalNewlinesRemoved": 1,
+        "liveCaptureAsset": "v3/profile-form/build-draft-state-published.capture.txt"
       }
     },
     "v3/build-profile/submit-writer.js": {
