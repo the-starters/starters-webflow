@@ -51,7 +51,7 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | Description/title input | `name="call-description"` |
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
-| Authored price tile | Preferred: `data-call-settings-output="price"`; the current component fallback resolves, inside `data-service-card-element="price-card"`, the leaf element whose authored text is already a complete currency amount such as `$150` |
+| Authored price tile | Preferred: `data-call-settings-output="price"`; the current component fallback resolves, inside `data-service-card-element="price-card"`, either one leaf containing a complete amount such as `$150` or the published adjacent sibling spans `$` + `150` |
 
 Yes and No are resolved as one pair, never independently, so a single radio can never be bound as
 both answers. Canonical `yes` and `no` values match first, then a leading `yes` or `no` word such as
