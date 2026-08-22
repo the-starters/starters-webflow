@@ -18,6 +18,7 @@
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"]'
   const OPEN_ACTION_SELECTOR =
     '[data-call-settings-action="open"], [data-availability-action="item-form-open"]'
+  const AUTHORED_STATUS_PILL_SELECTOR = '[data-availability-element="call-pill-on"]'
   const FOREIGN_CARD_SELECTOR =
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"], [data-call-settings-service], [data-availability-element="call-paid-form"]'
   const FIXED_DURATION_MINUTES = 60
@@ -385,8 +386,30 @@
     if (target) target.textContent = message || ''
   }
 
+  function setRadioChecked(item, checked) {
+    if (!item) return
+    item.checked = Boolean(checked)
+    const label = closestMatch(item, 'label')
+    if (!label) return
+    const visual = Array.prototype.find.call(qsa('[class]', label), function (candidate) {
+      return String(candidate.getAttribute('class') || '').split(/\s+/).includes('w-radio-input')
+    })
+    if (!visual) return
+    const classes = String(visual.getAttribute('class') || '').split(/\s+/).filter(Boolean)
+    const next = classes.filter(function (name) { return name !== 'w--redirected-checked' })
+    if (checked) next.push('w--redirected-checked')
+    visual.setAttribute('class', next.join(' '))
+  }
+
   function output(name) {
-    return qs('[data-call-settings-output="' + name + '"]', uiScope || root)
+    const canonical = qs('[data-call-settings-output="' + name + '"]', uiScope || root)
+    if (canonical || (name !== 'on' && name !== 'off')) return canonical
+    const authored = Array.prototype.find.call(
+      qsa(AUTHORED_STATUS_PILL_SELECTOR, uiScope || root),
+      function (item) { return String(item.textContent || '').trim().toLowerCase() === name },
+    ) || null
+    if (authored) authored.setAttribute('data-call-settings-output', name)
+    return authored
   }
 
   function leafElements(element) {
@@ -528,12 +551,12 @@
     const titleInput = field('title')
     const priceInput = field('price')
     const durationInput = field('duration')
-    if (enabledInput) enabledInput.checked = false
+    setRadioChecked(enabledInput, false)
     if (titleInput) titleInput.value = ''
     if (priceInput) priceInput.value = ''
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
     const disabledInput = disabledField()
-    if (disabledInput) disabledInput.checked = true
+    setRadioChecked(disabledInput, true)
     qsa('[data-paid-call-prerequisite]', uiScope || root).forEach(function (item) {
       item.setAttribute('data-ready', 'false')
     })
@@ -570,9 +593,9 @@
     const priceInput = field('price')
     const durationInput = field('duration')
 
-    if (enabledInput) enabledInput.checked = Boolean(service)
+    setRadioChecked(enabledInput, Boolean(service))
     const disabledInput = disabledField()
-    if (disabledInput) disabledInput.checked = !service
+    setRadioChecked(disabledInput, !service)
     if (titleInput) titleInput.value = service ? service.title || '' : 'Paid Consultation Call'
     if (priceInput) priceInput.value = service ? Number(service.price_cents || 0) / 100 : ''
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
@@ -634,14 +657,35 @@
   }
 
   function readIntent() {
-    const title = String((field('title') && field('title').value) || '').trim()
-    const price = Number((field('price') && field('price').value) || 0)
+    const titleInput = field('title')
+    const priceInput = field('price')
+    const title = String((titleInput && titleInput.value) || '').trim()
+    const price = Number((priceInput && priceInput.value) || 0)
     const duration = FIXED_DURATION_MINUTES
+    ;[titleInput, priceInput].forEach(function (input) {
+      if (!input) return
+      if (typeof input.setCustomValidity === 'function') input.setCustomValidity('')
+      input.setAttribute('aria-invalid', 'false')
+    })
     if (title.length < 3 || title.length > 80) {
-      throw new Error('Use a title between 3 and 80 characters.')
+      const message = 'Use a title between 3 and 80 characters.'
+      if (titleInput && typeof titleInput.setCustomValidity === 'function') {
+        titleInput.setCustomValidity(message)
+        titleInput.setAttribute('aria-invalid', 'true')
+        if (typeof titleInput.reportValidity === 'function') titleInput.reportValidity()
+      }
+      setMessage(message)
+      throw new Error(message)
     }
-    if (!Number.isInteger(price) || price < 5 || price > 999999) {
-      throw new Error('Use a whole-dollar rate from $5 to $999,999.')
+    if (!Number.isInteger(price) || price < 1 || price > 999999) {
+      const message = 'Use a whole-dollar rate from $1 to $999,999.'
+      if (priceInput && typeof priceInput.setCustomValidity === 'function') {
+        priceInput.setCustomValidity(message)
+        priceInput.setAttribute('aria-invalid', 'true')
+        if (typeof priceInput.reportValidity === 'function') priceInput.reportValidity()
+      }
+      setMessage(message)
+      throw new Error(message)
     }
     return { title: title, price_cents: price * 100, duration_minutes: duration }
   }
@@ -880,7 +924,8 @@
     if (enabledInput) {
       enabledInput.addEventListener('change', function () {
         const disabledInput = disabledField()
-        if (cardMode && enabledInput.checked && disabledInput) disabledInput.checked = false
+        setRadioChecked(enabledInput, enabledInput.checked)
+        if (cardMode && enabledInput.checked) setRadioChecked(disabledInput, false)
         if (!enabledInput.checked && canonicalService(settings)) {
           setMessage('Use Turn off paid calls to disable the active service safely.')
         }
@@ -889,9 +934,18 @@
     const disabledInput = disabledField()
     if (disabledInput) {
       disabledInput.addEventListener('change', function () {
-        if (disabledInput.checked && enabledInput) enabledInput.checked = false
+        setRadioChecked(disabledInput, disabledInput.checked)
+        if (disabledInput.checked) setRadioChecked(enabledInput, false)
       })
     }
+    ;['title', 'price'].forEach(function (name) {
+      const input = field(name)
+      if (!input) return
+      input.addEventListener('input', function () {
+        if (typeof input.setCustomValidity === 'function') input.setCustomValidity('')
+        input.setAttribute('aria-invalid', 'false')
+      })
+    })
     const openButton = action('open')
     if (openButton) {
       openButton.addEventListener('click', function (event) {
