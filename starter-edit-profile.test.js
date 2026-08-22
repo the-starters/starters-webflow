@@ -54,6 +54,8 @@ function createEnvironment(fetchImpl, {
   setTimeoutImpl = () => 1,
   documentReadyState = 'loading',
   notifyCurrentMemberOnAuthSubscribe = false,
+  initialAuthNotification = undefined,
+  memberReadSequence = null,
   profileType = 'full',
   fieldOverrides = {},
   missingSelectors = [],
@@ -243,6 +245,7 @@ function createEnvironment(fetchImpl, {
     auth: { email: 'old@example.com' },
     customFields: { 'free-user': '', 'last-name': '', phone: globalFields.phone.value },
   }
+  let memberReadIndex = 0
   const window = {
     activeProfile: { type: profileType, type_id: profileType === 'consult' ? 2 : 1 },
     MEMBER: currentMember,
@@ -253,11 +256,18 @@ function createEnvironment(fetchImpl, {
     location: { replace() {}, hostname: 'the-starters-3-0.webflow.io' },
     intlTelInput: Object.assign(() => ({}), { getInstance: () => null }),
     $memberstackDom: {
-      async getCurrentMember() { return { data: currentMember } },
+      async getCurrentMember() {
+        if (Array.isArray(memberReadSequence) && memberReadIndex < memberReadSequence.length) {
+          return { data: memberReadSequence[memberReadIndex++] }
+        }
+        return { data: currentMember }
+      },
       onAuthChange(listener) {
         authChangeListeners.push(listener)
-        if (notifyCurrentMemberOnAuthSubscribe) {
-          const subscribedMember = currentMember
+        if (notifyCurrentMemberOnAuthSubscribe || initialAuthNotification !== undefined) {
+          const subscribedMember = notifyCurrentMemberOnAuthSubscribe
+            ? currentMember
+            : initialAuthNotification
           Promise.resolve().then(() => listener({ data: subscribedMember }))
         }
       },
@@ -405,6 +415,37 @@ async function testInitialSameMemberAuthNotificationDoesNotRejectSave() {
 
   assert.equal(requests, 1)
   assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+}
+
+async function testInitialEmptyAuthNotificationDoesNotRejectCurrentMemberSave() {
+  let requests = 0
+  const environment = createEnvironment(async () => {
+    requests += 1
+    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+  }, { initialAuthNotification: null })
+
+  await submit(environment)
+
+  assert.equal(requests, 1)
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+}
+
+async function testMemberSwitchBetweenBracketingReadsDoesNotWrite() {
+  let requests = 0
+  const environment = createEnvironment(async () => {
+    requests += 1
+    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+  }, {
+    memberReadSequence: [
+      { id: 'mem_test', auth: { email: 'old@example.com' }, customFields: {} },
+      { id: 'mem_other', auth: { email: 'other@example.com' }, customFields: {} },
+    ],
+  })
+
+  await submit(environment)
+
+  assert.equal(requests, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
 }
 
 async function testEarlyLoadInitializesCountersAfterParsing() {
@@ -837,6 +878,8 @@ Promise.all([
   testSuccess(),
   testLateLoadInitializesImmediately(),
   testInitialSameMemberAuthNotificationDoesNotRejectSave(),
+  testInitialEmptyAuthNotificationDoesNotRejectCurrentMemberSave(),
+  testMemberSwitchBetweenBracketingReadsDoesNotWrite(),
   testEarlyLoadInitializesCountersAfterParsing(),
   testNon2xx(),
   testEveryOwnedSectionOpensSuccessModal(),

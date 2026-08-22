@@ -24,7 +24,6 @@ const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
 let observedMemberstackClient = null;
-let observedMemberstackMemberId = '';
 
 function memberFromResult(result) {
 	return result?.data || result?.member || result || null;
@@ -36,22 +35,23 @@ function memberScopeChangedError() {
 	return error;
 }
 
-// Memberstack immediately replays the current member when this listener subscribes.
-// Ignore only that same-member replay; every later notification invalidates in-flight work,
-// including logout followed by reauthentication as the same member.
+// Memberstack immediately replays its auth state when this listener subscribes.
+// Ignore that first replay and bracket subscription with two current-member reads.
+// Every later notification invalidates in-flight work, including logout followed by
+// reauthentication as the same member.
 function observeMemberstackAuth(client) {
 	if (observedMemberstackClient === client) return;
 	observedMemberstackClient = client;
-	observedMemberstackMemberId = memberFromResult(window.MEMBER)?.id || '';
 	let awaitingInitialNotification = true;
 	if (typeof client?.onAuthChange === 'function') {
-		client.onAuthChange((result) => {
-			const nextMemberId = memberFromResult(result)?.id || '';
+		client.onAuthChange(() => {
 			if (awaitingInitialNotification) {
 				awaitingInitialNotification = false;
-				if (nextMemberId && nextMemberId === observedMemberstackMemberId) return;
+				// Memberstack replays its current auth state on subscribe. The replay can
+				// briefly be empty while getCurrentMember() already has the live member.
+				// A second member read below closes that race before any request starts.
+				return;
 			}
-			observedMemberstackMemberId = nextMemberId;
 			memberAuthGeneration += 1;
 		});
 	}
@@ -62,10 +62,16 @@ async function captureMemberScope() {
 	if (!client || typeof client.getCurrentMember !== 'function') {
 		throw new Error('Memberstack member lookup is unavailable.');
 	}
+	const initialMember = memberFromResult(await client.getCurrentMember());
+	if (!initialMember?.id) throw memberScopeChangedError();
 	observeMemberstackAuth(client);
 	const generation = memberAuthGeneration;
 	const member = memberFromResult(await client.getCurrentMember());
-	if (!member?.id || generation !== memberAuthGeneration) throw memberScopeChangedError();
+	if (
+		!member?.id ||
+		member.id !== initialMember.id ||
+		generation !== memberAuthGeneration
+	) throw memberScopeChangedError();
 	return { client, generation, member };
 }
 
