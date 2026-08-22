@@ -176,8 +176,9 @@ isolation — plus the authored status-pill resolution and its drifted-copy diag
 rejected rate never blocks a later turn-off — are executable regressions in
 `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a live
 Xano TEST configuration, and an asset that only exists once the tag is published, so they
-are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io` and `thestarters.com` answer `401` behind
-the site password, so a local phase cannot even read the live authored DOM.
+are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io`
+and `thestarters.com` answer `401` behind the site password, so a local phase cannot even
+read the live authored DOM.
 The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm

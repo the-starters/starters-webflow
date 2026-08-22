@@ -131,21 +131,25 @@ calls, reminders, and email canaries stay under the separate-approval rule owned
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion boot, the
 published `consulting-calls-free` hydration, Free/Paid card isolation in both directions, the
 three-field upsert and guarded disable payloads, the in-flight double-Update dedup, the
-off-contract duration or price paint, and the expired-session fail-closed writes are executable
-regressions in `v3/free-call-settings.test.js`. The remaining legs need a live Memberstack session,
-a live Xano TEST configuration, and an asset that only exists once the tag is published, so they
-are not runnable from CI or from a local test phase; both `the-starters-3-0.webflow.io` and
-`thestarters.com` answer `401` behind the site password, so a local phase cannot read the live
-authored DOM either. The release owner runs them by hand, in this order, after the PR merges:
+off-contract duration or price paint, the expired-session fail-closed writes, the authored
+status-pill resolution and its drifted-copy diagnostic, and the `w--redirected-checked` radio sync
+are executable regressions in `v3/free-call-settings.test.js`. The remaining legs need a live
+Memberstack session, a live Xano TEST configuration, and an asset that only exists once the tag is
+published, so they are not runnable from CI or from a local test phase; both
+`the-starters-3-0.webflow.io` and `thestarters.com` answer `401` behind the site password, so a
+local phase cannot read the live authored DOM either. The release owner runs them by hand, in this
+order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm the served
-   assets are the new build. `v3/free-call-settings.js` is new here, so the file resolving at all on
-   the jsDelivr path proves it; the served `v3/scheduling-auth.js` must also contain
-   `starter/free-call-settings/get/v3`, because the previous build authenticated only the Paid
-   paths.
+   asset is the new build: the served `v3/free-call-settings.js` must contain the status-pill and
+   radio sync, `AUTHORED_STATUS_PILL_SELECTOR` together with `setRadioChecked`. The previous build
+   already shipped the file itself, and `v3/scheduling-auth.js` already authenticated
+   `starter/free-call-settings/get/v3`, so neither can tell this release from the one before it;
+   always check a marker this release introduced.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Free card reaches
    `data-free-call-settings="ready"` with canonical values, including a reload where Webflow or
-   Memberstack inserts the card late.
+   Memberstack inserts the card late. Confirm exactly one status pill renders in each state, and
+   that the authored radio visual matches the canonical answer after a reload.
 3. With both cards present, confirm isolation by hand in both directions: Edit, Cancel, and Update
    on the Free card must never move the Paid card's controls, and the reverse, and each card must
    keep its own editor-open attribute.
