@@ -81,6 +81,8 @@ or use a styling class. Add the canonical output attribute in Designer when that
 available through the approved element-edit path; the canonical marker always wins, and the authored
 tile is then never touched.
 
+The fallback runs in the card and stable-contract wiring only; the
+`data-paid-call-element="settings"` panel renders a price through its canonical output alone.
 The authored tile is borrowed, not owned, so the fallback is deliberately narrow:
 
 - Only a leaf whose authored text is already a complete currency amount is bound. A caption, a `/hr`
@@ -145,12 +147,14 @@ Do not activate this form until the paid-call reconciliation dry run has zero un
 
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion
 recovery, the duplicate-initialization dedup, the published `consulting-calls-paid`
-binding, the stale-readiness save of an active service, and the expired-session
-fail-closed writes are executable regressions in `v3/paid-call-settings.test.js`. The
-remaining legs need a live Memberstack session, a live Xano TEST configuration, and an
-asset that only exists once the tag is published, so they are not runnable from CI or
-from a local test phase. Both `the-starters-3-0.webflow.io` and `thestarters.com` answer
-`401` behind the site password, so a local phase cannot even read the live authored DOM.
+binding, the stale-readiness save of an active service, the expired-session
+fail-closed writes, and the authored price tile fallback — canonical precedence, leaf
+selection, Designer-copy restore, and Free-sibling isolation — are executable regressions
+in `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a
+live Xano TEST configuration, and an asset that only exists once the tag is published, so
+they are not runnable from CI or from a local test phase. Both
+`the-starters-3-0.webflow.io` and `thestarters.com` answer `401` behind the site
+password, so a local phase cannot even read the live authored DOM.
 The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
