@@ -10,6 +10,8 @@
   const CALL_SETTINGS_ROOT_SELECTOR = '[data-call-settings-service="paid"]'
   const ROOT_SELECTOR = '[data-paid-call-element="settings"]'
   const CARD_ROOT_SELECTOR = '[data-availability-element="call-paid-form"]'
+  const AUTHORED_PRICE_CARD_SELECTOR = '[data-service-card-element="price-card"]'
+  const AUTHORED_PRICE_AMOUNT = /^\$\s*[\d.,]+$/
   const STATUS_ATTRIBUTE = 'data-paid-call-settings'
   const PANEL_SELECTOR =
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"]'
@@ -43,6 +45,7 @@
   let rootObserver = null
   let rootWaitTimer = null
   let initializationPromise = null
+  let authoredPrice = null
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -385,6 +388,49 @@
     return qs('[data-call-settings-output="' + name + '"]', uiScope || root)
   }
 
+  function leafElements(element) {
+    if (!element) return []
+    const children = element.children ? Array.prototype.slice.call(element.children) : []
+    if (!children.length) return [element]
+    return children.reduce(function (found, child) {
+      return found.concat(leafElements(child))
+    }, [])
+  }
+
+  // The current native Webflow Paid card predates the canonical price output, so
+  // the canonical hook always wins and this resolves the existing tile only as a
+  // fallback. Bind the leaf that already displays a complete currency amount:
+  // that is proof the node owns the whole price, so the controller can never
+  // rewrite a caption, a unit, or a bare number that a sibling symbol completes.
+  // With no such leaf the tile stays Designer-owned and nothing is painted.
+  function authoredPriceTarget() {
+    if (!cardMode) return null
+    const card = qs(AUTHORED_PRICE_CARD_SELECTOR, uiScope || root)
+    if (!card) return null
+    return (
+      leafElements(card).find(function (leaf) {
+        return AUTHORED_PRICE_AMOUNT.test(String(leaf.textContent || '').trim())
+      }) || null
+    )
+  }
+
+  // Only a canonical output element is controller-owned and may show a zero
+  // state. The authored tile is borrowed, so it carries a canonical price while
+  // one exists and returns to its authored copy on every reset path.
+  function paintAuthoredPrice(service) {
+    const target = authoredPriceTarget()
+    if (!target) return
+    if (!authoredPrice || authoredPrice.target !== target) {
+      authoredPrice = { target: target, text: String(target.textContent || '') }
+    }
+    target.textContent = service ? formatUsd(service.price_cents) : authoredPrice.text
+  }
+
+  function restoreAuthoredPrice() {
+    if (!authoredPrice) return
+    authoredPrice.target.textContent = authoredPrice.text
+  }
+
   function formatUsd(cents) {
     const amount = Number(cents || 0) / 100
     const safeAmount = Number.isFinite(amount) ? amount : 0
@@ -459,6 +505,7 @@
     root.setAttribute('data-paid-call-bookable', 'false')
     setActionEnabled(action('save'), false)
     setActionEnabled(action('disable'), false)
+    restoreAuthoredPrice()
     setMessage(message)
   }
 
@@ -511,6 +558,7 @@
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
     if (priceOutput) priceOutput.textContent = formatUsd(service ? service.price_cents : 0)
+    else paintAuthoredPrice(service)
     show(output('on'), Boolean(service))
     show(output('off'), !service)
     setMessage(

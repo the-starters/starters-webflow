@@ -51,6 +51,7 @@ The current native `Dashboard / Call Item` Paid instance is also supported witho
 | Description/title input | `name="call-description"` |
 | Rate input | `name="call-rate"` |
 | Edit, Cancel, Update | `data-availability-action="item-form-open|item-form-close|item-form-submit"` |
+| Authored price tile | Preferred: `data-call-settings-output="price"`; the current component fallback resolves, inside `data-service-card-element="price-card"`, the leaf element whose authored text is already a complete currency amount such as `$150` |
 
 Yes and No are resolved as one pair, never independently, so a single radio can never be bound as
 both answers. Canonical `yes` and `no` values match first, then a leading `yes` or `no` word such as
@@ -75,6 +76,21 @@ For new Designer wiring, use the stable contract instead of the compatibility na
 - Optional outputs: `data-call-settings-output="status|on|off|price"`
 
 Keep the form native to Webflow. The controller binds behavior and does not create form HTML.
+The price fallback changes only the existing tile's text. It does not replace the tile, add markup,
+or use a styling class. Add the canonical output attribute in Designer when that element becomes
+available through the approved element-edit path; the canonical marker always wins, and the authored
+tile is then never touched.
+
+The fallback runs in the card and stable-contract wiring only; the
+`data-paid-call-element="settings"` panel renders a price through its canonical output alone.
+The authored tile is borrowed, not owned, so the fallback is deliberately narrow:
+
+- Only a leaf whose authored text is already a complete currency amount is bound. A caption, a `/hr`
+  unit, or a bare number completed by a separate currency symbol is never rewritten, and a tile with
+  no such leaf is left entirely to Designer.
+- Only a canonical `data-call-settings-output="price"` element, which exists solely as controller
+  output, shows the `$0.00` zero state. With no active canonical service — including paid calls off,
+  a signed-out member, and an expired session — the authored tile is restored to its Designer copy.
 
 Optional prerequisite rows use `data-paid-call-prerequisite` with one of these values (authorable
 anywhere inside the Paid card scope, including the Call Item header):
@@ -131,12 +147,14 @@ Do not activate this form until the paid-call reconciliation dry run has zero un
 
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion
 recovery, the duplicate-initialization dedup, the published `consulting-calls-paid`
-binding, the stale-readiness save of an active service, and the expired-session
-fail-closed writes are executable regressions in `v3/paid-call-settings.test.js`. The
-remaining legs need a live Memberstack session, a live Xano TEST configuration, and an
-asset that only exists once the tag is published, so they are not runnable from CI or
-from a local test phase. Both `the-starters-3-0.webflow.io` and `thestarters.com` answer
-`401` behind the site password, so a local phase cannot even read the live authored DOM.
+binding, the stale-readiness save of an active service, the expired-session
+fail-closed writes, and the authored price tile fallback — canonical precedence, leaf
+selection, Designer-copy restore, and Free-sibling isolation — are executable regressions
+in `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a
+live Xano TEST configuration, and an asset that only exists once the tag is published, so
+they are not runnable from CI or from a local test phase. Both
+`the-starters-3-0.webflow.io` and `thestarters.com` answer `401` behind the site
+password, so a local phase cannot even read the live authored DOM.
 The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
@@ -157,7 +175,14 @@ The release owner runs them by hand, in this order, after the PR merges:
    and canonical readback reports `data-paid-call-duration-current="60"`.
    `data-paid-call-bookable` turns `true` only once Xano readiness itself reports
    bookable, so re-check it after the readiness prerequisites pass.
-5. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
+5. On the published Paid card, confirm the authored price tile itself: with an active TEST
+   service it must read the canonical Xano rate as `$1,500.00`-style USD in the amount
+   element only, with any authored caption and unit untouched and no doubled currency
+   symbol; after turning paid calls off it must return to the Designer copy rather than
+   showing `$0.00`. If the tile does not change at all, its amount element does not author
+   a complete currency amount — report the real structure instead of widening the fallback
+   by guess, and prefer adding `data-call-settings-output="price"` in Designer.
+6. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
    it in the paid-call dry run. Never run a live-money production charge.
 
 Record the served-asset check and the TEST booking reconciliation result before the

@@ -96,7 +96,7 @@ function service(overrides = {}) {
   }
 }
 
-function buildDom(withRoot = true, cardMode = false, shared = false) {
+function buildDom(withRoot = true, cardMode = false, shared = false, priceTile = {}) {
   if (withRoot && cardMode) {
     const card = new El('section', { 'data-id': '' })
     const open = new El('div', { 'data-availability-action': 'item-form-open' })
@@ -112,7 +112,23 @@ function buildDom(withRoot = true, cardMode = false, shared = false) {
     const close = new El('div', { 'data-availability-action': 'item-form-close' })
     const save = new El('div', { 'data-availability-action': 'item-form-submit' })
     const statusOutput = new El('p', { 'data-call-settings-output': 'status' })
-    const priceOutput = new El('p', { 'data-call-settings-output': 'price' })
+    const priceOutput = priceTile.canonical === false
+      ? null
+      : new El('p', { 'data-call-settings-output': 'price' })
+    const authored = priceTile.authored === true || priceTile.foreign === true
+    const authoredPriceCard = authored
+      ? new El('div', { 'data-service-card-element': 'price-card' })
+      : null
+    const authoredPriceCaption = authored && priceTile.caption === true ? new El('p') : null
+    const authoredPriceText = authored ? new El('p') : null
+    if (authoredPriceCard) {
+      if (authoredPriceCaption) {
+        authoredPriceCaption.textContent = 'Rate'
+        authoredPriceCard.append(authoredPriceCaption)
+      }
+      authoredPriceText.textContent = priceTile.authoredText ?? '$150'
+      authoredPriceCard.append(authoredPriceText)
+    }
     const onOutput = new El('div', { 'data-call-settings-output': 'on' })
     const offOutput = new El('div', { 'data-call-settings-output': 'off' })
     const prerequisites = ['calendar', 'availability', 'stripe', 'charges', 'fresh', 'bookable']
@@ -130,11 +146,13 @@ function buildDom(withRoot = true, cardMode = false, shared = false) {
     const freeEnabled = new El('input', { name: 'free-consulting-calls', value: 'yes' })
     freeForm.append(freeEnabled, freeClose, freeSave)
     freeWrapper.append(freeForm)
+    if (priceTile.foreign === true) freeWrapper.append(authoredPriceCard)
     const header = shared ? [freeOpen, freeWrapper] : [open]
     card.append(
       ...header,
       statusOutput,
-      priceOutput,
+      ...(priceOutput ? [priceOutput] : []),
+      ...(authoredPriceCard && priceTile.foreign !== true ? [authoredPriceCard] : []),
       onOutput,
       offOutput,
       ...prerequisites,
@@ -155,6 +173,9 @@ function buildDom(withRoot = true, cardMode = false, shared = false) {
       status: null,
       statusOutput,
       priceOutput,
+      authoredPriceCard,
+      authoredPriceCaption,
+      authoredPriceText,
       onOutput,
       offOutput,
       formWrapper,
@@ -187,6 +208,7 @@ function load(options = {}) {
     options.withRoot !== false,
     options.cardMode === true || options.stableCardMode === true,
     options.sharedCallItem === true,
+    options.priceTile || {},
   )
   if (options.cardRadioValues && dom.root) {
     Object.keys(options.cardRadioValues).forEach((key) => {
@@ -945,6 +967,113 @@ test('the Paid card price output renders grouped two-decimal USD', async () => {
   assert.equal(off.dom.priceOutput.textContent, '$0.00')
   assert.equal(off.dom.onOutput.style.display, 'none')
   assert.equal(off.dom.offOutput.style.display, '')
+})
+
+test('the current native Paid card price marker renders canonical USD without a new Webflow hook', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true },
+    initial: canonical({
+      services: [service({ price_cents: 500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.priceOutput, null)
+  assert.equal(result.dom.authoredPriceText.textContent, '$5.00')
+})
+
+test('the authored Paid price tile keeps its Designer copy with paid calls off', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true },
+    initial: canonical(),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceText.textContent, '$150')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Add a rate to turn them on.')
+})
+
+test('the authored Paid price tile returns to its Designer copy when the session ends', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true },
+    initial: canonical({
+      services: [service({ price_cents: 500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+  assert.equal(result.dom.authoredPriceText.textContent, '$5.00')
+
+  result.expireMemberSilently()
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
+  assert.equal(result.dom.authoredPriceText.textContent, '$150')
+})
+
+test('the authored Paid price tile paints its amount and never a caption', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true, caption: true },
+    initial: canonical({
+      services: [service({ price_cents: 500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceCaption.textContent, 'Rate')
+  assert.equal(result.dom.authoredPriceText.textContent, '$5.00')
+})
+
+test('an authored Paid price tile with no currency amount is left to Designer', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true, authoredText: 'Set your rate' },
+    initial: canonical({
+      services: [service({ price_cents: 500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceText.textContent, 'Set your rate')
+})
+
+test('the canonical price output wins over an authored Paid price tile', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { authored: true },
+    initial: canonical({
+      services: [service({ price_cents: 500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.priceOutput.textContent, '$5.00')
+  assert.equal(result.dom.authoredPriceText.textContent, '$150')
+})
+
+test('a price tile authored on the Free sibling card is never painted by Paid', async () => {
+  const result = load({
+    sharedCallItem: true,
+    priceTile: { canonical: false, foreign: true },
+    initial: canonical({
+      services: [service({ price_cents: 500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceText.parentElement, result.dom.authoredPriceCard)
+  assert.equal(result.dom.authoredPriceCard.parentElement, result.dom.freeWrapper)
+  assert.equal(result.dom.authoredPriceText.textContent, '$150')
 })
 
 test('optional prerequisite rows authored in the Paid Call Item header are painted', async () => {
