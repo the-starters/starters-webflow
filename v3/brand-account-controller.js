@@ -70,7 +70,7 @@
   // by which time the Memberstack webhook has stamped brands_v3 for real.
   var BRAND_PROFILE_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
   var BRAND_PROFILE_MARKER_VALUE = '1'
-  var CONTROLLER_VERSION = 'brand-account-controller-v1'
+  var CONTROLLER_VERSION = 'brand-account-controller-v2'
   var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
   var NATIVE_FORM_DIAGNOSTICS_SCRIPT = 'native-form-diagnostics.js'
   var passwordEmailAttempts = new WeakMap()
@@ -578,6 +578,15 @@
     })
   }
 
+  function trackBuildEmailDecision(emailChangeRequired, securityEmailAttempted) {
+    if (!window.StartersTrack || typeof window.StartersTrack.track !== 'function') return
+    window.StartersTrack.track('brand_account_email_decision', {
+      controller_version: CONTROLLER_VERSION,
+      email_change_required: Boolean(emailChangeRequired),
+      security_email_attempted: Boolean(securityEmailAttempted),
+    })
+  }
+
   function friendlyError(error) {
     if (error && error.passwordEmailAttempted) {
       return 'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.'
@@ -618,7 +627,15 @@
     markBrandProfileCompletedLocally()
     if (emailIntent) {
       pendingBuildPasswordEmails.delete(form)
-      await sendResetPasswordEmailOnce(form, client, emailIntent.target)
+      try {
+        var emailResult = await sendResetPasswordEmailOnce(form, client, emailIntent.target)
+        trackBuildEmailDecision(true, Boolean(emailResult && emailResult.attempted))
+      } catch (error) {
+        trackBuildEmailDecision(true, Boolean(error && error.passwordEmailAttempted))
+        throw error
+      }
+    } else {
+      trackBuildEmailDecision(false, false)
     }
 
     return { memberId: member.id }

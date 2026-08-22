@@ -163,6 +163,26 @@ browser console through
 form values to these receipts; the shared README owns the exact allowlist and
 exclusions.
 
+Successful Brand Build Account completion also emits the privacy-safe
+`brand_account_email_decision` event. It contains only `controller_version`,
+`email_change_required`, and `security_email_attempted`. It must never contain
+the submitted email, the authenticated email, a member ID, or form values.
+
+## Brand controller cache key
+
+The Brand account controller keeps the `@latest` jsDelivr loader, but its
+Webflow script URL must include the released version as a query-string cache
+key. For release `v1.59.339`, use:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=1.59.339"></script>
+```
+
+Update this query value for every Brand account controller release, then
+publish Webflow and verify the complete saved block and all published domains.
+This forces browsers to request the new controller while preserving the
+repository's `@latest` release contract.
+
 ## Executed endpoint #1513 replay results
 
 The prerequisite backend replay gate passed using redacted Memberstack Test Mode

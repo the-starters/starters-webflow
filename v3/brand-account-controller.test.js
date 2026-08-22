@@ -576,13 +576,18 @@ test('Build Account refuses an email write after the signed-in member changes', 
 
 test('Build Account success records a privacy-safe console receipt without page diagnostics', async () => {
   const buildForm = makeForm('build', { email: 'private@example.com' })
-  const environment = loadController({ buildForm, diagnostics: true })
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'private@example.com',
+    diagnostics: true,
+  })
 
   buildForm.submitEvent()
   await settle()
 
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v2')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -590,6 +595,17 @@ test('Build Account success records a privacy-safe console receipt without page 
   assert.equal(buildForm.wrapper.done.textContent, 'Your authored success message.')
   assert.equal(buildForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.ok(environment.tracked.some((event) => event.name === 'workflow_form_submit_succeeded'))
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: false,
+        security_email_attempted: false,
+      },
+    }],
+  )
 })
 
 test('Build Account validation receipt truthfully records that no request started', async () => {
@@ -935,6 +951,17 @@ test('Build Account sends one security email only after changing login email', a
   )
   assert.deepEqual(plain(environment.calls[3].payload), { email: 'verified-next@example.com' })
   assert.deepEqual(plain(environment.calls[5].payload), { email: 'verified-next@example.com' })
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: true,
+        security_email_attempted: true,
+      },
+    }],
+  )
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
@@ -1004,6 +1031,17 @@ test('changed-email reset failure keeps durable completion and provides recovery
   assert.equal(
     buildForm.wrapper.failText.textContent,
     'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.',
+  )
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: true,
+        security_email_attempted: true,
+      },
+    }],
   )
 })
 
