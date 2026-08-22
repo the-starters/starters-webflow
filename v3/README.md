@@ -2064,10 +2064,15 @@ canonical `booking_ref`, requires its booking and configuration IDs to match the
 row, and supplies an idempotency key scoped to the canonical booking,
 environment, and a non-reversible hash of the Starter identity. The key stays in
 tab-scoped `sessionStorage` after an ambiguous failure so a refresh retries the
-same backend command. A successful response removes it before refreshing
-the canonical list, which moves the accepted row from Starter Call Requests to
-Starter Calls while it remains in Brand Calls. All other legacy mutation
-controls stay hidden until they have current V3-safe endpoint contracts.
+same backend command. Success is read from the published response contract: the
+canonical nested `confirmation.status` equal to `confirmed`, with a top-level
+`status` still accepted for compatibility; the response's `duplicate` replay
+flag does not change that decision. Any pending, malformed, or failed body
+fails closed and keeps the stored key. Only a confirmed response removes it
+before refreshing the canonical list, which moves the accepted row from Starter
+Call Requests to Starter Calls while it remains in Brand Calls. All other
+legacy mutation controls stay hidden until they have current V3-safe endpoint
+contracts.
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and
 on errors, and is shown only when the member's full canonical booking rows for

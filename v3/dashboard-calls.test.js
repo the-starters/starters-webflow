@@ -148,6 +148,15 @@ test('builds the current confirm payload only when booking_ref identities match'
   }, 'dashboard-confirm:one'), null)
 })
 
+test('accepts the canonical nested confirmation response and fails closed otherwise', () => {
+  assert.equal(api.confirmSucceeded({ confirmation: { status: 'confirmed' }, duplicate: false }), true)
+  assert.equal(api.confirmSucceeded({ confirmation: { status: 'confirmed' }, duplicate: true }), true)
+  assert.equal(api.confirmSucceeded({ status: 'confirmed' }), true)
+  assert.equal(api.confirmSucceeded({ confirmation: { status: 'pending' } }), false)
+  assert.equal(api.confirmSucceeded({ confirmation: null }), false)
+  assert.equal(api.confirmSucceeded(null), false)
+})
+
 test('confirmation attempt storage scopes omit identity data and isolate account and environment', async () => {
   const base = {
     booking_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -280,7 +289,7 @@ test('ambiguous confirmation survives a page rebuild and clears only after succe
     responseOk = true
     global.xanoAuthFetch = async (_url, options) => {
       bodies.push(JSON.parse(options.body))
-      return { ok: true, json: async () => ({ status: 'pending' }) }
+      return { ok: true, json: async () => ({ confirmation: { status: 'pending' } }) }
     }
     await clickFreshButton()
     assert.equal(bodies.length, 2)
@@ -290,7 +299,7 @@ test('ambiguous confirmation survives a page rebuild and clears only after succe
 
     global.xanoAuthFetch = async (_url, options) => {
       bodies.push(JSON.parse(options.body))
-      return { ok: true, json: async () => ({ status: 'confirmed' }) }
+      return { ok: true, json: async () => ({ confirmation: { status: 'confirmed' }, duplicate: false }) }
     }
     await clickFreshButton()
     assert.equal(bodies.length, 3)
