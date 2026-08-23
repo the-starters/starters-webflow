@@ -1571,7 +1571,30 @@ test('a stored paid rate cannot create a paid configuration', async () => {
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
   assert.equal(creates.length, 1)
   assert.equal(creates[0].body.in_config_name, 'Free Consultation Call - 30min')
+  assert.equal(creates[0].body.in_scheduler.min_booking_notice, 5)
   assert.equal(result.dom.steps.success.style.display, 'block')
+})
+
+test('production scheduler configuration creation keeps the 24-hour booking notice', async () => {
+  const availability = defaultAvailability()
+  availability.manager = null
+  const result = loadWriter({
+    availability,
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    storage: TZ_CACHED,
+  })
+  await settle()
+
+  assert.equal(result.window.StarterSchedulingAvailabilityWriter.minimumBookingNoticeMinutes(), 1440)
+  result.dom.managers.platform.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+
+  const creates = result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3')
+  assert.equal(creates.length, 1)
+  assert.equal(creates[0].body.in_scheduler.min_booking_notice, 1440)
 })
 
 test('config update rejection lands on config-request-error', async () => {

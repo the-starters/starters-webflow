@@ -765,7 +765,7 @@ test('applyDayBadges reverts to the default variant when no days are selected', 
 /* ------------------------------------------------------------------ */
 
 test('getUpcomingTimeSlots sorts, drops past slots, and slices to the limit', async () => {
-  // Matches the adapted lead-time rule (Date.now() + 24h floor): slot offsets
+  // Matches the production lead-time rule (Date.now() + 24h floor): slot offsets
   // here are in whole days so they clear that floor comfortably.
   const nowSeconds = Math.floor(Date.now() / 1000)
   const past = nowSeconds - 3600
@@ -791,6 +791,55 @@ test('getUpcomingTimeSlots sorts, drops past slots, and slices to the limit', as
   assert.equal(result.length, 3)
   assert.ok(result[0] < result[1] && result[1] < result[2])
   assert.ok(result.every((t) => t >= nowSeconds))
+})
+
+test('slot preview applies the host-locked booking notice floor', async () => {
+  const stagingNow = Math.floor(Date.now() / 1000)
+  const stagingTooSoon = stagingNow + 4 * 60
+  const stagingAllowed = stagingNow + 6 * 60
+  const staging = loadSection({
+    hostname: 'the-starters-3-0.webflow.io',
+    origin: 'https://the-starters-3-0.webflow.io',
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: stagingTooSoon }, { start_time: stagingAllowed }] },
+      }),
+    },
+  })
+  await settle()
+  assert.deepEqual(
+    await staging.window.StarterSchedulingAvailabilitySection.getUpcomingTimeSlots({
+      grantId: 'grant-1',
+      configId: 'cfg-free',
+    }),
+    [stagingAllowed],
+  )
+  const stagingQuery = staging.calls.filter(
+    (call) => call.path === '/scheduler/get_availability/v3',
+  ).at(-1).query
+  assert.ok(Number(stagingQuery.start_time) >= stagingNow + 5 * 60)
+  assert.ok(Number(stagingQuery.start_time) <= Math.floor(Date.now() / 1000) + 5 * 60)
+
+  const productionNow = Math.floor(Date.now() / 1000)
+  const productionTooSoon = productionNow + 23 * 60 * 60
+  const productionAllowed = productionNow + 25 * 60 * 60
+  const production = loadSection({
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: productionTooSoon }, { start_time: productionAllowed }] },
+      }),
+    },
+  })
+  await settle()
+  assert.deepEqual(
+    await production.window.StarterSchedulingAvailabilitySection.getUpcomingTimeSlots({
+      grantId: 'grant-1',
+      configId: 'cfg-free',
+    }),
+    [productionAllowed],
+  )
 })
 
 test('getUpcomingTimeSlots returns an empty array without grantId/configId', async () => {
@@ -951,6 +1000,24 @@ test('connecting for the first time (no items at all) seeds a default Mon-Fri 09
   assert.deepEqual(configCall.body.in_availability.availability_rules.default_open_hours, [
     { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' },
   ])
+  assert.equal(configCall.body.in_scheduler.min_booking_notice, 1440)
+})
+
+test('staging scheduler configuration creation uses a five-minute booking notice', async () => {
+  const { dom, calls, window } = loadSection({
+    hostname: 'the-starters-3-0.webflow.io',
+    origin: 'https://the-starters-3-0.webflow.io',
+    serverState: { availability: { items: {}, manager: null } },
+  })
+  await settle()
+
+  assert.equal(window.StarterSchedulingAvailabilitySection.minimumBookingNoticeMinutes(), 5)
+  dom.connectBtnWrapper.children[0].click()
+  await settle()
+
+  const configCall = calls.find((call) => call.path === '/scheduler/configurations/create/v3')
+  assert.ok(configCall)
+  assert.equal(configCall.body.in_scheduler.min_booking_notice, 5)
 })
 
 test('accepts any successful provider 2xx status when creating a scheduler configuration', async () => {
@@ -1867,7 +1934,8 @@ test('calendar-preview selects a date and time without creating a booking', asyn
   )
 })
 
-test('calendar-preview never falls back to a paid configuration', async () => {
+test('calendar-preview renders a canonical active paid service and its live slots', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
   const { dom, calls } = loadSection({
     serverState: {
       grantId: 'grant-1',
@@ -1879,8 +1947,347 @@ test('calendar-preview never falls back to a paid configuration', async () => {
           grant_id: 'grant-1',
           title: 'Paid Consultation Call',
           duration: 60,
+          price_cents: 100,
           is_paid: true,
           active: true,
+          sync_status: 'ready',
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'ready')
+  const paid = dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid"]')
+  assert.ok(paid)
+  assert.equal(paid.getAttribute('data-preview-service-type'), 'paid')
+  assert.equal(paid.getAttribute('aria-pressed'), 'true')
+  assert.equal(paid.children[0].textContent, 'Paid Consultation Call')
+  assert.equal(paid.children[1].textContent, '60 minutes · $1.00')
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    1,
+  )
+})
+
+test('calendar-preview shows free and paid services together', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-free',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+        },
+        {
+          config_id: 'cfg-paid',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          price_cents: 15000,
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  const services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.equal(services.children.length, 2)
+  assert.equal(services.children[0].getAttribute('data-preview-service-type'), 'free')
+  assert.equal(services.children[0].children[1].textContent, '30 minutes · Free')
+  assert.equal(services.children[1].getAttribute('data-preview-service-type'), 'paid')
+  assert.equal(services.children[1].children[1].textContent, '60 minutes · $150.00')
+})
+
+test('calendar-preview keeps Free before Paid when Xano returns the paid record first', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-paid',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          price_cents: 15000,
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+        {
+          config_id: 'cfg-free',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  const services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.deepEqual(
+    services.children.map((child) => child.getAttribute('data-preview-config-id')),
+    ['cfg-free', 'cfg-paid'],
+  )
+  assert.equal(services.children[0].getAttribute('aria-pressed'), 'true')
+  assert.equal(services.children[1].getAttribute('aria-pressed'), 'false')
+  const availability = calls.filter((call) => call.path === '/scheduler/get_availability/v3')
+  assert.equal(availability.length, 1)
+  assert.equal(availability[0].query.configuration_id, 'cfg-free')
+})
+
+test('calendar-preview orders duplicate services deterministically by config id', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const paid = (configId) => ({
+    config_id: configId,
+    title: 'Paid Consultation Call',
+    duration: 60,
+    price_cents: 15000,
+    is_paid: true,
+    active: true,
+    sync_status: 'ready',
+  })
+  const free = (configId) => ({
+    config_id: configId,
+    title: 'Free Consultation Call',
+    duration: 30,
+    is_paid: false,
+    active: true,
+  })
+  const slotRoutes = {
+    '/scheduler/get_availability/v3': () => ({
+      status: 200,
+      body: { time_slots: [{ start_time: future }] },
+    }),
+  }
+  const order = (configs) =>
+    loadSection({
+      serverState: { grantId: 'grant-1', grantEmail: 'g@example.com', calendarId: 'cal-1', configs },
+      getRoutes: slotRoutes,
+    })
+
+  const forward = order([paid('cfg-paid-b'), free('cfg-free-b'), paid('cfg-paid-a'), free('cfg-free-a')])
+  const reversed = order([free('cfg-free-a'), paid('cfg-paid-a'), free('cfg-free-b'), paid('cfg-paid-b')])
+  await settle()
+
+  const ids = (result) =>
+    result.dom.calendarPreview
+      .querySelector('[data-availability-element="preview-services"]')
+      .children.map((child) => child.getAttribute('data-preview-config-id'))
+  const expected = ['cfg-free-a', 'cfg-free-b', 'cfg-paid-a', 'cfg-paid-b']
+  assert.deepEqual(ids(forward), expected)
+  assert.deepEqual(ids(reversed), expected)
+})
+
+test('calendar-preview renders a free service that carries no stored duration', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-free-no-duration',
+          title: 'Free Consultation Call',
+          is_paid: false,
+          active: true,
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'ready')
+  const service = dom.calendarPreview.querySelector('[data-preview-config-id="cfg-free-no-duration"]')
+  assert.ok(service)
+  assert.equal(service.getAttribute('data-preview-service-type'), 'free')
+  assert.equal(service.children[1].textContent, '30 minutes · Free')
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    1,
+  )
+})
+
+test('calendar-preview admits environment stamps that differ only by case or padding', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-free-cased',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+          data_environment: ' Production ',
+        },
+        {
+          config_id: 'cfg-paid-cased',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          price_cents: 15000,
+          currency: 'USD',
+          is_paid: true,
+          active: true,
+          data_environment: 'PRODUCTION',
+          payment_environment: 'Live',
+          sync_status: 'ready',
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  const services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.ok(services)
+  assert.deepEqual(
+    services.children.map((child) => child.getAttribute('data-preview-config-id')),
+    ['cfg-free-cased', 'cfg-paid-cased'],
+  )
+})
+
+test('a free configuration stamped for another environment does not block canonical creation', async () => {
+  let canonicalState = null
+  const intentKey = 'starter-scheduling-oauth-intent:member-a'
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const result = loadSection({
+    search: '?success=true&grant_id=hosted-grant-9&state=member-a',
+    localStorage: {
+      [intentKey]: JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: null,
+      }),
+    },
+    serverState: {
+      configs: [
+        {
+          config_id: 'cfg-free-test-stamped',
+          grant_id: 'hosted-grant-9',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+          data_environment: 'test',
+        },
+      ],
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: null,
+      },
+    },
+    postRoutes: {
+      '/grants/add/v3': () => {
+        canonicalState.grantId = 'hosted-grant-9'
+        canonicalState.grantEmail = 'jp@hirethestarters.com'
+        canonicalState.calendarId = 'primary'
+        return { status: 200, body: { grant_id: 'hosted-grant-9' } }
+      },
+      '/scheduler/configurations/create/v3': () => {
+        canonicalState.configs.push({
+          config_id: 'cfg-free-production',
+          grant_id: 'hosted-grant-9',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+          data_environment: 'production',
+        })
+        return { status: 200, body: { response: { status: 200 } } }
+      },
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  canonicalState = result.state
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length,
+    1,
+  )
+  const services = result.dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-services"]',
+  )
+  assert.ok(services)
+  assert.deepEqual(
+    services.children.map((child) => child.getAttribute('data-preview-config-id')),
+    ['cfg-free-production'],
+  )
+})
+
+test('calendar-preview excludes paid services that are below $1 or failed provider sync', async () => {
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-paid-too-low',
+          duration: 60,
+          price_cents: 99,
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+        {
+          config_id: 'cfg-paid-failed',
+          duration: 60,
+          price_cents: 100,
+          is_paid: true,
+          active: true,
+          sync_status: 'failed',
         },
       ],
     },
@@ -1888,7 +2295,292 @@ test('calendar-preview never falls back to a paid configuration', async () => {
   await settle()
 
   assert.equal(dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
-  assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid"]'), null)
+  assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-too-low"]'), null)
+  assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-failed"]'), null)
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    0,
+  )
+})
+
+test('calendar-preview excludes a paid service that is not stored at the canonical 60 minutes', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-paid-legacy',
+          title: 'Legacy Paid Call',
+          duration: 15,
+          price_cents: 500,
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+        {
+          config_id: 'cfg-paid-no-duration',
+          title: 'Paid Call Without Duration',
+          price_cents: 500,
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
+  assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-legacy"]'), null)
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-no-duration"]'),
+    null,
+  )
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    0,
+  )
+})
+
+test('calendar-preview renders only the canonical USD paid service', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-paid-eur',
+          title: 'Euro Paid Call',
+          duration: 60,
+          price_cents: 15000,
+          currency: 'eur',
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+        {
+          config_id: 'cfg-paid-usd',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          price_cents: 15000,
+          currency: 'usd',
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  const services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.ok(services)
+  assert.equal(services.children.length, 1)
+  assert.equal(services.children[0].getAttribute('data-preview-config-id'), 'cfg-paid-usd')
+  assert.equal(services.children[0].children[1].textContent, '60 minutes · $150.00')
+})
+
+test('calendar-preview excludes configurations stamped for another environment', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const environmentConfigs = [
+    {
+      config_id: 'cfg-free-test-data',
+      title: 'Free Consultation Call (test)',
+      duration: 30,
+      is_paid: false,
+      active: true,
+      data_environment: 'test',
+    },
+    {
+      config_id: 'cfg-free-live-data',
+      title: 'Free Consultation Call',
+      duration: 30,
+      is_paid: false,
+      active: true,
+      data_environment: 'production',
+    },
+    {
+      config_id: 'cfg-paid-mixed-payment',
+      title: 'Paid Consultation Call (mixed)',
+      duration: 60,
+      price_cents: 15000,
+      currency: 'USD',
+      is_paid: true,
+      active: true,
+      data_environment: 'production',
+      payment_environment: 'test',
+      sync_status: 'ready',
+    },
+    {
+      config_id: 'cfg-paid-test',
+      title: 'Paid Consultation Call (test)',
+      duration: 60,
+      price_cents: 15000,
+      currency: 'USD',
+      is_paid: true,
+      active: true,
+      data_environment: 'test',
+      payment_environment: 'test',
+      sync_status: 'ready',
+    },
+    {
+      config_id: 'cfg-paid-live',
+      title: 'Paid Consultation Call',
+      duration: 60,
+      price_cents: 15000,
+      currency: 'USD',
+      is_paid: true,
+      active: true,
+      data_environment: 'production',
+      payment_environment: 'live',
+      sync_status: 'ready',
+    },
+  ]
+  const slotRoutes = {
+    '/scheduler/get_availability/v3': () => ({
+      status: 200,
+      body: { time_slots: [{ start_time: future }] },
+    }),
+  }
+  const production = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: environmentConfigs,
+    },
+    getRoutes: slotRoutes,
+  })
+  await settle()
+
+  const services = production.dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-services"]',
+  )
+  assert.ok(services)
+  assert.deepEqual(
+    services.children.map((child) => child.getAttribute('data-preview-config-id')),
+    ['cfg-free-live-data', 'cfg-paid-live'],
+  )
+
+  const staging = loadSection({
+    hostname: 'the-starters-3-0.webflow.io',
+    origin: 'https://the-starters-3-0.webflow.io',
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: environmentConfigs,
+    },
+    getRoutes: slotRoutes,
+  })
+  await settle()
+
+  const stagingServices = staging.dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-services"]',
+  )
+  assert.ok(stagingServices)
+  assert.deepEqual(
+    stagingServices.children.map((child) => child.getAttribute('data-preview-config-id')),
+    ['cfg-free-test-data', 'cfg-paid-test'],
+  )
+})
+
+test('calendar-preview reads the provider sync state without hiding a ready paid service', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-paid-ready-cased',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          price_cents: 15000,
+          is_paid: true,
+          active: true,
+          sync_status: 'READY',
+        },
+        {
+          config_id: 'cfg-paid-not-synced',
+          title: 'Unsynced Paid Call',
+          duration: 60,
+          price_cents: 15000,
+          is_paid: true,
+          active: true,
+          sync_status: false,
+        },
+        {
+          config_id: 'cfg-paid-pending',
+          title: 'Pending Paid Call',
+          duration: 60,
+          price_cents: 15000,
+          is_paid: true,
+          active: true,
+          sync_status: 'pending',
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  const services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.ok(services)
+  assert.deepEqual(
+    services.children.map((child) => child.getAttribute('data-preview-config-id')),
+    ['cfg-paid-ready-cased'],
+  )
+})
+
+test('calendar-preview excludes a paid service whose active state is not declared', async () => {
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-paid-unknown-active',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          price_cents: 15000,
+          is_paid: true,
+          sync_status: 'ready',
+        },
+      ],
+    },
+  })
+  await settle()
+
+  assert.equal(dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-unknown-active"]'),
+    null,
+  )
   assert.equal(
     calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
     0,

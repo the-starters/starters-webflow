@@ -51,6 +51,13 @@
   const DAY_VARIANT_SELECTED = 'w-variant-ebea452c-a047-af3f-dd6c-3062ee4c048c'
   const SLOTS_SEARCH_DAYS = 14
   const SLOTS_LIMIT = 8
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
+  // Canonical Paid Call duration, owned by paid-call-settings.js
+  // (FIXED_DURATION_MINUTES) and PAID-CALL-SETTINGS-WIRING.md.
+  const PAID_DURATION_MINUTES = 60
+  const FREE_DURATION_MINUTES = 30
+  const SYNC_READY_STATES = ['ready', 'ok', 'synced', 'active', 'complete', 'completed', 'true']
 
   // Shared "Availability - Notifications" modal (`[data-modal-target=
   // "availability-notification"]`), driven by global-embeds/modal/modal.js.
@@ -73,12 +80,19 @@
     PRE_OAUTH_GOOGLE_COPY + ' Your availability settings have been saved.'
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
-  const isStagingHost = window.location.hostname === STAGING_HOST
+  const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
+  const isStagingHost = activeHostname === STAGING_HOST
   const isApprovedProductionPath =
-    PRODUCTION_HOSTS.has(window.location.hostname) && activePath === PRODUCTION_PATH
+    PRODUCTION_HOSTS.has(activeHostname) && activePath === PRODUCTION_PATH
   if (!isStagingHost && !isApprovedProductionPath) return
   if (window.__tsSchedulingAvailabilitySection) return
   window.__tsSchedulingAvailabilitySection = true
+
+  function minimumBookingNoticeMinutes() {
+    return isStagingHost
+      ? STAGING_MIN_BOOKING_NOTICE_MINUTES
+      : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+  }
 
   let sessionMemberId = null
   let memberFields = {}
@@ -881,7 +895,7 @@
     await ensureTimezone()
     const openHours = getAvailArray()
     const price = '0'
-    const duration = 30
+    const duration = FREE_DURATION_MINUTES
     const interval = 15
     const buffer = 10
 
@@ -934,7 +948,7 @@
         cancellation_url: redirectURL + '?cancel=:booking_ref',
         hide_rescheduling_options: true,
         hide_cancellation_options: true,
-        min_booking_notice: 1440,
+        min_booking_notice: minimumBookingNoticeMinutes(),
         additional_fields: {
           call_full_title: { type: 'metadata', label: 'Call Full Title', default: fullTitle, required: false },
           call_tiny_title: { type: 'metadata', label: 'Call Tiny Title', default: tinyTitle, required: false },
@@ -2133,7 +2147,8 @@
     const region = opts.region || 'us'
     if (!grant || !configId) return []
 
-    const nowInSeconds = Math.floor(Date.now() / 1000) + 24 * 60 * 60
+    const nowInSeconds =
+      Math.floor(Date.now() / 1000) + minimumBookingNoticeMinutes() * 60
     const searchEndInSeconds = nowInSeconds + searchDays * 24 * 60 * 60
 
     try {
@@ -2240,15 +2255,86 @@
     ].join('-')
   }
 
+  function configStamp(value) {
+    return String(value == null ? '' : value).trim().toLowerCase()
+  }
+
+  function configEnvironmentMatches(config) {
+    const dataEnvironment = configStamp(config.data_environment)
+    if (dataEnvironment && dataEnvironment !== (isStagingHost ? 'test' : 'production')) {
+      return false
+    }
+    if (config.is_paid !== true) return true
+    const paymentEnvironment = configStamp(config.payment_environment)
+    return !(paymentEnvironment && paymentEnvironment !== (isStagingHost ? 'test' : 'live'))
+  }
+
+  // Single canonical Free predicate: the same record set decides whether a
+  // free configuration still needs creating and whether the preview can
+  // render one, so the preview can never reach a state the create path
+  // considers already satisfied.
+  function isCanonicalFreeConfig(config) {
+    return Boolean(
+      config &&
+        config.config_id &&
+        config.is_paid === false &&
+        config.active !== false &&
+        configEnvironmentMatches(config),
+    )
+  }
+
   function activeFreeConfigs() {
-    return configs.filter(function (config) {
-      return Boolean(
-        config &&
-          config.config_id &&
-          config.is_paid === false &&
-          config.active !== false,
-      )
-    })
+    return configs.filter(isCanonicalFreeConfig)
+  }
+
+  function previewDuration(config) {
+    const duration = Number(config && config.duration)
+    return Number.isInteger(duration) && duration > 0 ? duration : null
+  }
+
+  // Free records carry no provider-side duration guarantee, so fall back to
+  // the canonical Free duration this module itself creates rather than
+  // dropping the service from the card.
+  function previewDurationLabel(config) {
+    const duration = previewDuration(config)
+    return duration === null ? FREE_DURATION_MINUTES : duration
+  }
+
+  function previewSyncReady(config) {
+    const state = config.sync_status
+    if (state === undefined || state === null || state === '') return true
+    if (typeof state === 'boolean') return state
+    return SYNC_READY_STATES.indexOf(configStamp(state)) !== -1
+  }
+
+  function isCanonicalPaidConfig(config) {
+    if (!config || !config.config_id || config.is_paid !== true) return false
+    if (config.active !== true) return false
+    if (!configEnvironmentMatches(config)) return false
+    if (previewDuration(config) !== PAID_DURATION_MINUTES) return false
+    if (config.currency && String(config.currency).toUpperCase() !== 'USD') return false
+    return Boolean(
+      Number.isInteger(Number(config.price_cents)) &&
+        Number(config.price_cents) >= 100 &&
+        previewSyncReady(config),
+    )
+  }
+
+  function byPreviewConfigId(a, b) {
+    return String(a.config_id).localeCompare(String(b.config_id))
+  }
+
+  // Xano returns configurations in table order, so partition explicitly:
+  // Free first, then Paid, each tie-broken by config_id. This keeps both the
+  // rendered order and the default selection deterministic.
+  function activePreviewConfigs() {
+    const free = configs.filter(isCanonicalFreeConfig).sort(byPreviewConfigId)
+    const paid = configs.filter(isCanonicalPaidConfig).sort(byPreviewConfigId)
+    return free.concat(paid)
+  }
+
+  function formatPreviewPrice(priceCents) {
+    return '$' + (Number(priceCents) / 100).toFixed(2)
   }
 
   function applyStyles(node, styles) {
@@ -2276,7 +2362,7 @@
 
     if (!services.length) {
       shell.appendChild(
-        previewText('div', 'No active free service is available for preview.', {
+        previewText('div', 'No active call service is available for preview.', {
           padding: '18px',
           border: '1px solid #e2e2e2',
           borderRadius: '8px',
@@ -2294,6 +2380,13 @@
     servicesWrap.setAttribute(EL, 'preview-services')
     services.forEach(function (config) {
       const selected = config.config_id === selectedConfig.config_id
+      const previewTitle =
+        config.title ||
+        (config.is_paid === true ? 'Paid Consultation Call' : 'Free Consultation Call')
+      const previewDetail =
+        String(previewDurationLabel(config)) +
+        ' minutes · ' +
+        (config.is_paid === true ? formatPreviewPrice(config.price_cents) : 'Free')
       const button = applyStyles(document.createElement('button'), {
         padding: '12px 14px',
         border: selected ? '2px solid #1f211d' : '1px solid #d9d9d9',
@@ -2306,14 +2399,15 @@
       button.setAttribute('type', 'button')
       button.setAttribute('aria-pressed', selected ? 'true' : 'false')
       button.setAttribute('data-preview-config-id', config.config_id)
+      button.setAttribute('data-preview-service-type', config.is_paid === true ? 'paid' : 'free')
       button.appendChild(
-        previewText('strong', config.title || 'Free Consultation Call', {
+        previewText('strong', previewTitle, {
           display: 'block',
           fontSize: '14px',
         }),
       )
       button.appendChild(
-        previewText('span', String(Number(config.duration) || 30) + ' minutes · Free', {
+        previewText('span', previewDetail, {
           display: 'block',
           marginTop: '4px',
           color: '#6f746d',
@@ -2543,7 +2637,7 @@
     const renderVersion = ++previewRenderVersion
     setElementVisible('slots-list', false)
     setElementVisible('loading-slots', true)
-    const services = activeFreeConfigs()
+    const services = activePreviewConfigs()
     const selectedConfig =
       services.filter(function (config) {
         return config.config_id === selectedPreviewConfigId
@@ -2688,6 +2782,7 @@
     getAvailArray: getAvailArray,
     applyDayBadges: applyDayBadges,
     getUpcomingTimeSlots: getUpcomingTimeSlots,
+    minimumBookingNoticeMinutes: minimumBookingNoticeMinutes,
     publishCalendarConnectionState: publishCalendarConnectionState,
   }
 

@@ -17,6 +17,9 @@
   const NYLAS_MODULE_URL =
     'https://cdn.jsdelivr.net/npm/@nylas/web-elements@latest/dist/cdn/nylas-scheduling/nylas-scheduling.es.js'
   const SCHEDULER_API_URL = 'https://api.us.nylas.com'
+  const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const chooserBindings = new WeakMap()
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   let schedulerModulePromise = null
@@ -162,6 +165,17 @@
     return String(value == null ? '' : value).trim()
   }
 
+  function isStagingHost() {
+    return clean(global.location && global.location.hostname).toLowerCase() === STAGING_HOST
+  }
+
+  function minimumBookingNoticeMinutes() {
+    if (isCommonJs) return PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+    return isStagingHost()
+      ? STAGING_MIN_BOOKING_NOTICE_MINUTES
+      : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+  }
+
   async function authenticatedRequest(path, method, payload) {
     if (typeof global.xanoAuthFetch !== 'function') {
       throw new Error('The authenticated Xano bridge is unavailable')
@@ -210,7 +224,9 @@
     const grant = clean(grantId)
     const config = clean(configId)
     if (!grant || !config) throw new Error('A grant and configuration are required')
-    const start = Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) + 86400
+    const start =
+      Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) +
+      minimumBookingNoticeMinutes() * 60
     const query = new URLSearchParams({
       grant_id: grant,
       configuration_id: config,
@@ -223,7 +239,9 @@
 
   async function getNearestSlot(grantId, configId, nowMs) {
     const result = await authenticatedRequest(availabilityPath(grantId, configId, nowMs), 'GET')
-    const minimum = Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) + 86400
+    const minimum =
+      Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) +
+      minimumBookingNoticeMinutes() * 60
     const slots = Array.isArray(result && result.time_slots) ? result.time_slots : []
     const starts = slots.map(function (slot) {
       return Number(slot && slot.start_time)
@@ -436,7 +454,7 @@
         rescheduled_reason: { value: ' ', type: 'text' },
         unique_id: { value: global.crypto.randomUUID(), type: 'text' },
         from_stage: {
-          value: String(global.location.hostname === 'the-starters-3-0.webflow.io'),
+          value: String(isStagingHost()),
           type: 'text',
         },
       },
@@ -564,6 +582,7 @@
     getNearestSlot,
     getStarterByMemberId,
     installFreeBookingController,
+    minimumBookingNoticeMinutes,
   }
 
   if (isCommonJs) {

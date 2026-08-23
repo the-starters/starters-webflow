@@ -1,7 +1,24 @@
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
 const test = require('node:test')
+const vm = require('node:vm')
 
 const api = require('./free-call-booking.js')
+const SOURCE = fs.readFileSync(require.resolve('./free-call-booking.js'), 'utf8')
+
+function loadBrowserApi(hostname, xanoAuthFetch) {
+  const window = {
+    location: hostname === undefined ? {} : { hostname },
+    xanoAuthFetch,
+  }
+  vm.runInNewContext(SOURCE, {
+    URLSearchParams,
+    console,
+    globalThis: window,
+    window,
+  })
+  return window.StartersFreeCallBooking
+}
 
 class Element {
   constructor(tag = 'div', attrs = {}) {
@@ -166,6 +183,38 @@ test('canonical Free reads use one authenticated request and exact V3 routes', a
   assert.deepEqual(JSON.parse(calls[1].options.body), { grant_id: 'grant_1' })
   assert.equal(new URL(calls[2].url).pathname.endsWith(api.AVAILABILITY_PATH), true)
   assert.equal(calls[2].options.method, 'GET')
+})
+
+test('Free availability uses five minutes only on the exact staging host', async () => {
+  const now = Date.UTC(2026, 7, 24, 0, 0, 0)
+  const nowSeconds = Math.floor(now / 1000)
+  assert.equal(api.minimumBookingNoticeMinutes(), 1440)
+  assert.equal(
+    new URL('https://example.test' + api.availabilityPath('grant', 'config', now))
+      .searchParams.get('start_time'),
+    String(nowSeconds + 1440 * 60),
+  )
+
+  const staging = loadBrowserApi(
+    'the-starters-3-0.webflow.io',
+    async () => response({
+      time_slots: [
+        { start_time: nowSeconds + 4 * 60 },
+        { start_time: nowSeconds + 5 * 60 },
+      ],
+    }),
+  )
+  assert.equal(staging.minimumBookingNoticeMinutes(), 5)
+  assert.equal(
+    new URL('https://example.test' + staging.availabilityPath('grant', 'config', now))
+      .searchParams.get('start_time'),
+    String(nowSeconds + 5 * 60),
+  )
+  assert.equal(await staging.getNearestSlot('grant', 'config', now), nowSeconds + 5 * 60)
+
+  assert.equal(loadBrowserApi('thestarters.com').minimumBookingNoticeMinutes(), 1440)
+  assert.equal(loadBrowserApi('staging.thestarters.com').minimumBookingNoticeMinutes(), 1440)
+  assert.equal(loadBrowserApi().minimumBookingNoticeMinutes(), 1440)
 })
 
 test('reinstall keeps one chooser handler and one availability request per click', async () => {

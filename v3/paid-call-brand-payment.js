@@ -20,6 +20,9 @@
     'pk_test_51MMhu4AW8v1kanawI48Is1kTMhsz4XbB1XVOjw5xxLiFlKXuehHSFWhApJiUKquc8bmwjtuSTlTMitYjjShjB6aQ00Dhe2oFlX'
   const STRIPE_PUBLIC_KEY_LIVE =
     'pk_live_51MMhu4AW8v1kanawUQQjQTpTWBAsdVusIXoXSA26AcTHtZPYbJt6sr98ishd7cs5DXx4QeSMHw45QqrTuzftXaJm005MjZL3sz'
+  const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const MAX_KEY_LENGTH = 128
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
@@ -47,6 +50,19 @@
     }
     global.StartersBookingSurfaceOwnership = ownership
     return ownership
+  }
+
+  function isStagingHost() {
+    return String((global.location && global.location.hostname) || '')
+      .trim()
+      .toLowerCase() === STAGING_HOST
+  }
+
+  function minimumBookingNoticeMinutes() {
+    if (isCommonJs) return PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+    return isStagingHost()
+      ? STAGING_MIN_BOOKING_NOTICE_MINUTES
+      : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
   }
 
   function isValidGuestEmail(email) {
@@ -198,7 +214,9 @@
     if (!configId || !grantId || !Number.isInteger(duration) || duration <= 0) {
       throw new Error('A valid paid-call service is required')
     }
-    const start = Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) + 24 * 60 * 60
+    const start =
+      Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) +
+      minimumBookingNoticeMinutes() * 60
     const end = start + 14 * 24 * 60 * 60
     const query = new URLSearchParams({
       grant_id: grantId,
@@ -210,8 +228,11 @@
     return AVAILABILITY_PATH + '?' + query.toString()
   }
 
-  function normalizeAvailabilitySlots(result, config) {
+  function normalizeAvailabilitySlots(result, config, nowMs) {
     const durationMs = Number(config && config.duration) * 60 * 1000
+    const minimumStartMs =
+      (Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) +
+        minimumBookingNoticeMinutes() * 60) * 1000
     const rows = Array.isArray(result && result.time_slots) ? result.time_slots : []
     return rows.map(function (slot) {
       const startSeconds = Number(slot && slot.start_time)
@@ -222,15 +243,19 @@
         : start + durationMs
       return { start, end }
     }).filter(function (slot) {
-      return Number.isFinite(slot.start) && Number.isFinite(slot.end) && slot.end > slot.start
+      return Number.isFinite(slot.start) &&
+        Number.isFinite(slot.end) &&
+        slot.end > slot.start &&
+        slot.start >= minimumStartMs
     }).sort(function (a, b) {
       return a.start - b.start
     })
   }
 
   async function getPaidAvailability(config, nowMs) {
-    const result = await authenticatedRequest(availabilityQuery(config, nowMs), 'GET')
-    return normalizeAvailabilitySlots(result, config)
+    const resolvedNowMs = Number(nowMs === undefined ? Date.now() : nowMs)
+    const result = await authenticatedRequest(availabilityQuery(config, resolvedNowMs), 'GET')
+    return normalizeAvailabilitySlots(result, config, resolvedNowMs)
   }
 
   function createSetupAttempt(idempotencyKey) {
@@ -993,6 +1018,7 @@
     installGuestFormSubmitGuard,
     installPaidBookingController,
     mountPaidCalendar,
+    minimumBookingNoticeMinutes,
     normalizeGuestEmails,
     normalizeAvailabilitySlots,
     readGuestEmails,
