@@ -23,11 +23,14 @@ The files below are source-controlled candidates for self-contained controller b
 | 13 | `bio-editor.js` | `91671c4ed05806b2ed306f50c265954ef0c36714f59c77f721e2510370c9273f` | Bio editor, 1500-character limit, and counter ownership |
 | 14 | `grouped-selects.js` | `e80bb01f28a43ebcb5b28e8ea733bac273985ddfa3235179cdfc6a9a5168ae84` | Grouped multi-select options |
 
-`bio-editor.js` and `field-counters.js` have deliberately diverged from the inline
-bodies they were captured from. The bio limit is now 1500 **characters** rather than
-300 words, the editor owns its counter group, and the generic counter stands down for
-any `.form_input-wr` holding a `[data-editor-id]` element. The `pages` records still
-hash the live blocks and must not be edited to match; `candidateAssets` tracks the
+`bio-editor.js`, `field-counters.js`, and `company-experience-crud.js` have
+deliberately diverged from the inline bodies they were captured from. The bio limit is
+now 1500 **characters** rather than 300 words, the editor owns its counter group, and
+the generic counter stands down for any `.form_input-wr` holding a `[data-editor-id]`
+element. The company controller carries the work-experience date fix, whose contract is
+shared with Edit Profile and owned by
+[Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
+The `pages` records still hash the live blocks and must not be edited to match; `candidateAssets` tracks the
 reviewed repo files, so the byte length and SHA-256 there move with each change and
 `build-profile-ownership.test.js` fails until they do. The character contract itself is
 pinned by [`bio-char-limit.test.js`](../../bio-char-limit.test.js), which also holds
