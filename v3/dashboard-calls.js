@@ -16,6 +16,8 @@
   const CONFIRM_PATH = '/booking/confirm/v3'
   const CONFIRM_ATTEMPT_STORAGE_PREFIX = 'starters:dashboard-confirm:v1:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
+  const REQUEST_EXPIRATION_TICK_MS = 10000
+  const REQUEST_EXPIRATION_POLL_MS = 10000
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
   const PAGE_SIZE = 6
@@ -188,6 +190,19 @@
     })
   }
 
+  function sameBookingRows(current, next) {
+    if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
+      return false
+    }
+    return current.every(function (booking, index) {
+      try {
+        return JSON.stringify(booking) === JSON.stringify(next[index])
+      } catch (_error) {
+        return false
+      }
+    })
+  }
+
   function waitForMemberstack(timeoutMs) {
     if (
       global.$memberstackDom &&
@@ -354,6 +369,93 @@
     return !(Number.isFinite(start) && start > 0 && start <= time)
   }
 
+  function responseDeadline(booking) {
+    const expires = normalizeTimestamp(booking && booking.confirmation_expires_at)
+    if (Number.isFinite(expires) && expires > 0) return expires
+    const start = normalizeTimestamp(booking && booking.start)
+    return Number.isFinite(start) && start > 0 ? start : Number.NaN
+  }
+
+  function formatResponseTime(deadline, now) {
+    const remaining = Number(deadline) - Number(now == null ? Date.now() : now)
+    if (!Number.isFinite(remaining) || remaining <= 0) return 'Expired'
+    const totalMinutes = Math.ceil(remaining / 60000)
+    const days = Math.floor(totalMinutes / 1440)
+    const hours = Math.floor((totalMinutes % 1440) / 60)
+    const minutes = totalMinutes % 60
+    const parts = []
+    if (days) parts.push(days + 'd')
+    if (hours) parts.push(hours + 'h')
+    if (minutes) parts.push(minutes + 'm')
+    return parts.length ? parts.join(' ') : '0m'
+  }
+
+  function paintRequestExpiration(card, booking, role, now) {
+    const wrap = card && card.querySelector('[booking-item-expiration="wrap"]')
+    const output = card && card.querySelector('[booking-item-expiration="time"]')
+    const pending = role === 'starter' && bookingStatus(booking, now) === 'pending'
+    const deadline = responseDeadline(booking)
+    const visible = pending && Number.isFinite(deadline)
+    show(wrap, visible)
+    if (!visible) return false
+    const currentTime = Number(now == null ? Date.now() : now)
+    const expired = deadline <= currentTime
+    if (output) output.textContent = formatResponseTime(deadline, currentTime)
+    setClass(wrap, 'is-expiring', deadline - currentTime < 48 * 60 * 60 * 1000)
+    configureActionButtons(card, role, 'pending', booking, currentTime)
+    return expired
+  }
+
+  function refreshRequestExpirations(refs, role, now) {
+    let expired = false
+    ;(Array.isArray(refs) ? refs : []).forEach(function (section) {
+      if (!section || !section.list || typeof section.list.querySelectorAll !== 'function') return
+      const bookings = new Map()
+      ;(Array.isArray(section.rows) ? section.rows : []).forEach(function (booking) {
+        bookings.set(clean(booking && (booking.booking_id || booking.id)), booking)
+      })
+      section.list.querySelectorAll('[data-booking-id]').forEach(function (card) {
+        const booking = bookings.get(clean(card.getAttribute('data-booking-id')))
+        if (booking && paintRequestExpiration(card, booking, role, now)) expired = true
+      })
+    })
+    return expired
+  }
+
+  function startRequestExpirationTicker(refs, role, restart, options) {
+    const settings = options || {}
+    // The old inline helper remains defined, but its legacy list generator is
+    // no longer invoked on the current dashboard. This controller is the one
+    // active owner and uses one bounded timer for every rendered request.
+    if (role !== 'starter') return null
+    const setTimer = settings.setInterval || global.setInterval
+    const clearTimer = settings.clearInterval || global.clearInterval
+    const now = settings.now || Date.now
+    if (typeof setTimer !== 'function' || typeof clearTimer !== 'function') return null
+    let refreshBusy = false
+    let nextPollAt = 0
+    const tick = function () {
+      const currentTime = Number(now())
+      const hasExpiredRequest = refreshRequestExpirations(refs, role, currentTime)
+      if (!hasExpiredRequest || refreshBusy || currentTime < nextPollAt) return
+      refreshBusy = true
+      nextPollAt = currentTime + REQUEST_EXPIRATION_POLL_MS
+      Promise.resolve()
+        .then(restart)
+        .catch(function (error) {
+          console.error('[dashboard-calls] expiration refresh failed:', error && error.message)
+        })
+        .finally(function () {
+          refreshBusy = false
+        })
+    }
+    tick()
+    const timer = setTimer(tick, REQUEST_EXPIRATION_TICK_MS)
+    return function stop() {
+      clearTimer(timer)
+    }
+  }
+
   function canConfirmBooking(role, booking, now) {
     return role === 'starter' && responseWindowOpen(booking, now)
   }
@@ -461,6 +563,7 @@
     show(brandStatus, status === 'pending' && role === 'brand')
 
     configureActionButtons(card, role, status, booking)
+    paintRequestExpiration(card, booking, role)
 
     return card
   }
@@ -1218,7 +1321,9 @@
     generation,
     currentGeneration,
     useSharedMember,
+    options,
   ) {
+    const preserveExisting = Boolean(options && options.preserveExisting)
     try {
       let current =
         useSharedMember && global.memberReady && typeof global.memberReady.then === 'function'
@@ -1237,16 +1342,24 @@
       })
       if (generation !== currentGeneration()) return
       refs.forEach(function (section) {
-        section.rows = sectionBookings(rows, role, section.name)
+        const nextRows = sectionBookings(rows, role, section.name)
+        if (preserveExisting && sameBookingRows(section.rows, nextRows)) return
+        section.rows = nextRows
         renderSection(section, role, true)
       })
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
+      return true
     } catch (error) {
       if (generation !== currentGeneration()) return
+      if (preserveExisting) {
+        console.error('[dashboard-calls] background refresh failed:', error && error.message)
+        return false
+      }
       clearBrandHero(role)
       refs.forEach(renderFailure)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
       console.error('[dashboard-calls] failed closed:', error && error.message)
+      return false
     }
   }
 
@@ -1298,7 +1411,20 @@
         useSharedMember,
       )
     }
+    const refreshExpiredRequests = function () {
+      const generation = sessionGeneration
+      return refreshSession(
+        memberstack,
+        refs,
+        role,
+        generation,
+        currentGeneration,
+        false,
+        { preserveExisting: true },
+      )
+    }
     wireBookingActions(refs, role, restart)
+    startRequestExpirationTicker(refs, role, refreshExpiredRequests)
     if (typeof memberstack.onAuthChange === 'function') {
       memberstack.onAuthChange(function () {
         restart()
@@ -1311,6 +1437,12 @@
     bookingStatus,
     paidBooking,
     responseWindowOpen,
+    responseDeadline,
+    formatResponseTime,
+    paintRequestExpiration,
+    refreshRequestExpirations,
+    startRequestExpirationTicker,
+    refreshSession,
     canConfirmBooking,
     statusLabel,
     statusVariantClass,
@@ -1339,6 +1471,7 @@
     wireProjectLoadMore,
     roleForPath,
     sectionBookings,
+    sameBookingRows,
     uniqueBookings,
     wireBookingActions,
   }
