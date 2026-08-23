@@ -67,6 +67,9 @@ those systems.
 
 ## Release verification
 
+Implementation, automated, and live evidence for the in-flight reliability
+workflow is tracked in [PROGRESS-CHECKLIST.md](PROGRESS-CHECKLIST.md).
+
 1. Recapture the official element tree and authenticated published structural
    inventory, compare both with `published-form-contract.json`, and stop on
    unexplained drift.
