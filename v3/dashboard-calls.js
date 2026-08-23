@@ -16,6 +16,9 @@
   const CONFIRM_PATH = '/booking/confirm/v3'
   const CONFIRM_ATTEMPT_STORAGE_PREFIX = 'starters:dashboard-confirm:v1:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
+  const REQUEST_EXPIRATION_TICK_MS = 10000
+  const REQUEST_EXPIRATION_POLL_MS = 30000
+  const REQUEST_EXPIRATION_MAX_POLLS = 3
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
   const PAGE_SIZE = 6
@@ -35,6 +38,8 @@
     '[popup-stripe-card-open]',
     '[pm-use-this]',
   ].join(', ')
+  const DETAIL_MODAL_SELECTOR =
+    '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
   const DASHBOARD_ROLES = {
     '/starter-dashboard': 'starter',
     '/starter-dashboard---availability-stage': 'starter',
@@ -185,6 +190,19 @@
       if (role !== 'starter') return section === 'calls'
       if (section === 'requests') return status === 'pending'
       return section === 'calls' && status !== 'pending'
+    })
+  }
+
+  function sameBookingRows(current, next) {
+    if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
+      return false
+    }
+    return current.every(function (booking, index) {
+      try {
+        return JSON.stringify(booking) === JSON.stringify(next[index])
+      } catch (_error) {
+        return false
+      }
     })
   }
 
@@ -354,6 +372,134 @@
     return !(Number.isFinite(start) && start > 0 && start <= time)
   }
 
+  function responseDeadline(booking) {
+    const expires = normalizeTimestamp(booking && booking.confirmation_expires_at)
+    if (Number.isFinite(expires) && expires > 0) return expires
+    const start = normalizeTimestamp(booking && booking.start)
+    return Number.isFinite(start) && start > 0 ? start : Number.NaN
+  }
+
+  function formatResponseTime(deadline, now) {
+    const remaining = Number(deadline) - Number(now == null ? Date.now() : now)
+    if (!Number.isFinite(remaining) || remaining <= 0) return 'Expired'
+    const totalMinutes = Math.ceil(remaining / 60000)
+    const days = Math.floor(totalMinutes / 1440)
+    const hours = Math.floor((totalMinutes % 1440) / 60)
+    const minutes = totalMinutes % 60
+    const parts = []
+    if (days) parts.push(days + 'd')
+    if (hours) parts.push(hours + 'h')
+    if (minutes) parts.push(minutes + 'm')
+    return parts.length ? parts.join(' ') : '0m'
+  }
+
+  function requestExpirationOwned(booking, role, now) {
+    if (role !== 'starter' || bookingStatus(booking, now) !== 'pending') return false
+    return Number.isFinite(responseDeadline(booking))
+  }
+
+  function requestExpirationKey(booking) {
+    return clean(booking && (booking.booking_id || booking.id)) +
+      '@' + responseDeadline(booking)
+  }
+
+  function paintRequestExpiration(card, booking, role, now) {
+    const wrap = card && card.querySelector('[booking-item-expiration="wrap"]')
+    const output = card && card.querySelector('[booking-item-expiration="time"]')
+    const deadline = responseDeadline(booking)
+    const visible = requestExpirationOwned(booking, role, now)
+    show(wrap, visible)
+    if (!visible) return false
+    const currentTime = Number(now == null ? Date.now() : now)
+    const expired = deadline <= currentTime
+    if (output) output.textContent = formatResponseTime(deadline, currentTime)
+    // The authored countdown has no expiring-state combo class. `text-color-red`
+    // is the site-wide error colour already applied to error copy on this card,
+    // so the urgent countdown reuses it instead of an unstyled marker class.
+    setClass(output, 'text-color-red', deadline - currentTime < 48 * 60 * 60 * 1000)
+    configureActionButtons(card, role, 'pending', booking, currentTime)
+    return expired
+  }
+
+  function refreshRequestExpirations(refs, role, now) {
+    const expired = []
+    ;(Array.isArray(refs) ? refs : []).forEach(function (section) {
+      if (!section || !section.list || typeof section.list.querySelectorAll !== 'function') return
+      const bookings = new Map()
+      ;(Array.isArray(section.rows) ? section.rows : []).forEach(function (booking) {
+        bookings.set(clean(booking && (booking.booking_id || booking.id)), booking)
+      })
+      section.list.querySelectorAll('[data-booking-id]').forEach(function (card) {
+        const booking = bookings.get(clean(card.getAttribute('data-booking-id')))
+        if (booking && paintRequestExpiration(card, booking, role, now)) {
+          expired.push(requestExpirationKey(booking))
+        }
+      })
+    })
+    return expired
+  }
+
+  function refreshDetailExpiration(refs, role, now) {
+    if (!global.document || typeof global.document.querySelector !== 'function') return false
+    const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
+    if (!modal || typeof modal.getAttribute !== 'function') return false
+    if (!clean(modal.getAttribute('data-booking-id'))) return false
+    const booking = bookingFromCard(Array.isArray(refs) ? refs : [], modal)
+    if (!booking) return false
+    const status = bookingStatus(booking, now)
+    const base = modal.querySelector('[booking-popup-content="base"]') || modal
+    const pendingMessages = Array.prototype.slice.call(
+      base.querySelectorAll ? base.querySelectorAll('[pending-info-text]') : [],
+    )
+    pendingMessages.forEach(function (message, index) {
+      show(message, index === 0 && status === 'pending' && responseWindowOpen(booking, now))
+    })
+    configureDetailActions(modal, role, status, booking, now)
+    return true
+  }
+
+  function startRequestExpirationTicker(refs, role, restart, options) {
+    const settings = options || {}
+    // The old inline helper remains defined, but its legacy list generator is
+    // no longer invoked on the current dashboard. This controller is the one
+    // active owner and uses one bounded timer for every rendered request.
+    if (role !== 'starter') return null
+    const setTimer = settings.setInterval || global.setInterval
+    const clearTimer = settings.clearInterval || global.clearInterval
+    const now = settings.now || Date.now
+    if (typeof setTimer !== 'function' || typeof clearTimer !== 'function') return null
+    let refreshBusy = false
+    let nextPollAt = 0
+    const polls = new Map()
+    const tick = function () {
+      const currentTime = Number(now())
+      const expiredKeys = refreshRequestExpirations(refs, role, currentTime)
+      refreshDetailExpiration(refs, role, currentTime)
+      const pollable = expiredKeys.filter(function (key) {
+        return (polls.get(key) || 0) < REQUEST_EXPIRATION_MAX_POLLS
+      })
+      if (!pollable.length || refreshBusy || currentTime < nextPollAt) return
+      refreshBusy = true
+      nextPollAt = currentTime + REQUEST_EXPIRATION_POLL_MS
+      pollable.forEach(function (key) {
+        polls.set(key, (polls.get(key) || 0) + 1)
+      })
+      Promise.resolve()
+        .then(restart)
+        .catch(function (error) {
+          console.error('[dashboard-calls] expiration refresh failed:', error && error.message)
+        })
+        .finally(function () {
+          refreshBusy = false
+        })
+    }
+    tick()
+    const timer = setTimer(tick, REQUEST_EXPIRATION_TICK_MS)
+    return function stop() {
+      clearTimer(timer)
+    }
+  }
+
   function canConfirmBooking(role, booking, now) {
     return role === 'starter' && responseWindowOpen(booking, now)
   }
@@ -425,7 +571,8 @@
   }
 
   function bindCard(card, booking, role) {
-    const status = bookingStatus(booking)
+    const now = Date.now()
+    const status = bookingStatus(booking, now)
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
     const own = role === 'starter' ? booking.starter_data : booking.brand_data
     card.removeAttribute('bookings-item-template')
@@ -460,7 +607,10 @@
     text(brandStatus, '[label-text]', status === 'pending' ? 'Awaiting confirmation' : '')
     show(brandStatus, status === 'pending' && role === 'brand')
 
-    configureActionButtons(card, role, status, booking)
+    if (!requestExpirationOwned(booking, role, now)) {
+      configureActionButtons(card, role, status, booking, now)
+    }
+    paintRequestExpiration(card, booking, role, now)
 
     return card
   }
@@ -718,9 +868,7 @@
 
   function resetDetailModal() {
     if (!global.document || typeof global.document.querySelector !== 'function') return
-    const modal = global.document.querySelector(
-      '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
-    )
+    const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
     if (!modal) return
     if (typeof modal.close === 'function') {
       try {
@@ -767,9 +915,7 @@
       if (!details) return
       const card = details.closest && details.closest('[data-booking-id]')
       const booking = bookingFromCard(refs, card)
-      const modal = global.document.querySelector(
-        '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
-      )
+      const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
       if (!booking || !modal || !populateDetailModal(modal, booking, role)) {
         if (event.preventDefault) event.preventDefault()
         if (event.stopImmediatePropagation) event.stopImmediatePropagation()
@@ -1218,7 +1364,9 @@
     generation,
     currentGeneration,
     useSharedMember,
+    options,
   ) {
+    const preserveExisting = Boolean(options && options.preserveExisting)
     try {
       let current =
         useSharedMember && global.memberReady && typeof global.memberReady.then === 'function'
@@ -1237,16 +1385,30 @@
       })
       if (generation !== currentGeneration()) return
       refs.forEach(function (section) {
-        section.rows = sectionBookings(rows, role, section.name)
+        const nextRows = sectionBookings(rows, role, section.name)
+        if (preserveExisting && sameBookingRows(section.rows, nextRows)) return
+        const previousRendered = preserveExisting ? section.rendered : 0
+        section.rows = nextRows
         renderSection(section, role, true)
+        while (section.rendered < previousRendered) {
+          const rendered = section.rendered
+          renderSection(section, role, false)
+          if (section.rendered === rendered) break
+        }
       })
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
+      return true
     } catch (error) {
       if (generation !== currentGeneration()) return
+      if (preserveExisting) {
+        console.error('[dashboard-calls] background refresh failed:', error && error.message)
+        return false
+      }
       clearBrandHero(role)
       refs.forEach(renderFailure)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
       console.error('[dashboard-calls] failed closed:', error && error.message)
+      return false
     }
   }
 
@@ -1298,7 +1460,20 @@
         useSharedMember,
       )
     }
+    const refreshExpiredRequests = function () {
+      const generation = sessionGeneration
+      return refreshSession(
+        memberstack,
+        refs,
+        role,
+        generation,
+        currentGeneration,
+        false,
+        { preserveExisting: true },
+      )
+    }
     wireBookingActions(refs, role, restart)
+    startRequestExpirationTicker(refs, role, refreshExpiredRequests)
     if (typeof memberstack.onAuthChange === 'function') {
       memberstack.onAuthChange(function () {
         restart()
@@ -1311,6 +1486,13 @@
     bookingStatus,
     paidBooking,
     responseWindowOpen,
+    responseDeadline,
+    formatResponseTime,
+    paintRequestExpiration,
+    refreshRequestExpirations,
+    refreshDetailExpiration,
+    startRequestExpirationTicker,
+    refreshSession,
     canConfirmBooking,
     statusLabel,
     statusVariantClass,
@@ -1339,6 +1521,7 @@
     wireProjectLoadMore,
     roleForPath,
     sectionBookings,
+    sameBookingRows,
     uniqueBookings,
     wireBookingActions,
   }

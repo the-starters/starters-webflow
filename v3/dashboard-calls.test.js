@@ -517,6 +517,593 @@ test('read-only details stay available while expired requests cannot be accepted
   assert.equal(reschedule.hidden, true)
 })
 
+test('request expiration uses the canonical confirmation deadline before the call start', () => {
+  assert.equal(api.responseDeadline({
+    confirmation_expires_at: 2_000_000_000,
+    start: 3_000_000_000_000,
+  }), 2_000_000_000_000)
+  assert.equal(api.responseDeadline({ start: 3_000_000_000 }), 3_000_000_000_000)
+  assert.equal(api.formatResponseTime(2_000_000_000_000 + 60_000, 2_000_000_000_000), '1m')
+  assert.equal(api.formatResponseTime(2_000_000_000_000 + 61 * 60_000, 2_000_000_000_000), '1h 1m')
+  assert.equal(api.formatResponseTime(2_000_000_000_000 + 25 * 60 * 60_000 + 60_000, 2_000_000_000_000), '1d 1h 1m')
+  assert.equal(api.formatResponseTime(2_000_000_000_000, 2_000_000_000_000), 'Expired')
+})
+
+test('pending Starter request cards show the countdown and hide Accept at expiration', () => {
+  const wrap = element()
+  const output = element()
+  const details = element({ 'booking-card-action-btn': 'details' })
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const card = {
+    querySelector(selector) {
+      if (selector === '[booking-item-expiration="wrap"]') return wrap
+      if (selector === '[booking-item-expiration="time"]') return output
+      return null
+    },
+    querySelectorAll() {
+      return [details, accept]
+    },
+  }
+  const now = 2_000_000_000_000
+  const booking = {
+    status: 'pending',
+    start: now + 60 * 60 * 1000,
+    confirmation_expires_at: now + 30 * 60 * 1000,
+  }
+
+  assert.equal(api.paintRequestExpiration(card, booking, 'starter', now), false)
+  assert.equal(wrap.hidden, false)
+  assert.equal(output.textContent, '30m')
+  assert.equal(output.classList.contains('text-color-red'), true)
+  assert.equal(wrap.classList.contains('is-expiring'), false)
+  assert.equal(accept.hidden, false)
+
+  assert.equal(api.paintRequestExpiration(card, booking, 'starter', now + 30 * 60 * 1000), true)
+  assert.equal(output.textContent, 'Expired')
+  assert.equal(output.classList.contains('text-color-red'), true)
+  assert.equal(wrap.classList.contains('is-expiring'), false)
+  assert.equal(accept.hidden, true)
+  assert.equal(details.hidden, false)
+
+  assert.equal(api.paintRequestExpiration(card, booking, 'brand', now), false)
+  assert.equal(wrap.hidden, true)
+})
+
+test('GitHub expiration owner polls one expired request at a bounded interval', async () => {
+  const nowValue = { value: 2_000_000_000_000 }
+  const wrap = element()
+  const output = element()
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const card = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-expired' : null
+    },
+    querySelector(selector) {
+      if (selector === '[booking-item-expiration="wrap"]') return wrap
+      if (selector === '[booking-item-expiration="time"]') return output
+      return null
+    },
+    querySelectorAll() {
+      return [accept]
+    },
+  }
+  const cards = [card]
+  const refs = [{
+    rows: [{
+      booking_id: 'booking-expired',
+      status: 'pending',
+      start: nowValue.value + 60_000,
+      confirmation_expires_at: nowValue.value - 1,
+    }],
+    list: {
+      querySelectorAll() {
+        return cards
+      },
+    },
+  }]
+  let tick
+  let cleared = false
+  let restarts = 0
+  const stop = api.startRequestExpirationTicker(refs, 'starter', async () => {
+    restarts += 1
+  }, {
+    now: () => nowValue.value,
+    setInterval(callback, delay) {
+      assert.equal(delay, 10_000)
+      tick = callback
+      return 42
+    },
+    clearInterval(timer) {
+      assert.equal(timer, 42)
+      cleared = true
+    },
+  })
+
+  await new Promise(setImmediate)
+  assert.equal(restarts, 1)
+  assert.equal(output.textContent, 'Expired')
+  assert.equal(accept.hidden, true)
+
+  tick()
+  await new Promise(setImmediate)
+  assert.equal(restarts, 1)
+
+  // The same expired request stops earning canonical reads once its bounded
+  // budget is spent, even while it stays rendered and past its deadline.
+  for (let elapsed = 0; elapsed < 10; elapsed += 1) {
+    nowValue.value += 30_000
+    tick()
+    await new Promise(setImmediate)
+  }
+  assert.equal(restarts, 3)
+
+  // A different request crossing its own deadline is still polled.
+  refs[0].rows.push({
+    booking_id: 'booking-expired-later',
+    status: 'pending',
+    start: nowValue.value + 60_000,
+    confirmation_expires_at: nowValue.value - 1,
+  })
+  cards.push({
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-expired-later' : null
+    },
+    querySelector: () => element(),
+    querySelectorAll: () => [],
+  })
+  nowValue.value += 30_000
+  tick()
+  await new Promise(setImmediate)
+  assert.equal(restarts, 4)
+
+  nowValue.value += 30_000
+  tick()
+  await new Promise(setImmediate)
+  assert.equal(restarts, 5)
+
+  stop()
+  assert.equal(cleared, true)
+})
+
+test('the expiration owner arms exactly one timer, and none for Brands', () => {
+  const expiredRow = (id) => ({
+    booking_id: id,
+    status: 'pending',
+    start: 2_000_000_000_000 + 60_000,
+    confirmation_expires_at: 1,
+  })
+  const expiredCard = (id) => ({
+    getAttribute: (name) => (name === 'data-booking-id' ? id : null),
+    querySelector: () => element(),
+    querySelectorAll: () => [],
+  })
+  const refs = [
+    {
+      rows: [expiredRow('a'), expiredRow('b')],
+      list: { querySelectorAll: () => [expiredCard('a'), expiredCard('b')] },
+    },
+    {
+      rows: [expiredRow('c')],
+      list: { querySelectorAll: () => [expiredCard('c')] },
+    },
+  ]
+
+  let starterTimers = 0
+  const stop = api.startRequestExpirationTicker(refs, 'starter', () => {}, {
+    now: () => 2_000_000_000_000,
+    setInterval() {
+      starterTimers += 1
+      return 1
+    },
+    clearInterval() {},
+  })
+  assert.equal(typeof stop, 'function')
+  assert.equal(starterTimers, 1)
+
+  let brandTimers = 0
+  assert.equal(api.startRequestExpirationTicker(refs, 'brand', () => {}, {
+    now: () => 2_000_000_000_000,
+    setInterval() {
+      brandTimers += 1
+      return 1
+    },
+    clearInterval() {},
+  }), null)
+  assert.equal(brandTimers, 0)
+})
+
+test('an open detail modal hides Accept once the request passes its deadline', () => {
+  const originalDocument = global.document
+  const now = 2_000_000_000_000
+  const booking = {
+    booking_id: 'booking-open',
+    status: 'pending',
+    start: now + 2 * 60 * 60 * 1000,
+    confirmation_expires_at: now + 60 * 60 * 1000,
+  }
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const close = element({ 'booking-action-btn': 'switch-close' })
+  const pendingInfo = element({ 'pending-info-text': '' })
+  const modal = {
+    attributes: { 'data-booking-id': 'booking-open' },
+    getAttribute(name) {
+      return this.attributes[name] || null
+    },
+    querySelector() {
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector === '[pending-info-text]') return [pendingInfo]
+      return [accept, close]
+    },
+  }
+  const refs = [{ rows: [booking], list: { querySelectorAll: () => [] } }]
+  try {
+    global.document = { querySelector: () => modal }
+
+    assert.equal(api.refreshDetailExpiration(refs, 'starter', now), true)
+    assert.equal(accept.hidden, false)
+    assert.equal(close.hidden, false)
+    assert.equal(pendingInfo.hidden, false)
+
+    assert.equal(
+      api.refreshDetailExpiration(refs, 'starter', now + 60 * 60 * 1000),
+      true,
+    )
+    assert.equal(accept.hidden, true)
+    assert.equal(close.hidden, false)
+    assert.equal(pendingInfo.hidden, true)
+
+    modal.attributes = {}
+    assert.equal(api.refreshDetailExpiration(refs, 'starter', now), false)
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('expiration polling recovers from thrown and rejected refreshes and keeps retries bounded', async () => {
+  const nowValue = { value: 2_000_000_000_000 }
+  const card = {
+    getAttribute() {
+      return 'booking-expired'
+    },
+    querySelector() {
+      return element()
+    },
+    querySelectorAll() {
+      return []
+    },
+  }
+  const refs = [{
+    rows: [{
+      booking_id: 'booking-expired',
+      status: 'pending',
+      start: nowValue.value + 60_000,
+      confirmation_expires_at: nowValue.value - 1,
+    }],
+    list: { querySelectorAll: () => [card] },
+  }]
+  let tick
+  let restarts = 0
+  const originalError = console.error
+  console.error = () => {}
+  try {
+    api.startRequestExpirationTicker(refs, 'starter', () => {
+      restarts += 1
+      if (restarts === 1) throw new Error('synchronous refresh failure')
+      if (restarts === 2) return Promise.reject(new Error('rejected refresh failure'))
+      return Promise.resolve()
+    }, {
+      now: () => nowValue.value,
+      setInterval(callback) {
+        tick = callback
+        return 1
+      },
+      clearInterval() {},
+    })
+    await new Promise(setImmediate)
+    assert.equal(restarts, 1)
+
+    nowValue.value += 30_000
+    tick()
+    await new Promise(setImmediate)
+    assert.equal(restarts, 2)
+
+    nowValue.value += 30_000
+    tick()
+    await new Promise(setImmediate)
+    assert.equal(restarts, 3)
+
+    // The retry budget is spent: a transient failure never becomes an
+    // open-ended poll against the canonical endpoint.
+    nowValue.value += 30_000
+    tick()
+    await new Promise(setImmediate)
+    assert.equal(restarts, 3)
+  } finally {
+    console.error = originalError
+  }
+})
+
+test('expiration polling does not overlap an in-flight canonical refresh', async () => {
+  const nowValue = { value: 2_000_000_000_000 }
+  const card = {
+    getAttribute: () => 'booking-expired',
+    querySelector: () => element(),
+    querySelectorAll: () => [],
+  }
+  const refs = [{
+    rows: [{
+      booking_id: 'booking-expired',
+      status: 'pending',
+      start: nowValue.value + 60_000,
+      confirmation_expires_at: nowValue.value - 1,
+    }],
+    list: { querySelectorAll: () => [card] },
+  }]
+  const pending = deferred()
+  let tick
+  let restarts = 0
+  api.startRequestExpirationTicker(refs, 'starter', () => {
+    restarts += 1
+    return pending.promise
+  }, {
+    now: () => nowValue.value,
+    setInterval(callback) {
+      tick = callback
+      return 1
+    },
+    clearInterval() {},
+  })
+  await new Promise(setImmediate)
+  // Far enough past the throttle that only the in-flight guard can hold the
+  // second read back.
+  nowValue.value += 30_000
+  tick()
+  assert.equal(restarts, 1)
+
+  pending.resolve()
+  await new Promise(setImmediate)
+  nowValue.value += 30_000
+  tick()
+  await new Promise(setImmediate)
+  assert.equal(restarts, 2)
+})
+
+test('background expiration refresh preserves the rendered request after a transient failure', async () => {
+  const originalDocument = global.document
+  const originalLocation = global.location
+  const originalFetch = global.xanoAuthFetch
+  const originalError = console.error
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const list = element()
+  list.innerHTML = 'rendered request'
+  const refs = {
+    name: 'requests',
+    filter: 'all',
+    rows: [api.normalizeBooking({
+      booking_id: 'booking-expired',
+      status: 'pending',
+      starter_data: { memberstack_id: 'starter-1' },
+      confirmation_expires_at: 1,
+    })],
+    rendered: 1,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  let requestCount = 0
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    global.location = { pathname: '/starter-dashboard' }
+    console.error = () => {}
+    global.xanoAuthFetch = async () => {
+      requestCount += 1
+      if (requestCount === 1) {
+        return { ok: false, json: async () => null }
+      }
+      if (requestCount === 2) {
+        return {
+          ok: true,
+          json: async () => [{
+            booking_id: 'booking-expired',
+            status: 'pending',
+            starter_data: { memberstack_id: 'starter-1' },
+            confirmation_expires_at: 1,
+          }],
+        }
+      }
+      return {
+        ok: true,
+        json: async () => [{
+          booking_id: 'booking-expired',
+          status: 'cancelled',
+          starter_data: { memberstack_id: 'starter-1' },
+        }],
+      }
+    }
+    const memberstack = {
+      getCurrentMember: async () => ({ id: 'starter-1' }),
+    }
+    const currentGeneration = () => 1
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      currentGeneration,
+      false,
+      { preserveExisting: true },
+    ), false)
+    assert.equal(refs.rows.length, 1)
+    assert.equal(list.innerHTML, 'rendered request')
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      currentGeneration,
+      false,
+      { preserveExisting: true },
+    ), true)
+    assert.equal(refs.rows.length, 1)
+    assert.equal(list.innerHTML, 'rendered request')
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      currentGeneration,
+      false,
+      { preserveExisting: true },
+    ), true)
+    assert.equal(refs.rows.length, 0)
+    assert.equal(list.innerHTML, '')
+    assert.equal(refs.section.getAttribute('data-bookings-state'), 'empty')
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  } finally {
+    global.document = originalDocument
+    global.location = originalLocation
+    global.xanoAuthFetch = originalFetch
+    console.error = originalError
+  }
+})
+
+test('a background expiration refresh keeps every Load More page rendered', async () => {
+  const originalDocument = global.document
+  const originalLocation = global.location
+  const originalFetch = global.xanoAuthFetch
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const appended = []
+  const list = element()
+  list.appendChild = (child) => {
+    appended.push(child)
+  }
+  const canonicalRows = (context) => Array.from({ length: 14 }, (_unused, index) => ({
+    booking_id: 'booking-' + index,
+    status: 'confirmed',
+    start: 3_000_000_000_000,
+    call_context: index === 0 ? context : 'Call ' + index,
+    starter_data: { memberstack_id: 'starter-1' },
+  }))
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: canonicalRows('before').map(api.normalizeBooking),
+    // The reader clicked Load More twice: 14 rows, 12 of them on screen.
+    rendered: 12,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    global.location = { pathname: '/starter-dashboard' }
+    global.xanoAuthFetch = async () => ({
+      ok: true,
+      json: async () => canonicalRows('after'),
+    })
+
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'starter-1' }) },
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), true)
+
+    assert.equal(refs.rows.length, 14)
+    assert.equal(refs.rows[0].call_context, 'after')
+    assert.equal(refs.rendered, 12)
+    assert.equal(appended.length, 12)
+    assert.equal(refs.loadMore.hidden, false)
+  } finally {
+    global.document = originalDocument
+    global.location = originalLocation
+    global.xanoAuthFetch = originalFetch
+  }
+})
+
+test('a background refresh that shrinks the list stops at the available rows', async () => {
+  const originalDocument = global.document
+  const originalLocation = global.location
+  const originalFetch = global.xanoAuthFetch
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const appended = []
+  const list = element()
+  list.appendChild = (child) => {
+    appended.push(child)
+  }
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: Array.from({ length: 14 }, (_unused, index) => api.normalizeBooking({
+      booking_id: 'booking-' + index,
+      status: 'confirmed',
+      start: 3_000_000_000_000,
+      starter_data: { memberstack_id: 'starter-1' },
+    })),
+    rendered: 12,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    global.location = { pathname: '/starter-dashboard' }
+    global.xanoAuthFetch = async () => ({
+      ok: true,
+      json: async () => [{
+        booking_id: 'booking-0',
+        status: 'confirmed',
+        start: 3_000_000_000_000,
+        starter_data: { memberstack_id: 'starter-1' },
+      }],
+    })
+
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'starter-1' }) },
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), true)
+
+    assert.equal(refs.rows.length, 1)
+    assert.equal(refs.rendered, 1)
+    assert.equal(appended.length, 1)
+    assert.equal(refs.loadMore.hidden, true)
+  } finally {
+    global.document = originalDocument
+    global.location = originalLocation
+    global.xanoAuthFetch = originalFetch
+  }
+})
+
 test('important CSS-hidden status wrappers become visible with the role-aware lifecycle variant', () => {
   const label = element()
   const group = element({ 'booking-element-wrap': 'status' })
