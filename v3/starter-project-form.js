@@ -3,8 +3,10 @@
  *
  * Webflow owns the detached shared modal and all form markup. This controller
  * projects the selected Brand into the authored counterparty rail, binds the
- * native Brand select to Xano-authorized options, reuses the shared commercial
- * serializer from v3/project-form.js, and creates the canonical project.
+ * native Brand select to Xano-authorized options, replaces the authored generic
+ * Service 1/2/3 slots with the authenticated Starter's canonical Xano service
+ * names, reuses the shared commercial serializer from v3/project-form.js, and
+ * creates the canonical project.
  */
 ;(function (global) {
   'use strict'

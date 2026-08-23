@@ -49,6 +49,35 @@ A Standard Contract creates one PandaDoc outbox job. An Own Contract uses the
 existing active-project branch and creates no PandaDoc job. The endpoint must
 not create a proposal row or require a later approval action.
 
+## Starter service names
+
+The authenticated `starter/profile/me` response supplies the canonical service
+names as `services`, or as `Services` when `services` is absent. Both the array
+shape and the three-slot object shape are accepted:
+
+```json
+{ "services": ["Paid Media Audit", "Lifecycle Strategy"] }
+```
+
+```json
+{
+  "services": {
+    "service-1": "Paid Media Audit",
+    "service-2": "Lifecycle Strategy"
+  }
+}
+```
+
+Array items may be plain strings or objects carrying `name`, `label`, or `raw`.
+Object keys are read in slot order and tolerate the `service-1`, `service_1`,
+and `Service 1` spellings; any other key is ignored, so sibling metadata can
+never become a selectable service. Names are trimmed, empty values dropped, and
+duplicates removed case-insensitively.
+
+The Xano change that adds this field to the response is a separate unpublished
+draft. Until it is published under its own approved production boundary, the
+endpoint returns no services and the authored Webflow options stand unchanged.
+
 ## Shared Designer contract
 
 The controller binds these existing elements:
@@ -76,6 +105,15 @@ The controller binds these existing elements:
   fills Hiring Manager;
 - the Brand email input is disabled and hidden because the options endpoint does
   not expose it;
+- Service select: the authored `select[name="Services"]` (also matched by
+  `[data-project-field="service"]` and a lowercase `services` name). Webflow
+  authors every option, including **Freelance work**, **Monthly retainer**, and
+  the generic **Service 1**, **Service 2**, and **Service 3** placeholders. When
+  the authenticated Starter profile response carries at least one canonical
+  service name, the controller drops only the generic `Service 1/2/3` slots and
+  appends each canonical name as both the submitted option value and its visible
+  label, keeping every other authored option and its order. It rewrites option
+  data only; it does not replace the select or the form structure;
 - counterparty rail: the selected Brand member's full name fills the existing
   `full_name` binding, and the Brand company fills `professional_headline`.
   Eligible options must include both values. The controller clears and hides
@@ -89,6 +127,15 @@ Brand records as option data; it does not generate or replace the form structure
 One eligible Brand is selected automatically. Multiple eligible Brands keep the
 placeholder selected and require the Starter to choose. Zero eligible Brands
 disable the select and show **No eligible Brands yet**.
+
+Each modal open refreshes the Starter profile and the service names alongside
+the Brand options. An empty service list, a failed profile request, or a member
+scope change restores the authored options exactly, so the Starter never sees
+fewer choices than Webflow authored. A selection that survives the refresh is
+kept; one whose option no longer exists is cleared to the empty value. Service
+loading is independent of the Brand identity rail: the controller still clears
+the copied Starter photo, role, role list, and profile information rather than
+repainting them from the profile response.
 
 The canonical modal is the detached shared Contract Generation dialog with the
 Starter profile marker. Before the shared modal initializer runs, the controller
