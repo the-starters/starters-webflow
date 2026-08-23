@@ -132,6 +132,8 @@
   var freeCallBookingLoadPromise = null;
   var FREE_CALL_BOOKING_URL =
       'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/free-call-booking.js';
+  var FREE_CALL_BOOKING_LOADER_ATTR = 'data-starters-free-call-booking-loader';
+  var FREE_CALL_BOOKING_TIMEOUT_MS = 5000;
 
   function validFreeCallBooking(value) {
       return value &&
@@ -141,6 +143,29 @@
   function validBookingDiscovery(value) {
       return validFreeCallBooking(value) &&
           typeof value.getConfigs === 'function';
+  }
+
+  function isFreeCallBookingScript(script) {
+      try {
+          return new URL(script.src, window.location.href).pathname
+              .endsWith('/v3/free-call-booking.js');
+      } catch (_error) {
+          return false;
+      }
+  }
+
+  // This file is deferred, so a parser-inserted blocking tag has already
+  // executed and can never fire load/error again. Reuse only a tag that can
+  // still settle: an async/deferred one, or a loader this recovery injected.
+  function pendingFreeCallBookingLoader() {
+      var scripts = Array.from(document.querySelectorAll('script[src]'));
+      return scripts.find(function (script) {
+          return (
+              script.async ||
+              script.defer ||
+              script.hasAttribute(FREE_CALL_BOOKING_LOADER_ATTR)
+          ) && isFreeCallBookingScript(script);
+      }) || null;
   }
 
   function ensureFreeCallBooking() {
@@ -153,15 +178,7 @@
       freeCallBookingLoadPromise = new Promise(function (resolve) {
           var settled = false;
           var timeoutId = null;
-          var scripts = Array.from(document.querySelectorAll('script[src]'));
-          var loader = scripts.find(function (script) {
-              try {
-                  return new URL(script.src, window.location.href).pathname
-                      .endsWith('/v3/free-call-booking.js');
-              } catch (_error) {
-                  return false;
-              }
-          });
+          var injected = false;
 
           function finish(value) {
               if (settled) return;
@@ -171,31 +188,45 @@
               resolve(freeCallBooking);
           }
 
-          function loaded() {
-              finish(window.StartersFreeCallBooking);
-          }
-
           function failed() {
               console.warn('[hire-profile] Free Call booking controller failed to load');
               finish(null);
           }
 
-          if (!loader) {
-              loader = document.createElement('script');
+          // Every settle path re-reads the global first: a reused tag can have
+          // installed it without notifying us. Only give up once the canonical
+          // loader this file owns has had its own turn.
+          function attemptSettle() {
+              if (settled) return;
+              if (validFreeCallBooking(window.StartersFreeCallBooking)) {
+                  finish(window.StartersFreeCallBooking);
+                  return;
+              }
+              if (injected) {
+                  failed();
+                  return;
+              }
+              watch(injectLoader());
+          }
+
+          function injectLoader() {
+              injected = true;
+              var loader = document.createElement('script');
               loader.setAttribute('src', FREE_CALL_BOOKING_URL);
-              loader.setAttribute('data-starters-free-call-booking-loader', '');
+              loader.setAttribute(FREE_CALL_BOOKING_LOADER_ATTR, '');
               loader.async = true;
-          }
-
-          loader.addEventListener('load', loaded, { once: true });
-          loader.addEventListener('error', failed, { once: true });
-          timeoutId = window.setTimeout(function () {
-              if (!settled) failed();
-          }, 5000);
-
-          if (!loader.parentElement) {
               (document.head || document.documentElement).appendChild(loader);
+              return loader;
           }
+
+          function watch(loader) {
+              if (timeoutId !== null) window.clearTimeout(timeoutId);
+              loader.addEventListener('load', attemptSettle, { once: true });
+              loader.addEventListener('error', attemptSettle, { once: true });
+              timeoutId = window.setTimeout(attemptSettle, FREE_CALL_BOOKING_TIMEOUT_MS);
+          }
+
+          watch(pendingFreeCallBookingLoader() || injectLoader());
       });
 
       return freeCallBookingLoadPromise;

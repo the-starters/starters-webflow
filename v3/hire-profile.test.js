@@ -91,6 +91,22 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
     delete el.attributes[n]
   }
   el.hasAttribute = (n) => el.getAttribute(n) !== null
+  // Reflected script properties the loader recovery reads.
+  Object.defineProperty(el, 'src', {
+    get: () => el.getAttribute('src') || '',
+    set: (v) => el.setAttribute('src', v),
+    configurable: true,
+  })
+  for (const flag of ['async', 'defer']) {
+    let value = el.hasAttribute(flag)
+    Object.defineProperty(el, flag, {
+      get: () => value,
+      set: (next) => {
+        value = Boolean(next)
+      },
+      configurable: true,
+    })
+  }
   el.matches = (s) => compile(s)(el)
   el.appendChild = (child) => {
     child.parentElement = el
@@ -292,6 +308,7 @@ function makeContext({
   dynamicFreeController,
   freeControllerLoadFails = false,
   omitInitialFreeController = false,
+  existingHeadScripts = [],
   location = { hostname: 'www.thestarters.com', pathname: '/hire/ashna-rana' },
   schedulingBridge = false,
 } = {}) {
@@ -313,10 +330,15 @@ function makeContext({
       if (type === 'DOMContentLoaded') fn()
     },
     getElementById: (id) => head.querySelector('#' + id) || root.querySelector('#' + id),
-    querySelector: (s) => root.querySelector(s),
-    querySelectorAll: (s) => root.querySelectorAll(s),
+    // Real document queries span head and body; script tags live in head.
+    querySelector: (s) => head.querySelector(s) || root.querySelector(s),
+    querySelectorAll: (s) => [...head.querySelectorAll(s), ...root.querySelectorAll(s)],
     createElement: (tag) => makeElement(tag),
   }
+
+  const headScripts = existingHeadScripts.map((attrs) =>
+    head.appendChild(makeElement('script', attrs)),
+  )
 
   const defaultFreeController = (
     typeof getStarterByMemberId === 'function' ||
@@ -418,6 +440,7 @@ function makeContext({
     context.StarterSchedulingV3Stage = {}
     documentObject.documentElement.setAttribute('data-scheduling-v3-stage', 'ready')
   }
+  context.headScripts = headScripts
   context.warnings = warnings
   context.requestedIndexes = requestedIndexes
   context.emptyNavRefreshCalls = emptyNavRefreshCalls
@@ -1017,6 +1040,154 @@ test('a failed GitHub Free controller load keeps booking hidden', async () => {
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.ok(context.warnings.some((line) => line.includes('failed to load')))
+})
+
+
+const CANONICAL_BOOKING_LOADER =
+  'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/free-call-booking.js'
+
+const TEST_BRAND_MEMBER = {
+  id: 'brand_test_member',
+  auth: { email: 'brand-test@example.com' },
+  customFields: { 'free-user': 'Brand', 'last-name': 'Test' },
+  planConnections: [
+    { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+  ],
+}
+
+const TEST_BOOKING_CONFIGS = [
+  { config_id: 'config_free_test', is_paid: false, active: true, data_environment: 'test' },
+  {
+    config_id: 'config_paid_test',
+    is_paid: true,
+    active: true,
+    data_environment: 'test',
+    payment_environment: 'test',
+    price_cents: 500,
+    currency: 'usd',
+    duration: 60,
+  },
+]
+
+function makeTestFreeController() {
+  return {
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_test' }),
+    getConfigs: async () => TEST_BOOKING_CONFIGS,
+    installFreeBookingController: () => true,
+  }
+}
+
+function bookingLoaders(head) {
+  return head.children.filter(
+    (child) =>
+      child.tag === 'script' && child.hasAttribute('data-starters-free-call-booking-loader'),
+  )
+}
+
+/** Every booking-controller script tag present, injected or page-authored. */
+function bookingScripts(head) {
+  return head.children.filter(
+    (child) =>
+      child.tag === 'script' &&
+      String(child.getAttribute('src') || '').endsWith('/v3/free-call-booking.js'),
+  )
+}
+
+test('a page loader still in flight is reused instead of adding a second one', async () => {
+  const page = makePage({ index: 'Freelancers3.0-staging-test' })
+  const lateController = makeTestFreeController()
+  const context = makeContext({
+    page,
+    member: TEST_BRAND_MEMBER,
+    omitInitialFreeController: true,
+    existingHeadScripts: [{ src: CANONICAL_BOOKING_LOADER, async: '' }],
+    paidController: { installPaidBookingController: () => true },
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const inFlight = context.headScripts[0]
+  assert.equal(bookingLoaders(context.document.head).length, 0)
+  assert.equal(bookingScripts(context.document.head).length, 1)
+  assert.ok(
+    (inFlight.listeners.load || []).length > 0,
+    'expected the in-flight page loader to be watched rather than duplicated',
+  )
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+
+  context.StartersFreeCallBooking = lateController
+  for (const listener of inFlight.listeners.load) listener()
+  await settle()
+
+  assert.equal(bookingScripts(context.document.head).length, 1)
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free_test')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), 'config_paid_test')
+})
+
+test('a blocking page loader that already ran is superseded by the canonical loader', async () => {
+  const page = makePage({ index: 'Freelancers3.0-staging-test' })
+  const context = makeContext({
+    page,
+    member: TEST_BRAND_MEMBER,
+    omitInitialFreeController: true,
+    // A stale pinned tag whose load/error events fired long before this
+    // deferred file ran, and which never installed the controller.
+    existingHeadScripts: [{
+      src: 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/v3/free-call-booking.js',
+    }],
+    dynamicFreeController: makeTestFreeController(),
+    paidController: { installPaidBookingController: () => true },
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const loaders = bookingLoaders(context.document.head)
+  assert.equal(loaders.length, 1)
+  assert.equal(loaders[0].getAttribute('src'), CANONICAL_BOOKING_LOADER)
+  assert.deepEqual(context.headScripts[0].listeners, {})
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free_test')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), 'config_paid_test')
+  assert.ok(!context.warnings.some((line) => line.includes('failed to load')))
+})
+
+test('a reused page loader that errors falls back to the canonical loader', async () => {
+  const page = makePage({ index: 'Freelancers3.0-staging-test' })
+  const context = makeContext({
+    page,
+    member: TEST_BRAND_MEMBER,
+    omitInitialFreeController: true,
+    existingHeadScripts: [{
+      src: 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/v3/free-call-booking.js',
+      async: '',
+    }],
+    dynamicFreeController: makeTestFreeController(),
+    paidController: { installPaidBookingController: () => true },
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const inFlight = context.headScripts[0]
+  assert.equal(bookingLoaders(context.document.head).length, 0)
+
+  for (const listener of inFlight.listeners.error) listener()
+  await settle()
+
+  const loaders = bookingLoaders(context.document.head)
+  assert.equal(loaders.length, 1)
+  assert.equal(loaders[0].getAttribute('src'), CANONICAL_BOOKING_LOADER)
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free_test')
 })
 
 test('the TEST fixture booking surface stays hidden and inert on production', async () => {

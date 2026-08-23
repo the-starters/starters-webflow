@@ -45,8 +45,14 @@ execute its legacy helpers.
 page head does not contain `free-call-booking.js`, it adds that exact jsDelivr
 asset once and waits up to five seconds before booking discovery. A load error
 or timeout leaves the Book Call wrapper and both call options hidden. An
-existing controller or matching in-flight loader is reused, so this recovery
-does not create a second chooser owner. Keep the direct synchronous head tag as
+existing controller or matching loader that can still settle — an `async` or
+`defer` tag, or a loader this recovery already injected — is reused, so this
+recovery does not create a second chooser owner. A stale blocking tag cannot
+settle again, because this file is deferred and that tag has already executed;
+it is therefore superseded by the canonical loader instead of waited on. Every
+give-up path re-reads `window.StartersFreeCallBooking` first, so a controller
+that installs without notifying this file still counts. Keep the direct
+synchronous head tag as
 the final Webflow install; the runtime loader prevents the current missing-tag
 state from disabling Free and Paid discovery while the shared component cleanup
 is still pending.
