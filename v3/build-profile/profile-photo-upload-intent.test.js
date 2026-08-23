@@ -34,6 +34,7 @@ class TestFile {
 function element() {
   const listeners = new Map();
   const classes = new Set();
+  const attributes = new Map();
   return {
     style: {},
     classList: {
@@ -50,12 +51,22 @@ function element() {
       if (listener) listener(event);
     },
     appendChild() {},
+    getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
+    hasAttribute(name) { return attributes.has(name); },
+    removeAttribute(name) { attributes.delete(name); },
+    setAttribute(name, value) { attributes.set(name, String(value)); },
     contains() { return false; },
     querySelector() { return null; },
   };
 }
 
-function createHarness({ cryptoApi, uploadResponder } = {}) {
+function createHarness({
+  avatarResponder,
+  cryptoApi,
+  uploadResponder,
+  pathname = '/build-profile/full-profile',
+  storedPhotoUrl = '',
+} = {}) {
   const label = element();
   const wrap = element();
   const uploadError = element();
@@ -70,6 +81,8 @@ function createHarness({ cryptoApi, uploadResponder } = {}) {
   const previewImg = element();
   const removeBtn = element();
   const photoUrlInput = element();
+  photoUrlInput.setAttribute('data-input-capture', '');
+  photoUrlInput.value = storedPhotoUrl;
   const elements = new Map([
     ['#profile-photo-wrap', wrap],
     ['#profile-photo', input],
@@ -155,14 +168,17 @@ function createHarness({ cryptoApi, uploadResponder } = {}) {
       : cryptoApi,
     location: {
       hostname: 'thestarters.com',
-      pathname: '/build-profile/full-profile',
+      pathname,
       origin: 'https://thestarters.com',
     },
     localStorage: { setItem() {}, removeItem() {} },
     fetch: originalFetch,
     $memberstackDom: {
       async getMemberCookie() { return 'memberstack-token'; },
-      async updateMemberProfileImage() { return { data: { profileImage: 'https://example.invalid/small.jpg' } }; },
+      async updateMemberProfileImage() {
+        if (avatarResponder) return avatarResponder();
+        return { data: { profileImage: 'https://example.invalid/small.jpg' } };
+      },
     },
   };
   class TestEvent {
@@ -181,7 +197,7 @@ function createHarness({ cryptoApi, uploadResponder } = {}) {
   const context = vm.createContext({
     window,
     document,
-    console: { log() {}, info() {}, error() {} },
+    console: { log() {}, info() {}, warn() {}, error() {} },
     MEMBER: { id: 'member-id-not-sent' },
     activeProfile: { data: { step_1: { 'profile-photo-url': '' } } },
     waitForMember: (callback) => callback(),
@@ -228,6 +244,7 @@ function createHarness({ cryptoApi, uploadResponder } = {}) {
     uploadError,
     uploads,
     wrap,
+    window,
     resizeCount: () => resizeCount,
     TestEvent,
   };
@@ -242,9 +259,11 @@ async function run() {
   const {
     input,
     label,
+    photoUrlInput,
     uploadError,
     uploads,
     wrap,
+    window,
     resizeCount,
     TestEvent,
   } = createHarness();
@@ -258,8 +277,15 @@ async function run() {
   input.files = [firstFile];
   input.dispatchEvent(new TestEvent('change'));
   await settle();
+  assert.equal(uploads.length, 0);
+  assert.equal(photoUrlInput.value, 'pending-profile-photo-upload');
+  assert.equal(photoUrlInput.hasAttribute('data-input-capture'), false);
+  await assert.rejects(window.StartersBuildProfilePhotoUpload.commitPending(), /Save the profile/);
+  assert.equal(uploads.length, 0);
+
+  window.StartersBuildProfilePhotoUpload.markProfileSaved();
+  await assert.rejects(window.StartersBuildProfilePhotoUpload.commitPending(), /Image upload response is incomplete/);
   assert.equal(uploads.length, 1);
-  assert.equal(wrap.style.display, 'block');
   assert.equal(uploadError.style.display, 'block');
   assert.equal(uploadError.textContent, 'Image upload failed. Click here to try again.');
 
@@ -270,6 +296,7 @@ async function run() {
   assert.equal(uploads[0].memberId, null);
   assert.equal(uploads[1].memberId, null);
   assert.equal(resizeCount(), 1);
+  assert.equal(photoUrlInput.hasAttribute('data-input-capture'), true);
 
   const replacementWithSameMetadata = {
     name: 'photo.jpg',
@@ -283,6 +310,8 @@ async function run() {
   input.files = [replacementWithSameMetadata];
   input.dispatchEvent(new TestEvent('change'));
   await settle();
+  assert.equal(uploads.length, 2);
+  await window.StartersBuildProfilePhotoUpload.commitPending();
   assert.equal(uploads.length, 3);
   assert.notEqual(uploads[2].sourceMutationId, uploads[1].sourceMutationId);
   assert.equal(resizeCount(), 2);
@@ -293,6 +322,8 @@ async function run() {
   input.files = [secondFile];
   input.dispatchEvent(new TestEvent('change'));
   await settle();
+  assert.equal(uploads.length, 3);
+  await window.StartersBuildProfilePhotoUpload.commitPending();
   assert.equal(uploads.length, 4);
   assert.notEqual(uploads[3].sourceMutationId, uploads[2].sourceMutationId);
 
@@ -302,6 +333,8 @@ async function run() {
     dataTransfer: { files: [droppedFile] },
   });
   await settle();
+  assert.equal(uploads.length, 4);
+  await window.StartersBuildProfilePhotoUpload.commitPending();
   assert.equal(uploads.length, 5);
   assert.notEqual(uploads[4].sourceMutationId, uploads[3].sourceMutationId);
   assert.equal(uploads.every((upload) => upload.image && upload.memberId === null), true);
@@ -337,34 +370,109 @@ async function run() {
   });
 
   await select('first.jpg');
+  overlapping.window.StartersBuildProfilePhotoUpload.markProfileSaved();
+  const firstCommit = overlapping.window.StartersBuildProfilePhotoUpload.commitPending();
   await select('second.jpg');
-  pendingResponses[0](response('not-json'));
-  await settle();
-  assert.equal(overlapping.uploadError.style.display, 'none');
-  assert.equal(overlapping.wrap.style.display, 'none');
-
-  await select('third.jpg');
-  pendingResponses[1](response(JSON.stringify({
+  const secondCommit = overlapping.window.StartersBuildProfilePhotoUpload.commitPending();
+  pendingResponses[0](response(JSON.stringify({
     starter_image: 'https://example.invalid/stale.jpg',
     starter_image_small: 'https://example.invalid/stale-small.jpg',
   })));
+  await firstCommit;
   await settle();
-  assert.equal(overlapping.photoUrlInput.value, '');
-
-  pendingResponses[2](response(JSON.stringify({
+  assert.equal(overlapping.uploadError.style.display, 'none');
+  assert.equal(overlapping.wrap.style.display, 'none');
+  pendingResponses[1](response(JSON.stringify({
     starter_image: 'https://example.invalid/current.jpg',
     starter_image_small: 'https://example.invalid/current-small.jpg',
   })));
+  await secondCommit;
   await settle();
   assert.equal(
     overlapping.photoUrlInput.value,
     'https://example.invalid/current.jpg',
   );
+
+  const editProfile = createHarness({
+    pathname: '/starter-edit-profile',
+    uploadResponder() {
+      return response(JSON.stringify({
+        starter_image: 'https://example.invalid/edit-photo.jpg',
+        starter_image_small: 'https://example.invalid/edit-photo-small.jpg',
+      }));
+    },
+  });
+  editProfile.input.files = [{ name: 'edit.jpg', type: 'image/jpeg', size: 100 }];
+  editProfile.input.dispatchEvent(new editProfile.TestEvent('change'));
+  await settle();
+  assert.equal(editProfile.uploads.length, 1);
+  assert.equal(editProfile.photoUrlInput.value, 'https://example.invalid/edit-photo.jpg');
+
+  const avatarFailure = createHarness({
+    avatarResponder() { throw new Error('synthetic avatar failure'); },
+    uploadResponder() {
+      return response(JSON.stringify({
+        starter_image: 'https://example.invalid/canonical-photo.jpg',
+        starter_image_small: 'https://example.invalid/avatar-photo.jpg',
+      }));
+    },
+  });
+  avatarFailure.input.files = [{ name: 'avatar-failure.jpg', type: 'image/jpeg', size: 100 }];
+  avatarFailure.input.dispatchEvent(new avatarFailure.TestEvent('change'));
+  await settle();
+  avatarFailure.window.StartersBuildProfilePhotoUpload.markProfileSaved();
+  await avatarFailure.window.StartersBuildProfilePhotoUpload.commitPending();
+  assert.equal(avatarFailure.uploads.length, 1);
+  assert.equal(avatarFailure.photoUrlInput.value, 'https://example.invalid/canonical-photo.jpg');
+  assert.equal(avatarFailure.uploadError.style.display, 'none');
+
+  // `data-input-capture` is what the Build Profile draft controller enumerates, and it
+  // rewrites the whole of `step_1` from that set on every save - including the Submit
+  // click that triggers this gate. A returning Starter replacing an existing photo must
+  // therefore stay inside the capture set, holding the stored URL, until the replacement
+  // is actually committed.
+  const returning = createHarness({
+    storedPhotoUrl: 'https://example.invalid/stored-photo.jpg',
+    uploadResponder(index) {
+      if (index === 0) {
+        return new Response(JSON.stringify({ message: 'synthetic upload failure' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return response(JSON.stringify({
+        starter_image: 'https://example.invalid/replacement.jpg',
+        starter_image_small: 'https://example.invalid/replacement-small.jpg',
+      }));
+    },
+  });
+  returning.input.files = [{ name: 'replacement.jpg', type: 'image/jpeg', size: 100 }];
+  returning.input.dispatchEvent(new returning.TestEvent('change'));
+  await settle();
+  assert.equal(returning.uploads.length, 0);
+  assert.equal(returning.photoUrlInput.value, 'https://example.invalid/stored-photo.jpg');
+  assert.equal(returning.photoUrlInput.hasAttribute('data-input-capture'), true);
+
+  returning.window.StartersBuildProfilePhotoUpload.markProfileSaved();
+  await assert.rejects(
+    returning.window.StartersBuildProfilePhotoUpload.commitPending(),
+    /synthetic upload failure/,
+  );
+  assert.equal(returning.uploads.length, 1);
+  assert.equal(returning.photoUrlInput.value, 'https://example.invalid/stored-photo.jpg');
+  assert.equal(returning.photoUrlInput.hasAttribute('data-input-capture'), true);
+
+  returning.wrap.listeners.get('click')({ target: returning.uploadError });
+  await settle();
+  assert.equal(returning.uploads.length, 2);
+  assert.equal(returning.uploads[0].sourceMutationId, returning.uploads[1].sourceMutationId);
+  assert.equal(returning.photoUrlInput.value, 'https://example.invalid/replacement.jpg');
+  assert.equal(returning.photoUrlInput.hasAttribute('data-input-capture'), true);
 }
 
 run()
   .then(() => console.log(
-    'Browser interaction trace: selection showed retry UI after blank success JSON; click retry reused the intent and cached resize; picker reopen with identical metadata, a new selection, and a drop each created a new opaque intent; stale uploads could not overwrite the current photo.',
+    'Browser interaction trace: Build selection stayed local until the profile save gate; the first upload failure kept one opaque intent for retry; replacements and drops created new intents only when committed; stale overlapping uploads could not overwrite the current photo; a returning Starter kept the stored photo URL in draft capture across a failed replacement.',
   ))
   .catch((error) => {
     console.error(error);

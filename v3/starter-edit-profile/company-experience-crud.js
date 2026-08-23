@@ -152,7 +152,22 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             let editSelectedCompany = null;
             let editStartDateBaseline = null;
             let editEndDateBaseline = null;
+            let editStartDateUserChanged = false;
+            let editEndDateUserChanged = false;
             let isLimitReached = false;
+
+            let editStartDateSelectGuarded = false;
+            let editEndDateSelectGuarded = false;
+
+            if (editStartDateInput) {
+                editStartDateInput.addEventListener('input', () => { editStartDateUserChanged = true; });
+                editStartDateInput.addEventListener('change', () => { editStartDateUserChanged = true; });
+            }
+
+            if (editEndDateInput) {
+                editEndDateInput.addEventListener('input', () => { editEndDateUserChanged = true; });
+                editEndDateInput.addEventListener('change', () => { editEndDateUserChanged = true; });
+            }
 
             if (!companyList || !companyTemplate) {
                 console.warn('[Companies] .company-list or .company-card template not found');
@@ -295,6 +310,72 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 } catch (error) {
                     // ignore
                 }
+            }
+
+            const EDIT_DATEPICKER_POLL_MS = 100;
+            const EDIT_DATEPICKER_MAX_WAIT_MS = 10000;
+
+            function isEditCompanyDatepickerReady(input) {
+                if (!input) return true;
+                if (typeof jQuery === 'undefined' || !jQuery.fn || !jQuery.fn.datepicker) return false;
+
+                return !!jQuery(input).data('datepicker');
+            }
+
+            // jQuery UI writes a calendar pick straight into the field with `input.val()` and, because
+            // the shared embed pairs these inputs with its own `onSelect`, fires neither `input` nor
+            // `change`. Chain onto that callback so a picked date still counts as user input.
+            function guardEditCompanyDateSelection(input, markChanged) {
+                if (!input || !isEditCompanyDatepickerReady(input)) return false;
+
+                try {
+                    const existingOnSelect = jQuery(input).datepicker('option', 'onSelect');
+                    jQuery(input).datepicker('option', {
+                        onSelect: function () {
+                            markChanged();
+                            if (typeof existingOnSelect === 'function') existingOnSelect.apply(this, arguments);
+                        },
+                    });
+                    return true;
+                } catch (error) {
+                    return false;
+                }
+            }
+
+            function guardEditCompanyDateSelections() {
+                if (!editStartDateSelectGuarded) {
+                    editStartDateSelectGuarded = guardEditCompanyDateSelection(editStartDateInput, function () {
+                        editStartDateUserChanged = true;
+                    });
+                }
+
+                if (!editEndDateSelectGuarded) {
+                    editEndDateSelectGuarded = guardEditCompanyDateSelection(editEndDateInput, function () {
+                        editEndDateUserChanged = true;
+                    });
+                }
+            }
+
+            // jQuery UI is fetched over the network by Global-FormEmbeds-Datepicker.html, so the widget
+            // can initialize - and rewrite these fields from their raw text - after the edit modal is
+            // already open. Run `callback` once both inputs are live; when they already are nothing
+            // further will touch them, so there is nothing to wait for.
+            function whenEditCompanyDatepickerReady(callback) {
+                if (isEditCompanyDatepickerReady(editStartDateInput) && isEditCompanyDatepickerReady(editEndDateInput)) return;
+
+                let waited = 0;
+                const poll = setInterval(function () {
+                    waited += EDIT_DATEPICKER_POLL_MS;
+                    guardEditCompanyDateSelections();
+
+                    if (isEditCompanyDatepickerReady(editStartDateInput) && isEditCompanyDatepickerReady(editEndDateInput)) {
+                        clearInterval(poll);
+                        callback();
+                        return;
+                    }
+
+                    if (waited >= EDIT_DATEPICKER_MAX_WAIT_MS) clearInterval(poll);
+                }, EDIT_DATEPICKER_POLL_MS);
             }
 
             async function getCompanies() {
@@ -757,6 +838,39 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 if (!editCompanyWrapper || !company) return;
 
                 editCompanyWrapper.dataset.id = company.id || '';
+                const rawStartDate = company.start_date || '';
+                const rawEndDate = company.current_work ? 'Present' : (company.end_date || '');
+                editStartDateUserChanged = false;
+                editEndDateUserChanged = false;
+
+                function hydrateEditCompanyDates(onlyIfUnchanged = false) {
+                    if (editStartDateInput && (!onlyIfUnchanged || !editStartDateUserChanged)) {
+                        editStartDateInput.value = rawStartDate;
+                        resetDatepickerBounds(editStartDateInput);
+                        setDatepickerDate(editStartDateInput, rawStartDate);
+                        editStartDateBaseline = starterProfileCompanyDateBaseline(editStartDateInput, rawStartDate);
+                    }
+
+                    if (editEndDateInput && (!onlyIfUnchanged || !editEndDateUserChanged)) {
+                        editEndDateInput.value = rawEndDate;
+                        resetDatepickerBounds(editEndDateInput);
+
+                        if (company.end_date && !company.current_work) {
+                            setDatepickerDate(editEndDateInput, company.end_date);
+                        } else {
+                            setDatepickerDate(editEndDateInput, null);
+                        }
+
+                        if (company.current_work) {
+                            editEndDateInput.setAttribute('disabled', 'disabled');
+                        } else {
+                            editEndDateInput.removeAttribute('disabled');
+                        }
+
+                        editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
+                        editEndDateBaseline = starterProfileCompanyDateBaseline(editEndDateInput, rawEndDate);
+                    }
+                }
 
                 if (editCompanyInput) {
                     editCompanyInput.value = company.company_name || '';
@@ -766,32 +880,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     editJobTitleInput.value = company.job_title || '';
                 }
 
-                if (editStartDateInput) {
-                    const rawStartDate = company.start_date || '';
-                    editStartDateInput.value = rawStartDate;
-                    setDatepickerDate(editStartDateInput, rawStartDate);
-                    editStartDateBaseline = starterProfileCompanyDateBaseline(editStartDateInput, rawStartDate);
-                }
-
-                if (editEndDateInput) {
-                    editEndDateInput.value = company.current_work ? 'Present' : (company.end_date || '');
-
-                    if (company.current_work) {
-                        editEndDateInput.setAttribute('disabled', 'disabled');
-                        editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
-                    }
-
-                    if (company.end_date && !company.current_work) {
-                        setDatepickerDate(editEndDateInput, company.end_date);
-                    } else {
-                        setDatepickerDate(editEndDateInput, null);
-                    }
-
-                    editEndDateBaseline = starterProfileCompanyDateBaseline(
-                        editEndDateInput,
-                        company.current_work ? 'Present' : company.end_date,
-                    );
-                }
+                hydrateEditCompanyDates();
 
                 setCheckboxState(editCurrentWorkCheckbox, !!company.current_work);
 
@@ -802,6 +891,14 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 };
 
                 openEditModal();
+                // Opening the modal runs the shared date-picker embed over these inputs, which re-reads
+                // their raw text and can turn it into a relative-day date.
+                hydrateEditCompanyDates();
+                guardEditCompanyDateSelections();
+                whenEditCompanyDatepickerReady(function () {
+                    if (String(editCompanyWrapper.dataset.id) !== String(company.id || '')) return;
+                    hydrateEditCompanyDates(true);
+                });
             }
 
             function closeEditCompany(notCloseButton = false) {

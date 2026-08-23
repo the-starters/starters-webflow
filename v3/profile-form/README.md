@@ -12,12 +12,13 @@ newlines, and deferred controllers add one-time browser guards. The manifest rec
 live identities and candidate identities, plus the exact inverse transformation used to reconstruct
 each captured live body.
 
-`draft-state.js` is the one candidate that no longer reconstructs to its published body: it carries the
-member-bound hydration fix, so its transformation is recorded as
-`whitespace_plus_idempotency_guard_plus_behavior_change` and names
-`build-draft-state-published.capture.txt` as the immutable 11,002-character published body. Tests still
-pin the candidate length and SHA-256, still prove the published length, body hash, and complete-embed
-hash from that capture, and fail if the declared change ever stops diverging from it.
+Two candidates no longer reconstruct to their published bodies. `draft-state.js` carries the
+member-bound hydration fix, and `submit-writer.js` carries the profile-save and pending-photo commit
+gate. Their transformations are recorded as
+`whitespace_plus_idempotency_guard_plus_behavior_change` and name immutable published-body captures.
+Tests still pin each candidate length and SHA-256, prove the published length, body hash, and
+complete-embed hash from its capture, and fail if a declared change stops diverging from the published
+body.
 
 `inline-extraction-cutover-candidate.json` binds each source body to its authenticated published body
 length, SHA-256, complete-embed SHA-256, script index, component instance, and node or complete
@@ -53,7 +54,7 @@ profile-photo, Step 3 company, Step 4 portfolio, and later loaders stay unchange
 The extraction does not move the form into JavaScript. It does not change the separate Step 3 company
 owner or Step 4 portfolio owner. A future `wf-xano` conversion requires a separate declarative contract
 and must not be combined with this ownership cutover, which changes no behavior beyond the
-declared `draft-state.js` hydration fix recorded above.
+declared `draft-state.js` hydration fix and `submit-writer.js` photo gate recorded above.
 
 ## Verification
 
@@ -65,8 +66,8 @@ node --test v3/profile-form/inline-extraction-contract.test.js
 
 The executable suite checks immutable live identities and candidate identities against an oracle
 outside the cutover manifest. It removes the recorded one-time guards and restores normalized
-whitespace to reconstruct each live body, reads the published capture for the one candidate that
-declares a behavior change, parses the loader templates, and rejects URL, defer, order, duplicate, wrong-head,
+whitespace to reconstruct each unchanged live body, reads the published captures for candidates that
+declare behavior changes, parses the loader templates, and rejects URL, defer, order, duplicate, wrong-head,
 missed-removal, existing-loader, and route-owner drift. It executes each complete route sequence,
 including every existing profile controller at its captured position, in one browser-like context and
 pins the exact boot and handler registration order. It evaluates each grouped route twice to prove
@@ -110,10 +111,13 @@ sentinel into a calendar value, and clearing "I currently work here" cannot carr
 `Present` into an end-date field the member can see.
 
 Hydration also records the canonical string it came from next to the value the picker
-rendered from it. On save, a date field the member never touched re-serializes its
-original canonical string, and only a field whose visible value actually changed
-submits the picker's value. Editing an unrelated field therefore cannot rewrite a
-stored date to the picker's own formatting.
+rendered from it. Opening a different role clears date bounds and disabled state left by
+the prior modal. If jQuery UI initializes after the modal opens, the controller rehydrates
+the stored dates once the two pickers are ready. Input, change, and calendar-selection
+guards prevent that late pass from overwriting a date the member already typed or picked.
+On save, a date field the member never touched re-serializes its original canonical string,
+and only a field whose visible value actually changed submits the picker's value. Editing
+an unrelated field therefore cannot rewrite a stored date to the picker's own formatting.
 
 Run this coverage with:
 

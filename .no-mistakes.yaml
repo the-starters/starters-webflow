@@ -1,11 +1,10 @@
-# Ordered fallback list: use whichever agent is available, preferring claude.
-# NOTE: this list selects on AVAILABILITY, not on crash recovery. Claude is
-# first because Codex returned no output in two consecutive Calendar disconnect
-# reviews on 2026-08-13. If the selected agent dies or returns no output during
-# a step, the run fails instead of switching agents. `no-mistakes doctor`
-# reporting an agent runnable only proves it spawns, not that it survives a
-# step.
-agent: [claude, codex]
+# Ordered fallback list: use whichever agent is available, preferring codex.
+# NOTE: this list selects on AVAILABILITY, not on crash recovery. Claude
+# returned no output in two consecutive Starter Profile reviews on 2026-08-24.
+# If the selected agent dies or returns no output during a step, the run fails
+# instead of switching agents. `no-mistakes doctor` reporting an agent runnable
+# only proves it spawns, not that it survives a step.
+agent: [codex, claude]
 
 ignore_patterns:
   - "*.min.js"
