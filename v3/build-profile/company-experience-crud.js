@@ -152,9 +152,11 @@ function serializeStarterProfileCompanyDate(input, baseline) {
         return input ? input.value.trim() : '';
       }
 
-      // XANO keeps the full day-precision date (e.g. "Apr 22 2026") so the datepicker
-      // can parse it back correctly when the edit popup reopens; cards only ever
-      // display month + year, so this trims it down for display purposes only.
+      // Label-only transform: cards show month + year, so this drops any middle token
+      // from the stored string. It says nothing about what XANO stores — records hold
+      // month-only values like "Jan 2024" as well as day-precision ones — so the edit
+      // popup parses the raw string separately in starterProfileCompanyDatepickerValue.
+      // Contract: ../profile-form/README.md#company-experience-date-hydration
       function toMonthYearLabel(value) {
         const text = String(value || '').trim();
         if (!text || text.toLowerCase() === 'present') return text;
