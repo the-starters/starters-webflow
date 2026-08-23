@@ -573,6 +573,41 @@ test('paid booking sends only canonical guest emails and keeps them stable on re
   }
 })
 
+test('guest invitations travel to the canonical Xano booking endpoint', async () => {
+  const previous = global.xanoAuthFetch
+  const requests = []
+  global.xanoAuthFetch = async (url, options) => {
+    requests.push({ url, options })
+    return response({ booking_id: 'booking_invite_route', status: 'pending' })
+  }
+  try {
+    const attempt = api.createBookingAttempt({
+      starter_slug: 'jp-testiz-d',
+      config_id: 'config_paid',
+      start: 1787000000000,
+      end: 1787000900000,
+      timezone: 'Asia/Manila',
+      guest_emails: ['guest@example.com'],
+    }, 'paid-booking-invite-route-123')
+    await attempt.run()
+    assert.equal(requests.length, 1)
+    // The invite fan-out lives behind this exact Xano route: a drifted base,
+    // path, or verb sends the guests nowhere and no other assertion here
+    // notices, because every other check reads the module's own constants.
+    assert.equal(
+      requests[0].url,
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd/brand/booking/request/v3',
+    )
+    assert.equal(requests[0].options.method, 'POST')
+    assert.deepEqual(
+      JSON.parse(requests[0].options.body).guest_emails,
+      ['guest@example.com'],
+    )
+  } finally {
+    global.xanoAuthFetch = previous
+  }
+})
+
 test('booking fingerprint changes with every captured request field but not equivalent guests', () => {
   const base = {
     starter_slug: 'jp-testiz-d',
