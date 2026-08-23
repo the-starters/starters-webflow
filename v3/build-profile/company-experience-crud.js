@@ -43,12 +43,32 @@ function starterProfileCompanyDatepickerValue(value) {
   return null;
 }
 
+function starterProfileCompanyWidgetDateValue(input, value) {
+  const text = String(value || '').trim();
+  if (!input || !text) return null;
+  if (typeof jQuery === 'undefined' || !jQuery.datepicker || typeof jQuery.datepicker.parseDate !== 'function') return null;
+
+  // dateFormat lives on the Webflow markup, so only the widget knows it. parseDate
+  // throws on a mismatch rather than falling back to relative-day offsets.
+  try {
+    const format = jQuery(input).datepicker('option', 'dateFormat');
+    const date = format ? jQuery.datepicker.parseDate(format, text) : null;
+    return date instanceof Date ? date : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function starterProfileCompanyDatepickerDate(input, value) {
+  return starterProfileCompanyDatepickerValue(value) || starterProfileCompanyWidgetDateValue(input, value);
+}
+
 function setStarterProfileCompanyDatepickerDate(input, value) {
   if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
   if (isStarterProfileCompanyPresentDate(value)) return;
 
   try {
-    jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerValue(value));
+    jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerDate(input, value));
   } catch (error) {
     // The value may not match the widget's configured dateFormat.
   }
