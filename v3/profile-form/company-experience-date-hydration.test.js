@@ -65,6 +65,33 @@ for (const controllerPath of controllerPaths) {
     assert.equal(value.getDate(), 31)
   })
 
+  for (const [rawValue, expectedMonth, expectedDay] of [
+    ['Jan 1 2024', 0, 1],
+    ['Jan 01 2024', 0, 1],
+    ['April 22 2026', 3, 22],
+    ['April 22, 2026', 3, 22],
+  ]) {
+    test(`${controllerPath} hydrates day-precision date ${rawValue}`, () => {
+      const { context } = loadDateContract(controllerPath)
+      const value = context.starterProfileCompanyDatepickerValue(rawValue)
+
+      assert.equal(value.getFullYear(), Number(rawValue.match(/\d{4}/)[0]))
+      assert.equal(value.getMonth(), expectedMonth)
+      assert.equal(value.getDate(), expectedDay)
+    })
+  }
+
+  test(`${controllerPath} rejects invalid dates instead of applying relative-day offsets`, () => {
+    const { context, getCapturedDate } = loadDateContract(controllerPath)
+    const input = { value: 'Jan 32 2024' }
+
+    context.setStarterProfileCompanyDatepickerDate(input, input.value)
+
+    assert.equal(getCapturedDate(), null)
+    assert.equal(input.value, '')
+    assert.equal(context.starterProfileCompanyDatepickerValue('unknown 2024'), null)
+  })
+
   test(`${controllerPath} keeps the Present sentinel out of the datepicker`, () => {
     const { context, getCapturedDate } = loadDateContract(controllerPath)
     const input = { value: 'Present' }
