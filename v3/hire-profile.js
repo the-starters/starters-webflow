@@ -33,9 +33,13 @@
  *
  * DEPENDS ON (defined by earlier page/site embeds, not by this file):
  *   starter_memberstack_id, stripe_charges, waitForMember, memberReady, MEMBER,
- *   qs, qsa, StartersFreeCallBooking,
+ *   qs, qsa,
  *   jQuery ($, two utility blocks),
  *   window.WfAlgolia (search record).
+ *
+ * StartersFreeCallBooking is loaded from the GitHub/jsDelivr asset when an
+ * older Webflow page head does not install it yet. The dependency stays
+ * fail-closed: booking remains hidden if the hosted controller cannot load.
  *
  * The Algolia index is READ FROM THE PAGE, never hardcoded: v3/algolia-environment.js
  * rewrites [wf-algolia-index] per environment and the search key 403s any other
@@ -125,6 +129,77 @@
   var waitForMember = window.waitForMember;
   var memberReady = window.memberReady;
   var freeCallBooking = window.StartersFreeCallBooking;
+  var freeCallBookingLoadPromise = null;
+  var FREE_CALL_BOOKING_URL =
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/free-call-booking.js';
+
+  function validFreeCallBooking(value) {
+      return value &&
+          typeof value.getStarterByMemberId === 'function';
+  }
+
+  function validBookingDiscovery(value) {
+      return validFreeCallBooking(value) &&
+          typeof value.getConfigs === 'function';
+  }
+
+  function ensureFreeCallBooking() {
+      if (validFreeCallBooking(window.StartersFreeCallBooking)) {
+          freeCallBooking = window.StartersFreeCallBooking;
+          return Promise.resolve(freeCallBooking);
+      }
+      if (freeCallBookingLoadPromise) return freeCallBookingLoadPromise;
+
+      freeCallBookingLoadPromise = new Promise(function (resolve) {
+          var settled = false;
+          var timeoutId = null;
+          var scripts = Array.from(document.querySelectorAll('script[src]'));
+          var loader = scripts.find(function (script) {
+              try {
+                  return new URL(script.src, window.location.href).pathname
+                      .endsWith('/v3/free-call-booking.js');
+              } catch (_error) {
+                  return false;
+              }
+          });
+
+          function finish(value) {
+              if (settled) return;
+              settled = true;
+              if (timeoutId !== null) window.clearTimeout(timeoutId);
+              freeCallBooking = validFreeCallBooking(value) ? value : null;
+              resolve(freeCallBooking);
+          }
+
+          function loaded() {
+              finish(window.StartersFreeCallBooking);
+          }
+
+          function failed() {
+              console.warn('[hire-profile] Free Call booking controller failed to load');
+              finish(null);
+          }
+
+          if (!loader) {
+              loader = document.createElement('script');
+              loader.setAttribute('src', FREE_CALL_BOOKING_URL);
+              loader.setAttribute('data-starters-free-call-booking-loader', '');
+              loader.async = true;
+          }
+
+          loader.addEventListener('load', loaded, { once: true });
+          loader.addEventListener('error', failed, { once: true });
+          timeoutId = window.setTimeout(function () {
+              if (!settled) failed();
+          }, 5000);
+
+          if (!loader.parentElement) {
+              (document.head || document.documentElement).appendChild(loader);
+          }
+      });
+
+      return freeCallBookingLoadPromise;
+  }
   if (typeof qs !== 'function' || typeof qsa !== 'function' || typeof waitForMember !== 'function') {
     console.warn('[hire-profile] page helpers (qs/qsa/waitForMember) missing; profile scripts stood down');
     return;
@@ -262,15 +337,17 @@
               return;
           }
 
+          freeCallBooking = await ensureFreeCallBooking();
+          if (!validFreeCallBooking(freeCallBooking)) {
+              console.warn('[hire-profile] Free Call booking controller is unavailable');
+              return;
+          }
+
           const brand_name = MEMBER.customFields['free-user'] + " " + MEMBER.customFields['last-name'];
           const brand_email = MEMBER['auth']['email'];
 
           // if it's not a brand
           if (!isBrandMember(MEMBER)) {
-              if (!freeCallBooking || typeof freeCallBooking.getStarterByMemberId !== 'function') {
-                  console.warn('[hire-profile] Free Call booking controller is unavailable');
-                  return;
-              }
               // check calendar\availability connections
               const starter = await freeCallBooking.getStarterByMemberId(FREELANCER_ID);
               const grant_id = starter ? starter['nylas_grant_id'] : null;
@@ -607,11 +684,7 @@
 
   async function startersBooking_handler(freelancerId, brand_name, brand_email) {
 
-      if (
-          !freeCallBooking ||
-          typeof freeCallBooking.getStarterByMemberId !== 'function' ||
-          typeof freeCallBooking.getConfigs !== 'function'
-      ) {
+      if (!validBookingDiscovery(freeCallBooking)) {
           console.warn('[hire-profile] Free Call booking controller is unavailable');
           return;
       }

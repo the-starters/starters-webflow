@@ -289,6 +289,9 @@ function makeContext({
   createScheduler,
   freeController,
   paidController,
+  dynamicFreeController,
+  freeControllerLoadFails = false,
+  omitInitialFreeController = false,
   location = { hostname: 'www.thestarters.com', pathname: '/hire/ashna-rana' },
   schedulingBridge = false,
 } = {}) {
@@ -347,6 +350,7 @@ function makeContext({
     setTimeout,
     clearTimeout,
     Promise,
+    URL,
     Date,
     Map,
     Set,
@@ -370,7 +374,9 @@ function makeContext({
     MEMBER: member,
     memberReady: Promise.resolve(member),
     waitForMember: (cb) => Promise.resolve().then(() => cb(member)),
-    StartersFreeCallBooking: freeController || defaultFreeController,
+    StartersFreeCallBooking: omitInitialFreeController
+      ? undefined
+      : (freeController || defaultFreeController),
     StartersPaidCallBrandPayment: paidController,
     formatWithTimezone: () => ({ list: {} }),
     starter_memberstack_id: 'mem_canary',
@@ -392,6 +398,22 @@ function makeContext({
     },
   }
   context.window = context
+  const originalHeadAppend = head.appendChild
+  head.appendChild = (child) => {
+    const appended = originalHeadAppend(child)
+    if (
+      (dynamicFreeController || freeControllerLoadFails) &&
+      child.tag === 'script' &&
+      String(child.getAttribute('src') || '').endsWith('/v3/free-call-booking.js')
+    ) {
+      Promise.resolve().then(() => {
+        if (dynamicFreeController) context.StartersFreeCallBooking = dynamicFreeController
+        const eventName = freeControllerLoadFails ? 'error' : 'load'
+        for (const listener of child.listeners[eventName] || []) listener()
+      })
+    }
+    return appended
+  }
   if (schedulingBridge) {
     context.StarterSchedulingV3Stage = {}
     documentObject.documentElement.setAttribute('data-scheduling-v3-stage', 'ready')
@@ -874,6 +896,127 @@ test('the TEST fixture uses canonical Free and Paid configs to reveal the author
   assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), 'popup-booking-main')
   assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free_test')
   assert.equal(page.paidModalCta.getAttribute('data-config'), 'config_paid_test')
+})
+
+test('a missing page loader is recovered from the GitHub Free controller exactly once', async () => {
+  const page = makePage({ index: 'Freelancers3.0-staging-test' })
+  const configs = [
+    { config_id: 'config_free_test', is_paid: false, active: true, data_environment: 'test' },
+    {
+      config_id: 'config_paid_test',
+      is_paid: true,
+      active: true,
+      data_environment: 'test',
+      payment_environment: 'test',
+      price_cents: 500,
+      currency: 'usd',
+      duration: 60,
+    },
+  ]
+  let installs = 0
+  const dynamicFreeController = {
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_test' }),
+    getConfigs: async () => configs,
+    installFreeBookingController: () => {
+      installs += 1
+      return true
+    },
+  }
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_test_member',
+      auth: { email: 'brand-test@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Test' },
+      planConnections: [
+        { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+      ],
+    },
+    omitInitialFreeController: true,
+    dynamicFreeController,
+    paidController: { installPaidBookingController: () => true },
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const loaders = context.document.head.children.filter((child) =>
+    child.tag === 'script' &&
+    child.hasAttribute('data-starters-free-call-booking-loader'),
+  )
+  assert.equal(loaders.length, 1)
+  assert.equal(
+    loaders[0].getAttribute('src'),
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/free-call-booking.js',
+  )
+  assert.equal(context.StartersFreeCallBooking, dynamicFreeController)
+  assert.equal(installs, 1)
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free_test')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), 'config_paid_test')
+})
+
+test('an existing GitHub Free controller does not add another loader', async () => {
+  const page = makePage({ index: 'Freelancers3.0-staging-test' })
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_test_member',
+      auth: { email: 'brand-test@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Test' },
+      planConnections: [
+        { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+      ],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_test' }),
+    getConfigs: async () => [
+      { config_id: 'config_free_test', is_paid: false, active: true, data_environment: 'test' },
+    ],
+    initBookingComponents: () => {},
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(
+    context.document.head.children.filter((child) =>
+      child.tag === 'script' && child.hasAttribute('data-starters-free-call-booking-loader'),
+    ).length,
+    0,
+  )
+})
+
+test('a failed GitHub Free controller load keeps booking hidden', async () => {
+  const page = makePage({ index: 'Freelancers3.0-staging-test' })
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_test_member',
+      auth: { email: 'brand-test@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Test' },
+      planConnections: [
+        { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+      ],
+    },
+    omitInitialFreeController: true,
+    freeControllerLoadFails: true,
+    paidController: { installPaidBookingController: () => true },
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), null)
+  assert.equal(page.paidModalCta.getAttribute('data-config'), null)
+  assert.ok(context.warnings.some((line) => line.includes('failed to load')))
 })
 
 test('the TEST fixture booking surface stays hidden and inert on production', async () => {

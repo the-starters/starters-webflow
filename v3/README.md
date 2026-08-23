@@ -1831,6 +1831,15 @@ in its Page Settings head so `scheduling-auth.js`, `scheduling-v3-stage.js`, and
 component. A deferred adapter can lose the first legacy scheduling request, and
 a deferred Free controller can lose ownership of the first chooser binding.
 
+`hire-profile.js` has a bounded compatibility recovery for older saved heads
+that still omit `free-call-booking.js`: it reuses an existing matching loader or
+adds the exact `@latest/v3/free-call-booking.js` asset once, waits up to five
+seconds, and keeps booking hidden on failure. This restores the GitHub-owned
+Free and Paid discovery path without reactivating the dormant inline booking
+initializer. The synchronous head tag remains the final install contract and
+should replace reliance on the runtime recovery when the coordinated Webflow
+component cleanup is available.
+
 Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
