@@ -578,12 +578,17 @@
           body: '{}',
         })
       }).then(function (response) {
-        return Promise.resolve(response && response.json ? response.json() : null).then(function (data) {
-          if (!response || !response.ok) {
-            throw new Error(data && data.message ? data.message : 'Starter profile request failed')
-          }
-          return data
-        })
+        return Promise.resolve()
+          .then(function () {
+            return response && typeof response.json === 'function' ? response.json() : null
+          })
+          .catch(function () { return null })
+          .then(function (data) {
+            if (!response || !response.ok) {
+              throw new Error(data && data.message ? data.message : 'Starter profile request failed')
+            }
+            return data
+          })
       })
     }
   }

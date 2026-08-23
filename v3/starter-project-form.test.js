@@ -519,6 +519,89 @@ test('loads Starter services through the shared Xano auth bridge when the cached
   )
 })
 
+test('a blank shared token issues no fallback request and keeps the authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => '   '
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: true, status: 200, json: async () => ({ services: ['Should never load'] }) }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.deepEqual(requests, [])
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.value),
+    ['', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+  )
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
+test('a missing shared auth bridge issues no fallback request and keeps the authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: true, status: 200, json: async () => ({ services: ['Should never load'] }) }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.deepEqual(requests, [])
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
+test('a non-ok fallback response with a non-JSON body keeps the authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => 'xano-token'
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return {
+      ok: false,
+      status: 502,
+      json: async () => { throw new Error('Unexpected token < in JSON at position 0') },
+    }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.equal(requests.length, 1)
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.value),
+    ['', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+  )
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
+test('a 401 fallback response with a JSON error body keeps the authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => 'xano-token'
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.equal(requests.length, 1)
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
 test('profile loading clears authored identity and stays clear on failure', async () => {
   let rejectProfile
   const loaded = load({
