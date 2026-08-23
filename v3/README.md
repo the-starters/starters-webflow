@@ -2463,7 +2463,8 @@ not to the Scheduler configuration email flags.
 Minimum booking notice: the exact TEST/staging host
 `the-starters-3-0.webflow.io` uses five minutes in new Scheduler
 configurations and browser availability query floors. Booking Preview states
-the matching five-minute or 24-hour minimum. Production, unknown
+the five-minute minimum there and the 24-hour minimum on `thestarters.com` and
+`www.thestarters.com`. Production, unknown
 hosts, and CommonJS contexts fail closed to 1,440 minutes (24 hours). An
 availability-only configuration update never sends `in_scheduler`, so it does
 not change the existing provider booking policy. The Paid configuration is

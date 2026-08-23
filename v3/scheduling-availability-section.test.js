@@ -1883,6 +1883,38 @@ test('calendar-preview explains the five-minute staging booking notice', async (
   )
 })
 
+test('calendar-preview explains the 24-hour notice on both production hosts', async () => {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    const { dom } = loadSection({
+      hostname,
+      origin: 'https://' + hostname,
+      serverState: {
+        grantId: 'grant-1',
+        grantEmail: 'g@example.com',
+        calendarId: 'cal-1',
+        configs: [
+          {
+            config_id: 'cfg-free',
+            grant_id: 'grant-1',
+            title: 'Free Consultation Call',
+            duration: 30,
+            is_paid: false,
+            active: true,
+          },
+        ],
+      },
+    })
+    await settle()
+
+    assert.equal(
+      dom.calendarPreview.querySelector('[data-availability-element="preview-booking-notice"]')
+        .textContent,
+      "Bookings require at least 24 hours' notice.",
+      hostname,
+    )
+  }
+})
+
 test('calendar-preview uses the existing jQuery UI library for a stylable month calendar', async () => {
   const firstDate = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
   const secondDate = firstDate + 24 * 60 * 60
