@@ -51,6 +51,8 @@
   const DAY_VARIANT_SELECTED = 'w-variant-ebea452c-a047-af3f-dd6c-3062ee4c048c'
   const SLOTS_SEARCH_DAYS = 14
   const SLOTS_LIMIT = 8
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   // Canonical Paid Call duration, owned by paid-call-settings.js
   // (FIXED_DURATION_MINUTES) and PAID-CALL-SETTINGS-WIRING.md.
   const PAID_DURATION_MINUTES = 60
@@ -94,6 +96,13 @@
   let timezone = null
   let timezonePersisted = false
   let connectionError = false
+
+  function minimumBookingNoticeMinutes() {
+    const hostname = String(window.location.hostname || '').trim().toLowerCase()
+    return hostname === STAGING_HOST
+      ? STAGING_MIN_BOOKING_NOTICE_MINUTES
+      : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+  }
   let connectBusy = false
   let cachedItemTemplate = null
   let creatingDraft = false
@@ -938,7 +947,7 @@
         cancellation_url: redirectURL + '?cancel=:booking_ref',
         hide_rescheduling_options: true,
         hide_cancellation_options: true,
-        min_booking_notice: 1440,
+        min_booking_notice: minimumBookingNoticeMinutes(),
         additional_fields: {
           call_full_title: { type: 'metadata', label: 'Call Full Title', default: fullTitle, required: false },
           call_tiny_title: { type: 'metadata', label: 'Call Tiny Title', default: tinyTitle, required: false },
@@ -2137,7 +2146,8 @@
     const region = opts.region || 'us'
     if (!grant || !configId) return []
 
-    const nowInSeconds = Math.floor(Date.now() / 1000) + 24 * 60 * 60
+    const nowInSeconds =
+      Math.floor(Date.now() / 1000) + minimumBookingNoticeMinutes() * 60
     const searchEndInSeconds = nowInSeconds + searchDays * 24 * 60 * 60
 
     try {
@@ -2746,6 +2756,7 @@
     getAvailArray: getAvailArray,
     applyDayBadges: applyDayBadges,
     getUpcomingTimeSlots: getUpcomingTimeSlots,
+    minimumBookingNoticeMinutes: minimumBookingNoticeMinutes,
     publishCalendarConnectionState: publishCalendarConnectionState,
   }
 

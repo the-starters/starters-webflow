@@ -2460,6 +2460,13 @@ to prevent duplicate Brand and Starter messages. Guest calendar invitations
 belong to the canonical backend event lifecycle after organizer confirmation,
 not to the Scheduler configuration email flags.
 
+Minimum booking notice: the exact TEST/staging host
+`the-starters-3-0.webflow.io` uses five minutes in new Scheduler
+configurations and browser availability query floors. Production, unknown
+hosts, and CommonJS contexts fail closed to 1,440 minutes (24 hours). An
+availability-only configuration update never sends `in_scheduler`, so it does
+not change the existing provider booking policy.
+
 Runtime contract:
 
 - `data-scheduling-availability-writer` on the document root reports

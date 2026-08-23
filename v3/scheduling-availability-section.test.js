@@ -765,7 +765,7 @@ test('applyDayBadges reverts to the default variant when no days are selected', 
 /* ------------------------------------------------------------------ */
 
 test('getUpcomingTimeSlots sorts, drops past slots, and slices to the limit', async () => {
-  // Matches the adapted lead-time rule (Date.now() + 24h floor): slot offsets
+  // Matches the production lead-time rule (Date.now() + 24h floor): slot offsets
   // here are in whole days so they clear that floor comfortably.
   const nowSeconds = Math.floor(Date.now() / 1000)
   const past = nowSeconds - 3600
@@ -791,6 +791,55 @@ test('getUpcomingTimeSlots sorts, drops past slots, and slices to the limit', as
   assert.equal(result.length, 3)
   assert.ok(result[0] < result[1] && result[1] < result[2])
   assert.ok(result.every((t) => t >= nowSeconds))
+})
+
+test('slot preview applies the host-locked booking notice floor', async () => {
+  const stagingNow = Math.floor(Date.now() / 1000)
+  const stagingTooSoon = stagingNow + 4 * 60
+  const stagingAllowed = stagingNow + 6 * 60
+  const staging = loadSection({
+    hostname: 'the-starters-3-0.webflow.io',
+    origin: 'https://the-starters-3-0.webflow.io',
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: stagingTooSoon }, { start_time: stagingAllowed }] },
+      }),
+    },
+  })
+  await settle()
+  assert.deepEqual(
+    await staging.window.StarterSchedulingAvailabilitySection.getUpcomingTimeSlots({
+      grantId: 'grant-1',
+      configId: 'cfg-free',
+    }),
+    [stagingAllowed],
+  )
+  const stagingQuery = staging.calls.filter(
+    (call) => call.path === '/scheduler/get_availability/v3',
+  ).at(-1).query
+  assert.ok(Number(stagingQuery.start_time) >= stagingNow + 5 * 60)
+  assert.ok(Number(stagingQuery.start_time) <= Math.floor(Date.now() / 1000) + 5 * 60)
+
+  const productionNow = Math.floor(Date.now() / 1000)
+  const productionTooSoon = productionNow + 23 * 60 * 60
+  const productionAllowed = productionNow + 25 * 60 * 60
+  const production = loadSection({
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: productionTooSoon }, { start_time: productionAllowed }] },
+      }),
+    },
+  })
+  await settle()
+  assert.deepEqual(
+    await production.window.StarterSchedulingAvailabilitySection.getUpcomingTimeSlots({
+      grantId: 'grant-1',
+      configId: 'cfg-free',
+    }),
+    [productionAllowed],
+  )
 })
 
 test('getUpcomingTimeSlots returns an empty array without grantId/configId', async () => {
@@ -951,6 +1000,24 @@ test('connecting for the first time (no items at all) seeds a default Mon-Fri 09
   assert.deepEqual(configCall.body.in_availability.availability_rules.default_open_hours, [
     { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' },
   ])
+  assert.equal(configCall.body.in_scheduler.min_booking_notice, 1440)
+})
+
+test('staging scheduler configuration creation uses a five-minute booking notice', async () => {
+  const { dom, calls, window } = loadSection({
+    hostname: 'the-starters-3-0.webflow.io',
+    origin: 'https://the-starters-3-0.webflow.io',
+    serverState: { availability: { items: {}, manager: null } },
+  })
+  await settle()
+
+  assert.equal(window.StarterSchedulingAvailabilitySection.minimumBookingNoticeMinutes(), 5)
+  dom.connectBtnWrapper.children[0].click()
+  await settle()
+
+  const configCall = calls.find((call) => call.path === '/scheduler/configurations/create/v3')
+  assert.ok(configCall)
+  assert.equal(configCall.body.in_scheduler.min_booking_notice, 5)
 })
 
 test('accepts any successful provider 2xx status when creating a scheduler configuration', async () => {

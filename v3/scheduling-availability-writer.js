@@ -35,6 +35,8 @@
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
   const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const isStagingHost = window.location.hostname === STAGING_HOST
@@ -66,6 +68,13 @@
   let timezonePersisted = false
   let connectionError = false
   const oauthCallback = captureOAuthCallback()
+
+  function minimumBookingNoticeMinutes() {
+    const hostname = String(window.location.hostname || '').trim().toLowerCase()
+    return hostname === STAGING_HOST
+      ? STAGING_MIN_BOOKING_NOTICE_MINUTES
+      : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+  }
 
   function captureOAuthCallback() {
     const params = new URLSearchParams(window.location.search)
@@ -961,7 +970,7 @@
         cancellation_url: redirectURL + '?cancel=:booking_ref',
         hide_rescheduling_options: true,
         hide_cancellation_options: true,
-        min_booking_notice: 1440,
+        min_booking_notice: minimumBookingNoticeMinutes(),
         additional_fields: {
           call_full_title: { type: 'metadata', label: 'Call Full Title', default: fullTitle, required: false },
           call_tiny_title: { type: 'metadata', label: 'Call Tiny Title', default: tinyTitle, required: false },
@@ -1954,6 +1963,7 @@
     switchStep: switchStep,
     daysAlias: daysAlias,
     getAvailArray: getAvailArray,
+    minimumBookingNoticeMinutes: minimumBookingNoticeMinutes,
     publishCalendarConnectionState: publishCalendarConnectionState,
   }
 

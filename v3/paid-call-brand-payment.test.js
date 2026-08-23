@@ -1,8 +1,25 @@
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
 const test = require('node:test')
+const vm = require('node:vm')
 
 global.window = global
 const api = require('./paid-call-brand-payment.js')
+const SOURCE = fs.readFileSync(require.resolve('./paid-call-brand-payment.js'), 'utf8')
+
+function loadBrowserApi(hostname, xanoAuthFetch) {
+  const window = {
+    location: hostname === undefined ? {} : { hostname },
+    xanoAuthFetch,
+  }
+  vm.runInNewContext(SOURCE, {
+    URLSearchParams,
+    console,
+    globalThis: window,
+    window,
+  })
+  return window.StartersPaidCallBrandPayment
+}
 
 function response(body, options = {}) {
   return {
@@ -350,6 +367,43 @@ test('paid availability uses one authenticated read with no booking authority', 
   }
 })
 
+test('Paid availability uses five minutes only on the exact staging host', async () => {
+  const now = Date.UTC(2026, 7, 24, 0, 0, 0)
+  const nowSeconds = Math.floor(now / 1000)
+  const config = { config_id: 'config_paid', grant_id: 'grant_test', duration: 60 }
+
+  assert.equal(api.minimumBookingNoticeMinutes(), 1440)
+  assert.equal(
+    new URL('https://example.test' + api.availabilityQuery(config, now))
+      .searchParams.get('start_time'),
+    String(nowSeconds + 1440 * 60),
+  )
+
+  const staging = loadBrowserApi(
+    'the-starters-3-0.webflow.io',
+    async () => response({
+      time_slots: [
+        { start_time: nowSeconds + 4 * 60 },
+        { start_time: nowSeconds + 5 * 60 },
+      ],
+    }),
+  )
+  assert.equal(staging.minimumBookingNoticeMinutes(), 5)
+  assert.equal(
+    new URL('https://example.test' + staging.availabilityQuery(config, now))
+      .searchParams.get('start_time'),
+    String(nowSeconds + 5 * 60),
+  )
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await staging.getPaidAvailability(config, now))),
+    [{ start: (nowSeconds + 5 * 60) * 1000, end: (nowSeconds + 65 * 60) * 1000 }],
+  )
+
+  assert.equal(loadBrowserApi('thestarters.com').minimumBookingNoticeMinutes(), 1440)
+  assert.equal(loadBrowserApi('staging.thestarters.com').minimumBookingNoticeMinutes(), 1440)
+  assert.equal(loadBrowserApi().minimumBookingNoticeMinutes(), 1440)
+})
+
 test('paid availability fails closed before a request when service identity is incomplete', () => {
   assert.throws(
     () => api.availabilityQuery({ config_id: 'config_paid', duration: 15 }),
@@ -366,14 +420,16 @@ test('paid calendar renders dates and times and submits only the selected slot',
   const container = new CalendarElement('div')
   const submissions = []
   const selections = []
+  const firstStart = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const secondStart = firstStart + 30 * 60
   global.document = {
     createElement(tagName) { return new CalendarElement(tagName) },
   }
   global.jQuery = undefined
   global.xanoAuthFetch = async () => response({
     time_slots: [
-      { start_time: 1787000000, end_time: 1787000900 },
-      { start_time: 1787001800, end_time: 1787002700 },
+      { start_time: firstStart, end_time: firstStart + 15 * 60 },
+      { start_time: secondStart, end_time: secondStart + 15 * 60 },
     ],
   })
 
@@ -402,8 +458,8 @@ test('paid calendar renders dates and times and submits only the selected slot',
     await confirm.listeners.click()
     assert.equal(submissions.length, 1)
     assert.deepEqual(submissions[0], {
-      start: 1787001800000,
-      end: 1787002700000,
+      start: secondStart * 1000,
+      end: (secondStart + 15 * 60) * 1000,
       timezone: result.timezone,
     })
   } finally {
