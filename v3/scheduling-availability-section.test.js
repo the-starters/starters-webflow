@@ -1966,7 +1966,7 @@ test('calendar-preview uses the existing jQuery UI library for a stylable month 
   )
 })
 
-test('calendar-preview selects a date and time without creating a booking', async () => {
+test('calendar-preview selects Free or Paid dates and times without creating a booking', async () => {
   const firstDate = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
   const secondDate = firstDate + 24 * 60 * 60
   const { dom, calls } = loadSection({
@@ -1982,6 +1982,16 @@ test('calendar-preview selects a date and time without creating a booking', asyn
           is_paid: false,
           active: true,
         },
+        {
+          config_id: 'cfg-paid',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          price_cents: 5500,
+          currency: 'USD',
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
       ],
     },
     getRoutes: {
@@ -1993,6 +2003,12 @@ test('calendar-preview selects a date and time without creating a booking', asyn
   })
   await settle()
   const writeCountBeforeSelection = calls.filter((call) => call.method !== 'GET').length
+
+  let services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.equal(services.children.length, 2)
+  assert.equal(services.children[0].children[1].textContent, '30 minutes · Free')
+  assert.equal(services.children[1].children[1].textContent, '60 minutes · $55.00')
+  assert.equal(services.children[0].getAttribute('aria-pressed'), 'true')
 
   let dates = dom.calendarPreview.querySelector('[data-availability-element="preview-dates"]')
   dates.children[1].click()
@@ -2008,6 +2024,34 @@ test('calendar-preview selects a date and time without creating a booking', asyn
   assert.equal(
     calls.filter((call) => call.method !== 'GET').length,
     writeCountBeforeSelection,
+  )
+
+  services.children[1].click()
+  await settle()
+  services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.equal(services.children[0].getAttribute('aria-pressed'), 'false')
+  assert.equal(services.children[1].getAttribute('aria-pressed'), 'true')
+
+  dates = dom.calendarPreview.querySelector('[data-availability-element="preview-dates"]')
+  dates.children[1].click()
+  dates = dom.calendarPreview.querySelector('[data-availability-element="preview-dates"]')
+  assert.equal(dates.children[1].getAttribute('aria-pressed'), 'true')
+
+  times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(times.children.length, 1)
+  times.children[0].click()
+  times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(times.children[0].getAttribute('aria-pressed'), 'true')
+  assert.ok(dom.calendarPreview.querySelector('[data-availability-element="preview-selection"]'))
+  assert.equal(
+    calls.filter((call) => call.method !== 'GET').length,
+    writeCountBeforeSelection,
+  )
+  assert.deepEqual(
+    calls
+      .filter((call) => call.path === '/scheduler/get_availability/v3')
+      .map((call) => call.query.configuration_id),
+    ['cfg-free', 'cfg-paid'],
   )
 })
 
