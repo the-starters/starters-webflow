@@ -3,6 +3,14 @@
  * Original live inline body SHA-256: 8def2d83a95789431895634566199088cae153f1d517210abcb917977dd02e5d
  * Captured read-only from /starter-edit-profile on 2026-08-12.
  */
+function getStarterEditPortfolioSuccessCopy(updatedHighlightCount) {
+  if (!Number.isInteger(updatedHighlightCount) || updatedHighlightCount < 1) return null;
+  return {
+    heading: 'Highlight submitted',
+    message: 'Your changes were saved and sent for review. Your currently approved highlight stays live until the update is approved.',
+  };
+}
+
   // Manages portfolio CRUD, media uploads, previews, and edit/remove modals.
   document.addEventListener('DOMContentLoaded', async function () {
     waitForMember(async () => {
@@ -10,6 +18,12 @@
 
       const XANO_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io';
       ((XANO_GET_URL = `${XANO_BASE}/api:PmBJV0AG/Get_my_portfolios`), (XANO_CREATE_URL = `${XANO_BASE}/api:PmBJV0AG/Create_portfolio`), (XANO_UPDATE_URL = `${XANO_BASE}/api:PmBJV0AG/Update_portfolio`), (XANO_DELETE_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio`), (XANO_UPLOAD_URL = `${XANO_BASE}/api:PmBJV0AG/upload-image`), (XANO_ADD_IMAGE_URL = `${XANO_BASE}/api:PmBJV0AG/Add_portfolio_image`), (XANO_GET_IMAGES_URL = `${XANO_BASE}/api:PmBJV0AG/Get_portfolio_images`), (XANO_UPLOAD_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/upload-video`), (XANO_ADD_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/Add_portfolio_video`), (XANO_GET_VIDEOS_URL = `${XANO_BASE}/api:PmBJV0AG/Get_portfolio_videos`), (XANO_DELETE_IMAGE_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio_image`), (XANO_DELETE_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio_video`), (PLACEHOLDER_IMAGE = 'https://cdn.prod.website-files.com/plugins/Basic/assets/placeholder.60f9b1840c.svg'), (MAX_IMAGE_SIZE = 4 * 1024 * 1024), (MAX_VIDEO_SIZE = 50 * 1024 * 1024), (MAX_PORTFOLIOS = 9), (grid = qs('[data-highlights]')), (template = grid ? qs('.portfolio_card', grid) : null), (editModal = qs('[data-modal-target="portfolio-edit"]')), (editModalTrigger = qs('[data-modal-trigger="portfolio-edit"]')), (editModalClose = qs('[data-modal-close]', editModal)), (removeModal = qs('[data-modal-target="portfolio-remove"]')), (removeModalTrigger = qs('[data-modal-trigger="portfolio-remove"]')), (removeModalClose = qs('[data-modal-close]', removeModal)), (notifyModal = qs('[data-modal-target="portfolio-notification"]')), (notifyModalTrigger = qs('[data-modal-trigger="portfolio-notification"]')), (notifyModalClose = qs('[data-modal-close]', notifyModal)), (notificationText = notifyModal ? qs('[notification-text]', notifyModal) : null), (openSuccess = qs("[data-modal-trigger='edit-form-success']")), (createSubmit = qs('#add-highlight')), (editForm = qs('#wf-form-Portfolio-update')), (editSubmit = qs('[free-edit-submit]')), (portfolioSubmit = qs('[data-edit-submit="portfolio"]')), (titleInp = qs('#portfolio-title')), (descInp = qs('#portfolio-description')), (editTitleInp = qs('#portfolio-title-edit')), (editDescInp = qs('#portfolio-description-edit')), (imagesInp = qs('#portfolio-images')), (previewWrap = qs('#portfolio-images-preview')), (coverIndexInput = qs('#portfolio-cover-index')), (editImagesInp = qs('#portfolio-images-edit')), (editPreviewWrap = qs('#portfolio-images-edit-preview')), (videosInp = qs('#portfolio-videos')), (videosPreviewWrap = qs('#portfolio-videos-preview')), (editVideosInp = qs('#portfolio-videos-edit')), (editVideosPreviewWrap = qs('#portfolio-videos-edit-preview')), (firstPortfolioInp = qs('#first-portfolio')), (profileDrop = qs('#profile-dropdown')), (highlightDropdownLabel = qs('[highlight-dropdown-label]')), (skipBlock = qs('[skip-highlights]')));
+
+      const successModal = qs('[data-modal-target="edit-form-success"]');
+      const successHeading = successModal ? qs('.heading-style-h1', successModal) : null;
+      const successMessage = successModal ? qs('.text-size-xlarge', successModal) : null;
+      const defaultSuccessHeading = successHeading ? successHeading.textContent : '';
+      const defaultSuccessMessage = successMessage ? successMessage.textContent : '';
 
       if (!grid || !template) return;
       let selectedFiles = [],
@@ -450,6 +464,28 @@
         if (!notifyModal || !notifyModalClose) return;
 
         notifyModalClose.dispatchEvent(new Event('click', { bubbles: true }));
+      }
+
+      function restoreDefaultSuccessMessage() {
+        if (successHeading) successHeading.textContent = defaultSuccessHeading;
+        if (successMessage) successMessage.textContent = defaultSuccessMessage;
+      }
+
+      function openPendingReviewSuccess(updatedHighlightCount) {
+        const copy = getStarterEditPortfolioSuccessCopy(updatedHighlightCount);
+        if (!copy) return false;
+        if (successHeading) successHeading.textContent = copy.heading;
+        if (successMessage) successMessage.textContent = copy.message;
+        if (openSuccess) openSuccess.dispatchEvent(new Event('click', { bubbles: true }));
+        return true;
+      }
+
+      if (successModal) {
+        successModal.addEventListener('close', restoreDefaultSuccessMessage);
+        successModal.addEventListener('click', function (event) {
+          const closeTrigger = event.target && event.target.closest ? event.target.closest('[data-modal-close]') : null;
+          if (closeTrigger) setTimeout(restoreDefaultSuccessMessage, 0);
+        });
       }
 
       function updateCreateSubmitState() {
@@ -1049,7 +1085,9 @@
           clearAllDraftQueues();
           await renderPortfolios();
 
-          if (openSuccess) openSuccess.dispatchEvent(new Event('click', { bubbles: true }));
+          if (!openPendingReviewSuccess(updateDrafts.length) && openSuccess) {
+            openSuccess.dispatchEvent(new Event('click', { bubbles: true }));
+          }
         } catch (error) {
           console.error(error);
           openNotifyModal(getErrorMessage(error, 'Portfolio save failed'));
