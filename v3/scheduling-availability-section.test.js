@@ -1822,6 +1822,11 @@ test('calendar-preview renders canonical active free services and their live slo
   assert.equal(services.children[0].getAttribute('aria-pressed'), 'true')
   assert.equal(services.children[0].children[0].textContent, 'Free Consultation Call')
   assert.equal(services.children[0].children[1].textContent, '30 minutes · Free')
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-booking-notice"]')
+      .textContent,
+    "Bookings require at least 24 hours' notice.",
+  )
 
   const slotsList = dom.calendarPreview.querySelector('[data-availability-element="slots-list"]')
   assert.ok(slotsList)
@@ -1835,6 +1840,46 @@ test('calendar-preview renders canonical active free services and their live slo
   assert.equal(
     calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
     1,
+  )
+})
+
+test('calendar-preview explains the five-minute staging booking notice', async () => {
+  const future = Math.floor(Date.now() / 1000) + 10 * 60
+  const { dom } = loadSection({
+    hostname: ' THE-STARTERS-3-0.WEBFLOW.IO ',
+    origin: 'https://the-starters-3-0.webflow.io',
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-paid',
+          grant_id: 'grant-1',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          price_cents: 100,
+          currency: 'usd',
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+          data_environment: 'test',
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-booking-notice"]')
+      .textContent,
+    "Bookings require at least 5 minutes' notice.",
   )
 })
 
