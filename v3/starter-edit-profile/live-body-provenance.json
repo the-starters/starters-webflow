@@ -24,7 +24,7 @@
       "portfolio-crud.js": { "path": "v3/starter-edit-profile/portfolio-crud.js", "bytes": 50563, "sha256": "b8380028ecc9f4ff32126d030ff384ba2756e257c4cc7294cf6dbd02765cd5c1" },
       "portfolio-list.js": { "path": "v3/starter-edit-profile/portfolio-list.js", "bytes": 4013, "sha256": "f559928f524705d1fcce022a1213b0a637c233cbd55f4973dc376457e0ab74ff" },
       "company-autocomplete.js": { "path": "v3/starter-edit-profile/company-autocomplete.js", "bytes": 12921, "sha256": "07582d43008c17f4f447505c542f1175805d84cc9f5df3a79fdf1942e0bed7a4" },
-      "company-experience-crud.js": { "path": "v3/starter-edit-profile/company-experience-crud.js", "bytes": 48374, "sha256": "15dc4ab5366c8e9e8d80a3ddff4ab5bf98296904a72b08a7cd810cc7b4572647" },
+      "company-experience-crud.js": { "path": "v3/starter-edit-profile/company-experience-crud.js", "bytes": 48792, "sha256": "7d5f138bbdb351fead0d4412518443f91720c19fb23d0398efdb87ecca9c83fe" },
       "work-dates.js": { "path": "v3/build-profile/work-dates.js", "bytes": 1929, "sha256": "3be29b0dfecfadd6057e6da6a30af0a47dc41d67bdedda863aca003512fe2890" }
     }
   }

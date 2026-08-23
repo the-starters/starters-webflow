@@ -1,6 +1,10 @@
+function isStarterProfileCompanyPresentDate(value) {
+    return String(value || '').trim().toLowerCase() === 'present';
+}
+
 function starterProfileCompanyDatepickerValue(value) {
     const text = String(value || '').trim();
-    if (!text) return null;
+    if (!text || isStarterProfileCompanyPresentDate(text)) return null;
 
     const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/);
     if (isoMatch) {
@@ -24,12 +28,19 @@ function starterProfileCompanyDatepickerValue(value) {
 
 function setStarterProfileCompanyDatepickerDate(input, value) {
     if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
+    if (isStarterProfileCompanyPresentDate(value)) return;
 
     try {
         jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerValue(value));
     } catch (error) {
         // The value may not match the widget's configured dateFormat.
     }
+}
+
+function starterProfileCompanyDateBaseline(input, rawValue) {
+    const rawDate = String(rawValue || '').trim();
+    if (!input || !rawDate || isStarterProfileCompanyPresentDate(rawDate)) return null;
+    return { rawValue: rawDate, pickerValue: input.value.trim() };
 }
 
 function serializeStarterProfileCompanyDate(input, baseline) {
@@ -720,10 +731,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     const rawStartDate = company.start_date || '';
                     editStartDateInput.value = rawStartDate;
                     setDatepickerDate(editStartDateInput, rawStartDate);
-                    editStartDateBaseline = {
-                        rawValue: rawStartDate,
-                        pickerValue: getValue(editStartDateInput),
-                    };
+                    editStartDateBaseline = starterProfileCompanyDateBaseline(editStartDateInput, rawStartDate);
                 }
 
                 if (editEndDateInput) {
@@ -740,10 +748,10 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                         setDatepickerDate(editEndDateInput, null);
                     }
 
-                    editEndDateBaseline = {
-                        rawValue: company.current_work ? 'Present' : (company.end_date || ''),
-                        pickerValue: getValue(editEndDateInput),
-                    };
+                    editEndDateBaseline = starterProfileCompanyDateBaseline(
+                        editEndDateInput,
+                        company.current_work ? 'Present' : company.end_date,
+                    );
                 }
 
                 setCheckboxState(editCurrentWorkCheckbox, !!company.current_work);

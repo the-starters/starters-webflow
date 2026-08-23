@@ -21,6 +21,8 @@ function loadDateContract(relativePath) {
       if (value instanceof Date) {
         const month = value.toLocaleString('en-US', { month: 'short' })
         input.value = `${month} ${String(value.getDate()).padStart(2, '0')} ${value.getFullYear()}`
+      } else if (value === null) {
+        input.value = ''
       }
     },
   })
@@ -61,6 +63,49 @@ for (const controllerPath of controllerPaths) {
     assert.equal(value.getFullYear(), 2026)
     assert.equal(value.getMonth(), 7)
     assert.equal(value.getDate(), 31)
+  })
+
+  test(`${controllerPath} keeps the Present sentinel out of the datepicker`, () => {
+    const { context, getCapturedDate } = loadDateContract(controllerPath)
+    const input = { value: 'Present' }
+
+    context.setStarterProfileCompanyDatepickerDate(input, 'Present')
+
+    assert.equal(getCapturedDate(), undefined)
+    assert.equal(input.value, 'Present')
+    assert.equal(context.starterProfileCompanyDatepickerValue('present'), null)
+  })
+
+  test(`${controllerPath} never serializes Present for a role that is no longer current`, () => {
+    const { context } = loadDateContract(controllerPath)
+    const endInput = { value: '' }
+    const company = { end_date: 'Present', current_work: true }
+
+    endInput.value = company.current_work ? 'Present' : (company.end_date || '')
+    context.setStarterProfileCompanyDatepickerDate(endInput, null)
+
+    assert.equal(endInput.value, '')
+
+    const baseline = context.starterProfileCompanyDateBaseline(
+      endInput,
+      company.current_work ? 'Present' : company.end_date,
+    )
+
+    assert.equal(baseline, null)
+
+    endInput.value = ''
+
+    assert.equal(context.serializeStarterProfileCompanyDate(endInput, baseline), '')
+  })
+
+  test(`${controllerPath} preserves a stored Present end date when another field is edited`, () => {
+    const { context } = loadDateContract(controllerPath)
+    const endInput = { value: 'Present' }
+
+    context.setStarterProfileCompanyDatepickerDate(endInput, 'Present')
+    const baseline = context.starterProfileCompanyDateBaseline(endInput, 'Present')
+
+    assert.equal(context.serializeStarterProfileCompanyDate(endInput, baseline), 'Present')
   })
 
   test(`${controllerPath} preserves untouched canonical date strings`, () => {
