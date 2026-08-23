@@ -28,7 +28,7 @@ const EXPECTED_CANDIDATES = {
   sourceCommit: '781fd8ae6d05269cf14d0d33d8031ba0438ed3d4',
   files: {
     'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 14773, sha256: 'c0a95e71644efe2e660c368b6609a595169be1fa7fef9e81b72f1ec154d0b5db' },
-    'portfolio-crud.js': { path: 'v3/starter-edit-profile/portfolio-crud.js', bytes: 50563, sha256: 'b8380028ecc9f4ff32126d030ff384ba2756e257c4cc7294cf6dbd02765cd5c1' },
+    'portfolio-crud.js': { path: 'v3/starter-edit-profile/portfolio-crud.js', bytes: 53024, sha256: '793ae71fb66933d903d56af2134e0d61885adacce293e8687c3b05e906434bbf' },
     'portfolio-list.js': { path: 'v3/starter-edit-profile/portfolio-list.js', bytes: 4013, sha256: 'f559928f524705d1fcce022a1213b0a637c233cbd55f4973dc376457e0ab74ff' },
     'company-autocomplete.js': { path: 'v3/starter-edit-profile/company-autocomplete.js', bytes: 12921, sha256: '07582d43008c17f4f447505c542f1175805d84cc9f5df3a79fdf1942e0bed7a4' },
     'company-experience-crud.js': { path: 'v3/starter-edit-profile/company-experience-crud.js', bytes: 55527, sha256: 'd9ed6ce47bcc9d8a9da3b7a72988e3ce5f6c236858e83393bb633ee6458e20b5' },
