@@ -2022,7 +2022,7 @@ Webflow owns all call-section markup. Each section must provide:
   `[bookings-empty="<name>"]`;
 - optional `[bookings-count]`, `[bookings-load-more]`, and
   `[booking-filter="<status>"]` controls, with the section's filter controls
-  wrapped by `.tabs-button_component.is-dashboard`; and
+  wrapped by `.tabs-button_component.is-dashboard`;
 - card value slots using the existing `[booking-element]`, `[label-text]`,
   `[payment-status-wrap]`, and `[brand-status]` attributes. The status pill's
   authored `[booking-element-wrap="status"]` wrapper can start hidden in
@@ -2030,7 +2030,11 @@ Webflow owns all call-section markup. Each section must provide:
   `[booking-element-wrap]` is also supported when that wrapper owns the matched
   `[booking-element="status"]` pill. Painting the pill reveals only the owned
   wrapper as a flex container, including when the authored hide rule uses
-  `!important`.
+  `!important`; and
+- on the Starter request card, the optional authored countdown pair
+  `[booking-item-expiration="wrap"]` and `[booking-item-expiration="time"]`.
+  The controller only shows and writes them; it never generates the markup, so
+  a template without them renders unchanged.
 
 The script clones the authored item template in pages of six, deduplicates by
 canonical booking ID, and sorts newest first. Starter pending rows appear under
@@ -2073,6 +2077,31 @@ before refreshing the canonical list, which moves the accepted row from Starter
 Call Requests to Starter Calls while it remains in Brand Calls. All other
 legacy mutation controls stay hidden until they have current V3-safe endpoint
 contracts.
+
+This controller is also the single owner of the Starter request-expiry
+countdown; the legacy inline dashboard helper no longer renders that list, so
+its copy of the countdown is dead and must not be re-enabled. The countdown
+reads canonical `confirmation_expires_at` and falls back to canonical `start`
+only when that field is absent, renders the remaining time as `1d 2h 3m` with
+zero units omitted and any part-minute rounded up, shows `Expired` at or past
+the deadline, and reuses the authored site-wide `text-color-red` error colour
+inside the last 48 hours because the authored countdown has no expiring-state
+combo class. The
+wrap stays hidden for every row it does not own: Brand rows, non-pending rows,
+and pending rows with no usable deadline.
+
+One bounded ten-second timer, started only for the Starter role, repaints every
+rendered request card and the open `popup-booking-info` dialog from the already
+loaded canonical rows, so Accept disappears at the deadline without a reload
+and without a second timer per card. Crossing the deadline is the only trigger
+for a canonical re-read, and that read is bounded: at most three refreshes per
+booking-and-deadline pair, no more than one every thirty seconds, and never
+while another is in flight. That background refresh reuses the same identity
+and endpoint contract, skips repainting a section whose canonical rows are
+unchanged, restores the extra pages each section's load-more control had
+already revealed, and on failure logs and leaves the rendered list in place
+instead of failing the whole dashboard closed.
+
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and
 on errors, and is shown only when the member's full canonical booking rows for
