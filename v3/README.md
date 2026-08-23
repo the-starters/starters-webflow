@@ -2546,13 +2546,14 @@ and Paid service returned for the starter's grant. Free shows its duration and
 service fetches that configuration's next upcoming Nylas scheduler slots
 (`scheduler/get_availability/v3`, GET) and renders the available dates and
 times, replacing its loader. Only a record that declares what the card states
-enters the preview: a whole-minute duration, the host's own
-`data_environment` when the record carries one, and for Paid the canonical
-60-minute duration, `active: true`, USD currency, at least $1, the host's own
-`payment_environment`, and no declared non-ready provider sync state. A
-malformed, failed-sync, sub-$1, legacy-duration, or other-environment Paid
-service stays out of the preview. The single-slot version of this
-query used by the Bookings pages
+enters the preview: an explicit `is_paid` boolean, a whole-minute duration,
+and the host's own `data_environment` when the record carries one; Paid
+additionally requires the canonical 60-minute duration, `active: true`, a
+price of at least $1, a declared currency of USD, the host's own
+`payment_environment` when declared, and no declared non-ready provider sync
+state. A malformed, failed-sync, sub-$1, legacy-duration, or
+other-environment Paid service stays out of the preview. The single-slot
+version of this query used by the Bookings pages
 (`getNextAvailableTimeSlot`/`getNearestSlot` in the **separate**, non-repo
 `book-func-lib-2.html` Webflow embed) was refactored alongside this to expose
 the full sorted slot list via a new `getUpcomingTimeSlots`, so both stay in
