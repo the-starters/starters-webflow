@@ -1,3 +1,54 @@
+function isStarterProfileCompanyPresentDate(value) {
+  return String(value || '').trim().toLowerCase() === 'present';
+}
+
+function starterProfileCompanyDatepickerValue(value) {
+  const text = String(value || '').trim();
+  if (!text || isStarterProfileCompanyPresentDate(text)) return null;
+
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/);
+  if (isoMatch) {
+    const date = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+    if (
+      date.getFullYear() === Number(isoMatch[1]) &&
+      date.getMonth() === Number(isoMatch[2]) - 1 &&
+      date.getDate() === Number(isoMatch[3])
+    ) return date;
+  }
+
+  const monthYearMatch = text.match(/^([A-Za-z]+)\s+(\d{4})$/);
+  if (monthYearMatch) {
+    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const monthIndex = monthNames.indexOf(monthYearMatch[1].slice(0, 3).toLowerCase());
+    if (monthIndex >= 0) return new Date(Number(monthYearMatch[2]), monthIndex, 1);
+  }
+
+  return text;
+}
+
+function setStarterProfileCompanyDatepickerDate(input, value) {
+  if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
+  if (isStarterProfileCompanyPresentDate(value)) return;
+
+  try {
+    jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerValue(value));
+  } catch (error) {
+    // The value may not match the widget's configured dateFormat.
+  }
+}
+
+function starterProfileCompanyDateBaseline(input, rawValue) {
+  const rawDate = String(rawValue || '').trim();
+  if (!input || !rawDate || isStarterProfileCompanyPresentDate(rawDate)) return null;
+  return { rawValue: rawDate, pickerValue: input.value.trim() };
+}
+
+function serializeStarterProfileCompanyDate(input, baseline) {
+  const currentValue = input ? input.value.trim() : '';
+  if (baseline && currentValue === baseline.pickerValue) return baseline.rawValue;
+  return currentValue;
+}
+
 /**
  * GitHub-owned copy of the Build Profile Webflow controller block.
  * Original live inline body SHA-256: 6dc7fa7306d9558fb493cb6a6cfd6196659e0b7005c6d49831ffcc5f3261b5d3
@@ -49,6 +100,8 @@
       const cancelCompanyEditButton = qs('[cancel-company-edit]');
 
       let editSelectedCompany = null;
+      let editStartDateBaseline = null;
+      let editEndDateBaseline = null;
       let isLimitReached = false;
 
       if (!companyList || !companyTemplate) {
@@ -99,9 +152,11 @@
         return input ? input.value.trim() : '';
       }
 
-      // XANO keeps the full day-precision date (e.g. "Apr 22 2026") so the datepicker
-      // can parse it back correctly when the edit popup reopens; cards only ever
-      // display month + year, so this trims it down for display purposes only.
+      // Label-only transform: cards show month + year, so this drops any middle token
+      // from the stored string. It says nothing about what XANO stores — records hold
+      // month-only values like "Jan 2024" as well as day-precision ones — so the edit
+      // popup parses the raw string separately in starterProfileCompanyDatepickerValue.
+      // Contract: ../profile-form/README.md#company-experience-date-hydration
       function toMonthYearLabel(value) {
         const text = String(value || '').trim();
         if (!text || text.toLowerCase() === 'present') return text;
@@ -115,13 +170,7 @@
       // jQuery UI datepicker interop, replacing the old `input._flatpickr` calls now that
       // the picker itself is initialized elsewhere (Global-FormEmbeds-Datepicker.html).
       function setDatepickerDate(input, value) {
-        if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
-
-        try {
-          jQuery(input).datepicker('setDate', value || null);
-        } catch (error) {
-          // value may not match the widget's configured dateFormat — ignore.
-        }
+        setStarterProfileCompanyDatepickerDate(input, value);
       }
 
       // start/end pairs lock each other's minDate/maxDate on selection (see
@@ -579,10 +628,10 @@
         }
 
         if (editStartDateInput) {
-          editStartDateInput.value = company.start_date || '';
-          if (company.start_date) {
-            setDatepickerDate(editStartDateInput, company.start_date);
-          }
+          const rawStartDate = company.start_date || '';
+          editStartDateInput.value = rawStartDate;
+          setDatepickerDate(editStartDateInput, rawStartDate);
+          editStartDateBaseline = starterProfileCompanyDateBaseline(editStartDateInput, rawStartDate);
         }
 
         if (editEndDateInput) {
@@ -598,6 +647,11 @@
           } else {
             setDatepickerDate(editEndDateInput, null);
           }
+
+          editEndDateBaseline = starterProfileCompanyDateBaseline(
+            editEndDateInput,
+            company.current_work ? 'Present' : company.end_date,
+          );
         }
 
         setCheckboxState(editCurrentWorkCheckbox, !!company.current_work);
@@ -646,6 +700,8 @@
           setCheckboxState(editCurrentWorkCheckbox, false);
 
           editSelectedCompany = null;
+          editStartDateBaseline = null;
+          editEndDateBaseline = null;
         }, 800);
       }
 
@@ -771,8 +827,8 @@
             freelancers_id: starter_xano_id,
             company_name: getValue(editCompanyInput),
             job_title: getValue(editJobTitleInput),
-            start_date: getValue(editStartDateInput),
-            end_date: editCurrentWorkCheckbox && editCurrentWorkCheckbox.checked ? "Present" : getValue(editEndDateInput),
+            start_date: serializeStarterProfileCompanyDate(editStartDateInput, editStartDateBaseline),
+            end_date: editCurrentWorkCheckbox && editCurrentWorkCheckbox.checked ? "Present" : serializeStarterProfileCompanyDate(editEndDateInput, editEndDateBaseline),
             current_work: editCurrentWorkCheckbox ? editCurrentWorkCheckbox.checked : false,
             company_domain: editSelectedCompany ? editSelectedCompany.domain : '',
             company_logo_url: editSelectedCompany && editSelectedCompany.logo_url ? editSelectedCompany.logo_url : placeholderLogo,

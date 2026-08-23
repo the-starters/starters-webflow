@@ -76,3 +76,37 @@ country/state/city transitions, local-versus-member draft precedence, blank memb
 hydration from the signed-in member and its write-back into the synchronized draft, canonical edit
 hydration, the
 normalized final Build Profile payload, and that the controllers do not create a form element.
+
+## Company experience date hydration
+
+Both route copies of the company-experience controller
+(`../build-profile/company-experience-crud.js` and
+`../starter-edit-profile/company-experience-crud.js`) share one date contract, so the
+Full Profile, Consult, and Edit Profile work-experience modals hydrate and save
+identically.
+
+Stored dates are parsed into a real local `Date` before they reach
+`datepicker('setDate', …)`. jQuery UI treats a bare string as its relative-offset
+syntax rather than a calendar date, so a stored `Jan 2024` was read as a day offset and
+hydrated the picker on an unrelated month and year (`Mar 2032` in production Work
+Experience QA). The parser accepts `Month YYYY` (first of that month) and ISO
+`YYYY-MM-DD` with an optional time part (that exact local calendar day, never a UTC
+shift); any other string is handed to the widget unchanged, and a value the widget
+cannot parse is swallowed rather than allowed to break the modal.
+
+`Present` is a stored sentinel for a current role, not a date. It never reaches the
+picker and never becomes a baseline, so reopening a current role cannot turn the
+sentinel into a calendar value, and clearing "I currently work here" cannot carry
+`Present` into an end-date field the member can see.
+
+Hydration also records the canonical string it came from next to the value the picker
+rendered from it. On save, a date field the member never touched re-serializes its
+original canonical string, and only a field whose visible value actually changed
+submits the picker's value. Editing an unrelated field therefore cannot rewrite a
+stored date to the picker's own formatting.
+
+Run this coverage with:
+
+```sh
+node --test v3/profile-form/company-experience-date-hydration.test.js
+```
