@@ -2010,18 +2010,34 @@ test('calendar-preview selects Free or Paid dates and times without creating a b
   assert.equal(services.children[1].children[1].textContent, '60 minutes · $55.00')
   assert.equal(services.children[0].getAttribute('aria-pressed'), 'true')
 
-  services.children[1].click()
-  await settle()
-  services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
-  assert.equal(services.children[0].getAttribute('aria-pressed'), 'false')
-  assert.equal(services.children[1].getAttribute('aria-pressed'), 'true')
-
   let dates = dom.calendarPreview.querySelector('[data-availability-element="preview-dates"]')
   dates.children[1].click()
   dates = dom.calendarPreview.querySelector('[data-availability-element="preview-dates"]')
   assert.equal(dates.children[1].getAttribute('aria-pressed'), 'true')
 
   let times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(times.children.length, 1)
+  times.children[0].click()
+  times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(times.children[0].getAttribute('aria-pressed'), 'true')
+  assert.ok(dom.calendarPreview.querySelector('[data-availability-element="preview-selection"]'))
+  assert.equal(
+    calls.filter((call) => call.method !== 'GET').length,
+    writeCountBeforeSelection,
+  )
+
+  services.children[1].click()
+  await settle()
+  services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.equal(services.children[0].getAttribute('aria-pressed'), 'false')
+  assert.equal(services.children[1].getAttribute('aria-pressed'), 'true')
+
+  dates = dom.calendarPreview.querySelector('[data-availability-element="preview-dates"]')
+  dates.children[1].click()
+  dates = dom.calendarPreview.querySelector('[data-availability-element="preview-dates"]')
+  assert.equal(dates.children[1].getAttribute('aria-pressed'), 'true')
+
+  times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
   assert.equal(times.children.length, 1)
   times.children[0].click()
   times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
