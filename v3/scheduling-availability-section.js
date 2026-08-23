@@ -51,6 +51,10 @@
   const DAY_VARIANT_SELECTED = 'w-variant-ebea452c-a047-af3f-dd6c-3062ee4c048c'
   const SLOTS_SEARCH_DAYS = 14
   const SLOTS_LIMIT = 8
+  // Canonical Paid Call duration, owned by paid-call-settings.js
+  // (FIXED_DURATION_MINUTES) and PAID-CALL-SETTINGS-WIRING.md.
+  const PAID_DURATION_MINUTES = 60
+  const SYNC_READY_STATES = ['ready', 'ok', 'synced', 'active', 'complete', 'completed', 'true']
 
   // Shared "Availability - Notifications" modal (`[data-modal-target=
   // "availability-notification"]`), driven by global-embeds/modal/modal.js.
@@ -2251,15 +2255,44 @@
     })
   }
 
+  function previewDuration(config) {
+    const duration = Number(config && config.duration)
+    return Number.isInteger(duration) && duration > 0 ? duration : null
+  }
+
+  function previewEnvironmentMatches(config) {
+    const expectedDataEnvironment = isStagingHost ? 'test' : 'production'
+    const expectedPaymentEnvironment = isStagingHost ? 'test' : 'live'
+    if (config.data_environment && config.data_environment !== expectedDataEnvironment) {
+      return false
+    }
+    return !(
+      config.is_paid === true &&
+      config.payment_environment &&
+      config.payment_environment !== expectedPaymentEnvironment
+    )
+  }
+
+  function previewSyncReady(config) {
+    const state = config.sync_status
+    if (state === undefined || state === null || state === '') return true
+    if (typeof state === 'boolean') return state
+    return SYNC_READY_STATES.indexOf(String(state).trim().toLowerCase()) !== -1
+  }
+
   function activePreviewConfigs() {
     return configs.filter(function (config) {
       if (!config || !config.config_id || config.active === false) return false
+      if (previewDuration(config) === null) return false
+      if (!previewEnvironmentMatches(config)) return false
       if (config.is_paid === false) return true
+      if (config.is_paid !== true || config.active !== true) return false
+      if (previewDuration(config) !== PAID_DURATION_MINUTES) return false
+      if (config.currency && String(config.currency).toUpperCase() !== 'USD') return false
       return Boolean(
-        config.is_paid === true &&
-          Number.isInteger(Number(config.price_cents)) &&
+        Number.isInteger(Number(config.price_cents)) &&
           Number(config.price_cents) >= 100 &&
-          (!config.sync_status || config.sync_status === 'ready'),
+          previewSyncReady(config),
       )
     })
   }
@@ -2315,7 +2348,7 @@
         config.title ||
         (config.is_paid === true ? 'Paid Consultation Call' : 'Free Consultation Call')
       const previewDetail =
-        String(Number(config.duration) || 30) +
+        String(previewDuration(config)) +
         ' minutes · ' +
         (config.is_paid === true ? formatPreviewPrice(config.price_cents) : 'Free')
       const button = applyStyles(document.createElement('button'), {
