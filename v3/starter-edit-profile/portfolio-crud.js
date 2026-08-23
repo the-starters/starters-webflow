@@ -11,6 +11,56 @@ function getStarterEditPortfolioSuccessCopy(updatedHighlightCount) {
   };
 }
 
+function createStarterEditPortfolioSuccessController(options) {
+  const modal = options.modal;
+  const heading = options.heading;
+  const message = options.message;
+  const trigger = options.trigger;
+  const closeEventTarget = options.closeEventTarget;
+  const defaultHeading = heading ? heading.textContent : '';
+  const defaultMessage = message ? message.textContent : '';
+
+  function restore() {
+    if (heading) heading.textContent = defaultHeading;
+    if (message) message.textContent = defaultMessage;
+  }
+
+  function showForSubmit(updatedHighlightCount) {
+    const copy = getStarterEditPortfolioSuccessCopy(updatedHighlightCount);
+    if (copy) {
+      if (heading) heading.textContent = copy.heading;
+      if (message) message.textContent = copy.message;
+    } else {
+      restore();
+    }
+    if (trigger) trigger.dispatchEvent(new Event('click', { bubbles: true }));
+  }
+
+  function handleSharedModalClose(event) {
+    if (event.detail && event.detail.modal === modal) restore();
+  }
+
+  if (modal) modal.addEventListener('close', restore);
+  if (closeEventTarget) closeEventTarget.addEventListener('modal-close', handleSharedModalClose);
+
+  return { showForSubmit };
+}
+
+async function commitStarterEditPortfolioDrafts(options) {
+  for (const draft of options.createDrafts) {
+    await options.commitCreateDraft(draft);
+  }
+
+  for (const draft of options.updateDrafts) {
+    await options.commitUpdateDraft(draft);
+  }
+
+  await options.commitDeleteDrafts();
+  options.clearAllDraftQueues();
+  await options.renderPortfolios();
+  options.successController.showForSubmit(options.updateDrafts.length);
+}
+
   // Manages portfolio CRUD, media uploads, previews, and edit/remove modals.
   document.addEventListener('DOMContentLoaded', async function () {
     waitForMember(async () => {
@@ -22,8 +72,13 @@ function getStarterEditPortfolioSuccessCopy(updatedHighlightCount) {
       const successModal = qs('[data-modal-target="edit-form-success"]');
       const successHeading = successModal ? qs('.heading-style-h1', successModal) : null;
       const successMessage = successModal ? qs('.text-size-xlarge', successModal) : null;
-      const defaultSuccessHeading = successHeading ? successHeading.textContent : '';
-      const defaultSuccessMessage = successMessage ? successMessage.textContent : '';
+      const successController = createStarterEditPortfolioSuccessController({
+        modal: successModal,
+        heading: successHeading,
+        message: successMessage,
+        trigger: openSuccess,
+        closeEventTarget: window,
+      });
 
       if (!grid || !template) return;
       let selectedFiles = [],
@@ -464,28 +519,6 @@ function getStarterEditPortfolioSuccessCopy(updatedHighlightCount) {
         if (!notifyModal || !notifyModalClose) return;
 
         notifyModalClose.dispatchEvent(new Event('click', { bubbles: true }));
-      }
-
-      function restoreDefaultSuccessMessage() {
-        if (successHeading) successHeading.textContent = defaultSuccessHeading;
-        if (successMessage) successMessage.textContent = defaultSuccessMessage;
-      }
-
-      function openPendingReviewSuccess(updatedHighlightCount) {
-        const copy = getStarterEditPortfolioSuccessCopy(updatedHighlightCount);
-        if (!copy) return false;
-        if (successHeading) successHeading.textContent = copy.heading;
-        if (successMessage) successMessage.textContent = copy.message;
-        if (openSuccess) openSuccess.dispatchEvent(new Event('click', { bubbles: true }));
-        return true;
-      }
-
-      if (successModal) {
-        successModal.addEventListener('close', restoreDefaultSuccessMessage);
-        successModal.addEventListener('click', function (event) {
-          const closeTrigger = event.target && event.target.closest ? event.target.closest('[data-modal-close]') : null;
-          if (closeTrigger) setTimeout(restoreDefaultSuccessMessage, 0);
-        });
       }
 
       function updateCreateSubmitState() {
@@ -1062,7 +1095,7 @@ function getStarterEditPortfolioSuccessCopy(updatedHighlightCount) {
         const finalSubmitButton = portfolioSubmit || editSubmit || createSubmit;
 
         if (!pendingCreateDrafts.length && !pendingUpdateDrafts.size && !pendingDeleteDraftIds.size) {
-          if (openSuccess) openSuccess.dispatchEvent(new Event('click', { bubbles: true }));
+          successController.showForSubmit(0);
           return;
         }
 
@@ -1072,22 +1105,16 @@ function getStarterEditPortfolioSuccessCopy(updatedHighlightCount) {
           const createDrafts = pendingCreateDrafts.slice();
           const updateDrafts = Array.from(pendingUpdateDrafts.values());
 
-          for (const draft of createDrafts) {
-            await commitCreateDraft(draft);
-          }
-
-          for (const draft of updateDrafts) {
-            await commitUpdateDraft(draft);
-          }
-
-          await commitDeleteDrafts();
-
-          clearAllDraftQueues();
-          await renderPortfolios();
-
-          if (!openPendingReviewSuccess(updateDrafts.length) && openSuccess) {
-            openSuccess.dispatchEvent(new Event('click', { bubbles: true }));
-          }
+          await commitStarterEditPortfolioDrafts({
+            createDrafts: createDrafts,
+            updateDrafts: updateDrafts,
+            commitCreateDraft: commitCreateDraft,
+            commitUpdateDraft: commitUpdateDraft,
+            commitDeleteDrafts: commitDeleteDrafts,
+            clearAllDraftQueues: clearAllDraftQueues,
+            renderPortfolios: renderPortfolios,
+            successController: successController,
+          });
         } catch (error) {
           console.error(error);
           openNotifyModal(getErrorMessage(error, 'Portfolio save failed'));
