@@ -6,24 +6,61 @@ function starterProfileCompanyDatepickerValue(value) {
     const text = String(value || '').trim();
     if (!text || isStarterProfileCompanyPresentDate(text)) return null;
 
+    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+    function localCalendarDate(year, monthIndex, day) {
+        const date = new Date(year, monthIndex, day);
+        return (
+            date.getFullYear() === year &&
+            date.getMonth() === monthIndex &&
+            date.getDate() === day
+        ) ? date : null;
+    }
+
     const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/);
     if (isoMatch) {
-        const date = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
-        if (
-            date.getFullYear() === Number(isoMatch[1]) &&
-            date.getMonth() === Number(isoMatch[2]) - 1 &&
-            date.getDate() === Number(isoMatch[3])
-        ) return date;
+        const date = localCalendarDate(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+        if (date) return date;
+    }
+
+    const monthDayYearMatch = text.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
+    if (monthDayYearMatch) {
+        const monthIndex = monthNames.indexOf(monthDayYearMatch[1].slice(0, 3).toLowerCase());
+        if (monthIndex >= 0) {
+            const date = localCalendarDate(Number(monthDayYearMatch[3]), monthIndex, Number(monthDayYearMatch[2]));
+            if (date) return date;
+        }
     }
 
     const monthYearMatch = text.match(/^([A-Za-z]+)\s+(\d{4})$/);
     if (monthYearMatch) {
-        const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
         const monthIndex = monthNames.indexOf(monthYearMatch[1].slice(0, 3).toLowerCase());
         if (monthIndex >= 0) return new Date(Number(monthYearMatch[2]), monthIndex, 1);
     }
 
-    return text;
+    // jQuery UI interprets unknown strings as relative-day offsets. Do not let
+    // malformed or new provider formats silently become plausible future dates.
+    return null;
+}
+
+function starterProfileCompanyWidgetDateValue(input, value) {
+    const text = String(value || '').trim();
+    if (!input || !text) return null;
+    if (typeof jQuery === 'undefined' || !jQuery.datepicker || typeof jQuery.datepicker.parseDate !== 'function') return null;
+
+    // dateFormat lives on the Webflow markup, so only the widget knows it. parseDate
+    // throws on a mismatch rather than falling back to relative-day offsets.
+    try {
+        const format = jQuery(input).datepicker('option', 'dateFormat');
+        const date = format ? jQuery.datepicker.parseDate(format, text) : null;
+        return date instanceof Date ? date : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function starterProfileCompanyDatepickerDate(input, value) {
+    return starterProfileCompanyDatepickerValue(value) || starterProfileCompanyWidgetDateValue(input, value);
 }
 
 function setStarterProfileCompanyDatepickerDate(input, value) {
@@ -31,7 +68,7 @@ function setStarterProfileCompanyDatepickerDate(input, value) {
     if (isStarterProfileCompanyPresentDate(value)) return;
 
     try {
-        jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerValue(value));
+        jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerDate(input, value));
     } catch (error) {
         // The value may not match the widget's configured dateFormat.
     }

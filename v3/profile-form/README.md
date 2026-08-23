@@ -91,8 +91,18 @@ syntax rather than a calendar date, so a stored `Jan 2024` was read as a day off
 hydrated the picker on an unrelated month and year (`Mar 2032` in production Work
 Experience QA). The parser accepts `Month YYYY` (first of that month) and ISO
 `YYYY-MM-DD` with an optional time part (that exact local calendar day, never a UTC
-shift); any other string is handed to the widget unchanged, and a value the widget
-cannot parse is swallowed rather than allowed to break the modal.
+shift). Because Xano records hold day-precision values as well as month-only ones, it
+also accepts `Month D YYYY` and `Month D, YYYY`, and it rejects an out-of-range day such
+as `Jan 32 2024` rather than rolling it into the next month.
+
+A string in none of those shapes is re-parsed with the widget's own configured
+`dateFormat`. That format is set on the Webflow markup for each input, not here, so the
+widget is the only thing that can recognize a value it wrote itself; jQuery UI's
+`parseDate` throws on a mismatch instead of reading the string as a day offset. A value
+neither path can parse yields no picker value at all, so the field renders blank rather
+than hydrating an unrelated month and year. Nothing is lost when that happens: the
+baseline/serialize pair below re-submits the original stored string for a date field the
+member never touched.
 
 `Present` is a stored sentinel for a current role, not a date. It never reaches the
 picker and never becomes a baseline, so reopening a current role cannot turn the

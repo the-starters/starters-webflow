@@ -11,11 +11,36 @@ const controllerPaths = [
   '../build-profile/company-experience-crud.js',
 ]
 
-function loadDateContract(relativePath) {
+// Mirrors jQuery UI's parseDate contract for the one format this suite pins: an exact
+// match returns a Date, anything else throws instead of becoming a relative-day offset.
+function parseDateForTestFormat(format, value) {
+  if (format !== 'mm/dd/yy') throw new Error(`Unsupported format: ${format}`)
+
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(value))
+  if (!match) throw new Error('Unexpected literal')
+
+  const year = Number(match[3])
+  const monthIndex = Number(match[1]) - 1
+  const day = Number(match[2])
+  const date = new Date(year, monthIndex, day)
+
+  if (date.getFullYear() !== year || date.getMonth() !== monthIndex || date.getDate() !== day) {
+    throw new Error('Invalid date')
+  }
+
+  return date
+}
+
+function loadDateContract(relativePath, { dateFormat } = {}) {
   let capturedDate
+  const parseDateCalls = []
   const jQuery = (input) => ({
     data: () => true,
     datepicker(action, value) {
+      if (action === 'option') {
+        return value === 'dateFormat' ? dateFormat : undefined
+      }
+
       assert.equal(action, 'setDate')
       capturedDate = value
       if (value instanceof Date) {
@@ -27,6 +52,12 @@ function loadDateContract(relativePath) {
     },
   })
   jQuery.fn = { datepicker() {} }
+  jQuery.datepicker = {
+    parseDate(format, value) {
+      parseDateCalls.push({ format, value })
+      return parseDateForTestFormat(format, value)
+    },
+  }
 
   const context = vm.createContext({
     Date,
@@ -39,6 +70,7 @@ function loadDateContract(relativePath) {
   return {
     context,
     getCapturedDate: () => capturedDate,
+    getParseDateCalls: () => parseDateCalls,
   }
 }
 
@@ -63,6 +95,96 @@ for (const controllerPath of controllerPaths) {
     assert.equal(value.getFullYear(), 2026)
     assert.equal(value.getMonth(), 7)
     assert.equal(value.getDate(), 31)
+  })
+
+  for (const [rawValue, expectedMonth, expectedDay] of [
+    ['Jan 1 2024', 0, 1],
+    ['Jan 01 2024', 0, 1],
+    ['April 22 2026', 3, 22],
+    ['April 22, 2026', 3, 22],
+  ]) {
+    test(`${controllerPath} hydrates day-precision date ${rawValue}`, () => {
+      const { context } = loadDateContract(controllerPath)
+      const value = context.starterProfileCompanyDatepickerValue(rawValue)
+
+      assert.equal(value.getFullYear(), Number(rawValue.match(/\d{4}/)[0]))
+      assert.equal(value.getMonth(), expectedMonth)
+      assert.equal(value.getDate(), expectedDay)
+    })
+  }
+
+  test(`${controllerPath} rejects invalid dates instead of applying relative-day offsets`, () => {
+    const { context, getCapturedDate } = loadDateContract(controllerPath)
+    const input = { value: 'Jan 32 2024' }
+
+    context.setStarterProfileCompanyDatepickerDate(input, input.value)
+
+    assert.equal(getCapturedDate(), null)
+    assert.equal(input.value, '')
+    assert.equal(context.starterProfileCompanyDatepickerValue('unknown 2024'), null)
+  })
+
+  test(`${controllerPath} hydrates a value written in the widget's own dateFormat`, () => {
+    const { context, getCapturedDate, getParseDateCalls } = loadDateContract(controllerPath, {
+      dateFormat: 'mm/dd/yy',
+    })
+    const input = { value: '04/22/2026' }
+
+    context.setStarterProfileCompanyDatepickerDate(input, input.value)
+
+    const capturedDate = getCapturedDate()
+    assert.equal(capturedDate.getFullYear(), 2026)
+    assert.equal(capturedDate.getMonth(), 3)
+    assert.equal(capturedDate.getDate(), 22)
+    assert.equal(input.value, 'Apr 22 2026')
+    assert.deepEqual(getParseDateCalls(), [{ format: 'mm/dd/yy', value: '04/22/2026' }])
+  })
+
+  test(`${controllerPath} prefers the canonical shapes over the widget dateFormat`, () => {
+    const { context, getCapturedDate, getParseDateCalls } = loadDateContract(controllerPath, {
+      dateFormat: 'mm/dd/yy',
+    })
+    const input = { value: '2026-08-31' }
+
+    context.setStarterProfileCompanyDatepickerDate(input, input.value)
+
+    const capturedDate = getCapturedDate()
+    assert.equal(capturedDate.getFullYear(), 2026)
+    assert.equal(capturedDate.getMonth(), 7)
+    assert.equal(capturedDate.getDate(), 31)
+    assert.deepEqual(getParseDateCalls(), [])
+  })
+
+  test(`${controllerPath} still refuses a value the widget dateFormat cannot parse`, () => {
+    const { context, getCapturedDate } = loadDateContract(controllerPath, { dateFormat: 'mm/dd/yy' })
+    const input = { value: '+3m' }
+
+    context.setStarterProfileCompanyDatepickerDate(input, input.value)
+
+    assert.equal(getCapturedDate(), null)
+    assert.equal(input.value, '')
+    assert.equal(context.starterProfileCompanyDatepickerValue('13/45/2026'), null)
+  })
+
+  test(`${controllerPath} refuses an out-of-range day the widget dateFormat rejects`, () => {
+    const { context, getCapturedDate } = loadDateContract(controllerPath, { dateFormat: 'mm/dd/yy' })
+    const input = { value: '02/31/2026' }
+
+    context.setStarterProfileCompanyDatepickerDate(input, input.value)
+
+    assert.equal(getCapturedDate(), null)
+    assert.equal(input.value, '')
+  })
+
+  test(`${controllerPath} hydrates nothing when the widget has no configured dateFormat`, () => {
+    const { context, getCapturedDate, getParseDateCalls } = loadDateContract(controllerPath)
+    const input = { value: '04/22/2026' }
+
+    context.setStarterProfileCompanyDatepickerDate(input, input.value)
+
+    assert.equal(getCapturedDate(), null)
+    assert.equal(input.value, '')
+    assert.deepEqual(getParseDateCalls(), [])
   })
 
   test(`${controllerPath} keeps the Present sentinel out of the datepicker`, () => {
