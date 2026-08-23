@@ -56,6 +56,10 @@ input.
 
 ## Profile-photo upload contract
 
+The controller accepts only JPG/JPEG, PNG, and WebP files. Each file may be no
+larger than 4 MB (4 × 1024 × 1024 bytes). It rejects unsupported formats and
+larger files before it creates an upload intent or starts an upload.
+
 `profile-photo.js` creates a secure opaque `source_mutation_id` for each file
 selection or drop. On Full Profile and Consult, selection prepares the upload but
 does not send it. The submit writer first saves the authored profile payload and

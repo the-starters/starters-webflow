@@ -339,16 +339,22 @@ async function run() {
   assert.notEqual(uploads[4].sourceMutationId, uploads[3].sourceMutationId);
   assert.equal(uploads.every((upload) => upload.image && upload.memberId === null), true);
 
-  const unsupportedFormat = createHarness();
-  unsupportedFormat.input.files = [{ name: 'photo.avif', type: 'image/avif', size: 100 }];
-  unsupportedFormat.input.dispatchEvent(new unsupportedFormat.TestEvent('change'));
-  await settle();
-  assert.equal(unsupportedFormat.uploads.length, 0);
-  assert.equal(unsupportedFormat.uploadError.style.display, 'block');
-  assert.equal(
-    unsupportedFormat.uploadError.textContent,
-    'Please upload a JPG, PNG, or WebP image.',
-  );
+  for (const [name, type] of [
+    ['photo.avif', 'image/avif'],
+    ['photo.svg', 'image/svg+xml'],
+    ['photo.bmp', 'image/bmp'],
+  ]) {
+    const unsupportedFormat = createHarness();
+    unsupportedFormat.input.files = [{ name, type, size: 100 }];
+    unsupportedFormat.input.dispatchEvent(new unsupportedFormat.TestEvent('change'));
+    await settle();
+    assert.equal(unsupportedFormat.uploads.length, 0);
+    assert.equal(unsupportedFormat.uploadError.style.display, 'block');
+    assert.equal(
+      unsupportedFormat.uploadError.textContent,
+      'Please upload a JPG, PNG, or WebP image.',
+    );
+  }
 
   const fourMegabyteBoundary = createHarness();
   fourMegabyteBoundary.input.files = [{
@@ -361,6 +367,14 @@ async function run() {
   assert.equal(fourMegabyteBoundary.uploads.length, 0);
   assert.equal(fourMegabyteBoundary.photoUrlInput.value, 'pending-profile-photo-upload');
   assert.equal(fourMegabyteBoundary.uploadError.style.display, 'none');
+
+  const supportedWebp = createHarness();
+  supportedWebp.input.files = [{ name: 'photo.webp', type: 'image/webp', size: 100 }];
+  supportedWebp.input.dispatchEvent(new supportedWebp.TestEvent('change'));
+  await settle();
+  assert.equal(supportedWebp.uploads.length, 0);
+  assert.equal(supportedWebp.photoUrlInput.value, 'pending-profile-photo-upload');
+  assert.equal(supportedWebp.uploadError.style.display, 'none');
 
   const oversized = createHarness();
   oversized.input.files = [{
