@@ -413,7 +413,10 @@
     const currentTime = Number(now == null ? Date.now() : now)
     const expired = deadline <= currentTime
     if (output) output.textContent = formatResponseTime(deadline, currentTime)
-    setClass(wrap, 'is-expiring', deadline - currentTime < 48 * 60 * 60 * 1000)
+    // The authored countdown has no expiring-state combo class. `text-color-red`
+    // is the site-wide error colour already applied to error copy on this card,
+    // so the urgent countdown reuses it instead of an unstyled marker class.
+    setClass(output, 'text-color-red', deadline - currentTime < 48 * 60 * 60 * 1000)
     configureActionButtons(card, role, 'pending', booking, currentTime)
     return expired
   }

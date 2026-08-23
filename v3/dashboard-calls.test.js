@@ -554,12 +554,14 @@ test('pending Starter request cards show the countdown and hide Accept at expira
   assert.equal(api.paintRequestExpiration(card, booking, 'starter', now), false)
   assert.equal(wrap.hidden, false)
   assert.equal(output.textContent, '30m')
-  assert.equal(wrap.classList.contains('is-expiring'), true)
+  assert.equal(output.classList.contains('text-color-red'), true)
+  assert.equal(wrap.classList.contains('is-expiring'), false)
   assert.equal(accept.hidden, false)
 
   assert.equal(api.paintRequestExpiration(card, booking, 'starter', now + 30 * 60 * 1000), true)
   assert.equal(output.textContent, 'Expired')
-  assert.equal(wrap.classList.contains('is-expiring'), true)
+  assert.equal(output.classList.contains('text-color-red'), true)
+  assert.equal(wrap.classList.contains('is-expiring'), false)
   assert.equal(accept.hidden, true)
   assert.equal(details.hidden, false)
 
