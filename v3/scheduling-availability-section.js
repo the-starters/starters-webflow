@@ -2251,6 +2251,23 @@
     })
   }
 
+  function activePreviewConfigs() {
+    return configs.filter(function (config) {
+      if (!config || !config.config_id || config.active === false) return false
+      if (config.is_paid === false) return true
+      return Boolean(
+        config.is_paid === true &&
+          Number.isInteger(Number(config.price_cents)) &&
+          Number(config.price_cents) >= 100 &&
+          (!config.sync_status || config.sync_status === 'ready'),
+      )
+    })
+  }
+
+  function formatPreviewPrice(priceCents) {
+    return '$' + (Number(priceCents) / 100).toFixed(2)
+  }
+
   function applyStyles(node, styles) {
     Object.keys(styles).forEach(function (name) {
       node.style[name] = styles[name]
@@ -2276,7 +2293,7 @@
 
     if (!services.length) {
       shell.appendChild(
-        previewText('div', 'No active free service is available for preview.', {
+        previewText('div', 'No active call service is available for preview.', {
           padding: '18px',
           border: '1px solid #e2e2e2',
           borderRadius: '8px',
@@ -2294,6 +2311,13 @@
     servicesWrap.setAttribute(EL, 'preview-services')
     services.forEach(function (config) {
       const selected = config.config_id === selectedConfig.config_id
+      const previewTitle =
+        config.title ||
+        (config.is_paid === true ? 'Paid Consultation Call' : 'Free Consultation Call')
+      const previewDetail =
+        String(Number(config.duration) || 30) +
+        ' minutes · ' +
+        (config.is_paid === true ? formatPreviewPrice(config.price_cents) : 'Free')
       const button = applyStyles(document.createElement('button'), {
         padding: '12px 14px',
         border: selected ? '2px solid #1f211d' : '1px solid #d9d9d9',
@@ -2306,14 +2330,15 @@
       button.setAttribute('type', 'button')
       button.setAttribute('aria-pressed', selected ? 'true' : 'false')
       button.setAttribute('data-preview-config-id', config.config_id)
+      button.setAttribute('data-preview-service-type', config.is_paid === true ? 'paid' : 'free')
       button.appendChild(
-        previewText('strong', config.title || 'Free Consultation Call', {
+        previewText('strong', previewTitle, {
           display: 'block',
           fontSize: '14px',
         }),
       )
       button.appendChild(
-        previewText('span', String(Number(config.duration) || 30) + ' minutes · Free', {
+        previewText('span', previewDetail, {
           display: 'block',
           marginTop: '4px',
           color: '#6f746d',
@@ -2543,7 +2568,7 @@
     const renderVersion = ++previewRenderVersion
     setElementVisible('slots-list', false)
     setElementVisible('loading-slots', true)
-    const services = activeFreeConfigs()
+    const services = activePreviewConfigs()
     const selectedConfig =
       services.filter(function (config) {
         return config.config_id === selectedPreviewConfigId

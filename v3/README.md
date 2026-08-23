@@ -2540,9 +2540,13 @@ bails out before capturing the callback whenever
 race to redeem the same one-time code. The writer stays fully active on
 `--availability-stage`, which never carries that markup.
 
-The "Live bookable slots preview" card fetches the starter's own next
-upcoming Nylas scheduler slots (`scheduler/get_availability/v3`, GET) and
-renders a short list, replacing its loader. The single-slot version of this
+The "Live bookable slots preview" card renders every canonical active Free
+and Paid service returned for the starter's grant. Free shows its duration and
+`Free`; Paid shows its duration and canonical USD price. Selecting either
+service fetches that configuration's next upcoming Nylas scheduler slots
+(`scheduler/get_availability/v3`, GET) and renders the available dates and
+times, replacing its loader. A malformed, failed-sync, or sub-$1 Paid service
+stays out of the preview. The single-slot version of this
 query used by the Bookings pages
 (`getNextAvailableTimeSlot`/`getNearestSlot` in the **separate**, non-repo
 `book-func-lib-2.html` Webflow embed) was refactored alongside this to expose
