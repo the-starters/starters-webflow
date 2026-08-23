@@ -1119,7 +1119,7 @@ test('platform transition reuses its virtual account after partial calendar crea
   let paidService = {
     config_id: 'cfg-paid-old',
     title: 'Paid Strategy Call',
-    price_cents: 42500,
+    price_cents: 100,
     duration: 45,
     active: true,
   }
@@ -1238,7 +1238,7 @@ test('platform transition reuses its virtual account after partial calendar crea
   assert.deepEqual(paidService, {
     config_id: 'cfg-paid-restored',
     title: 'Paid Strategy Call',
-    price_cents: 42500,
+    price_cents: 100,
     duration: 45,
     active: true,
   })

@@ -206,7 +206,7 @@
               return record.payment_environment === expectedPaymentEnvironment &&
                   String(record.currency || '').toUpperCase() === 'USD' &&
                   Number.isInteger(priceCents) &&
-                  priceCents >= 500 &&
+                  priceCents >= 100 &&
                   Number.isInteger(duration) &&
                   duration > 0;
           }

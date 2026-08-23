@@ -95,14 +95,19 @@ function service(overrides = {}) {
   }
 }
 
-function buildDom(withRoot = true, publishedRoot = false) {
+function buildDom(withRoot = true, publishedRoot = false, authoredPills = false, pillLabels = {}) {
   if (!withRoot) return { root: null }
   const card = new El('section')
   const open = new El('div', { 'data-call-settings-action': 'open' })
   const status = new El('p', { 'data-call-settings-output': 'status' })
   const price = new El('p', { 'data-call-settings-output': 'price' })
-  const on = new El('div', { 'data-call-settings-output': 'on' })
-  const off = new El('div', { 'data-call-settings-output': 'off' })
+  const pillAttrs = authoredPills
+    ? { 'data-availability-element': 'call-pill-on' }
+    : null
+  const on = new El('div', pillAttrs || { 'data-call-settings-output': 'on' })
+  const off = new El('div', pillAttrs || { 'data-call-settings-output': 'off' })
+  on.textContent = pillLabels.on || 'ON'
+  off.textContent = pillLabels.off || 'OFF'
   const panel = new El('div', { 'data-call-settings-element': 'panel' })
   const root = new El('div', publishedRoot
     ? { 'data-availability-element': 'call-free-form' }
@@ -114,12 +119,18 @@ function buildDom(withRoot = true, publishedRoot = false) {
   })
   const no = new El('input', { name: 'consulting-calls-free', value: 'No' })
   const yes = new El('input', { name: 'consulting-calls-free', value: 'Yes' })
+  const noLabel = new El('label')
+  const yesLabel = new El('label')
+  const noVisual = new El('div', { class: 'radio-filter_check w-radio-input w--redirected-checked' })
+  const yesVisual = new El('div', { class: 'radio-filter_check w-radio-input' })
   const title = new El('input', { 'data-call-settings-input': 'title' })
   const close = new El('div', { 'data-call-settings-action': 'close' })
   const save = new El('div', { 'data-call-settings-action': 'submit' })
   const prerequisites = ['calendar', 'availability', 'enabled', 'bookable']
     .map((name) => new El('div', { 'data-free-call-prerequisite': name }))
-  form.append(no, yes, title, close, save)
+  noLabel.append(noVisual, no)
+  yesLabel.append(yesVisual, yes)
+  form.append(noLabel, yesLabel, title, close, save)
   root.append(form)
   panel.append(root)
   card.append(open, status, price, on, off, ...prerequisites, panel)
@@ -129,6 +140,8 @@ function buildDom(withRoot = true, publishedRoot = false) {
     form,
     no,
     yes,
+    noVisual,
+    yesVisual,
     title,
     close,
     save,
@@ -192,7 +205,12 @@ function buildPublishedSiblingDom() {
 function load(options = {}) {
   const dom = options.publishedSiblings === true
     ? buildPublishedSiblingDom()
-    : buildDom(options.withRoot !== false, options.publishedRoot === true)
+    : buildDom(
+      options.withRoot !== false,
+      options.publishedRoot === true,
+      options.authoredPills === true,
+      options.pillLabels || {},
+    )
   if (dom.root && options.radioNames) {
     dom.no.setAttribute('name', options.radioNames.no)
     dom.yes.setAttribute('name', options.radioNames.yes)
@@ -210,6 +228,7 @@ function load(options = {}) {
   const events = []
   const timers = []
   const observers = []
+  const warnings = []
   const windowListeners = new Map()
   let rootAvailable = options.withRoot !== false && options.rootDelayed !== true
   let state = options.initial || canonical()
@@ -289,7 +308,7 @@ function load(options = {}) {
     Date,
     Math,
     MutationObserver,
-    console: { warn() {} },
+    console: { warn: (...args) => warnings.push(args.join(' ')) },
     document,
     window,
   })
@@ -298,6 +317,7 @@ function load(options = {}) {
     dom,
     calls,
     events,
+    warnings,
     window,
     document,
     expireMember: () => { activeMember = null },
@@ -365,6 +385,61 @@ test('hydrates the published Free radio group from canonical GET', async () => {
   assert.equal(result.dom.root.getAttribute('data-free-call-duration-required'), '30')
   assert.equal(result.dom.root.getAttribute('data-free-call-price-cents'), '0')
   assert.equal(result.dom.root.getAttribute('data-free-call-bookable'), 'true')
+  assert.equal(result.dom.noVisual.getAttribute('class').includes('w--redirected-checked'), false)
+  assert.equal(result.dom.yesVisual.getAttribute('class').includes('w--redirected-checked'), true)
+})
+
+test('production-shaped pills show only canonical Free status', async () => {
+  const active = load({
+    authoredPills: true,
+    initial: canonical({
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+  assert.equal(active.dom.on.hidden, false)
+  assert.equal(active.dom.off.hidden, true)
+  assert.equal(active.dom.on.getAttribute('data-call-settings-output'), 'on')
+  assert.equal(active.dom.off.getAttribute('data-call-settings-output'), 'off')
+
+  const inactive = load({ authoredPills: true, initial: canonical() })
+  await settle()
+  assert.equal(inactive.dom.on.hidden, true)
+  assert.equal(inactive.dom.off.hidden, false)
+})
+
+test('drifted authored Free pill copy is reported on staging instead of failing silently', async () => {
+  const result = load({
+    authoredPills: true,
+    pillLabels: { on: 'Live', off: 'Paused' },
+    initial: canonical({
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.on.getAttribute('data-call-settings-output'), null)
+  assert.equal(result.warnings.length, 1)
+  assert.match(result.warnings[0], /no authored status pill reads "on"/)
+  assert.match(result.warnings[0], /live \| paused/)
+})
+
+test('authored Free pill copy padded with a non-breaking space still resolves', async () => {
+  const result = load({
+    authoredPills: true,
+    pillLabels: { on: '\u00a0On\u00a0', off: 'Off' },
+    initial: canonical({
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.on.hidden, false)
+  assert.equal(result.dom.off.hidden, true)
+  assert.equal(result.warnings.length, 0)
 })
 
 test('boots from the published call-free-form compatibility root', async () => {

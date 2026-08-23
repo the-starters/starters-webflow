@@ -602,10 +602,10 @@ test('booking fingerprint changes with every captured request field but not equi
 })
 
 test('canonical Paid price rejects stale or unsupported display authority', () => {
-  assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 500 }), '$5')
+  assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 100 }), '$1')
   assert.equal(api.canonicalPaidPrice({ currency: 'USD', price_cents: 1250 }), '$12.50')
-  assert.equal(api.canonicalPaidPrice({ currency: 'eur', price_cents: 500 }), '')
-  assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 0 }), '')
+  assert.equal(api.canonicalPaidPrice({ currency: 'eur', price_cents: 100 }), '')
+  assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 99 }), '')
   assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 500.5 }), '')
   assert.equal(api.canonicalPaidPrice({ currency: 'usd' }), '')
 })

@@ -2364,6 +2364,8 @@
     '[wf-xano-link="review_starter"], [data-project-action="review"]'
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
+  const PROJECT_REQUEST_PARTIES = ['brand', 'starter']
+  const PROJECT_LIFECYCLE_UNAVAILABLE_LABEL = 'Status Unavailable'
   // Sent documents use recipient view/sign sessions. Completed documents use
   // a separate protected-PDF route and never mint a signing session.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
@@ -2769,6 +2771,22 @@
     if (!wrap) return
     wrap.style.display = visible ? '' : 'none'
     wrap.setAttribute('aria-hidden', visible ? 'false' : 'true')
+  }
+
+  function setProjectActionWaiting(action, waiting) {
+    const wrap = projectActionWrap(action)
+    if (!action || !wrap) return
+    if (waiting) {
+      action.setAttribute('aria-disabled', 'true')
+      action.setAttribute('data-project-action-waiting', 'true')
+      wrap.setAttribute('data-project-action-waiting', 'true')
+      if ('disabled' in action) action.disabled = true
+    } else {
+      action.removeAttribute('aria-disabled')
+      action.removeAttribute('data-project-action-waiting')
+      wrap.removeAttribute('data-project-action-waiting')
+      if ('disabled' in action) action.disabled = false
+    }
   }
 
   function projectActionLabel(action) {
@@ -3178,15 +3196,9 @@
     })
 
     if (end) {
-      const label =
-        state === 'pending'
-          ? 'Cancel Project'
-          : state === 'completion_requested'
-            ? 'Confirm Completion'
-            : state === 'termination_requested'
-              ? 'Confirm End'
-              : 'End Project'
-      setProjectActionLabel(end, label)
+      const endState = projectLifecycleActionState(project, projectWorkflowRole)
+      setProjectActionLabel(end, endState.label)
+      setProjectActionWaiting(end, endState.blocked)
       if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'lifecycle') {
         setOpportunityActionPending(projectActionWrap(end), true)
       }
@@ -3418,9 +3430,60 @@
     return action.dataset.projectActionKey
   }
 
-  function projectActionIntent(project, confirmAction = window.confirm, promptAction = window.prompt) {
+  function projectPartyRequested(project, role, actionName) {
+    if (!project || (role !== 'brand' && role !== 'starter')) return false
+    const field = role + '_' + actionName + '_requested_at'
+    return project[field] != null && String(project[field]).trim() !== ''
+  }
+
+  function projectLifecycleRequestAction(state) {
+    if (state === 'completion_requested') return 'completion'
+    if (state === 'termination_requested') return 'termination'
+    return ''
+  }
+
+  function projectLifecycleActionState(project, role) {
+    const state = lifecycleState(project)
+    const actionName = projectLifecycleRequestAction(state)
+    if (!actionName) {
+      return {
+        waitingOn: '',
+        blocked: false,
+        label: state === 'pending' ? 'Cancel Project' : 'End Project',
+      }
+    }
+    // A present-but-empty timestamp means that party has not requested; an
+    // absent key means the projection dropped the field, so the requester
+    // cannot be identified and the control must fail closed rather than offer
+    // the requester a second request.
+    const requesterUnknown =
+      (role !== 'brand' && role !== 'starter') ||
+      PROJECT_REQUEST_PARTIES.some(
+        (party) => project[party + '_' + actionName + '_requested_at'] === undefined,
+      )
+    if (requesterUnknown) {
+      return { waitingOn: '', blocked: true, label: PROJECT_LIFECYCLE_UNAVAILABLE_LABEL }
+    }
+    if (projectPartyRequested(project, role, actionName)) {
+      const waitingOn = role === 'brand' ? 'Starter' : 'Brand'
+      return { waitingOn, blocked: true, label: 'Waiting for ' + waitingOn }
+    }
+    return {
+      waitingOn: '',
+      blocked: false,
+      label: actionName === 'completion' ? 'Confirm Completion' : 'Confirm End',
+    }
+  }
+
+  function projectActionIntent(
+    project,
+    confirmAction = window.confirm,
+    promptAction = window.prompt,
+    role = projectWorkflowRole,
+  ) {
     const state = lifecycleState(project)
     if (!state || PROJECT_TERMINAL_STATES.has(state)) return null
+    if (projectLifecycleActionState(project, role).blocked) return null
     if (state === 'pending') {
       return confirmAction('Cancel this project before it starts?')
         ? { action: 'cancel', reason: 'canceled_before_activation' }
@@ -3602,6 +3665,7 @@
       projectWorkflowActionLocks.delete(projectId)
       setProjectLifecyclePending(projectId, false, action)
       setOpportunityActionPending(projectActionWrap(action), false)
+      decorateProjectCard(card)
     }
   }
 
@@ -4005,6 +4069,7 @@
       if (!card) return
       event.preventDefault()
       event.stopPropagation()
+      if (action.getAttribute('data-project-action-waiting') === 'true') return
       if (action.matches(PROJECT_CONTRACT_SELECTOR)) await openProjectContract(action, card)
       else if (action.matches(PROJECT_END_SELECTOR)) await mutateProjectLifecycle(action, card)
       else if (binding.role === 'brand') await openProjectReview(action, card)
@@ -6279,6 +6344,7 @@
     invoiceSubmitControl,
     setInvoiceSubmitDisabled,
     projectActionIntent,
+    projectLifecycleActionState,
     projectContractIsViewable,
     projectContractIsDownloadable,
     projectContractPanelState,
