@@ -94,6 +94,12 @@
       : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
   }
 
+  function minimumBookingNoticeCopy() {
+    return isStagingHost
+      ? "Bookings require at least 5 minutes' notice."
+      : "Bookings require at least 24 hours' notice."
+  }
+
   let sessionMemberId = null
   let memberFields = {}
   let availability = null
@@ -2359,6 +2365,13 @@
       gap: '16px',
     })
     shell.setAttribute(EL, 'services-calendar-preview')
+
+    const notice = previewText('span', minimumBookingNoticeCopy(), {
+      color: '#6f746d',
+      fontSize: '12px',
+    })
+    notice.setAttribute(EL, 'preview-booking-notice')
+    shell.appendChild(notice)
 
     if (!services.length) {
       shell.appendChild(
