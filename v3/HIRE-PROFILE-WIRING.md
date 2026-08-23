@@ -1,7 +1,7 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-20
-Status: Free Call GitHub ownership prepared locally; Webflow cutover pending
+Last updated: 2026-08-23
+Status: Free Call behavior is GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
 
@@ -41,6 +41,23 @@ adapter must own scheduling requests, and the Free controller must define its
 namespace, before the shared **Call Scheduling - Global Code** component can
 execute its legacy helpers.
 
+`hire-profile.js` also verifies this dependency at runtime. If an older saved
+page head does not contain `free-call-booking.js`, it adds that exact jsDelivr
+asset once and waits up to five seconds for that loader before booking
+discovery. A load error or timeout leaves the Book Call wrapper and both call
+options hidden. An existing controller or matching loader that can still settle
+— an `async` or `defer` tag, or a loader this recovery already injected — is
+reused, so this recovery does not create a second chooser owner. Each watched
+loader gets its own five-second wait, so the reuse path can wait once for the
+existing tag and once more for the canonical loader before giving up. A stale
+blocking tag cannot settle again, because this file is deferred and that tag has
+already executed; it is therefore superseded by the canonical loader instead of
+waited on. Every give-up path re-reads `window.StartersFreeCallBooking` first,
+so a controller that installs without notifying this file still counts. Keep the
+direct synchronous head tag as the final Webflow install; the runtime loader
+prevents the current missing-tag state from disabling Free and Paid discovery
+while the shared component cleanup is still pending.
+
 Webflow → hire template → Page Settings → Custom Code → **Footer**:
 
 ```html
@@ -79,7 +96,9 @@ The file reads the page-owned identity and shared helper globals from `window`.
 It stands down with a `[hire-profile]` warning when `qs`, `qsa`,
 `waitForMember`, or `starter_memberstack_id` is missing, because an uncaught
 `ReferenceError` would abort the whole file and take every section with it.
-The Free booking namespace is guaranteed by the page install order above.
+The Free booking namespace normally comes from the page install order above.
+`hire-profile.js` supplies the bounded GitHub/jsDelivr recovery when that tag is
+missing and stands down if the namespace still cannot load.
 
 - Site head: `qs`, `qsa`, `MEMBER`, `memberReady`, `waitForMember`
 - Page embeds: `starter_memberstack_id`, `stripe_charges`, and the CMS-bound
@@ -107,7 +126,7 @@ Checked on `www.thestarters.com/hire/ashna-rana` at `document.readyState:
 | Global | At defer time |
 | --- | --- |
 | `qs`, `qsa`, `waitForMember`, `$` | `function` |
-| `StartersFreeCallBooking` | required frozen object after the pending GitHub/Webflow cutover |
+| `StartersFreeCallBooking` | existing frozen object, or loaded once by the bounded runtime recovery |
 | `MEMBER`, `memberReady`, `WfAlgolia` | `object` |
 | `starter_memberstack_id` | `string` |
 | `stripe_charges` | property present, value `undefined` |
@@ -131,7 +150,9 @@ against published source, 2026-08-16), so nothing depends on them being global.
 ## Timing
 
 Deferred, therefore strictly **later** than the inline footer was: it runs after
-HTML parse rather than mid-parse. Every global it consumes is set by then. This
+HTML parse rather than mid-parse. Every global it consumes is set by then,
+except `StartersFreeCallBooking` on an older saved head, which the bounded
+recovery described under **Install** loads before booking discovery. This
 is the only intentional timing change in the port.
 
 The empty-section observer watches child-list mutations, not attribute changes.
