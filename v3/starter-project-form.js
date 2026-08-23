@@ -18,6 +18,7 @@
   var TRIGGER_SELECTOR = '[data-modal-trigger="start-project"]'
   var TRIGGER_LINK_SELECTOR = TRIGGER_SELECTOR + ' a.clickable_link'
   var BRAND_SELECT_SELECTOR = '[data-project-field="brand_id"], #Brand'
+  var SERVICE_SELECT_SELECTOR = '[data-project-field="service"], select[name="Services"], select[name="services"]'
   var BRAND_ID_SELECTOR = '#brand-contract'
   var MANAGER_NAME_SELECTOR = '#hiring-manager-name, #Hiring-Manager-Name'
   var COMPANY_NAME_SELECTOR = '#brand-company-name, #Company-Name'
@@ -164,7 +165,75 @@
       professional_headline: clean(response && response.professional_headline),
       profile_photo: clean(response && response.profile_photo),
       freelancer_information: plainText(response && response.freelancer_information),
+      services: normalizeServices(response && (
+        Object.prototype.hasOwnProperty.call(response, 'services') ? response.services : response.Services
+      )),
     }
+  }
+
+  function normalizeServices(source) {
+    var values = []
+    if (Array.isArray(source)) {
+      values = source
+    } else if (source && typeof source === 'object') {
+      ;['service-1', 'service-2', 'service-3'].forEach(function (key) {
+        if (Object.prototype.hasOwnProperty.call(source, key)) values.push(source[key])
+      })
+      Object.keys(source).sort().forEach(function (key) {
+        if (/^service-[123]$/.test(key)) return
+        values.push(source[key])
+      })
+    }
+    var seen = {}
+    return values.reduce(function (services, item) {
+      var name = clean(item && typeof item === 'object'
+        ? (item.name || item.label || item.raw)
+        : item)
+      var key = name.toLowerCase()
+      if (!name || seen[key]) return services
+      seen[key] = true
+      services.push(name)
+      return services
+    }, [])
+  }
+
+  function genericServiceOption(option) {
+    var label = clean(option && option.textContent)
+    var value = clean(option && option.value)
+    return /^service[\s_-]*[123]$/i.test(label) || /^service[\s_-]*[123]$/i.test(value)
+  }
+
+  function renderServices(form, services) {
+    var select = field(form, SERVICE_SELECT_SELECTOR)
+    if (!select || !select.options || !select.ownerDocument || !select.ownerDocument.createElement) return false
+    var selected = clean(select.value)
+    for (var index = select.options.length - 1; index >= 0; index -= 1) {
+      var option = select.options[index]
+      if (genericServiceOption(option) || clean(option.getAttribute && option.getAttribute('data-starter-project-service')) === 'true') {
+        select.remove(index)
+      }
+    }
+    var existing = {}
+    Array.prototype.forEach.call(select.options, function (option) {
+      var name = clean(option && (option.value || option.textContent)).toLowerCase()
+      if (name) existing[name] = true
+    })
+    ;(services || []).forEach(function (service) {
+      var name = clean(service)
+      var key = name.toLowerCase()
+      if (!name || existing[key]) return
+      var option = select.ownerDocument.createElement('option')
+      option.textContent = name
+      option.value = name
+      option.setAttribute('data-starter-project-service', 'true')
+      select.appendChild(option)
+      existing[key] = true
+    })
+    var selectedExists = Array.prototype.some.call(select.options, function (option) {
+      return clean(option && option.value) === selected
+    })
+    select.value = selectedExists ? selected : ''
+    return true
   }
 
   function formContext(form) {
@@ -212,6 +281,7 @@
       }
       setBoundVisibility(element, Boolean(value))
     })
+    renderServices(form, profile && profile.services)
     return Boolean(targets.length)
   }
 
@@ -859,6 +929,7 @@
         var form = documentObject.querySelector(FORM_SELECTOR)
         if (form) {
           prepareOpen(form, documentObject, globalObject)
+          loadProfile(form, globalObject, true)
           loadOptions(form, globalObject, true)
         }
         return
@@ -898,7 +969,9 @@
     positiveId: positiveId,
     normalizeOptions: normalizeOptions,
     normalizeProfile: normalizeProfile,
+    normalizeServices: normalizeServices,
     renderProfile: renderProfile,
+    renderServices: renderServices,
     renderCounterparty: renderCounterparty,
     applyStarterCopy: applyStarterCopy,
     loadProfile: loadProfile,
