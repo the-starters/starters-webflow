@@ -86,19 +86,23 @@ cached `opportunities-3.0.js` predating the method would otherwise get no
 profile at all and keep the generic `Service 1`, `Service 2`, `Service 3`
 placeholders, so the controller falls back to a direct
 `POST https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/starter/profile/me` with a
-`{}` body, authorized by the shared `window.getXanoAuthToken` bridge.
+`{}` body, authorized by the shared `window.getXanoAuthToken` bridge. It sets
+the `Authorization` header itself instead of calling `window.xanoAuthFetch`,
+because that helper only credentials the reviewed `api:tCpV3oqd` scheduling
+paths and would pass this `api:opp30` route through unauthenticated.
 
 **The fallback therefore requires `v3/scheduling-auth.js` on the page.** That
-script owns `window.getXanoAuthToken` and installs it only on the staging host
-and the approved production paths, which include `/starter-dashboard`. Without
-it the fallback returns no request at all and no error is surfaced: the modal
-silently keeps the authored placeholders. Keep the loader in the Script order
-block below when installing or auditing this page.
+script owns `window.getXanoAuthToken`, and `/starter-dashboard` is inside its
+install boundary; the authoritative host and path list lives in
+[Scheduling auth](README.md#scheduling-auth). Without the bridge the fallback
+issues no request at all and no error is surfaced: the modal silently keeps the
+authored placeholders. Keep the loader in the Script order block below when
+installing or auditing this page.
 
-The fallback resolves nothing and issues no request when the bridge is absent,
-when `window.fetch` is missing, or when the bridge resolves a blank token, so it
-never sends `Bearer undefined`. A non-ok response — including one whose body is
-not JSON — rejects, the profile load swallows the rejection, and the authored
+The fallback issues no request when the bridge or `window.fetch` is missing, and
+rejects before issuing one when the bridge resolves a blank token, so it never
+sends `Bearer undefined`. A non-ok response — including one whose body is not
+JSON — also rejects. The profile load swallows every rejection, so the authored
 service options stand unchanged. The token is only ever passed to the
 `Authorization` header; it is never rendered, logged, or submitted.
 
@@ -194,7 +198,7 @@ Load the shared auth bridge and the existing data and form scripts first, then
 the Starter adapter:
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities-3.0.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/project-form.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-project-form.js"></script>

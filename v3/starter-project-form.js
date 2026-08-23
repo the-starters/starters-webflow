@@ -558,6 +558,11 @@
     return api && typeof api[method] === 'function' ? api[method] : null
   }
 
+  // Opp30.API.starterProfile stays the primary path. The fallback exists only
+  // for browser sessions holding a cached opportunities-3.0.js without that
+  // method, and it must set Authorization itself: window.xanoAuthFetch only
+  // credentials the reviewed api:tCpV3oqd scheduling paths and would send this
+  // api:opp30 route unauthenticated. See STARTER-PROJECT-FORM-WIRING.md.
   function starterProfileRequest(globalObject) {
     var request = projectApi(globalObject, 'starterProfile')
     if (request) return request

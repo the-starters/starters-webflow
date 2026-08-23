@@ -482,6 +482,30 @@ test('opening the modal loads the authenticated Starter services', async () => {
   )
 })
 
+test('the Opp30 starterProfile method stays the primary path and never reaches the auth bridge', async () => {
+  const loaded = load({ noDocument: true, profile: { services: [{ name: 'CRM Strategy' }] } })
+  const requests = []
+  let tokenCalls = 0
+  loaded.window.getXanoAuthToken = async () => {
+    tokenCalls += 1
+    return 'xano-token'
+  }
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: true, status: 200, json: async () => ({ services: ['Should never load'] }) }
+  }
+
+  await loaded.api.loadProfile(loaded.form, loaded.window, true)
+
+  assert.equal(loaded.calls.profile.length, 1)
+  assert.equal(tokenCalls, 0)
+  assert.deepEqual(requests, [])
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
+    ['Select one...', 'Freelance work', 'Monthly retainer', 'CRM Strategy'],
+  )
+})
+
 test('loads Starter services through the shared Xano auth bridge when the cached API lacks starterProfile', async () => {
   const loaded = load({ noDocument: true })
   const requests = []
