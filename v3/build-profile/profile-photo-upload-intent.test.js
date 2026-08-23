@@ -60,7 +60,13 @@ function element() {
   };
 }
 
-function createHarness({ avatarResponder, cryptoApi, uploadResponder, pathname = '/build-profile/full-profile' } = {}) {
+function createHarness({
+  avatarResponder,
+  cryptoApi,
+  uploadResponder,
+  pathname = '/build-profile/full-profile',
+  storedPhotoUrl = '',
+} = {}) {
   const label = element();
   const wrap = element();
   const uploadError = element();
@@ -76,6 +82,7 @@ function createHarness({ avatarResponder, cryptoApi, uploadResponder, pathname =
   const removeBtn = element();
   const photoUrlInput = element();
   photoUrlInput.setAttribute('data-input-capture', '');
+  photoUrlInput.value = storedPhotoUrl;
   const elements = new Map([
     ['#profile-photo-wrap', wrap],
     ['#profile-photo', input],
@@ -418,11 +425,54 @@ async function run() {
   assert.equal(avatarFailure.uploads.length, 1);
   assert.equal(avatarFailure.photoUrlInput.value, 'https://example.invalid/canonical-photo.jpg');
   assert.equal(avatarFailure.uploadError.style.display, 'none');
+
+  // `data-input-capture` is what the Build Profile draft controller enumerates, and it
+  // rewrites the whole of `step_1` from that set on every save - including the Submit
+  // click that triggers this gate. A returning Starter replacing an existing photo must
+  // therefore stay inside the capture set, holding the stored URL, until the replacement
+  // is actually committed.
+  const returning = createHarness({
+    storedPhotoUrl: 'https://example.invalid/stored-photo.jpg',
+    uploadResponder(index) {
+      if (index === 0) {
+        return new Response(JSON.stringify({ message: 'synthetic upload failure' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return response(JSON.stringify({
+        starter_image: 'https://example.invalid/replacement.jpg',
+        starter_image_small: 'https://example.invalid/replacement-small.jpg',
+      }));
+    },
+  });
+  returning.input.files = [{ name: 'replacement.jpg', type: 'image/jpeg', size: 100 }];
+  returning.input.dispatchEvent(new returning.TestEvent('change'));
+  await settle();
+  assert.equal(returning.uploads.length, 0);
+  assert.equal(returning.photoUrlInput.value, 'https://example.invalid/stored-photo.jpg');
+  assert.equal(returning.photoUrlInput.hasAttribute('data-input-capture'), true);
+
+  returning.window.StartersBuildProfilePhotoUpload.markProfileSaved();
+  await assert.rejects(
+    returning.window.StartersBuildProfilePhotoUpload.commitPending(),
+    /synthetic upload failure/,
+  );
+  assert.equal(returning.uploads.length, 1);
+  assert.equal(returning.photoUrlInput.value, 'https://example.invalid/stored-photo.jpg');
+  assert.equal(returning.photoUrlInput.hasAttribute('data-input-capture'), true);
+
+  returning.wrap.listeners.get('click')({ target: returning.uploadError });
+  await settle();
+  assert.equal(returning.uploads.length, 2);
+  assert.equal(returning.uploads[0].sourceMutationId, returning.uploads[1].sourceMutationId);
+  assert.equal(returning.photoUrlInput.value, 'https://example.invalid/replacement.jpg');
+  assert.equal(returning.photoUrlInput.hasAttribute('data-input-capture'), true);
 }
 
 run()
   .then(() => console.log(
-    'Browser interaction trace: Build selection stayed local until the profile save gate; the first upload failure kept one opaque intent for retry; replacements and drops created new intents only when committed; stale overlapping uploads could not overwrite the current photo.',
+    'Browser interaction trace: Build selection stayed local until the profile save gate; the first upload failure kept one opaque intent for retry; replacements and drops created new intents only when committed; stale overlapping uploads could not overwrite the current photo; a returning Starter kept the stored photo URL in draft capture across a failed replacement.',
   ))
   .catch((error) => {
     console.error(error);

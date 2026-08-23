@@ -186,8 +186,12 @@
           if (isBuildProfile && !retry) {
             // Keep the temporary required-field marker out of draft capture. The exact
             // authored capture attribute is restored after the canonical upload succeeds.
-            photoUrlInput.removeAttribute('data-input-capture');
-            photoUrlInput.value = 'pending-profile-photo-upload';
+            // An already stored photo URL satisfies the required field on its own, and
+            // draft capture must keep persisting it while the replacement is pending.
+            if (!String(photoUrlInput.value || '').trim()) {
+              photoUrlInput.removeAttribute('data-input-capture');
+              photoUrlInput.value = 'pending-profile-photo-upload';
+            }
             setLoader(false, preview);
             return;
           }

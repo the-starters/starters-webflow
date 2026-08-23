@@ -177,6 +177,7 @@ function createPicker(input, ready) {
     maxDate: null,
     dateFormat: null,
     date: null,
+    onSelect: null,
     setDate(value) {
       let next = value instanceof Date ? new Date(value.getTime()) : null
 
@@ -185,6 +186,16 @@ function createPicker(input, ready) {
 
       this.date = next
       this.input.value = next ? formatPickerValue(next) : ''
+    },
+    // jQuery UI's `_selectDate`: write the picked day straight into the field and hand
+    // it to `onSelect`. It fires no `input` and, because the shared embed always supplies
+    // an `onSelect` for a start/end pair, no `change` either.
+    select(value) {
+      this.date = value instanceof Date ? new Date(value.getTime()) : null
+      this.input.value = this.date ? formatPickerValue(this.date) : ''
+      if (typeof this.onSelect === 'function') {
+        this.onSelect.call(this.input, this.input.value, this)
+      }
     },
   }
 }
@@ -471,6 +482,56 @@ for (const controllerPath of controllerPaths) {
 
     assert.equal(app.editStartDateInput.value, 'Feb 2025')
     assert.equal(app.editEndDateInput.value, 'Mar 2026')
+  })
+
+  test(`${controllerPath} keeps a calendar pick made while the other picker is still loading`, async () => {
+    const app = bootCompanyController(controllerPath, { pickerReady: false })
+
+    app.openEditFor({
+      id: 11,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: 'Jan 2024',
+      end_date: 'Dec 2024',
+    })
+
+    app.startPicker.ready = true
+    app.clock.advance(100)
+
+    app.startPicker.select(new Date(2025, 1, 3))
+    assert.equal(app.editStartDateInput.value, 'Feb 03 2025')
+
+    app.endPicker.ready = true
+    app.clock.advance(500)
+
+    assert.equal(app.editStartDateInput.value, 'Feb 03 2025')
+    assert.equal(app.editEndDateInput.value, 'Dec 01 2024')
+
+    await app.saveEdit()
+    const payload = app.lastRequestPayload()
+
+    assert.equal(payload.start_date, 'Feb 03 2025')
+    assert.equal(payload.end_date, 'Dec 2024')
+  })
+
+  test(`${controllerPath} keeps a typed date committed only on blur`, () => {
+    const app = bootCompanyController(controllerPath, { pickerReady: false })
+
+    app.openEditFor({
+      id: 12,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: 'Jan 2024',
+      end_date: 'Dec 2024',
+    })
+
+    app.editStartDateInput.value = 'Feb 2025'
+    app.editStartDateInput.dispatchEvent({ type: 'change' })
+    app.markPickersReady()
+    app.clock.advance(500)
+
+    assert.equal(app.editStartDateInput.value, 'Feb 2025')
+    assert.equal(app.editEndDateInput.value, 'Dec 01 2024')
   })
 
   test(`${controllerPath} hydrates month-year dates without relative-day drift`, () => {

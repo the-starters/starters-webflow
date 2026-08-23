@@ -156,8 +156,18 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             let editEndDateUserChanged = false;
             let isLimitReached = false;
 
-            if (editStartDateInput) editStartDateInput.addEventListener('input', () => { editStartDateUserChanged = true; });
-            if (editEndDateInput) editEndDateInput.addEventListener('input', () => { editEndDateUserChanged = true; });
+            let editStartDateSelectGuarded = false;
+            let editEndDateSelectGuarded = false;
+
+            if (editStartDateInput) {
+                editStartDateInput.addEventListener('input', () => { editStartDateUserChanged = true; });
+                editStartDateInput.addEventListener('change', () => { editStartDateUserChanged = true; });
+            }
+
+            if (editEndDateInput) {
+                editEndDateInput.addEventListener('input', () => { editEndDateUserChanged = true; });
+                editEndDateInput.addEventListener('change', () => { editEndDateUserChanged = true; });
+            }
 
             if (!companyList || !companyTemplate) {
                 console.warn('[Companies] .company-list or .company-card template not found');
@@ -312,6 +322,40 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 return !!jQuery(input).data('datepicker');
             }
 
+            // jQuery UI writes a calendar pick straight into the field with `input.val()` and, because
+            // the shared embed pairs these inputs with its own `onSelect`, fires neither `input` nor
+            // `change`. Chain onto that callback so a picked date still counts as user input.
+            function guardEditCompanyDateSelection(input, markChanged) {
+                if (!input || !isEditCompanyDatepickerReady(input)) return false;
+
+                try {
+                    const existingOnSelect = jQuery(input).datepicker('option', 'onSelect');
+                    jQuery(input).datepicker('option', {
+                        onSelect: function () {
+                            markChanged();
+                            if (typeof existingOnSelect === 'function') existingOnSelect.apply(this, arguments);
+                        },
+                    });
+                    return true;
+                } catch (error) {
+                    return false;
+                }
+            }
+
+            function guardEditCompanyDateSelections() {
+                if (!editStartDateSelectGuarded) {
+                    editStartDateSelectGuarded = guardEditCompanyDateSelection(editStartDateInput, function () {
+                        editStartDateUserChanged = true;
+                    });
+                }
+
+                if (!editEndDateSelectGuarded) {
+                    editEndDateSelectGuarded = guardEditCompanyDateSelection(editEndDateInput, function () {
+                        editEndDateUserChanged = true;
+                    });
+                }
+            }
+
             // jQuery UI is fetched over the network by Global-FormEmbeds-Datepicker.html, so the widget
             // can initialize - and rewrite these fields from their raw text - after the edit modal is
             // already open. Run `callback` once both inputs are live; when they already are nothing
@@ -322,6 +366,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 let waited = 0;
                 const poll = setInterval(function () {
                     waited += EDIT_DATEPICKER_POLL_MS;
+                    guardEditCompanyDateSelections();
 
                     if (isEditCompanyDatepickerReady(editStartDateInput) && isEditCompanyDatepickerReady(editEndDateInput)) {
                         clearInterval(poll);
@@ -849,6 +894,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 // Opening the modal runs the shared date-picker embed over these inputs, which re-reads
                 // their raw text and can turn it into a relative-day date.
                 hydrateEditCompanyDates();
+                guardEditCompanyDateSelections();
                 whenEditCompanyDatepickerReady(function () {
                     if (String(editCompanyWrapper.dataset.id) !== String(company.id || '')) return;
                     hydrateEditCompanyDates(true);
