@@ -19,7 +19,7 @@ in [README.md](README.md) and in the root
       required rate keeps failing instead of persisting a zero rate.
 - [x] Pass every non-blank rate value through to Xano unrewritten.
 - [x] Keep the Services and Rates step Designer-native; the fix adds no form markup.
-- [x] Hydrate a stored work-experience date into the correct calendar month instead of
+- [x] Hydrate a stored work-experience date onto its correct calendar day instead of
       letting jQuery UI read it as a relative day offset, and keep the `Present`
       sentinel out of the picker. Contract:
       [Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
@@ -34,10 +34,11 @@ in [README.md](README.md) and in the root
       authored blank value untouched.
 - [x] An optional blank Hourly Rate submits `0`, a populated Hourly Rate submits
       unchanged, and a required blank Hourly Rate issues no request at all.
-- [x] Both route copies of the company controller hydrate `Month YYYY` and ISO dates
-      onto the right calendar day, keep `Present` out of the picker and the baseline,
-      and preserve untouched canonical date strings while a changed field still submits
-      its new value.
+- [x] Both route copies of the company controller hydrate every shape the contract
+      accepts onto the right calendar day, refuse a value neither the canonical shapes
+      nor the widget's own `dateFormat` can parse, keep `Present` out of the picker and
+      the baseline, and preserve untouched canonical date strings while a changed field
+      still submits its new value.
 
 Run this coverage with:
 
@@ -54,8 +55,9 @@ node --test profile-form/company-experience-date-hydration.test.js
 - [ ] Confirm on the published page that turning paid calls or retainers off saves the
       canonical `0` and that stored non-zero rates survive an unrelated save.
 - [ ] Retest the published Work Experience flow: an existing record reopens on its
-      stored month and year, a current role still reads `Present`, and saving an
-      unrelated field leaves both stored dates unchanged in Xano.
+      stored date, including a day-precision record on its exact day, a current role
+      still reads `Present`, and saving an unrelated field leaves both stored dates
+      unchanged in Xano.
 
 ## 🛑 Stop conditions
 
