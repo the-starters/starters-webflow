@@ -2486,8 +2486,8 @@ Runtime contract:
   OAuth return opens the existing `config-request-error` panel without a grant
   write.
 - `window.StarterSchedulingAvailabilityWriter` exposes `initialize()` for
-  retries plus `switchStep`, `daysAlias`, `getAvailArray`, and
-  `publishCalendarConnectionState`.
+  retries plus `switchStep`, `daysAlias`, `getAvailArray`,
+  `minimumBookingNoticeMinutes`, and `publishCalendarConnectionState`.
 
 Run its focused test with:
 
@@ -2597,8 +2597,8 @@ Runtime contract:
   other dashboard widgets (e.g. `dashboard-action-items.js`) work regardless
   of which script is active on the page.
 - `window.StarterSchedulingAvailabilitySection` exposes `initialize()`,
-  `daysAlias`, `getAvailArray`, `applyDayBadges`, `getUpcomingTimeSlots`, and
-  `publishCalendarConnectionState`.
+  `daysAlias`, `getAvailArray`, `applyDayBadges`, `getUpcomingTimeSlots`,
+  `minimumBookingNoticeMinutes`, and `publishCalendarConnectionState`.
 
 Run its focused test with:
 
