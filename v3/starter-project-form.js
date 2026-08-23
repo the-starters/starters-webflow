@@ -106,6 +106,7 @@
       optionsLoaded: false,
       profile: null,
       profileLoaded: false,
+      services: [],
       selected: null,
       key: '',
       keyPayload: '',
@@ -165,10 +166,19 @@
       professional_headline: clean(response && response.professional_headline),
       profile_photo: clean(response && response.profile_photo),
       freelancer_information: plainText(response && response.freelancer_information),
-      services: normalizeServices(response && (
-        Object.prototype.hasOwnProperty.call(response, 'services') ? response.services : response.Services
-      )),
     }
+  }
+
+  function responseServices(response) {
+    if (!response || typeof response !== 'object') return []
+    return normalizeServices(
+      Object.prototype.hasOwnProperty.call(response, 'services') ? response.services : response.Services
+    )
+  }
+
+  function serviceSlot(key) {
+    var match = /^service[\s_-]*([123])$/i.exec(clean(key))
+    return match ? Number(match[1]) : 0
   }
 
   function normalizeServices(source) {
@@ -176,13 +186,12 @@
     if (Array.isArray(source)) {
       values = source
     } else if (source && typeof source === 'object') {
-      ;['service-1', 'service-2', 'service-3'].forEach(function (key) {
-        if (Object.prototype.hasOwnProperty.call(source, key)) values.push(source[key])
-      })
-      Object.keys(source).sort().forEach(function (key) {
-        if (/^service-[123]$/.test(key)) return
-        values.push(source[key])
-      })
+      // Xano's object shape only ever carries the three authored slots. Any
+      // sibling metadata key must never become a selectable service value.
+      Object.keys(source)
+        .filter(function (key) { return serviceSlot(key) > 0 })
+        .sort(function (first, second) { return serviceSlot(first) - serviceSlot(second) })
+        .forEach(function (key) { values.push(source[key]) })
     }
     var seen = {}
     return values.reduce(function (services, item) {
@@ -197,37 +206,54 @@
     }, [])
   }
 
-  function genericServiceOption(option) {
-    var label = clean(option && option.textContent)
-    var value = clean(option && option.value)
-    return /^service[\s_-]*[123]$/i.test(label) || /^service[\s_-]*[123]$/i.test(value)
+  function genericServiceSlot(entry) {
+    return serviceSlot(entry.label) > 0 || serviceSlot(entry.value) > 0
   }
 
+  function authoredServiceOptions(select) {
+    if (!select.__starterProjectServiceOptions) {
+      select.__starterProjectServiceOptions = Array.prototype.map.call(select.options, function (option) {
+        return {
+          value: clean(option && option.value),
+          label: clean(option && option.textContent),
+        }
+      })
+    }
+    return select.__starterProjectServiceOptions
+  }
+
+  // The authored generic Service 1/2/3 slots are only given up once a non-empty
+  // canonical list is available. An empty list restores the authored markup so a
+  // failed request, a member scope change, or a Xano response without services
+  // never leaves the Starter with fewer options than Webflow authored.
   function renderServices(form, services) {
     var select = field(form, SERVICE_SELECT_SELECTOR)
     if (!select || !select.options || !select.ownerDocument || !select.ownerDocument.createElement) return false
-    var selected = clean(select.value)
-    for (var index = select.options.length - 1; index >= 0; index -= 1) {
-      var option = select.options[index]
-      if (genericServiceOption(option) || clean(option.getAttribute && option.getAttribute('data-starter-project-service')) === 'true') {
-        select.remove(index)
-      }
-    }
-    var existing = {}
-    Array.prototype.forEach.call(select.options, function (option) {
-      var name = clean(option && (option.value || option.textContent)).toLowerCase()
-      if (name) existing[name] = true
-    })
-    ;(services || []).forEach(function (service) {
-      var name = clean(service)
+    var authored = authoredServiceOptions(select)
+    var names = normalizeServices(services)
+    var target = names.length
+      ? authored.filter(function (entry) { return !genericServiceSlot(entry) })
+      : authored.slice()
+    var seen = {}
+    target.forEach(function (entry) { seen[entry.value.toLowerCase()] = true })
+    names.forEach(function (name) {
       var key = name.toLowerCase()
-      if (!name || existing[key]) return
-      var option = select.ownerDocument.createElement('option')
-      option.textContent = name
-      option.value = name
-      option.setAttribute('data-starter-project-service', 'true')
-      select.appendChild(option)
-      existing[key] = true
+      if (seen[key]) return
+      seen[key] = true
+      target.push({ value: name, label: name })
+    })
+    var selected = clean(select.value)
+    for (var index = select.options.length - 1; index >= target.length; index -= 1) {
+      select.remove(index)
+    }
+    target.forEach(function (entry, position) {
+      var option = select.options[position]
+      if (!option) {
+        option = select.ownerDocument.createElement('option')
+        select.appendChild(option)
+      }
+      option.value = entry.value
+      option.textContent = entry.label
     })
     var selectedExists = Array.prototype.some.call(select.options, function (option) {
       return clean(option && option.value) === selected
@@ -281,7 +307,6 @@
       }
       setBoundVisibility(element, Boolean(value))
     })
-    renderServices(form, profile && profile.services)
     return Boolean(targets.length)
   }
 
@@ -351,7 +376,9 @@
     current.profileRequest = null
     current.profile = null
     current.profileLoaded = false
+    current.services = []
     renderProfile(form, normalizeProfile(null))
+    renderServices(form, [])
   }
 
   function loadProfile(form, globalObject, forceRefresh) {
@@ -369,14 +396,16 @@
       .then(function (response) {
         if (generation !== current.generation || profileGeneration !== current.profileGeneration) return null
         current.profile = normalizeProfile(response)
+        current.services = responseServices(response)
         current.profileLoaded = true
-        renderProfile(form, current.profile)
+        renderServices(form, current.services)
         return current.profile
       })
       .catch(function () {
         if (generation !== current.generation || profileGeneration !== current.profileGeneration) return null
         current.profile = null
         current.profileLoaded = false
+        current.services = []
         return null
       })
       .finally(function () {
@@ -970,6 +999,7 @@
     normalizeOptions: normalizeOptions,
     normalizeProfile: normalizeProfile,
     normalizeServices: normalizeServices,
+    responseServices: responseServices,
     renderProfile: renderProfile,
     renderServices: renderServices,
     renderCounterparty: renderCounterparty,

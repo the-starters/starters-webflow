@@ -326,7 +326,7 @@ function load(options = {}) {
   }
 }
 
-test('normalizes and renders the authenticated Starter profile into scoped bindings', async () => {
+test('renders the authenticated Starter services and leaves the Brand rail identity intact', async () => {
   const loaded = load({ noDocument: true, profile: {
     first_name: 'Starter',
     last_name: 'Person',
@@ -346,16 +346,18 @@ test('normalizes and renders the authenticated Starter profile into scoped bindi
   const summary = new Element({ element: 'freelancer_infromation' })
   loaded.context.profileTargets = [photo, name, role, headline, summary]
 
-  const profile = await loaded.api.loadProfile(loaded.form, loaded.window)
+  const request = loaded.api.loadProfile(loaded.form, loaded.window)
+  loaded.api.renderCounterparty(loaded.form, { id: 7, manager_name: 'Dana Reyes', company_name: 'Northwind Coffee' })
+  const profile = await request
 
   assert.equal(loaded.calls.profile.length, 1)
   assert.equal(profile.full_name, 'Starter Person')
-  assert.equal(photo.getAttribute('src'), 'https://example.com/photo.jpg')
-  assert.equal(photo.getAttribute('alt'), 'Starter Person profile photo')
-  assert.equal(name.textContent, 'Starter Person')
-  assert.equal(role.textContent, 'Lifecycle Marketing')
-  assert.equal(headline.textContent, 'Retention lead')
-  assert.equal(summary.textContent, 'Builds & improves retention.')
+  assert.equal(name.textContent, 'Dana Reyes')
+  assert.equal(headline.textContent, 'Northwind Coffee')
+  assert.equal(photo.getAttribute('src'), null)
+  assert.equal(photo.getAttribute('alt'), '')
+  assert.equal(role.textContent, '')
+  assert.equal(summary.textContent, '')
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => [option.value, option.textContent]),
     [
@@ -368,14 +370,35 @@ test('normalizes and renders the authenticated Starter profile into scoped bindi
   )
 })
 
+test('the canonical service list never reaches the profile bind projection', async () => {
+  const loaded = load({
+    noDocument: true,
+    profile: { full_name: 'Starter Person', services: ['Lifecycle Email Program', 'Retention Audit'] },
+  })
+  const services = new Element({ 'data-project-bind': 'starter.services', textContent: 'Authored services copy' })
+  loaded.context.profileTargets = [services]
+
+  await loaded.api.loadProfile(loaded.form, loaded.window)
+
+  assert.equal(services.textContent, 'Authored services copy')
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.value),
+    ['', 'Freelance work', 'Monthly retainer', 'Lifecycle Email Program', 'Retention Audit'],
+  )
+})
+
 test('normalizes legacy service shapes and replaces only generic authored service slots', () => {
   const loaded = load({ noDocument: true })
 
   assert.deepEqual(
     JSON.parse(JSON.stringify(loaded.api.normalizeServices({
-      'service-1': { name: 'Paid Media Audit' },
-      'service-2': { raw: 'Creative Strategy Sprint' },
       'service-3': { name: 'paid media audit' },
+      'service-2': { raw: 'Creative Strategy Sprint' },
+      'service-1': { name: 'Paid Media Audit' },
+      count: 2,
+      updated_at: '2026-08-24',
+      service_slots: ['Not a service'],
+      services: ['Also not a service'],
     }))),
     ['Paid Media Audit', 'Creative Strategy Sprint'],
   )
@@ -392,6 +415,54 @@ test('normalizes legacy service shapes and replaces only generic authored servic
     ],
   )
   assert.equal(loaded.form.fields.serviceSelect.value, '')
+})
+
+test('authored generic service slots survive an empty list and a failed profile request', async () => {
+  let rejectProfile
+  const loaded = load({
+    noDocument: true,
+    starterProfile: () => new Promise((resolve, reject) => { rejectProfile = reject }),
+  })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const labels = () => loaded.form.fields.serviceSelect.options.map((option) => option.textContent)
+
+  assert.equal(loaded.api.renderServices(loaded.form, []), true)
+  assert.deepEqual(labels(), authored)
+
+  const request = loaded.api.loadProfile(loaded.form, loaded.window, true)
+  assert.deepEqual(labels(), authored)
+
+  await Promise.resolve()
+  rejectProfile(new Error('services unavailable'))
+  assert.equal(await request, null)
+  assert.deepEqual(labels(), authored)
+})
+
+test('a profile response without services keeps the authored service options', async () => {
+  const loaded = load({ noDocument: true, profile: { full_name: 'Starter Person' } })
+
+  assert.equal((await loaded.api.loadProfile(loaded.form, loaded.window)).full_name, 'Starter Person')
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
+    ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+  )
+})
+
+test('a member scope change drops the previous Starter services and restores authored slots', async () => {
+  const loaded = load({ profile: { services: ['CRM Strategy'] } })
+
+  await loaded.api.loadProfile(loaded.form, loaded.window, true)
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
+    ['Select one...', 'Freelance work', 'Monthly retainer', 'CRM Strategy'],
+  )
+
+  loaded.window.listeners['opp30:member-scope-reset']({ detail: { memberId: 'member-b' } })
+
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
+    ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+  )
 })
 
 test('opening the modal loads the authenticated Starter services', async () => {
