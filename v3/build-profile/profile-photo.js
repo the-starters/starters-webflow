@@ -52,7 +52,10 @@
 
       const MAX_SIZE = 4 * 1024 * 1024; // 4MB
       const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
+      const BUILD_PROFILE_PATHS = ['/build-profile/full-profile', '/build-profile/consult'];
+      const isBuildProfile = BUILD_PROFILE_PATHS.includes(String(window.location?.pathname || ''));
       let currentUploadIntent = null;
+      let buildProfileSaved = false;
 
       const XANO_BASE_URL = 'https://x08a-5ko8-jj1r.n7c.xano.io';
       const wrap = document.querySelector('#profile-photo-wrap');
@@ -64,6 +67,12 @@
       const photoUrlInput = document.querySelector('#profile-photo-url');
 
       if (!wrap || !label || !input || !preview || !previewImg || !photoUrlInput) return;
+
+      const photoCaptureAttribute = photoUrlInput.getAttribute('data-input-capture');
+      const hadPhotoCaptureAttribute = photoUrlInput.hasAttribute('data-input-capture');
+
+      const buildPhotoApi = window.StartersBuildProfilePhotoUpload || {};
+      if (isBuildProfile) window.StartersBuildProfilePhotoUpload = buildPhotoApi;
 
       waitProfileData(() => {
         if (activeProfile['data']['step_1']['profile-photo-url'] && activeProfile['data']['step_1']['profile-photo-url'] !== '') {
@@ -99,12 +108,19 @@
         previewImg.src = '';
         label.classList.remove('dropping');
 
+        restorePhotoCaptureAttribute();
         photoUrlInput.value = '';
         photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
         photoUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
 
         preview.style.display = 'none';
         wrap.style.display = 'block';
+      }
+
+      function restorePhotoCaptureAttribute() {
+        if (hadPhotoCaptureAttribute) {
+          photoUrlInput.setAttribute('data-input-capture', photoCaptureAttribute || '');
+        }
       }
 
       function createSourceMutationId() {
@@ -152,31 +168,38 @@
           return;
         }
 
-        setLoader(true, preview);
-
         const imageUrl = URL.createObjectURL(file);
         previewImg.src = imageUrl;
 
         wrap.style.display = 'none';
         preview.style.display = 'block';
 
-        // upload the image to Xano/Webflow and update the profile data with Webflow photo URL
         let uploadIntent;
-        let wf_photo_data;
         try {
           if (retry) {
             uploadIntent = currentUploadIntent;
           } else {
-            uploadIntent = { file, state: 'uploading' };
+            uploadIntent = { file, state: 'prepared', result: null, promise: null };
             currentUploadIntent = uploadIntent;
             uploadIntent.sourceMutationId = createSourceMutationId();
           }
-          uploadIntent.state = 'uploading';
-          currentUploadIntent = uploadIntent;
-          wf_photo_data = await uploadImage(
-            uploadIntent.file,
-            uploadIntent.sourceMutationId,
-          );
+          if (isBuildProfile && !retry) {
+            // Keep the temporary required-field marker out of draft capture. The exact
+            // authored capture attribute is restored after the canonical upload succeeds.
+            // An already stored photo URL satisfies the required field on its own, and
+            // draft capture must keep persisting it while the replacement is pending.
+            if (!String(photoUrlInput.value || '').trim()) {
+              photoUrlInput.removeAttribute('data-input-capture');
+              photoUrlInput.value = 'pending-profile-photo-upload';
+            }
+            setLoader(false, preview);
+            return;
+          }
+          if (isBuildProfile) {
+            await commitPreparedUpload();
+            return;
+          }
+          await applyUploadIntent(uploadIntent);
         } catch (error) {
           if (currentUploadIntent !== uploadIntent) return;
           uploadIntent.state = 'failed';
@@ -186,31 +209,81 @@
           console.error('Profile image upload failed:', error);
           return;
         }
-        if (currentUploadIntent !== uploadIntent) return;
-        uploadIntent.state = 'applying';
-        waitProfileData(async () => {
+      }
+
+      async function applyUploadIntent(uploadIntent) {
+        if (!uploadIntent || currentUploadIntent !== uploadIntent) return null;
+        if (uploadIntent.state === 'complete') return uploadIntent.result;
+        if (uploadIntent.promise) return uploadIntent.promise;
+
+        uploadIntent.state = 'uploading';
+        uploadIntent.promise = (async () => {
+          setLoader(true, preview);
+          const wf_photo_data = await uploadImage(
+            uploadIntent.file,
+            uploadIntent.sourceMutationId,
+          );
           if (currentUploadIntent !== uploadIntent) return;
+          uploadIntent.state = 'applying';
+          restorePhotoCaptureAttribute();
           photoUrlInput.value = wf_photo_data['starter_image'];
           photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
           photoUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
 
           setLoader(false, preview);
 
-          const fileSmaller = await urlToFile(wf_photo_data['starter_image_small'], file.name);
-          if (currentUploadIntent !== uploadIntent) return;
-          const updImgInfo = await window.$memberstackDom.updateMemberProfileImage({ profileImage: fileSmaller });
-          if (currentUploadIntent !== uploadIntent) return;
-          console.log('Smaller image for Memberstack profile:', updImgInfo?.data?.profileImage);
-          
-          // update logo image in the nav bar
-          requestAnimationFrame(() => {
-            if (currentUploadIntent !== uploadIntent) return;
-            qsa('[nav-profile-image]').forEach(img => {
-              img.src = img.srcset = updImgInfo?.data?.profileImage || wf_photo_data['starter_image'];
+          uploadIntent.state = 'complete';
+          uploadIntent.result = wf_photo_data;
+
+          // Memberstack avatar sync is cosmetic. A failure here must not turn an already
+          // committed Xano photo into a failed Build Profile submission or retry the upload.
+          try {
+            const fileSmaller = await urlToFile(wf_photo_data['starter_image_small'], uploadIntent.file.name);
+            if (currentUploadIntent !== uploadIntent) return wf_photo_data;
+            const updImgInfo = await window.$memberstackDom.updateMemberProfileImage({ profileImage: fileSmaller });
+            if (currentUploadIntent !== uploadIntent) return wf_photo_data;
+            console.log('Smaller image for Memberstack profile:', updImgInfo?.data?.profileImage);
+
+            requestAnimationFrame(() => {
+              if (currentUploadIntent !== uploadIntent) return;
+              qsa('[nav-profile-image]').forEach(img => {
+                img.src = img.srcset = updImgInfo?.data?.profileImage || wf_photo_data['starter_image'];
+              });
             });
-            currentUploadIntent = null;
-          });
-        });
+          } catch (avatarError) {
+            console.warn('Memberstack profile image sync failed after canonical upload:', avatarError);
+          }
+          return wf_photo_data;
+        })();
+
+        try {
+          return await uploadIntent.promise;
+        } catch (error) {
+          if (currentUploadIntent === uploadIntent) uploadIntent.state = 'failed';
+          throw error;
+        } finally {
+          uploadIntent.promise = null;
+        }
+      }
+
+      async function commitPreparedUpload() {
+        if (!isBuildProfile || !currentUploadIntent) return null;
+        if (!buildProfileSaved) throw new Error('Save the profile before uploading its photo');
+        try {
+          return await applyUploadIntent(currentUploadIntent);
+        } catch (error) {
+          setLoader(false, preview);
+          wrap.style.display = 'block';
+          showError('Image upload failed. Click here to try again.');
+          console.error('Profile image upload failed:', error);
+          throw error;
+        }
+      }
+
+      if (isBuildProfile) {
+        buildPhotoApi.hasPendingUpload = () => !!currentUploadIntent && currentUploadIntent.state !== 'complete';
+        buildPhotoApi.markProfileSaved = () => { buildProfileSaved = true; };
+        buildPhotoApi.commitPending = commitPreparedUpload;
       }
 
       async function urlToFile(url, fileName = 'profile-photo.jpg') {

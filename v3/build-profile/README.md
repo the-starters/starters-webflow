@@ -57,11 +57,18 @@ input.
 ## Profile-photo upload contract
 
 `profile-photo.js` creates a secure opaque `source_mutation_id` for each file
-selection or drop and sends only that ID and the image in the upload body. A
-user retry of the same pending file keeps the same upload intent. Every explicit
-selection or drop creates a new intent, even when the file metadata matches a
-prior choice. If the browser cannot create a valid ID, the controller fails
-closed before it starts the upload.
+selection or drop. On Full Profile and Consult, selection prepares the upload but
+does not send it. The submit writer first saves the authored profile payload and
+then commits the pending photo with only the mutation ID and image in the upload
+body. Starter Edit Profile keeps its immediate upload behavior.
+
+A user retry of the same pending file keeps the same upload intent. The writer
+reuses the completed profile save only while the authored payload is unchanged;
+an edit after a failed photo commit requires a new profile save before the photo
+is retried. Every explicit selection or drop creates a new intent, even when the
+file metadata matches a prior choice. A returning Starter's stored photo URL stays
+in draft capture until its replacement commits. If the browser cannot create a
+valid ID, the controller fails closed before it starts the upload.
 
 `profile-image-auth-shim.js` owns authentication and resizing for this upload
 request. It rejects a missing or malformed
@@ -74,6 +81,12 @@ On the one allowed `401` retrade, it reuses the same Blob and
 exact-host gate remains authoritative for `/starter-edit-profile`: non-Live
 hosts block known mutations and preserve reads, as recorded in the
 [V3 access matrix](../ACCESS-MATRIX.md#enforcement-layers).
+
+After Xano returns both canonical image URLs, the photo commit is complete. The
+controller restores the authored draft-capture attribute and updates the hidden
+photo URL before it attempts the cosmetic Memberstack avatar sync. An avatar-sync
+failure is logged but does not fail the saved profile, show retry UI, or repeat the
+canonical upload.
 
 The GitHub assets and executable selection, drop, user-retry, auth-retrade, and
 provenance checks may be prepared before the server change. Do not create a
@@ -131,9 +144,14 @@ These live blocks stay unchanged while Elvin owns availability, booking, and pai
 
 - the shared profile/session foundation;
 - draft restore and incremental dropdown state;
-- the final Build Profile submit writer, which includes availability and paid-call fields. The separate outcome observer does not change its request or payload;
 - page validation and rate formatting that is coupled to those fields;
 - Consult and Full Profile call/retainer visibility controllers.
+
+The extracted final submit writer is now a declared behavior-change candidate. It
+keeps the existing normalized profile payload, availability fields, and paid-call
+fields, and adds only the profile-save and pending-photo commit gate described in
+[Profile-photo upload contract](#profile-photo-upload-contract). The separate
+outcome observer still does not change its request or payload.
 
 This exclusion is a release boundary, not proof that the remaining inline code is acceptable long term.
 
