@@ -1,7 +1,4 @@
 
-  var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
-  if (!profileFormControllers.buildProfileSubmitWriter) {
-  profileFormControllers.buildProfileSubmitWriter = true;
   document.addEventListener('DOMContentLoaded', function () {
     waitForMember(() => {
       if (!MEMBER.id) return;
@@ -14,7 +11,6 @@
 
       success.style.display = 'none';
       error.style.display = 'none';
-      let savedBuildResult = null;
 
       // custom form submission handler
       formSubmit.addEventListener('click', async function (e) {
@@ -168,54 +164,33 @@
           const step = formSubmit.closest('[data-form="step"]');
           setLoader(true, step);
 
-          if (!savedBuildResult) {
-            const response = await xanoAuthFetch(ENDPOINT_URL, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-            });
+          const response = await xanoAuthFetch(ENDPOINT_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
 
-            if (!response.ok) {
-              setLoader(false, step);
-              success.style.display = 'none';
-              error.style.display = 'block';
+          if (!response.ok) {
+            setLoader(false, step);
+            success.style.display = 'none';
+            error.style.display = 'block';
 
-              const errorText = await response.text();
-              throw new Error(`Xano request failed: ${response.status} ${errorText}`);
-            }
-
-            savedBuildResult = {
-              payload,
-              responseData: await response.json(),
-            };
-          }
-
-          const committedPayload = savedBuildResult.payload;
-          const photoUpload = window.StartersBuildProfilePhotoUpload;
-          if (photoUpload?.hasPendingUpload?.()) {
-            photoUpload.markProfileSaved();
-            try {
-              await photoUpload.commitPending();
-            } catch (photoError) {
-              setLoader(false, step);
-              success.style.display = 'none';
-              error.style.display = 'block';
-              throw photoError;
-            }
+            const errorText = await response.text();
+            throw new Error(`Xano request failed: ${response.status} ${errorText}`);
           }
 
           // update Member customFields, if even one of them was changed
           if (
-            MEMBER.customFields?.['free-user']?.toLowerCase().trim() !== (committedPayload['first_name'] || '').toLowerCase().trim() ||
-            MEMBER.customFields?.['last-name']?.toLowerCase().trim() !== (committedPayload['last_name'] || '').toLowerCase().trim() ||
-            MEMBER.customFields?.['phone']?.toLowerCase().trim() !== (committedPayload['phone'] || '').toLowerCase().trim()
+            MEMBER.customFields?.['free-user']?.toLowerCase().trim() !== (payload['first_name'] || '').toLowerCase().trim() ||
+            MEMBER.customFields?.['last-name']?.toLowerCase().trim() !== (payload['last_name'] || '').toLowerCase().trim() ||
+            MEMBER.customFields?.['phone']?.toLowerCase().trim() !== (payload['phone'] || '').toLowerCase().trim()
           ) {
             try {
               await window.$memberstackDom.updateMember({
                 customFields: {
-                  'free-user': committedPayload.first_name || '',
-                  'last-name': committedPayload.last_name || '',
-                  'phone': committedPayload.phone || '',
+                  'free-user': payload.first_name || '',
+                  'last-name': payload.last_name || '',
+                  'phone': payload.phone || '',
                 }
               });
             } catch (error) {
@@ -224,10 +199,10 @@
           }
 
           // update email, if it was changed
-          if (MEMBER.auth.email?.trim() !== committedPayload.email?.trim()) {
+          if (MEMBER.auth.email?.trim() !== payload.email?.trim()) {
             try {
               await window.$memberstackDom.updateMemberAuth({
-                email: committedPayload.email,
+                email: payload.email,
               });
             } catch (error) {
               console.error("Failed to update Member email:", error);
@@ -235,8 +210,8 @@
           }
 
           const successName = qs('[data-value="first-name"]', success);
-          if (successName) successName.textContent = committedPayload.first_name || '';
-
+          if (successName) successName.textContent = payload.first_name || '';
+          
           const successCTA = qs('[dashboard-button-wrap] .button', success);
           if (successCTA) {
             const redirectUrl = MEMBER.customFields?.['freelancer-dashboard-url'] || MEMBER.customFields?.['freelancer-profile-url'] || '/starter-dashboard';
@@ -248,9 +223,9 @@
           error.style.display = 'none';
           success.style.display = 'block';
 
-          console.log("payload:", committedPayload);
+          console.log("payload:", payload);
 
-          return savedBuildResult.responseData;
+          return await response.json();
         // } else {
 
         //   // update Member customFields, if even one of them was changed
@@ -272,4 +247,3 @@
       }
     });
   });
-  }

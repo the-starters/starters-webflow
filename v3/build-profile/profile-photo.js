@@ -52,7 +52,11 @@
 
       const MAX_SIZE = 4 * 1024 * 1024; // 4MB
       const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
+      const BUILD_PROFILE_PATHS = ['/build-profile/full-profile', '/build-profile/consult'];
+      const isBuildProfile = BUILD_PROFILE_PATHS.includes(String(window.location?.pathname || ''));
       let currentUploadIntent = null;
+      let buildProfileSaved = false;
+      const commitListeners = [];
 
       const XANO_BASE_URL = 'https://x08a-5ko8-jj1r.n7c.xano.io';
       const wrap = document.querySelector('#profile-photo-wrap');
@@ -64,6 +68,9 @@
       const photoUrlInput = document.querySelector('#profile-photo-url');
 
       if (!wrap || !label || !input || !preview || !previewImg || !photoUrlInput) return;
+
+      const buildPhotoApi = window.StartersBuildProfilePhotoUpload || {};
+      if (isBuildProfile) window.StartersBuildProfilePhotoUpload = buildPhotoApi;
 
       waitProfileData(() => {
         if (activeProfile['data']['step_1']['profile-photo-url'] && activeProfile['data']['step_1']['profile-photo-url'] !== '') {
@@ -105,6 +112,16 @@
 
         preview.style.display = 'none';
         wrap.style.display = 'block';
+      }
+
+      function notifyCommitted(result) {
+        commitListeners.slice().forEach((listener) => {
+          try {
+            listener(result);
+          } catch (error) {
+            console.error('Profile image completion listener failed:', error);
+          }
+        });
       }
 
       function createSourceMutationId() {
@@ -152,31 +169,33 @@
           return;
         }
 
-        setLoader(true, preview);
-
         const imageUrl = URL.createObjectURL(file);
         previewImg.src = imageUrl;
 
         wrap.style.display = 'none';
         preview.style.display = 'block';
 
-        // upload the image to Xano/Webflow and update the profile data with Webflow photo URL
         let uploadIntent;
-        let wf_photo_data;
         try {
           if (retry) {
             uploadIntent = currentUploadIntent;
           } else {
-            uploadIntent = { file, state: 'uploading' };
+            uploadIntent = { file, state: 'prepared', result: null, promise: null };
             currentUploadIntent = uploadIntent;
             uploadIntent.sourceMutationId = createSourceMutationId();
           }
-          uploadIntent.state = 'uploading';
-          currentUploadIntent = uploadIntent;
-          wf_photo_data = await uploadImage(
-            uploadIntent.file,
-            uploadIntent.sourceMutationId,
-          );
+          if (isBuildProfile && !retry) {
+            photoUrlInput.value = 'pending-profile-photo-upload';
+            photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
+            photoUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
+            setLoader(false, preview);
+            return;
+          }
+          if (isBuildProfile) {
+            await commitPreparedUpload();
+            return;
+          }
+          await applyUploadIntent(uploadIntent);
         } catch (error) {
           if (currentUploadIntent !== uploadIntent) return;
           uploadIntent.state = 'failed';
@@ -186,17 +205,29 @@
           console.error('Profile image upload failed:', error);
           return;
         }
-        if (currentUploadIntent !== uploadIntent) return;
-        uploadIntent.state = 'applying';
-        waitProfileData(async () => {
+      }
+
+      async function applyUploadIntent(uploadIntent) {
+        if (!uploadIntent || currentUploadIntent !== uploadIntent) return null;
+        if (uploadIntent.state === 'complete') return uploadIntent.result;
+        if (uploadIntent.promise) return uploadIntent.promise;
+
+        uploadIntent.state = 'uploading';
+        uploadIntent.promise = (async () => {
+          setLoader(true, preview);
+          const wf_photo_data = await uploadImage(
+            uploadIntent.file,
+            uploadIntent.sourceMutationId,
+          );
           if (currentUploadIntent !== uploadIntent) return;
+          uploadIntent.state = 'applying';
           photoUrlInput.value = wf_photo_data['starter_image'];
           photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
           photoUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
 
           setLoader(false, preview);
 
-          const fileSmaller = await urlToFile(wf_photo_data['starter_image_small'], file.name);
+          const fileSmaller = await urlToFile(wf_photo_data['starter_image_small'], uploadIntent.file.name);
           if (currentUploadIntent !== uploadIntent) return;
           const updImgInfo = await window.$memberstackDom.updateMemberProfileImage({ profileImage: fileSmaller });
           if (currentUploadIntent !== uploadIntent) return;
@@ -208,9 +239,44 @@
             qsa('[nav-profile-image]').forEach(img => {
               img.src = img.srcset = updImgInfo?.data?.profileImage || wf_photo_data['starter_image'];
             });
-            currentUploadIntent = null;
           });
-        });
+          uploadIntent.state = 'complete';
+          uploadIntent.result = wf_photo_data;
+          notifyCommitted(wf_photo_data);
+          return wf_photo_data;
+        })();
+
+        try {
+          return await uploadIntent.promise;
+        } catch (error) {
+          if (currentUploadIntent === uploadIntent) uploadIntent.state = 'failed';
+          throw error;
+        } finally {
+          uploadIntent.promise = null;
+        }
+      }
+
+      async function commitPreparedUpload() {
+        if (!isBuildProfile || !currentUploadIntent) return null;
+        if (!buildProfileSaved) throw new Error('Save the profile before uploading its photo');
+        try {
+          return await applyUploadIntent(currentUploadIntent);
+        } catch (error) {
+          setLoader(false, preview);
+          wrap.style.display = 'block';
+          showError('Image upload failed. Click here to try again.');
+          console.error('Profile image upload failed:', error);
+          throw error;
+        }
+      }
+
+      if (isBuildProfile) {
+        buildPhotoApi.hasPendingUpload = () => !!currentUploadIntent && currentUploadIntent.state !== 'complete';
+        buildPhotoApi.markProfileSaved = () => { buildProfileSaved = true; };
+        buildPhotoApi.commitPending = commitPreparedUpload;
+        buildPhotoApi.addCommitListener = (listener) => {
+          if (typeof listener === 'function' && !commitListeners.includes(listener)) commitListeners.push(listener);
+        };
       }
 
       async function urlToFile(url, fileName = 'profile-photo.jpg') {

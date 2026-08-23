@@ -55,7 +55,7 @@ function element() {
   };
 }
 
-function createHarness({ cryptoApi, uploadResponder } = {}) {
+function createHarness({ cryptoApi, uploadResponder, pathname = '/build-profile/full-profile' } = {}) {
   const label = element();
   const wrap = element();
   const uploadError = element();
@@ -155,7 +155,7 @@ function createHarness({ cryptoApi, uploadResponder } = {}) {
       : cryptoApi,
     location: {
       hostname: 'thestarters.com',
-      pathname: '/build-profile/full-profile',
+      pathname,
       origin: 'https://thestarters.com',
     },
     localStorage: { setItem() {}, removeItem() {} },
@@ -228,6 +228,7 @@ function createHarness({ cryptoApi, uploadResponder } = {}) {
     uploadError,
     uploads,
     wrap,
+    window,
     resizeCount: () => resizeCount,
     TestEvent,
   };
@@ -242,9 +243,11 @@ async function run() {
   const {
     input,
     label,
+    photoUrlInput,
     uploadError,
     uploads,
     wrap,
+    window,
     resizeCount,
     TestEvent,
   } = createHarness();
@@ -258,8 +261,14 @@ async function run() {
   input.files = [firstFile];
   input.dispatchEvent(new TestEvent('change'));
   await settle();
+  assert.equal(uploads.length, 0);
+  assert.equal(photoUrlInput.value, 'pending-profile-photo-upload');
+  await assert.rejects(window.StartersBuildProfilePhotoUpload.commitPending(), /Save the profile/);
+  assert.equal(uploads.length, 0);
+
+  window.StartersBuildProfilePhotoUpload.markProfileSaved();
+  await assert.rejects(window.StartersBuildProfilePhotoUpload.commitPending(), /Image upload response is incomplete/);
   assert.equal(uploads.length, 1);
-  assert.equal(wrap.style.display, 'block');
   assert.equal(uploadError.style.display, 'block');
   assert.equal(uploadError.textContent, 'Image upload failed. Click here to try again.');
 
@@ -283,6 +292,8 @@ async function run() {
   input.files = [replacementWithSameMetadata];
   input.dispatchEvent(new TestEvent('change'));
   await settle();
+  assert.equal(uploads.length, 2);
+  await window.StartersBuildProfilePhotoUpload.commitPending();
   assert.equal(uploads.length, 3);
   assert.notEqual(uploads[2].sourceMutationId, uploads[1].sourceMutationId);
   assert.equal(resizeCount(), 2);
@@ -293,6 +304,8 @@ async function run() {
   input.files = [secondFile];
   input.dispatchEvent(new TestEvent('change'));
   await settle();
+  assert.equal(uploads.length, 3);
+  await window.StartersBuildProfilePhotoUpload.commitPending();
   assert.equal(uploads.length, 4);
   assert.notEqual(uploads[3].sourceMutationId, uploads[2].sourceMutationId);
 
@@ -302,6 +315,8 @@ async function run() {
     dataTransfer: { files: [droppedFile] },
   });
   await settle();
+  assert.equal(uploads.length, 4);
+  await window.StartersBuildProfilePhotoUpload.commitPending();
   assert.equal(uploads.length, 5);
   assert.notEqual(uploads[4].sourceMutationId, uploads[3].sourceMutationId);
   assert.equal(uploads.every((upload) => upload.image && upload.memberId === null), true);
@@ -337,34 +352,48 @@ async function run() {
   });
 
   await select('first.jpg');
+  overlapping.window.StartersBuildProfilePhotoUpload.markProfileSaved();
+  const firstCommit = overlapping.window.StartersBuildProfilePhotoUpload.commitPending();
   await select('second.jpg');
-  pendingResponses[0](response('not-json'));
-  await settle();
-  assert.equal(overlapping.uploadError.style.display, 'none');
-  assert.equal(overlapping.wrap.style.display, 'none');
-
-  await select('third.jpg');
-  pendingResponses[1](response(JSON.stringify({
+  const secondCommit = overlapping.window.StartersBuildProfilePhotoUpload.commitPending();
+  pendingResponses[0](response(JSON.stringify({
     starter_image: 'https://example.invalid/stale.jpg',
     starter_image_small: 'https://example.invalid/stale-small.jpg',
   })));
+  await firstCommit;
   await settle();
-  assert.equal(overlapping.photoUrlInput.value, '');
-
-  pendingResponses[2](response(JSON.stringify({
+  assert.equal(overlapping.uploadError.style.display, 'none');
+  assert.equal(overlapping.wrap.style.display, 'none');
+  pendingResponses[1](response(JSON.stringify({
     starter_image: 'https://example.invalid/current.jpg',
     starter_image_small: 'https://example.invalid/current-small.jpg',
   })));
+  await secondCommit;
   await settle();
   assert.equal(
     overlapping.photoUrlInput.value,
     'https://example.invalid/current.jpg',
   );
+
+  const editProfile = createHarness({
+    pathname: '/starter-edit-profile',
+    uploadResponder() {
+      return response(JSON.stringify({
+        starter_image: 'https://example.invalid/edit-photo.jpg',
+        starter_image_small: 'https://example.invalid/edit-photo-small.jpg',
+      }));
+    },
+  });
+  editProfile.input.files = [{ name: 'edit.jpg', type: 'image/jpeg', size: 100 }];
+  editProfile.input.dispatchEvent(new editProfile.TestEvent('change'));
+  await settle();
+  assert.equal(editProfile.uploads.length, 1);
+  assert.equal(editProfile.photoUrlInput.value, 'https://example.invalid/edit-photo.jpg');
 }
 
 run()
   .then(() => console.log(
-    'Browser interaction trace: selection showed retry UI after blank success JSON; click retry reused the intent and cached resize; picker reopen with identical metadata, a new selection, and a drop each created a new opaque intent; stale uploads could not overwrite the current photo.',
+    'Browser interaction trace: Build selection stayed local until the profile save gate; the first upload failure kept one opaque intent for retry; replacements and drops created new intents only when committed; stale overlapping uploads could not overwrite the current photo.',
   ))
   .catch((error) => {
     console.error(error);
