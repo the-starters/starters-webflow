@@ -339,6 +339,41 @@ async function run() {
   assert.notEqual(uploads[4].sourceMutationId, uploads[3].sourceMutationId);
   assert.equal(uploads.every((upload) => upload.image && upload.memberId === null), true);
 
+  const unsupportedFormat = createHarness();
+  unsupportedFormat.input.files = [{ name: 'photo.avif', type: 'image/avif', size: 100 }];
+  unsupportedFormat.input.dispatchEvent(new unsupportedFormat.TestEvent('change'));
+  await settle();
+  assert.equal(unsupportedFormat.uploads.length, 0);
+  assert.equal(unsupportedFormat.uploadError.style.display, 'block');
+  assert.equal(
+    unsupportedFormat.uploadError.textContent,
+    'Please upload a JPG, PNG, or WebP image.',
+  );
+
+  const fourMegabyteBoundary = createHarness();
+  fourMegabyteBoundary.input.files = [{
+    name: 'photo.png',
+    type: 'image/png',
+    size: 4 * 1024 * 1024,
+  }];
+  fourMegabyteBoundary.input.dispatchEvent(new fourMegabyteBoundary.TestEvent('change'));
+  await settle();
+  assert.equal(fourMegabyteBoundary.uploads.length, 0);
+  assert.equal(fourMegabyteBoundary.photoUrlInput.value, 'pending-profile-photo-upload');
+  assert.equal(fourMegabyteBoundary.uploadError.style.display, 'none');
+
+  const oversized = createHarness();
+  oversized.input.files = [{
+    name: 'photo.png',
+    type: 'image/png',
+    size: (4 * 1024 * 1024) + 1,
+  }];
+  oversized.input.dispatchEvent(new oversized.TestEvent('change'));
+  await settle();
+  assert.equal(oversized.uploads.length, 0);
+  assert.equal(oversized.uploadError.style.display, 'block');
+  assert.equal(oversized.uploadError.textContent, 'Image is too large. Max size is 4MB.');
+
   const unavailable = createHarness({ cryptoApi: {} });
   unavailable.input.value = '/fake/unavailable.jpg';
   unavailable.input.files = [firstFile];

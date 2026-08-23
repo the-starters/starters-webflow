@@ -156,10 +156,10 @@
         }
         if (!file) return;
 
-        const allowedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/avif', 'image/bmp'];
+        const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
 
         if (!allowedTypes.includes(file.type)) {
-          showError('Please upload a valid image. GIF images are not supported.');
+          showError('Please upload a JPG, PNG, or WebP image.');
           return;
         }
 
