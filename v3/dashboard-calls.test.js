@@ -585,6 +585,7 @@ test('GitHub expiration owner polls one expired request at a bounded interval', 
       return [accept]
     },
   }
+  const cards = [card]
   const refs = [{
     rows: [{
       booking_id: 'booking-expired',
@@ -594,7 +595,7 @@ test('GitHub expiration owner polls one expired request at a bounded interval', 
     }],
     list: {
       querySelectorAll() {
-        return [card]
+        return cards
       },
     },
   }]
@@ -625,31 +626,136 @@ test('GitHub expiration owner polls one expired request at a bounded interval', 
   await new Promise(setImmediate)
   assert.equal(restarts, 1)
 
-  nowValue.value += 10_000
+  // The same expired request stops earning canonical reads once its bounded
+  // budget is spent, even while it stays rendered and past its deadline.
+  for (let elapsed = 0; elapsed < 10; elapsed += 1) {
+    nowValue.value += 30_000
+    tick()
+    await new Promise(setImmediate)
+  }
+  assert.equal(restarts, 3)
+
+  // A different request crossing its own deadline is still polled.
+  refs[0].rows.push({
+    booking_id: 'booking-expired-later',
+    status: 'pending',
+    start: nowValue.value + 60_000,
+    confirmation_expires_at: nowValue.value - 1,
+  })
+  cards.push({
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-expired-later' : null
+    },
+    querySelector: () => element(),
+    querySelectorAll: () => [],
+  })
+  nowValue.value += 30_000
   tick()
   await new Promise(setImmediate)
-  assert.equal(restarts, 2)
+  assert.equal(restarts, 4)
+
+  nowValue.value += 30_000
+  tick()
+  await new Promise(setImmediate)
+  assert.equal(restarts, 5)
 
   stop()
   assert.equal(cleared, true)
 })
 
-test('a dormant legacy helper does not suppress the active GitHub expiration owner', () => {
-  const originalLegacyHelper = global.refreshRequestsExpiration
-  let timers = 0
+test('the expiration owner arms exactly one timer, and none for Brands', () => {
+  const expiredRow = (id) => ({
+    booking_id: id,
+    status: 'pending',
+    start: 2_000_000_000_000 + 60_000,
+    confirmation_expires_at: 1,
+  })
+  const expiredCard = (id) => ({
+    getAttribute: (name) => (name === 'data-booking-id' ? id : null),
+    querySelector: () => element(),
+    querySelectorAll: () => [],
+  })
+  const refs = [
+    {
+      rows: [expiredRow('a'), expiredRow('b')],
+      list: { querySelectorAll: () => [expiredCard('a'), expiredCard('b')] },
+    },
+    {
+      rows: [expiredRow('c')],
+      list: { querySelectorAll: () => [expiredCard('c')] },
+    },
+  ]
+
+  let starterTimers = 0
+  const stop = api.startRequestExpirationTicker(refs, 'starter', () => {}, {
+    now: () => 2_000_000_000_000,
+    setInterval() {
+      starterTimers += 1
+      return 1
+    },
+    clearInterval() {},
+  })
+  assert.equal(typeof stop, 'function')
+  assert.equal(starterTimers, 1)
+
+  let brandTimers = 0
+  assert.equal(api.startRequestExpirationTicker(refs, 'brand', () => {}, {
+    now: () => 2_000_000_000_000,
+    setInterval() {
+      brandTimers += 1
+      return 1
+    },
+    clearInterval() {},
+  }), null)
+  assert.equal(brandTimers, 0)
+})
+
+test('an open detail modal hides Accept once the request passes its deadline', () => {
+  const originalDocument = global.document
+  const now = 2_000_000_000_000
+  const booking = {
+    booking_id: 'booking-open',
+    status: 'pending',
+    start: now + 2 * 60 * 60 * 1000,
+    confirmation_expires_at: now + 60 * 60 * 1000,
+  }
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const close = element({ 'booking-action-btn': 'switch-close' })
+  const pendingInfo = element({ 'pending-info-text': '' })
+  const modal = {
+    attributes: { 'data-booking-id': 'booking-open' },
+    getAttribute(name) {
+      return this.attributes[name] || null
+    },
+    querySelector() {
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector === '[pending-info-text]') return [pendingInfo]
+      return [accept, close]
+    },
+  }
+  const refs = [{ rows: [booking], list: { querySelectorAll: () => [] } }]
   try {
-    global.refreshRequestsExpiration = () => {}
-    const stop = api.startRequestExpirationTicker([], 'starter', () => {}, {
-      setInterval() {
-        timers += 1
-        return 1
-      },
-      clearInterval() {},
-    })
-    assert.equal(typeof stop, 'function')
-    assert.equal(timers, 1)
+    global.document = { querySelector: () => modal }
+
+    assert.equal(api.refreshDetailExpiration(refs, 'starter', now), true)
+    assert.equal(accept.hidden, false)
+    assert.equal(close.hidden, false)
+    assert.equal(pendingInfo.hidden, false)
+
+    assert.equal(
+      api.refreshDetailExpiration(refs, 'starter', now + 60 * 60 * 1000),
+      true,
+    )
+    assert.equal(accept.hidden, true)
+    assert.equal(close.hidden, false)
+    assert.equal(pendingInfo.hidden, true)
+
+    modal.attributes = {}
+    assert.equal(api.refreshDetailExpiration(refs, 'starter', now), false)
   } finally {
-    global.refreshRequestsExpiration = originalLegacyHelper
+    global.document = originalDocument
   }
 })
 
@@ -696,12 +802,19 @@ test('expiration polling recovers from thrown and rejected refreshes and keeps r
     await new Promise(setImmediate)
     assert.equal(restarts, 1)
 
-    nowValue.value += 10_000
+    nowValue.value += 30_000
     tick()
     await new Promise(setImmediate)
     assert.equal(restarts, 2)
 
-    nowValue.value += 10_000
+    nowValue.value += 30_000
+    tick()
+    await new Promise(setImmediate)
+    assert.equal(restarts, 3)
+
+    // The retry budget is spent: a transient failure never becomes an
+    // open-ended poll against the canonical endpoint.
+    nowValue.value += 30_000
     tick()
     await new Promise(setImmediate)
     assert.equal(restarts, 3)
@@ -741,13 +854,15 @@ test('expiration polling does not overlap an in-flight canonical refresh', async
     clearInterval() {},
   })
   await new Promise(setImmediate)
-  nowValue.value += 10_000
+  // Far enough past the throttle that only the in-flight guard can hold the
+  // second read back.
+  nowValue.value += 30_000
   tick()
   assert.equal(restarts, 1)
 
   pending.resolve()
   await new Promise(setImmediate)
-  nowValue.value += 10_000
+  nowValue.value += 30_000
   tick()
   await new Promise(setImmediate)
   assert.equal(restarts, 2)
@@ -859,6 +974,131 @@ test('background expiration refresh preserves the rendered request after a trans
     global.location = originalLocation
     global.xanoAuthFetch = originalFetch
     console.error = originalError
+  }
+})
+
+test('a background expiration refresh keeps every Load More page rendered', async () => {
+  const originalDocument = global.document
+  const originalLocation = global.location
+  const originalFetch = global.xanoAuthFetch
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const appended = []
+  const list = element()
+  list.appendChild = (child) => {
+    appended.push(child)
+  }
+  const canonicalRows = (context) => Array.from({ length: 14 }, (_unused, index) => ({
+    booking_id: 'booking-' + index,
+    status: 'confirmed',
+    start: 3_000_000_000_000,
+    call_context: index === 0 ? context : 'Call ' + index,
+    starter_data: { memberstack_id: 'starter-1' },
+  }))
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: canonicalRows('before').map(api.normalizeBooking),
+    // The reader clicked Load More twice: 14 rows, 12 of them on screen.
+    rendered: 12,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    global.location = { pathname: '/starter-dashboard' }
+    global.xanoAuthFetch = async () => ({
+      ok: true,
+      json: async () => canonicalRows('after'),
+    })
+
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'starter-1' }) },
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), true)
+
+    assert.equal(refs.rows.length, 14)
+    assert.equal(refs.rows[0].call_context, 'after')
+    assert.equal(refs.rendered, 12)
+    assert.equal(appended.length, 12)
+    assert.equal(refs.loadMore.hidden, false)
+  } finally {
+    global.document = originalDocument
+    global.location = originalLocation
+    global.xanoAuthFetch = originalFetch
+  }
+})
+
+test('a background refresh that shrinks the list stops at the available rows', async () => {
+  const originalDocument = global.document
+  const originalLocation = global.location
+  const originalFetch = global.xanoAuthFetch
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const appended = []
+  const list = element()
+  list.appendChild = (child) => {
+    appended.push(child)
+  }
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: Array.from({ length: 14 }, (_unused, index) => api.normalizeBooking({
+      booking_id: 'booking-' + index,
+      status: 'confirmed',
+      start: 3_000_000_000_000,
+      starter_data: { memberstack_id: 'starter-1' },
+    })),
+    rendered: 12,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    global.location = { pathname: '/starter-dashboard' }
+    global.xanoAuthFetch = async () => ({
+      ok: true,
+      json: async () => [{
+        booking_id: 'booking-0',
+        status: 'confirmed',
+        start: 3_000_000_000_000,
+        starter_data: { memberstack_id: 'starter-1' },
+      }],
+    })
+
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'starter-1' }) },
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), true)
+
+    assert.equal(refs.rows.length, 1)
+    assert.equal(refs.rendered, 1)
+    assert.equal(appended.length, 1)
+    assert.equal(refs.loadMore.hidden, true)
+  } finally {
+    global.document = originalDocument
+    global.location = originalLocation
+    global.xanoAuthFetch = originalFetch
   }
 })
 

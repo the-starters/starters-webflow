@@ -17,7 +17,8 @@
   const CONFIRM_ATTEMPT_STORAGE_PREFIX = 'starters:dashboard-confirm:v1:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const REQUEST_EXPIRATION_TICK_MS = 10000
-  const REQUEST_EXPIRATION_POLL_MS = 10000
+  const REQUEST_EXPIRATION_POLL_MS = 30000
+  const REQUEST_EXPIRATION_MAX_POLLS = 3
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
   const PAGE_SIZE = 6
@@ -37,6 +38,8 @@
     '[popup-stripe-card-open]',
     '[pm-use-this]',
   ].join(', ')
+  const DETAIL_MODAL_SELECTOR =
+    '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
   const DASHBOARD_ROLES = {
     '/starter-dashboard': 'starter',
     '/starter-dashboard---availability-stage': 'starter',
@@ -390,12 +393,21 @@
     return parts.length ? parts.join(' ') : '0m'
   }
 
+  function requestExpirationOwned(booking, role, now) {
+    if (role !== 'starter' || bookingStatus(booking, now) !== 'pending') return false
+    return Number.isFinite(responseDeadline(booking))
+  }
+
+  function requestExpirationKey(booking) {
+    return clean(booking && (booking.booking_id || booking.id)) +
+      '@' + responseDeadline(booking)
+  }
+
   function paintRequestExpiration(card, booking, role, now) {
     const wrap = card && card.querySelector('[booking-item-expiration="wrap"]')
     const output = card && card.querySelector('[booking-item-expiration="time"]')
-    const pending = role === 'starter' && bookingStatus(booking, now) === 'pending'
     const deadline = responseDeadline(booking)
-    const visible = pending && Number.isFinite(deadline)
+    const visible = requestExpirationOwned(booking, role, now)
     show(wrap, visible)
     if (!visible) return false
     const currentTime = Number(now == null ? Date.now() : now)
@@ -407,7 +419,7 @@
   }
 
   function refreshRequestExpirations(refs, role, now) {
-    let expired = false
+    const expired = []
     ;(Array.isArray(refs) ? refs : []).forEach(function (section) {
       if (!section || !section.list || typeof section.list.querySelectorAll !== 'function') return
       const bookings = new Map()
@@ -416,10 +428,31 @@
       })
       section.list.querySelectorAll('[data-booking-id]').forEach(function (card) {
         const booking = bookings.get(clean(card.getAttribute('data-booking-id')))
-        if (booking && paintRequestExpiration(card, booking, role, now)) expired = true
+        if (booking && paintRequestExpiration(card, booking, role, now)) {
+          expired.push(requestExpirationKey(booking))
+        }
       })
     })
     return expired
+  }
+
+  function refreshDetailExpiration(refs, role, now) {
+    if (!global.document || typeof global.document.querySelector !== 'function') return false
+    const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
+    if (!modal || typeof modal.getAttribute !== 'function') return false
+    if (!clean(modal.getAttribute('data-booking-id'))) return false
+    const booking = bookingFromCard(Array.isArray(refs) ? refs : [], modal)
+    if (!booking) return false
+    const status = bookingStatus(booking, now)
+    const base = modal.querySelector('[booking-popup-content="base"]') || modal
+    const pendingMessages = Array.prototype.slice.call(
+      base.querySelectorAll ? base.querySelectorAll('[pending-info-text]') : [],
+    )
+    pendingMessages.forEach(function (message, index) {
+      show(message, index === 0 && status === 'pending' && responseWindowOpen(booking, now))
+    })
+    configureDetailActions(modal, role, status, booking, now)
+    return true
   }
 
   function startRequestExpirationTicker(refs, role, restart, options) {
@@ -434,12 +467,20 @@
     if (typeof setTimer !== 'function' || typeof clearTimer !== 'function') return null
     let refreshBusy = false
     let nextPollAt = 0
+    const polls = new Map()
     const tick = function () {
       const currentTime = Number(now())
-      const hasExpiredRequest = refreshRequestExpirations(refs, role, currentTime)
-      if (!hasExpiredRequest || refreshBusy || currentTime < nextPollAt) return
+      const expiredKeys = refreshRequestExpirations(refs, role, currentTime)
+      refreshDetailExpiration(refs, role, currentTime)
+      const pollable = expiredKeys.filter(function (key) {
+        return (polls.get(key) || 0) < REQUEST_EXPIRATION_MAX_POLLS
+      })
+      if (!pollable.length || refreshBusy || currentTime < nextPollAt) return
       refreshBusy = true
       nextPollAt = currentTime + REQUEST_EXPIRATION_POLL_MS
+      pollable.forEach(function (key) {
+        polls.set(key, (polls.get(key) || 0) + 1)
+      })
       Promise.resolve()
         .then(restart)
         .catch(function (error) {
@@ -527,7 +568,8 @@
   }
 
   function bindCard(card, booking, role) {
-    const status = bookingStatus(booking)
+    const now = Date.now()
+    const status = bookingStatus(booking, now)
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
     const own = role === 'starter' ? booking.starter_data : booking.brand_data
     card.removeAttribute('bookings-item-template')
@@ -562,8 +604,10 @@
     text(brandStatus, '[label-text]', status === 'pending' ? 'Awaiting confirmation' : '')
     show(brandStatus, status === 'pending' && role === 'brand')
 
-    configureActionButtons(card, role, status, booking)
-    paintRequestExpiration(card, booking, role)
+    if (!requestExpirationOwned(booking, role, now)) {
+      configureActionButtons(card, role, status, booking, now)
+    }
+    paintRequestExpiration(card, booking, role, now)
 
     return card
   }
@@ -821,9 +865,7 @@
 
   function resetDetailModal() {
     if (!global.document || typeof global.document.querySelector !== 'function') return
-    const modal = global.document.querySelector(
-      '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
-    )
+    const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
     if (!modal) return
     if (typeof modal.close === 'function') {
       try {
@@ -870,9 +912,7 @@
       if (!details) return
       const card = details.closest && details.closest('[data-booking-id]')
       const booking = bookingFromCard(refs, card)
-      const modal = global.document.querySelector(
-        '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
-      )
+      const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
       if (!booking || !modal || !populateDetailModal(modal, booking, role)) {
         if (event.preventDefault) event.preventDefault()
         if (event.stopImmediatePropagation) event.stopImmediatePropagation()
@@ -1344,8 +1384,14 @@
       refs.forEach(function (section) {
         const nextRows = sectionBookings(rows, role, section.name)
         if (preserveExisting && sameBookingRows(section.rows, nextRows)) return
+        const previousRendered = preserveExisting ? section.rendered : 0
         section.rows = nextRows
         renderSection(section, role, true)
+        while (section.rendered < previousRendered) {
+          const rendered = section.rendered
+          renderSection(section, role, false)
+          if (section.rendered === rendered) break
+        }
       })
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
       return true
@@ -1441,6 +1487,7 @@
     formatResponseTime,
     paintRequestExpiration,
     refreshRequestExpirations,
+    refreshDetailExpiration,
     startRequestExpirationTicker,
     refreshSession,
     canConfirmBooking,
