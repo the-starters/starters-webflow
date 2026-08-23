@@ -52,12 +52,15 @@
     return ownership
   }
 
+  function isStagingHost() {
+    return String((global.location && global.location.hostname) || '')
+      .trim()
+      .toLowerCase() === STAGING_HOST
+  }
+
   function minimumBookingNoticeMinutes() {
     if (isCommonJs) return PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
-    const hostname = String(
-      (global.location && global.location.hostname) || '',
-    ).trim().toLowerCase()
-    return hostname === STAGING_HOST
+    return isStagingHost()
       ? STAGING_MIN_BOOKING_NOTICE_MINUTES
       : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
   }

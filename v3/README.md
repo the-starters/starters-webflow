@@ -2465,7 +2465,12 @@ Minimum booking notice: the exact TEST/staging host
 configurations and browser availability query floors. Production, unknown
 hosts, and CommonJS contexts fail closed to 1,440 minutes (24 hours). An
 availability-only configuration update never sends `in_scheduler`, so it does
-not change the existing provider booking policy.
+not change the existing provider booking policy. The Paid configuration is
+created server-side through `/starter/paid-call-settings/upsert/v3`, which the
+browser calls with product intent only, so that record's provider-side
+`min_booking_notice` is owned by Xano: the staging five-minute value narrows
+only the browser's own query and admission window, and a paid staging booking
+is still gated by whatever notice Xano stamped on that configuration.
 
 Runtime contract:
 
@@ -2553,14 +2558,23 @@ and Paid service returned for the starter's grant. Free shows its duration and
 service fetches that configuration's next upcoming Nylas scheduler slots
 (`scheduler/get_availability/v3`, GET) and renders the available dates and
 times, replacing its loader. Only a record that declares what the card states
-enters the preview: an explicit `is_paid` boolean, a whole-minute duration,
-and the host's own `data_environment` when the record carries one; Paid
-additionally requires the canonical 60-minute duration, `active: true`, a
-price of at least $1, a declared currency of USD, the host's own
-`payment_environment` when declared, and no declared non-ready provider sync
-state. A malformed, failed-sync, sub-$1, legacy-duration, or
-other-environment Paid service stays out of the preview. The single-slot
-version of this query used by the Bookings pages
+enters the preview: an explicit `is_paid` boolean and the host's own
+`data_environment` when the record carries one; Paid additionally requires the
+canonical 60-minute duration, `active: true`, a price of at least $1, a
+declared currency of USD, the host's own `payment_environment` when declared,
+and no declared non-ready provider sync state. Environment stamps and the
+provider sync state are compared case-insensitively and trimmed, so a
+`Production`/`LIVE`-cased record is not silently dropped. Free carries no
+provider-side duration guarantee, so a Free record without a whole-minute
+duration still renders at the canonical 30 minutes this module creates; a
+malformed, failed-sync, sub-$1, legacy-duration, or other-environment Paid
+service stays out of the preview. The card partitions its services
+explicitly — Free first, then Paid, each tie-broken by `config_id` — because
+Xano returns configurations in table order, so both the rendered order and
+the default selection stay deterministic. The Free admission rule is the same
+predicate that decides whether a free configuration still needs creating, so
+the preview can never be empty for a record the create path already counts as
+canonical. The single-slot version of this query used by the Bookings pages
 (`getNextAvailableTimeSlot`/`getNearestSlot` in the **separate**, non-repo
 `book-func-lib-2.html` Webflow embed) was refactored alongside this to expose
 the full sorted slot list via a new `getUpcomingTimeSlots`, so both stay in

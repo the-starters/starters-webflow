@@ -165,10 +165,13 @@
     return String(value == null ? '' : value).trim()
   }
 
+  function isStagingHost() {
+    return clean(global.location && global.location.hostname).toLowerCase() === STAGING_HOST
+  }
+
   function minimumBookingNoticeMinutes() {
     if (isCommonJs) return PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
-    const hostname = clean(global.location && global.location.hostname).toLowerCase()
-    return hostname === STAGING_HOST
+    return isStagingHost()
       ? STAGING_MIN_BOOKING_NOTICE_MINUTES
       : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
   }
@@ -451,7 +454,7 @@
         rescheduled_reason: { value: ' ', type: 'text' },
         unique_id: { value: global.crypto.randomUUID(), type: 'text' },
         from_stage: {
-          value: String(global.location.hostname === 'the-starters-3-0.webflow.io'),
+          value: String(isStagingHost()),
           type: 'text',
         },
       },

@@ -56,6 +56,7 @@
   // Canonical Paid Call duration, owned by paid-call-settings.js
   // (FIXED_DURATION_MINUTES) and PAID-CALL-SETTINGS-WIRING.md.
   const PAID_DURATION_MINUTES = 60
+  const FREE_DURATION_MINUTES = 30
   const SYNC_READY_STATES = ['ready', 'ok', 'synced', 'active', 'complete', 'completed', 'true']
 
   // Shared "Availability - Notifications" modal (`[data-modal-target=
@@ -79,12 +80,19 @@
     PRE_OAUTH_GOOGLE_COPY + ' Your availability settings have been saved.'
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
-  const isStagingHost = window.location.hostname === STAGING_HOST
+  const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
+  const isStagingHost = activeHostname === STAGING_HOST
   const isApprovedProductionPath =
-    PRODUCTION_HOSTS.has(window.location.hostname) && activePath === PRODUCTION_PATH
+    PRODUCTION_HOSTS.has(activeHostname) && activePath === PRODUCTION_PATH
   if (!isStagingHost && !isApprovedProductionPath) return
   if (window.__tsSchedulingAvailabilitySection) return
   window.__tsSchedulingAvailabilitySection = true
+
+  function minimumBookingNoticeMinutes() {
+    return isStagingHost
+      ? STAGING_MIN_BOOKING_NOTICE_MINUTES
+      : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+  }
 
   let sessionMemberId = null
   let memberFields = {}
@@ -96,13 +104,6 @@
   let timezone = null
   let timezonePersisted = false
   let connectionError = false
-
-  function minimumBookingNoticeMinutes() {
-    const hostname = String(window.location.hostname || '').trim().toLowerCase()
-    return hostname === STAGING_HOST
-      ? STAGING_MIN_BOOKING_NOTICE_MINUTES
-      : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
-  }
   let connectBusy = false
   let cachedItemTemplate = null
   let creatingDraft = false
@@ -894,7 +895,7 @@
     await ensureTimezone()
     const openHours = getAvailArray()
     const price = '0'
-    const duration = 30
+    const duration = FREE_DURATION_MINUTES
     const interval = 15
     const buffer = 10
 
@@ -2254,15 +2255,36 @@
     ].join('-')
   }
 
+  function configStamp(value) {
+    return String(value == null ? '' : value).trim().toLowerCase()
+  }
+
+  function configEnvironmentMatches(config) {
+    const dataEnvironment = configStamp(config.data_environment)
+    if (dataEnvironment && dataEnvironment !== (isStagingHost ? 'test' : 'production')) {
+      return false
+    }
+    if (config.is_paid !== true) return true
+    const paymentEnvironment = configStamp(config.payment_environment)
+    return !(paymentEnvironment && paymentEnvironment !== (isStagingHost ? 'test' : 'live'))
+  }
+
+  // Single canonical Free predicate: the same record set decides whether a
+  // free configuration still needs creating and whether the preview can
+  // render one, so the preview can never reach a state the create path
+  // considers already satisfied.
+  function isCanonicalFreeConfig(config) {
+    return Boolean(
+      config &&
+        config.config_id &&
+        config.is_paid === false &&
+        config.active !== false &&
+        configEnvironmentMatches(config),
+    )
+  }
+
   function activeFreeConfigs() {
-    return configs.filter(function (config) {
-      return Boolean(
-        config &&
-          config.config_id &&
-          config.is_paid === false &&
-          config.active !== false,
-      )
-    })
+    return configs.filter(isCanonicalFreeConfig)
   }
 
   function previewDuration(config) {
@@ -2270,41 +2292,45 @@
     return Number.isInteger(duration) && duration > 0 ? duration : null
   }
 
-  function previewEnvironmentMatches(config) {
-    const expectedDataEnvironment = isStagingHost ? 'test' : 'production'
-    const expectedPaymentEnvironment = isStagingHost ? 'test' : 'live'
-    if (config.data_environment && config.data_environment !== expectedDataEnvironment) {
-      return false
-    }
-    return !(
-      config.is_paid === true &&
-      config.payment_environment &&
-      config.payment_environment !== expectedPaymentEnvironment
-    )
+  // Free records carry no provider-side duration guarantee, so fall back to
+  // the canonical Free duration this module itself creates rather than
+  // dropping the service from the card.
+  function previewDurationLabel(config) {
+    const duration = previewDuration(config)
+    return duration === null ? FREE_DURATION_MINUTES : duration
   }
 
   function previewSyncReady(config) {
     const state = config.sync_status
     if (state === undefined || state === null || state === '') return true
     if (typeof state === 'boolean') return state
-    return SYNC_READY_STATES.indexOf(String(state).trim().toLowerCase()) !== -1
+    return SYNC_READY_STATES.indexOf(configStamp(state)) !== -1
   }
 
+  function isCanonicalPaidConfig(config) {
+    if (!config || !config.config_id || config.is_paid !== true) return false
+    if (config.active !== true) return false
+    if (!configEnvironmentMatches(config)) return false
+    if (previewDuration(config) !== PAID_DURATION_MINUTES) return false
+    if (config.currency && String(config.currency).toUpperCase() !== 'USD') return false
+    return Boolean(
+      Number.isInteger(Number(config.price_cents)) &&
+        Number(config.price_cents) >= 100 &&
+        previewSyncReady(config),
+    )
+  }
+
+  function byPreviewConfigId(a, b) {
+    return String(a.config_id).localeCompare(String(b.config_id))
+  }
+
+  // Xano returns configurations in table order, so partition explicitly:
+  // Free first, then Paid, each tie-broken by config_id. This keeps both the
+  // rendered order and the default selection deterministic.
   function activePreviewConfigs() {
-    return configs.filter(function (config) {
-      if (!config || !config.config_id || config.active === false) return false
-      if (previewDuration(config) === null) return false
-      if (!previewEnvironmentMatches(config)) return false
-      if (config.is_paid === false) return true
-      if (config.is_paid !== true || config.active !== true) return false
-      if (previewDuration(config) !== PAID_DURATION_MINUTES) return false
-      if (config.currency && String(config.currency).toUpperCase() !== 'USD') return false
-      return Boolean(
-        Number.isInteger(Number(config.price_cents)) &&
-          Number(config.price_cents) >= 100 &&
-          previewSyncReady(config),
-      )
-    })
+    const free = configs.filter(isCanonicalFreeConfig).sort(byPreviewConfigId)
+    const paid = configs.filter(isCanonicalPaidConfig).sort(byPreviewConfigId)
+    return free.concat(paid)
   }
 
   function formatPreviewPrice(priceCents) {
@@ -2358,7 +2384,7 @@
         config.title ||
         (config.is_paid === true ? 'Paid Consultation Call' : 'Free Consultation Call')
       const previewDetail =
-        String(previewDuration(config)) +
+        String(previewDurationLabel(config)) +
         ' minutes · ' +
         (config.is_paid === true ? formatPreviewPrice(config.price_cents) : 'Free')
       const button = applyStyles(document.createElement('button'), {

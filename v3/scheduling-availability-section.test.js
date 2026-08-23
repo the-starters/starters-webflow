@@ -2019,6 +2019,253 @@ test('calendar-preview shows free and paid services together', async () => {
   assert.equal(services.children[1].children[1].textContent, '60 minutes · $150.00')
 })
 
+test('calendar-preview keeps Free before Paid when Xano returns the paid record first', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-paid',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          price_cents: 15000,
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+        {
+          config_id: 'cfg-free',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  const services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.deepEqual(
+    services.children.map((child) => child.getAttribute('data-preview-config-id')),
+    ['cfg-free', 'cfg-paid'],
+  )
+  assert.equal(services.children[0].getAttribute('aria-pressed'), 'true')
+  assert.equal(services.children[1].getAttribute('aria-pressed'), 'false')
+  const availability = calls.filter((call) => call.path === '/scheduler/get_availability/v3')
+  assert.equal(availability.length, 1)
+  assert.equal(availability[0].query.configuration_id, 'cfg-free')
+})
+
+test('calendar-preview orders duplicate services deterministically by config id', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const paid = (configId) => ({
+    config_id: configId,
+    title: 'Paid Consultation Call',
+    duration: 60,
+    price_cents: 15000,
+    is_paid: true,
+    active: true,
+    sync_status: 'ready',
+  })
+  const free = (configId) => ({
+    config_id: configId,
+    title: 'Free Consultation Call',
+    duration: 30,
+    is_paid: false,
+    active: true,
+  })
+  const slotRoutes = {
+    '/scheduler/get_availability/v3': () => ({
+      status: 200,
+      body: { time_slots: [{ start_time: future }] },
+    }),
+  }
+  const order = (configs) =>
+    loadSection({
+      serverState: { grantId: 'grant-1', grantEmail: 'g@example.com', calendarId: 'cal-1', configs },
+      getRoutes: slotRoutes,
+    })
+
+  const forward = order([paid('cfg-paid-b'), free('cfg-free-b'), paid('cfg-paid-a'), free('cfg-free-a')])
+  const reversed = order([free('cfg-free-a'), paid('cfg-paid-a'), free('cfg-free-b'), paid('cfg-paid-b')])
+  await settle()
+
+  const ids = (result) =>
+    result.dom.calendarPreview
+      .querySelector('[data-availability-element="preview-services"]')
+      .children.map((child) => child.getAttribute('data-preview-config-id'))
+  const expected = ['cfg-free-a', 'cfg-free-b', 'cfg-paid-a', 'cfg-paid-b']
+  assert.deepEqual(ids(forward), expected)
+  assert.deepEqual(ids(reversed), expected)
+})
+
+test('calendar-preview renders a free service that carries no stored duration', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-free-no-duration',
+          title: 'Free Consultation Call',
+          is_paid: false,
+          active: true,
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'ready')
+  const service = dom.calendarPreview.querySelector('[data-preview-config-id="cfg-free-no-duration"]')
+  assert.ok(service)
+  assert.equal(service.getAttribute('data-preview-service-type'), 'free')
+  assert.equal(service.children[1].textContent, '30 minutes · Free')
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    1,
+  )
+})
+
+test('calendar-preview admits environment stamps that differ only by case or padding', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-free-cased',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+          data_environment: ' Production ',
+        },
+        {
+          config_id: 'cfg-paid-cased',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          price_cents: 15000,
+          currency: 'USD',
+          is_paid: true,
+          active: true,
+          data_environment: 'PRODUCTION',
+          payment_environment: 'Live',
+          sync_status: 'ready',
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  const services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.ok(services)
+  assert.deepEqual(
+    services.children.map((child) => child.getAttribute('data-preview-config-id')),
+    ['cfg-free-cased', 'cfg-paid-cased'],
+  )
+})
+
+test('a free configuration stamped for another environment does not block canonical creation', async () => {
+  let canonicalState = null
+  const intentKey = 'starter-scheduling-oauth-intent:member-a'
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const result = loadSection({
+    search: '?success=true&grant_id=hosted-grant-9&state=member-a',
+    localStorage: {
+      [intentKey]: JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: null,
+      }),
+    },
+    serverState: {
+      configs: [
+        {
+          config_id: 'cfg-free-test-stamped',
+          grant_id: 'hosted-grant-9',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+          data_environment: 'test',
+        },
+      ],
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: null,
+      },
+    },
+    postRoutes: {
+      '/grants/add/v3': () => {
+        canonicalState.grantId = 'hosted-grant-9'
+        canonicalState.grantEmail = 'jp@hirethestarters.com'
+        canonicalState.calendarId = 'primary'
+        return { status: 200, body: { grant_id: 'hosted-grant-9' } }
+      },
+      '/scheduler/configurations/create/v3': () => {
+        canonicalState.configs.push({
+          config_id: 'cfg-free-production',
+          grant_id: 'hosted-grant-9',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+          data_environment: 'production',
+        })
+        return { status: 200, body: { response: { status: 200 } } }
+      },
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  canonicalState = result.state
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length,
+    1,
+  )
+  const services = result.dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-services"]',
+  )
+  assert.ok(services)
+  assert.deepEqual(
+    services.children.map((child) => child.getAttribute('data-preview-config-id')),
+    ['cfg-free-production'],
+  )
+})
+
 test('calendar-preview excludes paid services that are below $1 or failed provider sync', async () => {
   const { dom, calls } = loadSection({
     serverState: {

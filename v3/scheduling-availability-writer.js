@@ -39,9 +39,10 @@
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
-  const isStagingHost = window.location.hostname === STAGING_HOST
+  const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
+  const isStagingHost = activeHostname === STAGING_HOST
   const isApprovedProductionPath =
-    PRODUCTION_HOSTS.has(window.location.hostname) && activePath === PRODUCTION_PATH
+    PRODUCTION_HOSTS.has(activeHostname) && activePath === PRODUCTION_PATH
   if (!isStagingHost && !isApprovedProductionPath) return
   // The staging-host gate above has no path restriction, so on
   // the-starters-3-0.webflow.io this writer would otherwise self-activate on
@@ -70,8 +71,7 @@
   const oauthCallback = captureOAuthCallback()
 
   function minimumBookingNoticeMinutes() {
-    const hostname = String(window.location.hostname || '').trim().toLowerCase()
-    return hostname === STAGING_HOST
+    return isStagingHost
       ? STAGING_MIN_BOOKING_NOTICE_MINUTES
       : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
   }
