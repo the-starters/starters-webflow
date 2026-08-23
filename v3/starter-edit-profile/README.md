@@ -20,6 +20,10 @@ Replace only an exact live inline body whose index and SHA-256 match the capture
 | 90 | `v3/starter-edit-profile/company-experience-crud.js` | Edit-profile company-experience CRUD |
 | 91 | `v3/build-profile/work-dates.js` | Work-date validation and current-role state |
 
+Work Highlight updates enter moderation. After an update succeeds, the portfolio
+controller replaces the shared generic live-message with a pending-review
+confirmation, then restores the shared modal copy when it closes.
+
 `company-experience-crud.js` deliberately diverges from the live body it was captured
 from: it carries the work-experience date fix, whose contract is shared with Build
 Profile and owned by
