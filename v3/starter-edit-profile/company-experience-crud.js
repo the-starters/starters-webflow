@@ -757,6 +757,28 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 if (!editCompanyWrapper || !company) return;
 
                 editCompanyWrapper.dataset.id = company.id || '';
+                const rawStartDate = company.start_date || '';
+                const rawEndDate = company.current_work ? 'Present' : (company.end_date || '');
+
+                function hydrateEditCompanyDates() {
+                    if (editStartDateInput) {
+                        editStartDateInput.value = rawStartDate;
+                        setDatepickerDate(editStartDateInput, rawStartDate);
+                        editStartDateBaseline = starterProfileCompanyDateBaseline(editStartDateInput, rawStartDate);
+                    }
+
+                    if (editEndDateInput) {
+                        editEndDateInput.value = rawEndDate;
+
+                        if (company.end_date && !company.current_work) {
+                            setDatepickerDate(editEndDateInput, company.end_date);
+                        } else {
+                            setDatepickerDate(editEndDateInput, null);
+                        }
+
+                        editEndDateBaseline = starterProfileCompanyDateBaseline(editEndDateInput, rawEndDate);
+                    }
+                }
 
                 if (editCompanyInput) {
                     editCompanyInput.value = company.company_name || '';
@@ -766,32 +788,14 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     editJobTitleInput.value = company.job_title || '';
                 }
 
-                if (editStartDateInput) {
-                    const rawStartDate = company.start_date || '';
-                    editStartDateInput.value = rawStartDate;
-                    setDatepickerDate(editStartDateInput, rawStartDate);
-                    editStartDateBaseline = starterProfileCompanyDateBaseline(editStartDateInput, rawStartDate);
-                }
-
                 if (editEndDateInput) {
-                    editEndDateInput.value = company.current_work ? 'Present' : (company.end_date || '');
-
                     if (company.current_work) {
                         editEndDateInput.setAttribute('disabled', 'disabled');
                         editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
                     }
-
-                    if (company.end_date && !company.current_work) {
-                        setDatepickerDate(editEndDateInput, company.end_date);
-                    } else {
-                        setDatepickerDate(editEndDateInput, null);
-                    }
-
-                    editEndDateBaseline = starterProfileCompanyDateBaseline(
-                        editEndDateInput,
-                        company.current_work ? 'Present' : company.end_date,
-                    );
                 }
+
+                hydrateEditCompanyDates();
 
                 setCheckboxState(editCurrentWorkCheckbox, !!company.current_work);
 
@@ -802,6 +806,14 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 };
 
                 openEditModal();
+                // The shared modal/date-picker interaction can parse the hidden raw value as a
+                // relative-day expression while it opens. Reapply the canonical Date after that
+                // synchronous interaction completes and refresh the no-change baseline.
+                setTimeout(() => {
+                    if (String(editCompanyWrapper.dataset.id) === String(company.id || '')) {
+                        hydrateEditCompanyDates();
+                    }
+                }, 0);
             }
 
             function closeEditCompany(notCloseButton = false) {

@@ -75,6 +75,19 @@ function loadDateContract(relativePath, { dateFormat } = {}) {
 }
 
 for (const controllerPath of controllerPaths) {
+  test(`${controllerPath} reapplies canonical edit dates after the modal opens`, () => {
+    const source = fs.readFileSync(path.join(__dirname, controllerPath), 'utf8')
+    const openEditStart = source.indexOf('function openEditCompany(company)')
+    const openEditEnd = source.indexOf('function closeEditCompany(', openEditStart)
+    const openEditSource = source.slice(openEditStart, openEditEnd)
+
+    assert.notEqual(openEditStart, -1)
+    assert.match(openEditSource, /function hydrateEditCompanyDates\(\)/)
+    assert.match(openEditSource, /openEditModal\(\);[\s\S]*setTimeout\(\(\) => \{[\s\S]*hydrateEditCompanyDates\(\);/)
+    assert.equal((openEditSource.match(/hydrateEditCompanyDates\(\);/g) || []).length, 2)
+    assert.match(openEditSource, /String\(editCompanyWrapper\.dataset\.id\) === String\(company\.id \|\| ''\)/)
+  })
+
   test(`${controllerPath} hydrates month-year dates without relative-day drift`, () => {
     const { context, getCapturedDate } = loadDateContract(controllerPath)
     const input = { value: 'Jan 2024' }
