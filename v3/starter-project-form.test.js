@@ -482,6 +482,150 @@ test('opening the modal loads the authenticated Starter services', async () => {
   )
 })
 
+test('the Opp30 starterProfile method stays the primary path and never reaches the auth bridge', async () => {
+  const loaded = load({ noDocument: true, profile: { services: [{ name: 'CRM Strategy' }] } })
+  const requests = []
+  let tokenCalls = 0
+  loaded.window.getXanoAuthToken = async () => {
+    tokenCalls += 1
+    return 'xano-token'
+  }
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: true, status: 200, json: async () => ({ services: ['Should never load'] }) }
+  }
+
+  await loaded.api.loadProfile(loaded.form, loaded.window, true)
+
+  assert.equal(loaded.calls.profile.length, 1)
+  assert.equal(tokenCalls, 0)
+  assert.deepEqual(requests, [])
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
+    ['Select one...', 'Freelance work', 'Monthly retainer', 'CRM Strategy'],
+  )
+})
+
+test('loads Starter services through the shared Xano auth bridge when the cached API lacks starterProfile', async () => {
+  const loaded = load({ noDocument: true })
+  const requests = []
+  let tokenCalls = 0
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => {
+    tokenCalls += 1
+    return 'xano-token'
+  }
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ services: [{ name: 'CRM Strategy' }] }),
+    }
+  }
+
+  await loaded.api.loadProfile(loaded.form, loaded.window, true)
+
+  assert.equal(tokenCalls, 1)
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/starter/profile/me')
+  assert.equal(requests[0].options.method, 'POST')
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer xano-token')
+  assert.equal(requests[0].options.body, '{}')
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => [option.value, option.textContent]),
+    [
+      ['', 'Select one...'],
+      ['Freelance work', 'Freelance work'],
+      ['Monthly retainer', 'Monthly retainer'],
+      ['CRM Strategy', 'CRM Strategy'],
+    ],
+  )
+})
+
+test('a blank shared token issues no fallback request and keeps the authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => '   '
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: true, status: 200, json: async () => ({ services: ['Should never load'] }) }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.deepEqual(requests, [])
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.value),
+    ['', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+  )
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
+test('a missing shared auth bridge issues no fallback request and keeps the authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: true, status: 200, json: async () => ({ services: ['Should never load'] }) }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.deepEqual(requests, [])
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
+test('a non-ok fallback response with a non-JSON body keeps the authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => 'xano-token'
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return {
+      ok: false,
+      status: 502,
+      json: async () => { throw new Error('Unexpected token < in JSON at position 0') },
+    }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.equal(requests.length, 1)
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.value),
+    ['', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+  )
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
+test('a 401 fallback response with a JSON error body keeps the authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => 'xano-token'
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.equal(requests.length, 1)
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
 test('profile loading clears authored identity and stays clear on failure', async () => {
   let rejectProfile
   const loaded = load({

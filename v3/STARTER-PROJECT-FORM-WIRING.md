@@ -78,6 +78,34 @@ The Xano change that adds this field to the response is a separate unpublished
 draft. Until it is published under its own approved production boundary, the
 endpoint returns no services and the authored Webflow options stand unchanged.
 
+### Profile request paths
+
+The controller reads the profile through `Opp30.API.starterProfile()` whenever
+that method exists. That remains the primary path. Browser sessions holding a
+cached `opportunities-3.0.js` predating the method would otherwise get no
+profile at all and keep the generic `Service 1`, `Service 2`, `Service 3`
+placeholders, so the controller falls back to a direct
+`POST https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/starter/profile/me` with a
+`{}` body, authorized by the shared `window.getXanoAuthToken` bridge. It sets
+the `Authorization` header itself instead of calling `window.xanoAuthFetch`,
+because that helper only credentials the reviewed `api:tCpV3oqd` scheduling
+paths and would pass this `api:opp30` route through unauthenticated.
+
+**The fallback therefore requires `v3/scheduling-auth.js` on the page.** That
+script owns `window.getXanoAuthToken`, and `/starter-dashboard` is inside its
+install boundary; the authoritative host and path list lives in
+[Scheduling auth](README.md#scheduling-auth). Without the bridge the fallback
+issues no request at all and no error is surfaced: the modal silently keeps the
+authored placeholders. Keep the loader in the Script order block below when
+installing or auditing this page.
+
+The fallback issues no request when the bridge or `window.fetch` is missing, and
+rejects before issuing one when the bridge resolves a blank token, so it never
+sends `Bearer undefined`. A non-ok response — including one whose body is not
+JSON — also rejects. The profile load swallows every rejection, so the authored
+service options stand unchanged. The token is only ever passed to the
+`Authorization` header; it is never rendered, logged, or submitted.
+
 ## Shared Designer contract
 
 The controller binds these existing elements:
@@ -166,13 +194,21 @@ panel's **Manage Projects** link goes to `/starter-dashboard#projects`.
 
 ## Script order
 
-Load the existing data and form scripts first, then the Starter adapter:
+Load the shared auth bridge and the existing data and form scripts first, then
+the Starter adapter:
 
 ```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities-3.0.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/project-form.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-project-form.js"></script>
 ```
+
+`scheduling-auth.js` is required, not optional. It installs the
+`window.getXanoAuthToken` bridge that backs the profile fallback described under
+[Profile request paths](#profile-request-paths). Omit it and any session with a
+cached `opportunities-3.0.js` lacking `Opp30.API.starterProfile` silently keeps
+the generic `Service 1`, `Service 2`, `Service 3` placeholders.
 
 Do not add the last loader until both V3 endpoints exist and pass backend tests.
 After release, install it on the Starter Dashboard so the existing Navbar action

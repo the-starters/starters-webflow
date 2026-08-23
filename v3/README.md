@@ -1864,6 +1864,11 @@ Current safety boundary:
   Memberstack bootstrap and one in-flight Xano token trade per member session;
   live identity checks after auth changes and before writes still call
   Memberstack directly and fail closed on a changed member.
+- The Starter **Contract Generation** modal also depends on
+  `window.getXanoAuthToken` when a browser session holds a cached
+  `opportunities-3.0.js` without `Opp30.API.starterProfile`, so keep
+  `/starter-dashboard` inside the boundary above; that fallback is owned by
+  [STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md#profile-request-paths).
 - Transparently wraps reviewed direct `/v3` requests while the stage adapter
   migrates legacy component callers.
 - Installs synchronously and takes ownership from the legacy bridge in

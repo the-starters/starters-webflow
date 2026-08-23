@@ -19,6 +19,7 @@
   var LEGACY_MODAL_SELECTOR = 'dialog[data-modal-target="start-project"]'
   var TRIGGER_SELECTOR = '[data-modal-trigger="start-project"]'
   var TRIGGER_LINK_SELECTOR = TRIGGER_SELECTOR + ' a.clickable_link'
+  var STARTER_PROFILE_URL = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/starter/profile/me'
   var BRAND_SELECT_SELECTOR = '[data-project-field="brand_id"], #Brand'
   var SERVICE_SELECT_SELECTOR = '[data-project-field="service"], select[name="Services"], select[name="services"]'
   var BRAND_ID_SELECTOR = '#brand-contract'
@@ -391,7 +392,7 @@
     if (!forceRefresh) invalidateProfile(form)
     var generation = current.generation
     var profileGeneration = current.profileGeneration
-    var request = projectApi(globalObject, 'starterProfile')
+    var request = starterProfileRequest(globalObject)
     if (!request) return Promise.resolve(null)
     var profileRequest = Promise.resolve()
       .then(function () { return request() })
@@ -555,6 +556,46 @@
   function projectApi(globalObject, method) {
     var api = globalObject && globalObject.Opp30 && globalObject.Opp30.API
     return api && typeof api[method] === 'function' ? api[method] : null
+  }
+
+  // Opp30.API.starterProfile stays the primary path. The fallback exists only
+  // for browser sessions holding a cached opportunities-3.0.js without that
+  // method, and it must set Authorization itself: window.xanoAuthFetch only
+  // credentials the reviewed api:tCpV3oqd scheduling paths and would send this
+  // api:opp30 route unauthenticated. See STARTER-PROJECT-FORM-WIRING.md.
+  function starterProfileRequest(globalObject) {
+    var request = projectApi(globalObject, 'starterProfile')
+    if (request) return request
+    if (
+      !globalObject ||
+      typeof globalObject.getXanoAuthToken !== 'function' ||
+      typeof globalObject.fetch !== 'function'
+    ) return null
+    return function () {
+      return Promise.resolve(globalObject.getXanoAuthToken()).then(function (token) {
+        if (!clean(token)) throw new Error('Starter profile authentication is unavailable')
+        return globalObject.fetch(STARTER_PROFILE_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + token,
+          },
+          body: '{}',
+        })
+      }).then(function (response) {
+        return Promise.resolve()
+          .then(function () {
+            return response && typeof response.json === 'function' ? response.json() : null
+          })
+          .catch(function () { return null })
+          .then(function (data) {
+            if (!response || !response.ok) {
+              throw new Error(data && data.message ? data.message : 'Starter profile request failed')
+            }
+            return data
+          })
+      })
+    }
   }
 
   function syncCommercialForm(form, documentObject, globalObject) {
