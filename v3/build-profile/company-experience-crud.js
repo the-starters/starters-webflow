@@ -224,6 +224,37 @@ function serializeStarterProfileCompanyDate(input, baseline) {
         }
       }
 
+      const EDIT_DATEPICKER_POLL_MS = 100;
+      const EDIT_DATEPICKER_MAX_WAIT_MS = 10000;
+
+      function isEditCompanyDatepickerReady(input) {
+        if (!input) return true;
+        if (typeof jQuery === 'undefined' || !jQuery.fn || !jQuery.fn.datepicker) return false;
+
+        return !!jQuery(input).data('datepicker');
+      }
+
+      // jQuery UI is fetched over the network by Global-FormEmbeds-Datepicker.html, so the widget
+      // can initialize - and rewrite these fields from their raw text - after the edit modal is
+      // already open. Run `callback` once both inputs are live; when they already are nothing
+      // further will touch them, so there is nothing to wait for.
+      function whenEditCompanyDatepickerReady(callback) {
+        if (isEditCompanyDatepickerReady(editStartDateInput) && isEditCompanyDatepickerReady(editEndDateInput)) return;
+
+        let waited = 0;
+        const poll = setInterval(function () {
+          waited += EDIT_DATEPICKER_POLL_MS;
+
+          if (isEditCompanyDatepickerReady(editStartDateInput) && isEditCompanyDatepickerReady(editEndDateInput)) {
+            clearInterval(poll);
+            callback();
+            return;
+          }
+
+          if (waited >= EDIT_DATEPICKER_MAX_WAIT_MS) clearInterval(poll);
+        }, EDIT_DATEPICKER_POLL_MS);
+      }
+
       function setButtonText(text) {
         if (textEl) textEl.textContent = text;
       }
@@ -661,12 +692,14 @@ function serializeStarterProfileCompanyDate(input, baseline) {
         function hydrateEditCompanyDates() {
           if (editStartDateInput) {
             editStartDateInput.value = rawStartDate;
+            resetDatepickerBounds(editStartDateInput);
             setDatepickerDate(editStartDateInput, rawStartDate);
             editStartDateBaseline = starterProfileCompanyDateBaseline(editStartDateInput, rawStartDate);
           }
 
           if (editEndDateInput) {
             editEndDateInput.value = rawEndDate;
+            resetDatepickerBounds(editEndDateInput);
 
             if (company.end_date && !company.current_work) {
               setDatepickerDate(editEndDateInput, company.end_date);
@@ -674,6 +707,13 @@ function serializeStarterProfileCompanyDate(input, baseline) {
               setDatepickerDate(editEndDateInput, null);
             }
 
+            if (company.current_work) {
+              editEndDateInput.setAttribute('disabled', 'disabled');
+            } else {
+              editEndDateInput.removeAttribute('disabled');
+            }
+
+            editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
             editEndDateBaseline = starterProfileCompanyDateBaseline(editEndDateInput, rawEndDate);
           }
         }
@@ -684,13 +724,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
         if (editJobTitleInput) {
           editJobTitleInput.value = company.job_title || '';
-        }
-
-        if (editEndDateInput) {
-          if (company.current_work) {
-            editEndDateInput.setAttribute('disabled', 'disabled');
-            editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
-          }
         }
 
         hydrateEditCompanyDates();
@@ -704,14 +737,13 @@ function serializeStarterProfileCompanyDate(input, baseline) {
         };
 
         openEditModal();
-        // The shared modal/date-picker interaction can parse the hidden raw value as a
-        // relative-day expression while it opens. Reapply the canonical Date after that
-        // synchronous interaction completes and refresh the no-change baseline.
-        setTimeout(() => {
-          if (String(editCompanyWrapper.dataset.id) === String(company.id || '')) {
-            hydrateEditCompanyDates();
-          }
-        }, 0);
+        // Opening the modal runs the shared date-picker embed over these inputs, which re-reads
+        // their raw text and can turn it into a relative-day date.
+        hydrateEditCompanyDates();
+        whenEditCompanyDatepickerReady(function () {
+          if (String(editCompanyWrapper.dataset.id) !== String(company.id || '')) return;
+          hydrateEditCompanyDates();
+        });
       }
 
       function closeEditCompany(notCloseButton = false) {
