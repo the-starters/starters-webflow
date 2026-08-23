@@ -139,7 +139,12 @@ function serializeStarterProfileCompanyDate(input, baseline) {
       let editSelectedCompany = null;
       let editStartDateBaseline = null;
       let editEndDateBaseline = null;
+      let editStartDateUserChanged = false;
+      let editEndDateUserChanged = false;
       let isLimitReached = false;
+
+      if (editStartDateInput) editStartDateInput.addEventListener('input', () => { editStartDateUserChanged = true; });
+      if (editEndDateInput) editEndDateInput.addEventListener('input', () => { editEndDateUserChanged = true; });
 
       if (!companyList || !companyTemplate) {
         console.warn('[Companies] .company-list or .company-card template not found');
@@ -688,16 +693,18 @@ function serializeStarterProfileCompanyDate(input, baseline) {
         editCompanyWrapper.dataset.id = company.id || '';
         const rawStartDate = company.start_date || '';
         const rawEndDate = company.current_work ? 'Present' : (company.end_date || '');
+        editStartDateUserChanged = false;
+        editEndDateUserChanged = false;
 
-        function hydrateEditCompanyDates() {
-          if (editStartDateInput) {
+        function hydrateEditCompanyDates(onlyIfUnchanged = false) {
+          if (editStartDateInput && (!onlyIfUnchanged || !editStartDateUserChanged)) {
             editStartDateInput.value = rawStartDate;
             resetDatepickerBounds(editStartDateInput);
             setDatepickerDate(editStartDateInput, rawStartDate);
             editStartDateBaseline = starterProfileCompanyDateBaseline(editStartDateInput, rawStartDate);
           }
 
-          if (editEndDateInput) {
+          if (editEndDateInput && (!onlyIfUnchanged || !editEndDateUserChanged)) {
             editEndDateInput.value = rawEndDate;
             resetDatepickerBounds(editEndDateInput);
 
@@ -742,7 +749,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
         hydrateEditCompanyDates();
         whenEditCompanyDatepickerReady(function () {
           if (String(editCompanyWrapper.dataset.id) !== String(company.id || '')) return;
-          hydrateEditCompanyDates();
+          hydrateEditCompanyDates(true);
         });
       }
 

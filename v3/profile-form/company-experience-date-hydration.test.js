@@ -451,6 +451,28 @@ for (const controllerPath of controllerPaths) {
     assert.equal(payload.end_date, 'Dec 2024')
   })
 
+  test(`${controllerPath} does not overwrite dates edited before a late picker initializes`, () => {
+    const app = bootCompanyController(controllerPath, { pickerReady: false })
+
+    app.openEditFor({
+      id: 5,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: 'Jan 2024',
+      end_date: 'Dec 2024',
+    })
+
+    app.editStartDateInput.value = 'Feb 2025'
+    app.editEndDateInput.value = 'Mar 2026'
+    app.editStartDateInput.dispatchEvent({ type: 'input' })
+    app.editEndDateInput.dispatchEvent({ type: 'input' })
+    app.markPickersReady()
+    app.clock.advance(500)
+
+    assert.equal(app.editStartDateInput.value, 'Feb 2025')
+    assert.equal(app.editEndDateInput.value, 'Mar 2026')
+  })
+
   test(`${controllerPath} hydrates month-year dates without relative-day drift`, () => {
     const { context, getCapturedDate } = loadDateContract(controllerPath)
     const input = { value: 'Jan 2024' }

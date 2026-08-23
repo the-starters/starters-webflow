@@ -164,6 +164,14 @@
           updated: Date.now(),
         };
 
+        // `updated` changes on every click. Compare the actual authored payload so an
+        // unchanged photo retry can reuse the completed profile save, while a user edit
+        // after a failed photo commit forces a fresh canonical save.
+        const payloadFingerprint = JSON.stringify({ ...payload, updated: 0 });
+        if (savedBuildResult && savedBuildResult.payloadFingerprint !== payloadFingerprint) {
+          savedBuildResult = null;
+        }
+
         //if (localStorage.getItem('submit_profile')) {
           const step = formSubmit.closest('[data-form="step"]');
           setLoader(true, step);
@@ -186,6 +194,7 @@
 
             savedBuildResult = {
               payload,
+              payloadFingerprint,
               responseData: await response.json(),
             };
           }

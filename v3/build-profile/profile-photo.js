@@ -56,7 +56,6 @@
       const isBuildProfile = BUILD_PROFILE_PATHS.includes(String(window.location?.pathname || ''));
       let currentUploadIntent = null;
       let buildProfileSaved = false;
-      const commitListeners = [];
 
       const XANO_BASE_URL = 'https://x08a-5ko8-jj1r.n7c.xano.io';
       const wrap = document.querySelector('#profile-photo-wrap');
@@ -68,6 +67,9 @@
       const photoUrlInput = document.querySelector('#profile-photo-url');
 
       if (!wrap || !label || !input || !preview || !previewImg || !photoUrlInput) return;
+
+      const photoCaptureAttribute = photoUrlInput.getAttribute('data-input-capture');
+      const hadPhotoCaptureAttribute = photoUrlInput.hasAttribute('data-input-capture');
 
       const buildPhotoApi = window.StartersBuildProfilePhotoUpload || {};
       if (isBuildProfile) window.StartersBuildProfilePhotoUpload = buildPhotoApi;
@@ -106,6 +108,7 @@
         previewImg.src = '';
         label.classList.remove('dropping');
 
+        restorePhotoCaptureAttribute();
         photoUrlInput.value = '';
         photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
         photoUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -114,14 +117,10 @@
         wrap.style.display = 'block';
       }
 
-      function notifyCommitted(result) {
-        commitListeners.slice().forEach((listener) => {
-          try {
-            listener(result);
-          } catch (error) {
-            console.error('Profile image completion listener failed:', error);
-          }
-        });
+      function restorePhotoCaptureAttribute() {
+        if (hadPhotoCaptureAttribute) {
+          photoUrlInput.setAttribute('data-input-capture', photoCaptureAttribute || '');
+        }
       }
 
       function createSourceMutationId() {
@@ -185,9 +184,10 @@
             uploadIntent.sourceMutationId = createSourceMutationId();
           }
           if (isBuildProfile && !retry) {
+            // Keep the temporary required-field marker out of draft capture. The exact
+            // authored capture attribute is restored after the canonical upload succeeds.
+            photoUrlInput.removeAttribute('data-input-capture');
             photoUrlInput.value = 'pending-profile-photo-upload';
-            photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
-            photoUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
             setLoader(false, preview);
             return;
           }
@@ -221,28 +221,34 @@
           );
           if (currentUploadIntent !== uploadIntent) return;
           uploadIntent.state = 'applying';
+          restorePhotoCaptureAttribute();
           photoUrlInput.value = wf_photo_data['starter_image'];
           photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
           photoUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
 
           setLoader(false, preview);
 
-          const fileSmaller = await urlToFile(wf_photo_data['starter_image_small'], uploadIntent.file.name);
-          if (currentUploadIntent !== uploadIntent) return;
-          const updImgInfo = await window.$memberstackDom.updateMemberProfileImage({ profileImage: fileSmaller });
-          if (currentUploadIntent !== uploadIntent) return;
-          console.log('Smaller image for Memberstack profile:', updImgInfo?.data?.profileImage);
-          
-          // update logo image in the nav bar
-          requestAnimationFrame(() => {
-            if (currentUploadIntent !== uploadIntent) return;
-            qsa('[nav-profile-image]').forEach(img => {
-              img.src = img.srcset = updImgInfo?.data?.profileImage || wf_photo_data['starter_image'];
-            });
-          });
           uploadIntent.state = 'complete';
           uploadIntent.result = wf_photo_data;
-          notifyCommitted(wf_photo_data);
+
+          // Memberstack avatar sync is cosmetic. A failure here must not turn an already
+          // committed Xano photo into a failed Build Profile submission or retry the upload.
+          try {
+            const fileSmaller = await urlToFile(wf_photo_data['starter_image_small'], uploadIntent.file.name);
+            if (currentUploadIntent !== uploadIntent) return wf_photo_data;
+            const updImgInfo = await window.$memberstackDom.updateMemberProfileImage({ profileImage: fileSmaller });
+            if (currentUploadIntent !== uploadIntent) return wf_photo_data;
+            console.log('Smaller image for Memberstack profile:', updImgInfo?.data?.profileImage);
+
+            requestAnimationFrame(() => {
+              if (currentUploadIntent !== uploadIntent) return;
+              qsa('[nav-profile-image]').forEach(img => {
+                img.src = img.srcset = updImgInfo?.data?.profileImage || wf_photo_data['starter_image'];
+              });
+            });
+          } catch (avatarError) {
+            console.warn('Memberstack profile image sync failed after canonical upload:', avatarError);
+          }
           return wf_photo_data;
         })();
 
@@ -274,9 +280,6 @@
         buildPhotoApi.hasPendingUpload = () => !!currentUploadIntent && currentUploadIntent.state !== 'complete';
         buildPhotoApi.markProfileSaved = () => { buildProfileSaved = true; };
         buildPhotoApi.commitPending = commitPreparedUpload;
-        buildPhotoApi.addCommitListener = (listener) => {
-          if (typeof listener === 'function' && !commitListeners.includes(listener)) commitListeners.push(listener);
-        };
       }
 
       async function urlToFile(url, fileName = 'profile-photo.jpg') {

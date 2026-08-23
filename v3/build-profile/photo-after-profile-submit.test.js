@@ -17,7 +17,7 @@ function element() {
   }
 }
 
-test('Build saves the canonical profile before its photo and a photo retry does not repeat the profile save', async () => {
+test('Build saves before its photo, reuses unchanged saves, and resaves changed retry payloads', async () => {
   const form = element()
   const submit = element()
   const success = element()
@@ -37,7 +37,7 @@ test('Build saves the canonical profile before its photo and a photo retry does 
     async commitPending() {
       photoAttempts += 1
       order.push(`photo-${photoAttempts}`)
-      if (photoAttempts === 1) throw new Error('synthetic photo failure')
+      if (photoAttempts < 3) throw new Error('synthetic photo failure')
       photoPending = false
       return { starter_image: 'https://example.invalid/photo.jpg' }
     },
@@ -47,10 +47,11 @@ test('Build saves the canonical profile before its photo and a photo retry does 
     ['[build-profile-success]', success],
     ['[build-profile-error]', failure],
   ])
+  let firstName = 'Test'
   class TestFormData {
     *[Symbol.iterator]() {
       yield ['email', 'profile@example.invalid']
-      yield ['first-name', 'Test']
+      yield ['first-name', firstName]
       yield ['last-name', 'Starter']
       yield ['phone', '']
     }
@@ -103,9 +104,16 @@ test('Build saves the canonical profile before its photo and a photo retry does 
   assert.equal(failure.style.display, 'block')
   assert.equal(success.style.display, 'none')
 
-  await click({ preventDefault() {} })
+  await assert.rejects(click({ preventDefault() {} }), /synthetic photo failure/)
   assert.equal(profileSaves, 1)
   assert.equal(photoAttempts, 2)
+  assert.equal(failure.style.display, 'block')
+  assert.equal(success.style.display, 'none')
+
+  firstName = 'Changed'
+  await click({ preventDefault() {} })
+  assert.equal(profileSaves, 2)
+  assert.equal(photoAttempts, 3)
   assert.equal(form.style.display, 'none')
   assert.equal(failure.style.display, 'none')
   assert.equal(success.style.display, 'block')
@@ -115,5 +123,8 @@ test('Build saves the canonical profile before its photo and a photo retry does 
     'photo-1',
     'mark-profile-saved',
     'photo-2',
+    'profile-save',
+    'mark-profile-saved',
+    'photo-3',
   ])
 })

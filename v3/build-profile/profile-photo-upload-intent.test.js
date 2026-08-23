@@ -34,6 +34,7 @@ class TestFile {
 function element() {
   const listeners = new Map();
   const classes = new Set();
+  const attributes = new Map();
   return {
     style: {},
     classList: {
@@ -50,12 +51,16 @@ function element() {
       if (listener) listener(event);
     },
     appendChild() {},
+    getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
+    hasAttribute(name) { return attributes.has(name); },
+    removeAttribute(name) { attributes.delete(name); },
+    setAttribute(name, value) { attributes.set(name, String(value)); },
     contains() { return false; },
     querySelector() { return null; },
   };
 }
 
-function createHarness({ cryptoApi, uploadResponder, pathname = '/build-profile/full-profile' } = {}) {
+function createHarness({ avatarResponder, cryptoApi, uploadResponder, pathname = '/build-profile/full-profile' } = {}) {
   const label = element();
   const wrap = element();
   const uploadError = element();
@@ -70,6 +75,7 @@ function createHarness({ cryptoApi, uploadResponder, pathname = '/build-profile/
   const previewImg = element();
   const removeBtn = element();
   const photoUrlInput = element();
+  photoUrlInput.setAttribute('data-input-capture', '');
   const elements = new Map([
     ['#profile-photo-wrap', wrap],
     ['#profile-photo', input],
@@ -162,7 +168,10 @@ function createHarness({ cryptoApi, uploadResponder, pathname = '/build-profile/
     fetch: originalFetch,
     $memberstackDom: {
       async getMemberCookie() { return 'memberstack-token'; },
-      async updateMemberProfileImage() { return { data: { profileImage: 'https://example.invalid/small.jpg' } }; },
+      async updateMemberProfileImage() {
+        if (avatarResponder) return avatarResponder();
+        return { data: { profileImage: 'https://example.invalid/small.jpg' } };
+      },
     },
   };
   class TestEvent {
@@ -181,7 +190,7 @@ function createHarness({ cryptoApi, uploadResponder, pathname = '/build-profile/
   const context = vm.createContext({
     window,
     document,
-    console: { log() {}, info() {}, error() {} },
+    console: { log() {}, info() {}, warn() {}, error() {} },
     MEMBER: { id: 'member-id-not-sent' },
     activeProfile: { data: { step_1: { 'profile-photo-url': '' } } },
     waitForMember: (callback) => callback(),
@@ -263,6 +272,7 @@ async function run() {
   await settle();
   assert.equal(uploads.length, 0);
   assert.equal(photoUrlInput.value, 'pending-profile-photo-upload');
+  assert.equal(photoUrlInput.hasAttribute('data-input-capture'), false);
   await assert.rejects(window.StartersBuildProfilePhotoUpload.commitPending(), /Save the profile/);
   assert.equal(uploads.length, 0);
 
@@ -279,6 +289,7 @@ async function run() {
   assert.equal(uploads[0].memberId, null);
   assert.equal(uploads[1].memberId, null);
   assert.equal(resizeCount(), 1);
+  assert.equal(photoUrlInput.hasAttribute('data-input-capture'), true);
 
   const replacementWithSameMetadata = {
     name: 'photo.jpg',
@@ -389,6 +400,24 @@ async function run() {
   await settle();
   assert.equal(editProfile.uploads.length, 1);
   assert.equal(editProfile.photoUrlInput.value, 'https://example.invalid/edit-photo.jpg');
+
+  const avatarFailure = createHarness({
+    avatarResponder() { throw new Error('synthetic avatar failure'); },
+    uploadResponder() {
+      return response(JSON.stringify({
+        starter_image: 'https://example.invalid/canonical-photo.jpg',
+        starter_image_small: 'https://example.invalid/avatar-photo.jpg',
+      }));
+    },
+  });
+  avatarFailure.input.files = [{ name: 'avatar-failure.jpg', type: 'image/jpeg', size: 100 }];
+  avatarFailure.input.dispatchEvent(new avatarFailure.TestEvent('change'));
+  await settle();
+  avatarFailure.window.StartersBuildProfilePhotoUpload.markProfileSaved();
+  await avatarFailure.window.StartersBuildProfilePhotoUpload.commitPending();
+  assert.equal(avatarFailure.uploads.length, 1);
+  assert.equal(avatarFailure.photoUrlInput.value, 'https://example.invalid/canonical-photo.jpg');
+  assert.equal(avatarFailure.uploadError.style.display, 'none');
 }
 
 run()
