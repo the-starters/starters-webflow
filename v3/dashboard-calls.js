@@ -132,6 +132,7 @@
   }
 
   async function wireDashboardCallModules(moduleOptions) {
+    const options = moduleOptions || {}
     const dashboardModules = {
       actions: null,
       media: null,
@@ -143,8 +144,11 @@
         DASHBOARD_CALL_MODULES.map(function (spec, index) {
           return loadDashboardModule(spec, function (dashboardModule) {
             try {
-              dashboardModule.wire(moduleOptions)
+              dashboardModule.wire(options)
               dashboardModules[moduleKeys[index]] = dashboardModule
+              if (typeof options.onAvailable === 'function') {
+                options.onAvailable(dashboardModule, moduleKeys[index])
+              }
             } catch (error) {
               console.error(
                 '[dashboard-calls] optional module unavailable:',
@@ -903,7 +907,7 @@
           action === 'notetaker-media' &&
           validDashboardModule(global.StartersDashboardCallMedia) &&
           typeof global.StartersDashboardCallMedia.canReadMedia === 'function' &&
-          global.StartersDashboardCallMedia.canReadMedia(booking)
+          global.StartersDashboardCallMedia.canReadMedia(booking, status)
         show(
           button,
           action === 'switch-close' ||
@@ -1605,6 +1609,10 @@
       restart,
       getBooking: function (target) {
         return bookingForActionTarget(refs, target)
+      },
+      getBookingStatus: bookingStatus,
+      onAvailable: function () {
+        refreshDetailExpiration(refs, role)
       },
     }
     wireDashboardCallModules(moduleOptions)

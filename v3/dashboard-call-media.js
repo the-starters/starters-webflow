@@ -18,13 +18,14 @@
     return String(value == null ? '' : value).trim()
   }
 
-  function canReadMedia(booking) {
+  function canReadMedia(booking, lifecycleStatus) {
+    const status = clean(
+      lifecycleStatus == null ? booking && booking.status : lifecycleStatus,
+    ).toLowerCase()
     return (
       clean(booking && booking.notetaker_id) !== '' &&
       clean(booking && booking.grant_id) !== '' &&
-      ['completed', 'archived'].includes(
-        clean(booking && booking.status).toLowerCase(),
-      )
+      ['completed', 'archived'].includes(status)
     )
   }
 
@@ -62,9 +63,9 @@
     }
   }
 
-  async function getMedia(booking) {
+  async function getMedia(booking, lifecycleStatus) {
     if (
-      !canReadMedia(booking) ||
+      !canReadMedia(booking, lifecycleStatus) ||
       typeof global.xanoAuthFetch !== 'function'
     ) return null
     const response = await global.xanoAuthFetch(
@@ -136,7 +137,11 @@
           )
         if (!button) return
         const booking = settings.getBooking(button)
-        if (!canReadMedia(booking)) return
+        const lifecycleStatus =
+          typeof settings.getBookingStatus === 'function'
+            ? settings.getBookingStatus(booking)
+            : null
+        if (!canReadMedia(booking, lifecycleStatus)) return
         if (event.preventDefault) event.preventDefault()
         if (event.stopImmediatePropagation) event.stopImmediatePropagation()
         else if (event.stopPropagation) event.stopPropagation()
@@ -144,7 +149,7 @@
         button.__startersMediaBusy = true
         button.setAttribute('aria-busy', 'true')
         try {
-          const media = await getMedia(booking)
+          const media = await getMedia(booking, lifecycleStatus)
           const modal =
             button.closest &&
             button.closest(

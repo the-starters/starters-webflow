@@ -15,8 +15,75 @@ function booking() {
 test('media reads require a completed canonical booking identity', () => {
   assert.equal(api.canReadMedia(booking()), true)
   assert.equal(api.canReadMedia({ ...booking(), status: 'confirmed' }), false)
+  assert.equal(
+    api.canReadMedia({ ...booking(), status: 'confirmed' }, 'completed'),
+    true,
+  )
   assert.equal(api.canReadMedia({ ...booking(), grant_id: '' }), false)
   assert.equal(api.canReadMedia({ ...booking(), notetaker_id: '' }), false)
+})
+
+test('media click uses the dashboard lifecycle status', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const listeners = {}
+  const modal = {
+    querySelector(selector) {
+      if (selector === '[notetaker-media=container]') return { style: {} }
+      if (selector === '[notetaker-media=recording]') {
+        return {
+          style: {},
+          removeAttribute() {},
+        }
+      }
+      return null
+    },
+  }
+  const button = {
+    attributes: {},
+    closest(selector) {
+      return selector.includes('notetaker-media') ? this : modal
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = value
+    },
+  }
+  const endedBooking = { ...booking(), status: 'confirmed' }
+  let requests = 0
+  global.xanoAuthFetch = async function () {
+    requests += 1
+    return {
+      ok: true,
+      async json() {
+        return {
+          response: {
+            status: 200,
+            result: { data: { recording: {} } },
+          },
+        }
+      },
+    }
+  }
+
+  try {
+    api.wire({
+      document: {
+        addEventListener(name, listener) {
+          listeners[name] = listener
+        },
+      },
+      getBooking() {
+        return endedBooking
+      },
+      getBookingStatus() {
+        return 'completed'
+      },
+    })
+    await listeners.click({ target: button })
+    assert.equal(requests, 1)
+    assert.equal(button.attributes['aria-busy'], 'false')
+  } finally {
+    global.xanoAuthFetch = originalFetch
+  }
 })
 
 test('media normalization allows only HTTPS provider URLs', () => {

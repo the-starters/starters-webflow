@@ -99,6 +99,15 @@ test('Details exposes exact supported decline and media actions only', () => {
   assert.equal(decline.hidden, true)
   assert.equal(cancel.hidden, true)
   assert.equal(reschedule.hidden, true)
+
+  dashboard.configureDetailActions(modal, 'brand', 'completed', {
+    booking_id: 'booking-ended',
+    status: 'confirmed',
+    end: Date.now() - 1000,
+    notetaker_id: 'notetaker-1',
+    grant_id: 'grant-1',
+  })
+  assert.equal(media.hidden, false)
 })
 
 test('dashboard reuses already-loaded narrow modules', async () => {
@@ -183,6 +192,7 @@ test('optional modules wire once when they load after the fallback', async () =>
   const scripts = []
   const fallbacks = []
   const wireCounts = { actions: 0, media: 0, payment: 0 }
+  const available = []
 
   global.document = {
     createElement() {
@@ -213,7 +223,12 @@ test('optional modules wire once when they load after the fallback', async () =>
   delete global.StartersDashboardCallPayment
 
   try {
-    const wiring = dashboard.wireDashboardCallModules({ document: global.document })
+    const wiring = dashboard.wireDashboardCallModules({
+      document: global.document,
+      onAvailable(_dashboardModule, key) {
+        available.push(key)
+      },
+    })
     fallbacks.forEach(function (fallback) {
       fallback()
     })
@@ -241,6 +256,7 @@ test('optional modules wire once when they load after the fallback', async () =>
     })
 
     assert.deepEqual(wireCounts, { actions: 1, media: 1, payment: 1 })
+    assert.deepEqual(available, ['actions', 'media', 'payment'])
     assert.equal(loaded.actions, global.StartersDashboardCallActions)
     assert.equal(loaded.media, global.StartersDashboardCallMedia)
     assert.equal(loaded.payment, global.StartersDashboardCallPayment)
