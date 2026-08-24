@@ -1507,6 +1507,55 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   assert.equal(page.paidModalOption.style.display, 'none')
 })
 
+test('a Paid service card opens the authored Free/Paid chooser instead of the retired direct scheduler', async () => {
+  const page = makePage({ includeFreeCard: false })
+  let chooserClicks = 0
+  page.bookingButton.click = () => { chooserClicks += 1 }
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({
+      nylas_grant_id: 'grant_prod',
+      nylas_grant_email: 'starter@example.com',
+    }),
+    getConfigs: async () => [{
+      config_id: 'paid_live',
+      is_paid: true,
+      active: true,
+      data_environment: 'production',
+      payment_environment: 'live',
+      currency: 'usd',
+      price_cents: 100,
+      duration: 60,
+    }],
+    paidController: { installPaidBookingController: () => true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const paidCard = page.servicesList.querySelector('[data-type="paid"]')
+  assert.equal(paidCard.getAttribute('booking-popup-open'), null)
+  assert.equal(paidCard.getAttribute('data-modal-trigger'), null)
+  assert.equal(paidCard.getAttribute('data-call-service-chooser'), 'ready')
+  assert.equal(paidCard.listeners.click.length, 1)
+
+  let prevented = 0
+  let stopped = 0
+  paidCard.listeners.click[0]({
+    preventDefault: () => { prevented += 1 },
+    stopImmediatePropagation: () => { stopped += 1 },
+  })
+  assert.equal(prevented, 1)
+  assert.equal(stopped, 1)
+  assert.equal(chooserClicks, 1)
+})
+
 test('Paid-only discovery stays closed when the V3 controller is unavailable', async () => {
   const page = makePage()
   let nearestSlotCalls = 0

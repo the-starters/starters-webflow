@@ -107,6 +107,30 @@
       });
   }
 
+  function wireCallServiceCardsToChooser() {
+      const chooser = document.querySelector('[data-modal-trigger="popup-booking-main"]');
+      if (!chooser || typeof chooser.click !== 'function') return false;
+
+      qsa('#services [data-service-card="component"][data-type]').forEach(function (card) {
+          const type = card.getAttribute('data-type');
+          if (type !== 'free' && type !== 'paid') return;
+          if (card.getAttribute('data-call-service-chooser') === 'ready') return;
+
+          // Service cards are shortcuts to the authored Free/Paid chooser.
+          // They must not invoke the retired direct scheduler handler, which
+          // performs a Starter-owned Stripe readiness check as the Brand.
+          card.removeAttribute('booking-popup-open');
+          card.removeAttribute('data-modal-trigger');
+          card.setAttribute('data-call-service-chooser', 'ready');
+          card.addEventListener('click', function (event) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              chooser.click();
+          }, true);
+      });
+      return true;
+  }
+
   function isBlockedProductionBookingSurface() {
       const host = window.location && window.location.hostname;
       const path = window.location && window.location.pathname
@@ -801,6 +825,7 @@
 
               if (!bookingSurfaceAvailable) return;
               setBookingButtonAvailable(true);
+              wireCallServiceCardsToChooser();
 
           } else {
               console.warn("No Configurations found for the current starter.");
