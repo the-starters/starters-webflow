@@ -211,6 +211,10 @@ function load(options = {}) {
       options.authoredPills === true,
       options.pillLabels || {},
     )
+  const delayedSiblings = options.rootFirst === true && dom.card
+    ? dom.card.children.filter((item) => item !== dom.panel)
+    : []
+  if (delayedSiblings.length) dom.card.children = [dom.panel]
   if (dom.root && options.radioNames) {
     dom.no.setAttribute('name', options.radioNames.no)
     dom.yes.setAttribute('name', options.radioNames.yes)
@@ -329,6 +333,13 @@ function load(options = {}) {
       rootAvailable = true
       observers.filter((observer) => observer.active).forEach((observer) => observer.callback())
     },
+    revealSiblings: () => {
+      dom.card.append(...delayedSiblings)
+      observers.filter((observer) => observer.active).forEach((observer) => observer.callback())
+    },
+    notifyMutation: () => {
+      observers.filter((observer) => observer.active).forEach((observer) => observer.callback())
+    },
     flushTimers: () => {
       const pending = timers.splice(0)
       pending.forEach((timer) => { if (!timer.cancelled) timer.callback() })
@@ -407,6 +418,32 @@ test('production-shaped pills show only canonical Free status', async () => {
   await settle()
   assert.equal(inactive.dom.on.hidden, true)
   assert.equal(inactive.dom.off.hidden, false)
+})
+
+test('Free re-resolves the card when status pills and Edit arrive after the root', async () => {
+  const result = load({
+    publishedRoot: true,
+    authoredPills: true,
+    rootFirst: true,
+    initial: canonical({
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  result.revealSiblings()
+  await settle()
+
+  assert.equal(result.dom.on.hidden, false)
+  assert.equal(result.dom.on.style.display, '')
+  assert.equal(result.dom.off.hidden, true)
+  assert.equal(result.dom.off.style.display, 'none')
+  assert.equal(result.dom.on.getAttribute('data-call-settings-output'), 'on')
+  assert.equal(result.dom.off.getAttribute('data-call-settings-output'), 'off')
+
+  await result.dom.open.dispatch('click')
+  assert.equal(result.dom.panel.style.display, 'flex')
 })
 
 test('drifted authored Free pill copy is reported on staging instead of failing silently', async () => {

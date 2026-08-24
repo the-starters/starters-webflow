@@ -8,6 +8,8 @@ const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const SCHEDULING_URL = `${XANO_ORIGIN}/api:tCpV3oqd/scheduler/configurations/update/v3`
 const V3_STARTER_URL = `${XANO_ORIGIN}/api:tCpV3oqd/starter/get_by_memberstack/v3`
 const BRAND_PAYMENT_URLS = [
+  `${XANO_ORIGIN}/api:tCpV3oqd/brand/booking/payment-action/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/brand/booking/payment-method-replace/v3`,
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-method/setup/v3`,
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-method/set-default/v3`,
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-readiness/v3`,

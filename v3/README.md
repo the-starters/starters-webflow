@@ -2013,7 +2013,13 @@ node v3/scheduling-v3-stage.test.js
 `/starter-dashboard`, `/brand-dashboard`, and their two availability-stage
 paths. It is inert everywhere else. Load it through
 `scheduling-v3-stage-component.html`, after the synchronous scheduling auth and
-stage adapter; that loader is the authoritative script order.
+stage adapter; that loader is the authoritative script order. At boot it loads
+`dashboard-call-actions.js`, `dashboard-call-media.js`, and
+`dashboard-call-payment.js` from the same GitHub-backed `v3` CDN directory. A
+missing or invalid optional module times out after five seconds without blocking
+the canonical dashboard reader and leaves its controls hidden. If that script
+loads after the fallback, the controller still wires its valid module exactly
+once.
 
 The controller obtains the current Memberstack member, reads
 `booking_record/get/v3` through `window.xanoAuthFetch` with that member's ID,
@@ -2067,14 +2073,18 @@ a per-call amount, replacing only the adjacent exact Designer-authored legacy
 suffix without generating markup. Only the base content state and one
 applicable pending message can be visible. Confirmed calls can show their
 canonical meeting link; cancelled and archived calls cannot. Every authored
-payment or booking action stays hidden except Close, Back, and the Starter's
-eligible pending-call Accept action. Reschedule also fails closed at its
-delegated trigger until a populated V3 reschedule flow exists, so the empty
-authored reschedule dialog cannot open.
+payment or booking action stays hidden except Close, Back, the Starter's
+eligible pending-call Accept and Decline actions, and owner-scoped recording
+access for eligible completed or archived calls. These migrated actions remain
+inside View Details; card-level decline, media, and other legacy controls stay
+hidden. Cancel and reschedule fail closed at their delegated triggers until
+their canonical lifecycle contracts are safe, so their authored dialogs cannot
+open. Direct transcript access and every payment control also stay hidden.
 
-The Starter pending card and details dialog expose only the Designer-authored
-Accept control while the canonical response window remains open. Before the
-controller calls `booking/confirm/v3`, it decodes the
+The Starter pending card exposes only the Designer-authored Accept lifecycle
+control while the canonical response window remains open. The details dialog
+exposes both Accept and Decline under their separate eligibility contracts.
+Before the controller calls `booking/confirm/v3`, it decodes the
 canonical `booking_ref`, requires its booking and configuration IDs to match the
 row, and supplies an idempotency key scoped to the canonical booking,
 environment, and a non-reversible hash of the Starter identity. The key stays in
@@ -2088,6 +2098,39 @@ before refreshing the canonical list, which moves the accepted row from Starter
 Call Requests to Starter Calls while it remains in Brand Calls. All other
 legacy mutation controls stay hidden until they have current V3-safe endpoint
 contracts.
+
+`dashboard-call-actions.js` owns the supported decline command. It exposes
+Decline only to the Starter on a canonical pending row that has a booking ID,
+configuration ID, and exact `test` or `production` data environment. The native
+Webflow modal owns `[booking-decline-reason]` and every visible state; the module
+does not generate form or modal markup. It requires a non-empty reason and posts
+only `booking_id`, `config_id`, `reason`, and a tab-scoped idempotency key to
+`booking/decline/v3`. The key is scoped by environment, booking, a non-reversible
+Starter identity hash, and a non-reversible reason hash. An ambiguous or
+malformed result keeps the key for safe replay. Only an exact nested
+`decline.status` of `declined` for the same booking clears it and refreshes the
+canonical list.
+
+`dashboard-call-media.js` owns read-only notetaker recording access. The action
+is eligible only for an owner-scoped canonical completed or archived booking
+with both `notetaker_id` and `grant_id`; it posts those two identifiers to
+`notetaker/get_media/v3` through `window.xanoAuthFetch`. It accepts only HTTPS
+recording URLs returned by that authenticated ownership proxy and paints the
+existing `[notetaker-media]` elements. A transcript URL is reduced to an
+availability flag and is never returned to the dashboard consumer. Direct
+transcript fetch and rendering remain closed because there is no reviewed
+authenticated V3 transcript proxy with an exact ownership contract.
+
+`dashboard-call-payment.js` provides server-owned Paid Call recovery helpers
+without activating UI. For an owning Brand and an exact canonical payment state,
+the helpers can request `brand/booking/payment-action/v3` with only the booking
+ID, or send an existing `pm_` PaymentMethod ID plus a bounded idempotency key to
+`brand/booking/payment-method-replace/v3`. Eligibility requires the booking's
+payment environment to be exactly `test` or `live`. Both commands run through
+`window.xanoAuthFetch`; the browser never calls Stripe or another provider
+directly. `wire()` remains inert, so no card form, authentication-secret flow,
+or payment-replacement control is active until the native dashboard UI has a
+separately reviewed ownership contract.
 
 This controller is also the single owner of the Starter request-expiry
 countdown; the legacy inline dashboard helper no longer renders that list, so
@@ -2183,7 +2226,12 @@ Runtime contract:
 Run its focused test with:
 
 ```sh
-node --test v3/dashboard-calls.test.js
+node --test \
+  v3/dashboard-calls.test.js \
+  v3/dashboard-call-actions.test.js \
+  v3/dashboard-call-media.test.js \
+  v3/dashboard-call-payment.test.js \
+  v3/dashboard-call-modules-integration.test.js
 ```
 
 ## Booking-stage availability initializer

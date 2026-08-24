@@ -38,6 +38,7 @@
   let wiredMemberstack = null
   let memberstackReadyResolvers = []
   let rootObserver = null
+  let uiObserver = null
   let statusPillWarned = false
   let rootWaitTimer = null
   let initializationPromise = null
@@ -142,6 +143,35 @@
       candidate = candidate.parentElement
     }
     return anchor
+  }
+
+  function paintStatusPills() {
+    const active = Boolean(settings && canonicalService(settings))
+    show(output('on'), active)
+    show(output('off'), !active)
+  }
+
+  function bindOpenAction() {
+    const openButton = action('open')
+    if (!openButton || openButton.__tsFreeCallOpenBound) return
+    openButton.__tsFreeCallOpenBound = true
+    openButton.addEventListener('click', function (event) {
+      event.preventDefault()
+      setCardEditorOpen(root.getAttribute('data-free-call-editor-open') !== 'true')
+    })
+  }
+
+  function refreshUiScope() {
+    if (!root) return
+    uiScope = findCallCardScope(root)
+    bindOpenAction()
+    paintStatusPills()
+  }
+
+  function watchUiScope() {
+    if (uiObserver || typeof MutationObserver !== 'function') return
+    uiObserver = new MutationObserver(refreshUiScope)
+    uiObserver.observe(document.documentElement, { childList: true, subtree: true })
   }
 
   function setStatus(value) {
@@ -377,8 +407,7 @@
     root.setAttribute('data-free-call-bookable', 'false')
     const priceOutput = output('price')
     if (priceOutput) priceOutput.textContent = formatFreePrice(0)
-    show(output('on'), false)
-    show(output('off'), true)
+    paintStatusPills()
     setActionEnabled(action('save'), false)
     setMessage(message)
   }
@@ -456,8 +485,7 @@
     setActionEnabled(action('save'), canSaveSettings(value))
     const priceOutput = output('price')
     if (priceOutput) priceOutput.textContent = formatFreePrice(service ? servicePriceCents(service) : 0)
-    show(output('on'), Boolean(service))
-    show(output('off'), !service)
+    paintStatusPills()
     setMessage(
       service
         ? !contractMatches
@@ -709,13 +737,7 @@
         if (pair.disabled.checked) setRadioChecked(pair.enabled, false)
       })
     }
-    const openButton = action('open')
-    if (openButton) {
-      openButton.addEventListener('click', function (event) {
-        event.preventDefault()
-        setCardEditorOpen(root.getAttribute('data-free-call-editor-open') !== 'true')
-      })
-    }
+    bindOpenAction()
     const closeButton = action('close')
     if (closeButton) {
       closeButton.addEventListener('click', function (event) {
@@ -740,6 +762,7 @@
     initializationPromise = (async function () {
       stopRootWait()
       uiScope = findCallCardScope(root)
+      watchUiScope()
       setCardEditorOpen(false)
       bind()
       await waitForMemberstack()

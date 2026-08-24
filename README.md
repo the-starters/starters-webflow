@@ -193,6 +193,12 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/dashboard-calls.js` — authenticated canonical call-section and Brand hero
   binder for the V3 dashboards; see `v3/README.md` for its Designer markup,
   identity, state, and endpoint contracts
+- `v3/dashboard-call-actions.js` — native dashboard decline binder using the
+  canonical idempotent V3 lifecycle command; unsafe cancel and reschedule stay closed
+- `v3/dashboard-call-media.js` — owner-scoped read-only notetaker recording
+  binder; direct transcript provider access stays closed
+- `v3/dashboard-call-payment.js` — server-owned Paid Call recovery helpers;
+  browser Stripe writes and the unreviewed dashboard card UI stay inactive
 - `v3/scheduling-availability-init.js` — scheduling availability and Calendar
   connection-state initializer. Saved hours remain independent from canonical
   grant/calendar/configuration proof, and the Designer-authored Dashboard

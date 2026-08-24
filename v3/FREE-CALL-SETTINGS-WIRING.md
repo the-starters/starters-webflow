@@ -38,6 +38,11 @@ The current Designer form works without generated IDs or styling selectors:
 The controller stamps `data-call-settings-input="enabled|disabled"` on the verified radio pair at
 runtime. It never renames the group and never binds the Paid form.
 
+Webflow or Memberstack can insert the Free form root before the sibling status pills and Edit
+control. After the root boots, the controller watches the document, re-resolves the owning Free
+card when siblings arrive, binds that late Edit control once, and repaints exactly the canonical
+On or Off pill. The native Webflow form and its authored sibling controls remain the markup owner.
+
 For future Designer edits, prefer the stable contract:
 
 - Card root: `data-call-settings-service="free"`
@@ -129,8 +134,9 @@ calls, reminders, and email canaries stay under the separate-approval rule owned
 ## Post-release live verification
 
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion boot, the
-published `consulting-calls-free` hydration, Free/Paid card isolation in both directions, the
-three-field upsert and guarded disable payloads, the in-flight double-Update dedup, the
+root-first/sibling-later card recovery, the published `consulting-calls-free` hydration,
+Free/Paid card isolation in both directions, the three-field upsert and guarded disable payloads,
+the in-flight double-Update dedup, the
 off-contract duration or price paint, the expired-session fail-closed writes, the authored
 status-pill resolution and its drifted-copy diagnostic, and the `w--redirected-checked` radio sync
 are executable regressions in `v3/free-call-settings.test.js`. The remaining legs need a live
@@ -141,8 +147,8 @@ local phase cannot read the live authored DOM either. The release owner runs the
 order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm the served
-   asset is the new build: the served `v3/free-call-settings.js` must contain the status-pill and
-   radio sync, `AUTHORED_STATUS_PILL_SELECTOR` together with `setRadioChecked`. The previous build
+   asset is the new build: the served `v3/free-call-settings.js` must contain the late-sibling
+   recovery, `watchUiScope` together with `paintStatusPills`. The previous build
    already shipped the file itself, and `v3/scheduling-auth.js` already authenticated
    `starter/free-call-settings/get/v3`, so neither can tell this release from the one before it;
    always check a marker this release introduced.
