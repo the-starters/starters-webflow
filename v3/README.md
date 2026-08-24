@@ -2016,8 +2016,9 @@ paths. It is inert everywhere else. Load it through
 stage adapter; that loader is the authoritative script order. At boot it loads
 `dashboard-call-actions.js`, `dashboard-call-media.js`, and
 `dashboard-call-payment.js` from the same GitHub-backed `v3` CDN directory. A
-missing or invalid optional module resolves after five seconds and leaves its
-controls hidden instead of blocking the canonical dashboard reader.
+missing or invalid optional module stops blocking the canonical dashboard
+reader after five seconds and leaves its controls hidden. If that script loads
+after the fallback, the controller still wires its valid module exactly once.
 
 The controller obtains the current Memberstack member, reads
 `booking_record/get/v3` through `window.xanoAuthFetch` with that member's ID,
