@@ -12,9 +12,9 @@ newlines, and deferred controllers add one-time browser guards. The manifest rec
 live identities and candidate identities, plus the exact inverse transformation used to reconstruct
 each captured live body.
 
-Two candidates no longer reconstruct to their published bodies. `draft-state.js` carries the
-member-bound hydration fix, and `submit-writer.js` carries the profile-save and pending-photo commit
-gate. Their transformations are recorded as
+Three candidates no longer reconstruct to their published bodies. `canonical-profile-loader.js`
+carries company logo hydration, `draft-state.js` carries the member-bound hydration fix, and
+`submit-writer.js` carries the profile-save and pending-photo commit gate. Their transformations are recorded as
 `whitespace_plus_idempotency_guard_plus_behavior_change` and name immutable published-body captures.
 Tests still pin each candidate length and SHA-256, prove the published length, body hash, and
 complete-embed hash from its capture, and fail if a declared change stops diverging from the published
