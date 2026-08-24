@@ -72,11 +72,14 @@ Array items may be plain strings or objects carrying `name`, `label`, or `raw`.
 Object keys are read in slot order and tolerate the `service-1`, `service_1`,
 and `Service 1` spellings; any other key is ignored, so sibling metadata can
 never become a selectable service. Names are trimmed, empty values dropped, and
-duplicates removed case-insensitively.
+duplicates removed case-insensitively. Generic `Service 1`, `Service 2`, and
+`Service 3` values are dropped from every response shape.
 
-The Xano change that adds this field to the response is a separate unpublished
-draft. Until it is published under its own approved production boundary, the
-endpoint returns no services. The controller still removes the generic service
+The `freelancers_v3.Services` field is live in production and the profile
+endpoint projects it into the response. A read-only production reconciliation
+on 2026-08-24 found 677 profiles with non-empty canonical service arrays. The
+three production test profiles used for this workflow currently have empty
+arrays. For an empty array, the controller removes the generic service
 placeholders and keeps every valid authored option.
 
 ### Profile request paths
@@ -161,9 +164,9 @@ the Brand options. The controller never restores the generic `Service 1/2/3`
 slots after an empty service list, a failed profile request, or a member scope
 change. It keeps every valid authored option. A selection that survives the
 refresh is kept; one whose option no longer exists is cleared to the empty
-value. Service loading is independent of the Brand identity rail: the controller still clears
-the copied Starter photo, role, role list, and profile information rather than
-repainting them from the profile response.
+value. Service loading is independent of the Brand identity rail: the
+controller still clears the copied Starter photo, role, role list, and profile
+information rather than repainting them from the profile response.
 
 The canonical modal is the detached shared Contract Generation dialog with the
 Starter profile marker. Before the shared modal initializer runs, the controller

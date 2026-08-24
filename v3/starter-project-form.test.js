@@ -387,7 +387,7 @@ test('the canonical service list never reaches the profile bind projection', asy
   )
 })
 
-test('normalizes legacy service shapes and replaces only generic authored service slots', () => {
+test('normalizes canonical services and removes generic slots from every source', () => {
   const loaded = load({ noDocument: true })
 
   assert.deepEqual(
@@ -402,9 +402,22 @@ test('normalizes legacy service shapes and replaces only generic authored servic
     }))),
     ['Paid Media Audit', 'Creative Strategy Sprint'],
   )
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(loaded.api.normalizeServices([
+      'Service 1',
+      { name: 'service-2' },
+      { label: 'SERVICE_3' },
+      'Paid Media Audit',
+    ]))),
+    ['Paid Media Audit'],
+  )
 
   loaded.form.fields.serviceSelect.value = 'Service 2'
-  assert.equal(loaded.api.renderServices(loaded.form, ['Paid Media Audit']), true)
+  assert.equal(loaded.api.renderServices(loaded.form, [
+    'Service 1',
+    'Paid Media Audit',
+    { label: 'Service 3' },
+  ]), true)
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => [option.value, option.textContent]),
     [

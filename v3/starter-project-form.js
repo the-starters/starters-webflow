@@ -202,7 +202,7 @@
         ? (item.name || item.label || item.raw)
         : item)
       var key = name.toLowerCase()
-      if (!name || seen[key]) return services
+      if (!name || serviceSlot(name) > 0 || seen[key]) return services
       seen[key] = true
       services.push(name)
       return services
