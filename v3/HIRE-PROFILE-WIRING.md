@@ -44,7 +44,7 @@ execute its legacy helpers.
 `hire-profile.js` also verifies this dependency at runtime. If an older saved
 page head does not contain `free-call-booking.js`, it adds that exact jsDelivr
 asset once and waits up to five seconds for that loader before booking
-discovery. A load error or timeout leaves the Book Call wrapper and both call
+discovery. A load error or timeout leaves every Book Call trigger and both call
 options hidden. An existing controller or matching loader that can still settle
 — an `async` or `defer` tag, or a loader this recovery already injected — is
 reused, so this recovery does not create a second chooser owner. Each watched
@@ -204,9 +204,13 @@ eligible Free or Paid option opens `popup-booking`. Free uses the Nylas public
 component through `StartersFreeCallBooking`. Paid uses the authenticated calendar and booking flow owned by
 [`README.md`](README.md#brand-paid-call-payment-method-client) inside the same
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
-production route map. The authored Book Call wrapper stays hidden and
-`aria-hidden="true"` until canonical discovery produces a Free option that the
-GitHub Free controller can own or a Paid option that the V3 controller accepts.
+production route map. Every authored
+`[data-modal-trigger="popup-booking-main"]` stays hidden with
+`data-booking-trigger-unavailable` and `aria-disabled="true"`, and the Book Call
+wrapper stays hidden with `aria-hidden="true"`, until canonical discovery
+produces a Free option that the GitHub Free controller can own or a Paid option
+that the V3 controller accepts. This includes triggers outside the wrapper, so
+no entry point can open an empty chooser while discovery is closed.
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
 
