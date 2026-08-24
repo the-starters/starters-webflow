@@ -3,8 +3,8 @@
  *
  * Webflow owns the authored modal and reason fields. This module binds those
  * elements and sends only environment-safe commands that have a published V3
- * contract. Cancel and reschedule stay hidden until their Xano helpers isolate
- * TEST and production provider credentials.
+ * contract. Cancel and reschedule stay hidden until their canonical lifecycle
+ * contracts are reviewed as safe.
  */
 ;(function (global) {
   'use strict'
