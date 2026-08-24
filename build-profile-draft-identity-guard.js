@@ -25,12 +25,13 @@
 
   if (!window || window.__TS_BUILD_PROFILE_DRAFT_GUARD__) return
 
-  const VERSION = '1.1.0'
+  const VERSION = '1.2.0'
   const LEGACY_KEY = 'build_profile'
   const SCOPED_PREFIX = 'ts:build_profile:member:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const StorageConstructor = window.Storage
   const localStorage = window.localStorage
+  const upstreamMemberReady = window.memberReady
   const PROFILE_TYPES_BY_PATH = Object.freeze({
     '/build-profile/consult': Object.freeze({
       type: 'consult',
@@ -96,6 +97,16 @@
 
   function finish(nextStatus) {
     status = nextStatus
+    if (status === 'ready') {
+      window.MEMBER = memberData
+    } else {
+      memberId = ''
+      memberData = null
+      scopedKey = ''
+      pendingValue = null
+      pendingRemoval = false
+      window.MEMBER = { id: '' }
+    }
     resolveReady({ status, memberId: memberId || null })
     window.dispatchEvent(
       new window.CustomEvent('ts:build-profile-draft-identity', {
@@ -166,7 +177,16 @@
   function gateAuthored(authored) {
     return function gatedAuthoredEntry() {
       const self = this
-      const invocationArgs = arguments
+      const invocationArgs = Array.prototype.slice.call(arguments)
+      const callback = invocationArgs[0]
+      if (typeof callback === 'function') {
+        invocationArgs[0] = function gatedAuthoredCallback() {
+          const callbackArgs = Array.prototype.slice.call(arguments)
+          if (callbackArgs.length) callbackArgs[0] = memberData
+          else callbackArgs.push(memberData)
+          return callback.apply(this, callbackArgs)
+        }
+      }
       return ready.then(function () {
         return authored.apply(self, invocationArgs)
       })
@@ -232,6 +252,14 @@
 
   async function resolveIdentity() {
     try {
+      if (upstreamMemberReady && typeof upstreamMemberReady.then === 'function') {
+        try {
+          await upstreamMemberReady
+        } catch {
+          // The upstream promise is a readiness boundary, not identity authority.
+        }
+      }
+
       const memberstack = await waitForMemberstack()
       if (!memberstack) {
         finish('blocked')
