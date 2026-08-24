@@ -756,6 +756,26 @@
       if (message) message.textContent = 'We could not book this call. Please try again.'
     }
 
+    function showPaidSuccess() {
+      popup.querySelectorAll('[success-call-buttons]').forEach(function (element) {
+        element.style.display = element.getAttribute('data-type') === 'paid' ? 'flex' : 'none'
+      })
+      popup.querySelectorAll('[schedule-step="success"] [booking-element="paid-meeting"]').forEach(function (element) {
+        element.textContent = 'Paid Call'
+      })
+      popup.querySelectorAll('[schedule-step="success"] *').forEach(function (element) {
+        if (/^Your card ending in .+ will be charged for this call\.$/i.test(String(element.textContent || '').trim())) {
+          element.style.display = ''
+          element.setAttribute('aria-hidden', 'false')
+        }
+      })
+      const successText = popup.querySelector('[booking-success-text]')
+      if (successText) {
+        successText.textContent = 'Your paid call request was sent. We will notify you when the Starter confirms it.'
+      }
+      switchStep(popup, 'success')
+    }
+
     async function submitBooking(slot) {
       if (bookingLock) return
       let guestEmails
@@ -788,12 +808,8 @@
       bookingLock = true
       try {
         const result = await bookingAttempt.run()
-        const successText = popup.querySelector('[booking-success-text]')
-        if (successText) {
-          successText.textContent = 'Your paid call request was sent. We will notify you when the Starter confirms it.'
-        }
         closeGuestUi()
-        switchStep(popup, 'success')
+        showPaidSuccess()
         return result
       } finally {
         bookingLock = false

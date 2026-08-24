@@ -300,6 +300,10 @@ The Free controller uses the calendar and idempotent booking-command primitives
 exported by `paid-call-brand-payment.js`. It does not mount the public Nylas
 scheduler or create a provider booking directly. Success requires the server
 response to contain both the provider booking ID and the canonical Xano row ID.
+After that response, the shared success step labels the booking `Free Call`,
+shows only the Free actions, displays the Free request confirmation, and hides
+the legacy card-charge notice. A later Paid success restores the `Paid Call`
+label, Paid actions, Paid request confirmation, and card-charge notice.
 
 `paid-call-brand-payment.js` receives the exact accepted Paid configuration and
 owns that authored CTA, Stripe Card Element, and paid booking command. Only
