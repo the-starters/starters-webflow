@@ -979,6 +979,24 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     closest() { return item },
   }
   const successText = { textContent: '' }
+  const freeButtons = {
+    attrs: { 'data-type': 'free' },
+    style: { display: 'flex' },
+    getAttribute(name) { return this.attrs[name] || null },
+  }
+  const paidButtons = {
+    attrs: { 'data-type': 'paid' },
+    style: { display: 'none' },
+    getAttribute(name) { return this.attrs[name] || null },
+  }
+  const successCallType = { textContent: 'Free Call' }
+  const cardNotice = {
+    attrs: { 'aria-hidden': 'true' },
+    style: { display: 'none' },
+    textContent: 'Your card ending in 1234 will be charged for this call.',
+    getAttribute(name) { return this.attrs[name] || null },
+    setAttribute(name, value) { this.attrs[name] = String(value) },
+  }
   const paidText = { textContent: '' }
   const guestUi = makeGuestUi(['not-an-email'])
   const guestField = guestUi.rows[0].field
@@ -999,6 +1017,9 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
       const guestNodes = guestQueryAll(guestUi, selector)
       if (guestNodes.length) return guestNodes
       if (selector === '[schedule-step]') return steps
+      if (selector === '[success-call-buttons]') return [freeButtons, paidButtons]
+      if (selector === '[schedule-step="success"] [booking-element="paid-meeting"]') return [successCallType]
+      if (selector === '[schedule-step="success"] *') return [successCallType, cardNotice]
       return []
     },
   }
@@ -1114,6 +1135,11 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     assert.equal(guestField.value, '')
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(successText.textContent.includes('paid call request was sent'), true)
+    assert.equal(freeButtons.style.display, 'none')
+    assert.equal(paidButtons.style.display, 'flex')
+    assert.equal(successCallType.textContent, 'Paid Call')
+    assert.equal(cardNotice.style.display, '')
+    assert.equal(cardNotice.getAttribute('aria-hidden'), 'false')
     assert.equal(steps[1].style.display, 'flex')
   } finally {
     global.document = previous.document
