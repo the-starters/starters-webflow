@@ -75,9 +75,13 @@ action, so a Yes click is never read as a turn-off.
 The controller scopes every compatibility selector to the Paid card. It anchors on the Paid Form
 Block's own enclosing form wrapper and only widens to the Call Item that owns that wrapper. If the
 Call Item also holds another card's form wrapper, the controller stays inside the Paid wrapper, so it
-never binds or toggles the Free card. Give the Paid card its own `item-form-open` inside that Call
-Item so Edit stays wired. It does not use styling classes, generated element IDs, or the duplicate
-Form Block ID.
+never binds or toggles the Free card. Webflow or Memberstack can insert that form root before its
+sibling status pills and Edit control. After the root boots, the controller watches the document,
+re-resolves the owning Paid card when siblings arrive, binds that late Edit control once, and
+repaints exactly the canonical On or Off pill. Give the Paid card its own `item-form-open` inside
+that Call Item so Edit stays wired. It does not use styling classes, generated element IDs, or the
+duplicate Form Block ID. The native Webflow form and its authored sibling controls remain the
+markup owner.
 
 For new Designer wiring, use the stable contract instead of the compatibility names:
 
@@ -170,7 +174,8 @@ Do not activate this form until the paid-call reconciliation dry run has zero un
 ## Post-release live verification
 
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion
-recovery, the duplicate-initialization dedup, the published `consulting-calls-paid`
+recovery, the root-first/sibling-later card recovery, the duplicate-initialization dedup,
+the published `consulting-calls-paid`
 binding, the stale-readiness save of an active service, the expired-session
 fail-closed writes, and the authored price tile fallback — canonical precedence,
 single-leaf and split `$` + number selection, the continued-amount guard that leaves a
@@ -186,9 +191,9 @@ read the live authored DOM.
 The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
-   the served asset is the new build: the served file must contain the status-pill and radio
-   sync, `AUTHORED_STATUS_PILL_SELECTOR` together with `setRadioChecked` and
-   `clearFieldValidity`. The previous build already shipped `consulting-calls-paid`,
+   the served asset is the new build: the served file must contain the late-sibling recovery,
+   `watchUiScope` together with `paintStatusPills`. The previous build already shipped
+   `AUTHORED_STATUS_PILL_SELECTOR`, `setRadioChecked`, `clearFieldValidity`, `consulting-calls-paid`,
    `cardRadioPair`, the root-wait recovery, `normalizeCardRadioGroup`, `AUTHORED_PRICE_NUMBER`,
    and `endsAuthoredAmount`, so none of those markers can tell this release from the one
    before it; always check a marker this release introduced.
