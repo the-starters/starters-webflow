@@ -655,6 +655,8 @@ test('allows reviewed Brand payment routes on dashboards and Hire', async () => 
   const dashboard = loadStage({ pathname: '/brand-dashboard' })
   const hire = loadStage({ pathname: '/hire/jp-dionisio' })
   const paymentRoutes = [
+    'brand/booking/payment-action/v3',
+    'brand/booking/payment-method-replace/v3',
     'brand/payment-method/setup/v3',
     'brand/payment-method/set-default/v3',
   ]

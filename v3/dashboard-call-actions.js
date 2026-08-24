@@ -148,11 +148,12 @@
     return payload
   }
 
-  function declineSucceeded(body) {
+  function declineSucceeded(body, bookingId) {
     const result = body && body.decline
     return Boolean(
       result &&
-      clean(result.booking_id) !== '' &&
+      clean(result.booking_id) === clean(bookingId) &&
+      clean(bookingId) !== '' &&
       clean(result.status).toLowerCase() === 'declined'
     )
   }
@@ -176,7 +177,7 @@
     const body = await response.json().catch(function () {
       return null
     })
-    if (!response.ok || !declineSucceeded(body)) {
+    if (!response.ok || !declineSucceeded(body, payload.booking_id)) {
       throw new Error('Canonical booking decline failed')
     }
     await clearDeclineAttemptKey(booking, reason, attemptKey)

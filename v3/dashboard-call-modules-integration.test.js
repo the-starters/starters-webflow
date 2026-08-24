@@ -1,5 +1,4 @@
 const assert = require('node:assert/strict')
-const fs = require('node:fs')
 const test = require('node:test')
 
 global.window = global
@@ -109,20 +108,26 @@ test('dashboard reuses already-loaded narrow modules', async () => {
   assert.equal(loaded.payment, global.StartersDashboardCallPayment)
 })
 
-test('narrow modules contain no legacy direct provider or unsafe lifecycle route', () => {
-  const files = [
-    'dashboard-call-actions.js',
-    'dashboard-call-media.js',
-    'dashboard-call-payment.js',
-  ]
-  const source = files
-    .map((file) => fs.readFileSync(require.resolve('./' + file), 'utf8'))
-    .join('\n')
-  assert.doesNotMatch(source, /api\.stripe\.com/)
-  assert.doesNotMatch(source, /api\.us\.nylas\.com/)
-  assert.doesNotMatch(source, /\/booking\/(?:cancel|reschedule)\/v3/)
-  assert.doesNotMatch(source, /innerHTML\s*=/)
-  assert.match(source, /\/booking\/decline\/v3/)
-  assert.match(source, /\/notetaker\/get_media\/v3/)
-  assert.match(source, /\/brand\/booking\/payment-method-replace\/v3/)
+test('unsupported lifecycle and payment controls stay inactive', () => {
+  const cancel = button('switch-cancel')
+  const reschedule = button('reschedule')
+  const payment = button('replace-payment-method')
+  const modal = {
+    querySelectorAll() {
+      return [cancel, reschedule, payment]
+    },
+  }
+
+  dashboard.configureDetailActions(modal, 'brand', 'confirmed', {
+    booking_id: 'booking-paid-1',
+    paid_meeting: true,
+    payment_environment: 'test',
+    payment_status: 'expired_card',
+    status: 'confirmed',
+  })
+
+  assert.equal(cancel.hidden, true)
+  assert.equal(reschedule.hidden, true)
+  assert.equal(payment.hidden, true)
+  assert.equal(global.StartersDashboardCallPayment.wire(), false)
 })

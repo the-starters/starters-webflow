@@ -34,6 +34,8 @@
     'booking_record/update_paid_booking_price': 'booking_record/update_paid_booking_price/v3',
     'booking_record/update_payment_status': 'booking_record/update_payment_status/v3',
     'booking_record/update_reschedule': 'booking_record/update_reschedule/v3',
+    'brand/booking/payment-action': 'brand/booking/payment-action/v3',
+    'brand/booking/payment-method-replace': 'brand/booking/payment-method-replace/v3',
     'brand/booking/request': 'brand/booking/request/v3',
     'brand/payment-method/setup': 'brand/payment-method/setup/v3',
     'brand/payment-method/set-default': 'brand/payment-method/set-default/v3',

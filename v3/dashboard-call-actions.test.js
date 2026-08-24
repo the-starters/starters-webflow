@@ -144,14 +144,62 @@ test('only an exact declined response clears the command', () => {
   assert.equal(
     api.declineSucceeded({
       decline: { booking_id: 'booking-test-1', status: 'declined' },
-    }),
+    }, 'booking-test-1'),
     true,
   )
   assert.equal(
     api.declineSucceeded({
       decline: { booking_id: 'booking-test-1', status: 'pending' },
-    }),
+    }, 'booking-test-1'),
     false,
   )
-  assert.equal(api.declineSucceeded(null), false)
+  assert.equal(
+    api.declineSucceeded({
+      decline: { booking_id: 'booking-other', status: 'declined' },
+    }, 'booking-test-1'),
+    false,
+  )
+  assert.equal(api.declineSucceeded(null, 'booking-test-1'), false)
+})
+
+test('a mismatched decline response retains the command key', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const keys = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000001'
+      },
+    }
+    global.xanoAuthFetch = async function (_url, options) {
+      keys.push(JSON.parse(options.body).idempotency_key)
+      return {
+        ok: true,
+        async json() {
+          return {
+            decline: { booking_id: 'booking-other', status: 'declined' },
+          }
+        },
+      }
+    }
+
+    await assert.rejects(
+      api.declineBooking(pendingBooking(), 'Not available'),
+      /Canonical booking decline failed/,
+    )
+    await assert.rejects(
+      api.declineBooking(pendingBooking(), 'Not available'),
+      /Canonical booking decline failed/,
+    )
+    assert.equal(keys.length, 2)
+    assert.equal(keys[1], keys[0])
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
 })
