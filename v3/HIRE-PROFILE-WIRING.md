@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-23
+Last updated: 2026-08-24
 Status: Free Call behavior is GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
@@ -188,8 +188,9 @@ Canaries: `/hire/ashna-rana` (free + paid calls, 5000 / 4500) and
    `Retainer`) and must **not** carry `data-modal-trigger`, `booking-popup-open`,
    or `data-type` — otherwise a logged-in click opens an unconfigured booking
    popup for a card that cannot be booked.
-3. Eligible signed-in Brand: call cards keep the Book Call modal flow, and each
-   non-call card opens Start a Project with its exact native Services preset.
+3. Eligible signed-in Brand: both Free and Paid call cards open the authored
+   Free/Paid chooser, and each non-call card opens Start a Project with its
+   exact native Services preset.
 4. `document.documentElement` carries `data-v3-algolia-status="ready"`.
 5. The Algolia object ID matches the positive integer in
    `[data-starter-xano-id]`.
@@ -208,6 +209,13 @@ production route map. The authored Book Call wrapper stays hidden and
 GitHub Free controller can own or a Paid option that the V3 controller accepts.
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
+
+Both native Free and Paid service cards are shortcuts to that same authored
+chooser. `hire-profile.js` removes their retired direct-scheduler attributes and
+opens `popup-booking-main` only while the canonically discovered Book Call
+wrapper has `aria-hidden="false"`. The card click does not perform booking,
+payment, or Stripe-readiness work. The selected chooser option remains the only
+path into the Free or Paid scheduler.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact

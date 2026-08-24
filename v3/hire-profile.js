@@ -107,6 +107,36 @@
       });
   }
 
+  function wireCallServiceCardsToChooser() {
+      document.querySelectorAll('#services [data-service-card="component"]').forEach(function (card) {
+          // The native Webflow service cards identify the call type through
+          // has-connection. Keep data-type as a compatibility hook for older
+          // saved markup and focused fixtures.
+          const type = card.getAttribute('data-type') || card.getAttribute('has-connection');
+          if (type !== 'free' && type !== 'paid') return;
+          if (card.getAttribute('data-call-service-chooser') === 'ready') return;
+
+          // Service cards are shortcuts to the authored Free/Paid chooser.
+          // They must not invoke the retired direct scheduler handler, which
+          // performs a Starter-owned Stripe readiness check as the Brand.
+          card.removeAttribute('booking-popup-open');
+          card.removeAttribute('data-modal-trigger');
+          card.setAttribute('data-call-service-chooser', 'ready');
+          card.addEventListener('click', function (event) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              const chooser = document.querySelector('[data-modal-trigger="popup-booking-main"]');
+              const wrapper = chooser && chooser.closest('[booking-button-wrapper]');
+              if (
+                  chooser &&
+                  typeof chooser.click === 'function' &&
+                  wrapper &&
+                  wrapper.getAttribute('aria-hidden') === 'false'
+              ) chooser.click();
+          }, true);
+      });
+  }
+
   function isBlockedProductionBookingSurface() {
       const host = window.location && window.location.hostname;
       const path = window.location && window.location.pathname
@@ -121,6 +151,7 @@
   // Webflow always authors the structural Book Call trigger. Canonical
   // environment-scoped discovery is the only code path that may reveal it.
   setBookingButtonAvailable(false);
+  wireCallServiceCardsToChooser();
 
   // Page-embed contract. This file is deferred, so all of these are already
   // defined in the normal case; stand down loudly rather than throwing if not.

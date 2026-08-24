@@ -164,6 +164,7 @@ function makePage({
   index = 'Freelancers3.0-production',
   includeFreeCard = true,
   includeNativeFreeTemplate = false,
+  includeCallDataType = true,
 } = {}) {
   const root = makeElement('body')
 
@@ -199,10 +200,10 @@ function makePage({
     'has-connection': includeFreeCard ? 'free' : 'paid',
     'data-modal-trigger': 'popup-booking',
     'booking-popup-open': '',
-    'data-type': includeFreeCard ? 'free' : 'paid',
     'data-signup-trigger-element': 'service',
     'data-signup-trigger-value': includeFreeCard ? 'Free Call' : 'Paid Consulting Call',
   }
+  if (includeCallDataType) cardAttributes['data-type'] = includeFreeCard ? 'free' : 'paid'
   if (!includeFreeCard) delete cardAttributes['booking-popup-open']
 
   const card = makeElement(
@@ -1271,7 +1272,7 @@ test('invalid, inactive, and cross-role plan records fail closed with a legacy B
     assert.equal(configReads, 0, 'ineligible plan state must not read booking configurations')
     assert.equal(schedulerCalls, 0, 'ineligible plan state must not initialize the scheduler')
     assert.equal(page.inlineWrapper.style.display, 'none')
-    assert.equal(page.servicesList.children[0].getAttribute('data-modal-trigger'), 'popup-booking')
+    assert.equal(page.servicesList.children[0].getAttribute('data-modal-trigger'), null)
   }
 })
 
@@ -1294,7 +1295,7 @@ test('logged-out free-call clicks keep signup attribution and never initialize i
   const freeCard = page.servicesList.children[0]
   assert.equal(freeCard.getAttribute('data-signup-trigger-element'), 'service')
   assert.equal(freeCard.getAttribute('data-signup-trigger-value'), 'Free Call')
-  assert.equal(freeCard.getAttribute('data-modal-trigger'), 'popup-booking')
+  assert.equal(freeCard.getAttribute('data-modal-trigger'), null)
   assert.equal(freeCard.onclick, undefined)
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
@@ -1347,7 +1348,7 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
     bookingCalls[0][2].map((record) => record.config_id),
     ['config_free'],
   )
-  assert.equal(freeCard.getAttribute('data-modal-trigger'), 'popup-booking')
+  assert.equal(freeCard.getAttribute('data-modal-trigger'), null)
   assert.equal(freeCard.getAttribute('data-type'), 'free')
   assert.equal(schedulerCalls, 0, 'the calendar waits for a modal option click')
   assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free')
@@ -1507,6 +1508,88 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   assert.equal(page.paidModalOption.style.display, 'none')
 })
 
+test('a Paid service card opens the authored Free/Paid chooser instead of the retired direct scheduler', async () => {
+  // Production Webflow markup identifies this card with has-connection="paid"
+  // and does not author data-type on the service card itself.
+  const page = makePage({ includeFreeCard: false, includeCallDataType: false })
+  let chooserClicks = 0
+  page.bookingButton.click = () => { chooserClicks += 1 }
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({
+      nylas_grant_id: 'grant_prod',
+      nylas_grant_email: 'starter@example.com',
+    }),
+    getConfigs: async () => [{
+      config_id: 'paid_live',
+      is_paid: true,
+      active: true,
+      data_environment: 'production',
+      payment_environment: 'live',
+      currency: 'usd',
+      price_cents: 100,
+      duration: 60,
+    }],
+    paidController: { installPaidBookingController: () => true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const paidCard = page.servicesList.querySelector('[has-connection="paid"]')
+  assert.equal(paidCard.getAttribute('data-type'), null)
+  assert.equal(paidCard.getAttribute('booking-popup-open'), null)
+  assert.equal(paidCard.getAttribute('data-modal-trigger'), null)
+  assert.equal(paidCard.getAttribute('data-call-service-chooser'), 'ready')
+  assert.equal(paidCard.listeners.click.length, 1)
+
+  let prevented = 0
+  let stopped = 0
+  paidCard.listeners.click[0]({
+    preventDefault: () => { prevented += 1 },
+    stopImmediatePropagation: () => { stopped += 1 },
+  })
+  assert.equal(prevented, 1)
+  assert.equal(stopped, 1)
+  assert.equal(chooserClicks, 1)
+})
+
+test('call service cards neutralize the retired scheduler before dependency stand-down', () => {
+  for (const includeFreeCard of [true, false]) {
+    const page = makePage({ includeFreeCard })
+    let chooserClicks = 0
+    page.bookingButton.click = () => { chooserClicks += 1 }
+    const context = makeContext({ page })
+    delete context.qs
+    delete context.qsa
+    delete context.waitForMember
+    vm.createContext(context)
+    vm.runInContext(source, context)
+
+    const card = page.servicesList.children[0]
+    assert.equal(card.getAttribute('booking-popup-open'), null)
+    assert.equal(card.getAttribute('data-modal-trigger'), null)
+    assert.equal(card.getAttribute('data-call-service-chooser'), 'ready')
+    assert.equal(card.listeners.click.length, 1)
+
+    let prevented = 0
+    let stopped = 0
+    card.listeners.click[0]({
+      preventDefault: () => { prevented += 1 },
+      stopImmediatePropagation: () => { stopped += 1 },
+    })
+    assert.equal(prevented, 1)
+    assert.equal(stopped, 1)
+    assert.equal(chooserClicks, 0)
+  }
+})
+
 test('Paid-only discovery stays closed when the V3 controller is unavailable', async () => {
   const page = makePage()
   let nearestSlotCalls = 0
@@ -1651,16 +1734,18 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
   const freeCard = page.servicesList.children.find((card) => card.getAttribute('data-type') === 'free')
   assert.equal(
     freeCard.getAttribute('data-modal-trigger'),
-    'popup-booking',
+    null,
     'Free Call must not be converted into a project trigger',
   )
+  assert.equal(freeCard.getAttribute('data-call-service-chooser'), 'ready')
   assert.equal(freeCard.getAttribute('data-sp-fill'), null)
   assert.equal(freeCard.getAttribute('data-sp-fill-value'), null)
   assert.equal(
     paidCard.getAttribute('data-modal-trigger'),
-    'popup-booking',
+    null,
     'Paid Call must not be converted into a project trigger',
   )
+  assert.equal(paidCard.getAttribute('data-call-service-chooser'), 'ready')
   assert.equal(paidCard.getAttribute('data-sp-fill'), null)
   assert.equal(paidCard.getAttribute('data-sp-fill-value'), null)
 })
