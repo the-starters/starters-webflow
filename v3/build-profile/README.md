@@ -23,6 +23,15 @@ The files below are source-controlled candidates for self-contained controller b
 | 13 | `bio-editor.js` | `91671c4ed05806b2ed306f50c265954ef0c36714f59c77f721e2510370c9273f` | Bio editor, 1500-character limit, and counter ownership |
 | 14 | `grouped-selects.js` | `e80bb01f28a43ebcb5b28e8ea733bac273985ddfa3235179cdfc6a9a5168ae84` | Grouped multi-select options |
 
+`portfolio-crud.js` and `portfolio-list.js` own only the exact
+`/build-profile/consult` and `/build-profile/full-profile` routes. They accept an
+optional trailing slash and fail closed on every other path before member
+resolution, selector reads, event binding, network reads, uploads, or writes.
+This route gate prevents a nested or stale Build loader from claiming the native
+Edit Profile Work Highlights controls. Do not replace it with a DOM marker or a
+first-loader-wins flag because Build and Edit intentionally share the same
+Designer selectors.
+
 `bio-editor.js`, `field-counters.js`, and `company-experience-crud.js` have
 deliberately diverged from the inline bodies they were captured from. The bio limit is
 now 1500 **characters** rather than 300 words, the editor owns its counter group, and

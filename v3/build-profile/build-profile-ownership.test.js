@@ -48,8 +48,8 @@ const EXPECTED_CANDIDATES = {
   sourceCommit: '781fd8ae6d05269cf14d0d33d8031ba0438ed3d4',
   files: {
     'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 14711, sha256: '1204793001fe3ce407bc7761e7fbe713a7b3752cb074fa76f53024263f2eaf78' },
-    'portfolio-crud.js': { path: 'v3/build-profile/portfolio-crud.js', bytes: 38194, sha256: 'dd827f0e98e442774a935cc40224381a53fde0c0bdd1603e694f932d6b1dbfc7' },
-    'portfolio-list.js': { path: 'v3/build-profile/portfolio-list.js', bytes: 3834, sha256: '9f7e8f223de29bc5d8ddb970ca0fe25dbfdf53cdbb36fd68a07c2e81b08b28d1' },
+    'portfolio-crud.js': { path: 'v3/build-profile/portfolio-crud.js', bytes: 38397, sha256: '67a4ae90325477bc931a35d015eeba536e90ad5ff90968dc6c0cccb06872576f' },
+    'portfolio-list.js': { path: 'v3/build-profile/portfolio-list.js', bytes: 4036, sha256: '508b94b1f40f05dcc916c79c3cf0bec04f627f75bb607d93d02c02e0950fe11b' },
     'company-autocomplete.js': { path: 'v3/build-profile/company-autocomplete.js', bytes: 11921, sha256: 'a342c3700e30a9693ed2c746feef7641785726f0ca9f28c4b00730e417525cbe' },
     'work-dates.js': { path: 'v3/build-profile/work-dates.js', bytes: 1929, sha256: '3be29b0dfecfadd6057e6da6a30af0a47dc41d67bdedda863aca003512fe2890' },
     'company-experience-crud.js': { path: 'v3/build-profile/company-experience-crud.js', bytes: 39104, sha256: 'd463b86613a42d5bdb1846f3294595441dbdc806d79530758560a03df0f8be85' },
@@ -125,6 +125,7 @@ test('controllers boot against native markup without creating forms or excluded 
       addEventListener() {},
       document,
       fetch: async (url) => { requests.push(String(url)); return { ok: true, json: async () => ({}) } },
+      location: { pathname: '/build-profile/consult' },
       setTimeout,
     }
     const context = vm.createContext({
@@ -141,6 +142,122 @@ test('controllers boot against native markup without creating forms or excluded 
     assert.equal(created.includes('form'), false, `${file} created a form`)
     assert.equal(requests.some((url) => /availability|booking|paid[_-]?call|free-consulting/i.test(url)), false, file)
   }
+})
+
+for (const file of ['portfolio-crud.js', 'portfolio-list.js']) {
+  test(`${file} boots only on exact Build Profile routes`, async () => {
+    async function boot(pathname) {
+      const listeners = []
+      const requests = []
+      let memberWaits = 0
+      let selectorReads = 0
+      const document = {
+        addEventListener(type, listener) { listeners.push({ type, listener }) },
+        querySelector() { selectorReads += 1; return null },
+        querySelectorAll() { selectorReads += 1; return [] },
+      }
+      const window = {
+        addEventListener() {},
+        document,
+        location: { pathname },
+      }
+      const context = vm.createContext({
+        console,
+        document,
+        fetch: async (url) => { requests.push(String(url)); return { ok: true, json: async () => ({}) } },
+        FormData,
+        MEMBER: { id: 'test-member' },
+        qs: document.querySelector,
+        qsa: document.querySelectorAll,
+        setTimeout,
+        URL,
+        waitForMember(callback) { memberWaits += 1; return callback() },
+        window,
+      })
+
+      new vm.Script(source(file), { filename: file }).runInContext(context)
+      for (const { type, listener } of listeners.slice()) {
+        if (type === 'DOMContentLoaded') await listener()
+      }
+
+      return { memberWaits, requests, selectorReads }
+    }
+
+    for (const pathname of [
+      '/starter-edit-profile',
+      '/starter-edit-profile/',
+      '/build-profile',
+      '/build-profile/consult/preview',
+      '/build-profile/full-profile-copy',
+      '',
+    ]) {
+      assert.deepEqual(await boot(pathname), {
+        memberWaits: 0,
+        requests: [],
+        selectorReads: 0,
+      }, pathname)
+    }
+
+    for (const pathname of [
+      '/build-profile/consult',
+      '/build-profile/consult/',
+      '/build-profile/full-profile',
+      '/build-profile/full-profile/',
+    ]) {
+      const result = await boot(pathname)
+      assert.equal(result.memberWaits, 1, pathname)
+      assert.ok(result.selectorReads > 0, pathname)
+      assert.deepEqual(result.requests, [], pathname)
+    }
+  })
+}
+
+test('nested Build portfolio assets stay inert while Edit portfolio assets own Edit Profile', async () => {
+  const listeners = []
+  const requests = []
+  let memberWaits = 0
+  let selectorReads = 0
+  const document = {
+    addEventListener(type, listener) { listeners.push({ type, listener }) },
+    querySelector() { selectorReads += 1; return null },
+    querySelectorAll() { selectorReads += 1; return [] },
+  }
+  const window = {
+    addEventListener() {},
+    document,
+    location: { pathname: '/starter-edit-profile' },
+  }
+  const context = vm.createContext({
+    activeProfile: {},
+    console,
+    document,
+    Event: class Event {},
+    fetch: async (url) => { requests.push(String(url)); return { ok: true, json: async () => ({}) } },
+    FormData,
+    MEMBER: { id: 'test-member' },
+    qs: document.querySelector,
+    qsa: document.querySelectorAll,
+    setTimeout,
+    URL,
+    waitForMember(callback) { memberWaits += 1; return callback() },
+    window,
+  })
+
+  for (const file of ['portfolio-crud.js', 'portfolio-list.js']) {
+    new vm.Script(source(file), { filename: file }).runInContext(context)
+  }
+  for (const file of ['portfolio-crud.js', 'portfolio-list.js']) {
+    const asset = path.resolve(DIR, '../starter-edit-profile', file)
+    new vm.Script(fs.readFileSync(asset, 'utf8'), { filename: `edit-${file}` }).runInContext(context)
+  }
+
+  for (const { type, listener } of listeners.slice()) {
+    if (type === 'DOMContentLoaded') await listener()
+  }
+
+  assert.equal(memberWaits, 2)
+  assert.ok(selectorReads > 0)
+  assert.deepEqual(requests, [])
 })
 
 test('profile consumers wait for canonical fallback before their first read', () => {
