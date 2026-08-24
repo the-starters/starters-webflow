@@ -481,7 +481,8 @@ test('a page missing the Memberstack helpers stands down instead of throwing', (
   assert.equal(page.paidModalOption.style.display, 'none')
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
-  assert.equal(page.servicesList.children[0].style.display, undefined)
+  assert.equal(page.servicesList.children[0].style.display, 'none')
+  assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
 })
 
 test('a page missing starter_memberstack_id stands down instead of throwing', () => {
@@ -499,7 +500,8 @@ test('a page missing starter_memberstack_id stands down instead of throwing', ()
   assert.equal(page.paidModalOption.style.display, 'none')
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
-  assert.equal(page.servicesList.children[0].style.display, undefined)
+  assert.equal(page.servicesList.children[0].style.display, 'none')
+  assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
 })
 
 test('the jQuery-only blocks are skipped, not fatal, when jQuery is absent', () => {
@@ -1380,7 +1382,7 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
 })
 
-test('authored modal options hide synchronously without hiding Services call cards', async () => {
+test('a signed-in Brand hides call projections while canonical discovery is pending', async () => {
   const page = makePage()
   let resolveStarter
   const starterReady = new Promise((resolve) => {
@@ -1408,12 +1410,44 @@ test('authored modal options hide synchronously without hiding Services call car
   assert.equal(page.paidModalOption.getAttribute('aria-hidden'), 'true')
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
-  assert.equal(page.servicesList.children[0].style.display, undefined)
+  assert.equal(page.servicesList.children[0].style.display, 'none')
+  assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
+  assert.equal(page.servicesList.children[0].getAttribute('aria-hidden'), 'true')
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
 
   resolveStarter(null)
   await settle()
+})
+
+test('an anonymous viewer cannot reveal call projections from stale public flags', async () => {
+  const page = makePage()
+  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  page.root.appendChild(paidSurface)
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': true,
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
+  for (const surface of [freeSurface, paidSurface]) {
+    assert.equal(surface.getAttribute('data-canonical-call-unavailable'), '')
+    assert.equal(surface.getAttribute('aria-hidden'), 'true')
+    assert.equal(surface.style.display, 'none')
+  }
+
+  await settle()
+
+  for (const surface of [freeSurface, paidSurface]) {
+    assert.equal(surface.getAttribute('data-canonical-call-unavailable'), '')
+    assert.equal(surface.getAttribute('aria-hidden'), 'true')
+    assert.equal(surface.style.display, 'none')
+  }
 })
 
 test('a chooser trigger outside booking-button-wrapper stays hidden until discovery succeeds', async () => {

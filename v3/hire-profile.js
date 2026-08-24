@@ -12,10 +12,9 @@
  *    Experiences and Clients are outside this file: Webflow CMS renders them
  *    natively for all viewers after the Phase 2 cutover.
  *  - Booking wiring, which stays behind the Memberstack member gate.
- *  - Services call-card visibility. The live connection endpoints 401 for
- *    anonymous callers and the brand booking path never toggles visibility, so
- *    anonymous viewers AND signed-in brands derive availability from the public
- *    Algolia record. Starter members keep the live-derived owner toggles.
+ *  - Services call-card visibility. Anonymous viewers stay closed. Signed-in
+ *    brands use canonical booking discovery and successful controller installs.
+ *    Starter members keep the live-derived owner toggles.
  *  - Freelance/Retainer rate cards, cloned from the section's Default card.
  *  - Small page utilities that shipped in the same footer (rate formatting,
  *    rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more).
@@ -221,6 +220,7 @@
 
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
+  syncCanonicalCallSurfaces([]);
   // Webflow authors the structural Book Call triggers and dialog. Canonical
   // environment-scoped discovery is the only code path that may enable them.
   setBookingButtonAvailable(false);
@@ -486,6 +486,10 @@
               // check calendar\availability connections
               const starter = await freeCallBooking.getStarterByMemberId(FREELANCER_ID);
               const grant_id = starter ? starter['nylas_grant_id'] : null;
+              const ownerConfigs = [];
+              if (grant_id) ownerConfigs.push({ is_paid: false });
+              if (grant_id && window.stripe_charges) ownerConfigs.push({ is_paid: true });
+              syncCanonicalCallSurfaces(ownerConfigs);
               if (!grant_id) {
                   qsa('[no-connection="free"]').forEach((item) => item.style.display = "block");
               } else {
@@ -531,11 +535,9 @@
   });
 
   /* PUBLIC-RECORD SERVICES (anonymous + brand viewers)
-     The live connection endpoints require auth (401 for anonymous callers),
-     and the brand booking path never toggles card visibility at all, so
-     anonymous viewers AND signed-in brands derive call availability from
-     the public search record. Starter members keep the live-derived
-     owner toggles above. */
+     The public record supplies non-call services only. Call projections stay
+     closed for anonymous viewers and use canonical discovery for brands.
+     Starter members keep the live-derived owner toggles above. */
   waitForMember(async function () {
       var isBrand = isBrandMember(MEMBER);
       if (MEMBER.id && !isBrand) return;
@@ -543,21 +545,6 @@
       try {
           const record = await getPublicStarterRecord();
           if (!record) return;
-
-          if (record['free-consulting-calls-t-f']) {
-              qsa('[has-connection="free"]').forEach((item) => {
-                  if (!item.hasAttribute('data-canonical-call-unavailable')) {
-                      item.style.display = "block";
-                  }
-              });
-          }
-          if (record['paid-consulting-calls-t-f']) {
-              qsa('[has-connection="paid"]').forEach((item) => {
-                  if (!item.hasAttribute('data-canonical-call-unavailable')) {
-                      item.style.display = "block";
-                  }
-              });
-          }
 
           if (!MEMBER.id) markServiceCardsClickable();
           if (isBrand) {
