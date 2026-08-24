@@ -105,9 +105,10 @@ loader in the Script order block below when installing or auditing this page.
 The fallback issues no request when the bridge or `window.fetch` is missing, and
 rejects before issuing one when the bridge resolves a blank token, so it never
 sends `Bearer undefined`. A non-ok response — including one whose body is not
-JSON — also rejects. The profile load swallows every rejection, so the authored
-service options stand unchanged. The token is only ever passed to the
-`Authorization` header; it is never rendered, logged, or submitted.
+JSON — also rejects. The profile load swallows every rejection. Valid authored
+service options remain, while `Service 1`, `Service 2`, and `Service 3` never
+return. The token is only ever passed to the `Authorization` header; it is never
+rendered, logged, or submitted.
 
 ## Shared Designer contract
 
