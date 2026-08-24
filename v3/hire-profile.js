@@ -123,6 +123,45 @@
               trigger.setAttribute('aria-disabled', 'true');
           }
       });
+
+      document.querySelectorAll('[data-modal-target="popup-booking-main"]').forEach(function (dialog) {
+          if (available) {
+              dialog.removeAttribute('data-booking-surface-unavailable');
+          } else {
+              dialog.setAttribute('data-booking-surface-unavailable', '');
+          }
+      });
+  }
+
+  function openBookingChooser() {
+      const chooser = Array.from(
+          document.querySelectorAll('[data-modal-trigger="popup-booking-main"]')
+      ).find(function (trigger) {
+          return !trigger.hasAttribute('data-booking-trigger-unavailable') &&
+              trigger.getAttribute('aria-disabled') !== 'true';
+      });
+      if (chooser && typeof chooser.click === 'function') {
+          chooser.click();
+          return true;
+      }
+
+      // Some migrated CMS profiles do not render the legacy Book Call button,
+      // but they still contain the native Webflow booking dialog and service
+      // cards. Open that authored dialog through its existing Lumos controller
+      // so canonical booking discovery, not the legacy button, owns access.
+      const dialog = document.querySelector('[data-modal-target="popup-booking-main"]');
+      if (!dialog || dialog.hasAttribute('data-booking-surface-unavailable')) return false;
+
+      const modalController = window.lumos && window.lumos.modal;
+      if (modalController && typeof modalController.open === 'function') {
+          modalController.open('popup-booking-main');
+          return true;
+      }
+      if (typeof dialog.showModal === 'function') {
+          dialog.showModal();
+          return true;
+      }
+      return false;
   }
 
   function wireCallServiceCardsToChooser() {
@@ -143,14 +182,7 @@
           card.addEventListener('click', function (event) {
               event.preventDefault();
               event.stopImmediatePropagation();
-              const chooser = document.querySelector('[data-modal-trigger="popup-booking-main"]');
-              const wrapper = chooser && chooser.closest('[booking-button-wrapper]');
-              if (
-                  chooser &&
-                  typeof chooser.click === 'function' &&
-                  wrapper &&
-                  wrapper.getAttribute('aria-hidden') === 'false'
-              ) chooser.click();
+              openBookingChooser();
           }, true);
       });
   }
