@@ -187,8 +187,11 @@ generate form HTML.
 The controller also corrects the copied Brand-facing text in the native modal
 for the Starter flow. The right rail says **Selected Brand**, the introduction
 describes working with a Brand, and the scope, upfront-payment, and ongoing-term
-help text addresses the Starter. These are exact-text updates to existing
-Designer elements, not generated markup.
+help text addresses the Starter. After a Brand is selected, the alignment notice
+and **Message Party** action use the Brand manager's first name. They use the
+company name when the manager name is empty and return to neutral **Party** copy
+when the selection is cleared. These are updates to existing Designer elements,
+not generated markup.
 
 After a successful submit, the controller restores the native controls before
 it reveals `.generate-contract_success`. This lets the existing shared preview

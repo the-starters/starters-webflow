@@ -153,6 +153,7 @@ class Element {
     if (selector === '[data-project-success-title], .generate-contract_success-text') return this.successTitles || []
     if (selector === '[data-project-bind], [element]') return this.profileTargets || []
     if (selector === 'p, label, span') return this.copyTargets || []
+    if (selector === 'p, label, span, a, button') return this.copyTargets || []
     if (selector === '.generate-contract_success a.clickable_link, .w-form-done a.clickable_link') return this.successLinks || []
     if (selector === '#brand-name-contract, #brand-name, #freeName, #FreeEmail, #pushMemID') return this.cmsOnly || []
     return []
@@ -214,6 +215,8 @@ function formFixture() {
     new Element({ tagName: 'p', textContent: "The share of the total you'll pay the freelancer before work begins (0–100%)." }),
     new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
     new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
+    new Element({ tagName: 'span', textContent: 'Party' }),
+    new Element({ tagName: 'button', textContent: 'Message Party' }),
   ]
   form.controls = Object.values(form.fields)
   return { context, form, wrapper }
@@ -841,6 +844,29 @@ test('selecting a Brand stores its ID and clears stale sample email', () => {
   assert.equal(context.profileTargets[5].hidden, true)
 })
 
+test('selected Brand personalizes Party copy and clearing restores neutral copy', () => {
+  const { api, context, form } = load({ noDocument: true })
+
+  api.prepareStarterContext(form)
+  api.selectBrand(form, { id: 12, company_name: 'Acme', manager_name: 'Dana Reyes' })
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Dana',
+    'Message Dana',
+  ])
+
+  api.selectBrand(form, { id: 13, company_name: 'Northwind Coffee', manager_name: '   ' })
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Northwind Coffee',
+    'Message Northwind Coffee',
+  ])
+
+  api.clearSelectedBrand(form)
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Party',
+    'Message Party',
+  ])
+})
+
 test('prepares Starter-specific copy and dashboard destination without changing native markup', () => {
   const { api, context, form } = load({ noDocument: true })
 
@@ -854,6 +880,8 @@ test('prepares Starter-specific copy and dashboard destination without changing 
     'The share of the total project cost the Brand will pay before work begins (0–100%).',
     'The contract will continue until you or the Brand ends the project',
     'The contract will continue until you or the Brand ends the project',
+    'Party',
+    'Message Party',
   ])
   assert.equal(context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
 })

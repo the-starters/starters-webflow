@@ -111,6 +111,7 @@
       profileLoaded: false,
       services: [],
       selected: null,
+      partyCopyTargets: null,
       key: '',
       keyPayload: '',
       lockedControls: null,
@@ -328,6 +329,31 @@
     return replaced
   }
 
+  function renderPartyCopy(form, option) {
+    var current = formState(form)
+    var root = formContext(form)
+    if (!root || !root.querySelectorAll) return false
+    if (!current.partyCopyTargets) {
+      current.partyCopyTargets = Array.prototype.reduce.call(
+        root.querySelectorAll('p, label, span, a, button'),
+        function (targets, element) {
+          var value = clean(element.textContent)
+          if (value === 'Party') targets.push({ element: element, action: false })
+          if (value === 'Message Party') targets.push({ element: element, action: true })
+          return targets
+        },
+        []
+      )
+    }
+    var manager = clean(option && option.manager_name)
+    var name = manager ? manager.split(/\s+/)[0] : clean(option && option.company_name)
+    if (!name) name = 'Party'
+    current.partyCopyTargets.forEach(function (target) {
+      target.element.textContent = target.action ? 'Message ' + name : name
+    })
+    return Boolean(current.partyCopyTargets.length)
+  }
+
   function applyStarterCopy(form) {
     var root = formContext(form)
     if (!root) return false
@@ -480,6 +506,7 @@
       brandSelect.setAttribute('data-project-field', 'brand_id')
     }
     applyStarterCopy(form)
+    renderPartyCopy(form, formState(form).selected)
     var root = formContext(form)
     var successLinks = root && root.querySelectorAll ? root.querySelectorAll(SUCCESS_LINK_SELECTOR) : []
     Array.prototype.forEach.call(successLinks, function (link) {
@@ -500,6 +527,7 @@
     // sample or previous selection value already present in the authored form.
     writeField(field(form, EMAIL_SELECTOR), '')
     renderCounterparty(form, option)
+    renderPartyCopy(form, option)
     return true
   }
 
@@ -511,6 +539,7 @@
     writeField(field(form, COMPANY_NAME_SELECTOR), '')
     writeField(field(form, EMAIL_SELECTOR), '')
     renderCounterparty(form, null)
+    renderPartyCopy(form, null)
   }
 
   function clearRenderedOptions(form) {
