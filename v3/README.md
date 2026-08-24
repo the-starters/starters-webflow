@@ -769,15 +769,17 @@ has a source but no referrer keeps the source and gets the referrer filled in.
 
 ### Signup Trigger CTAs
 
-On `/hire/<slug>`, tag the logged-out Hire, Message, Book Call, and service
+On `/hire/<slug>`, tag the logged-out Hire, Message, and visible non-call service
 controls so a click stamps `signup_trigger` and opens the signup modal
-(`data-modal-target="signup-modal"`). Create the Memberstack `signup-trigger`
-field before shipping a release that writes it.
+(`data-modal-target="signup-modal"`). Call entry points stay hidden until
+authenticated canonical discovery succeeds, as defined by
+[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
+Create the Memberstack `signup-trigger` field before shipping a release that
+writes it.
 
 ```html
 <button data-signup-trigger-element="hire">Hire</button>
 <button data-signup-trigger-element="message">Message</button>
-<button data-signup-trigger-element="book-call">Book Call</button>
 <button
   data-signup-trigger-element="service"
   data-signup-trigger-value="brand-strategy">
@@ -785,9 +787,11 @@ field before shipping a release that writes it.
 </button>
 ```
 
-Allowed `data-signup-trigger-element` values: `hire`, `message`, `book-call`,
-`service`. Optional `data-signup-trigger-value` overrides the stored string for
-the three CTAs; for `service` it is required and stores `service:<detail>`.
+Allowed `data-signup-trigger-element` values remain `hire`, `message`,
+`book-call`, and `service`; `book-call` is retained for compatibility but is not
+an anonymous Hire-profile entry point. Optional `data-signup-trigger-value`
+overrides the stored string for the three CTAs; for `service` it is required and
+stores `service:<detail>`.
 Unknown elements and incomplete service tags write nothing (staging warning).
 Logged-in clicks are ignored so Hire/Message/Book keep their member flows.
 Last tagged click wins until signup (72h cookie). The hire template also needs

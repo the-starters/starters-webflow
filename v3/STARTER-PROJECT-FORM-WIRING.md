@@ -34,14 +34,17 @@ projection:
     {
       "counterparty_id": 81,
       "company_name": "Acme",
-      "hiring_manager_name": "Jai"
+      "hiring_manager_name": "Jai",
+      "memberstack_member_id": "mem_brand"
     }
   ]
 }
 ```
 
 `hiring_manager_name` may be empty. The company name remains the visible Party
-fallback in that state.
+fallback in that state. `memberstack_member_id` is the authenticated Brand
+member ID. The controller validates it and uses
+`/messages?with=<memberstack_member_id>` for the existing Message action.
 
 Do not return message text or use the browser's Brand value as authority.
 
@@ -194,8 +197,10 @@ describes working with a Brand, and the scope, upfront-payment, and ongoing-term
 help text addresses the Starter. After a Brand is selected, the alignment notice
 and **Message Party** action use the Brand manager's first name. They use the
 company name when the manager name is empty and return to neutral **Party** copy
-when the selection is cleared. These are updates to existing Designer elements,
-not generated markup.
+when the selection is cleared. The same selection updates the action destination
+to `/messages?with=<memberstack_member_id>` and restores `#` when the selection
+is cleared or the ID is invalid. These are updates to existing Designer
+elements, not generated markup.
 
 After a successful submit, the controller restores the native controls before
 it reveals `.generate-contract_success`. This lets the existing shared preview

@@ -216,7 +216,7 @@ function formFixture() {
     new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
     new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
     new Element({ tagName: 'span', textContent: 'Party' }),
-    new Element({ tagName: 'button', textContent: 'Message Party' }),
+    new Element({ tagName: 'a', href: '#', textContent: 'Message Party' }),
   ]
   form.controls = Object.values(form.fields)
   return { context, form, wrapper }
@@ -773,17 +773,17 @@ test('promotes the detached shared Contract Generation form into Starter context
 test('normalizes, deduplicates, and sorts eligible Brands by stable Xano ID', () => {
   const { api } = load({ noDocument: true })
   const options = api.normalizeOptions({ counterparties: [
-    { counterparty_id: 9, company_name: 'Zulu', hiring_manager_name: 'Zoe' },
-    { counterparty_id: 4, company_name: 'Alpha', hiring_manager_name: 'Amy', email: 'not-returned@example.com' },
+    { counterparty_id: 9, company_name: 'Zulu', hiring_manager_name: 'Zoe', memberstack_member_id: 'mem_zulu' },
+    { counterparty_id: 4, company_name: 'Alpha', hiring_manager_name: 'Amy', email: 'not-returned@example.com', memberstack_member_id: 'mem_alpha' },
     { counterparty_id: 9, company_name: 'Duplicate' },
     { counterparty_id: 0, company_name: 'Invalid' },
     { counterparty_id: 6, company_name: 'Missing manager' },
     { counterparty_id: 7, hiring_manager_name: 'Missing company' },
   ] })
   assert.deepEqual(JSON.parse(JSON.stringify(options)), [
-    { id: 4, label: 'Alpha — Amy', company_name: 'Alpha', manager_name: 'Amy' },
-    { id: 6, label: 'Missing manager', company_name: 'Missing manager', manager_name: '' },
-    { id: 9, label: 'Zulu — Zoe', company_name: 'Zulu', manager_name: 'Zoe' },
+    { id: 4, label: 'Alpha — Amy', company_name: 'Alpha', manager_name: 'Amy', memberstack_member_id: 'mem_alpha' },
+    { id: 6, label: 'Missing manager', company_name: 'Missing manager', manager_name: '', memberstack_member_id: '' },
+    { id: 9, label: 'Zulu — Zoe', company_name: 'Zulu', manager_name: 'Zoe', memberstack_member_id: 'mem_zulu' },
   ])
   assert.equal(Object.prototype.hasOwnProperty.call(options[0], 'email'), false)
 })
@@ -849,28 +849,56 @@ test('selected Brand personalizes Party copy and clearing restores neutral copy'
   const { api, context, form } = load({ noDocument: true })
 
   api.prepareStarterContext(form)
-  api.selectBrand(form, { id: 12, company_name: 'Acme', manager_name: 'Dana Reyes' })
+  api.selectBrand(form, { id: 12, company_name: 'Acme', manager_name: 'Dana Reyes', memberstack_member_id: 'mem_dana' })
   assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
     'Dana',
     'Message Dana',
   ])
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_dana')
 
-  api.selectBrand(form, { id: 13, company_name: 'Northwind Coffee', manager_name: '   ' })
+  api.selectBrand(form, { id: 13, company_name: 'Northwind Coffee', manager_name: '   ', memberstack_member_id: 'mem_northwind' })
   assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
     'Northwind Coffee',
     'Message Northwind Coffee',
   ])
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_northwind')
 
   api.clearSelectedBrand(form)
   assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
     'Party',
     'Message Party',
   ])
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '#')
+})
+
+test('message destination accepts destination-compatible Memberstack IDs only', () => {
+  const { api, context, form } = load({ noDocument: true })
+
+  api.prepareStarterContext(form)
+  for (const memberstack_member_id of ['mem_bad-id', 'mem_sb_extra_underscore', 'mem_', '']) {
+    api.selectBrand(form, {
+      id: 12,
+      company_name: 'Acme',
+      manager_name: 'Dana Reyes',
+      memberstack_member_id,
+    })
+
+    assert.equal(context.copyTargets.at(-1).textContent, 'Message Dana')
+    assert.equal(context.copyTargets.at(-1).getAttribute('href'), '#')
+  }
+
+  api.selectBrand(form, {
+    id: 12,
+    company_name: 'Acme',
+    manager_name: 'Dana Reyes',
+    memberstack_member_id: 'mem_sb_Dana123',
+  })
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_sb_Dana123')
 })
 
 test('an eligible Brand without a manager name uses its company for Party copy', async () => {
   const { api, calls, context, form, window } = load({
-    counterparties: [{ counterparty_id: 13, company_name: 'Northwind Coffee', hiring_manager_name: '   ' }],
+    counterparties: [{ counterparty_id: 13, company_name: 'Northwind Coffee', hiring_manager_name: '   ', memberstack_member_id: 'mem_northwind' }],
   })
 
   const options = await api.loadOptions(form, window)
@@ -884,6 +912,7 @@ test('an eligible Brand without a manager name uses its company for Party copy',
     'Northwind Coffee',
     'Message Northwind Coffee',
   ])
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_northwind')
 })
 
 test('prepares Starter-specific copy and dashboard destination without changing native markup', () => {

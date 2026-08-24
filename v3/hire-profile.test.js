@@ -16,6 +16,7 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./hire-profile.js'), 'utf8')
+const freeBookingSource = fs.readFileSync(require.resolve('./free-call-booking.js'), 'utf8')
 
 /* ------------------------------------------------------------------ DOM --- */
 
@@ -246,7 +247,6 @@ function makePage({
   root.appendChild(services)
 
   const popupNylasContainer = makeElement('div', { 'nylas-container': '' })
-  root.appendChild(popupNylasContainer)
 
   const freeModalOption = makeElement('div', { 'call-type-item': '' })
   const freeModalCta = makeElement('button', {
@@ -274,7 +274,11 @@ function makePage({
   bookingButtonWrapper.appendChild(bookingButton)
   if (includeBookingButton) root.appendChild(bookingButtonWrapper)
 
-  const bookingDialog = makeElement('dialog', { 'data-modal-target': 'popup-booking-main' })
+  const bookingDialog = makeElement('dialog', {
+    'data-modal-target': 'popup-booking-main',
+    'popup-booking': '',
+  })
+  bookingDialog.appendChild(popupNylasContainer)
   root.appendChild(bookingDialog)
 
   return {
@@ -378,6 +382,7 @@ function makeContext({
     setTimeout,
     clearTimeout,
     Promise,
+    URLSearchParams,
     URL,
     Date,
     Map,
@@ -481,7 +486,8 @@ test('a page missing the Memberstack helpers stands down instead of throwing', (
   assert.equal(page.paidModalOption.style.display, 'none')
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
-  assert.equal(page.servicesList.children[0].style.display, undefined)
+  assert.equal(page.servicesList.children[0].style.display, 'none')
+  assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
 })
 
 test('a page missing starter_memberstack_id stands down instead of throwing', () => {
@@ -499,7 +505,8 @@ test('a page missing starter_memberstack_id stands down instead of throwing', ()
   assert.equal(page.paidModalOption.style.display, 'none')
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
-  assert.equal(page.servicesList.children[0].style.display, undefined)
+  assert.equal(page.servicesList.children[0].style.display, 'none')
+  assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
 })
 
 test('the jQuery-only blocks are skipped, not fatal, when jQuery is absent', () => {
@@ -677,6 +684,9 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
     const title = card.getAttribute('data-rate-card') === 'freelance' ? 'Freelance' : 'Retainer'
     assert.equal(card.getAttribute('data-signup-trigger-element'), 'service')
     assert.equal(card.getAttribute('data-signup-trigger-value'), title)
+    assert.equal(card.getAttribute('data-canonical-call-unavailable'), null)
+    assert.equal(card.getAttribute('aria-hidden'), 'false')
+    assert.equal(card.style.display, 'block')
     for (const dropped of [
       'data-modal-trigger',
       'booking-popup-open',
@@ -897,7 +907,7 @@ test('the TEST fixture uses canonical Free and Paid configs to reveal the author
       payment_environment: 'test',
       price_cents: 100,
       currency: 'usd',
-      duration: 15,
+      duration: 60,
     },
   ]
   const context = makeContext({
@@ -1373,13 +1383,14 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(
     guard.textContent,
     '[data-booking-unavailable]{display:none!important}' +
-      '[data-booking-trigger-unavailable]{display:none!important}',
+      '[data-booking-trigger-unavailable]{display:none!important}' +
+      '[data-canonical-call-unavailable]{display:none!important}',
   )
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
 })
 
-test('authored modal options hide synchronously without hiding Services call cards', async () => {
+test('a signed-in Brand hides call projections while canonical discovery is pending', async () => {
   const page = makePage()
   let resolveStarter
   const starterReady = new Promise((resolve) => {
@@ -1407,12 +1418,44 @@ test('authored modal options hide synchronously without hiding Services call car
   assert.equal(page.paidModalOption.getAttribute('aria-hidden'), 'true')
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
-  assert.equal(page.servicesList.children[0].style.display, undefined)
+  assert.equal(page.servicesList.children[0].style.display, 'none')
+  assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
+  assert.equal(page.servicesList.children[0].getAttribute('aria-hidden'), 'true')
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
 
   resolveStarter(null)
   await settle()
+})
+
+test('an anonymous viewer cannot reveal call projections from stale public flags', async () => {
+  const page = makePage()
+  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  page.root.appendChild(paidSurface)
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': true,
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
+  for (const surface of [freeSurface, paidSurface]) {
+    assert.equal(surface.getAttribute('data-canonical-call-unavailable'), '')
+    assert.equal(surface.getAttribute('aria-hidden'), 'true')
+    assert.equal(surface.style.display, 'none')
+  }
+
+  await settle()
+
+  for (const surface of [freeSurface, paidSurface]) {
+    assert.equal(surface.getAttribute('data-canonical-call-unavailable'), '')
+    assert.equal(surface.getAttribute('aria-hidden'), 'true')
+    assert.equal(surface.style.display, 'none')
+  }
 })
 
 test('a chooser trigger outside booking-button-wrapper stays hidden until discovery succeeds', async () => {
@@ -1444,6 +1487,169 @@ test('a chooser trigger outside booking-button-wrapper stays hidden until discov
   ))
 })
 
+test('canonical discovery removes legacy Free and Paid projections when the profile is not bookable', async () => {
+  const page = makePage()
+  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  page.root.appendChild(paidSurface)
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': true,
+    },
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => null,
+    getConfigs: async () => [],
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
+  for (const surface of [freeSurface, paidSurface]) {
+    assert.equal(surface.getAttribute('data-canonical-call-unavailable'), '')
+    assert.equal(surface.getAttribute('aria-hidden'), 'true')
+    assert.equal(surface.style.display, 'none')
+  }
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+})
+
+test('canonical installed Free and Paid controllers reveal every matching projection surface', async () => {
+  const page = makePage()
+  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  page.root.appendChild(paidSurface)
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': false,
+      'paid-consulting-calls-t-f': false,
+    },
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({
+      nylas_grant_id: 'grant_prod',
+      nylas_grant_email: 'starter@example.com',
+    }),
+    getConfigs: async () => [
+      { config_id: 'free_live', is_paid: false, active: true, data_environment: 'production' },
+      {
+        config_id: 'paid_live',
+        is_paid: true,
+        active: true,
+        data_environment: 'production',
+        payment_environment: 'live',
+        currency: 'USD',
+        price_cents: 25000,
+        duration: 60,
+      },
+    ],
+    initBookingComponents: () => {},
+    paidController: { installPaidBookingController: () => true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
+  for (const surface of [freeSurface, paidSurface]) {
+    assert.equal(surface.getAttribute('data-canonical-call-unavailable'), null)
+    assert.equal(surface.getAttribute('aria-hidden'), null)
+    assert.equal(surface.style.display, 'block')
+  }
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+})
+
+test('canonical Brand discovery refreshes hidden Services navigation after reveal', async () => {
+  const page = makePage()
+  const services = page.root.querySelector('#services')
+  services.style.display = 'none'
+  let resolveConfigs
+  const configsReady = new Promise((resolve) => { resolveConfigs = resolve })
+  let refreshes = 0
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getConfigs: () => configsReady,
+    initBookingComponents: () => {},
+  })
+  context.__startersEmptyNavRefresh = () => {
+    refreshes += 1
+    const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
+    if (freeSurface.style.display === 'block' && freeSurface.getAttribute('aria-hidden') !== 'true') {
+      services.style.display = 'block'
+    }
+  }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(refreshes, 0)
+  assert.equal(services.style.display, 'none')
+
+  resolveConfigs([{
+    config_id: 'free_live',
+    is_paid: false,
+    active: true,
+    data_environment: 'production',
+  }])
+  await settle()
+
+  assert.equal(refreshes, 1)
+  assert.equal(services.style.display, 'block')
+})
+
+test('canonical discovery preserves hidden runtime call templates', async () => {
+  const page = makePage({ includeNativeFreeTemplate: true })
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getConfigs: async () => [{
+      config_id: 'free_live',
+      is_paid: false,
+      active: true,
+      data_environment: 'production',
+    }],
+    initBookingComponents: () => {},
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const authored = page.servicesList.children[0]
+  assert.equal(authored.getAttribute('data-canonical-call-unavailable'), null)
+  assert.equal(authored.style.display, 'block')
+  assert.equal(page.nativeFreeTemplate.hasAttribute('hidden'), true)
+  assert.equal(page.nativeFreeTemplate.getAttribute('aria-hidden'), 'true')
+  assert.notEqual(page.nativeFreeTemplate.style.display, 'block')
+  assert.equal(
+    page.servicesList.children.filter((card) =>
+      card.getAttribute('has-connection') === 'free' && !card.hasAttribute('hidden'),
+    ).length,
+    1,
+  )
+})
+
 test('booking discovery rejects inactive, mixed-environment, and duplicate configurations', async () => {
   const scenarios = [
     [{ config_id: 'inactive_free', is_paid: false, active: false, data_environment: 'production' }],
@@ -1451,6 +1657,7 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
     [{ config_id: 'mixed_data', is_paid: false, active: true, data_environment: 'test' }],
     [{ config_id: 'mixed_payment', is_paid: true, active: true, data_environment: 'production', payment_environment: 'test', currency: 'USD', price_cents: 500 }],
     [{ config_id: 'missing_duration', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500 }],
+    [{ config_id: 'wrong_duration', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 30 }],
     [{ config_id: 'sub_minimum', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 99, duration: 60 }],
     [{ config_id: 'unknown_payment', is_paid: null, active: true, data_environment: 'production' }],
     [
@@ -1458,12 +1665,12 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
       { config_id: 'free_b', is_paid: false, active: true, data_environment: 'production' },
     ],
     [
-      { config_id: 'paid_a', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 30 },
-      { config_id: 'paid_b', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 30 },
+      { config_id: 'paid_a', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 60 },
+      { config_id: 'paid_b', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 60 },
     ],
     [
       { config_id: 'shared', is_paid: false, active: true, data_environment: 'production' },
-      { config_id: 'shared', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 30 },
+      { config_id: 'shared', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 60 },
     ],
   ]
 
@@ -1503,7 +1710,7 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   const bookingCalls = []
   const paidCalls = []
   const configs = [
-    { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'usd', price_cents: 1250, duration: 30 },
+    { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'usd', price_cents: 1250, duration: 60 },
     { config_id: 'free_live', is_paid: false, active: true, data_environment: 'production', payment_environment: null },
   ]
   const context = makeContext({
@@ -1549,7 +1756,64 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   assert.equal(page.freeModalOption.getAttribute('aria-hidden'), null)
   assert.equal(page.paidModalOption.getAttribute('aria-hidden'), null)
   assert.equal(page.freeModalOption.style.display, 'block')
+  assert.equal(page.paidModalOption.style.display, 'block')
+})
+
+test('a failed Paid install keeps the installed Free chooser option selectable', async () => {
+  const page = makePage()
+  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  page.root.appendChild(paidSurface)
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({
+      nylas_grant_id: 'grant_prod',
+      nylas_grant_email: 'starter@example.com',
+    }),
+    getConfigs: async () => [
+      {
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+      },
+      {
+        config_id: 'paid_live',
+        is_paid: true,
+        active: true,
+        data_environment: 'production',
+        payment_environment: 'live',
+        currency: 'USD',
+        price_cents: 1250,
+        duration: 60,
+      },
+    ],
+    initBookingComponents: () => {},
+    paidController: { installPaidBookingController: () => false },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
+  assert.equal(freeSurface.style.display, 'block')
+  assert.equal(freeSurface.getAttribute('data-canonical-call-unavailable'), null)
+  assert.equal(paidSurface.style.display, 'none')
+  assert.equal(paidSurface.getAttribute('data-canonical-call-unavailable'), '')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'free_live')
+  assert.equal(page.freeModalOption.getAttribute('data-booking-unavailable'), null)
+  assert.equal(page.freeModalOption.getAttribute('aria-hidden'), null)
+  assert.equal(page.freeModalOption.style.display, 'block')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), null)
+  assert.equal(page.paidModalOption.getAttribute('data-booking-unavailable'), '')
+  assert.equal(page.paidModalOption.getAttribute('aria-hidden'), 'true')
   assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
 })
 
 test('a Paid service card opens the authored Free/Paid chooser instead of the retired direct scheduler', async () => {
@@ -1615,14 +1879,19 @@ test('a migrated profile without the legacy Book Call button opens the native ch
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
       planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
     },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
-    getConfigs: async () => [{
-      config_id: 'free_live',
-      is_paid: false,
-      active: true,
-      data_environment: 'production',
-    }],
-    initBookingComponents: () => {},
+    omitInitialFreeController: true,
+  })
+  context.xanoAuthFetch = async (url) => ({
+    ok: true,
+    status: 200,
+    json: async () => String(url).includes('/starter/get_booking_profile/v3')
+      ? { id: 383, nylas_grant_id: 'grant_prod' }
+      : [{
+          config_id: 'free_live',
+          is_paid: false,
+          active: true,
+          data_environment: 'production',
+        }],
   })
   context.lumos = {
     modal: {
@@ -1630,7 +1899,13 @@ test('a migrated profile without the legacy Book Call button opens the native ch
       open: (id) => opened.push(id),
     },
   }
+  context.StartersPaidCallBrandPayment = {
+    bookingRequestFingerprint: () => 'fingerprint',
+    createBookingAttempt: () => ({ run: async () => ({}) }),
+    mountPaidCalendar: async () => ({ slots: [] }),
+  }
   vm.createContext(context)
+  vm.runInContext(freeBookingSource, context)
   vm.runInContext(source, context)
   await settle()
 
@@ -1715,7 +1990,7 @@ test('Paid-only discovery stays closed when the V3 controller is unavailable', a
       payment_environment: 'live',
       currency: 'USD',
       price_cents: 1250,
-      duration: 30,
+        duration: 60,
     }],
     getNearestSlot: async () => { nearestSlotCalls += 1 },
   })
