@@ -165,6 +165,7 @@ function makePage({
   includeFreeCard = true,
   includeNativeFreeTemplate = false,
   includeCallDataType = true,
+  includeBookingButton = true,
 } = {}) {
   const root = makeElement('body')
 
@@ -271,7 +272,10 @@ function makePage({
   bookingButtonWrapper.setAttribute('aria-hidden', 'true')
   const bookingButton = makeElement('button', { 'data-modal-trigger': 'popup-booking-main' })
   bookingButtonWrapper.appendChild(bookingButton)
-  root.appendChild(bookingButtonWrapper)
+  if (includeBookingButton) root.appendChild(bookingButtonWrapper)
+
+  const bookingDialog = makeElement('dialog', { 'data-modal-target': 'popup-booking-main' })
+  root.appendChild(bookingDialog)
 
   return {
     root,
@@ -291,6 +295,7 @@ function makePage({
     paidModalPrice,
     bookingButtonWrapper,
     bookingButton,
+    bookingDialog,
   }
 }
 
@@ -1597,6 +1602,67 @@ test('a Paid service card opens the authored Free/Paid chooser instead of the re
   assert.equal(prevented, 1)
   assert.equal(stopped, 1)
   assert.equal(chooserClicks, 1)
+})
+
+test('a migrated profile without the legacy Book Call button opens the native chooser through Lumos', async () => {
+  const page = makePage({ includeBookingButton: false })
+  const opened = []
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getConfigs: async () => [{
+      config_id: 'free_live',
+      is_paid: false,
+      active: true,
+      data_environment: 'production',
+    }],
+    initBookingComponents: () => {},
+  })
+  context.lumos = {
+    modal: {
+      list: { 'popup-booking-main': { el: page.bookingDialog } },
+      open: (id) => opened.push(id),
+    },
+  }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.root.querySelector('[data-modal-trigger="popup-booking-main"]'), null)
+  assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), null)
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  freeCard.listeners.click[0]({
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  })
+  assert.deepEqual(opened, ['popup-booking-main'])
+})
+
+test('a migrated profile without the legacy Book Call button stays closed before discovery succeeds', () => {
+  const page = makePage({ includeBookingButton: false })
+  let opened = 0
+  const context = makeContext({ page })
+  context.lumos = { modal: { open: () => { opened += 1 } } }
+  delete context.qs
+  delete context.qsa
+  delete context.waitForMember
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
+  const card = page.servicesList.children[0]
+  card.listeners.click[0]({
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  })
+  assert.equal(opened, 0)
 })
 
 test('call service cards neutralize the retired scheduler before dependency stand-down', () => {

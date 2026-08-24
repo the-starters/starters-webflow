@@ -189,8 +189,9 @@ Canaries: `/hire/ashna-rana` (free + paid calls, 5000 / 4500) and
    or `data-type` — otherwise a logged-in click opens an unconfigured booking
    popup for a card that cannot be booked.
 3. Eligible signed-in Brand: both Free and Paid call cards open the authored
-   Free/Paid chooser, and each non-call card opens Start a Project with its
-   exact native Services preset.
+   Free/Paid chooser, including on a migrated profile whose legacy Book Call
+   button is absent. Each non-call card opens Start a Project with its exact
+   native Services preset.
 4. `document.documentElement` carries `data-v3-algolia-status="ready"`.
 5. The Algolia object ID matches the positive integer in
    `[data-starter-xano-id]`.
@@ -211,13 +212,18 @@ wrapper stays hidden with `aria-hidden="true"`, until canonical discovery
 produces a Free option that the GitHub Free controller can own or a Paid option
 that the V3 controller accepts. This includes triggers outside the wrapper, so
 no entry point can open an empty chooser while discovery is closed.
+The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
+`data-booking-surface-unavailable` until that same discovery succeeds.
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
 
 Both native Free and Paid service cards are shortcuts to that same authored
 chooser. `hire-profile.js` removes their retired direct-scheduler attributes and
-opens `popup-booking-main` only while the canonically discovered Book Call
-wrapper has `aria-hidden="false"`. The card click does not perform booking,
+opens `popup-booking-main` only after canonical discovery enables the booking
+surface. It clicks an enabled authored chooser trigger when one exists. On a
+migrated profile without the legacy Book Call button, it opens the existing
+native Webflow dialog through `window.lumos.modal`, with the dialog's native
+`showModal()` method as a fallback. The card click does not perform booking,
 payment, or Stripe-readiness work. The selected chooser option remains the only
 path into the Free or Paid scheduler.
 
