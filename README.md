@@ -1376,6 +1376,11 @@ node --test build-profile-wiring-audit.test.js
 
 `build-profile-draft-identity-guard.js` loads synchronously in the page head and
 routes the legacy `build_profile` localStorage key to a member-scoped physical key.
+It treats the existing `window.memberReady` promise as a readiness boundary only.
+After that promise settles, the guard performs a fresh Memberstack identity read,
+sets `window.MEMBER` to that result, and then releases authored callbacks. This
+keeps the guard, the page controllers, and the physical draft key on one member
+when a browser changes sessions.
 Reads of the legacy key return `null` until the stable Memberstack member ID
 resolves, so a load-time draft restore that reads synchronously would race that
 window and never repopulate the member's own draft. Any authored draft restore

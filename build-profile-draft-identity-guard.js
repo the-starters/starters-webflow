@@ -25,12 +25,13 @@
 
   if (!window || window.__TS_BUILD_PROFILE_DRAFT_GUARD__) return
 
-  const VERSION = '1.1.0'
+  const VERSION = '1.2.0'
   const LEGACY_KEY = 'build_profile'
   const SCOPED_PREFIX = 'ts:build_profile:member:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const StorageConstructor = window.Storage
   const localStorage = window.localStorage
+  const upstreamMemberReady = window.memberReady
   const PROFILE_TYPES_BY_PATH = Object.freeze({
     '/build-profile/consult': Object.freeze({
       type: 'consult',
@@ -232,6 +233,14 @@
 
   async function resolveIdentity() {
     try {
+      if (upstreamMemberReady && typeof upstreamMemberReady.then === 'function') {
+        try {
+          await upstreamMemberReady
+        } catch {
+          // The upstream promise is a readiness boundary, not identity authority.
+        }
+      }
+
       const memberstack = await waitForMemberstack()
       if (!memberstack) {
         finish('blocked')
@@ -250,6 +259,7 @@
       }
 
       memberData = response?.data || response || null
+      window.MEMBER = memberData
       scopedKey = `${SCOPED_PREFIX}${memberId}`
       status = 'ready'
 
