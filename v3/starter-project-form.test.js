@@ -153,6 +153,7 @@ class Element {
     if (selector === '[data-project-success-title], .generate-contract_success-text') return this.successTitles || []
     if (selector === '[data-project-bind], [element]') return this.profileTargets || []
     if (selector === 'p, label, span') return this.copyTargets || []
+    if (selector === 'p, label, span, a, button') return this.copyTargets || []
     if (selector === '.generate-contract_success a.clickable_link, .w-form-done a.clickable_link') return this.successLinks || []
     if (selector === '#brand-name-contract, #brand-name, #freeName, #FreeEmail, #pushMemID') return this.cmsOnly || []
     return []
@@ -214,6 +215,8 @@ function formFixture() {
     new Element({ tagName: 'p', textContent: "The share of the total you'll pay the freelancer before work begins (0–100%)." }),
     new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
     new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
+    new Element({ tagName: 'span', textContent: 'Party' }),
+    new Element({ tagName: 'button', textContent: 'Message Party' }),
   ]
   form.controls = Object.values(form.fields)
   return { context, form, wrapper }
@@ -387,7 +390,7 @@ test('the canonical service list never reaches the profile bind projection', asy
   )
 })
 
-test('normalizes legacy service shapes and replaces only generic authored service slots', () => {
+test('normalizes canonical services and removes generic slots from every source', () => {
   const loaded = load({ noDocument: true })
 
   assert.deepEqual(
@@ -402,9 +405,22 @@ test('normalizes legacy service shapes and replaces only generic authored servic
     }))),
     ['Paid Media Audit', 'Creative Strategy Sprint'],
   )
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(loaded.api.normalizeServices([
+      'Service 1',
+      { name: 'service-2' },
+      { label: 'SERVICE_3' },
+      'Paid Media Audit',
+    ]))),
+    ['Paid Media Audit'],
+  )
 
   loaded.form.fields.serviceSelect.value = 'Service 2'
-  assert.equal(loaded.api.renderServices(loaded.form, ['Paid Media Audit']), true)
+  assert.equal(loaded.api.renderServices(loaded.form, [
+    'Service 1',
+    'Paid Media Audit',
+    { label: 'Service 3' },
+  ]), true)
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => [option.value, option.textContent]),
     [
@@ -417,38 +433,38 @@ test('normalizes legacy service shapes and replaces only generic authored servic
   assert.equal(loaded.form.fields.serviceSelect.value, '')
 })
 
-test('authored generic service slots survive an empty list and a failed profile request', async () => {
+test('authored generic service slots stay removed for an empty list and a failed profile request', async () => {
   let rejectProfile
   const loaded = load({
     noDocument: true,
     starterProfile: () => new Promise((resolve, reject) => { rejectProfile = reject }),
   })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const validAuthored = ['Select one...', 'Freelance work', 'Monthly retainer']
   const labels = () => loaded.form.fields.serviceSelect.options.map((option) => option.textContent)
 
   assert.equal(loaded.api.renderServices(loaded.form, []), true)
-  assert.deepEqual(labels(), authored)
+  assert.deepEqual(labels(), validAuthored)
 
   const request = loaded.api.loadProfile(loaded.form, loaded.window, true)
-  assert.deepEqual(labels(), authored)
+  assert.deepEqual(labels(), validAuthored)
 
   await Promise.resolve()
   rejectProfile(new Error('services unavailable'))
   assert.equal(await request, null)
-  assert.deepEqual(labels(), authored)
+  assert.deepEqual(labels(), validAuthored)
 })
 
-test('a profile response without services keeps the authored service options', async () => {
+test('a profile response without services keeps only valid authored service options', async () => {
   const loaded = load({ noDocument: true, profile: { full_name: 'Starter Person' } })
 
   assert.equal((await loaded.api.loadProfile(loaded.form, loaded.window)).full_name, 'Starter Person')
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
-    ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+    ['Select one...', 'Freelance work', 'Monthly retainer'],
   )
 })
 
-test('a member scope change drops the previous Starter services and restores authored slots', async () => {
+test('a member scope change drops the previous Starter services without restoring generic slots', async () => {
   const loaded = load({ profile: { services: ['CRM Strategy'] } })
 
   await loaded.api.loadProfile(loaded.form, loaded.window, true)
@@ -461,7 +477,7 @@ test('a member scope change drops the previous Starter services and restores aut
 
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
-    ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+    ['Select one...', 'Freelance work', 'Monthly retainer'],
   )
 })
 
@@ -543,9 +559,9 @@ test('loads Starter services through the shared Xano auth bridge when the cached
   )
 })
 
-test('a blank shared token issues no fallback request and keeps the authored service slots', async () => {
+test('a blank shared token issues no fallback request and keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.getXanoAuthToken = async () => '   '
@@ -560,14 +576,14 @@ test('a blank shared token issues no fallback request and keeps the authored ser
   assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.value),
-    ['', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+    ['', 'Freelance work', 'Monthly retainer'],
   )
   assert.deepEqual(loaded.calls.submit, [])
 })
 
-test('a missing shared auth bridge issues no fallback request and keeps the authored service slots', async () => {
+test('a missing shared auth bridge issues no fallback request and keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.fetch = async (url, options) => {
@@ -582,9 +598,9 @@ test('a missing shared auth bridge issues no fallback request and keeps the auth
   assert.deepEqual(loaded.calls.submit, [])
 })
 
-test('a non-ok fallback response with a non-JSON body keeps the authored service slots', async () => {
+test('a non-ok fallback response with a non-JSON body keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.getXanoAuthToken = async () => 'xano-token'
@@ -603,14 +619,14 @@ test('a non-ok fallback response with a non-JSON body keeps the authored service
   assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.value),
-    ['', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+    ['', 'Freelance work', 'Monthly retainer'],
   )
   assert.deepEqual(loaded.calls.submit, [])
 })
 
-test('a 401 fallback response with a JSON error body keeps the authored service slots', async () => {
+test('a 401 fallback response with a JSON error body keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.getXanoAuthToken = async () => 'xano-token'
@@ -766,6 +782,7 @@ test('normalizes, deduplicates, and sorts eligible Brands by stable Xano ID', ()
   ] })
   assert.deepEqual(JSON.parse(JSON.stringify(options)), [
     { id: 4, label: 'Alpha — Amy', company_name: 'Alpha', manager_name: 'Amy' },
+    { id: 6, label: 'Missing manager', company_name: 'Missing manager', manager_name: '' },
     { id: 9, label: 'Zulu — Zoe', company_name: 'Zulu', manager_name: 'Zoe' },
   ])
   assert.equal(Object.prototype.hasOwnProperty.call(options[0], 'email'), false)
@@ -828,6 +845,47 @@ test('selecting a Brand stores its ID and clears stale sample email', () => {
   assert.equal(context.profileTargets[5].hidden, true)
 })
 
+test('selected Brand personalizes Party copy and clearing restores neutral copy', () => {
+  const { api, context, form } = load({ noDocument: true })
+
+  api.prepareStarterContext(form)
+  api.selectBrand(form, { id: 12, company_name: 'Acme', manager_name: 'Dana Reyes' })
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Dana',
+    'Message Dana',
+  ])
+
+  api.selectBrand(form, { id: 13, company_name: 'Northwind Coffee', manager_name: '   ' })
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Northwind Coffee',
+    'Message Northwind Coffee',
+  ])
+
+  api.clearSelectedBrand(form)
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Party',
+    'Message Party',
+  ])
+})
+
+test('an eligible Brand without a manager name uses its company for Party copy', async () => {
+  const { api, calls, context, form, window } = load({
+    counterparties: [{ counterparty_id: 13, company_name: 'Northwind Coffee', hiring_manager_name: '   ' }],
+  })
+
+  const options = await api.loadOptions(form, window)
+
+  assert.equal(calls.options.length, 1)
+  assert.equal(options.length, 1)
+  assert.equal(form.fields.select.value, '13')
+  assert.equal(form.fields.brandId.value, '13')
+  assert.equal(form.fields.select.options[1].textContent, 'Northwind Coffee')
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Northwind Coffee',
+    'Message Northwind Coffee',
+  ])
+})
+
 test('prepares Starter-specific copy and dashboard destination without changing native markup', () => {
   const { api, context, form } = load({ noDocument: true })
 
@@ -841,6 +899,8 @@ test('prepares Starter-specific copy and dashboard destination without changing 
     'The share of the total project cost the Brand will pay before work begins (0–100%).',
     'The contract will continue until you or the Brand ends the project',
     'The contract will continue until you or the Brand ends the project',
+    'Party',
+    'Message Party',
   ])
   assert.equal(context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
 })

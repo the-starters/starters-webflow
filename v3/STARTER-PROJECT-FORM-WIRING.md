@@ -40,6 +40,9 @@ projection:
 }
 ```
 
+`hiring_manager_name` may be empty. The company name remains the visible Party
+fallback in that state.
+
 Do not return message text or use the browser's Brand value as authority.
 
 `POST projects/submit/v3` accepts the stable `brand_id`, the shared commercial
@@ -72,19 +75,22 @@ Array items may be plain strings or objects carrying `name`, `label`, or `raw`.
 Object keys are read in slot order and tolerate the `service-1`, `service_1`,
 and `Service 1` spellings; any other key is ignored, so sibling metadata can
 never become a selectable service. Names are trimmed, empty values dropped, and
-duplicates removed case-insensitively.
+duplicates removed case-insensitively. Generic `Service 1`, `Service 2`, and
+`Service 3` values are dropped from every response shape.
 
-The Xano change that adds this field to the response is a separate unpublished
-draft. Until it is published under its own approved production boundary, the
-endpoint returns no services and the authored Webflow options stand unchanged.
+The `freelancers_v3.Services` field is live in production and the profile
+endpoint projects it into the response. A read-only production reconciliation
+on 2026-08-24 found 677 profiles with non-empty canonical service arrays. The
+three production test profiles used for this workflow currently have empty
+arrays. For an empty array, the controller removes the generic service
+placeholders and keeps every valid authored option.
 
 ### Profile request paths
 
 The controller reads the profile through `Opp30.API.starterProfile()` whenever
 that method exists. That remains the primary path. Browser sessions holding a
 cached `opportunities-3.0.js` predating the method would otherwise get no
-profile at all and keep the generic `Service 1`, `Service 2`, `Service 3`
-placeholders, so the controller falls back to a direct
+profile at all, so the controller falls back to a direct
 `POST https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/starter/profile/me` with a
 `{}` body, authorized by the shared `window.getXanoAuthToken` bridge. It sets
 the `Authorization` header itself instead of calling `window.xanoAuthFetch`,
@@ -95,16 +101,17 @@ paths and would pass this `api:opp30` route through unauthenticated.
 script owns `window.getXanoAuthToken`, and `/starter-dashboard` is inside its
 install boundary; the authoritative host and path list lives in
 [Scheduling auth](README.md#scheduling-auth). Without the bridge the fallback
-issues no request at all and no error is surfaced: the modal silently keeps the
-authored placeholders. Keep the loader in the Script order block below when
-installing or auditing this page.
+issues no request at all and no error is surfaced. The modal still removes the
+generic service placeholders and keeps every valid authored option. Keep the
+loader in the Script order block below when installing or auditing this page.
 
 The fallback issues no request when the bridge or `window.fetch` is missing, and
 rejects before issuing one when the bridge resolves a blank token, so it never
 sends `Bearer undefined`. A non-ok response — including one whose body is not
-JSON — also rejects. The profile load swallows every rejection, so the authored
-service options stand unchanged. The token is only ever passed to the
-`Authorization` header; it is never rendered, logged, or submitted.
+JSON — also rejects. The profile load swallows every rejection. Valid authored
+service options remain, while `Service 1`, `Service 2`, and `Service 3` never
+return. The token is only ever passed to the `Authorization` header; it is never
+rendered, logged, or submitted.
 
 ## Shared Designer contract
 
@@ -129,22 +136,23 @@ The controller binds these existing elements:
 - stable selected Brand ID: `#brand-contract`;
 - Brand display fields: `#Company-Name` and `#Hiring-Manager-Name` (legacy
   lowercase Starter IDs remain supported during rollback). The selected
-  option's `company_name` fills Company and its `hiring_manager_name` full name
-  fills Hiring Manager;
+  option's `company_name` fills Company. Its `hiring_manager_name` fills Hiring
+  Manager when present; otherwise Hiring Manager remains empty;
 - the Brand email input is disabled and hidden because the options endpoint does
   not expose it;
 - Service select: the authored `select[name="Services"]` (also matched by
   `[data-project-field="service"]` and a lowercase `services` name). Webflow
   authors every option, including **Freelance work**, **Monthly retainer**, and
-  the generic **Service 1**, **Service 2**, and **Service 3** placeholders. When
-  the authenticated Starter profile response carries at least one canonical
-  service name, the controller drops only the generic `Service 1/2/3` slots and
-  appends each canonical name as both the submitted option value and its visible
-  label, keeping every other authored option and its order. It rewrites option
-  data only; it does not replace the select or the form structure;
-- counterparty rail: the selected Brand member's full name fills the existing
-  `full_name` binding, and the Brand company fills `professional_headline`.
-  Eligible options must include both values. The controller clears and hides
+  the generic **Service 1**, **Service 2**, and **Service 3** placeholders. The
+  controller always drops only the generic `Service 1/2/3` slots. It keeps every
+  other authored option and its order. When canonical services are present, it
+  appends each name as both the submitted option value and its visible label. It
+  rewrites option data only; it does not replace the select or the form
+  structure;
+- counterparty rail: the selected Brand manager's full name, when present,
+  fills the existing `full_name` binding, and the Brand company fills
+  `professional_headline`.
+  Eligible options must include a company name. The controller clears and hides
   the copied Starter photo, role, role list, and profile information. Existing
   `element` attributes remain supported; new markup should use
   `data-project-bind="starter.<field>"`;
@@ -157,13 +165,13 @@ placeholder selected and require the Starter to choose. Zero eligible Brands
 disable the select and show **No eligible Brands yet**.
 
 Each modal open refreshes the Starter profile and the service names alongside
-the Brand options. An empty service list, a failed profile request, or a member
-scope change restores the authored options exactly, so the Starter never sees
-fewer choices than Webflow authored. A selection that survives the refresh is
-kept; one whose option no longer exists is cleared to the empty value. Service
-loading is independent of the Brand identity rail: the controller still clears
-the copied Starter photo, role, role list, and profile information rather than
-repainting them from the profile response.
+the Brand options. The controller never restores the generic `Service 1/2/3`
+slots after an empty service list, a failed profile request, or a member scope
+change. It keeps every valid authored option. A selection that survives the
+refresh is kept; one whose option no longer exists is cleared to the empty
+value. Service loading is independent of the Brand identity rail: the
+controller still clears the copied Starter photo, role, role list, and profile
+information rather than repainting them from the profile response.
 
 The canonical modal is the detached shared Contract Generation dialog with the
 Starter profile marker. Before the shared modal initializer runs, the controller
@@ -183,8 +191,11 @@ generate form HTML.
 The controller also corrects the copied Brand-facing text in the native modal
 for the Starter flow. The right rail says **Selected Brand**, the introduction
 describes working with a Brand, and the scope, upfront-payment, and ongoing-term
-help text addresses the Starter. These are exact-text updates to existing
-Designer elements, not generated markup.
+help text addresses the Starter. After a Brand is selected, the alignment notice
+and **Message Party** action use the Brand manager's first name. They use the
+company name when the manager name is empty and return to neutral **Party** copy
+when the selection is cleared. These are updates to existing Designer elements,
+not generated markup.
 
 After a successful submit, the controller restores the native controls before
 it reveals `.generate-contract_success`. This lets the existing shared preview
@@ -207,8 +218,9 @@ the Starter adapter:
 `scheduling-auth.js` is required, not optional. It installs the
 `window.getXanoAuthToken` bridge that backs the profile fallback described under
 [Profile request paths](#profile-request-paths). Omit it and any session with a
-cached `opportunities-3.0.js` lacking `Opp30.API.starterProfile` silently keeps
-the generic `Service 1`, `Service 2`, `Service 3` placeholders.
+cached `opportunities-3.0.js` lacking `Opp30.API.starterProfile` cannot load
+canonical services. The controller still removes the generic placeholders and
+keeps every valid authored option.
 
 Do not add the last loader until both V3 endpoints exist and pass backend tests.
 After release, install it on the Starter Dashboard so the existing Navbar action

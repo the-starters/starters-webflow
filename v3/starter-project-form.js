@@ -3,10 +3,10 @@
  *
  * Webflow owns the detached shared modal and all form markup. This controller
  * projects the selected Brand into the authored counterparty rail, binds the
- * native Brand select to Xano-authorized options, replaces the authored generic
- * Service 1/2/3 slots with the authenticated Starter's canonical Xano service
- * names, reuses the shared commercial serializer from v3/project-form.js, and
- * creates the canonical project.
+ * native Brand select to Xano-authorized options, removes the authored generic
+ * Service 1/2/3 slots, appends the authenticated Starter's canonical Xano
+ * service names, reuses the shared commercial serializer from
+ * v3/project-form.js, and creates the canonical project.
  */
 ;(function (global) {
   'use strict'
@@ -111,6 +111,7 @@
       profileLoaded: false,
       services: [],
       selected: null,
+      partyCopyTargets: null,
       key: '',
       keyPayload: '',
       lockedControls: null,
@@ -137,9 +138,9 @@
       if (!id || seen[id]) return items
       var company = clean(raw && (raw.company_name || raw.counterparty_label || raw.label))
       var manager = clean(raw && (raw.hiring_manager_name || raw.full_name || raw.manager_name))
-      if (!company || !manager) return items
+      if (!company) return items
       var label = company
-      if (company.toLowerCase() !== manager.toLowerCase()) {
+      if (manager && company.toLowerCase() !== manager.toLowerCase()) {
         label = company + ' — ' + manager
       }
       seen[id] = true
@@ -202,7 +203,7 @@
         ? (item.name || item.label || item.raw)
         : item)
       var key = name.toLowerCase()
-      if (!name || seen[key]) return services
+      if (!name || serviceSlot(name) > 0 || seen[key]) return services
       seen[key] = true
       services.push(name)
       return services
@@ -225,18 +226,15 @@
     return select.__starterProjectServiceOptions
   }
 
-  // The authored generic Service 1/2/3 slots are only given up once a non-empty
-  // canonical list is available. An empty list restores the authored markup so a
-  // failed request, a member scope change, or a Xano response without services
-  // never leaves the Starter with fewer options than Webflow authored.
+  // Service 1/2/3 are Webflow authoring placeholders, never valid project
+  // services. Remove them even when the canonical profile has no services or
+  // the profile request fails. Valid authored options remain available.
   function renderServices(form, services) {
     var select = field(form, SERVICE_SELECT_SELECTOR)
     if (!select || !select.options || !select.ownerDocument || !select.ownerDocument.createElement) return false
     var authored = authoredServiceOptions(select)
     var names = normalizeServices(services)
-    var target = names.length
-      ? authored.filter(function (entry) { return !genericServiceSlot(entry) })
-      : authored.slice()
+    var target = authored.filter(function (entry) { return !genericServiceSlot(entry) })
     var seen = {}
     target.forEach(function (entry) { seen[entry.value.toLowerCase()] = true })
     names.forEach(function (name) {
@@ -329,6 +327,31 @@
       replaced = true
     }
     return replaced
+  }
+
+  function renderPartyCopy(form, option) {
+    var current = formState(form)
+    var root = formContext(form)
+    if (!root || !root.querySelectorAll) return false
+    if (!current.partyCopyTargets) {
+      current.partyCopyTargets = Array.prototype.reduce.call(
+        root.querySelectorAll('p, label, span, a, button'),
+        function (targets, element) {
+          var value = clean(element.textContent)
+          if (value === 'Party') targets.push({ element: element, action: false })
+          if (value === 'Message Party') targets.push({ element: element, action: true })
+          return targets
+        },
+        []
+      )
+    }
+    var manager = clean(option && option.manager_name)
+    var name = manager ? manager.split(/\s+/)[0] : clean(option && option.company_name)
+    if (!name) name = 'Party'
+    current.partyCopyTargets.forEach(function (target) {
+      target.element.textContent = target.action ? 'Message ' + name : name
+    })
+    return Boolean(current.partyCopyTargets.length)
   }
 
   function applyStarterCopy(form) {
@@ -483,6 +506,7 @@
       brandSelect.setAttribute('data-project-field', 'brand_id')
     }
     applyStarterCopy(form)
+    renderPartyCopy(form, formState(form).selected)
     var root = formContext(form)
     var successLinks = root && root.querySelectorAll ? root.querySelectorAll(SUCCESS_LINK_SELECTOR) : []
     Array.prototype.forEach.call(successLinks, function (link) {
@@ -503,6 +527,7 @@
     // sample or previous selection value already present in the authored form.
     writeField(field(form, EMAIL_SELECTOR), '')
     renderCounterparty(form, option)
+    renderPartyCopy(form, option)
     return true
   }
 
@@ -514,6 +539,7 @@
     writeField(field(form, COMPANY_NAME_SELECTOR), '')
     writeField(field(form, EMAIL_SELECTOR), '')
     renderCounterparty(form, null)
+    renderPartyCopy(form, null)
   }
 
   function clearRenderedOptions(form) {
