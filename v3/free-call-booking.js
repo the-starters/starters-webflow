@@ -310,6 +310,15 @@
     popup.querySelectorAll('[success-call-buttons]').forEach(function (element) {
       element.style.display = element.getAttribute('data-type') === 'free' ? 'flex' : 'none'
     })
+    popup.querySelectorAll('[schedule-step="success"] [booking-element="paid-meeting"]').forEach(function (element) {
+      element.textContent = 'Free Call'
+    })
+    popup.querySelectorAll('[schedule-step="success"] *').forEach(function (element) {
+      if (/^Your card ending in .+ will be charged for this call\.$/i.test(clean(element.textContent))) {
+        element.style.display = 'none'
+        element.setAttribute('aria-hidden', 'true')
+      }
+    })
     const successText = popup.querySelector('[booking-success-text]')
     if (successText) {
       successText.textContent =
