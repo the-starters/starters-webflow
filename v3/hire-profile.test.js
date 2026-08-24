@@ -1755,7 +1755,64 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   assert.equal(page.freeModalOption.getAttribute('aria-hidden'), null)
   assert.equal(page.paidModalOption.getAttribute('aria-hidden'), null)
   assert.equal(page.freeModalOption.style.display, 'block')
+  assert.equal(page.paidModalOption.style.display, 'block')
+})
+
+test('a failed Paid install keeps the installed Free chooser option selectable', async () => {
+  const page = makePage()
+  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  page.root.appendChild(paidSurface)
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({
+      nylas_grant_id: 'grant_prod',
+      nylas_grant_email: 'starter@example.com',
+    }),
+    getConfigs: async () => [
+      {
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+      },
+      {
+        config_id: 'paid_live',
+        is_paid: true,
+        active: true,
+        data_environment: 'production',
+        payment_environment: 'live',
+        currency: 'USD',
+        price_cents: 1250,
+        duration: 30,
+      },
+    ],
+    initBookingComponents: () => {},
+    paidController: { installPaidBookingController: () => false },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
+  assert.equal(freeSurface.style.display, 'block')
+  assert.equal(freeSurface.getAttribute('data-canonical-call-unavailable'), null)
+  assert.equal(paidSurface.style.display, 'none')
+  assert.equal(paidSurface.getAttribute('data-canonical-call-unavailable'), '')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'free_live')
+  assert.equal(page.freeModalOption.getAttribute('data-booking-unavailable'), null)
+  assert.equal(page.freeModalOption.getAttribute('aria-hidden'), null)
+  assert.equal(page.freeModalOption.style.display, 'block')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), null)
+  assert.equal(page.paidModalOption.getAttribute('data-booking-unavailable'), '')
+  assert.equal(page.paidModalOption.getAttribute('aria-hidden'), 'true')
   assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
 })
 
 test('a Paid service card opens the authored Free/Paid chooser instead of the retired direct scheduler', async () => {

@@ -103,6 +103,16 @@
       });
   }
 
+  function reconcileInstalledBookingModalOptions(configs) {
+      primeBookingModalOptions(configs);
+      document.querySelectorAll(
+          '[call-type-item] [booking-popup-open][data-type][data-config]'
+      ).forEach(function (cta) {
+          const item = cta.closest('[call-type-item]');
+          if (item) item.style.display = 'block';
+      });
+  }
+
   function setBookingButtonAvailable(available) {
       document.querySelectorAll('[booking-button-wrapper]').forEach(function (wrapper) {
           wrapper.style.display = available ? 'flex' : 'none';
@@ -916,6 +926,7 @@
                   }
               }
 
+              reconcileInstalledBookingModalOptions(installedConfigs);
               const callSurfacesChanged = syncCanonicalCallSurfaces(installedConfigs);
               if (callSurfacesChanged) refreshEmptySectionNav();
               if (!bookingSurfaceAvailable) return;
