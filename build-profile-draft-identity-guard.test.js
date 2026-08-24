@@ -10,11 +10,14 @@ const source = fs.readFileSync(
 )
 
 function createEnvironment({
+  initialMember,
+  memberError,
   memberId,
   memberReady,
   sharedValues = new Map(),
   pendingMember = false,
   pathname = '/unrelated-page',
+  waitForMember,
 }) {
   class FakeStorage {
     getItem(key) {
@@ -35,7 +38,9 @@ function createEnvironment({
     ? new Promise((resolve) => {
         resolveMember = resolve
       })
-    : Promise.resolve({ data: memberId ? { id: memberId } : null })
+    : memberError
+      ? Promise.reject(memberError)
+      : Promise.resolve({ data: memberId ? { id: memberId } : null })
 
   const events = []
   const window = {
@@ -57,7 +62,9 @@ function createEnvironment({
     setTimeout,
   }
 
+  if (initialMember !== undefined) window.MEMBER = initialMember
   if (memberReady !== undefined) window.memberReady = memberReady
+  if (waitForMember !== undefined) window.waitForMember = waitForMember
 
   const context = vm.createContext({ console, Date, Promise, setTimeout, window })
   vm.runInContext(source, context)
@@ -322,6 +329,36 @@ test('waits for upstream readiness then aligns every consumer to the fresh live 
   assert.equal(sharedValues.get('ts:build_profile:member:mem_current'), 'current-member-draft')
 })
 
+test('a preinstalled authored helper cannot pass its stale ready member to the callback', async () => {
+  const upstream = deferred()
+  const live = deferred()
+  const staleMember = { id: 'mem_stale' }
+  const currentMember = { id: 'mem_current' }
+  const environment = createEnvironment({
+    initialMember: staleMember,
+    memberId: 'ignored-by-live-override',
+    memberReady: upstream.promise,
+    pendingMember: true,
+    waitForMember: (callback) => upstream.promise.then(callback),
+  })
+
+  environment.window.$memberstackDom.getCurrentMember = () => live.promise
+
+  let callbackMember = null
+  const gated = environment.window.waitForMember((member) => {
+    callbackMember = member
+  })
+
+  upstream.resolve(staleMember)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  live.resolve({ data: currentMember })
+  await gated
+
+  assert.deepEqual(callbackMember, currentMember)
+  assert.deepEqual(environment.window.MEMBER, currentMember)
+  assert.equal(environment.guard.memberId, 'mem_current')
+})
+
 test('a rejected upstream readiness promise still performs the fresh live identity read', async () => {
   const upstream = deferred()
   const environment = createEnvironment({
@@ -335,6 +372,44 @@ test('a rejected upstream readiness promise still performs the fresh live identi
   assert.equal(environment.guard.status, 'ready')
   assert.equal(environment.guard.memberId, 'mem_current')
   assert.deepEqual(environment.window.MEMBER, { id: 'mem_current' })
+})
+
+test('an anonymous live read clears a stale global member before callbacks run', async () => {
+  const environment = createEnvironment({
+    initialMember: { id: 'mem_stale' },
+    memberId: null,
+  })
+
+  let callbackMember = 'not-run'
+  let callbackGlobalMember = null
+  await environment.window.waitForMember((member) => {
+    callbackMember = member
+    callbackGlobalMember = environment.window.MEMBER
+  })
+
+  assert.equal(environment.guard.status, 'anonymous')
+  assert.equal(environment.guard.memberId, null)
+  assert.equal(callbackMember, null)
+  assert.equal(callbackGlobalMember.id, '')
+})
+
+test('a rejected live read clears a stale global member before callbacks run', async () => {
+  const environment = createEnvironment({
+    initialMember: { id: 'mem_stale' },
+    memberError: new Error('live identity failed'),
+  })
+
+  let callbackMember = 'not-run'
+  let callbackGlobalMember = null
+  await environment.window.waitForMember((member) => {
+    callbackMember = member
+    callbackGlobalMember = environment.window.MEMBER
+  })
+
+  assert.equal(environment.guard.status, 'blocked')
+  assert.equal(environment.guard.memberId, null)
+  assert.equal(callbackMember, null)
+  assert.equal(callbackGlobalMember.id, '')
 })
 
 test('a later authored waitForMember stays gated behind identity and restores the scoped draft on first callback', async () => {
@@ -372,7 +447,7 @@ test('a later authored waitForMember stays gated behind identity and restores th
 
   assert.equal(environment.guard.status, 'ready')
   assert.equal(restored, 'saved-draft')
-  assert.equal(seenArg, 'mem_current')
+  assert.deepEqual(seenArg, { id: 'mem_current' })
   assert.equal(delegateThis, environment.window)
   assert.equal(result, 'authored-return')
 })

@@ -97,6 +97,16 @@
 
   function finish(nextStatus) {
     status = nextStatus
+    if (status === 'ready') {
+      window.MEMBER = memberData
+    } else {
+      memberId = ''
+      memberData = null
+      scopedKey = ''
+      pendingValue = null
+      pendingRemoval = false
+      window.MEMBER = { id: '' }
+    }
     resolveReady({ status, memberId: memberId || null })
     window.dispatchEvent(
       new window.CustomEvent('ts:build-profile-draft-identity', {
@@ -167,7 +177,16 @@
   function gateAuthored(authored) {
     return function gatedAuthoredEntry() {
       const self = this
-      const invocationArgs = arguments
+      const invocationArgs = Array.prototype.slice.call(arguments)
+      const callback = invocationArgs[0]
+      if (typeof callback === 'function') {
+        invocationArgs[0] = function gatedAuthoredCallback() {
+          const callbackArgs = Array.prototype.slice.call(arguments)
+          if (callbackArgs.length) callbackArgs[0] = memberData
+          else callbackArgs.push(memberData)
+          return callback.apply(this, callbackArgs)
+        }
+      }
       return ready.then(function () {
         return authored.apply(self, invocationArgs)
       })
@@ -259,7 +278,6 @@
       }
 
       memberData = response?.data || response || null
-      window.MEMBER = memberData
       scopedKey = `${SCOPED_PREFIX}${memberId}`
       status = 'ready'
 
