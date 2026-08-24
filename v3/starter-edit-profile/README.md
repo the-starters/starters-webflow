@@ -24,6 +24,14 @@ Work Highlight updates enter moderation. After an update succeeds, the portfolio
 controller replaces the shared generic live-message with a pending-review
 confirmation, then restores the shared modal copy when it closes.
 
+The Edit portfolio controllers are the only Work Highlights owners on
+`/starter-edit-profile`. The Build portfolio controllers fail closed outside the
+two exact Build routes, even if an obsolete nested Webflow component still loads
+their files. This prevents duplicate immediate Build writes from bypassing the
+Edit draft and moderation boundary. Structural Webflow cleanup must still remove
+the obsolete nested Build component; the code gate is the runtime safety boundary
+until that component repair is published.
+
 `company-experience-crud.js` deliberately diverges from the live body it was captured
 from: it carries the work-experience date fix, whose contract is shared with Build
 Profile and owned by
