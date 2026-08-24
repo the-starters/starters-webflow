@@ -506,7 +506,7 @@
       popup.querySelector('[nylas-container]') ||
       global.document.querySelector('[nylas-container]')
     )
-    if (!popup || !container || !ctas.length || !mainButtons.length) return false
+    if (!popup || !container || !ctas.length) return false
 
     const state = {
       config,

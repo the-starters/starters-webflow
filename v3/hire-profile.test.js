@@ -16,6 +16,7 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./hire-profile.js'), 'utf8')
+const freeBookingSource = fs.readFileSync(require.resolve('./free-call-booking.js'), 'utf8')
 
 /* ------------------------------------------------------------------ DOM --- */
 
@@ -246,7 +247,6 @@ function makePage({
   root.appendChild(services)
 
   const popupNylasContainer = makeElement('div', { 'nylas-container': '' })
-  root.appendChild(popupNylasContainer)
 
   const freeModalOption = makeElement('div', { 'call-type-item': '' })
   const freeModalCta = makeElement('button', {
@@ -274,7 +274,11 @@ function makePage({
   bookingButtonWrapper.appendChild(bookingButton)
   if (includeBookingButton) root.appendChild(bookingButtonWrapper)
 
-  const bookingDialog = makeElement('dialog', { 'data-modal-target': 'popup-booking-main' })
+  const bookingDialog = makeElement('dialog', {
+    'data-modal-target': 'popup-booking-main',
+    'popup-booking': '',
+  })
+  bookingDialog.appendChild(popupNylasContainer)
   root.appendChild(bookingDialog)
 
   return {
@@ -378,6 +382,7 @@ function makeContext({
     setTimeout,
     clearTimeout,
     Promise,
+    URLSearchParams,
     URL,
     Date,
     Map,
@@ -679,6 +684,9 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
     const title = card.getAttribute('data-rate-card') === 'freelance' ? 'Freelance' : 'Retainer'
     assert.equal(card.getAttribute('data-signup-trigger-element'), 'service')
     assert.equal(card.getAttribute('data-signup-trigger-value'), title)
+    assert.equal(card.getAttribute('data-canonical-call-unavailable'), null)
+    assert.equal(card.getAttribute('aria-hidden'), 'false')
+    assert.equal(card.style.display, 'block')
     for (const dropped of [
       'data-modal-trigger',
       'booking-popup-open',
@@ -1560,6 +1568,43 @@ test('canonical installed Free and Paid controllers reveal every matching projec
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
 })
 
+test('canonical discovery preserves hidden runtime call templates', async () => {
+  const page = makePage({ includeNativeFreeTemplate: true })
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getConfigs: async () => [{
+      config_id: 'free_live',
+      is_paid: false,
+      active: true,
+      data_environment: 'production',
+    }],
+    initBookingComponents: () => {},
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const authored = page.servicesList.children[0]
+  assert.equal(authored.getAttribute('data-canonical-call-unavailable'), null)
+  assert.equal(authored.style.display, 'block')
+  assert.equal(page.nativeFreeTemplate.hasAttribute('hidden'), true)
+  assert.equal(page.nativeFreeTemplate.getAttribute('aria-hidden'), 'true')
+  assert.notEqual(page.nativeFreeTemplate.style.display, 'block')
+  assert.equal(
+    page.servicesList.children.filter((card) =>
+      card.getAttribute('has-connection') === 'free' && !card.hasAttribute('hidden'),
+    ).length,
+    1,
+  )
+})
+
 test('booking discovery rejects inactive, mixed-environment, and duplicate configurations', async () => {
   const scenarios = [
     [{ config_id: 'inactive_free', is_paid: false, active: false, data_environment: 'production' }],
@@ -1731,14 +1776,19 @@ test('a migrated profile without the legacy Book Call button opens the native ch
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
       planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
     },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
-    getConfigs: async () => [{
-      config_id: 'free_live',
-      is_paid: false,
-      active: true,
-      data_environment: 'production',
-    }],
-    initBookingComponents: () => {},
+    omitInitialFreeController: true,
+  })
+  context.xanoAuthFetch = async (url) => ({
+    ok: true,
+    status: 200,
+    json: async () => String(url).includes('/starter/get_booking_profile/v3')
+      ? { id: 383, nylas_grant_id: 'grant_prod' }
+      : [{
+          config_id: 'free_live',
+          is_paid: false,
+          active: true,
+          data_environment: 'production',
+        }],
   })
   context.lumos = {
     modal: {
@@ -1747,6 +1797,7 @@ test('a migrated profile without the legacy Book Call button opens the native ch
     },
   }
   vm.createContext(context)
+  vm.runInContext(freeBookingSource, context)
   vm.runInContext(source, context)
   await settle()
 

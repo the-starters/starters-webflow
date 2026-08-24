@@ -142,6 +142,9 @@
 
       ['free', 'paid'].forEach(function (type) {
           document.querySelectorAll('[has-connection="' + type + '"]').forEach(function (surface) {
+              if (surface.hasAttribute('hidden') || surface.hasAttribute('data-runtime-call-template')) {
+                  return;
+              }
               if (availability[type]) {
                   surface.removeAttribute('data-canonical-call-unavailable');
                   surface.removeAttribute('aria-hidden');
@@ -648,6 +651,7 @@
           el.removeAttribute('hidden');
           el.removeAttribute('data-runtime-call-template');
           el.removeAttribute('data-runtime-free-call-card');
+          el.removeAttribute('data-canonical-call-unavailable');
           el.setAttribute('aria-hidden', 'false');
 
           // Keep data-signup-trigger-* so signup-attribution.js opens the

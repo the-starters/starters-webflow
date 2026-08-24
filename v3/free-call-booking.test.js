@@ -109,7 +109,7 @@ function withGlobals(values, run) {
   })
 }
 
-function chooserFixture() {
+function chooserFixture({ includeMain = true } = {}) {
   const popup = new Element('section', { 'popup-booking': '' })
   const freeButtons = new Element('div', { 'success-call-buttons': '', 'data-type': 'free' })
   const paidButtons = new Element('div', { 'success-call-buttons': '', 'data-type': 'paid' })
@@ -134,7 +134,7 @@ function chooserFixture() {
     },
     querySelectorAll(selector) {
       if (selector.includes('[data-type="free"]')) return [cta]
-      if (selector === '[data-modal-trigger="popup-booking-main"]') return [main]
+      if (selector === '[data-modal-trigger="popup-booking-main"]') return includeMain ? [main] : []
       return []
     },
     createElement(tag) {
@@ -251,6 +251,22 @@ test('reinstall keeps one chooser handler and one availability request per click
     assert.equal(requests, 2)
     assert.equal(typeof firstHandler, 'function')
   })
+})
+
+test('the authored chooser installs without a legacy main trigger', async () => {
+  const fixture = chooserFixture({ includeMain: false })
+  await withGlobals({ document: fixture.document }, async () => {
+    assert.equal(api.installFreeBookingController({
+      config: { config_id: 'free_prod', is_paid: false },
+      grantId: 'grant_prod',
+      brandName: 'Brand Member',
+      brandEmail: 'brand@example.com',
+    }), true)
+  })
+
+  assert.equal(fixture.cta.getAttribute('data-config'), 'free_prod')
+  assert.equal(typeof fixture.cta.onclick, 'function')
+  assert.equal(fixture.main.onclick, null)
 })
 
 test('each Free option click mounts one Nylas scheduler in the authored container', async () => {
