@@ -1373,7 +1373,8 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(
     guard.textContent,
     '[data-booking-unavailable]{display:none!important}' +
-      '[data-booking-trigger-unavailable]{display:none!important}',
+      '[data-booking-trigger-unavailable]{display:none!important}' +
+      '[data-canonical-call-unavailable]{display:none!important}',
   )
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
@@ -1442,6 +1443,87 @@ test('a chooser trigger outside booking-button-wrapper stays hidden until discov
   assert.ok(guard.textContent.includes(
     '[data-booking-trigger-unavailable]{display:none!important}',
   ))
+})
+
+test('canonical discovery removes legacy Free and Paid projections when the profile is not bookable', async () => {
+  const page = makePage()
+  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  page.root.appendChild(paidSurface)
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': true,
+    },
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => null,
+    getConfigs: async () => [],
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
+  for (const surface of [freeSurface, paidSurface]) {
+    assert.equal(surface.getAttribute('data-canonical-call-unavailable'), '')
+    assert.equal(surface.getAttribute('aria-hidden'), 'true')
+    assert.equal(surface.style.display, 'none')
+  }
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+})
+
+test('canonical installed Free and Paid controllers reveal every matching projection surface', async () => {
+  const page = makePage()
+  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  page.root.appendChild(paidSurface)
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': false,
+      'paid-consulting-calls-t-f': false,
+    },
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({
+      nylas_grant_id: 'grant_prod',
+      nylas_grant_email: 'starter@example.com',
+    }),
+    getConfigs: async () => [
+      { config_id: 'free_live', is_paid: false, active: true, data_environment: 'production' },
+      {
+        config_id: 'paid_live',
+        is_paid: true,
+        active: true,
+        data_environment: 'production',
+        payment_environment: 'live',
+        currency: 'USD',
+        price_cents: 25000,
+        duration: 60,
+      },
+    ],
+    initBookingComponents: () => {},
+    paidController: { installPaidBookingController: () => true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
+  for (const surface of [freeSurface, paidSurface]) {
+    assert.equal(surface.getAttribute('data-canonical-call-unavailable'), null)
+    assert.equal(surface.getAttribute('aria-hidden'), null)
+    assert.equal(surface.style.display, 'block')
+  }
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
 })
 
 test('booking discovery rejects inactive, mixed-environment, and duplicate configurations', async () => {

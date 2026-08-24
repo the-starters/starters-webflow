@@ -58,6 +58,7 @@
       style.textContent = [
           '[data-booking-unavailable]{display:none!important}',
           '[data-booking-trigger-unavailable]{display:none!important}',
+          '[data-canonical-call-unavailable]{display:none!important}',
       ].join('');
       (document.head || document.documentElement).appendChild(style);
   }
@@ -130,6 +131,28 @@
           } else {
               dialog.setAttribute('data-booking-surface-unavailable', '');
           }
+      });
+  }
+
+  function syncCanonicalCallSurfaces(configs) {
+      const records = Array.isArray(configs) ? configs : [];
+      const availability = {
+          free: records.some(function (record) { return record && record.is_paid === false; }),
+          paid: records.some(function (record) { return record && record.is_paid === true; }),
+      };
+
+      ['free', 'paid'].forEach(function (type) {
+          document.querySelectorAll('[has-connection="' + type + '"]').forEach(function (surface) {
+              if (availability[type]) {
+                  surface.removeAttribute('data-canonical-call-unavailable');
+                  surface.removeAttribute('aria-hidden');
+                  surface.style.display = 'block';
+              } else {
+                  surface.setAttribute('data-canonical-call-unavailable', '');
+                  surface.setAttribute('aria-hidden', 'true');
+                  surface.style.display = 'none';
+              }
+          });
       });
   }
 
@@ -522,10 +545,18 @@
           if (!record) return;
 
           if (record['free-consulting-calls-t-f']) {
-              qsa('[has-connection="free"]').forEach((item) => item.style.display = "block");
+              qsa('[has-connection="free"]').forEach((item) => {
+                  if (!item.hasAttribute('data-canonical-call-unavailable')) {
+                      item.style.display = "block";
+                  }
+              });
           }
           if (record['paid-consulting-calls-t-f']) {
-              qsa('[has-connection="paid"]').forEach((item) => item.style.display = "block");
+              qsa('[has-connection="paid"]').forEach((item) => {
+                  if (!item.hasAttribute('data-canonical-call-unavailable')) {
+                      item.style.display = "block";
+                  }
+              });
           }
 
           if (!MEMBER.id) markServiceCardsClickable();
@@ -797,6 +828,7 @@
   async function startersBooking_handler(freelancerId, brand_name, brand_email) {
 
       if (!validBookingDiscovery(freeCallBooking)) {
+          syncCanonicalCallSurfaces([]);
           console.warn('[hire-profile] Free Call booking controller is unavailable');
           return;
       }
@@ -824,6 +856,7 @@
               }) || null;
               let bookingSurfaceAvailable = false;
               let freeInstalled = false;
+              const installedConfigs = [];
 
               // The GitHub Free controller owns only the accepted Free option.
               // Remove Paid before it binds the authored chooser, then restore
@@ -841,6 +874,7 @@
                       });
                   freeInstalled = installed === true;
                   bookingSurfaceAvailable = freeInstalled;
+                  if (freeInstalled) installedConfigs.push(freeConfigs[0]);
                   if (!installed) {
                       primeBookingModalOptions([]);
                       console.warn('Free Call controller is unavailable; Free stayed closed.');
@@ -874,20 +908,24 @@
                           starterEmail: starter.nylas_grant_email,
                       });
                   bookingSurfaceAvailable = bookingSurfaceAvailable || installed === true;
+                  if (installed === true) installedConfigs.push(paidConfig);
                   if (!installed) {
                       primeBookingModalOptions(freeConfigs);
                       console.warn('Paid Call controller is unavailable; Paid stayed closed.');
                   }
               }
 
+              syncCanonicalCallSurfaces(installedConfigs);
               if (!bookingSurfaceAvailable) return;
               setBookingButtonAvailable(true);
 
           } else {
+              syncCanonicalCallSurfaces([]);
               console.warn("No Configurations found for the current starter.");
           }
 
       } else {
+          syncCanonicalCallSurfaces([]);
           console.warn("No Nylas Grant ID found for the current starter.");
       }
   }
