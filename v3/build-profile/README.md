@@ -26,7 +26,8 @@ The files below are source-controlled candidates for self-contained controller b
 `portfolio-crud.js` and `portfolio-list.js` own only the exact
 `/build-profile/consult` and `/build-profile/full-profile` routes. They accept an
 optional trailing slash and fail closed on every other path before member
-resolution, selector reads, event binding, network reads, uploads, or writes.
+resolution, selector reads, controller event binding, network reads, uploads, or
+writes. The scripts still register their initial `DOMContentLoaded` listener.
 This route gate prevents a nested or stale Build loader from claiming the native
 Edit Profile Work Highlights controls. Do not replace it with a DOM marker or a
 first-loader-wins flag because Build and Edit intentionally share the same
