@@ -76,15 +76,15 @@ duplicates removed case-insensitively.
 
 The Xano change that adds this field to the response is a separate unpublished
 draft. Until it is published under its own approved production boundary, the
-endpoint returns no services and the authored Webflow options stand unchanged.
+endpoint returns no services. The controller still removes the generic service
+placeholders and keeps every valid authored option.
 
 ### Profile request paths
 
 The controller reads the profile through `Opp30.API.starterProfile()` whenever
 that method exists. That remains the primary path. Browser sessions holding a
 cached `opportunities-3.0.js` predating the method would otherwise get no
-profile at all and keep the generic `Service 1`, `Service 2`, `Service 3`
-placeholders, so the controller falls back to a direct
+profile at all, so the controller falls back to a direct
 `POST https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/starter/profile/me` with a
 `{}` body, authorized by the shared `window.getXanoAuthToken` bridge. It sets
 the `Authorization` header itself instead of calling `window.xanoAuthFetch`,
@@ -95,9 +95,9 @@ paths and would pass this `api:opp30` route through unauthenticated.
 script owns `window.getXanoAuthToken`, and `/starter-dashboard` is inside its
 install boundary; the authoritative host and path list lives in
 [Scheduling auth](README.md#scheduling-auth). Without the bridge the fallback
-issues no request at all and no error is surfaced: the modal silently keeps the
-authored placeholders. Keep the loader in the Script order block below when
-installing or auditing this page.
+issues no request at all and no error is surfaced. The modal still removes the
+generic service placeholders and keeps every valid authored option. Keep the
+loader in the Script order block below when installing or auditing this page.
 
 The fallback issues no request when the bridge or `window.fetch` is missing, and
 rejects before issuing one when the bridge resolves a blank token, so it never
@@ -136,12 +136,12 @@ The controller binds these existing elements:
 - Service select: the authored `select[name="Services"]` (also matched by
   `[data-project-field="service"]` and a lowercase `services` name). Webflow
   authors every option, including **Freelance work**, **Monthly retainer**, and
-  the generic **Service 1**, **Service 2**, and **Service 3** placeholders. When
-  the authenticated Starter profile response carries at least one canonical
-  service name, the controller drops only the generic `Service 1/2/3` slots and
-  appends each canonical name as both the submitted option value and its visible
-  label, keeping every other authored option and its order. It rewrites option
-  data only; it does not replace the select or the form structure;
+  the generic **Service 1**, **Service 2**, and **Service 3** placeholders. The
+  controller always drops only the generic `Service 1/2/3` slots. It keeps every
+  other authored option and its order. When canonical services are present, it
+  appends each name as both the submitted option value and its visible label. It
+  rewrites option data only; it does not replace the select or the form
+  structure;
 - counterparty rail: the selected Brand member's full name fills the existing
   `full_name` binding, and the Brand company fills `professional_headline`.
   Eligible options must include both values. The controller clears and hides
@@ -157,11 +157,11 @@ placeholder selected and require the Starter to choose. Zero eligible Brands
 disable the select and show **No eligible Brands yet**.
 
 Each modal open refreshes the Starter profile and the service names alongside
-the Brand options. An empty service list, a failed profile request, or a member
-scope change restores the authored options exactly, so the Starter never sees
-fewer choices than Webflow authored. A selection that survives the refresh is
-kept; one whose option no longer exists is cleared to the empty value. Service
-loading is independent of the Brand identity rail: the controller still clears
+the Brand options. The controller never restores the generic `Service 1/2/3`
+slots after an empty service list, a failed profile request, or a member scope
+change. It keeps every valid authored option. A selection that survives the
+refresh is kept; one whose option no longer exists is cleared to the empty
+value. Service loading is independent of the Brand identity rail: the controller still clears
 the copied Starter photo, role, role list, and profile information rather than
 repainting them from the profile response.
 
@@ -207,8 +207,9 @@ the Starter adapter:
 `scheduling-auth.js` is required, not optional. It installs the
 `window.getXanoAuthToken` bridge that backs the profile fallback described under
 [Profile request paths](#profile-request-paths). Omit it and any session with a
-cached `opportunities-3.0.js` lacking `Opp30.API.starterProfile` silently keeps
-the generic `Service 1`, `Service 2`, `Service 3` placeholders.
+cached `opportunities-3.0.js` lacking `Opp30.API.starterProfile` cannot load
+canonical services. The controller still removes the generic placeholders and
+keeps every valid authored option.
 
 Do not add the last loader until both V3 endpoints exist and pass backend tests.
 After release, install it on the Starter Dashboard so the existing Navbar action
