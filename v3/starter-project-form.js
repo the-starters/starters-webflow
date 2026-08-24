@@ -79,6 +79,16 @@
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null
   }
 
+  function memberstackId(value) {
+    var id = clean(value)
+    return /^mem_[A-Za-z0-9_-]+$/.test(id) ? id : ''
+  }
+
+  function messageUrl(option) {
+    var id = memberstackId(option && option.memberstack_member_id)
+    return id ? '/messages?with=' + encodeURIComponent(id) : '#'
+  }
+
   function createdProject(result) {
     var project = result && result.project
     var lifecycleState = clean(project && project.lifecycle_state).toLowerCase()
@@ -138,13 +148,22 @@
       if (!id || seen[id]) return items
       var company = clean(raw && (raw.company_name || raw.counterparty_label || raw.label))
       var manager = clean(raw && (raw.hiring_manager_name || raw.full_name || raw.manager_name))
+      var counterpartyMemberstackId = memberstackId(raw && (
+        raw.counterparty_memberstack_id || raw.memberstack_member_id || raw.memberstack_id
+      ))
       if (!company) return items
       var label = company
       if (manager && company.toLowerCase() !== manager.toLowerCase()) {
         label = company + ' — ' + manager
       }
       seen[id] = true
-      items.push({ id: id, label: label, company_name: company, manager_name: manager })
+      items.push({
+        id: id,
+        label: label,
+        company_name: company,
+        manager_name: manager,
+        memberstack_member_id: counterpartyMemberstackId,
+      })
       return items
     }, []).sort(function (left, right) {
       return left.label.localeCompare(right.label)
@@ -350,6 +369,9 @@
     if (!name) name = 'Party'
     current.partyCopyTargets.forEach(function (target) {
       target.element.textContent = target.action ? 'Message ' + name : name
+      if (target.action && clean(target.element.tagName).toLowerCase() === 'a' && target.element.setAttribute) {
+        target.element.setAttribute('href', messageUrl(option))
+      }
     })
     return Boolean(current.partyCopyTargets.length)
   }
@@ -1065,6 +1087,8 @@
 
   var api = {
     positiveId: positiveId,
+    memberstackId: memberstackId,
+    messageUrl: messageUrl,
     normalizeOptions: normalizeOptions,
     normalizeProfile: normalizeProfile,
     normalizeServices: normalizeServices,
