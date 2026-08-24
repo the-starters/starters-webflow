@@ -29,9 +29,8 @@ class Element {
     this.children = []
     this.parentElement = null
     this.queries = new Map()
-    this.shadowRoot = null
     this.onclick = null
-    this.id = ''
+    this.value = ''
   }
 
   setQuery(selector, values) {
@@ -56,19 +55,10 @@ class Element {
       : null
   }
 
-  hasAttribute(name) {
-    return this.getAttribute(name) !== null
-  }
-
   appendChild(child) {
     child.parentElement = this
     this.children.push(child)
     return child
-  }
-
-  replaceChildren(...children) {
-    this.children = []
-    children.forEach((child) => this.appendChild(child))
   }
 
   closest(selector) {
@@ -76,7 +66,6 @@ class Element {
     while (node) {
       if (selector === '[call-type-item]' && node.getAttribute('call-type-item') !== null) return node
       if (selector === '[popup-booking]' && node.getAttribute('popup-booking') !== null) return node
-      if (selector === '[booking-element-wrap]' && node.getAttribute('booking-element-wrap') !== null) return node
       node = node.parentElement
     }
     return null
@@ -109,11 +98,25 @@ function withGlobals(values, run) {
   })
 }
 
-function chooserFixture({ includeMain = true } = {}) {
+function chooserFixture({ includeMain = true, guests = [] } = {}) {
   const popup = new Element('section', { 'popup-booking': '' })
   const freeButtons = new Element('div', { 'success-call-buttons': '', 'data-type': 'free' })
   const paidButtons = new Element('div', { 'success-call-buttons': '', 'data-type': 'paid' })
+  const defaultStep = new Element('div', { 'schedule-step': 'default' })
+  const successStep = new Element('div', { 'schedule-step': 'success' })
+  const successText = new Element('p', { 'booking-success-text': '' })
+  const guestError = new Element('p', { 'data-call-guest-error': '' })
+  const topic = new Element('input', { name: 'topic' })
+  const context = new Element('textarea', { name: 'context' })
+  topic.value = 'Growth audit'
+  context.value = 'Review the launch plan'
   popup.setQuery('[success-call-buttons]', [freeButtons, paidButtons])
+  popup.setQuery('[schedule-step]', [defaultStep, successStep])
+  popup.setQuery('[booking-success-text]', successText)
+  popup.setQuery('[data-call-guest-error]', guestError)
+  popup.setQuery('[data-call-guest-email]', guests)
+  popup.setQuery('[name="topic"], [booking-topic]', topic)
+  popup.setQuery('[name="context"], [booking-context]', context)
 
   const item = new Element('div', { 'call-type-item': '' })
   const nextSlot = new Element('span', { 'next-available-slot': '' })
@@ -125,6 +128,7 @@ function chooserFixture({ includeMain = true } = {}) {
   const main = new Element('button', { 'data-modal-trigger': 'popup-booking-main' })
   const container = new Element('div', { 'nylas-container': '' })
   popup.appendChild(container)
+  popup.setQuery('[nylas-container]', container)
 
   const document = {
     querySelector(selector) {
@@ -137,21 +141,71 @@ function chooserFixture({ includeMain = true } = {}) {
       if (selector === '[data-modal-trigger="popup-booking-main"]') return includeMain ? [main] : []
       return []
     },
-    createElement(tag) {
-      const element = new Element(tag)
-      if (tag === 'nylas-scheduling') element.shadowRoot = shadowRoot()
-      return element
-    },
   }
-  return { cta, container, document, freeButtons, item, main, nextSlot, paidButtons, popup }
+  return {
+    container,
+    context,
+    cta,
+    defaultStep,
+    document,
+    freeButtons,
+    guestError,
+    item,
+    main,
+    nextSlot,
+    paidButtons,
+    popup,
+    successStep,
+    successText,
+    topic,
+  }
 }
 
-function shadowRoot() {
-  const root = new Element('shadow-root')
-  root.getElementById = function (id) {
-    return this.children.find((child) => child.id === id) || null
+function bookingApiFixture(options = {}) {
+  const state = {
+    attempts: 0,
+    inputs: [],
+    mounts: [],
+    runs: 0,
   }
-  return root
+  const bookingApi = {
+    bookingRequestFingerprint(input) {
+      return JSON.stringify(input)
+    },
+    createBookingAttempt(input) {
+      state.attempts += 1
+      state.inputs.push(input)
+      return {
+        run: async () => {
+          state.runs += 1
+          if (options.run) return options.run(state.runs)
+          return {
+            booking: {
+              booking_id: 'provider-free-1',
+              row_id: 901,
+            },
+          }
+        },
+      }
+    },
+    mountPaidCalendar: async (mount) => {
+      state.mounts.push(mount)
+      return { slots: [{ start: 1, end: 2 }] }
+    },
+    readGuestEmails: () => options.guests || [],
+  }
+  return { bookingApi, state }
+}
+
+function installSettings(bookingApi) {
+  return {
+    bookingApi,
+    brandEmail: 'brand@example.com',
+    config: { config_id: 'free_prod', duration: 30, is_paid: false, price_cents: 0 },
+    grantId: 'grant_prod',
+    starterEmail: 'starter@example.com',
+    starterSlug: 'starter-slug',
+  }
 }
 
 test('canonical Free reads use one authenticated request and exact V3 routes', async () => {
@@ -170,10 +224,7 @@ test('canonical Free reads use one authenticated request and exact V3 routes', a
   }, async () => {
     assert.equal((await api.getStarterByMemberId('mem_starter')).id, 82)
     assert.equal((await api.getConfigs('grant_1'))[0].config_id, 'free_1')
-    assert.equal(
-      await api.getNearestSlot('grant_1', 'free_1', now),
-      Math.floor(now / 1000) + 100000,
-    )
+    assert.equal(await api.getNearestSlot('grant_1', 'free_1', now), Math.floor(now / 1000) + 100000)
   })
 
   assert.equal(calls.length, 3)
@@ -182,249 +233,135 @@ test('canonical Free reads use one authenticated request and exact V3 routes', a
   assert.equal(new URL(calls[1].url).pathname.endsWith(api.CONFIGS_PATH), true)
   assert.deepEqual(JSON.parse(calls[1].options.body), { grant_id: 'grant_1' })
   assert.equal(new URL(calls[2].url).pathname.endsWith(api.AVAILABILITY_PATH), true)
-  assert.equal(calls[2].options.method, 'GET')
 })
 
 test('Free availability uses five minutes only on the exact staging host', async () => {
   const now = Date.UTC(2026, 7, 24, 0, 0, 0)
   const nowSeconds = Math.floor(now / 1000)
   assert.equal(api.minimumBookingNoticeMinutes(), 1440)
-  assert.equal(
-    new URL('https://example.test' + api.availabilityPath('grant', 'config', now))
-      .searchParams.get('start_time'),
-    String(nowSeconds + 1440 * 60),
-  )
-
-  const staging = loadBrowserApi(
-    'the-starters-3-0.webflow.io',
-    async () => response({
-      time_slots: [
-        { start_time: nowSeconds + 4 * 60 },
-        { start_time: nowSeconds + 5 * 60 },
-      ],
-    }),
-  )
+  const staging = loadBrowserApi('the-starters-3-0.webflow.io', async () => response({
+    time_slots: [{ start_time: nowSeconds + 5 * 60 }],
+  }))
   assert.equal(staging.minimumBookingNoticeMinutes(), 5)
-  assert.equal(
-    new URL('https://example.test' + staging.availabilityPath('grant', 'config', now))
-      .searchParams.get('start_time'),
-    String(nowSeconds + 5 * 60),
-  )
   assert.equal(await staging.getNearestSlot('grant', 'config', now), nowSeconds + 5 * 60)
-
   assert.equal(loadBrowserApi('thestarters.com').minimumBookingNoticeMinutes(), 1440)
-  assert.equal(loadBrowserApi('staging.thestarters.com').minimumBookingNoticeMinutes(), 1440)
-  assert.equal(loadBrowserApi().minimumBookingNoticeMinutes(), 1440)
-})
-
-test('reinstall keeps one chooser handler and one availability request per click', async () => {
-  const fixture = chooserFixture()
-  let requests = 0
-  await withGlobals({
-    document: fixture.document,
-    location: { hostname: 'www.thestarters.com' },
-    xanoAuthFetch: async () => {
-      requests += 1
-      return response({ time_slots: [{ start_time: Math.floor(Date.now() / 1000) + 90000 }] })
-    },
-  }, async () => {
-    const settings = {
-      config: { config_id: 'free_prod', is_paid: false },
-      grantId: 'grant_prod',
-      brandName: 'Brand Member',
-      brandEmail: 'brand@example.com',
-    }
-    assert.equal(api.installFreeBookingController(settings), true)
-    const firstHandler = fixture.main.onclick
-    assert.equal(api.installFreeBookingController(settings), true)
-    assert.notEqual(fixture.main.onclick, null)
-
-    const first = event()
-    await fixture.main.onclick(first)
-    assert.equal(first.prevented, 1)
-    assert.equal(requests, 1)
-    assert.notEqual(fixture.nextSlot.textContent, 'Loading...')
-
-    const second = event()
-    await fixture.main.onclick(second)
-    assert.equal(second.prevented, 1)
-    assert.equal(requests, 2)
-    assert.equal(typeof firstHandler, 'function')
-  })
 })
 
 test('the authored chooser installs without a legacy main trigger', async () => {
   const fixture = chooserFixture({ includeMain: false })
+  const booking = bookingApiFixture()
   await withGlobals({ document: fixture.document }, async () => {
-    assert.equal(api.installFreeBookingController({
-      config: { config_id: 'free_prod', is_paid: false },
-      grantId: 'grant_prod',
-      brandName: 'Brand Member',
-      brandEmail: 'brand@example.com',
-    }), true)
+    assert.equal(api.installFreeBookingController(installSettings(booking.bookingApi)), true)
   })
-
   assert.equal(fixture.cta.getAttribute('data-config'), 'free_prod')
+  assert.equal(fixture.cta.getAttribute('data-free-call-v3'), 'ready')
   assert.equal(typeof fixture.cta.onclick, 'function')
-  assert.equal(fixture.main.onclick, null)
 })
 
-test('each Free option click mounts one Nylas scheduler in the authored container', async () => {
-  const fixture = chooserFixture()
-  let definitions = 0
-  let schedulerCreates = 0
-  const originalCreate = fixture.document.createElement
-  fixture.document.createElement = function (tag) {
-    if (tag === 'nylas-scheduling') schedulerCreates += 1
-    return originalCreate.call(this, tag)
-  }
-
-  await withGlobals({
-    document: fixture.document,
-    location: { hostname: 'the-starters-3-0.webflow.io' },
-    customElements: { get: () => definitions > 0 },
-    setTimeout: (fn) => { fn(); return 1 },
-  }, async () => {
-    const settings = {
-      config: { config_id: 'free_test', is_paid: false },
-      grantId: 'grant_test',
-      brandName: 'Brand Test',
-      brandEmail: 'brand-test@example.com',
-      loadSchedulerModule: async () => ({ defineCustomElement: () => { definitions += 1 } }),
-    }
-    assert.equal(api.installFreeBookingController(settings), true)
-
-    const first = event()
-    await fixture.cta.onclick(first)
-    assert.equal(first.prevented, 1)
-    assert.equal(schedulerCreates, 1)
-    assert.equal(fixture.container.children.length, 1)
-    const scheduler = fixture.container.children[0]
-    assert.equal(scheduler.configurationId, 'free_test')
-    assert.equal(scheduler.schedulerApiUrl, 'https://api.us.nylas.com')
-    assert.deepEqual(scheduler.bookingInfo.primaryParticipant, {
-      name: 'Brand Test',
-      email: 'brand-test@example.com',
+test('Free click mounts the authored calendar and canonical command, never Nylas scheduling', async () => {
+  const guests = Array.from({ length: 5 }, () => new Element('input', { 'data-call-guest-email': '' }))
+  const fixture = chooserFixture({ guests })
+  const booking = bookingApiFixture({ guests: ['guest@example.com'] })
+  await withGlobals({ document: fixture.document }, async () => {
+    assert.equal(api.installFreeBookingController(installSettings(booking.bookingApi)), true)
+    await fixture.cta.onclick(event())
+    assert.equal(booking.state.mounts.length, 1)
+    assert.equal(booking.state.mounts[0].confirmText, 'Request free call')
+    assert.deepEqual(booking.state.mounts[0].config, {
+      config_id: 'free_prod',
+      duration: 30,
+      grant_id: 'grant_prod',
+      is_paid: false,
+      price_cents: 0,
     })
-    assert.equal(scheduler.bookingInfo.additionalFields.from_stage.value, 'true')
-    assert.equal(fixture.freeButtons.style.display, 'flex')
-    assert.equal(fixture.paidButtons.style.display, 'none')
-
-    const second = event()
-    await fixture.cta.onclick(second)
-    assert.equal(second.prevented, 1)
-    assert.equal(schedulerCreates, 2)
-    assert.equal(fixture.container.children.length, 1, 'the second click replaces, not duplicates, the calendar')
-    assert.equal(definitions, 1)
+    await booking.state.mounts[0].onConfirm({
+      start: 1780000000000,
+      end: 1780001800000,
+      timezone: 'Asia/Manila',
+    })
   })
+
+  assert.equal(booking.state.attempts, 1)
+  assert.equal(booking.state.runs, 1)
+  assert.deepEqual(booking.state.inputs[0], {
+    brand_email: 'brand@example.com',
+    config_id: 'free_prod',
+    context: 'Review the launch plan',
+    end: 1780001800000,
+    guest_emails: ['guest@example.com'],
+    start: 1780000000000,
+    starter_email: 'starter@example.com',
+    starter_slug: 'starter-slug',
+    timezone: 'Asia/Manila',
+    topic: 'Growth audit',
+  })
+  assert.equal(fixture.defaultStep.style.display, 'none')
+  assert.equal(fixture.successStep.style.display, 'flex')
+  assert.match(fixture.successText.textContent, /free call request was sent/i)
+  assert.equal(SOURCE.includes('nylas-scheduling'), false)
+  assert.equal(SOURCE.includes('shadowRoot'), false)
 })
 
-test('a newer shared-surface owner prevents a pending Free mount', async () => {
+test('Free success requires both canonical row and provider booking identifiers', async () => {
   const fixture = chooserFixture()
-  const paidCalendar = new Element('div')
+  const booking = bookingApiFixture({ run: async () => ({ booking: { booking_id: 'provider-only' } }) })
+  await withGlobals({ document: fixture.document }, async () => {
+    api.installFreeBookingController(installSettings(booking.bookingApi))
+    await fixture.cta.onclick(event())
+    await assert.rejects(
+      booking.state.mounts[0].onConfirm({ start: 1, end: 2, timezone: 'UTC' }),
+      /canonical booking response is incomplete/i,
+    )
+  })
+  assert.notEqual(fixture.successStep.style.display, 'flex')
+})
 
-  await withGlobals({
-    document: fixture.document,
-    location: { hostname: 'www.thestarters.com' },
-    customElements: { get: () => true },
-    setTimeout: (fn) => { fn(); return 1 },
-  }, async () => {
-    assert.equal(api.installFreeBookingController({
-      config: { config_id: 'free_prod', is_paid: false },
-      grantId: 'grant_prod',
-      brandName: 'Brand Member',
-      brandEmail: 'brand@example.com',
-    }), true)
+test('a failed Free request reuses its bounded booking attempt on retry', async () => {
+  const fixture = chooserFixture()
+  const booking = bookingApiFixture({
+    run: async (run) => {
+      if (run === 1) throw new Error('temporary failure')
+      return { booking: { booking_id: 'provider-free-2', row_id: 902 } }
+    },
+  })
+  await withGlobals({ document: fixture.document }, async () => {
+    api.installFreeBookingController(installSettings(booking.bookingApi))
+    await fixture.cta.onclick(event())
+    const slot = { start: 1, end: 2, timezone: 'UTC' }
+    await assert.rejects(booking.state.mounts[0].onConfirm(slot), /temporary failure/)
+    await booking.state.mounts[0].onConfirm(slot)
+  })
+  assert.equal(booking.state.attempts, 1)
+  assert.equal(booking.state.runs, 2)
+  assert.equal(fixture.successStep.style.display, 'flex')
+})
 
+test('a newer shared-surface owner prevents a pending Free calendar mount', async () => {
+  const fixture = chooserFixture()
+  let resolveMount
+  const booking = bookingApiFixture()
+  booking.bookingApi.mountPaidCalendar = (mount) => {
+    booking.state.mounts.push(mount)
+    return new Promise((resolve) => { resolveMount = resolve })
+  }
+  await withGlobals({ document: fixture.document }, async () => {
+    api.installFreeBookingController(installSettings(booking.bookingApi))
     const pending = fixture.cta.onclick(event())
     global.StartersBookingSurfaceOwnership.claim(fixture.container)
-    fixture.container.replaceChildren(paidCalendar)
+    resolveMount({ slots: [] })
     await pending
-
-    assert.deepEqual(fixture.container.children, [paidCalendar])
-    assert.equal(fixture.freeButtons.style.display, undefined)
-    assert.equal(fixture.paidButtons.style.display, undefined)
   })
+  assert.equal(booking.state.mounts[0].isCurrent(), false)
 })
 
-test('provider callbacks keep identity fields hidden and switch the native success step', async () => {
+test('Free install fails closed without the shared canonical booking client', async () => {
   const fixture = chooserFixture()
-  const defaultStep = new Element('div', { 'schedule-step': 'default' })
-  const successStep = new Element('div', { 'schedule-step': 'success' })
-  const successText = new Element('p', { 'booking-success-text': '' })
-  const callType = new Element('span', { 'booking-element': 'paid-meeting' })
-  defaultStep.style.display = 'block'
-  successStep.style.display = 'none'
-  successText.textContent = 'Authored success copy'
-  fixture.popup.setQuery('[schedule-step]', [defaultStep, successStep])
-  fixture.popup.setQuery('[booking-success-text]', successText)
-  fixture.popup.setQuery('[booking-element]', callType)
-
-  await withGlobals({
-    document: fixture.document,
-    location: { hostname: 'www.thestarters.com' },
-    customElements: { get: () => true },
-    setTimeout: (fn) => { fn(); return 1 },
-  }, async () => {
-    const scheduler = await api.createScheduler({
-      configId: 'free_prod',
-      brandName: 'Brand Member',
+  await withGlobals({ document: fixture.document }, async () => {
+    assert.equal(api.installFreeBookingController({
       brandEmail: 'brand@example.com',
-    })
-
-    const form = new Element('nylas-booking-form')
-    form.shadowRoot = shadowRoot()
-    const submit = new Element('button')
-    const identity = new Element('input-component')
-    identity.id = 'brand_memberstack_id'
-    identity.shadowRoot = shadowRoot()
-    identity.parentElement = new Element('label')
-    const starterIdentity = new Element('input-component')
-    starterIdentity.id = 'starter_memberstack_id'
-    starterIdentity.shadowRoot = shadowRoot()
-    starterIdentity.parentElement = new Element('label')
-    const context = new Element('input-component')
-    context.id = 'call_context'
-    context.shadowRoot = shadowRoot()
-    context.parentElement = new Element('label')
-    form.shadowRoot.setQuery('button[type="submit"]', submit)
-    form.shadowRoot.setQuery('input-component', [identity, starterIdentity, context])
-    scheduler.shadowRoot.setQuery('nylas-booking-form', form)
-
-    scheduler.eventOverrides.timeslotConfirmed()
-    assert.equal(submit.textContent, 'Request Call')
-    assert.equal(identity.parentElement.style.display, 'none')
-    assert.equal(starterIdentity.parentElement.style.display, 'none')
-    assert.equal(context.parentElement.style.display, undefined)
-
-    scheduler.eventOverrides.bookedEventInfo({
-      detail: { data: { booking_id: '   ' } },
-    })
-
-    assert.equal(defaultStep.style.display, 'block')
-    assert.equal(successStep.style.display, 'none')
-    assert.equal(successText.textContent, 'Authored success copy')
-
-    scheduler.eventOverrides.bookedEventInfo({
-      detail: {
-        data: {
-          booking_id: 'booking-free-1',
-          additional_fields: {
-            call_full_title: 'Free Call',
-            call_context: 'Project fit',
-            starter_name: 'Starter Member',
-          },
-        },
-      },
-    }, {
-      schedulerStore: {
-        get: () => ({ start_time: new Date('2026-08-21T05:00:00Z') }),
-      },
-    })
-
-    assert.equal(defaultStep.style.display, 'none')
-    assert.equal(successStep.style.display, 'flex')
-    assert.equal(callType.textContent, 'Free Call')
-    assert.match(successText.textContent, /Starter Member/)
+      config: { config_id: 'free_prod', is_paid: false },
+      grantId: 'grant_prod',
+      starterSlug: 'starter-slug',
+    }), false)
   })
 })

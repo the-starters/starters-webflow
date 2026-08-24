@@ -78,7 +78,7 @@ remain deferred (`paid-call-brand-payment.js`,
 | Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state · anonymous: closed · brand: accepted canonical configuration plus successful controller install | this file / authenticated Xano, Nylas, and Stripe |
 | Freelance / Retainer rate cards | everyone | this file / Algolia record, cloned from the section's Default card |
-| Free booking popup | signed-in Brand members | this file + `free-call-booking.js` / authenticated Xano + Nylas |
+| Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
 | Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more |
 
@@ -291,7 +291,13 @@ Free or Paid configuration only to its matching controller.
 the existing Free modal flow. It replaces handlers instead of adding duplicate
 listeners. Its install does not require a legacy main Book Call button. Each
 Book Call click makes one availability request, and each Free option click
-mounts one scheduler in the existing `[nylas-container]`.
+mounts one authored calendar in the existing `[nylas-container]` and submits
+one idempotent canonical booking command for the selected slot.
+The Free controller uses the calendar and idempotent booking-command primitives
+exported by `paid-call-brand-payment.js`. It does not mount the public Nylas
+scheduler or create a provider booking directly. Success requires the server
+response to contain both the provider booking ID and the canonical Xano row ID.
+
 `paid-call-brand-payment.js` receives the exact accepted Paid configuration and
 owns that authored CTA, Stripe Card Element, and paid booking command. Only
 successfully installed configurations are reconciled into the chooser and the

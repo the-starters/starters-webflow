@@ -443,7 +443,9 @@
                   Number.isInteger(duration) &&
                   duration > 0;
           }
-          return record.is_paid === false;
+          return record.is_paid === false &&
+              (record.price_cents == null || Number(record.price_cents) === 0) &&
+              (record.duration == null || Number(record.duration) === 30);
       });
       const configIds = new Set();
       const hasDuplicateConfigId = active.some(function (record) {
@@ -879,9 +881,13 @@
                       freeCallBooking.installFreeBookingController({
                           config: freeConfigs[0],
                           grantId: grant_id,
+                          starterSlug: decodeURIComponent(
+                              window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
+                          ),
                           starterMemberstackId: freelancerId,
                           brandName: brand_name,
                           brandEmail: brand_email,
+                          starterEmail: starter.nylas_grant_email,
                       });
                   freeInstalled = installed === true;
                   bookingSurfaceAvailable = freeInstalled;

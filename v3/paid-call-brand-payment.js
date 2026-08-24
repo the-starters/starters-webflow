@@ -467,7 +467,7 @@
     })
     confirm.type = 'button'
     confirm.disabled = true
-    confirm.textContent = 'Request paid call'
+    confirm.textContent = String(settings.confirmText || 'Request paid call')
     confirm.setAttribute('data-paid-calendar-element', 'confirm')
 
     function renderTimes() {

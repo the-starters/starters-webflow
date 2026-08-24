@@ -411,7 +411,7 @@ test('paid availability fails closed before a request when service identity is i
   )
 })
 
-test('paid calendar renders dates and times and submits only the selected slot', async () => {
+test('shared call calendar renders dates and times and submits only the selected slot', async () => {
   const previous = {
     document: global.document,
     jQuery: global.jQuery,
@@ -441,6 +441,7 @@ test('paid calendar renders dates and times and submits only the selected slot',
         grant_id: 'grant_test',
         duration: 15,
       },
+      confirmText: 'Request free call',
       onSelectionChange(slot) { selections.push(slot) },
       async onConfirm(slot) { submissions.push(slot) },
     })
@@ -450,6 +451,7 @@ test('paid calendar renders dates and times and submits only the selected slot',
     const confirm = container.querySelectorAll('[data-paid-calendar-element]')
       .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
     assert.equal(timeButtons.length, 2)
+    assert.equal(confirm.textContent, 'Request free call')
     assert.equal(confirm.disabled, true)
     assert.deepEqual(selections, [null])
     timeButtons[1].listeners.click()

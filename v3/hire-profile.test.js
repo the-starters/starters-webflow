@@ -1898,6 +1898,11 @@ test('a migrated profile without the legacy Book Call button opens the native ch
       open: (id) => opened.push(id),
     },
   }
+  context.StartersPaidCallBrandPayment = {
+    bookingRequestFingerprint: () => 'fingerprint',
+    createBookingAttempt: () => ({ run: async () => ({}) }),
+    mountPaidCalendar: async () => ({ slots: [] }),
+  }
   vm.createContext(context)
   vm.runInContext(freeBookingSource, context)
   vm.runInContext(source, context)
