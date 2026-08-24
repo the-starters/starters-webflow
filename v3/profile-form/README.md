@@ -78,6 +78,22 @@ hydration from the signed-in member and its write-back into the synchronized dra
 hydration, the
 normalized final Build Profile payload, and that the controllers do not create a form element.
 
+## Company selection logo persistence
+
+The Build Profile and Starter Edit Profile company autocomplete controllers
+serialize each selected company as `name`, `domain`, and `logo_url` in the
+authored `also-worked-with` hidden input. A platform company result keeps its
+`logo_url` through selection, draft hydration, tag rendering, and later
+serialization. Starter Edit Profile canonical hydration accepts the API's
+`company_logo_url` field and the compatible `logo_url` field. A manually typed
+company has an empty `logo_url`.
+
+Run the shared contract coverage with:
+
+```sh
+node --test v3/profile-form/company-autocomplete-logo-hydration.test.js
+```
+
 ## Company experience date hydration
 
 Both route copies of the company-experience controller
