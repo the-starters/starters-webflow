@@ -127,6 +127,22 @@
     }
   }
 
+  async function wireDashboardCallModules(moduleOptions) {
+    try {
+      const dashboardModules = await loadDashboardCallModules()
+      if (dashboardModules.actions) dashboardModules.actions.wire(moduleOptions)
+      if (dashboardModules.media) dashboardModules.media.wire(moduleOptions)
+      if (dashboardModules.payment) dashboardModules.payment.wire(moduleOptions)
+      return dashboardModules
+    } catch (error) {
+      console.error(
+        '[dashboard-calls] optional modules unavailable:',
+        error && error.message,
+      )
+      return null
+    }
+  }
+
   async function stableScopeHash(value) {
     const input = clean(value)
     if (!input) return ''
@@ -1508,7 +1524,6 @@
     if (global.__startersDashboardCallsBooted) return
     global.__startersDashboardCallsBooted = true
     wireProjectFilters()
-    const dashboardModules = await loadDashboardCallModules()
 
     const refs = Array.prototype.slice
       .call(document.querySelectorAll('[bookings-section]'))
@@ -1571,9 +1586,7 @@
         return bookingForActionTarget(refs, target)
       },
     }
-    if (dashboardModules.actions) dashboardModules.actions.wire(moduleOptions)
-    if (dashboardModules.media) dashboardModules.media.wire(moduleOptions)
-    if (dashboardModules.payment) dashboardModules.payment.wire(moduleOptions)
+    wireDashboardCallModules(moduleOptions)
     wireBookingActions(refs, role, restart)
     startRequestExpirationTicker(refs, role, refreshExpiredRequests)
     if (typeof memberstack.onAuthChange === 'function') {
@@ -1630,7 +1643,9 @@
     loadDashboardCallModules,
     loadDashboardModule,
     validDashboardModule,
+    wireDashboardCallModules,
     wireBookingActions,
+    boot,
   }
   if (!isCommonJs) configureProjectWrappers()
   if (isCommonJs) module.exports = api

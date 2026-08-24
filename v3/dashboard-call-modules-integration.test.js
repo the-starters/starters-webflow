@@ -108,6 +108,72 @@ test('dashboard reuses already-loaded narrow modules', async () => {
   assert.equal(loaded.payment, global.StartersDashboardCallPayment)
 })
 
+test('optional module loading does not block dashboard boot', async () => {
+  const originalDocument = global.document
+  const originalLocation = global.location
+  const originalSetTimeout = global.setTimeout
+  const originalBooted = global.__startersDashboardCallsBooted
+  const originalWfXano = global.WfXano
+  const originalActions = global.StartersDashboardCallActions
+  const originalMedia = global.StartersDashboardCallMedia
+  const originalPayment = global.StartersDashboardCallPayment
+  const appended = []
+  let fallbackCount = 0
+
+  global.document = {
+    createElement() {
+      return {
+        addEventListener() {},
+        setAttribute() {},
+      }
+    },
+    head: {
+      appendChild(script) {
+        appended.push(script)
+      },
+    },
+    querySelector() {
+      return null
+    },
+    querySelectorAll() {
+      return []
+    },
+  }
+  global.location = { pathname: '/starter-dashboard' }
+  global.setTimeout = function () {
+    fallbackCount += 1
+    return fallbackCount
+  }
+  global.__startersDashboardCallsBooted = false
+  global.WfXano = []
+  delete global.StartersDashboardCallActions
+  delete global.StartersDashboardCallMedia
+  delete global.StartersDashboardCallPayment
+
+  try {
+    const outcome = await Promise.race([
+      dashboard.boot().then(function () {
+        return 'booted'
+      }),
+      new Promise(function (resolve) {
+        originalSetTimeout(function () {
+          resolve('blocked')
+        }, 25)
+      }),
+    ])
+    assert.equal(outcome, 'booted')
+  } finally {
+    global.document = originalDocument
+    global.location = originalLocation
+    global.setTimeout = originalSetTimeout
+    global.__startersDashboardCallsBooted = originalBooted
+    global.WfXano = originalWfXano
+    global.StartersDashboardCallActions = originalActions
+    global.StartersDashboardCallMedia = originalMedia
+    global.StartersDashboardCallPayment = originalPayment
+  }
+})
+
 test('unsupported lifecycle and payment controls stay inactive', () => {
   const cancel = button('switch-cancel')
   const reschedule = button('reschedule')
