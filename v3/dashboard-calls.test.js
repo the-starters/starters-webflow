@@ -84,8 +84,9 @@ function memoryStorage() {
   }
 }
 
-async function until(predicate) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+async function until(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
     if (predicate()) return
     await new Promise(setImmediate)
   }
