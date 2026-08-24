@@ -117,6 +117,10 @@ function chooserFixture({ includeMain = true, guests = [] } = {}) {
   const defaultStep = new Element('div', { 'schedule-step': 'default' })
   const successStep = new Element('div', { 'schedule-step': 'success' })
   const successText = new Element('p', { 'booking-success-text': '' })
+  const successCallType = new Element('p', { 'booking-element': 'paid-meeting' })
+  const legacyCardNotice = new Element('p')
+  successCallType.textContent = 'Paid Call'
+  legacyCardNotice.textContent = 'Your card ending in 1234 will be charged for this call.'
   const guestError = new Element('p', { 'data-call-guest-error': '' })
   const topic = new Element('input', { name: 'topic' })
   const context = new Element('textarea', { name: 'context' })
@@ -125,6 +129,8 @@ function chooserFixture({ includeMain = true, guests = [] } = {}) {
   popup.setQuery('[success-call-buttons]', [freeButtons, paidButtons])
   popup.setQuery('[schedule-step]', [defaultStep, successStep])
   popup.setQuery('[booking-success-text]', successText)
+  popup.setQuery('[schedule-step="success"] [booking-element="paid-meeting"]', successCallType)
+  popup.setQuery('[schedule-step="success"] *', [successCallType, legacyCardNotice])
   popup.setQuery('[data-call-guest-error]', guestError)
   popup.setQuery('[data-call-guest-email]', guests)
   popup.setQuery('[name="topic"], [booking-topic]', topic)
@@ -204,7 +210,9 @@ function chooserFixture({ includeMain = true, guests = [] } = {}) {
     paidButtons,
     popup,
     successStep,
+    successCallType,
     successText,
+    legacyCardNotice,
     topic,
   }
 }
@@ -355,6 +363,9 @@ test('Free click mounts the authored calendar and canonical command', async () =
   assert.equal(fixture.defaultStep.style.display, 'none')
   assert.equal(fixture.successStep.style.display, 'flex')
   assert.match(fixture.successText.textContent, /free call request was sent/i)
+  assert.equal(fixture.successCallType.textContent, 'Free Call')
+  assert.equal(fixture.legacyCardNotice.style.display, 'none')
+  assert.equal(fixture.legacyCardNotice.getAttribute('aria-hidden'), 'true')
 })
 
 test('Free success requires both canonical row and provider booking identifiers', async () => {
