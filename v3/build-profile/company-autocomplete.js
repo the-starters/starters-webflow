@@ -57,7 +57,7 @@
           for (const uniqueId of Object.keys(selectedCompanies)) {
             const company = selectedCompanies[uniqueId];
             if (company.name) {
-              renderNewTag(company.name, company.domain || '', null, uniqueId);
+              renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '');
             }
           }
         }

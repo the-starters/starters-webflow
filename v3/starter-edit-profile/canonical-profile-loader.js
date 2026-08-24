@@ -218,12 +218,14 @@
 
                             const name = String(company.company_name ?? '').trim();
                             const domain = String(company.company_domain ?? '').trim();
+                            const logoUrl = String(company.company_logo_url || company.logo_url || '').trim();
 
                             if (!name && !domain) return acc;
 
                             acc[crypto.randomUUID()] = {
                                 name,
                                 domain,
+                                logo_url: logoUrl,
                             };
 
                             return acc;
