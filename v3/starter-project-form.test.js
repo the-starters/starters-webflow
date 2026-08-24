@@ -782,6 +782,7 @@ test('normalizes, deduplicates, and sorts eligible Brands by stable Xano ID', ()
   ] })
   assert.deepEqual(JSON.parse(JSON.stringify(options)), [
     { id: 4, label: 'Alpha — Amy', company_name: 'Alpha', manager_name: 'Amy' },
+    { id: 6, label: 'Missing manager', company_name: 'Missing manager', manager_name: '' },
     { id: 9, label: 'Zulu — Zoe', company_name: 'Zulu', manager_name: 'Zoe' },
   ])
   assert.equal(Object.prototype.hasOwnProperty.call(options[0], 'email'), false)
