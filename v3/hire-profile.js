@@ -55,7 +55,10 @@
 
       const style = document.createElement('style');
       style.setAttribute('id', guardId);
-      style.textContent = '[data-booking-unavailable]{display:none!important}';
+      style.textContent = [
+          '[data-booking-unavailable]{display:none!important}',
+          '[data-booking-trigger-unavailable]{display:none!important}',
+      ].join('');
       (document.head || document.documentElement).appendChild(style);
   }
 
@@ -105,6 +108,21 @@
           wrapper.style.display = available ? 'flex' : 'none';
           wrapper.setAttribute('aria-hidden', available ? 'false' : 'true');
       });
+
+      // The hire template has more than one authored Book Call entry point.
+      // Some are not descendants of booking-button-wrapper, so hiding only the
+      // wrapper can leave a live trigger that opens an empty chooser while
+      // canonical discovery is still closed. Gate every chooser trigger with
+      // the same discovery result.
+      document.querySelectorAll('[data-modal-trigger="popup-booking-main"]').forEach(function (trigger) {
+          if (available) {
+              trigger.removeAttribute('data-booking-trigger-unavailable');
+              trigger.removeAttribute('aria-disabled');
+          } else {
+              trigger.setAttribute('data-booking-trigger-unavailable', '');
+              trigger.setAttribute('aria-disabled', 'true');
+          }
+      });
   }
 
   function wireCallServiceCardsToChooser() {
@@ -148,8 +166,8 @@
 
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
-  // Webflow always authors the structural Book Call trigger. Canonical
-  // environment-scoped discovery is the only code path that may reveal it.
+  // Webflow authors the structural Book Call triggers. Canonical
+  // environment-scoped discovery is the only code path that may reveal them.
   setBookingButtonAvailable(false);
   wireCallServiceCardsToChooser();
 
