@@ -247,7 +247,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `navbar-embeds/transparent-nav-bg.js` — fades in the `.nav_bg` layer on scroll for transparent navbar variants
 - `navbar-embeds/nav-menu.js` — mobile menu button (`#menu-btn`) toggles body scroll lock
 - `navbar-embeds/memberstack/free-paid-anon.js` — Memberstack navbar gating for free/paid/anonymous states (`data-gate`, `data-hide-if-both`), reveals via `.ms-nav-ready`
-- `navbar-embeds/memberstack/ms-code-field-link.js` — turns `[ms-code-field-link]` elements into external links from a Memberstack member custom field
+- `navbar-embeds/memberstack/ms-code-field-link.js` — binds placeholder `[ms-code-field-link]` elements to member-specific destinations. Other fields keep their external-link behavior; `freelancer-profile-url` instead resolves the current member through Xano to the internal `/hire/<slug>` route, never reads the legacy V2 field value, and stays hidden when no published V3 slug exists
 - `navbar-embeds/navbar-explore/explore-menu.css` — explore mega-menu base styles (hidden by default, chevron rotation, Designer preview)
 - `navbar-embeds/navbar-explore/explore-menu-mobile.css` — explore menu mobile full-screen stacked columns; fixed `--explore-mtop` navbar offset
 - `navbar-embeds/navbar-explore/navbar-explore.js` — desktop explore mega-menu flyout column positioning (bails <=991px)
