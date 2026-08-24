@@ -198,8 +198,8 @@
 
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
-  // Webflow authors the structural Book Call triggers. Canonical
-  // environment-scoped discovery is the only code path that may reveal them.
+  // Webflow authors the structural Book Call triggers and dialog. Canonical
+  // environment-scoped discovery is the only code path that may enable them.
   setBookingButtonAvailable(false);
   wireCallServiceCardsToChooser();
 
