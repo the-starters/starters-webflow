@@ -108,10 +108,7 @@
   }
 
   function wireCallServiceCardsToChooser() {
-      const chooser = document.querySelector('[data-modal-trigger="popup-booking-main"]');
-      if (!chooser || typeof chooser.click !== 'function') return false;
-
-      qsa('#services [data-service-card="component"][data-type]').forEach(function (card) {
+      document.querySelectorAll('#services [data-service-card="component"][data-type]').forEach(function (card) {
           const type = card.getAttribute('data-type');
           if (type !== 'free' && type !== 'paid') return;
           if (card.getAttribute('data-call-service-chooser') === 'ready') return;
@@ -125,10 +122,16 @@
           card.addEventListener('click', function (event) {
               event.preventDefault();
               event.stopImmediatePropagation();
-              chooser.click();
+              const chooser = document.querySelector('[data-modal-trigger="popup-booking-main"]');
+              const wrapper = chooser && chooser.closest('[booking-button-wrapper]');
+              if (
+                  chooser &&
+                  typeof chooser.click === 'function' &&
+                  wrapper &&
+                  wrapper.getAttribute('aria-hidden') === 'false'
+              ) chooser.click();
           }, true);
       });
-      return true;
   }
 
   function isBlockedProductionBookingSurface() {
@@ -145,6 +148,7 @@
   // Webflow always authors the structural Book Call trigger. Canonical
   // environment-scoped discovery is the only code path that may reveal it.
   setBookingButtonAvailable(false);
+  wireCallServiceCardsToChooser();
 
   // Page-embed contract. This file is deferred, so all of these are already
   // defined in the normal case; stand down loudly rather than throwing if not.
@@ -825,7 +829,6 @@
 
               if (!bookingSurfaceAvailable) return;
               setBookingButtonAvailable(true);
-              wireCallServiceCardsToChooser();
 
           } else {
               console.warn("No Configurations found for the current starter.");
