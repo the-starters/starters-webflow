@@ -1,7 +1,7 @@
 # `v3/hire-profile.js` — wiring and ownership
 
 Last updated: 2026-08-24
-Status: Free Call behavior is GitHub-owned; direct Webflow head cleanup remains pending
+Status: Call projections and Free Call behavior are GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
 
@@ -76,7 +76,7 @@ remain deferred (`paid-call-brand-payment.js`,
 | --- | --- | --- |
 | Notable Experience | everyone, incl. logged out | native Webflow CMS / Work Histories |
 | Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
-| Services call cards (Free / Paid Consulting) | owner: live connection state · anonymous + brand: public search record | this file / Nylas, Stripe, or Algolia |
+| Call projections (hero, sticky header, Services, and chooser) | owner: live connection state · anonymous: closed · brand: accepted canonical configuration plus successful controller install | this file / authenticated Xano, Nylas, and Stripe |
 | Freelance / Retainer rate cards | everyone | this file / Algolia record, cloned from the section's Default card |
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` / authenticated Xano + Nylas |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
@@ -113,10 +113,11 @@ missing and stands down if the namespace still cannot load.
   selector so a placeholder link cannot abort the remaining page utilities
 - `window.WfAlgolia` — the search client, awaited with a 30s deadline
 - `window.__startersEmptyNavRefresh` — optional, debounced refresh hook from
-  `utils/section-custom-toc/hide-empty-sections.js`. After an asynchronous
-  call-card reveal or rate-card render, this file asks the empty-section owner
-  to re-evaluate the Services section and its TOC link. The call is guarded:
-  a missing or failing cosmetic hook must not stop card rendering.
+  `utils/section-custom-toc/hide-empty-sections.js`. After canonical discovery
+  changes a call projection or the rate-card path renders, this file asks the
+  empty-section owner to re-evaluate the Services section and its TOC link. The
+  call is guarded: a missing or failing cosmetic hook must not stop card
+  rendering.
 
 ### Dependency contract
 
@@ -156,10 +157,11 @@ recovery described under **Install** loads before booking discovery. This
 is the only intentional timing change in the port.
 
 The empty-section observer watches child-list mutations, not attribute changes.
-Changing a call card's inline `display` therefore does not trigger that observer.
-Every asynchronous path that reveals call cards, plus the rate-card render path,
-calls `window.__startersEmptyNavRefresh()` so `#services` and its TOC link match
-the final visible-card state even when no rate card adds a DOM child.
+Changing a call projection's inline `display` therefore does not trigger that
+observer. Canonical Brand discovery refreshes the empty-section owner when it
+changes a call projection, and the rate-card render path refreshes it after
+adding cards. This keeps `#services` and its TOC link aligned with the final
+visible-card state even when no rate card adds a DOM child.
 
 ## ⛔ The Algolia index must never be hardcoded
 
@@ -175,23 +177,28 @@ Services section on 2026-08-16, for every viewer, after the index migration.
 
 ## Verification
 
-Canaries: `/hire/ashna-rana` (free + paid calls, 5000 / 4500) and
-`/hire/jake-mcintyre` (free call only, 135 / 5500).
+Use profiles whose current production Xano readback proves one valid Free-only
+configuration and one valid Free-plus-Paid configuration. Do not select a
+canary from legacy Webflow or Algolia call flags.
 
-1. Anonymous: 4 cards on ashna, 3 on jake. The Services section and its TOC
-   link remain visible after the asynchronous cards render. Native CMS
-   Experiences and Clients remain present, and no profile-data Xano request
-   runs.
-2. Anonymous click on **any** service card opens the signup modal in place.
+1. Anonymous: every hero, sticky-header, Services, and chooser call projection
+   stays hidden, even when the public search record carries legacy Free or Paid
+   call flags. Native CMS Experiences and Clients remain present, and no
+   profile-data Xano request runs.
+2. Anonymous click on any visible non-call service card opens the signup modal
+   in place.
    That is driven by `v3/signup-attribution.js` off `data-signup-trigger-*`, so
    the cloned rate cards must keep those attributes (values `Freelance` /
    `Retainer`) and must **not** carry `data-modal-trigger`, `booking-popup-open`,
    or `data-type` — otherwise a logged-in click opens an unconfigured booking
    popup for a card that cannot be booked.
-3. Eligible signed-in Brand: both Free and Paid call cards open the authored
-   Free/Paid chooser, including on a migrated profile whose legacy Book Call
-   button is absent. Each non-call card opens Start a Project with its exact
-   native Services preset.
+3. Eligible signed-in Brand: canonical discovery keeps every call projection
+   closed until its exact controller installs. A successful Free install reveals
+   every Free projection; a successful Paid install reveals every Paid
+   projection. Each revealed call card opens the authored chooser, including on
+   a migrated profile whose legacy Book Call button is absent. A failed Paid
+   install leaves Paid hidden without closing an installed Free option. Each
+   non-call card opens Start a Project with its exact native Services preset.
 4. `document.documentElement` carries `data-v3-algolia-status="ready"`.
 5. The Algolia object ID matches the positive integer in
    `[data-starter-xano-id]`.
@@ -217,7 +224,17 @@ The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
 
-Both native Free and Paid service cards are shortcuts to that same authored
+Every authored Free and Paid projection starts hidden. Anonymous viewers cannot
+reveal one from the public search record. For a signed-in Brand,
+`hire-profile.js` reveals all matching `[has-connection="free"]` or
+`[has-connection="paid"]` surfaces only after the exact canonical option passes
+the client filter and its controller installs successfully. Hidden runtime call
+templates remain hidden. A missing configuration or failed controller install
+removes legacy visibility from the matching hero, sticky-header, Services, and
+chooser projection so stale Webflow or Algolia intent cannot advertise an
+unbookable call.
+
+The native Free and Paid service cards are shortcuts to that same authored
 chooser. `hire-profile.js` removes their retired direct-scheduler attributes and
 opens `popup-booking-main` only after canonical discovery enables the booking
 surface. It clicks an enabled authored chooser trigger when one exists. On a
@@ -268,20 +285,22 @@ Designer-authored `[call-type-item]` and removes `data-config` from its booking
 CTA. It also marks unavailable options with `data-booking-unavailable` and
 `aria-hidden="true"`; an injected `!important` guard keeps those options hidden
 even if a delayed shared-initializer callback changes their inline display.
-After discovery accepts the canonical set, the controller assigns each accepted
-Free or Paid `config_id` and removes both unavailable markers for that option.
+After discovery accepts the canonical set, the controller offers each accepted
+Free or Paid configuration only to its matching controller.
 `free-call-booking.js` receives only the accepted Free configuration and keeps
 the existing Free modal flow. It replaces handlers instead of adding duplicate
-listeners. Each Book Call click makes one availability request, and each Free
-option click mounts one scheduler in the existing `[nylas-container]`.
-`paid-call-brand-payment.js` receives the exact
-accepted Paid configuration and owns that authored CTA, Stripe Card Element,
-and paid booking command. A call type without one exact accepted configuration
-keeps no `data-config` and retains the structural hide. This keeps an authored
-Paid option closed during startup, when its controller is missing, and whenever
-Paid has no accepted configuration; it does not hide the separate Services call
-cards. A Paid-only set also keeps the Book Call trigger closed when the Paid
-controller cannot install.
+listeners. Its install does not require a legacy main Book Call button. Each
+Book Call click makes one availability request, and each Free option click
+mounts one scheduler in the existing `[nylas-container]`.
+`paid-call-brand-payment.js` receives the exact accepted Paid configuration and
+owns that authored CTA, Stripe Card Element, and paid booking command. Only
+successfully installed configurations are reconciled into the chooser and the
+matching page projections. A call type without one exact accepted and installed
+configuration keeps no `data-config` and retains the structural hide. This
+keeps Paid closed during startup, when its controller is missing, and whenever
+Paid has no accepted configuration. A failed Paid install does not remove an
+installed Free chooser row or add a duplicate call row. A Paid-only set also
+keeps the Book Call trigger closed when the Paid controller cannot install.
 
 On the Free Call details screen, the controller hides the booking-form rows for
 `brand_memberstack_id` and `starter_memberstack_id` after Nylas confirms the
