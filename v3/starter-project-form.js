@@ -81,7 +81,7 @@
 
   function memberstackId(value) {
     var id = clean(value)
-    return /^mem_[A-Za-z0-9_-]+$/.test(id) ? id : ''
+    return /^mem_(?:sb_)?[A-Za-z0-9]+$/.test(id) ? id : ''
   }
 
   function messageUrl(option) {

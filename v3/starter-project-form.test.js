@@ -871,19 +871,29 @@ test('selected Brand personalizes Party copy and clearing restores neutral copy'
   assert.equal(context.copyTargets.at(-1).getAttribute('href'), '#')
 })
 
-test('message destination rejects a missing or malformed Memberstack ID', () => {
+test('message destination accepts destination-compatible Memberstack IDs only', () => {
   const { api, context, form } = load({ noDocument: true })
 
   api.prepareStarterContext(form)
+  for (const memberstack_member_id of ['mem_bad-id', 'mem_sb_extra_underscore', 'mem_', '']) {
+    api.selectBrand(form, {
+      id: 12,
+      company_name: 'Acme',
+      manager_name: 'Dana Reyes',
+      memberstack_member_id,
+    })
+
+    assert.equal(context.copyTargets.at(-1).textContent, 'Message Dana')
+    assert.equal(context.copyTargets.at(-1).getAttribute('href'), '#')
+  }
+
   api.selectBrand(form, {
     id: 12,
     company_name: 'Acme',
     manager_name: 'Dana Reyes',
-    memberstack_member_id: 'https://unsafe.example/messages',
+    memberstack_member_id: 'mem_sb_Dana123',
   })
-
-  assert.equal(context.copyTargets.at(-1).textContent, 'Message Dana')
-  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '#')
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_sb_Dana123')
 })
 
 test('an eligible Brand without a manager name uses its company for Party copy', async () => {
