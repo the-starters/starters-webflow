@@ -417,38 +417,38 @@ test('normalizes legacy service shapes and replaces only generic authored servic
   assert.equal(loaded.form.fields.serviceSelect.value, '')
 })
 
-test('authored generic service slots survive an empty list and a failed profile request', async () => {
+test('authored generic service slots stay removed for an empty list and a failed profile request', async () => {
   let rejectProfile
   const loaded = load({
     noDocument: true,
     starterProfile: () => new Promise((resolve, reject) => { rejectProfile = reject }),
   })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const validAuthored = ['Select one...', 'Freelance work', 'Monthly retainer']
   const labels = () => loaded.form.fields.serviceSelect.options.map((option) => option.textContent)
 
   assert.equal(loaded.api.renderServices(loaded.form, []), true)
-  assert.deepEqual(labels(), authored)
+  assert.deepEqual(labels(), validAuthored)
 
   const request = loaded.api.loadProfile(loaded.form, loaded.window, true)
-  assert.deepEqual(labels(), authored)
+  assert.deepEqual(labels(), validAuthored)
 
   await Promise.resolve()
   rejectProfile(new Error('services unavailable'))
   assert.equal(await request, null)
-  assert.deepEqual(labels(), authored)
+  assert.deepEqual(labels(), validAuthored)
 })
 
-test('a profile response without services keeps the authored service options', async () => {
+test('a profile response without services keeps only valid authored service options', async () => {
   const loaded = load({ noDocument: true, profile: { full_name: 'Starter Person' } })
 
   assert.equal((await loaded.api.loadProfile(loaded.form, loaded.window)).full_name, 'Starter Person')
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
-    ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+    ['Select one...', 'Freelance work', 'Monthly retainer'],
   )
 })
 
-test('a member scope change drops the previous Starter services and restores authored slots', async () => {
+test('a member scope change drops the previous Starter services without restoring generic slots', async () => {
   const loaded = load({ profile: { services: ['CRM Strategy'] } })
 
   await loaded.api.loadProfile(loaded.form, loaded.window, true)
@@ -461,7 +461,7 @@ test('a member scope change drops the previous Starter services and restores aut
 
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
-    ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+    ['Select one...', 'Freelance work', 'Monthly retainer'],
   )
 })
 
@@ -543,9 +543,9 @@ test('loads Starter services through the shared Xano auth bridge when the cached
   )
 })
 
-test('a blank shared token issues no fallback request and keeps the authored service slots', async () => {
+test('a blank shared token issues no fallback request and keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.getXanoAuthToken = async () => '   '
@@ -560,14 +560,14 @@ test('a blank shared token issues no fallback request and keeps the authored ser
   assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.value),
-    ['', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+    ['', 'Freelance work', 'Monthly retainer'],
   )
   assert.deepEqual(loaded.calls.submit, [])
 })
 
-test('a missing shared auth bridge issues no fallback request and keeps the authored service slots', async () => {
+test('a missing shared auth bridge issues no fallback request and keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.fetch = async (url, options) => {
@@ -582,9 +582,9 @@ test('a missing shared auth bridge issues no fallback request and keeps the auth
   assert.deepEqual(loaded.calls.submit, [])
 })
 
-test('a non-ok fallback response with a non-JSON body keeps the authored service slots', async () => {
+test('a non-ok fallback response with a non-JSON body keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.getXanoAuthToken = async () => 'xano-token'
@@ -603,14 +603,14 @@ test('a non-ok fallback response with a non-JSON body keeps the authored service
   assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.value),
-    ['', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3'],
+    ['', 'Freelance work', 'Monthly retainer'],
   )
   assert.deepEqual(loaded.calls.submit, [])
 })
 
-test('a 401 fallback response with a JSON error body keeps the authored service slots', async () => {
+test('a 401 fallback response with a JSON error body keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer', 'Service 1', 'Service 2', 'Service 3']
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.getXanoAuthToken = async () => 'xano-token'

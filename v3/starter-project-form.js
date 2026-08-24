@@ -225,18 +225,15 @@
     return select.__starterProjectServiceOptions
   }
 
-  // The authored generic Service 1/2/3 slots are only given up once a non-empty
-  // canonical list is available. An empty list restores the authored markup so a
-  // failed request, a member scope change, or a Xano response without services
-  // never leaves the Starter with fewer options than Webflow authored.
+  // Service 1/2/3 are Webflow authoring placeholders, never valid project
+  // services. Remove them even when the canonical profile has no services or
+  // the profile request fails. Valid authored options remain available.
   function renderServices(form, services) {
     var select = field(form, SERVICE_SELECT_SELECTOR)
     if (!select || !select.options || !select.ownerDocument || !select.ownerDocument.createElement) return false
     var authored = authoredServiceOptions(select)
     var names = normalizeServices(services)
-    var target = names.length
-      ? authored.filter(function (entry) { return !genericServiceSlot(entry) })
-      : authored.slice()
+    var target = authored.filter(function (entry) { return !genericServiceSlot(entry) })
     var seen = {}
     target.forEach(function (entry) { seen[entry.value.toLowerCase()] = true })
     names.forEach(function (name) {
