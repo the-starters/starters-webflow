@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 Status: Call projections and Free Call behavior are GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
@@ -208,8 +208,8 @@ canary from legacy Webflow or Algolia call flags.
 The beside-services calendar markup remains authored for possible future use,
 but runtime keeps `[data-availability-element="wrapper"]` hidden. The live flow
 uses the existing modal sequence: Book Call opens `popup-booking-main`, and an
-eligible Free or Paid option opens `popup-booking`. Free uses the Nylas public
-component through `StartersFreeCallBooking`. Paid uses the authenticated calendar and booking flow owned by
+eligible Free or Paid option opens `popup-booking`. Free and Paid use the
+authenticated authored calendar. Paid uses the booking flow owned by
 [`README.md`](README.md#brand-paid-call-payment-method-client) inside the same
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
 production route map. Every authored
@@ -242,7 +242,7 @@ migrated profile without the legacy Book Call button, it opens the existing
 native Webflow dialog through `window.lumos.modal`, with the dialog's native
 `showModal()` method as a fallback. The card click does not perform booking,
 payment, or Stripe-readiness work. The selected chooser option remains the only
-path into the Free or Paid scheduler.
+path into the Free or Paid calendar.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
@@ -270,7 +270,10 @@ filter. `hire-profile.js` applies a second, fail-closed check before it gives
 that set to the two GitHub modal controllers. Each record must have a `config_id`, `active ===
 true`, and the host's exact `data_environment` (`test` on the Webflow test host,
 `production` on the production hosts). Free records must have `is_paid ===
-false`. Paid records must have `is_paid === true` and the matching
+false`; when present, `price_cents` must resolve to zero and `duration` must
+resolve to 30 minutes. The controller normalizes every accepted Free calendar
+to zero cents and 30 minutes before slot selection. Paid records must have
+`is_paid === true` and the matching
 `payment_environment` (`test` or `live`), USD currency, and an integer
 `price_cents` of at least 100, plus a `duration` of exactly 60 minutes. Unknown
 hosts return no bookable set. The client excludes records from another data or
@@ -312,7 +315,10 @@ On the Free Call details screen, the authored calendar reveals the native guest
 form after a timeslot is selected. Add and remove controls manage up to five
 guest email fields. The authenticated canonical Xano command derives member
 identity and sends the selected slot, call details, and normalized guest emails.
-The browser does not create a provider booking directly.
+The browser does not create a provider booking directly. Free uses the same
+optional five-row guest-hook structure and validation contract linked below.
+No guest hooks keep Free bookable without `guest_emails`; a partial guest tree
+fails closed.
 
 The Paid guest-field markup, validation, payload, and retry contract is owned by
 the [Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
@@ -325,11 +331,12 @@ Paid/Free/close/success visibility and reset lifecycle.
 ## Inline Global Code cutover boundary
 
 The released Webflow component still contains legacy JavaScript across its
-Global Code embeds. The scoped cutover removes only the Free behavior now owned
-by `free-call-booking.js`: Starter booking-profile reads, bookable configuration
-reads, nearest-slot reads, Free chooser handlers, and Free Nylas scheduler
-mounting. Keep the native chooser, modal shell, Nylas container, and success
-step in Designer.
+Global Code embeds. The scoped cutover removes the retired Free behavior:
+Starter booking-profile reads, bookable configuration reads, nearest-slot
+reads, Free chooser handlers, public Nylas scheduler mounting, and direct
+provider submission. `free-call-booking.js` owns the replacement authenticated
+calendar and canonical command. Keep the native chooser, modal shell, Nylas
+container, guest fields, and success step in Designer.
 
 Do not port or remove the legacy Paid/Stripe branches, dashboard call lists,
 call details, confirmation, decline, cancel, reschedule, payment actions, or
