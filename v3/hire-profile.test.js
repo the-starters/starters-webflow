@@ -1568,6 +1568,51 @@ test('canonical installed Free and Paid controllers reveal every matching projec
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
 })
 
+test('canonical Brand discovery refreshes hidden Services navigation after reveal', async () => {
+  const page = makePage()
+  const services = page.root.querySelector('#services')
+  services.style.display = 'none'
+  let resolveConfigs
+  const configsReady = new Promise((resolve) => { resolveConfigs = resolve })
+  let refreshes = 0
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getConfigs: () => configsReady,
+    initBookingComponents: () => {},
+  })
+  context.__startersEmptyNavRefresh = () => {
+    refreshes += 1
+    const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
+    if (freeSurface.style.display === 'block' && freeSurface.getAttribute('aria-hidden') !== 'true') {
+      services.style.display = 'block'
+    }
+  }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(refreshes, 0)
+  assert.equal(services.style.display, 'none')
+
+  resolveConfigs([{
+    config_id: 'free_live',
+    is_paid: false,
+    active: true,
+    data_environment: 'production',
+  }])
+  await settle()
+
+  assert.equal(refreshes, 1)
+  assert.equal(services.style.display, 'block')
+})
+
 test('canonical discovery preserves hidden runtime call templates', async () => {
   const page = makePage({ includeNativeFreeTemplate: true })
   const context = makeContext({

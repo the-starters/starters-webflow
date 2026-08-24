@@ -135,6 +135,7 @@
 
   function syncCanonicalCallSurfaces(configs) {
       const records = Array.isArray(configs) ? configs : [];
+      let changed = false;
       const availability = {
           free: records.some(function (record) { return record && record.is_paid === false; }),
           paid: records.some(function (record) { return record && record.is_paid === true; }),
@@ -146,16 +147,25 @@
                   return;
               }
               if (availability[type]) {
+                  changed = changed ||
+                      surface.hasAttribute('data-canonical-call-unavailable') ||
+                      surface.getAttribute('aria-hidden') === 'true' ||
+                      surface.style.display !== 'block';
                   surface.removeAttribute('data-canonical-call-unavailable');
                   surface.removeAttribute('aria-hidden');
                   surface.style.display = 'block';
               } else {
+                  changed = changed ||
+                      !surface.hasAttribute('data-canonical-call-unavailable') ||
+                      surface.getAttribute('aria-hidden') !== 'true' ||
+                      surface.style.display !== 'none';
                   surface.setAttribute('data-canonical-call-unavailable', '');
                   surface.setAttribute('aria-hidden', 'true');
                   surface.style.display = 'none';
               }
           });
       });
+      return changed;
   }
 
   function openBookingChooser() {
@@ -906,7 +916,8 @@
                   }
               }
 
-              syncCanonicalCallSurfaces(installedConfigs);
+              const callSurfacesChanged = syncCanonicalCallSurfaces(installedConfigs);
+              if (callSurfacesChanged) refreshEmptySectionNav();
               if (!bookingSurfaceAvailable) return;
               setBookingButtonAvailable(true);
 
