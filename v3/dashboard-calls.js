@@ -14,6 +14,25 @@
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
   const BOOKINGS_PATH = '/booking_record/get/v3'
   const CONFIRM_PATH = '/booking/confirm/v3'
+  const DASHBOARD_CALL_MODULES = [
+    {
+      globalName: 'StartersDashboardCallActions',
+      path: 'dashboard-call-actions.js',
+      marker: 'data-starters-dashboard-call-actions',
+    },
+    {
+      globalName: 'StartersDashboardCallMedia',
+      path: 'dashboard-call-media.js',
+      marker: 'data-starters-dashboard-call-media',
+    },
+    {
+      globalName: 'StartersDashboardCallPayment',
+      path: 'dashboard-call-payment.js',
+      marker: 'data-starters-dashboard-call-payment',
+    },
+  ]
+  const DASHBOARD_MODULE_BASE =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/'
   const CONFIRM_ATTEMPT_STORAGE_PREFIX = 'starters:dashboard-confirm:v1:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const REQUEST_EXPIRATION_TICK_MS = 10000
@@ -57,6 +76,55 @@
 
   function clean(value) {
     return String(value == null ? '' : value).trim()
+  }
+
+  function validDashboardModule(value) {
+    return value && typeof value.wire === 'function'
+  }
+
+  function loadDashboardModule(spec) {
+    if (validDashboardModule(global[spec.globalName])) {
+      return Promise.resolve(global[spec.globalName])
+    }
+    if (!global.document || typeof global.document.createElement !== 'function') {
+      return Promise.resolve(null)
+    }
+    return new Promise(function (resolve) {
+      let script = global.document.querySelector(
+        'script[' + spec.marker + '], script[src$="/v3/' + spec.path + '"]',
+      )
+      let settled = false
+      function finish() {
+        if (settled) return
+        settled = true
+        resolve(
+          validDashboardModule(global[spec.globalName])
+            ? global[spec.globalName]
+            : null,
+        )
+      }
+      if (!script) {
+        script = global.document.createElement('script')
+        script.src = DASHBOARD_MODULE_BASE + spec.path
+        script.defer = true
+        script.setAttribute(spec.marker, '')
+        ;(global.document.head || global.document.documentElement).appendChild(script)
+      }
+      script.addEventListener('load', finish, { once: true })
+      script.addEventListener('error', finish, { once: true })
+      global.setTimeout(finish, 5000)
+    })
+  }
+
+  async function loadDashboardCallModules() {
+    const modules = await Promise.all(
+      DASHBOARD_CALL_MODULES.map(loadDashboardModule),
+    )
+    return {
+      actions: modules[0],
+      media: modules[1],
+      payment: modules[2],
+    }
   }
 
   async function stableScopeHash(value) {
@@ -789,9 +857,23 @@
         const accept =
           action === 'switch-confirm' &&
           canConfirmBooking(role, booking, now)
+        const decline =
+          (action === 'switch-decline' || action === 'decline') &&
+          validDashboardModule(global.StartersDashboardCallActions) &&
+          typeof global.StartersDashboardCallActions.canDecline === 'function' &&
+          global.StartersDashboardCallActions.canDecline(role, booking)
+        const media =
+          action === 'notetaker-media' &&
+          validDashboardModule(global.StartersDashboardCallMedia) &&
+          typeof global.StartersDashboardCallMedia.canReadMedia === 'function' &&
+          global.StartersDashboardCallMedia.canReadMedia(booking)
         show(
           button,
-          action === 'switch-close' || action === 'switch-base' || accept,
+          action === 'switch-close' ||
+            action === 'switch-base' ||
+            accept ||
+            decline ||
+            media,
         )
       })
   }
@@ -864,6 +946,14 @@
       return Boolean(booking)
     })
     return booking
+  }
+
+  function bookingForActionTarget(refs, target) {
+    const carrier =
+      target &&
+      target.closest &&
+      target.closest('[data-booking-id]')
+    return bookingFromCard(refs, carrier)
   }
 
   function resetDetailModal() {
@@ -1418,6 +1508,7 @@
     if (global.__startersDashboardCallsBooted) return
     global.__startersDashboardCallsBooted = true
     wireProjectFilters()
+    const dashboardModules = await loadDashboardCallModules()
 
     const refs = Array.prototype.slice
       .call(document.querySelectorAll('[bookings-section]'))
@@ -1472,6 +1563,17 @@
         { preserveExisting: true },
       )
     }
+    const moduleOptions = {
+      document: global.document,
+      role,
+      restart,
+      getBooking: function (target) {
+        return bookingForActionTarget(refs, target)
+      },
+    }
+    if (dashboardModules.actions) dashboardModules.actions.wire(moduleOptions)
+    if (dashboardModules.media) dashboardModules.media.wire(moduleOptions)
+    if (dashboardModules.payment) dashboardModules.payment.wire(moduleOptions)
     wireBookingActions(refs, role, restart)
     startRequestExpirationTicker(refs, role, refreshExpiredRequests)
     if (typeof memberstack.onAuthChange === 'function') {
@@ -1502,6 +1604,7 @@
     wireBookingDetails,
     resetDetailModal,
     configureActionButtons,
+    configureDetailActions,
     confirmAttemptStorageKey,
     storedConfirmAttemptKey,
     createConfirmAttemptKey,
@@ -1523,6 +1626,10 @@
     sectionBookings,
     sameBookingRows,
     uniqueBookings,
+    bookingForActionTarget,
+    loadDashboardCallModules,
+    loadDashboardModule,
+    validDashboardModule,
     wireBookingActions,
   }
   if (!isCommonJs) configureProjectWrappers()
