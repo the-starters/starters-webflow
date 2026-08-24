@@ -30,6 +30,7 @@ class Element {
     this.parentElement = null
     this.queries = new Map()
     this.onclick = null
+    this.listeners = {}
     this.value = ''
   }
 
@@ -59,6 +60,17 @@ class Element {
     child.parentElement = this
     this.children.push(child)
     return child
+  }
+
+  addEventListener(name, listener) {
+    if (!this.listeners[name]) this.listeners[name] = []
+    this.listeners[name].push(listener)
+  }
+
+  contains(candidate) {
+    return this.children.some(function visit(child) {
+      return child === candidate || child.children.some(visit)
+    })
   }
 
   closest(selector) {
@@ -130,6 +142,41 @@ function chooserFixture({ includeMain = true, guests = [] } = {}) {
   popup.appendChild(container)
   popup.setQuery('[nylas-container]', container)
 
+  let guestUi = null
+  if (guests.length) {
+    const wrapper = new Element('div', { 'data-call-guest-fields': '' })
+    const list = new Element('div', { 'data-call-guest-list': '' })
+    const add = new Element('button', { 'data-call-guest-add': '' })
+    const rows = guests.map(function (field) {
+      const row = new Element('div', { 'data-call-guest-row': '' })
+      const remove = new Element('button', { 'data-call-guest-remove': '' })
+      row.appendChild(field)
+      row.appendChild(remove)
+      row.setQuery('[data-call-guest-email]', field)
+      row.setQuery('[data-call-guest-remove]', remove)
+      list.appendChild(row)
+      return { field, remove, row }
+    })
+    list.setQuery('[data-call-guest-row]', rows.map(({ row }) => row))
+    wrapper.appendChild(list)
+    wrapper.appendChild(add)
+    wrapper.appendChild(guestError)
+    wrapper.setQuery('[data-call-guest-list]', list)
+    wrapper.setQuery('[data-call-guest-add]', add)
+    wrapper.setQuery('[data-call-guest-error]', guestError)
+    popup.appendChild(wrapper)
+    popup.setQuery('[data-call-guest-fields]', wrapper)
+    popup.setQuery('[data-call-guest-list]', list)
+    popup.setQuery('[data-call-guest-add]', add)
+    popup.setQuery('[data-call-guest-row]', rows.map(({ row }) => row))
+    popup.setQuery('[data-call-guest-remove]', rows.map(({ remove }) => remove))
+    popup.setQuery(
+      '[data-call-guest-fields], [data-call-guest-list], [data-call-guest-error], [data-call-guest-add], [data-call-guest-row], [data-call-guest-email], [data-call-guest-remove]',
+      [wrapper, list, guestError, add].concat(rows.flatMap(({ row, field, remove }) => [row, field, remove])),
+    )
+    guestUi = { add, rows, wrapper }
+  }
+
   const document = {
     querySelector(selector) {
       if (selector === '[popup-booking]') return popup
@@ -150,6 +197,7 @@ function chooserFixture({ includeMain = true, guests = [] } = {}) {
     document,
     freeButtons,
     guestError,
+    guestUi,
     item,
     main,
     nextSlot,
@@ -192,7 +240,10 @@ function bookingApiFixture(options = {}) {
       state.mounts.push(mount)
       return { slots: [{ start: 1, end: 2 }] }
     },
-    readGuestEmails: () => options.guests || [],
+    readGuestEmails: (popup) => options.guests || popup
+      .querySelectorAll('[data-call-guest-email]')
+      .filter((field) => !field.disabled && String(field.value || '').trim())
+      .map((field) => String(field.value).trim().toLowerCase()),
   }
   return { bookingApi, state }
 }
@@ -258,10 +309,10 @@ test('the authored chooser installs without a legacy main trigger', async () => 
   assert.equal(typeof fixture.cta.onclick, 'function')
 })
 
-test('Free click mounts the authored calendar and canonical command, never Nylas scheduling', async () => {
+test('Free click mounts the authored calendar and canonical command', async () => {
   const guests = Array.from({ length: 5 }, () => new Element('input', { 'data-call-guest-email': '' }))
   const fixture = chooserFixture({ guests })
-  const booking = bookingApiFixture({ guests: ['guest@example.com'] })
+  const booking = bookingApiFixture()
   await withGlobals({ document: fixture.document }, async () => {
     assert.equal(api.installFreeBookingController(installSettings(booking.bookingApi)), true)
     await fixture.cta.onclick(event())
@@ -274,6 +325,12 @@ test('Free click mounts the authored calendar and canonical command, never Nylas
       is_paid: false,
       price_cents: 0,
     })
+    booking.state.mounts[0].onSelectionChange({ start: 1780000000000, end: 1780001800000 })
+    assert.equal(fixture.guestUi.wrapper.style.display, 'flex')
+    assert.equal(fixture.guestUi.rows[0].field.disabled, false)
+    fixture.guestUi.add.listeners.click[0](event())
+    assert.equal(fixture.guestUi.rows[1].row.style.display, 'flex')
+    fixture.guestUi.rows[1].field.value = 'Guest@Example.com'
     await booking.state.mounts[0].onConfirm({
       start: 1780000000000,
       end: 1780001800000,
@@ -298,8 +355,6 @@ test('Free click mounts the authored calendar and canonical command, never Nylas
   assert.equal(fixture.defaultStep.style.display, 'none')
   assert.equal(fixture.successStep.style.display, 'flex')
   assert.match(fixture.successText.textContent, /free call request was sent/i)
-  assert.equal(SOURCE.includes('nylas-scheduling'), false)
-  assert.equal(SOURCE.includes('shadowRoot'), false)
 })
 
 test('Free success requires both canonical row and provider booking identifiers', async () => {

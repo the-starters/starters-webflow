@@ -420,7 +420,9 @@ test('shared call calendar renders dates and times and submits only the selected
   const container = new CalendarElement('div')
   const submissions = []
   const selections = []
-  const firstStart = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const firstStart =
+    Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000) / 86400000) * 86400 +
+    12 * 60 * 60
   const secondStart = firstStart + 30 * 60
   global.document = {
     createElement(tagName) { return new CalendarElement(tagName) },
@@ -520,7 +522,7 @@ test('booking retries reuse one key and omit identity, price, card, and environm
   const requests = []
   global.xanoAuthFetch = async (url, options) => {
     requests.push({ url, options })
-    return response({ booking_id: 'booking_one', status: 'pending' })
+    return response({ booking: { booking_id: 'booking_one', row_id: 901 } })
   }
   try {
     const attempt = api.createBookingAttempt({
@@ -601,7 +603,7 @@ test('paid booking sends only canonical guest emails and keeps them stable on re
   const requests = []
   global.xanoAuthFetch = async (url, options) => {
     requests.push({ url, options })
-    return response({ booking_id: 'booking_with_guest', status: 'pending' })
+    return response({ booking: { booking_id: 'booking_with_guest', row_id: 902 } })
   }
   try {
     const attempt = api.createBookingAttempt({
@@ -636,7 +638,7 @@ test('guest invitations travel to the canonical Xano booking endpoint', async ()
   const requests = []
   global.xanoAuthFetch = async (url, options) => {
     requests.push({ url, options })
-    return response({ booking_id: 'booking_invite_route', status: 'pending' })
+    return response({ booking: { booking_id: 'booking_invite_route', row_id: 903 } })
   }
   try {
     const attempt = api.createBookingAttempt({
@@ -703,7 +705,7 @@ test('canonical Paid price rejects stale or unsupported display authority', () =
   assert.equal(api.canonicalPaidPrice({ currency: 'usd' }), '')
 })
 
-test('invalid canonical Paid price leaves the authored option hidden and unchanged', () => {
+test('invalid canonical Paid price or duration leaves the authored option hidden', () => {
   const previous = global.document
   const price = { textContent: '$50' }
   const item = {
@@ -723,16 +725,51 @@ test('invalid canonical Paid price leaves the authored option hidden and unchang
       config: {
         config_id: 'config_paid',
         grant_id: 'grant_test',
-        duration: 30,
+        duration: 60,
         is_paid: true,
         currency: 'usd',
         price_cents: 0,
+      },
+    }), false)
+    assert.equal(api.installPaidBookingController({
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 30,
+        is_paid: true,
+        currency: 'usd',
+        price_cents: 500,
       },
     }), false)
     assert.equal(price.textContent, '$50')
     assert.equal(item.style.display, 'none')
   } finally {
     global.document = previous
+  }
+})
+
+test('booking success requires canonical row and provider booking proof', async () => {
+  const previous = global.xanoAuthFetch
+  const responses = [{}, { booking: { booking_id: 'provider-only' } }]
+  global.xanoAuthFetch = async () => response(responses.shift())
+  try {
+    const input = {
+      starter_slug: 'starter-one',
+      config_id: 'config_paid',
+      start: 1787000000000,
+      end: 1787003600000,
+      timezone: 'UTC',
+    }
+    await assert.rejects(
+      api.createBookingAttempt(input, 'missing-canonical-row').run(),
+      /canonical booking response is incomplete/i,
+    )
+    await assert.rejects(
+      api.createBookingAttempt(input, 'missing-provider-booking').run(),
+      /canonical booking response is incomplete/i,
+    )
+  } finally {
+    global.xanoAuthFetch = previous
   }
 })
 
@@ -770,14 +807,14 @@ test('Paid installation stays bookable without optional guest markup', async () 
     if (url.endsWith(api.READINESS_PATH)) {
       return response({ environment: 'test', bookable: true })
     }
-    return response({ booking_id: 'booking_without_guest', status: 'pending' })
+    return response({ booking: { booking_id: 'booking_without_guest', row_id: 904 } })
   }
   try {
     assert.equal(api.installPaidBookingController({
       config: {
         config_id: 'config_paid',
         grant_id: 'grant_test',
-        duration: 30,
+        duration: 60,
         is_paid: true,
         currency: 'usd',
         price_cents: 500,
@@ -848,7 +885,7 @@ test('Paid installation fails closed when optional guest markup is incomplete', 
       config: {
         config_id: 'config_paid',
         grant_id: 'grant_test',
-        duration: 30,
+        duration: 60,
         is_paid: true,
         currency: 'usd',
         price_cents: 500,
@@ -907,7 +944,7 @@ test('Paid installation fails closed for every stray guest hook outside the wrap
         config: {
           config_id: 'config_paid',
           grant_id: 'grant_test',
-          duration: 30,
+          duration: 60,
           is_paid: true,
           currency: 'usd',
           price_cents: 500,
@@ -979,7 +1016,7 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
         resolveReadiness = () => resolve(response({ environment: 'live', bookable: true }))
       })
     }
-    return response({ booking_id: 'booking_one', status: 'pending' })
+    return response({ booking: { booking_id: 'booking_one', row_id: 905 } })
   }
   let calendarOptions
   let calendarCount = 0
@@ -988,7 +1025,7 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
       config: {
         config_id: 'config_paid',
         grant_id: 'grant_test',
-        duration: 30,
+        duration: 60,
         is_paid: true,
         currency: 'usd',
         price_cents: 500,
@@ -1138,7 +1175,7 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
       config: {
         config_id: 'config_paid',
         grant_id: 'grant_test',
-        duration: 30,
+        duration: 60,
         is_paid: true,
         currency: 'usd',
         price_cents: 500,
@@ -1217,7 +1254,7 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
     assert.equal(api.installPaidBookingController({
       config: {
         config_id: 'config_paid',
-        duration: 30,
+        duration: 60,
         is_paid: true,
         currency: 'usd',
         price_cents: 500,
@@ -1241,7 +1278,7 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
     await Promise.all([first, second])
     assert.equal(mounts.length, 1)
     assert.equal(mounts[0].grant_id, 'grant_test')
-    assert.equal(mounts[0].duration, 30)
+    assert.equal(mounts[0].duration, 60)
   } finally {
     global.document = previous.document
     global.xanoAuthFetch = previous.xanoAuthFetch
@@ -1332,7 +1369,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
       config: {
         config_id: 'config_paid',
         grant_id: 'grant_test',
-        duration: 30,
+        duration: 60,
         is_paid: true,
         currency: 'USD',
         price_cents: 1250,

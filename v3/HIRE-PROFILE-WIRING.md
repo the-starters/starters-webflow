@@ -105,8 +105,8 @@ missing and stands down if the namespace still cannot load.
   `[data-starter-xano-id]` carrier inside `.data-native-binding`
 - GitHub module: `window.StartersFreeCallBooking`. It owns
   `getStarterByMemberId`, `getConfigs`, `getNearestSlot`, the Free chooser,
-  and the Nylas Free scheduler. `hire-profile.js` does not use the old bare
-  booking globals.
+  the authored calendar, guest controls, and authenticated canonical booking
+  command. `hire-profile.js` does not use the old bare booking globals.
 - jQuery `$` — used by the dropdown and anchor-scroll blocks only; each is
   individually guarded, so a missing jQuery costs those two behaviours and
   nothing else. The anchor utilities also ignore a bare `#` or an invalid hash
@@ -272,9 +272,9 @@ true`, and the host's exact `data_environment` (`test` on the Webflow test host,
 `production` on the production hosts). Free records must have `is_paid ===
 false`. Paid records must have `is_paid === true` and the matching
 `payment_environment` (`test` or `live`), USD currency, and an integer
-`price_cents` of at least 100, plus a positive integer `duration`. Unknown hosts
-return no bookable set. The client excludes records from another data or payment
-environment and rejects invalid Paid prices or durations. It rejects the
+`price_cents` of at least 100, plus a `duration` of exactly 60 minutes. Unknown
+hosts return no bookable set. The client excludes records from another data or
+payment environment and rejects invalid Paid prices or durations. It rejects the
 complete remaining set if a `config_id` repeats or if more than one active Free
 or Paid record remains. A valid pair is ordered Free then Paid so the
 nearest-slot preview is deterministic. An empty or rejected set does not reveal
@@ -308,13 +308,11 @@ Paid has no accepted configuration. A failed Paid install does not remove an
 installed Free chooser row or add a duplicate call row. A Paid-only set also
 keeps the Book Call trigger closed when the Paid controller cannot install.
 
-On the Free Call details screen, the controller hides the booking-form rows for
-`brand_memberstack_id` and `starter_memberstack_id` after Nylas confirms the
-timeslot. It does not remove or change either field, so both stable IDs remain
-in the Nylas booking payload for Xano environment routing and ownership checks.
-Name, Email, Add guest, and Call Context remain visible. This presentation-only
-change does not apply to Paid Consulting Call. The Paid flow is described in
-[`README.md`](README.md#brand-paid-call-payment-method-client).
+On the Free Call details screen, the authored calendar reveals the native guest
+form after a timeslot is selected. Add and remove controls manage up to five
+guest email fields. The authenticated canonical Xano command derives member
+identity and sends the selected slot, call details, and normalized guest emails.
+The browser does not create a provider booking directly.
 
 The Paid guest-field markup, validation, payload, and retry contract is owned by
 the [Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).

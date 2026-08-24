@@ -907,7 +907,7 @@ test('the TEST fixture uses canonical Free and Paid configs to reveal the author
       payment_environment: 'test',
       price_cents: 100,
       currency: 'usd',
-      duration: 15,
+      duration: 60,
     },
   ]
   const context = makeContext({
@@ -1657,6 +1657,7 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
     [{ config_id: 'mixed_data', is_paid: false, active: true, data_environment: 'test' }],
     [{ config_id: 'mixed_payment', is_paid: true, active: true, data_environment: 'production', payment_environment: 'test', currency: 'USD', price_cents: 500 }],
     [{ config_id: 'missing_duration', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500 }],
+    [{ config_id: 'wrong_duration', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 30 }],
     [{ config_id: 'sub_minimum', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 99, duration: 60 }],
     [{ config_id: 'unknown_payment', is_paid: null, active: true, data_environment: 'production' }],
     [
@@ -1664,12 +1665,12 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
       { config_id: 'free_b', is_paid: false, active: true, data_environment: 'production' },
     ],
     [
-      { config_id: 'paid_a', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 30 },
-      { config_id: 'paid_b', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 30 },
+      { config_id: 'paid_a', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 60 },
+      { config_id: 'paid_b', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 60 },
     ],
     [
       { config_id: 'shared', is_paid: false, active: true, data_environment: 'production' },
-      { config_id: 'shared', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 30 },
+      { config_id: 'shared', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 60 },
     ],
   ]
 
@@ -1709,7 +1710,7 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   const bookingCalls = []
   const paidCalls = []
   const configs = [
-    { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'usd', price_cents: 1250, duration: 30 },
+    { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'usd', price_cents: 1250, duration: 60 },
     { config_id: 'free_live', is_paid: false, active: true, data_environment: 'production', payment_environment: null },
   ]
   const context = makeContext({
@@ -1789,7 +1790,7 @@ test('a failed Paid install keeps the installed Free chooser option selectable',
         payment_environment: 'live',
         currency: 'USD',
         price_cents: 1250,
-        duration: 30,
+        duration: 60,
       },
     ],
     initBookingComponents: () => {},
@@ -1989,7 +1990,7 @@ test('Paid-only discovery stays closed when the V3 controller is unavailable', a
       payment_environment: 'live',
       currency: 'USD',
       price_cents: 1250,
-      duration: 30,
+        duration: 60,
     }],
     getNearestSlot: async () => { nearestSlotCalls += 1 },
   })

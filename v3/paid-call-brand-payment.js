@@ -325,10 +325,21 @@
     return {
       idempotencyKey: key,
       payload,
-      run: function () {
-        return authenticatedPost(BOOKING_PATH, payload)
+      run: async function () {
+        const result = await authenticatedPost(BOOKING_PATH, payload)
+        return requireCanonicalBookingProof(result)
       },
     }
+  }
+
+  function requireCanonicalBookingProof(result) {
+    const booking = result && result.booking
+    const rowId = String((booking && booking.row_id) || '').trim()
+    const bookingId = String((booking && booking.booking_id) || '').trim()
+    if (!rowId || !bookingId) {
+      throw new Error('The canonical booking response is incomplete')
+    }
+    return result
   }
 
   function loadStripe() {
@@ -583,7 +594,7 @@
     const duration = Number(config && config.duration)
     const document = global.document
     const priceText = canonicalPaidPrice(config)
-    if (!document || !config || config.is_paid !== true || !config.config_id || !grantId || !Number.isInteger(duration) || duration <= 0 || !priceText) {
+    if (!document || !config || config.is_paid !== true || !config.config_id || !grantId || duration !== 60 || !priceText) {
       return false
     }
     const availabilityConfig = Object.assign({}, config, {
@@ -922,7 +933,8 @@
       }
     })
 
-    if (guestUiEnabled) {
+    if (guestUiEnabled && !guestAdd.__startersGuestUiBound) {
+      guestAdd.__startersGuestUiBound = true
       guestAdd.addEventListener('click', function (event) {
         event.preventDefault()
         const next = guestBindings.find(function (binding) {
@@ -937,6 +949,7 @@
       })
 
       guestBindings.forEach(function (binding, index) {
+        binding.remove.__startersGuestUiBound = true
         binding.remove.addEventListener('click', function (event) {
           event.preventDefault()
           binding.field.value = ''
@@ -1022,6 +1035,7 @@
     normalizeGuestEmails,
     normalizeAvailabilitySlots,
     readGuestEmails,
+    requireCanonicalBookingProof,
     validateKey,
     validatePaymentMethodId,
   }

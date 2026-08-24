@@ -440,8 +440,7 @@
                   String(record.currency || '').toUpperCase() === 'USD' &&
                   Number.isInteger(priceCents) &&
                   priceCents >= 100 &&
-                  Number.isInteger(duration) &&
-                  duration > 0;
+                  duration === 60;
           }
           return record.is_paid === false &&
               (record.price_cents == null || Number(record.price_cents) === 0) &&

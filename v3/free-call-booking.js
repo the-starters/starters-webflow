@@ -206,6 +206,106 @@
     error.style.display = message ? 'block' : 'none'
   }
 
+  function installGuestUi(api, popup, container) {
+    const wrapper = popup.querySelector('[data-call-guest-fields]')
+    const hookSelector =
+      '[data-call-guest-fields], [data-call-guest-list], [data-call-guest-error], [data-call-guest-add], [data-call-guest-row], [data-call-guest-email], [data-call-guest-remove]'
+    if (!popup.querySelectorAll(hookSelector).length) {
+      return {
+        hide: function () {},
+        read: function () { return [] },
+        reset: function () {},
+        show: function () {},
+      }
+    }
+    const list = wrapper && wrapper.querySelector('[data-call-guest-list]')
+    const error = wrapper && wrapper.querySelector('[data-call-guest-error]')
+    const add = wrapper && wrapper.querySelector('[data-call-guest-add]')
+    const rows = list ? Array.from(list.querySelectorAll('[data-call-guest-row]')) : []
+    const bindings = rows.map(function (row) {
+      return {
+        row,
+        field: row.querySelector('[data-call-guest-email]'),
+        remove: row.querySelector('[data-call-guest-remove]'),
+      }
+    })
+    if (
+      !wrapper || !list || !error || !add || rows.length !== 5 ||
+      popup.querySelectorAll('[data-call-guest-email]').length !== 5 ||
+      popup.querySelectorAll('[data-call-guest-remove]').length !== 5 ||
+      bindings.some(function (binding) { return !binding.field || !binding.remove }) ||
+      (typeof container.contains === 'function' && container.contains(wrapper))
+    ) return null
+
+    if (typeof api.installGuestFormSubmitGuard === 'function') {
+      api.installGuestFormSubmitGuard(wrapper)
+    }
+
+    function update() {
+      const visible = bindings.filter(function (binding) {
+        return binding.row.getAttribute('aria-hidden') !== 'true'
+      }).length
+      add.disabled = visible >= 5
+      add.style.display = add.disabled ? 'none' : ''
+    }
+
+    function reset() {
+      bindings.forEach(function (binding, index) {
+        binding.field.value = ''
+        binding.field.disabled = index !== 0
+        binding.row.style.display = index === 0 ? 'flex' : 'none'
+        binding.row.setAttribute('aria-hidden', index === 0 ? 'false' : 'true')
+        binding.remove.style.display = index === 0 ? 'none' : ''
+      })
+      setGuestError(popup, '')
+      update()
+    }
+
+    function setVisible(visible) {
+      wrapper.style.display = visible ? 'flex' : 'none'
+      wrapper.setAttribute('aria-hidden', visible ? 'false' : 'true')
+    }
+
+    if (!add.__startersGuestUiBound) {
+      add.__startersGuestUiBound = true
+      add.addEventListener('click', function (event) {
+        event.preventDefault()
+        const next = bindings.find(function (binding) {
+          return binding.row.getAttribute('aria-hidden') === 'true'
+        })
+        if (!next) return
+        next.row.style.display = 'flex'
+        next.row.setAttribute('aria-hidden', 'false')
+        next.field.disabled = false
+        if (typeof next.field.focus === 'function') next.field.focus()
+        update()
+      })
+      bindings.forEach(function (binding, index) {
+        binding.remove.__startersGuestUiBound = true
+        binding.remove.addEventListener('click', function (event) {
+          event.preventDefault()
+          binding.field.value = ''
+          if (index !== 0) {
+            binding.field.disabled = true
+            binding.row.style.display = 'none'
+            binding.row.setAttribute('aria-hidden', 'true')
+          }
+          setGuestError(popup, '')
+          update()
+        })
+      })
+    }
+
+    reset()
+    setVisible(false)
+    return {
+      hide: function () { reset(); setVisible(false) },
+      read: function (excluded) { return readGuestEmails(api, popup, excluded) },
+      reset,
+      show: function () { setVisible(true) },
+    }
+  }
+
   function showFreeSuccess(popup) {
     popup.querySelectorAll('[success-call-buttons]').forEach(function (element) {
       element.style.display = element.getAttribute('data-type') === 'free' ? 'flex' : 'none'
@@ -259,6 +359,8 @@
       global.document.querySelector('[nylas-container]')
     )
     if (!popup || !container || !ctas.length) return false
+    const guestUi = installGuestUi(bookingApi, popup, container)
+    if (!guestUi) return false
 
     const state = {
       bookingApi,
@@ -294,6 +396,7 @@
         const generation = bookingSurfaceOwnership.claim(container)
         container.textContent = 'Loading available times...'
         container.setAttribute('data-paid-calendar-state', 'loading')
+        guestUi.hide()
         setGuestError(current.popup, '')
         current.popup.querySelectorAll('[success-call-buttons]').forEach(function (element) {
           element.style.display = element.getAttribute('data-type') === 'free' ? 'flex' : 'none'
@@ -310,7 +413,7 @@
               if (binding.bookingLock) return
               let guests
               try {
-                guests = readGuestEmails(current.bookingApi, current.popup, [
+                guests = guestUi.read([
                   current.brandEmail,
                   current.starterEmail,
                 ])
@@ -349,6 +452,15 @@
               } finally {
                 binding.bookingLock = false
               }
+            },
+            onSelectionChange: function (slot) {
+              if (!bookingSurfaceOwnership.owns(container, generation)) return
+              if (!slot) {
+                guestUi.hide()
+                return
+              }
+              guestUi.reset()
+              guestUi.show()
             },
           })
         } catch (error) {
