@@ -164,6 +164,7 @@ function makePage({
   index = 'Freelancers3.0-production',
   includeFreeCard = true,
   includeNativeFreeTemplate = false,
+  includeCallDataType = true,
 } = {}) {
   const root = makeElement('body')
 
@@ -199,10 +200,10 @@ function makePage({
     'has-connection': includeFreeCard ? 'free' : 'paid',
     'data-modal-trigger': 'popup-booking',
     'booking-popup-open': '',
-    'data-type': includeFreeCard ? 'free' : 'paid',
     'data-signup-trigger-element': 'service',
     'data-signup-trigger-value': includeFreeCard ? 'Free Call' : 'Paid Consulting Call',
   }
+  if (includeCallDataType) cardAttributes['data-type'] = includeFreeCard ? 'free' : 'paid'
   if (!includeFreeCard) delete cardAttributes['booking-popup-open']
 
   const card = makeElement(
@@ -1508,7 +1509,9 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
 })
 
 test('a Paid service card opens the authored Free/Paid chooser instead of the retired direct scheduler', async () => {
-  const page = makePage({ includeFreeCard: false })
+  // Production Webflow markup identifies this card with has-connection="paid"
+  // and does not author data-type on the service card itself.
+  const page = makePage({ includeFreeCard: false, includeCallDataType: false })
   let chooserClicks = 0
   page.bookingButton.click = () => { chooserClicks += 1 }
   const context = makeContext({
@@ -1539,7 +1542,8 @@ test('a Paid service card opens the authored Free/Paid chooser instead of the re
   vm.runInContext(source, context)
   await settle()
 
-  const paidCard = page.servicesList.querySelector('[data-type="paid"]')
+  const paidCard = page.servicesList.querySelector('[has-connection="paid"]')
+  assert.equal(paidCard.getAttribute('data-type'), null)
   assert.equal(paidCard.getAttribute('booking-popup-open'), null)
   assert.equal(paidCard.getAttribute('data-modal-trigger'), null)
   assert.equal(paidCard.getAttribute('data-call-service-chooser'), 'ready')

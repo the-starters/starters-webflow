@@ -108,8 +108,11 @@
   }
 
   function wireCallServiceCardsToChooser() {
-      document.querySelectorAll('#services [data-service-card="component"][data-type]').forEach(function (card) {
-          const type = card.getAttribute('data-type');
+      document.querySelectorAll('#services [data-service-card="component"]').forEach(function (card) {
+          // The native Webflow service cards identify the call type through
+          // has-connection. Keep data-type as a compatibility hook for older
+          // saved markup and focused fixtures.
+          const type = card.getAttribute('data-type') || card.getAttribute('has-connection');
           if (type !== 'free' && type !== 'paid') return;
           if (card.getAttribute('data-call-service-chooser') === 'ready') return;
 
