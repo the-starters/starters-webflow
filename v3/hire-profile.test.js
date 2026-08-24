@@ -869,6 +869,8 @@ test('an empty canonical configuration response fails closed without booking act
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.bookingButtonWrapper.style.display, 'none')
   assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
   assert.equal(
     page.servicesList.children.filter((card) =>
       card.hasAttribute('data-runtime-free-call-card'),
@@ -918,6 +920,8 @@ test('the TEST fixture uses canonical Free and Paid configs to reveal the author
   assert.equal(page.bookingButtonWrapper.style.display, 'flex')
   assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
   assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), 'popup-booking-main')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
   assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free_test')
   assert.equal(page.paidModalCta.getAttribute('data-config'), 'config_paid_test')
 })
@@ -1361,7 +1365,11 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(page.paidModalOption.getAttribute('aria-hidden'), 'true')
   const guard = context.document.getElementById('hire-booking-modal-availability-guard')
   assert.ok(guard)
-  assert.equal(guard.textContent, '[data-booking-unavailable]{display:none!important}')
+  assert.equal(
+    guard.textContent,
+    '[data-booking-unavailable]{display:none!important}' +
+      '[data-booking-trigger-unavailable]{display:none!important}',
+  )
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
 })
@@ -1395,9 +1403,40 @@ test('authored modal options hide synchronously without hiding Services call car
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.equal(page.servicesList.children[0].style.display, undefined)
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
 
   resolveStarter(null)
   await settle()
+})
+
+test('a chooser trigger outside booking-button-wrapper stays hidden until discovery succeeds', async () => {
+  const page = makePage()
+  const strayTrigger = makeElement('button', {
+    'data-modal-trigger': 'popup-booking-main',
+  })
+  page.root.appendChild(strayTrigger)
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => null,
+    getConfigs: async () => [],
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(strayTrigger.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(strayTrigger.getAttribute('aria-disabled'), 'true')
+  const guard = context.document.getElementById('hire-booking-modal-availability-guard')
+  assert.ok(guard.textContent.includes(
+    '[data-booking-trigger-unavailable]{display:none!important}',
+  ))
 })
 
 test('booking discovery rejects inactive, mixed-environment, and duplicate configurations', async () => {
