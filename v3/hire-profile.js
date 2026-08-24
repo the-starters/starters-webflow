@@ -12,10 +12,9 @@
  *    Experiences and Clients are outside this file: Webflow CMS renders them
  *    natively for all viewers after the Phase 2 cutover.
  *  - Booking wiring, which stays behind the Memberstack member gate.
- *  - Services call-card visibility. The live connection endpoints 401 for
- *    anonymous callers and the brand booking path never toggles visibility, so
- *    anonymous viewers AND signed-in brands derive availability from the public
- *    Algolia record. Starter members keep the live-derived owner toggles.
+ *  - Services call-card visibility. Anonymous viewers stay closed. Signed-in
+ *    brands use canonical booking discovery and successful controller installs.
+ *    Starter members keep the live-derived owner toggles.
  *  - Freelance/Retainer rate cards, cloned from the section's Default card.
  *  - Small page utilities that shipped in the same footer (rate formatting,
  *    rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more).
@@ -58,6 +57,7 @@
       style.textContent = [
           '[data-booking-unavailable]{display:none!important}',
           '[data-booking-trigger-unavailable]{display:none!important}',
+          '[data-canonical-call-unavailable]{display:none!important}',
       ].join('');
       (document.head || document.documentElement).appendChild(style);
   }
@@ -103,6 +103,16 @@
       });
   }
 
+  function reconcileInstalledBookingModalOptions(configs) {
+      primeBookingModalOptions(configs);
+      document.querySelectorAll(
+          '[call-type-item] [booking-popup-open][data-type][data-config]'
+      ).forEach(function (cta) {
+          const item = cta.closest('[call-type-item]');
+          if (item) item.style.display = 'block';
+      });
+  }
+
   function setBookingButtonAvailable(available) {
       document.querySelectorAll('[booking-button-wrapper]').forEach(function (wrapper) {
           wrapper.style.display = available ? 'flex' : 'none';
@@ -131,6 +141,41 @@
               dialog.setAttribute('data-booking-surface-unavailable', '');
           }
       });
+  }
+
+  function syncCanonicalCallSurfaces(configs) {
+      const records = Array.isArray(configs) ? configs : [];
+      let changed = false;
+      const availability = {
+          free: records.some(function (record) { return record && record.is_paid === false; }),
+          paid: records.some(function (record) { return record && record.is_paid === true; }),
+      };
+
+      ['free', 'paid'].forEach(function (type) {
+          document.querySelectorAll('[has-connection="' + type + '"]').forEach(function (surface) {
+              if (surface.hasAttribute('hidden') || surface.hasAttribute('data-runtime-call-template')) {
+                  return;
+              }
+              if (availability[type]) {
+                  changed = changed ||
+                      surface.hasAttribute('data-canonical-call-unavailable') ||
+                      surface.getAttribute('aria-hidden') === 'true' ||
+                      surface.style.display !== 'block';
+                  surface.removeAttribute('data-canonical-call-unavailable');
+                  surface.removeAttribute('aria-hidden');
+                  surface.style.display = 'block';
+              } else {
+                  changed = changed ||
+                      !surface.hasAttribute('data-canonical-call-unavailable') ||
+                      surface.getAttribute('aria-hidden') !== 'true' ||
+                      surface.style.display !== 'none';
+                  surface.setAttribute('data-canonical-call-unavailable', '');
+                  surface.setAttribute('aria-hidden', 'true');
+                  surface.style.display = 'none';
+              }
+          });
+      });
+      return changed;
   }
 
   function openBookingChooser() {
@@ -198,6 +243,7 @@
 
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
+  syncCanonicalCallSurfaces([]);
   // Webflow authors the structural Book Call triggers and dialog. Canonical
   // environment-scoped discovery is the only code path that may enable them.
   setBookingButtonAvailable(false);
@@ -394,10 +440,11 @@
                   String(record.currency || '').toUpperCase() === 'USD' &&
                   Number.isInteger(priceCents) &&
                   priceCents >= 100 &&
-                  Number.isInteger(duration) &&
-                  duration > 0;
+                  duration === 60;
           }
-          return record.is_paid === false;
+          return record.is_paid === false &&
+              (record.price_cents == null || Number(record.price_cents) === 0) &&
+              (record.duration == null || Number(record.duration) === 30);
       });
       const configIds = new Set();
       const hasDuplicateConfigId = active.some(function (record) {
@@ -463,6 +510,10 @@
               // check calendar\availability connections
               const starter = await freeCallBooking.getStarterByMemberId(FREELANCER_ID);
               const grant_id = starter ? starter['nylas_grant_id'] : null;
+              const ownerConfigs = [];
+              if (grant_id) ownerConfigs.push({ is_paid: false });
+              if (grant_id && window.stripe_charges) ownerConfigs.push({ is_paid: true });
+              syncCanonicalCallSurfaces(ownerConfigs);
               if (!grant_id) {
                   qsa('[no-connection="free"]').forEach((item) => item.style.display = "block");
               } else {
@@ -508,11 +559,9 @@
   });
 
   /* PUBLIC-RECORD SERVICES (anonymous + brand viewers)
-     The live connection endpoints require auth (401 for anonymous callers),
-     and the brand booking path never toggles card visibility at all, so
-     anonymous viewers AND signed-in brands derive call availability from
-     the public search record. Starter members keep the live-derived
-     owner toggles above. */
+     The public record supplies non-call services only. Call projections stay
+     closed for anonymous viewers and use canonical discovery for brands.
+     Starter members keep the live-derived owner toggles above. */
   waitForMember(async function () {
       var isBrand = isBrandMember(MEMBER);
       if (MEMBER.id && !isBrand) return;
@@ -520,13 +569,6 @@
       try {
           const record = await getPublicStarterRecord();
           if (!record) return;
-
-          if (record['free-consulting-calls-t-f']) {
-              qsa('[has-connection="free"]').forEach((item) => item.style.display = "block");
-          }
-          if (record['paid-consulting-calls-t-f']) {
-              qsa('[has-connection="paid"]').forEach((item) => item.style.display = "block");
-          }
 
           if (!MEMBER.id) markServiceCardsClickable();
           if (isBrand) {
@@ -630,6 +672,7 @@
           el.removeAttribute('hidden');
           el.removeAttribute('data-runtime-call-template');
           el.removeAttribute('data-runtime-free-call-card');
+          el.removeAttribute('data-canonical-call-unavailable');
           el.setAttribute('aria-hidden', 'false');
 
           // Keep data-signup-trigger-* so signup-attribution.js opens the
@@ -797,6 +840,7 @@
   async function startersBooking_handler(freelancerId, brand_name, brand_email) {
 
       if (!validBookingDiscovery(freeCallBooking)) {
+          syncCanonicalCallSurfaces([]);
           console.warn('[hire-profile] Free Call booking controller is unavailable');
           return;
       }
@@ -824,6 +868,7 @@
               }) || null;
               let bookingSurfaceAvailable = false;
               let freeInstalled = false;
+              const installedConfigs = [];
 
               // The GitHub Free controller owns only the accepted Free option.
               // Remove Paid before it binds the authored chooser, then restore
@@ -835,12 +880,17 @@
                       freeCallBooking.installFreeBookingController({
                           config: freeConfigs[0],
                           grantId: grant_id,
+                          starterSlug: decodeURIComponent(
+                              window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
+                          ),
                           starterMemberstackId: freelancerId,
                           brandName: brand_name,
                           brandEmail: brand_email,
+                          starterEmail: starter.nylas_grant_email,
                       });
                   freeInstalled = installed === true;
                   bookingSurfaceAvailable = freeInstalled;
+                  if (freeInstalled) installedConfigs.push(freeConfigs[0]);
                   if (!installed) {
                       primeBookingModalOptions([]);
                       console.warn('Free Call controller is unavailable; Free stayed closed.');
@@ -874,20 +924,26 @@
                           starterEmail: starter.nylas_grant_email,
                       });
                   bookingSurfaceAvailable = bookingSurfaceAvailable || installed === true;
+                  if (installed === true) installedConfigs.push(paidConfig);
                   if (!installed) {
                       primeBookingModalOptions(freeConfigs);
                       console.warn('Paid Call controller is unavailable; Paid stayed closed.');
                   }
               }
 
+              reconcileInstalledBookingModalOptions(installedConfigs);
+              const callSurfacesChanged = syncCanonicalCallSurfaces(installedConfigs);
+              if (callSurfacesChanged) refreshEmptySectionNav();
               if (!bookingSurfaceAvailable) return;
               setBookingButtonAvailable(true);
 
           } else {
+              syncCanonicalCallSurfaces([]);
               console.warn("No Configurations found for the current starter.");
           }
 
       } else {
+          syncCanonicalCallSurfaces([]);
           console.warn("No Nylas Grant ID found for the current starter.");
       }
   }
