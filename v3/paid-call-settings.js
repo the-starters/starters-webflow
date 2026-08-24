@@ -46,6 +46,7 @@
   let wiredMemberstack = null
   let memberstackReadyResolvers = []
   let rootObserver = null
+  let uiObserver = null
   let rootWaitTimer = null
   let initializationPromise = null
   let authoredPrice = null
@@ -163,6 +164,35 @@
       candidate = candidate.parentElement
     }
     return anchor
+  }
+
+  function paintStatusPills() {
+    const active = Boolean(settings && canonicalService(settings))
+    show(output('on'), active)
+    show(output('off'), !active)
+  }
+
+  function bindOpenAction() {
+    const openButton = action('open')
+    if (!openButton || openButton.__tsPaidCallOpenBound) return
+    openButton.__tsPaidCallOpenBound = true
+    openButton.addEventListener('click', function (event) {
+      event.preventDefault()
+      setCardEditorOpen(root.getAttribute('data-paid-call-editor-open') !== 'true')
+    })
+  }
+
+  function refreshUiScope() {
+    if (!root || !cardMode) return
+    uiScope = findCallCardScope(root)
+    bindOpenAction()
+    paintStatusPills()
+  }
+
+  function watchUiScope() {
+    if (!cardMode || uiObserver || typeof MutationObserver !== 'function') return
+    uiObserver = new MutationObserver(refreshUiScope)
+    uiObserver.observe(document.documentElement, { childList: true, subtree: true })
   }
 
   function setStatus(value) {
@@ -610,8 +640,7 @@
     const priceOutput = output('price')
     if (priceOutput) priceOutput.textContent = formatUsd(0)
     restoreAuthoredPrice()
-    show(output('on'), false)
-    show(output('off'), true)
+    paintStatusPills()
     setMessage(message)
   }
 
@@ -666,8 +695,7 @@
     const priceOutput = output('price')
     if (priceOutput) priceOutput.textContent = formatUsd(service ? service.price_cents : 0)
     else paintAuthoredPrice(service)
-    show(output('on'), Boolean(service))
-    show(output('off'), !service)
+    paintStatusPills()
     setMessage(
       service
         ? Number(service.duration) !== FIXED_DURATION_MINUTES
@@ -982,13 +1010,7 @@
         setFieldValidity(input, '')
       })
     })
-    const openButton = action('open')
-    if (openButton) {
-      openButton.addEventListener('click', function (event) {
-        event.preventDefault()
-        setCardEditorOpen(root.getAttribute('data-paid-call-editor-open') !== 'true')
-      })
-    }
+    bindOpenAction()
     const closeButton = action('close')
     if (closeButton) {
       closeButton.addEventListener('click', function (event) {
@@ -1015,6 +1037,7 @@
     initializationPromise = (async function () {
       stopRootWait()
       uiScope = cardMode ? findCallCardScope(root) : root
+      watchUiScope()
       if (cardMode) setCardEditorOpen(false)
       bind()
       await waitForMemberstack()

@@ -258,6 +258,10 @@ function load(options = {}) {
     options.authoredPills === true,
     options.pillLabels || {},
   )
+  const delayedSiblings = options.rootFirst === true && dom.card
+    ? dom.card.children.filter((item) => item !== dom.formWrapper)
+    : []
+  if (delayedSiblings.length) dom.card.children = [dom.formWrapper]
   if (options.cardRadioValues && dom.root) {
     Object.keys(options.cardRadioValues).forEach((key) => {
       if (dom[key]) dom[key].setAttribute('value', options.cardRadioValues[key])
@@ -403,6 +407,10 @@ function load(options = {}) {
     },
     revealRoot: () => {
       rootAvailable = true
+      observers.filter((observer) => observer.active).forEach((observer) => observer.callback())
+    },
+    revealSiblings: () => {
+      dom.card.append(...delayedSiblings)
       observers.filter((observer) => observer.active).forEach((observer) => observer.callback())
     },
     notifyMutation: () => {
@@ -779,6 +787,29 @@ test('authored pill copy padded with a non-breaking space still resolves', async
   assert.equal(result.dom.onOutput.hidden, false)
   assert.equal(result.dom.offOutput.hidden, true)
   assert.equal(result.warnings.length, 0)
+})
+
+test('Paid re-resolves the card when status pills and Edit arrive after the root', async () => {
+  const result = load({
+    cardMode: true,
+    authoredPills: true,
+    rootFirst: true,
+    initial: canonical(),
+  })
+  await settle()
+
+  result.revealSiblings()
+  await settle()
+
+  assert.equal(result.dom.onOutput.hidden, true)
+  assert.equal(result.dom.onOutput.style.display, 'none')
+  assert.equal(result.dom.offOutput.hidden, false)
+  assert.equal(result.dom.offOutput.style.display, '')
+  assert.equal(result.dom.onOutput.getAttribute('data-call-settings-output'), 'on')
+  assert.equal(result.dom.offOutput.getAttribute('data-call-settings-output'), 'off')
+
+  await result.dom.open.dispatch('click')
+  assert.equal(result.dom.formWrapper.style.display, 'flex')
 })
 
 test('an active legacy service can update to 60 minutes while readiness is stale', async () => {
