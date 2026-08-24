@@ -8,6 +8,14 @@ const vm = require('node:vm')
 
 const SOURCE = fs.readFileSync(path.join(__dirname, 'ms-code-field-link.js'), 'utf8')
 
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
 class Link {
   constructor(attributes) {
     this.attributes = new Map(Object.entries(attributes || {}))
@@ -58,6 +66,7 @@ function load(options) {
     },
   }
   context.window = context
+  context.memberReady = options.memberReady || Promise.resolve({})
   if (options.memberstack !== false) {
     context.$memberstackDom = options.memberstack || {
       getCurrentMember: async () => ({ data: options.currentMember || options.member || null }),
@@ -101,18 +110,30 @@ test('View Profile waits for live Memberstack identity and ignores a stale membe
   assert.equal(link.style.display, '')
 })
 
-test('View Profile stays hidden until delayed Memberstack readiness resolves', async () => {
+test('View Profile awaits memberReady before reading the live Memberstack identity', async () => {
   const link = new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' })
-  const result = load({ links: [link], member: { id: 'mem_stale123' }, memberstack: false })
+  const memberReady = deferred()
+  let currentMemberReads = 0
+  const result = load({
+    links: [link],
+    member: { id: 'mem_stale123' },
+    memberReady: memberReady.promise,
+    memberstack: {
+      getCurrentMember: async () => {
+        currentMemberReads += 1
+        return { data: { id: 'mem_live456' } }
+      },
+    },
+  })
 
   assert.equal(link.style.display, 'none')
-  assert.equal(result.requests.length, 0)
-  result.context.$memberstackDom = {
-    getCurrentMember: async () => ({ data: { id: 'mem_live456' } }),
-  }
-
-  await new Promise((resolve) => setTimeout(resolve, 125))
   await flush()
+  assert.equal(currentMemberReads, 0)
+  assert.equal(result.requests.length, 0)
+
+  memberReady.resolve({ id: 'mem_stale123' })
+  await flush()
+  assert.equal(currentMemberReads, 1)
   assert.equal(result.requests.length, 1)
   assert.deepEqual(JSON.parse(result.requests[0].init.body), { member_id: 'mem_live456' })
   assert.equal(link.href, '/hire/jp-dionisio')
@@ -137,6 +158,7 @@ test('View Profile stays hidden when no published V3 slug exists', async () => {
 
 test('other member-field links keep their existing external-link behavior', async () => {
   const link = new Link({ href: '#', 'ms-code-field-link': 'billing-url' })
+  link.style.display = 'none'
   const result = load({
     links: [link],
     member: {
@@ -150,7 +172,7 @@ test('other member-field links keep their existing external-link behavior', asyn
   assert.equal(link.href, 'https://account.example/settings')
   assert.equal(link.target, '_blank')
   assert.equal(link.rel, 'noopener noreferrer')
-  assert.equal(link.style.display, '')
+  assert.equal(link.style.display, 'none')
 })
 
 test('a real static profile link remains authoritative', async () => {

@@ -32,7 +32,6 @@
       element.href = url
       element.rel = 'noopener noreferrer'
       element.target = '_blank'
-      show(element)
     } catch (error) {
       hide(element)
     }
@@ -63,11 +62,21 @@
     })
   }
 
+  function waitForMemberstackReady() {
+    var ready = window.memberReady
+    if (!ready || typeof ready.then !== 'function') return Promise.resolve()
+    return Promise.resolve(ready).then(
+      function () {},
+      function () {},
+    )
+  }
+
   function bindV3Profile(element) {
     hide(element)
     if (typeof fetch !== 'function') return
 
-    waitForMemberstack()
+    waitForMemberstackReady()
+      .then(waitForMemberstack)
       .then(function (memberstack) {
         if (!memberstack) return null
         return memberstack.getCurrentMember()
