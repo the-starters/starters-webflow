@@ -82,9 +82,16 @@
     return value && typeof value.wire === 'function'
   }
 
-  function loadDashboardModule(spec) {
+  function loadDashboardModule(spec, onAvailable) {
+    let delivered = false
+    function deliver(value) {
+      if (!validDashboardModule(value) || delivered) return null
+      delivered = true
+      if (typeof onAvailable === 'function') onAvailable(value)
+      return value
+    }
     if (validDashboardModule(global[spec.globalName])) {
-      return Promise.resolve(global[spec.globalName])
+      return Promise.resolve(deliver(global[spec.globalName]))
     }
     if (!global.document || typeof global.document.createElement !== 'function') {
       return Promise.resolve(null)
@@ -95,13 +102,10 @@
       )
       let settled = false
       function finish() {
+        const dashboardModule = deliver(global[spec.globalName])
         if (settled) return
         settled = true
-        resolve(
-          validDashboardModule(global[spec.globalName])
-            ? global[spec.globalName]
-            : null,
-        )
+        resolve(dashboardModule)
       }
       if (!script) {
         script = global.document.createElement('script')
@@ -128,11 +132,28 @@
   }
 
   async function wireDashboardCallModules(moduleOptions) {
+    const dashboardModules = {
+      actions: null,
+      media: null,
+      payment: null,
+    }
+    const moduleKeys = ['actions', 'media', 'payment']
     try {
-      const dashboardModules = await loadDashboardCallModules()
-      if (dashboardModules.actions) dashboardModules.actions.wire(moduleOptions)
-      if (dashboardModules.media) dashboardModules.media.wire(moduleOptions)
-      if (dashboardModules.payment) dashboardModules.payment.wire(moduleOptions)
+      await Promise.all(
+        DASHBOARD_CALL_MODULES.map(function (spec, index) {
+          return loadDashboardModule(spec, function (dashboardModule) {
+            try {
+              dashboardModule.wire(moduleOptions)
+              dashboardModules[moduleKeys[index]] = dashboardModule
+            } catch (error) {
+              console.error(
+                '[dashboard-calls] optional module unavailable:',
+                error && error.message,
+              )
+            }
+          })
+        }),
+      )
       return dashboardModules
     } catch (error) {
       console.error(

@@ -174,6 +174,85 @@ test('optional module loading does not block dashboard boot', async () => {
   }
 })
 
+test('optional modules wire once when they load after the fallback', async () => {
+  const originalDocument = global.document
+  const originalSetTimeout = global.setTimeout
+  const originalActions = global.StartersDashboardCallActions
+  const originalMedia = global.StartersDashboardCallMedia
+  const originalPayment = global.StartersDashboardCallPayment
+  const scripts = []
+  const fallbacks = []
+  const wireCounts = { actions: 0, media: 0, payment: 0 }
+
+  global.document = {
+    createElement() {
+      const listeners = {}
+      const script = {
+        listeners,
+        addEventListener(name, listener) {
+          listeners[name] = listener
+        },
+        setAttribute() {},
+      }
+      scripts.push(script)
+      return script
+    },
+    head: {
+      appendChild() {},
+    },
+    querySelector() {
+      return null
+    },
+  }
+  global.setTimeout = function (callback) {
+    fallbacks.push(callback)
+    return fallbacks.length
+  }
+  delete global.StartersDashboardCallActions
+  delete global.StartersDashboardCallMedia
+  delete global.StartersDashboardCallPayment
+
+  try {
+    const wiring = dashboard.wireDashboardCallModules({ document: global.document })
+    fallbacks.forEach(function (fallback) {
+      fallback()
+    })
+    const loaded = await wiring
+    assert.deepEqual(loaded, { actions: null, media: null, payment: null })
+
+    global.StartersDashboardCallActions = {
+      wire() {
+        wireCounts.actions += 1
+      },
+    }
+    global.StartersDashboardCallMedia = {
+      wire() {
+        wireCounts.media += 1
+      },
+    }
+    global.StartersDashboardCallPayment = {
+      wire() {
+        wireCounts.payment += 1
+      },
+    }
+    scripts.forEach(function (script) {
+      script.listeners.load()
+      script.listeners.load()
+    })
+
+    assert.deepEqual(wireCounts, { actions: 1, media: 1, payment: 1 })
+    assert.equal(loaded.actions, global.StartersDashboardCallActions)
+    assert.equal(loaded.media, global.StartersDashboardCallMedia)
+    assert.equal(loaded.payment, global.StartersDashboardCallPayment)
+  } finally {
+    global.document = originalDocument
+    global.setTimeout = originalSetTimeout
+    global.StartersDashboardCallActions = originalActions
+    global.StartersDashboardCallMedia = originalMedia
+    global.StartersDashboardCallPayment = originalPayment
+  }
+})
+
 test('unsupported lifecycle and payment controls stay inactive', () => {
   const cancel = button('switch-cancel')
   const reschedule = button('reschedule')
