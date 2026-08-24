@@ -34,6 +34,9 @@ function load(options) {
   const requests = []
   const context = {
     URL,
+    Date,
+    Promise,
+    setTimeout,
     document: {
       addEventListener(type, listener) {
         listeners.set(type, listener)
@@ -54,10 +57,16 @@ function load(options) {
       return options.response || { ok: true, json: async () => ({ slug: 'jp-dionisio' }) }
     },
   }
+  context.window = context
+  if (options.memberstack !== false) {
+    context.$memberstackDom = options.memberstack || {
+      getCurrentMember: async () => ({ data: options.currentMember || options.member || null }),
+    }
+  }
 
   vm.runInNewContext(SOURCE, context)
   listeners.get('DOMContentLoaded')()
-  return { links, requests }
+  return { context, links, requests }
 }
 
 async function flush() {
@@ -65,7 +74,7 @@ async function flush() {
   await new Promise((resolve) => setImmediate(resolve))
 }
 
-test('View Profile resolves the current member to the internal V3 profile route', async () => {
+test('View Profile waits for live Memberstack identity and ignores a stale member cache', async () => {
   const link = new Link({
     href: '#',
     target: '_blank',
@@ -75,19 +84,38 @@ test('View Profile resolves the current member to the internal V3 profile route'
   const result = load({
     links: [link],
     member: {
-      id: 'mem_abc123',
+      id: 'mem_stale123',
       customFields: { 'freelancer-profile-url': 'https://hirethestarters.com/freelancers-v2/123' },
     },
+    currentMember: { id: 'mem_live456' },
   })
 
   assert.equal(link.style.display, 'none')
   await flush()
 
   assert.equal(result.requests.length, 1)
-  assert.deepEqual(JSON.parse(result.requests[0].init.body), { member_id: 'mem_abc123' })
+  assert.deepEqual(JSON.parse(result.requests[0].init.body), { member_id: 'mem_live456' })
   assert.equal(link.href, '/hire/jp-dionisio')
   assert.equal(link.target, '')
   assert.equal(link.rel, '')
+  assert.equal(link.style.display, '')
+})
+
+test('View Profile stays hidden until delayed Memberstack readiness resolves', async () => {
+  const link = new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' })
+  const result = load({ links: [link], member: { id: 'mem_stale123' }, memberstack: false })
+
+  assert.equal(link.style.display, 'none')
+  assert.equal(result.requests.length, 0)
+  result.context.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'mem_live456' } }),
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 125))
+  await flush()
+  assert.equal(result.requests.length, 1)
+  assert.deepEqual(JSON.parse(result.requests[0].init.body), { member_id: 'mem_live456' })
+  assert.equal(link.href, '/hire/jp-dionisio')
   assert.equal(link.style.display, '')
 })
 

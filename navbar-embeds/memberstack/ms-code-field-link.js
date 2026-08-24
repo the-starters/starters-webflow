@@ -6,6 +6,8 @@
   var SLUG_RESOLVER_URL =
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter/slug_by_memberstack'
   var MEMBER_ID_PATTERN = /^mem_(?:sb_)?[A-Za-z0-9]+$/
+  var MEMBERSTACK_TIMEOUT_MS = 2000
+  var MEMBERSTACK_POLL_MS = 100
 
   function hide(element) {
     element.style.display = 'none'
@@ -36,15 +38,51 @@
     }
   }
 
-  function bindV3Profile(element, memberId) {
-    hide(element)
-    if (!MEMBER_ID_PATTERN.test(memberId) || typeof fetch !== 'function') return
+  function memberFromResult(result) {
+    return result && (result.data || result.member || result)
+  }
 
-    fetch(SLUG_RESOLVER_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member_id: memberId }),
+  function waitForMemberstack() {
+    var startedAt = Date.now()
+
+    return new Promise(function (resolve) {
+      function check() {
+        var memberstack = window.$memberstackDom
+        if (memberstack && typeof memberstack.getCurrentMember === 'function') {
+          resolve(memberstack)
+          return
+        }
+        if (Date.now() - startedAt >= MEMBERSTACK_TIMEOUT_MS) {
+          resolve(null)
+          return
+        }
+        window.setTimeout(check, MEMBERSTACK_POLL_MS)
+      }
+
+      check()
     })
+  }
+
+  function bindV3Profile(element) {
+    hide(element)
+    if (typeof fetch !== 'function') return
+
+    waitForMemberstack()
+      .then(function (memberstack) {
+        if (!memberstack) return null
+        return memberstack.getCurrentMember()
+      })
+      .then(function (result) {
+        var member = memberFromResult(result)
+        var memberId = member && typeof member.id === 'string' ? member.id.trim() : ''
+        if (!MEMBER_ID_PATTERN.test(memberId)) return null
+
+        return fetch(SLUG_RESOLVER_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ member_id: memberId }),
+        })
+      })
       .then(function (response) {
         if (!response || response.ok === false) return null
         return response.json()
@@ -70,8 +108,6 @@
     } catch (error) {
       memberData = {}
     }
-    if (!memberData || !memberData.id) return
-
     document.querySelectorAll('[ms-code-field-link]').forEach(function (element) {
       // A real static link is authoritative. Only placeholders use member data.
       var staticHref = element.getAttribute('href')
@@ -81,10 +117,11 @@
       if (fieldKey === V3_PROFILE_FIELD) {
         // The Memberstack field still stores the legacy V2 profile URL. Resolve
         // the current Starter's canonical V3 CMS slug instead.
-        bindV3Profile(element, String(memberData.id).trim())
+        bindV3Profile(element)
         return
       }
 
+      if (!memberData || !memberData.id) return
       bindLegacyField(element, memberData, fieldKey)
     })
   })
