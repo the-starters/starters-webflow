@@ -3,10 +3,10 @@
  *
  * Webflow owns the detached shared modal and all form markup. This controller
  * projects the selected Brand into the authored counterparty rail, binds the
- * native Brand select to Xano-authorized options, replaces the authored generic
- * Service 1/2/3 slots with the authenticated Starter's canonical Xano service
- * names, reuses the shared commercial serializer from v3/project-form.js, and
- * creates the canonical project.
+ * native Brand select to Xano-authorized options, removes the authored generic
+ * Service 1/2/3 slots, appends the authenticated Starter's canonical Xano
+ * service names, reuses the shared commercial serializer from
+ * v3/project-form.js, and creates the canonical project.
  */
 ;(function (global) {
   'use strict'
@@ -138,9 +138,9 @@
       if (!id || seen[id]) return items
       var company = clean(raw && (raw.company_name || raw.counterparty_label || raw.label))
       var manager = clean(raw && (raw.hiring_manager_name || raw.full_name || raw.manager_name))
-      if (!company || !manager) return items
+      if (!company) return items
       var label = company
-      if (company.toLowerCase() !== manager.toLowerCase()) {
+      if (manager && company.toLowerCase() !== manager.toLowerCase()) {
         label = company + ' — ' + manager
       }
       seen[id] = true

@@ -40,6 +40,9 @@ projection:
 }
 ```
 
+`hiring_manager_name` may be empty. The company name remains the visible Party
+fallback in that state.
+
 Do not return message text or use the browser's Brand value as authority.
 
 `POST projects/submit/v3` accepts the stable `brand_id`, the shared commercial
@@ -133,8 +136,8 @@ The controller binds these existing elements:
 - stable selected Brand ID: `#brand-contract`;
 - Brand display fields: `#Company-Name` and `#Hiring-Manager-Name` (legacy
   lowercase Starter IDs remain supported during rollback). The selected
-  option's `company_name` fills Company and its `hiring_manager_name` full name
-  fills Hiring Manager;
+  option's `company_name` fills Company. Its `hiring_manager_name` fills Hiring
+  Manager when present; otherwise Hiring Manager remains empty;
 - the Brand email input is disabled and hidden because the options endpoint does
   not expose it;
 - Service select: the authored `select[name="Services"]` (also matched by
@@ -146,9 +149,10 @@ The controller binds these existing elements:
   appends each name as both the submitted option value and its visible label. It
   rewrites option data only; it does not replace the select or the form
   structure;
-- counterparty rail: the selected Brand member's full name fills the existing
-  `full_name` binding, and the Brand company fills `professional_headline`.
-  Eligible options must include both values. The controller clears and hides
+- counterparty rail: the selected Brand manager's full name, when present,
+  fills the existing `full_name` binding, and the Brand company fills
+  `professional_headline`.
+  Eligible options must include a company name. The controller clears and hides
   the copied Starter photo, role, role list, and profile information. Existing
   `element` attributes remain supported; new markup should use
   `data-project-bind="starter.<field>"`;

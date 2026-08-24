@@ -867,6 +867,24 @@ test('selected Brand personalizes Party copy and clearing restores neutral copy'
   ])
 })
 
+test('an eligible Brand without a manager name uses its company for Party copy', async () => {
+  const { api, calls, context, form, window } = load({
+    counterparties: [{ counterparty_id: 13, company_name: 'Northwind Coffee', hiring_manager_name: '   ' }],
+  })
+
+  const options = await api.loadOptions(form, window)
+
+  assert.equal(calls.options.length, 1)
+  assert.equal(options.length, 1)
+  assert.equal(form.fields.select.value, '13')
+  assert.equal(form.fields.brandId.value, '13')
+  assert.equal(form.fields.select.options[1].textContent, 'Northwind Coffee')
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Northwind Coffee',
+    'Message Northwind Coffee',
+  ])
+})
+
 test('prepares Starter-specific copy and dashboard destination without changing native markup', () => {
   const { api, context, form } = load({ noDocument: true })
 
