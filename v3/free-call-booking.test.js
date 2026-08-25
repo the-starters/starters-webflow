@@ -456,7 +456,7 @@ test('Free-only modal close resets fields and ignores stale booking success', as
   })
 })
 
-test('Free reopen reuses the in-flight canonical booking attempt', async () => {
+test('Free reopen blocks a changed command while one is in flight', async () => {
   const fixture = chooserFixture()
   let resolveBooking
   const booking = bookingApiFixture({
@@ -478,13 +478,15 @@ test('Free reopen reuses the in-flight canonical booking attempt', async () => {
     assert.equal(fixture.topic.value, '')
     assert.equal(fixture.context.value, '')
     await fixture.cta.onclick(event())
-    const current = booking.state.mounts[1].onConfirm(slot)
-    await new Promise((resolve) => setImmediate(resolve))
+    await assert.rejects(
+      booking.state.mounts[1].onConfirm(slot),
+      /still being processed/i,
+    )
     assert.equal(booking.state.attempts, 1)
     assert.equal(booking.state.runs, 1)
     resolveBooking()
-    await Promise.all([stale, current])
-    assert.equal(fixture.successStep.style.display, 'flex')
+    await stale
+    assert.equal(fixture.successStep.style.display, 'none')
   })
 })
 

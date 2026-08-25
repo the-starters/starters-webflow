@@ -1720,7 +1720,7 @@ test('closing card setup clears the selected slot before a later save', async ()
   }
 })
 
-test('a reset booking reuses the in-flight canonical attempt', async () => {
+test('a reset booking blocks a changed command while one is in flight', async () => {
   let bookingCount = 0
   let resolveStaleBooking
   const fixture = makePaidLifecycleFixture(async (url) => {
@@ -1745,13 +1745,13 @@ test('a reset booking reuses the in-flight canonical attempt', async () => {
     assert.equal(fixture.topic.value, '')
     assert.equal(fixture.context.value, '')
     await fixture.paid.onclick({ preventDefault() {} })
-    const current = fixture.calendars[1].options.onConfirm(slot)
-    await new Promise((resolve) => setImmediate(resolve))
+    await assert.rejects(
+      fixture.calendars[1].options.onConfirm(slot),
+      /still being processed/i,
+    )
     assert.equal(bookingCount, 1)
     resolveStaleBooking()
-    await Promise.all([stale, current])
-    assert.equal(fixture.steps[1].style.display, 'flex')
-    fixture.mainClose.click()
+    await stale
     assert.equal(fixture.steps[0].style.display, 'flex')
     assert.equal(fixture.steps[1].style.display, 'none')
   } finally {

@@ -495,39 +495,41 @@
                 !bookingSurfaceOwnership.owns(container, generation) ||
                 bookingLocks.has(generation)
               ) return
+              let guests
+              try {
+                guests = guestUi.read([
+                  current.brandEmail,
+                  current.starterEmail,
+                ])
+                setGuestError(current.popup, '')
+              } catch (error) {
+                setGuestError(current.popup, error && error.message)
+                throw error
+              }
+              const input = {
+                starter_slug: current.starterSlug,
+                config_id: current.configId,
+                start: slot.start,
+                end: slot.end,
+                timezone: slot.timezone,
+                topic: fieldValue(current.popup, '[name="topic"], [booking-topic]'),
+                context: fieldValue(current.popup, '[name="context"], [booking-context]'),
+                guest_emails: guests,
+                brand_email: current.brandEmail,
+                starter_email: current.starterEmail,
+              }
+              const fingerprint = current.bookingApi.bookingRequestFingerprint(input)
               let entry = activeBookingEntry
+              if (entry && entry.fingerprint !== fingerprint) {
+                throw new Error('Another booking request is still being processed')
+              }
               if (!entry) {
-                let guests
-                try {
-                  guests = guestUi.read([
-                    current.brandEmail,
-                    current.starterEmail,
-                  ])
-                  setGuestError(current.popup, '')
-                } catch (error) {
-                  setGuestError(current.popup, error && error.message)
-                  throw error
-                }
-                const input = {
-                  starter_slug: current.starterSlug,
-                  config_id: current.configId,
-                  start: slot.start,
-                  end: slot.end,
-                  timezone: slot.timezone,
-                  topic: fieldValue(current.popup, '[name="topic"], [booking-topic]'),
-                  context: fieldValue(current.popup, '[name="context"], [booking-context]'),
-                  guest_emails: guests,
-                  brand_email: current.brandEmail,
-                  starter_email: current.starterEmail,
-                }
-                const fingerprint = current.bookingApi.bookingRequestFingerprint(input)
                 entry = bookingAttempts.get(fingerprint)
                 if (!entry) {
                   entry = {
                     attempt: current.bookingApi.createBookingAttempt(input),
                     fingerprint,
                     inFlight: null,
-                    result: null,
                   }
                   bookingAttempts.set(fingerprint, entry)
                 }
@@ -535,26 +537,22 @@
               }
               bookingLocks.add(generation)
               try {
-                if (!entry.inFlight && !entry.result) {
+                if (!entry.inFlight) {
                   entry.inFlight = entry.attempt.run().then(function (result) {
                     if (!canonicalBookingId(result)) {
                       throw new Error('The canonical booking response is incomplete')
                     }
-                    entry.result = result
+                    if (bookingAttempts.get(entry.fingerprint) === entry) {
+                      bookingAttempts.delete(entry.fingerprint)
+                    }
                     return result
-                  }).catch(function (error) {
-                    if (activeBookingEntry === entry) activeBookingEntry = null
-                    throw error
                   }).finally(function () {
+                    if (activeBookingEntry === entry) activeBookingEntry = null
                     entry.inFlight = null
                   })
                 }
-                const result = entry.result || await entry.inFlight
+                const result = await entry.inFlight
                 if (!bookingSurfaceOwnership.owns(container, generation)) return result
-                if (activeBookingEntry === entry) activeBookingEntry = null
-                if (bookingAttempts.get(entry.fingerprint) === entry) {
-                  bookingAttempts.delete(entry.fingerprint)
-                }
                 showFreeSuccess(current.popup)
                 return result
               } finally {

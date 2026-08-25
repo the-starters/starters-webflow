@@ -968,38 +968,40 @@
         confirmation !== paidConfirmationSequence ||
         bookingLocks.has(generation)
       ) return
+      let guestEmails
+      try {
+        guestEmails = guestUiEnabled
+          ? readGuestEmails(popup, [settings.brandEmail, settings.starterEmail])
+          : []
+        setGuestError('')
+      } catch (error) {
+        setGuestError(error && error.message)
+        throw error
+      }
+      const bookingInput = {
+        starter_slug: settings.starterSlug,
+        config_id: config.config_id,
+        start: slot.start,
+        end: slot.end,
+        timezone: slot.timezone,
+        topic: fieldValue('[name="topic"], [booking-topic]'),
+        context: fieldValue('[name="context"], [booking-context]'),
+        guest_emails: guestEmails,
+        brand_email: settings.brandEmail,
+        starter_email: settings.starterEmail,
+      }
+      const fingerprint = bookingRequestFingerprint(bookingInput)
       let entry = activeBookingEntry
+      if (entry && entry.fingerprint !== fingerprint) {
+        throw new Error('Another booking request is still being processed')
+      }
       if (!entry) {
-        let guestEmails
-        try {
-          guestEmails = guestUiEnabled
-            ? readGuestEmails(popup, [settings.brandEmail, settings.starterEmail])
-            : []
-          setGuestError('')
-        } catch (error) {
-          setGuestError(error && error.message)
-          throw error
-        }
-        const bookingInput = {
-          starter_slug: settings.starterSlug,
-          config_id: config.config_id,
-          start: slot.start,
-          end: slot.end,
-          timezone: slot.timezone,
-          topic: fieldValue('[name="topic"], [booking-topic]'),
-          context: fieldValue('[name="context"], [booking-context]'),
-          guest_emails: guestEmails,
-          brand_email: settings.brandEmail,
-          starter_email: settings.starterEmail,
-        }
-        const fingerprint = bookingRequestFingerprint(bookingInput)
         entry = bookingAttempts.get(fingerprint)
         if (!entry) {
           entry = {
             attempt: createBookingAttempt(bookingInput),
             fingerprint,
             inFlight: null,
-            result: null,
           }
           bookingAttempts.set(fingerprint, entry)
         }
@@ -1007,28 +1009,24 @@
       }
       bookingLocks.add(generation)
       try {
-        if (!entry.inFlight && !entry.result) {
+        if (!entry.inFlight) {
           entry.inFlight = entry.attempt.run().then(function (result) {
-            entry.result = result
+            if (bookingAttempts.get(entry.fingerprint) === entry) {
+              bookingAttempts.delete(entry.fingerprint)
+            }
             return result
-          }).catch(function (error) {
-            if (activeBookingEntry === entry) activeBookingEntry = null
-            throw error
           }).finally(function () {
+            if (activeBookingEntry === entry) activeBookingEntry = null
             entry.inFlight = null
           })
         }
-        const result = entry.result || await entry.inFlight
+        const result = await entry.inFlight
         if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return result
         resetGuestUi()
         setGuestUiVisible(false)
         pendingPaidSlot = null
         pendingPaidSlotGeneration = 0
         pendingPaidConfirmation = 0
-        if (activeBookingEntry === entry) activeBookingEntry = null
-        if (bookingAttempts.get(entry.fingerprint) === entry) {
-          bookingAttempts.delete(entry.fingerprint)
-        }
         showPaidSuccess()
         return result
       } finally {
