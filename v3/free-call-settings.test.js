@@ -657,6 +657,36 @@ test('Free description loads from canonical profile intent and is sent with the 
   assert.equal(result.dom.title.readOnly, false)
 })
 
+test('a stale Free description readback leaves the editor open and reports an error', async () => {
+  const result = load({
+    initial: canonical({
+      public_description: 'Old description',
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ setState }) => {
+        setState(canonical({
+          public_description: 'Old description',
+          services: [service({ revision: 5 })],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+  await result.dom.open.dispatch('click')
+  result.dom.title.value = 'New description'
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
+  assert.match(result.dom.status.textContent, /description did not match canonical readback/)
+  assert.equal(result.dom.panel.style.display, 'flex')
+  assert.equal(result.events.some((event) => event.type === 'starterFreeCallWriteSuccess'), false)
+})
+
 test('Free description longer than 60 characters fails before any write', async () => {
   const result = load({ initial: canonical() })
   await settle()

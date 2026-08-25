@@ -138,8 +138,8 @@ calls, reminders, and email canaries stay under the separate-approval rule owned
 
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion boot, the
 root-first/sibling-later card recovery, the published `consulting-calls-free` hydration,
-Free/Paid card isolation in both directions, the three-field upsert and guarded disable payloads,
-the in-flight double-Update dedup, the
+Free/Paid card isolation in both directions, the four-field upsert and guarded disable payloads,
+the canonical description and fixed-product readbacks, the in-flight double-Update dedup, the
 off-contract duration or price paint, the expired-session fail-closed writes, the authored
 status-pill resolution and its drifted-copy diagnostic, and the `w--redirected-checked` radio sync
 are executable regressions in `v3/free-call-settings.test.js`. The remaining legs need a live
@@ -162,8 +162,10 @@ order, after the PR merges:
 3. With both cards present, confirm isolation by hand in both directions: Edit, Cancel, and Update
    on the Free card must never move the Paid card's controls, and the reverse, and each card must
    keep its own editor-open attribute.
-4. On the Free card, pick Yes and click Update by hand. The request body must carry only `config_id`,
-   `expected_revision`, and `idempotency_key`, and the card must reach the canonical readback state
+4. On the Free card, enter a distinct description, pick Yes, and click Update by hand. The request
+   body must carry only `config_id`, `description`, `expected_revision`, and `idempotency_key`.
+   Confirm the canonical readback returns the submitted `public_description`, the public Webflow
+   profile and Algolia record show the same description, and the card reaches the canonical state
    with `data-free-call-duration-current="30"` and `data-free-call-price-cents="0"`.
 5. On a TEST fixture stored at a duration other than `30` or a price other than `0`, confirm the
    card reads `data-free-call-bookable="false"` and shows the real stored price, and that an Update

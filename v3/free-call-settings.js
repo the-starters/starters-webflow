@@ -590,6 +590,9 @@
       if (!saved || !validateService(saved)) {
         throw new Error('Free-call settings did not match canonical 30-minute/$0 readback')
       }
+      if (String(canonical.public_description || '') !== description) {
+        throw new Error('Free-call description did not match canonical readback')
+      }
       if (!currentRender(version, memberId)) return null
       render(canonical)
       emit('starterFreeCallWriteSuccess', { action: 'upsert', configId: saved.config_id })
