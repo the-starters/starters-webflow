@@ -28,8 +28,7 @@ in [README.md](README.md) and in the root
 - [x] Show the pending-review confirmation after a Work Highlight update, keep the
       approved version described as live, and restore the shared generic modal copy
       after the modal closes.
-- [x] Keep an image-picker Escape from clearing the selected Work Highlight behind
-      a still-visible edit modal, and close any stale restored modal on `pageshow`.
+- [x] Preserve the [Work Highlight modal lifecycle](README.md#work-highlight-modal-lifecycle).
 
 ## 🧪 Automated evidence
 

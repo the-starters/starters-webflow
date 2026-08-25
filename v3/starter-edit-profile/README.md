@@ -24,6 +24,15 @@ Work Highlight updates enter moderation. After an update succeeds, the portfolio
 controller replaces the shared generic live-message with a pending-review
 confirmation, then restores the shared modal copy when it closes.
 
+### Work Highlight modal lifecycle
+
+While the edit modal is visible, it retains the selected Work Highlight and its
+existing image and video previews. A document-level `Escape` closes only the
+remove and notification modals; it must not close or reset the editor because an
+image picker can send the same key event. A `pageshow` closes the edit modal only
+when the browser restored it without an active Work Highlight. Opening or filling
+an editor cancels any delayed reset from an earlier close.
+
 The Edit portfolio controllers are the only Work Highlights owners on
 `/starter-edit-profile`. The Build portfolio controllers fail closed outside the
 two exact Build routes, even if an obsolete nested Webflow component still loads
