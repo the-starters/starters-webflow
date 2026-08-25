@@ -55,12 +55,12 @@ function makeDocument(elements, body) {
 }
 
 function run(elements, options = {}) {
-  const { hostname = PROD_HOST, language = 'en-US', body = null, context: reuse } = options
+  const { hostname = PROD_HOST, language = 'en-US', body = null, debug = false } = options
   const warnings = []
   const observers = []
 
-  const context = reuse || {
-    window: {},
+  const context = {
+    window: debug ? { STARTERS_DEBUG: true } : {},
     location: { hostname },
     navigator: { language, languages: [language] },
     console: {
@@ -72,11 +72,10 @@ function run(elements, options = {}) {
     },
   }
   context.document = makeDocument(elements, body)
-  if (reuse) context.__warnings = context.__warnings || []
 
   vm.createContext(context)
   vm.runInContext(source, context)
-  return { context, warnings, observers, elements }
+  return { context, warnings, observers }
 }
 
 /** Format one value through a fresh page and return the resulting text. */
@@ -238,17 +237,7 @@ test('production stays silent even when a value cannot be formatted', () => {
 })
 
 test('STARTERS_DEBUG opts a production page into the warnings', () => {
-  const el = bound('not a number')
-  const warnings = []
-  const context = {
-    window: { STARTERS_DEBUG: true },
-    location: { hostname: PROD_HOST },
-    navigator: { language: 'en-US', languages: ['en-US'] },
-    console: { warn: (...args) => warnings.push(args.map((a) => String(a)).join(' ')) },
-  }
-  context.document = makeDocument([el], null)
-  vm.createContext(context)
-  vm.runInContext(source, context)
+  const { warnings } = run([bound('not a number')], { hostname: PROD_HOST, debug: true })
   assert.ok(warnings.length > 0, 'expected opt-in warnings on production')
 })
 
@@ -287,6 +276,17 @@ test('nodes added after load are formatted by the observer', () => {
   }
   observers[0]([{ addedNodes: [host] }])
   assert.equal(late.textContent, '12.3K')
+})
+
+test('a refusal says why, so callers can tell the cases apart', () => {
+  // `reason` is documented public API on the returned object.
+  const { context } = run([])
+  const millify = context.window.__startersMillify
+  const opts = { precision: 1, units: ['', 'K', 'M'], space: false, lowercase: false }
+  assert.equal(millify('nope', opts).reason, 'parse')
+  assert.equal(millify('9007199254740992', opts).reason, 'range')
+  assert.equal(millify('999999999', opts).reason, 'units')
+  assert.equal(millify('5000', { ...opts, max: 1000 }).reason, 'max')
 })
 
 test('the pure formatter is exposed for console use', () => {

@@ -54,7 +54,7 @@
   // graceful fallback (caller leaves the element's text untouched).
   function millifyCore(input, opts) {
     var num = parseFloat(input);
-    if (!isFinite(num)) return fail('parse');
+    if (!Number.isFinite(num)) return fail('parse');
     // Values beyond the safe integer range are ambiguous — leave them alone.
     if (num > MAX || num < MIN) return fail('range');
 
