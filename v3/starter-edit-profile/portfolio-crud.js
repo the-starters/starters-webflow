@@ -46,6 +46,12 @@ function createStarterEditPortfolioSuccessController(options) {
   return { showForSubmit };
 }
 
+function createStarterEditPortfolioModalLifecycle(options) {
+  options.eventTarget.addEventListener('pageshow', function () {
+    if (options.isModalOpen() && !options.hasActivePortfolio()) options.closeModal();
+  });
+}
+
 async function commitStarterEditPortfolioDrafts(options) {
   for (const draft of options.createDrafts) {
     await options.commitCreateDraft(draft);
@@ -92,7 +98,8 @@ async function commitStarterEditPortfolioDrafts(options) {
         pendingCreateDrafts = [],
         pendingUpdateDrafts = new Map(),
         pendingDeleteDraftIds = new Set(),
-        autoOpenedCreateDropdown = false;
+        autoOpenedCreateDropdown = false,
+        editFormResetTimer = null;
 
       function getAssetUrl(value) {
         if (!value) return '';
@@ -474,9 +481,16 @@ async function commitStarterEditPortfolioDrafts(options) {
         );
       }
 
+      function cancelEditFormReset() {
+        if (editFormResetTimer === null) return;
+        clearTimeout(editFormResetTimer);
+        editFormResetTimer = null;
+      }
+
       function openModal() {
         if (!editModal) return;
 
+        cancelEditFormReset();
         editModalTrigger.dispatchEvent(new Event('click', { bubbles: true }));
       }
 
@@ -486,7 +500,10 @@ async function commitStarterEditPortfolioDrafts(options) {
         editModalClose.dispatchEvent(new Event('click', { bubbles: true }));
 
         resetEditDraftState();
-        setTimeout(() => {
+        cancelEditFormReset();
+        editFormResetTimer = setTimeout(() => {
+          editFormResetTimer = null;
+          if (editModal.open || activePortfolio) return;
           if (editForm) editForm.reset();
         }, 300);
       }
@@ -520,6 +537,17 @@ async function commitStarterEditPortfolioDrafts(options) {
 
         notifyModalClose.dispatchEvent(new Event('click', { bubbles: true }));
       }
+
+      createStarterEditPortfolioModalLifecycle({
+        eventTarget: window,
+        hasActivePortfolio: function () {
+          return Boolean(activePortfolio);
+        },
+        isModalOpen: function () {
+          return Boolean(editModal && editModal.open);
+        },
+        closeModal: closeModal,
+      });
 
       function updateCreateSubmitState() {
         if (!createSubmit) return;
@@ -720,6 +748,7 @@ async function commitStarterEditPortfolioDrafts(options) {
       }
 
       async function fillEditForm(portfolio) {
+        cancelEditFormReset();
         activePortfolio = portfolio;
 
         if (portfolio && portfolio.pending_type === 'create') {
@@ -1226,7 +1255,6 @@ async function commitStarterEditPortfolioDrafts(options) {
         if (event.key !== 'Escape') return;
         closeNotifyModal();
         closeRemoveModal();
-        closeModal();
       });
 
       if (imagesInp) {
@@ -1382,7 +1410,7 @@ async function commitStarterEditPortfolioDrafts(options) {
       if (editSubmit) editSubmit.addEventListener('click', handlePortfolioUpdate);
       if (portfolioSubmit) portfolioSubmit.addEventListener('click', handlePortfolioSubmitAll);
 
-      closeModal();
+      if (editModal && editModal.open) closeModal();
       closeNotifyModal();
       try {
         await renderPortfolios();
