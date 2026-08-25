@@ -142,7 +142,10 @@
     var max = null;
     var mAttr = el.getAttribute('data-millify-max');
     if (mAttr !== null && mAttr.trim() !== '') {
-      var m = Number(mAttr);
+      // Through sanitize() for the same reason the value path uses it: an author
+      // writing "1,000,000" is writing the number the CMS shows them, and a bare
+      // Number() would make that NaN and drop the ceiling silently in production.
+      var m = Number(sanitize(mAttr));
       if (isFinite(m) && m > 0) {
         max = m;
       } else {
