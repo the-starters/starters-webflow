@@ -57,7 +57,7 @@
           for (const uniqueId of Object.keys(selectedCompanies)) {
             const company = selectedCompanies[uniqueId];
             if (company.name) {
-              renderNewTag(company.name, company.domain || '', null, uniqueId);
+              renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '');
             }
           }
         }
@@ -70,7 +70,8 @@
       qsa("[also-worked-tag]", tagWrapper).forEach(function (tag) {
         companies[tag.dataset.uniqueId] = {
           "name": qs("[also-worked-tag-name]", tag).textContent,
-          "domain": qs("[also-worked-tag-domain]", tag).textContent
+          "domain": qs("[also-worked-tag-domain]", tag).textContent,
+          "logo_url": tag.dataset.logoUrl || ""
         }
       });
 
@@ -111,7 +112,7 @@
         const typedCompany = input.value.trim();
 
         dropdown.innerHTML = `
-          <button class="company-search-item ${isCompanyAdded({ name: typedCompany }) ? "is-added" : ""}" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="">
+          <button class="company-search-item ${isCompanyAdded({ name: typedCompany }) ? "is-added" : ""}" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="">
               <img class="company-search-logo" src="${PLACEHOLDER_LOGO_URL}" alt="">
               <span class="company-search-text">
                   <span class="company-search-name">${escapeHtml(typedCompany || 'Company not found')}</span>
@@ -136,7 +137,7 @@
       dropdown.innerHTML = results
         .map(function (item) {
           return `
-            <button class="company-search-item ${isCompanyAdded(item) ? "is-added" : ""}" type="button" data-name="${escapeHtml(item.name)}" data-domain="${escapeHtml(item.domain)}">
+            <button class="company-search-item ${isCompanyAdded(item) ? "is-added" : ""}" type="button" data-name="${escapeHtml(item.name)}" data-domain="${escapeHtml(item.domain)}" data-logo-url="${escapeHtml(item.logo_url || '')}">
                 <img class="company-search-logo" src="${escapeHtml(item.logo_url || PLACEHOLDER_LOGO_URL)}" alt="">
                 <span class="company-search-text">
                     <span class="company-search-name">${escapeHtml(item.name)}</span>
@@ -251,13 +252,14 @@
       }, 300);
     }
 
-    function renderNewTag(selectedName, selectedDomain, item, uniqueId) {
+    function renderNewTag(selectedName, selectedDomain, item, uniqueId, selectedLogoUrl = '') {
       if (!tagTemplate || !tagWrapper) return;
       if (!selectedName) return;
 
       const newTag = tagTemplate.cloneNode(true);
       newTag.classList.remove('is_template');
       newTag.dataset.uniqueId = uniqueId || crypto.randomUUID();
+      newTag.dataset.logoUrl = selectedLogoUrl || item?.dataset?.logoUrl || '';
       qs('[also-worked-tag-name]', newTag).textContent = selectedName;
       qs('[also-worked-tag-domain]', newTag).textContent = selectedDomain;
       qs('[also-worked-tag-delete]', newTag).addEventListener('click', function () {
@@ -313,10 +315,11 @@
       selectingCompany = true;
       const selectedName = item.dataset.name;
       const selectedDomain = item.dataset.domain || '';
+      const selectedLogoUrl = item.dataset.logoUrl || '';
       const outOfCapacity = isMaxCompanies();
 
       if (isMulti && !outOfCapacity) {
-        renderNewTag(selectedName, selectedDomain, item);
+        renderNewTag(selectedName, selectedDomain, item, undefined, selectedLogoUrl);
 
       } else {
         input.value = selectedName;
@@ -374,4 +377,3 @@
       if (!searchGroup.contains(event.target)) closeDropdown();
     });
   }
-

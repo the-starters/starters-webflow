@@ -146,13 +146,14 @@
       }
     },
     "v3/starter-edit-profile/canonical-profile-loader.js": {
-      "candidateCharacters": 18899,
-      "candidateSha256": "a3b5fc307df29dff801a2260a86b0c560752e56d7e71933569104d2f672741f0",
+      "candidateCharacters": 19061,
+      "candidateSha256": "02b85dcb2ba10f3cbb115e96fb48dce70c078f6956e90ab2edd181977156e592",
       "transformation": {
-        "kind": "whitespace_plus_idempotency_guard",
+        "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "canonicalProfileLoader",
         "restoreTrailingWhitespace": {},
-        "terminalNewlinesRemoved": 0
+        "terminalNewlinesRemoved": 0,
+        "liveCaptureAsset": "v3/profile-form/edit-canonical-profile-loader-published.capture.txt"
       }
     },
     "v3/build-profile/draft-state.js": {

@@ -12,9 +12,9 @@ newlines, and deferred controllers add one-time browser guards. The manifest rec
 live identities and candidate identities, plus the exact inverse transformation used to reconstruct
 each captured live body.
 
-Two candidates no longer reconstruct to their published bodies. `draft-state.js` carries the
-member-bound hydration fix, and `submit-writer.js` carries the profile-save and pending-photo commit
-gate. Their transformations are recorded as
+Three candidates no longer reconstruct to their published bodies. `canonical-profile-loader.js`
+carries company logo hydration, `draft-state.js` carries the member-bound hydration fix, and
+`submit-writer.js` carries the profile-save and pending-photo commit gate. Their transformations are recorded as
 `whitespace_plus_idempotency_guard_plus_behavior_change` and name immutable published-body captures.
 Tests still pin each candidate length and SHA-256, prove the published length, body hash, and
 complete-embed hash from its capture, and fail if a declared change stops diverging from the published
@@ -77,6 +77,22 @@ country/state/city transitions, local-versus-member draft precedence, blank memb
 hydration from the signed-in member and its write-back into the synchronized draft, canonical edit
 hydration, the
 normalized final Build Profile payload, and that the controllers do not create a form element.
+
+## Company selection logo persistence
+
+The Build Profile and Starter Edit Profile company autocomplete controllers
+serialize each selected company as `name`, `domain`, and `logo_url` in the
+authored `also-worked-with` hidden input. A platform company result keeps its
+`logo_url` through selection, draft hydration, tag rendering, and later
+serialization. Starter Edit Profile canonical hydration accepts the API's
+`company_logo_url` field and the compatible `logo_url` field. A manually typed
+company has an empty `logo_url`.
+
+Run the shared contract coverage with:
+
+```sh
+node --test v3/profile-form/company-autocomplete-logo-hydration.test.js
+```
 
 ## Company experience date hydration
 
