@@ -1816,12 +1816,103 @@ test('a failed Paid install keeps the installed Free chooser option selectable',
   assert.equal(page.bookingButtonWrapper.style.display, 'flex')
 })
 
-test('a Paid service card opens the authored Free/Paid chooser instead of the retired direct scheduler', async () => {
+test('the generic Book Call button keeps the authored Free/Paid chooser entry', async () => {
+  const page = makePage()
+  let chooserClicks = 0
+  let freeClicks = 0
+  page.bookingButton.click = () => { chooserClicks += 1 }
+  page.freeModalCta.click = () => { freeClicks += 1 }
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    freeController: {
+      getStarterByMemberId: async () => ({
+        nylas_grant_id: 'grant_prod',
+        nylas_grant_email: 'starter@example.com',
+      }),
+      getConfigs: async () => [{
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+      }],
+      installFreeBookingController: () => {
+        page.freeModalCta.setAttribute('data-free-call-v3', 'ready')
+        return true
+      },
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), 'popup-booking-main')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+  page.bookingButton.click()
+  assert.equal(chooserClicks, 1)
+  assert.equal(freeClicks, 0)
+})
+
+test('a Free service card skips the chooser and clicks only the ready Free CTA', async () => {
+  const page = makePage()
+  let chooserClicks = 0
+  let freeClicks = 0
+  page.bookingButton.click = () => { chooserClicks += 1 }
+  page.freeModalCta.click = () => { freeClicks += 1 }
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    freeController: {
+      getStarterByMemberId: async () => ({
+        nylas_grant_id: 'grant_prod',
+        nylas_grant_email: 'starter@example.com',
+      }),
+      getConfigs: async () => [{
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+      }],
+      installFreeBookingController: () => {
+        page.freeModalCta.setAttribute('data-free-call-v3', 'ready')
+        return true
+      },
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.equal(freeCard.getAttribute('booking-popup-open'), null)
+  assert.equal(freeCard.getAttribute('data-modal-trigger'), null)
+  assert.equal(freeCard.getAttribute('data-call-service-direct'), 'ready')
+  freeCard.listeners.click[0]({
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  })
+  assert.equal(freeClicks, 1)
+  assert.equal(chooserClicks, 0)
+})
+
+test('a Paid service card skips the chooser and clicks only the ready Paid CTA', async () => {
   // Production Webflow markup identifies this card with has-connection="paid"
   // and does not author data-type on the service card itself.
   const page = makePage({ includeFreeCard: false, includeCallDataType: false })
   let chooserClicks = 0
+  let paidClicks = 0
   page.bookingButton.click = () => { chooserClicks += 1 }
+  page.paidModalCta.click = () => { paidClicks += 1 }
   const context = makeContext({
     page,
     member: {
@@ -1844,7 +1935,12 @@ test('a Paid service card opens the authored Free/Paid chooser instead of the re
       price_cents: 100,
       duration: 60,
     }],
-    paidController: { installPaidBookingController: () => true },
+    paidController: {
+      installPaidBookingController: () => {
+        page.paidModalCta.setAttribute('data-paid-call-v3', 'ready')
+        return true
+      },
+    },
   })
   vm.createContext(context)
   vm.runInContext(source, context)
@@ -1854,7 +1950,7 @@ test('a Paid service card opens the authored Free/Paid chooser instead of the re
   assert.equal(paidCard.getAttribute('data-type'), null)
   assert.equal(paidCard.getAttribute('booking-popup-open'), null)
   assert.equal(paidCard.getAttribute('data-modal-trigger'), null)
-  assert.equal(paidCard.getAttribute('data-call-service-chooser'), 'ready')
+  assert.equal(paidCard.getAttribute('data-call-service-direct'), 'ready')
   assert.equal(paidCard.listeners.click.length, 1)
 
   let prevented = 0
@@ -1865,12 +1961,14 @@ test('a Paid service card opens the authored Free/Paid chooser instead of the re
   })
   assert.equal(prevented, 1)
   assert.equal(stopped, 1)
-  assert.equal(chooserClicks, 1)
+  assert.equal(paidClicks, 1)
+  assert.equal(chooserClicks, 0)
 })
 
-test('a migrated profile without the legacy Book Call button opens the native chooser through Lumos', async () => {
+test('a migrated profile without the legacy Book Call button still uses the direct Free CTA', async () => {
   const page = makePage({ includeBookingButton: false })
-  const opened = []
+  let freeClicks = 0
+  page.freeModalCta.click = () => { freeClicks += 1 }
   const context = makeContext({
     page,
     member: {
@@ -1893,12 +1991,6 @@ test('a migrated profile without the legacy Book Call button opens the native ch
           data_environment: 'production',
         }],
   })
-  context.lumos = {
-    modal: {
-      list: { 'popup-booking-main': { el: page.bookingDialog } },
-      open: (id) => opened.push(id),
-    },
-  }
   context.StartersPaidCallBrandPayment = {
     bookingRequestFingerprint: () => 'fingerprint',
     createBookingAttempt: () => ({ run: async () => ({}) }),
@@ -1917,14 +2009,14 @@ test('a migrated profile without the legacy Book Call button opens the native ch
     preventDefault() {},
     stopImmediatePropagation() {},
   })
-  assert.deepEqual(opened, ['popup-booking-main'])
+  assert.equal(freeClicks, 1)
 })
 
 test('a migrated profile without the legacy Book Call button stays closed before discovery succeeds', () => {
   const page = makePage({ includeBookingButton: false })
-  let opened = 0
+  let freeClicks = 0
+  page.freeModalCta.click = () => { freeClicks += 1 }
   const context = makeContext({ page })
-  context.lumos = { modal: { open: () => { opened += 1 } } }
   delete context.qs
   delete context.qsa
   delete context.waitForMember
@@ -1937,14 +2029,15 @@ test('a migrated profile without the legacy Book Call button stays closed before
     preventDefault() {},
     stopImmediatePropagation() {},
   })
-  assert.equal(opened, 0)
+  assert.equal(freeClicks, 0)
 })
 
 test('call service cards neutralize the retired scheduler before dependency stand-down', () => {
   for (const includeFreeCard of [true, false]) {
     const page = makePage({ includeFreeCard })
-    let chooserClicks = 0
-    page.bookingButton.click = () => { chooserClicks += 1 }
+    let directClicks = 0
+    const target = includeFreeCard ? page.freeModalCta : page.paidModalCta
+    target.click = () => { directClicks += 1 }
     const context = makeContext({ page })
     delete context.qs
     delete context.qsa
@@ -1955,7 +2048,7 @@ test('call service cards neutralize the retired scheduler before dependency stan
     const card = page.servicesList.children[0]
     assert.equal(card.getAttribute('booking-popup-open'), null)
     assert.equal(card.getAttribute('data-modal-trigger'), null)
-    assert.equal(card.getAttribute('data-call-service-chooser'), 'ready')
+    assert.equal(card.getAttribute('data-call-service-direct'), 'ready')
     assert.equal(card.listeners.click.length, 1)
 
     let prevented = 0
@@ -1966,7 +2059,47 @@ test('call service cards neutralize the retired scheduler before dependency stan
     })
     assert.equal(prevented, 1)
     assert.equal(stopped, 1)
-    assert.equal(chooserClicks, 0)
+    assert.equal(directClicks, 0)
+  }
+})
+
+test('a call service card fails closed when its matching CTA is absent or unready', async () => {
+  for (const mode of ['absent', 'unready']) {
+    const page = makePage({ includeFreeCard: false, includeCallDataType: false })
+    let paidClicks = 0
+    page.paidModalCta.click = () => { paidClicks += 1 }
+    if (mode === 'absent') page.paidModalCta.remove()
+    const context = makeContext({
+      page,
+      member: {
+        id: 'brand_member',
+        auth: { email: 'brand@example.com' },
+        customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+        planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+      },
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+      getConfigs: async () => [{
+        config_id: 'paid_live',
+        is_paid: true,
+        active: true,
+        data_environment: 'production',
+        payment_environment: 'live',
+        currency: 'usd',
+        price_cents: 100,
+        duration: 60,
+      }],
+      paidController: { installPaidBookingController: () => true },
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+
+    const paidCard = page.servicesList.querySelector('[has-connection="paid"]')
+    paidCard.listeners.click[0]({
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    })
+    assert.equal(paidClicks, 0, mode)
   }
 })
 
@@ -2117,7 +2250,7 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
     null,
     'Free Call must not be converted into a project trigger',
   )
-  assert.equal(freeCard.getAttribute('data-call-service-chooser'), 'ready')
+  assert.equal(freeCard.getAttribute('data-call-service-direct'), 'ready')
   assert.equal(freeCard.getAttribute('data-sp-fill'), null)
   assert.equal(freeCard.getAttribute('data-sp-fill-value'), null)
   assert.equal(
@@ -2125,7 +2258,7 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
     null,
     'Paid Call must not be converted into a project trigger',
   )
-  assert.equal(paidCard.getAttribute('data-call-service-chooser'), 'ready')
+  assert.equal(paidCard.getAttribute('data-call-service-direct'), 'ready')
   assert.equal(paidCard.getAttribute('data-sp-fill'), null)
   assert.equal(paidCard.getAttribute('data-sp-fill-value'), null)
 })

@@ -112,6 +112,7 @@ function withGlobals(values, run) {
 
 function chooserFixture({ includeMain = true, guests = [] } = {}) {
   const popup = new Element('section', { 'popup-booking': '' })
+  const close = new Element('button', { 'data-modal-close': '' })
   const freeButtons = new Element('div', { 'success-call-buttons': '', 'data-type': 'free' })
   const paidButtons = new Element('div', { 'success-call-buttons': '', 'data-type': 'paid' })
   const defaultStep = new Element('div', { 'schedule-step': 'default' })
@@ -135,6 +136,7 @@ function chooserFixture({ includeMain = true, guests = [] } = {}) {
   popup.setQuery('[data-call-guest-email]', guests)
   popup.setQuery('[name="topic"], [booking-topic]', topic)
   popup.setQuery('[name="context"], [booking-context]', context)
+  popup.setQuery('[data-modal-close], [booking-popup-close], [popup-booking-close]', close)
 
   const item = new Element('div', { 'call-type-item': '' })
   const nextSlot = new Element('span', { 'next-available-slot': '' })
@@ -197,6 +199,7 @@ function chooserFixture({ includeMain = true, guests = [] } = {}) {
   }
   return {
     container,
+    close,
     context,
     cta,
     defaultStep,
@@ -333,6 +336,8 @@ test('Free click mounts the authored calendar and canonical command', async () =
       is_paid: false,
       price_cents: 0,
     })
+    fixture.topic.value = 'Growth audit'
+    fixture.context.value = 'Review the launch plan'
     booking.state.mounts[0].onSelectionChange({ start: 1780000000000, end: 1780001800000 })
     assert.equal(fixture.guestUi.wrapper.style.display, 'flex')
     assert.equal(fixture.guestUi.rows[0].field.disabled, false)
@@ -418,6 +423,71 @@ test('a newer shared-surface owner prevents a pending Free calendar mount', asyn
     await pending
   })
   assert.equal(booking.state.mounts[0].isCurrent(), false)
+})
+
+test('Free-only modal close resets fields and ignores stale booking success', async () => {
+  const fixture = chooserFixture()
+  let resolveBooking
+  const booking = bookingApiFixture({
+    run: () => new Promise((resolve) => {
+      resolveBooking = () => resolve({
+        booking: { booking_id: 'stale-free', row_id: 903 },
+      })
+    }),
+  })
+  await withGlobals({ document: fixture.document }, async () => {
+    api.installFreeBookingController(installSettings(booking.bookingApi))
+    await fixture.cta.onclick(event())
+    fixture.topic.value = 'Discard topic'
+    fixture.context.value = 'Discard context'
+    fixture.container.textContent = 'Calendar'
+    const pending = booking.state.mounts[0].onConfirm({ start: 1, end: 2, timezone: 'UTC' })
+    await new Promise((resolve) => setImmediate(resolve))
+    fixture.close.listeners.click[0](event())
+    assert.equal(fixture.topic.value, '')
+    assert.equal(fixture.context.value, '')
+    assert.equal(fixture.container.textContent, '')
+    assert.equal(fixture.defaultStep.style.display, 'flex')
+    assert.equal(fixture.successStep.style.display, 'none')
+    resolveBooking()
+    await pending
+    assert.equal(fixture.defaultStep.style.display, 'flex')
+    assert.equal(fixture.successStep.style.display, 'none')
+  })
+})
+
+test('Free reopen blocks a changed command while one is in flight', async () => {
+  const fixture = chooserFixture()
+  let resolveBooking
+  const booking = bookingApiFixture({
+    run: () => new Promise((resolve) => {
+      resolveBooking = () => resolve({
+        booking: { booking_id: 'shared-free', row_id: 904 },
+      })
+    }),
+  })
+  await withGlobals({ document: fixture.document }, async () => {
+    const slot = { start: 1, end: 2, timezone: 'UTC' }
+    api.installFreeBookingController(installSettings(booking.bookingApi))
+    await fixture.cta.onclick(event())
+    fixture.topic.value = 'Original topic'
+    fixture.context.value = 'Original context'
+    const stale = booking.state.mounts[0].onConfirm(slot)
+    await new Promise((resolve) => setImmediate(resolve))
+    fixture.close.listeners.click[0](event())
+    assert.equal(fixture.topic.value, '')
+    assert.equal(fixture.context.value, '')
+    await fixture.cta.onclick(event())
+    await assert.rejects(
+      booking.state.mounts[1].onConfirm(slot),
+      /still being processed/i,
+    )
+    assert.equal(booking.state.attempts, 1)
+    assert.equal(booking.state.runs, 1)
+    resolveBooking()
+    await stale
+    assert.equal(fixture.successStep.style.display, 'none')
+  })
 })
 
 test('Free install fails closed without the shared canonical booking client', async () => {

@@ -420,10 +420,12 @@ test('shared call calendar renders dates and times and submits only the selected
   const container = new CalendarElement('div')
   const submissions = []
   const selections = []
+  let resolveConfirmation
   const firstStart =
     Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000) / 86400000) * 86400 +
     12 * 60 * 60
   const secondStart = firstStart + 30 * 60
+  const thirdStart = firstStart + 24 * 60 * 60
   global.document = {
     createElement(tagName) { return new CalendarElement(tagName) },
   }
@@ -432,6 +434,7 @@ test('shared call calendar renders dates and times and submits only the selected
     time_slots: [
       { start_time: firstStart, end_time: firstStart + 15 * 60 },
       { start_time: secondStart, end_time: secondStart + 15 * 60 },
+      { start_time: thirdStart, end_time: thirdStart + 15 * 60 },
     ],
   })
 
@@ -445,21 +448,36 @@ test('shared call calendar renders dates and times and submits only the selected
       },
       confirmText: 'Request free call',
       onSelectionChange(slot) { selections.push(slot) },
-      async onConfirm(slot) { submissions.push(slot) },
+      async onConfirm(slot) {
+        submissions.push(slot)
+        await new Promise((resolve) => { resolveConfirmation = resolve })
+      },
     })
-    assert.equal(result.slots.length, 2)
+    assert.equal(result.slots.length, 3)
     assert.equal(container.getAttribute('data-paid-calendar-state'), 'ready')
     const timeButtons = container.querySelectorAll('[data-paid-calendar-slot]')
+    const dateButtons = container.querySelectorAll('[data-paid-calendar-date]')
     const confirm = container.querySelectorAll('[data-paid-calendar-element]')
       .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
     assert.equal(timeButtons.length, 2)
+    assert.equal(dateButtons.length, 2)
     assert.equal(confirm.textContent, 'Request free call')
     assert.equal(confirm.disabled, true)
     assert.deepEqual(selections, [null])
     timeButtons[1].listeners.click()
     assert.equal(confirm.disabled, false)
     assert.deepEqual(selections[1], result.slots[1])
-    await confirm.listeners.click()
+    const pendingConfirmation = confirm.listeners.click()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(timeButtons[0].disabled, true)
+    assert.equal(timeButtons[1].disabled, true)
+    assert.equal(dateButtons[0].disabled, true)
+    assert.equal(dateButtons[1].disabled, true)
+    timeButtons[0].listeners.click()
+    dateButtons[1].listeners.click()
+    assert.deepEqual(selections[1], result.slots[1])
+    resolveConfirmation()
+    await pendingConfirmation
     assert.equal(submissions.length, 1)
     assert.deepEqual(submissions[0], {
       start: secondStart * 1000,
@@ -965,7 +983,6 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     xanoAuthFetch: global.xanoAuthFetch,
   }
   const requests = []
-  let resolveReadiness
   const priceText = { textContent: '$50' }
   const item = {
     style: {},
@@ -1033,9 +1050,7 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
   global.xanoAuthFetch = async (url, options) => {
     requests.push({ url, options })
     if (url.endsWith(api.READINESS_PATH)) {
-      return new Promise((resolve) => {
-        resolveReadiness = () => resolve(response({ environment: 'live', bookable: true }))
-      })
+      return response({ environment: 'live', bookable: true })
     }
     return response({ booking: { booking_id: 'booking_one', row_id: 905 } })
   }
@@ -1063,10 +1078,9 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     assert.equal(priceText.textContent, '$5')
     const firstClick = cta.onclick({ preventDefault() {} })
     const secondClick = cta.onclick({ preventDefault() {} })
-    assert.equal(requests.filter(({ url }) => url.endsWith(api.READINESS_PATH)).length, 1)
-    resolveReadiness()
     await Promise.all([firstClick, secondClick])
     assert.equal(calendarCount, 1)
+    assert.equal(requests.filter(({ url }) => url.endsWith(api.READINESS_PATH)).length, 0)
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.wrapper.getAttribute('aria-hidden'), 'true')
     calendarOptions.onSelectionChange({
@@ -1147,12 +1161,13 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
   }
 })
 
-test('Free selection invalidates a pending Paid readiness response', async () => {
+test('Free selection invalidates a pending Paid calendar response', async () => {
   const previous = {
     document: global.document,
     xanoAuthFetch: global.xanoAuthFetch,
   }
-  let resolveReadiness
+  let resolveCalendar
+  let calendarOptions
   const container = new CalendarElement('div')
   const guestUi = makeGuestUi()
   container.textContent = 'Free scheduler'
@@ -1169,16 +1184,25 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
   }
   const freeListeners = {}
   const modalClose = guestControl()
+  const topic = { value: '' }
+  const context = { value: '' }
+  const steps = [
+    { style: {}, getAttribute: () => 'default' },
+    { style: {}, getAttribute: () => 'success' },
+  ]
   const free = {
     addEventListener(name, listener) { freeListeners[name] = listener },
   }
   const popup = {
     querySelector(selector) {
       if (selector === '[nylas-container]') return container
+      if (selector === '[name="topic"], [booking-topic]') return topic
+      if (selector === '[name="context"], [booking-context]') return context
       return guestQuery(guestUi, selector)
     },
     querySelectorAll(selector) {
       if (selector === '[data-modal-close], [booking-popup-close], [popup-booking-close]') return [modalClose]
+      if (selector === '[schedule-step]') return steps
       return guestQueryAll(guestUi, selector)
     },
   }
@@ -1191,9 +1215,6 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
       return selector.includes('data-type="free"') ? [free] : [paid]
     },
   }
-  global.xanoAuthFetch = async () => new Promise((resolve) => {
-    resolveReadiness = () => resolve(response({ bookable: true }))
-  })
   let mounts = 0
 
   try {
@@ -1206,25 +1227,42 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
         currency: 'usd',
         price_cents: 500,
       },
-      mountCalendar() { mounts += 1 },
+      mountCalendar(options) {
+        mounts += 1
+        calendarOptions = options
+        return new Promise((resolve) => { resolveCalendar = resolve })
+      },
     }), true)
     guestUi.wrapper.style.display = 'flex'
     guestUi.rows[0].field.value = 'close@example.com'
+    topic.value = 'Old topic'
+    context.value = 'Old context'
+    steps[0].style.display = 'none'
+    steps[1].style.display = 'flex'
+    container.textContent = 'Old calendar'
     modalClose.listeners.click()
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.rows[0].field.value, '')
+    assert.equal(topic.value, '')
+    assert.equal(context.value, '')
+    assert.equal(container.textContent, '')
+    assert.equal(steps[0].style.display, 'flex')
+    assert.equal(steps[1].style.display, 'none')
     const pending = paid.onclick({ preventDefault() {} })
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.wrapper.getAttribute('aria-hidden'), 'true')
     assert.equal(container.textContent, 'Loading available times...')
     assert.equal(container.getAttribute('data-paid-calendar-state'), 'loading')
+    assert.equal(mounts, 1)
+    assert.equal(calendarOptions.isCurrent(), true)
     freeListeners.click()
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.rows[0].field.value, '')
     container.textContent = 'Free scheduler'
-    resolveReadiness()
+    assert.equal(calendarOptions.isCurrent(), false)
+    resolveCalendar({ slots: [] })
     await pending
-    assert.equal(mounts, 0)
+    assert.equal(mounts, 1)
     assert.equal(container.textContent, 'Free scheduler')
   } finally {
     global.document = previous.document
@@ -1237,7 +1275,7 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
     document: global.document,
     xanoAuthFetch: global.xanoAuthFetch,
   }
-  const readinessResolvers = []
+  let resolveFirstCalendar
   const container = new CalendarElement('div')
   const guestUi = makeGuestUi()
   const price = { textContent: '$50' }
@@ -1271,9 +1309,6 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
       return selector.includes('data-type="free"') ? [free] : [paid]
     },
   }
-  global.xanoAuthFetch = async () => new Promise((resolve) => {
-    readinessResolvers.push(function () { resolve(response({ bookable: true })) })
-  })
   const mounts = []
 
   try {
@@ -1287,7 +1322,10 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
       },
       grantId: 'grant_test',
       mountCalendar(options) {
-        mounts.push(options.config)
+        mounts.push(options)
+        if (mounts.length === 1) {
+          return new Promise((resolve) => { resolveFirstCalendar = resolve })
+        }
         return Promise.resolve({ slots: [] })
       },
     }), true)
@@ -1296,15 +1334,15 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
     container.textContent = 'Free scheduler'
     const second = paid.onclick({ preventDefault() {} })
     assert.equal(container.textContent, 'Loading available times...')
-    assert.equal(readinessResolvers.length, 1)
-    readinessResolvers[0]()
-    await new Promise((resolve) => setImmediate(resolve))
-    assert.equal(readinessResolvers.length, 2)
-    readinessResolvers[1]()
-    await Promise.all([first, second])
     assert.equal(mounts.length, 1)
-    assert.equal(mounts[0].grant_id, 'grant_test')
-    assert.equal(mounts[0].duration, 60)
+    assert.equal(mounts[0].isCurrent(), false)
+    resolveFirstCalendar({ slots: [] })
+    await new Promise((resolve) => setImmediate(resolve))
+    await Promise.all([first, second])
+    assert.equal(mounts.length, 2)
+    assert.equal(mounts[1].isCurrent(), true)
+    assert.equal(mounts[1].config.grant_id, 'grant_test')
+    assert.equal(mounts[1].config.duration, 60)
   } finally {
     global.document = previous.document
     global.xanoAuthFetch = previous.xanoAuthFetch
@@ -1332,6 +1370,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
   }
   const guestUi = makeGuestUi()
   const calendarContainer = new CalendarElement('div')
+  let calendarOptions
   const popup = {
     querySelector(selector) {
       if (selector === '[nylas-container]') return calendarContainer
@@ -1343,10 +1382,37 @@ test('card setup retries reuse the same setup and default-selection attempts', a
     disabled: false,
     addEventListener(name, listener) { listeners[name] = listener },
   }
-  const cardMount = {}
-  const errorText = { textContent: '' }
-  const statusText = { textContent: '' }
-  const openCard = { click() {} }
+  const cardMount = {
+    attrs: {},
+    setAttribute(name, value) { this.attrs[name] = value },
+  }
+  const errorText = {
+    textContent: '',
+    attrs: {},
+    setAttribute(name, value) { this.attrs[name] = value },
+  }
+  const statusText = {
+    textContent: '',
+    attrs: {},
+    setAttribute(name, value) { this.attrs[name] = value },
+  }
+  const cardLabel = {
+    id: '',
+    textContent: 'Payment Methods',
+    setAttribute(name, value) { if (name === 'id') this.id = value },
+  }
+  const staleAction = { style: {} }
+  const paymentModal = {
+    attrs: {},
+    querySelector(selector) {
+      if (selector === '[pm-use-this]') return staleAction
+      return null
+    },
+    querySelectorAll() { return [cardLabel] },
+    setAttribute(name, value) { this.attrs[name] = value },
+  }
+  let openCardClicks = 0
+  const openCard = { click() { openCardClicks += 1 } }
   const closeCard = { click() {} }
   global.document = {
     querySelector(selector) {
@@ -1355,15 +1421,28 @@ test('card setup retries reuse the same setup and default-selection attempts', a
       if (selector.includes('[save-card-btn]')) return save
       if (selector.includes('[card-error]')) return errorText
       if (selector.includes('[save-card-status]')) return statusText
+      if (selector === '[popup-stripe-card]') return paymentModal
       if (selector === '[popup-stripe-card-open]') return openCard
       if (selector === '[popup-stripe-card-close]') return closeCard
       return null
     },
     querySelectorAll() { return [cta] },
   }
-  const card = { mount() {}, on() {} }
+  let cardChange
+  let cardCreateOptions
+  const card = {
+    mount() {},
+    clear() {},
+    on(name, listener) { if (name === 'change') cardChange = listener },
+  }
   global.Stripe = () => ({
-    elements: () => ({ create: () => card }),
+    elements: () => ({
+      create(type, options) {
+        assert.equal(type, 'card')
+        cardCreateOptions = options
+        return card
+      },
+    }),
     confirmCardSetup: async () => ({
       setupIntent: { payment_method: 'pm_retry_card' },
     }),
@@ -1376,7 +1455,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
       readinessCount += 1
       return response({
         environment: 'test',
-        bookable: readinessCount >= 3,
+        bookable: readinessCount >= 2,
       })
     }
     if (url.endsWith(api.SET_DEFAULT_PATH)) {
@@ -1386,6 +1465,9 @@ test('card setup retries reuse the same setup and default-selection attempts', a
     }
     if (url.endsWith(api.SETUP_PATH)) {
       return response({ client_secret: 'seti_retry_secret' })
+    }
+    if (url.endsWith(api.BOOKING_PATH)) {
+      return response({ booking: { booking_id: 'booking_card_ready', row_id: 906 } })
     }
     throw new Error('Unexpected request: ' + url)
   }
@@ -1401,14 +1483,40 @@ test('card setup retries reuse the same setup and default-selection attempts', a
         price_cents: 1250,
       },
       starterSlug: 'jp-testiz-d',
-      mountCalendar() { return Promise.resolve({ slots: [] }) },
+      mountCalendar(options) {
+        calendarOptions = options
+        return Promise.resolve({ slots: [] })
+      },
     }), true)
     assert.equal(priceText.textContent, '$12.50')
+    assert.equal(cardLabel.id, 'paid-card-details-label')
+    assert.equal(cardMount.attrs['aria-labelledby'], 'paid-card-details-label')
+    assert.equal(paymentModal.attrs.role, 'dialog')
+    assert.equal(paymentModal.attrs['aria-modal'], 'true')
+    assert.equal(paymentModal.attrs['aria-labelledby'], 'paid-card-details-label')
+    assert.equal(errorText.attrs.role, 'alert')
+    assert.equal(errorText.attrs['aria-live'], 'assertive')
+    assert.equal(statusText.attrs.role, 'status')
+    assert.equal(statusText.attrs['aria-live'], 'polite')
+    assert.equal(staleAction.style.display, 'none')
     await cta.onclick({ preventDefault() {} })
+    await calendarOptions.onConfirm({
+      start: 1787000000000,
+      end: 1787003600000,
+      timezone: 'Pacific/Auckland',
+    })
+    assert.equal(openCardClicks, 1)
+    assert.equal(cardCreateOptions.hidePostalCode, true)
+    assert.equal(cardCreateOptions.style.base['::placeholder'].color, '#74786f')
+    assert.equal(requests.filter(({ url }) => url.endsWith(api.SETUP_PATH)).length, 0)
     const saveEvent = {
       preventDefault() {},
       stopImmediatePropagation() {},
     }
+    await listeners.click(saveEvent)
+    assert.equal(errorText.textContent, 'Enter complete card details.')
+    assert.equal(requests.filter(({ url }) => url.endsWith(api.SETUP_PATH)).length, 0)
+    cardChange({ complete: true })
     await listeners.click(saveEvent)
     await listeners.click(saveEvent)
 
@@ -1427,5 +1535,509 @@ test('card setup retries reuse the same setup and default-selection attempts', a
     global.document = previous.document
     global.Stripe = previous.Stripe
     global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
+function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
+  const previous = {
+    document: global.document,
+    Stripe: global.Stripe,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const container = new CalendarElement('div')
+  const calendars = []
+  const steps = [
+    { style: {}, getAttribute: () => 'default' },
+    { style: {}, getAttribute: () => 'success' },
+  ]
+  function control() {
+    const listeners = {}
+    return {
+      disabled: false,
+      listeners,
+      addEventListener(name, listener) {
+        if (!listeners[name]) listeners[name] = []
+        listeners[name].push(listener)
+      },
+      click() {
+        ;(listeners.click || []).forEach(function (listener) {
+          listener({ preventDefault() {}, stopImmediatePropagation() {} })
+        })
+      },
+    }
+  }
+  const mainClose = control()
+  const paymentClose = control()
+  const save = control()
+  const cardMount = { setAttribute() {} }
+  const errorText = { textContent: '', setAttribute() {} }
+  const statusText = { textContent: '', setAttribute() {} }
+  const paymentModalListeners = {}
+  const paymentModal = {
+    addEventListener(name, listener) {
+      if (!paymentModalListeners[name]) paymentModalListeners[name] = []
+      paymentModalListeners[name].push(listener)
+    },
+    cancel() {
+      ;(paymentModalListeners.cancel || []).forEach(function (listener) {
+        listener({ preventDefault() {} })
+      })
+    },
+    querySelector() { return null },
+    querySelectorAll() { return [] },
+    setAttribute() {},
+  }
+  const topic = { value: '' }
+  const context = { value: '' }
+  const paidText = { textContent: 'Choose a time for your paid call.' }
+  const popup = {
+    querySelector(selector) {
+      if (selector === '[nylas-container]') return container
+      if (selector === '[name="topic"], [booking-topic]') return topic
+      if (selector === '[name="context"], [booking-context]') return context
+      if (selector === '[paid-call-text]') return paidText
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector === '[data-modal-close], [booking-popup-close], [popup-booking-close]') return [mainClose]
+      if (selector === '[schedule-step]') return steps
+      return []
+    },
+  }
+  const price = { textContent: '' }
+  const item = { style: {}, querySelector: () => price }
+  const paid = {
+    getAttribute(name) { return name === 'data-config' ? 'config_paid' : null },
+    setAttribute() {},
+    closest() { return item },
+  }
+  let openCount = 0
+  const openPayment = { click() { openCount += 1 } }
+  global.document = {
+    querySelector(selector) {
+      if (selector === '[popup-booking]') return popup
+      if (selector.includes('[card-element]')) return cardMount
+      if (selector.includes('[save-card-btn]')) return save
+      if (selector.includes('[card-error]')) return errorText
+      if (selector.includes('[save-card-status]')) return statusText
+      if (selector === '[popup-stripe-card]') return paymentModal
+      if (selector === '[popup-stripe-card-open]') return openPayment
+      if (selector === '[popup-stripe-card-close]') return paymentClose
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector.includes('data-type="paid"')) return [paid]
+      if (selector === '[popup-stripe-card] [data-modal-close], [popup-stripe-card-close]') return [paymentClose]
+      return []
+    },
+  }
+  const cardListeners = {}
+  let cardCreates = 0
+  let cardConfirmations = 0
+  let saveBindings = 0
+  const originalSaveAdd = save.addEventListener
+  save.addEventListener = function (name, listener) {
+    if (name === 'click') saveBindings += 1
+    originalSaveAdd.call(save, name, listener)
+  }
+  global.Stripe = () => ({
+    elements: () => ({
+      create() {
+        cardCreates += 1
+        return {
+          clear() {},
+          mount() {},
+          on(name, listener) { cardListeners[name] = listener },
+        }
+      },
+    }),
+    confirmCardSetup: async () => {
+      cardConfirmations += 1
+      return { setupIntent: { payment_method: 'pm_lifecycle' } }
+    },
+  })
+  global.xanoAuthFetch = fetch
+  api.installPaidBookingController({
+    config: {
+      config_id: 'config_paid',
+      grant_id: 'grant_test',
+      duration: 60,
+      is_paid: true,
+      currency: 'USD',
+      price_cents: 500,
+    },
+    starterSlug: 'lifecycle-test',
+    mountCalendar(options) {
+      const state = { clearCount: 0, options }
+      calendars.push(state)
+      if (fixtureOptions.mountCalendar) return fixtureOptions.mountCalendar(options, state)
+      return Promise.resolve({
+        slots: [],
+        clearSelection() {
+          state.clearCount += 1
+          options.onSelectionChange(null)
+        },
+      })
+    },
+  })
+  return {
+    calendars,
+    cardListeners,
+    context,
+    getCardConfirmations: () => cardConfirmations,
+    getCardCreates: () => cardCreates,
+    getOpenCount: () => openCount,
+    getSaveBindings: () => saveBindings,
+    mainClose,
+    paid,
+    paidText,
+    paymentClose,
+    paymentModal,
+    restore() {
+      global.document = previous.document
+      global.Stripe = previous.Stripe
+      global.xanoAuthFetch = previous.xanoAuthFetch
+    },
+    save,
+    steps,
+    topic,
+  }
+}
+
+test('canceling card setup clears the selected slot before a later save', async () => {
+  let readinessCount = 0
+  let bookingCount = 0
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({ environment: 'test', bookable: readinessCount >= 2 })
+    }
+    if (url.endsWith(api.SETUP_PATH)) return response({ client_secret: 'seti_close' })
+    if (url.endsWith(api.SET_DEFAULT_PATH)) return response({ readiness: 'ready' })
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingCount += 1
+      return response({ booking: { booking_id: 'unexpected', row_id: 1 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    await fixture.paid.onclick({ preventDefault() {} })
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    await fixture.calendars[0].options.onConfirm(slot)
+    assert.equal(fixture.getOpenCount(), 1)
+    fixture.paymentModal.cancel()
+    assert.equal(fixture.calendars[0].clearCount, 1)
+    fixture.cardListeners.change({ complete: true })
+    await fixture.save.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+    assert.equal(bookingCount, 0)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('selected-slot readiness controls card setup without a second read', async () => {
+  let readinessCount = 0
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({ environment: 'test', bookable: readinessCount > 1 })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[0].options.onConfirm({
+      start: 1787000000000,
+      end: 1787003600000,
+      timezone: 'UTC',
+    })
+    assert.equal(readinessCount, 1)
+    assert.equal(fixture.getCardCreates(), 1)
+    assert.equal(fixture.getOpenCount(), 1)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('main modal reset restores authored Paid copy after calendar failure', async () => {
+  let mountCount = 0
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    throw new Error('Unexpected request: ' + url)
+  }, {
+    mountCalendar() {
+      mountCount += 1
+      if (mountCount === 1) return Promise.reject(new Error('calendar unavailable'))
+      return Promise.resolve({ slots: [] })
+    },
+  })
+  try {
+    await fixture.paid.onclick({ preventDefault() {} })
+    assert.equal(fixture.paidText.textContent, 'We could not book this call. Please try again.')
+    fixture.mainClose.click()
+    assert.equal(fixture.paidText.textContent, 'Choose a time for your paid call.')
+    await fixture.paid.onclick({ preventDefault() {} })
+    assert.equal(fixture.paidText.textContent, 'Choose a time for your paid call.')
+    assert.equal(mountCount, 2)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('shared booking surface blocks overlapping Free and Paid commands', async () => {
+  const container = new CalendarElement('div')
+  let resolveFree
+  let paidRuns = 0
+  const freeCommand = global.StartersBookingSurfaceLifecycle.runBooking(
+    container,
+    'free-command',
+    function () {
+      return {
+        run: function () {
+          return new Promise(function (resolve) { resolveFree = resolve })
+        },
+      }
+    },
+  )
+
+  assert.throws(function () {
+    global.StartersBookingSurfaceLifecycle.runBooking(
+      container,
+      'paid-command',
+      function () {
+        return {
+          run: async function () {
+            paidRuns += 1
+            return { booking: { booking_id: 'paid-overlap', row_id: 2 } }
+          },
+        }
+      },
+    )
+  }, /Another booking request is still being processed/)
+  assert.equal(paidRuns, 0)
+
+  resolveFree({ booking: { booking_id: 'free-complete', row_id: 1 } })
+  await freeCommand
+  await global.StartersBookingSurfaceLifecycle.runBooking(
+    container,
+    'paid-command',
+    function () {
+      return {
+        run: async function () {
+          paidRuns += 1
+          return { booking: { booking_id: 'paid-complete', row_id: 2 } }
+        },
+      }
+    },
+  )
+  assert.equal(paidRuns, 1)
+})
+
+test('a reset booking blocks a changed command while one is in flight', async () => {
+  let bookingCount = 0
+  let resolveStaleBooking
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) return response({ environment: 'test', bookable: true })
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingCount += 1
+      if (bookingCount === 1) {
+        return new Promise((resolve) => { resolveStaleBooking = () => resolve(response({ booking: { booking_id: 'stale', row_id: 1 } })) })
+      }
+      return response({ booking: { booking_id: 'current', row_id: 2 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    await fixture.paid.onclick({ preventDefault() {} })
+    fixture.topic.value = 'Original topic'
+    fixture.context.value = 'Original context'
+    const stale = fixture.calendars[0].options.onConfirm(slot)
+    await new Promise((resolve) => setImmediate(resolve))
+    fixture.mainClose.click()
+    assert.equal(fixture.topic.value, '')
+    assert.equal(fixture.context.value, '')
+    await fixture.paid.onclick({ preventDefault() {} })
+    await assert.rejects(
+      fixture.calendars[1].options.onConfirm(slot),
+      /still being processed/i,
+    )
+    assert.equal(bookingCount, 1)
+    resolveStaleBooking()
+    await stale
+    assert.equal(fixture.steps[0].style.display, 'flex')
+    assert.equal(fixture.steps[1].style.display, 'none')
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('overlapping paid generations share one card setup installation', async () => {
+  let readinessCount = 0
+  let resolveFirstReadiness
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      if (readinessCount === 1) {
+        return new Promise((resolve) => {
+          resolveFirstReadiness = () => resolve(response({ environment: 'test', bookable: false }))
+        })
+      }
+      return response({ environment: 'test', bookable: false })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    await fixture.paid.onclick({ preventDefault() {} })
+    const first = fixture.calendars[0].options.onConfirm(slot)
+    await new Promise((resolve) => setImmediate(resolve))
+    fixture.mainClose.click()
+    await fixture.paid.onclick({ preventDefault() {} })
+    const second = fixture.calendars[1].options.onConfirm(slot)
+    await second
+    resolveFirstReadiness()
+    await Promise.all([first, second])
+    assert.equal(fixture.getCardCreates(), 1)
+    assert.equal(fixture.getSaveBindings(), 1)
+    assert.equal(fixture.getOpenCount(), 1)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('the latest Paid confirmation owns an overlapping readiness response', async () => {
+  let readinessCount = 0
+  let resolveFirstReadiness
+  const bookingStarts = []
+  const fixture = makePaidLifecycleFixture(async (url, options) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      if (readinessCount === 1) {
+        return new Promise((resolve) => {
+          resolveFirstReadiness = () => resolve(response({ environment: 'test', bookable: true }))
+        })
+      }
+      return response({ environment: 'test', bookable: true })
+    }
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingStarts.push(JSON.parse(options.body).start)
+      return response({ booking: { booking_id: 'latest-slot', row_id: 904 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const firstSlot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    const secondSlot = { start: 1787007200000, end: 1787010800000, timezone: 'UTC' }
+    await fixture.paid.onclick({ preventDefault() {} })
+    const first = fixture.calendars[0].options.onConfirm(firstSlot)
+    await new Promise((resolve) => setImmediate(resolve))
+    const second = fixture.calendars[0].options.onConfirm(secondSlot)
+    await second
+    resolveFirstReadiness()
+    await first
+    assert.deepEqual(bookingStarts, [secondSlot.start])
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('booking retry reuses completed card setup and booking attempt', async () => {
+  let readinessCount = 0
+  let setupCount = 0
+  let defaultCount = 0
+  const bookingBodies = []
+  const fixture = makePaidLifecycleFixture(async (url, options) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({ environment: 'test', bookable: readinessCount >= 2 })
+    }
+    if (url.endsWith(api.SETUP_PATH)) {
+      setupCount += 1
+      return response({ client_secret: 'seti_booking_retry' })
+    }
+    if (url.endsWith(api.SET_DEFAULT_PATH)) {
+      defaultCount += 1
+      return response({ readiness: 'ready' })
+    }
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingBodies.push(options.body)
+      if (bookingBodies.length === 1) throw new Error('temporary booking failure')
+      return response({ booking: { booking_id: 'booking_retry', row_id: 905 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[0].options.onConfirm(slot)
+    fixture.cardListeners.change({ complete: true })
+    const saveEvent = { preventDefault() {}, stopImmediatePropagation() {} }
+    await fixture.save.listeners.click[0](saveEvent)
+    await fixture.save.listeners.click[0](saveEvent)
+    assert.equal(setupCount, 1)
+    assert.equal(defaultCount, 1)
+    assert.equal(fixture.getCardConfirmations(), 1)
+    assert.equal(bookingBodies.length, 2)
+    assert.equal(new Set(bookingBodies).size, 1)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('stale card save cannot mutate a reopened payment generation', async () => {
+  let readinessCount = 0
+  let defaultCount = 0
+  let bookingCount = 0
+  const setupBodies = []
+  const setupResolvers = []
+  const fixture = makePaidLifecycleFixture(async (url, options) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({ environment: 'test', bookable: readinessCount >= 3 })
+    }
+    if (url.endsWith(api.SETUP_PATH)) {
+      setupBodies.push(options.body)
+      return new Promise((resolve) => {
+        setupResolvers.push(() => resolve(response({
+          client_secret: 'seti_generation_' + setupResolvers.length,
+        })))
+      })
+    }
+    if (url.endsWith(api.SET_DEFAULT_PATH)) {
+      defaultCount += 1
+      return response({ readiness: 'ready' })
+    }
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingCount += 1
+      return response({ booking: { booking_id: 'current-payment', row_id: 906 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    const saveEvent = { preventDefault() {}, stopImmediatePropagation() {} }
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[0].options.onConfirm(slot)
+    fixture.cardListeners.change({ complete: true })
+    const staleSave = fixture.save.listeners.click[0](saveEvent)
+    await new Promise((resolve) => setImmediate(resolve))
+    fixture.paymentClose.click()
+    await fixture.calendars[0].options.onConfirm(slot)
+    fixture.cardListeners.change({ complete: true })
+    const currentSave = fixture.save.listeners.click[0](saveEvent)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(setupResolvers.length, 2)
+    setupResolvers[0]()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(fixture.getCardConfirmations(), 0)
+    assert.equal(fixture.save.disabled, true)
+    setupResolvers[1]()
+    await Promise.all([staleSave, currentSave])
+    assert.equal(new Set(setupBodies).size, 2)
+    assert.equal(fixture.getCardConfirmations(), 1)
+    assert.equal(defaultCount, 1)
+    assert.equal(bookingCount, 1)
+  } finally {
+    fixture.restore()
   }
 })
