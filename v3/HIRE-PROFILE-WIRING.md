@@ -265,9 +265,11 @@ fallback when the SDK payload omits `planConnections`; it cannot override
 supplied plan state. Regression coverage in
 [`hire-profile.test.js`](hire-profile.test.js) includes Test Brand and Brand
 Free plan-only members, plus empty, inactive, and cross-role plan states.
-Paid-call selection remains gated by the existing canonical configuration and
-Stripe-readiness checks. This routing change does not trigger Stripe, reminders,
-transactional email, or a booking submission by itself.
+Paid direct entry remains gated by the existing canonical configuration.
+Stripe readiness is read only after the Brand confirms a slot, and booking
+submission remains gated by that canonical result. This routing change does not
+trigger Stripe, reminders, transactional email, or a booking submission by
+itself.
 
 `nylas_configurations/get_bookable/v3` owns the authoritative bookable-set
 filter. `hire-profile.js` applies a second, fail-closed check before it gives

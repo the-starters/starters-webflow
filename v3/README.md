@@ -3208,9 +3208,10 @@ The browser sends neither field. The controller uses this sequence:
 Closing the main booking modal, its backdrop, or ESC invalidates the shared
 calendar generation and restores `schedule-step="default"`. It also clears the
 selected slot, guest fields, topic, context, calendar, errors, status text, and
-Stripe Card Element. Closing only the Stripe dialog clears its card/error state
-without creating a booking. Direct Free and Paid Services cards skip the chooser;
-generic Book Call buttons continue to open it.
+Stripe Card Element. Closing only the Stripe dialog clears its card/error state,
+retained slot, and Paid guest state without creating a booking. Direct Free and
+Paid Services cards skip the chooser; generic Book Call buttons continue to open
+it.
 
 The native `[popup-stripe-card]` component must keep its visible payment title
 (`Payment Methods` today; `Card details` is also supported) and retain
@@ -3235,10 +3236,10 @@ replaces that node's CMS or Designer text with the canonical USD value from
 currency, non-integer price, or price below 100 cents makes installation fail
 closed.
 
-While a Paid readiness request is pending, another click on the same current
-Paid choice is ignored. A Free choice invalidates that request. If the member
-then chooses Paid again, the controller runs only that latest Paid choice after
-the stale request settles.
+While a Paid calendar load is pending, another click on the same current Paid
+choice is ignored. A Free choice invalidates that load. If the member then
+chooses Paid again, the controller runs only that latest Paid choice after the
+stale load settles.
 
 The booking payload contains only the Starter slug, configuration ID, selected
 slot, timezone, optional topic/context, optional canonical `guest_emails`, and a
