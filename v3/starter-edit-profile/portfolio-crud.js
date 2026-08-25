@@ -1236,6 +1236,12 @@ async function commitStarterEditPortfolioDrafts(options) {
         }
       });
 
+      document.addEventListener('keydown', function (event) {
+        if (event.key !== 'Escape') return;
+        closeNotifyModal();
+        closeRemoveModal();
+      });
+
       if (imagesInp) {
         imagesInp.setAttribute('multiple', 'multiple');
         imagesInp.addEventListener('change', function () {

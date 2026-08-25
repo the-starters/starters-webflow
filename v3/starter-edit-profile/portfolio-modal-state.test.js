@@ -86,7 +86,10 @@ function createControllerFixture() {
   const editDescription = createElement();
   const editImages = createElement();
   const editVideos = createElement();
-  const notifyModal = createElement();
+  const removeModal = createElement({ visible: false });
+  const removeModalTrigger = createElement();
+  const removeModalClose = createElement();
+  const notifyModal = createElement({ visible: false });
   const notifyModalTrigger = createElement();
   const notifyModalClose = createElement();
   const notificationText = createElement();
@@ -101,6 +104,8 @@ function createControllerFixture() {
     ['#portfolio-description-edit', editDescription],
     ['#portfolio-images-edit-preview', editImages],
     ['#portfolio-videos-edit-preview', editVideos],
+    ['[data-modal-target="portfolio-remove"]', removeModal],
+    ['[data-modal-trigger="portfolio-remove"]', removeModalTrigger],
     ['[data-modal-target="portfolio-notification"]', notifyModal],
     ['[data-modal-trigger="portfolio-notification"]', notifyModalTrigger],
   ]);
@@ -114,6 +119,7 @@ function createControllerFixture() {
   let memberBoot;
 
   editModal.querySelector = (selector) => selector === '[data-modal-close]' ? editModalClose : null;
+  removeModal.querySelector = (selector) => selector === '[data-modal-close]' ? removeModalClose : null;
   notifyModal.querySelector = (selector) => {
     if (selector === '[data-modal-close]') return notifyModalClose;
     if (selector === '[notification-text]') return notificationText;
@@ -122,7 +128,13 @@ function createControllerFixture() {
   grid.querySelector = (selector) => selector === '.portfolio_card' ? template : null;
   editModalTrigger.addEventListener('click', () => { editModal.visible = true; });
   editModalClose.addEventListener('click', () => { editModal.visible = false; });
-  notifyModalTrigger.addEventListener('click', () => { notifications.push(notificationText.textContent); });
+  removeModalTrigger.addEventListener('click', () => { removeModal.visible = true; });
+  removeModalClose.addEventListener('click', () => { removeModal.visible = false; });
+  notifyModalTrigger.addEventListener('click', () => {
+    notifyModal.visible = true;
+    notifications.push(notificationText.textContent);
+  });
+  notifyModalClose.addEventListener('click', () => { notifyModal.visible = false; });
 
   const responses = {
     Get_my_portfolios: [portfolio],
@@ -181,6 +193,10 @@ function createControllerFixture() {
     grid,
     editButton,
     editModal,
+    removeModal,
+    removeModalTrigger,
+    notifyModal,
+    notifyModalTrigger,
     editSubmit,
     editTitle,
     editImages,
@@ -226,12 +242,21 @@ test('document Escape preserves the active highlight and its media', async () =>
   assert.equal(fixture.editVideos.children.length, 1);
   assert.equal(fixture.editVideos.children[0].children[0].src, 'https://example.com/video.mp4');
 
+  await fixture.removeModalTrigger.dispatchEvent({ type: 'click' });
+  await fixture.notifyModalTrigger.dispatchEvent({ type: 'click' });
+  assert.equal(fixture.removeModal.visible, true);
+  assert.equal(fixture.notifyModal.visible, true);
+
   await fixture.document.dispatchEvent({ type: 'keydown', key: 'Escape' });
 
+  assert.equal(fixture.removeModal.visible, false);
+  assert.equal(fixture.notifyModal.visible, false);
   assert.equal(fixture.editModal.visible, true);
   assert.equal(fixture.editTitle.value, 'Selected highlight');
   assert.equal(fixture.editImages.children.length, 1);
+  assert.equal(fixture.editImages.children[0].children[0].src, 'https://example.com/image.jpg?tpl=large');
   assert.equal(fixture.editVideos.children.length, 1);
+  assert.equal(fixture.editVideos.children[0].children[0].src, 'https://example.com/video.mp4');
 
   await fixture.editSubmit.dispatchEvent({
     type: 'click',
