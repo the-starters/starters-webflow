@@ -6,7 +6,63 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, 'portfolio-crud.js'), 'utf8');
 
-function loadController() {
+function createEventTarget(properties = {}) {
+  const listeners = new Map();
+  return Object.assign(properties, {
+    addEventListener(type, listener) {
+      const values = listeners.get(type) || [];
+      values.push(listener);
+      listeners.set(type, values);
+    },
+    async dispatchEvent(event) {
+      event.target ||= this;
+      const results = [];
+      for (const listener of listeners.get(event.type) || []) results.push(listener(event));
+      await Promise.all(results);
+      return true;
+    },
+  });
+}
+
+function createClassList() {
+  const values = new Set();
+  return {
+    add(...names) { names.forEach((name) => values.add(name)); },
+    remove(...names) { names.forEach((name) => values.delete(name)); },
+    contains(name) { return values.has(name); },
+  };
+}
+
+function createElement(properties = {}) {
+  const element = createEventTarget({
+    children: [],
+    classList: createClassList(),
+    style: {},
+    textContent: '',
+    value: '',
+    ...properties,
+  });
+  element.appendChild = (child) => {
+    element.children.push(child);
+    child.parentElement = element;
+    return child;
+  };
+  element.remove = () => {};
+  element.reset = () => { element.resetCount = (element.resetCount || 0) + 1; };
+  element.setAttribute = (name, value) => { element[name] = value; };
+  element.cloneNode = () => createElement();
+  element.click = () => element.dispatchEvent({ type: 'click' });
+  Object.defineProperty(element, 'innerHTML', {
+    get() { return element._innerHTML || ''; },
+    set(value) {
+      element._innerHTML = value;
+      if (value === '') element.children = [];
+    },
+  });
+  return element;
+}
+
+function loadLifecycle() {
   const context = vm.createContext({
     console,
     document: { addEventListener() {} },
@@ -15,22 +71,127 @@ function loadController() {
   return context;
 }
 
-function createEventTarget() {
-  const listeners = new Map();
+function createControllerFixture() {
+  const portfolio = { id: 42, title: 'Selected highlight', description: 'Existing work' };
+  const image = { id: 101, image_url: 'https://example.com/image.jpg', is_cover: true };
+  const video = { id: 202, video_url: 'https://example.com/video.mp4' };
+  const grid = createElement();
+  const template = createElement();
+  const editModal = createElement({ visible: false });
+  const editModalTrigger = createElement();
+  const editModalClose = createElement();
+  const editForm = createElement();
+  const editSubmit = createElement();
+  const editTitle = createElement();
+  const editDescription = createElement();
+  const editImages = createElement();
+  const editVideos = createElement();
+  const notifyModal = createElement();
+  const notifyModalTrigger = createElement();
+  const notifyModalClose = createElement();
+  const notificationText = createElement();
+  const notifications = [];
+  const authoredElements = new Map([
+    ['[data-highlights]', grid],
+    ['[data-modal-target="portfolio-edit"]', editModal],
+    ['[data-modal-trigger="portfolio-edit"]', editModalTrigger],
+    ['#wf-form-Portfolio-update', editForm],
+    ['[free-edit-submit]', editSubmit],
+    ['#portfolio-title-edit', editTitle],
+    ['#portfolio-description-edit', editDescription],
+    ['#portfolio-images-edit-preview', editImages],
+    ['#portfolio-videos-edit-preview', editVideos],
+    ['[data-modal-target="portfolio-notification"]', notifyModal],
+    ['[data-modal-trigger="portfolio-notification"]', notifyModalTrigger],
+  ]);
+  const document = createEventTarget({
+    createElement: () => createElement(),
+    querySelector: (selector) => authoredElements.get(selector) || null,
+    querySelectorAll: () => [],
+  });
+  const window = createEventTarget({ document });
+  const errors = [];
+  let memberBoot;
+
+  editModal.querySelector = (selector) => selector === '[data-modal-close]' ? editModalClose : null;
+  notifyModal.querySelector = (selector) => {
+    if (selector === '[data-modal-close]') return notifyModalClose;
+    if (selector === '[notification-text]') return notificationText;
+    return null;
+  };
+  grid.querySelector = (selector) => selector === '.portfolio_card' ? template : null;
+  editModalTrigger.addEventListener('click', () => { editModal.visible = true; });
+  editModalClose.addEventListener('click', () => { editModal.visible = false; });
+  notifyModalTrigger.addEventListener('click', () => { notifications.push(notificationText.textContent); });
+
+  const responses = {
+    Get_my_portfolios: [portfolio],
+    Get_portfolio_images: [image],
+    Get_portfolio_videos: [video],
+  };
+  const context = vm.createContext({
+    console: { ...console, error: (error) => errors.push(error) },
+    document,
+    window,
+    MEMBER: { id: 'member-1' },
+    waitForMember(callback) {
+      memberBoot = callback();
+      return memberBoot;
+    },
+    qs(selector, root) {
+      if (root && typeof root.querySelector === 'function') return root.querySelector(selector);
+      return document.querySelector(selector);
+    },
+    qsa(selector, root) {
+      if (root && typeof root.querySelectorAll === 'function') return root.querySelectorAll(selector);
+      return document.querySelectorAll(selector);
+    },
+    fetch: async (url) => {
+      const key = Object.keys(responses).find((name) => String(url).includes(name));
+      return { ok: true, json: async () => key ? responses[key] : [] };
+    },
+    Event: class Event {
+      constructor(type, options = {}) { this.type = type; Object.assign(this, options); }
+    },
+    FormData,
+    URL,
+    setTimeout: (callback) => callback(),
+    setLoader() {},
+  });
+  context.window.fetch = context.fetch;
+
+  const card = createElement();
+  const idBlock = createElement({ textContent: String(portfolio.id) });
+  const editButton = createElement();
+  editButton.closest = (selector) => {
+    if (selector === '[show-portfolio]') return editButton;
+    if (selector === '.portfolio_card') return card;
+    return null;
+  };
+  card.querySelector = (selector) => selector === '.portfolio_card-id' ? idBlock : null;
+
   return {
-    addEventListener(type, listener) {
-      const values = listeners.get(type) || [];
-      values.push(listener);
-      listeners.set(type, values);
+    async boot() {
+      new vm.Script(source, { filename: 'portfolio-crud.js' }).runInContext(context);
+      await document.dispatchEvent({ type: 'DOMContentLoaded' });
+      await memberBoot;
     },
-    dispatchEvent(event) {
-      for (const listener of listeners.get(event.type) || []) listener(event);
-    },
+    document,
+    window,
+    grid,
+    editButton,
+    editModal,
+    editSubmit,
+    editTitle,
+    editImages,
+    editVideos,
+    notifications,
+    errors,
   };
 }
 
-test('portfolio lifecycle ignores Escape and closes only a stale restored modal', () => {
-  const context = loadController();
+test('portfolio lifecycle closes only a stale restored modal', async () => {
+  const context = loadLifecycle();
   const eventTarget = createEventTarget();
   let hasActivePortfolio = true;
   let closeCount = 0;
@@ -41,11 +202,42 @@ test('portfolio lifecycle ignores Escape and closes only a stale restored modal'
     closeModal: () => { closeCount += 1; },
   });
 
-  eventTarget.dispatchEvent({ type: 'keydown', key: 'Escape' });
-  eventTarget.dispatchEvent({ type: 'pageshow' });
+  await eventTarget.dispatchEvent({ type: 'pageshow' });
   assert.equal(closeCount, 0);
 
   hasActivePortfolio = false;
-  eventTarget.dispatchEvent({ type: 'pageshow' });
+  await eventTarget.dispatchEvent({ type: 'pageshow' });
   assert.equal(closeCount, 1);
+});
+
+test('document Escape preserves the active highlight and its media', async () => {
+  const fixture = createControllerFixture();
+  await fixture.boot();
+
+  await fixture.grid.dispatchEvent({
+    type: 'click',
+    target: fixture.editButton,
+  });
+
+  assert.equal(fixture.editModal.visible, true);
+  assert.equal(fixture.editTitle.value, 'Selected highlight');
+  assert.equal(fixture.editImages.children.length, 1);
+  assert.equal(fixture.editImages.children[0].children[0].src, 'https://example.com/image.jpg?tpl=large');
+  assert.equal(fixture.editVideos.children.length, 1);
+  assert.equal(fixture.editVideos.children[0].children[0].src, 'https://example.com/video.mp4');
+
+  await fixture.document.dispatchEvent({ type: 'keydown', key: 'Escape' });
+
+  assert.equal(fixture.editModal.visible, true);
+  assert.equal(fixture.editTitle.value, 'Selected highlight');
+  assert.equal(fixture.editImages.children.length, 1);
+  assert.equal(fixture.editVideos.children.length, 1);
+
+  await fixture.editSubmit.dispatchEvent({
+    type: 'click',
+    preventDefault() {},
+  });
+
+  assert.equal(fixture.notifications.includes('Portfolio is not selected'), false);
+  assert.equal(fixture.errors.some((error) => error && error.message === 'Portfolio is not selected'), false);
 });
