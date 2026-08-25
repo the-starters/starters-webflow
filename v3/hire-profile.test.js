@@ -219,7 +219,9 @@ function makePage({
   const bookingContent = makeElement('div', {}, ['service-card_content-wrapper'])
   bookingContent.appendChild(makeElement('div', { 'next-available-slot': '' }))
   card.appendChild(bookingContent)
-  card.appendChild(makeElement('div', { 'data-millify': '', 'data-millify-raw': '0' }))
+  card.appendChild(
+    makeElement('div', { 'data-millify': '', 'data-millify-raw': '0', 'data-millify-max': '5000' }),
+  )
   list.appendChild(card)
 
   let nativeFreeTemplate = null
@@ -706,6 +708,18 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
   const price = cloned[0].querySelector('[data-millify]')
   assert.equal(price.getAttribute('data-millify'), '5000')
   assert.equal(price.getAttribute('data-millify-raw'), null, 'stale raw value must be cleared')
+  assert.equal(
+    price.getAttribute('data-millify-max'),
+    null,
+    'the authored ceiling is sized for the paid-call rate and must not be inherited by rate cards',
+  )
+
+  // The strip must happen on the clone, never the source: the authored call
+  // card's paid-call price is exactly what the ceiling guards.
+  const template = page.servicesList.children.find(
+    (child) => child.getAttribute('data-rate-card') === null,
+  )
+  assert.equal(template.querySelector('[data-millify]').getAttribute('data-millify-max'), '5000')
 })
 
 test('a retainer that is disabled or zero produces no retainer card', async () => {
