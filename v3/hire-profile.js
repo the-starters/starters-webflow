@@ -738,9 +738,15 @@
 
           // Hand millify the raw value through its explicit attribute; a stale
           // data-millify-raw on the clone would make it re-parse formatted text.
+          // data-millify-max is stripped too: the authored template's ceiling is
+          // sized for the paid-call rate (hundreds), and cloneNode would hand it
+          // to Freelance/Retainer prices whose legitimate values run to $15K/hr
+          // and $250K/mo — a false refusal renders the raw number, which looks
+          // exactly like the bad-data case the ceiling exists to expose.
           const priceEl = el.querySelector('[data-millify]');
           if (priceEl) {
               priceEl.removeAttribute('data-millify-raw');
+              priceEl.removeAttribute('data-millify-max');
               priceEl.setAttribute('data-millify', String(card.price));
               priceEl.textContent = String(card.price);
           }
