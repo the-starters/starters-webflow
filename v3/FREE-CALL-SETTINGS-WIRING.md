@@ -13,6 +13,9 @@ payload.
 - The browser mutation payload contains the public `description` plus `config_id`,
   `expected_revision`, and `idempotency_key`. Xano still fixes the provider title, duration,
   and price.
+- The browser trims the public description and rejects more than `60` characters before any write.
+  Xano returns it as `public_description` and projects the same value to the public Webflow profile
+  and Algolia record.
 - Initial and terminal UI state always comes from
   `GET starter/free-call-settings/get/v3`.
 
