@@ -713,6 +713,13 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
     null,
     'the authored ceiling is sized for the paid-call rate and must not be inherited by rate cards',
   )
+
+  // The strip must happen on the clone, never the source: the authored call
+  // card's paid-call price is exactly what the ceiling guards.
+  const template = page.servicesList.children.find(
+    (child) => child.getAttribute('data-rate-card') === null,
+  )
+  assert.equal(template.querySelector('[data-millify]').getAttribute('data-millify-max'), '5000')
 })
 
 test('a retainer that is disabled or zero produces no retainer card', async () => {
