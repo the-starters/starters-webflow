@@ -441,6 +441,9 @@
     if (!state.brandEmail) return false
 
     let clearFreeCalendarSelection = null
+    const bookingLocks = new Set()
+    const bookingAttempts = new Map()
+    let activeBookingEntry = null
 
     function clearField(selector) {
       const field = popup.querySelector(selector)
@@ -463,8 +466,6 @@
     ctas.forEach(function (cta) {
       const binding = chooserBindings.get(cta) || {}
       binding.state = Object.assign({}, state, { cta })
-      binding.bookingLocks = binding.bookingLocks || new Set()
-      binding.bookingAttempts = binding.bookingAttempts || new Map()
       chooserBindings.set(cta, binding)
       cta.setAttribute('data-config', configId)
       cta.setAttribute('data-free-call-v3', 'ready')
@@ -492,42 +493,47 @@
             onConfirm: async function (slot) {
               if (
                 !bookingSurfaceOwnership.owns(container, generation) ||
-                binding.bookingLocks.has(generation)
+                bookingLocks.has(generation)
               ) return
-              let guests
-              try {
-                guests = guestUi.read([
-                  current.brandEmail,
-                  current.starterEmail,
-                ])
-                setGuestError(current.popup, '')
-              } catch (error) {
-                setGuestError(current.popup, error && error.message)
-                throw error
-              }
-              const input = {
-                starter_slug: current.starterSlug,
-                config_id: current.configId,
-                start: slot.start,
-                end: slot.end,
-                timezone: slot.timezone,
-                topic: fieldValue(current.popup, '[name="topic"], [booking-topic]'),
-                context: fieldValue(current.popup, '[name="context"], [booking-context]'),
-                guest_emails: guests,
-                brand_email: current.brandEmail,
-                starter_email: current.starterEmail,
-              }
-              const fingerprint = current.bookingApi.bookingRequestFingerprint(input)
-              let entry = binding.bookingAttempts.get(fingerprint)
+              let entry = activeBookingEntry
               if (!entry) {
-                entry = {
-                  attempt: current.bookingApi.createBookingAttempt(input),
-                  inFlight: null,
-                  result: null,
+                let guests
+                try {
+                  guests = guestUi.read([
+                    current.brandEmail,
+                    current.starterEmail,
+                  ])
+                  setGuestError(current.popup, '')
+                } catch (error) {
+                  setGuestError(current.popup, error && error.message)
+                  throw error
                 }
-                binding.bookingAttempts.set(fingerprint, entry)
+                const input = {
+                  starter_slug: current.starterSlug,
+                  config_id: current.configId,
+                  start: slot.start,
+                  end: slot.end,
+                  timezone: slot.timezone,
+                  topic: fieldValue(current.popup, '[name="topic"], [booking-topic]'),
+                  context: fieldValue(current.popup, '[name="context"], [booking-context]'),
+                  guest_emails: guests,
+                  brand_email: current.brandEmail,
+                  starter_email: current.starterEmail,
+                }
+                const fingerprint = current.bookingApi.bookingRequestFingerprint(input)
+                entry = bookingAttempts.get(fingerprint)
+                if (!entry) {
+                  entry = {
+                    attempt: current.bookingApi.createBookingAttempt(input),
+                    fingerprint,
+                    inFlight: null,
+                    result: null,
+                  }
+                  bookingAttempts.set(fingerprint, entry)
+                }
+                activeBookingEntry = entry
               }
-              binding.bookingLocks.add(generation)
+              bookingLocks.add(generation)
               try {
                 if (!entry.inFlight && !entry.result) {
                   entry.inFlight = entry.attempt.run().then(function (result) {
@@ -536,19 +542,23 @@
                     }
                     entry.result = result
                     return result
+                  }).catch(function (error) {
+                    if (activeBookingEntry === entry) activeBookingEntry = null
+                    throw error
                   }).finally(function () {
                     entry.inFlight = null
                   })
                 }
                 const result = entry.result || await entry.inFlight
                 if (!bookingSurfaceOwnership.owns(container, generation)) return result
-                if (binding.bookingAttempts.get(fingerprint) === entry) {
-                  binding.bookingAttempts.delete(fingerprint)
+                if (activeBookingEntry === entry) activeBookingEntry = null
+                if (bookingAttempts.get(entry.fingerprint) === entry) {
+                  bookingAttempts.delete(entry.fingerprint)
                 }
                 showFreeSuccess(current.popup)
                 return result
               } finally {
-                binding.bookingLocks.delete(generation)
+                bookingLocks.delete(generation)
               }
             },
             onSelectionChange: function (slot) {

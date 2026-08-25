@@ -775,6 +775,7 @@
     let paidClickLock = false
     const bookingLocks = new Set()
     const bookingAttempts = new Map()
+    let activeBookingEntry = null
     let paidConfirmationSequence = 0
     let activePaidGeneration = 0
     let queuedPaidGeneration = 0
@@ -967,37 +968,42 @@
         confirmation !== paidConfirmationSequence ||
         bookingLocks.has(generation)
       ) return
-      let guestEmails
-      try {
-        guestEmails = guestUiEnabled
-          ? readGuestEmails(popup, [settings.brandEmail, settings.starterEmail])
-          : []
-        setGuestError('')
-      } catch (error) {
-        setGuestError(error && error.message)
-        throw error
-      }
-      const bookingInput = {
-        starter_slug: settings.starterSlug,
-        config_id: config.config_id,
-        start: slot.start,
-        end: slot.end,
-        timezone: slot.timezone,
-        topic: fieldValue('[name="topic"], [booking-topic]'),
-        context: fieldValue('[name="context"], [booking-context]'),
-        guest_emails: guestEmails,
-        brand_email: settings.brandEmail,
-        starter_email: settings.starterEmail,
-      }
-      const fingerprint = bookingRequestFingerprint(bookingInput)
-      let entry = bookingAttempts.get(fingerprint)
+      let entry = activeBookingEntry
       if (!entry) {
-        entry = {
-          attempt: createBookingAttempt(bookingInput),
-          inFlight: null,
-          result: null,
+        let guestEmails
+        try {
+          guestEmails = guestUiEnabled
+            ? readGuestEmails(popup, [settings.brandEmail, settings.starterEmail])
+            : []
+          setGuestError('')
+        } catch (error) {
+          setGuestError(error && error.message)
+          throw error
         }
-        bookingAttempts.set(fingerprint, entry)
+        const bookingInput = {
+          starter_slug: settings.starterSlug,
+          config_id: config.config_id,
+          start: slot.start,
+          end: slot.end,
+          timezone: slot.timezone,
+          topic: fieldValue('[name="topic"], [booking-topic]'),
+          context: fieldValue('[name="context"], [booking-context]'),
+          guest_emails: guestEmails,
+          brand_email: settings.brandEmail,
+          starter_email: settings.starterEmail,
+        }
+        const fingerprint = bookingRequestFingerprint(bookingInput)
+        entry = bookingAttempts.get(fingerprint)
+        if (!entry) {
+          entry = {
+            attempt: createBookingAttempt(bookingInput),
+            fingerprint,
+            inFlight: null,
+            result: null,
+          }
+          bookingAttempts.set(fingerprint, entry)
+        }
+        activeBookingEntry = entry
       }
       bookingLocks.add(generation)
       try {
@@ -1005,6 +1011,9 @@
           entry.inFlight = entry.attempt.run().then(function (result) {
             entry.result = result
             return result
+          }).catch(function (error) {
+            if (activeBookingEntry === entry) activeBookingEntry = null
+            throw error
           }).finally(function () {
             entry.inFlight = null
           })
@@ -1016,7 +1025,10 @@
         pendingPaidSlot = null
         pendingPaidSlotGeneration = 0
         pendingPaidConfirmation = 0
-        if (bookingAttempts.get(fingerprint) === entry) bookingAttempts.delete(fingerprint)
+        if (activeBookingEntry === entry) activeBookingEntry = null
+        if (bookingAttempts.get(entry.fingerprint) === entry) {
+          bookingAttempts.delete(entry.fingerprint)
+        }
         showPaidSuccess()
         return result
       } finally {

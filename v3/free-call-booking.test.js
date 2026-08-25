@@ -470,9 +470,13 @@ test('Free reopen reuses the in-flight canonical booking attempt', async () => {
     const slot = { start: 1, end: 2, timezone: 'UTC' }
     api.installFreeBookingController(installSettings(booking.bookingApi))
     await fixture.cta.onclick(event())
+    fixture.topic.value = 'Original topic'
+    fixture.context.value = 'Original context'
     const stale = booking.state.mounts[0].onConfirm(slot)
     await new Promise((resolve) => setImmediate(resolve))
     fixture.close.listeners.click[0](event())
+    assert.equal(fixture.topic.value, '')
+    assert.equal(fixture.context.value, '')
     await fixture.cta.onclick(event())
     const current = booking.state.mounts[1].onConfirm(slot)
     await new Promise((resolve) => setImmediate(resolve))

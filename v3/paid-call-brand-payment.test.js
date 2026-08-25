@@ -1670,6 +1670,7 @@ function makePaidLifecycleFixture(fetch) {
   return {
     calendars,
     cardListeners,
+    context,
     getCardConfirmations: () => cardConfirmations,
     getCardCreates: () => cardCreates,
     getOpenCount: () => openCount,
@@ -1684,6 +1685,7 @@ function makePaidLifecycleFixture(fetch) {
     },
     save,
     steps,
+    topic,
   }
 }
 
@@ -1735,9 +1737,13 @@ test('a reset booking reuses the in-flight canonical attempt', async () => {
   try {
     const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
     await fixture.paid.onclick({ preventDefault() {} })
+    fixture.topic.value = 'Original topic'
+    fixture.context.value = 'Original context'
     const stale = fixture.calendars[0].options.onConfirm(slot)
     await new Promise((resolve) => setImmediate(resolve))
     fixture.mainClose.click()
+    assert.equal(fixture.topic.value, '')
+    assert.equal(fixture.context.value, '')
     await fixture.paid.onclick({ preventDefault() {} })
     const current = fixture.calendars[1].options.onConfirm(slot)
     await new Promise((resolve) => setImmediate(resolve))
