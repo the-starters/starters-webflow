@@ -49,9 +49,11 @@
     if (
       existing &&
       typeof existing.register === 'function' &&
-      typeof existing.reset === 'function'
+      typeof existing.reset === 'function' &&
+      typeof existing.runBooking === 'function'
     ) return existing
     const bindings = new WeakMap()
+    const bookingStates = new WeakMap()
     const lifecycle = {
       register: function (popup, container, onReset) {
         let binding = bindings.get(popup)
@@ -89,6 +91,36 @@
         const generation = bookingSurfaceOwnership.claim(binding.container)
         binding.resets.forEach(function (reset) { reset(generation, nextType || '') })
         return generation
+      },
+      runBooking: function (container, fingerprint, createAttempt, validateResult) {
+        let state = bookingStates.get(container)
+        if (!state) {
+          state = { active: null, attempts: new Map() }
+          bookingStates.set(container, state)
+        }
+        let entry = state.active
+        if (entry && entry.fingerprint !== fingerprint) {
+          throw new Error('Another booking request is still being processed')
+        }
+        if (!entry) {
+          entry = state.attempts.get(fingerprint)
+          if (!entry) {
+            entry = { attempt: createAttempt(), fingerprint, inFlight: null }
+            state.attempts.set(fingerprint, entry)
+          }
+          state.active = entry
+        }
+        if (!entry.inFlight) {
+          entry.inFlight = entry.attempt.run().then(function (result) {
+            if (validateResult) validateResult(result)
+            if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
+            return result
+          }).finally(function () {
+            if (state.active === entry) state.active = null
+            entry.inFlight = null
+          })
+        }
+        return entry.inFlight
       },
     }
     global.StartersBookingSurfaceLifecycle = lifecycle
@@ -442,8 +474,6 @@
 
     let clearFreeCalendarSelection = null
     const bookingLocks = new Set()
-    const bookingAttempts = new Map()
-    let activeBookingEntry = null
 
     function clearField(selector) {
       const field = popup.querySelector(selector)
@@ -519,39 +549,18 @@
                 starter_email: current.starterEmail,
               }
               const fingerprint = current.bookingApi.bookingRequestFingerprint(input)
-              let entry = activeBookingEntry
-              if (entry && entry.fingerprint !== fingerprint) {
-                throw new Error('Another booking request is still being processed')
-              }
-              if (!entry) {
-                entry = bookingAttempts.get(fingerprint)
-                if (!entry) {
-                  entry = {
-                    attempt: current.bookingApi.createBookingAttempt(input),
-                    fingerprint,
-                    inFlight: null,
-                  }
-                  bookingAttempts.set(fingerprint, entry)
-                }
-                activeBookingEntry = entry
-              }
               bookingLocks.add(generation)
               try {
-                if (!entry.inFlight) {
-                  entry.inFlight = entry.attempt.run().then(function (result) {
+                const result = await bookingSurfaceLifecycle.runBooking(
+                  container,
+                  fingerprint,
+                  function () { return current.bookingApi.createBookingAttempt(input) },
+                  function (result) {
                     if (!canonicalBookingId(result)) {
                       throw new Error('The canonical booking response is incomplete')
                     }
-                    if (bookingAttempts.get(entry.fingerprint) === entry) {
-                      bookingAttempts.delete(entry.fingerprint)
-                    }
-                    return result
-                  }).finally(function () {
-                    if (activeBookingEntry === entry) activeBookingEntry = null
-                    entry.inFlight = null
-                  })
-                }
-                const result = await entry.inFlight
+                  },
+                )
                 if (!bookingSurfaceOwnership.owns(container, generation)) return result
                 showFreeSuccess(current.popup)
                 return result

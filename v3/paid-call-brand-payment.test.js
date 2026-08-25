@@ -1572,7 +1572,17 @@ function makePaidLifecycleFixture(fetch) {
   const cardMount = { setAttribute() {} }
   const errorText = { textContent: '', setAttribute() {} }
   const statusText = { textContent: '', setAttribute() {} }
+  const paymentModalListeners = {}
   const paymentModal = {
+    addEventListener(name, listener) {
+      if (!paymentModalListeners[name]) paymentModalListeners[name] = []
+      paymentModalListeners[name].push(listener)
+    },
+    cancel() {
+      ;(paymentModalListeners.cancel || []).forEach(function (listener) {
+        listener({ preventDefault() {} })
+      })
+    },
     querySelector() { return null },
     querySelectorAll() { return [] },
     setAttribute() {},
@@ -1678,6 +1688,7 @@ function makePaidLifecycleFixture(fetch) {
     mainClose,
     paid,
     paymentClose,
+    paymentModal,
     restore() {
       global.document = previous.document
       global.Stripe = previous.Stripe
@@ -1689,7 +1700,7 @@ function makePaidLifecycleFixture(fetch) {
   }
 }
 
-test('closing card setup clears the selected slot before a later save', async () => {
+test('canceling card setup clears the selected slot before a later save', async () => {
   let readinessCount = 0
   let bookingCount = 0
   const fixture = makePaidLifecycleFixture(async (url) => {
@@ -1710,7 +1721,7 @@ test('closing card setup clears the selected slot before a later save', async ()
     const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
     await fixture.calendars[0].options.onConfirm(slot)
     assert.equal(fixture.getOpenCount(), 1)
-    fixture.paymentClose.click()
+    fixture.paymentModal.cancel()
     assert.equal(fixture.calendars[0].clearCount, 1)
     fixture.cardListeners.change({ complete: true })
     await fixture.save.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
@@ -1718,6 +1729,55 @@ test('closing card setup clears the selected slot before a later save', async ()
   } finally {
     fixture.restore()
   }
+})
+
+test('shared booking surface blocks overlapping Free and Paid commands', async () => {
+  const container = new CalendarElement('div')
+  let resolveFree
+  let paidRuns = 0
+  const freeCommand = global.StartersBookingSurfaceLifecycle.runBooking(
+    container,
+    'free-command',
+    function () {
+      return {
+        run: function () {
+          return new Promise(function (resolve) { resolveFree = resolve })
+        },
+      }
+    },
+  )
+
+  assert.throws(function () {
+    global.StartersBookingSurfaceLifecycle.runBooking(
+      container,
+      'paid-command',
+      function () {
+        return {
+          run: async function () {
+            paidRuns += 1
+            return { booking: { booking_id: 'paid-overlap', row_id: 2 } }
+          },
+        }
+      },
+    )
+  }, /Another booking request is still being processed/)
+  assert.equal(paidRuns, 0)
+
+  resolveFree({ booking: { booking_id: 'free-complete', row_id: 1 } })
+  await freeCommand
+  await global.StartersBookingSurfaceLifecycle.runBooking(
+    container,
+    'paid-command',
+    function () {
+      return {
+        run: async function () {
+          paidRuns += 1
+          return { booking: { booking_id: 'paid-complete', row_id: 2 } }
+        },
+      }
+    },
+  )
+  assert.equal(paidRuns, 1)
 })
 
 test('a reset booking blocks a changed command while one is in flight', async () => {
