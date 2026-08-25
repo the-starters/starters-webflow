@@ -204,6 +204,22 @@
       }) || null;
   }
 
+  function openBookingModalFromRegistry() {
+      const modal = window.lumos && window.lumos.modal;
+      const entry = modal && modal.list
+          ? modal.list['popup-booking-main']
+          : null;
+      if (!entry || typeof entry.open !== 'function') return false;
+      if (entry.el && entry.el.open) return true;
+
+      try {
+          entry.open();
+          return true;
+      } catch (_error) {
+          return false;
+      }
+  }
+
   function openReadyCallType(type) {
       const cta = findReadyCallTypeCta(type);
       if (!cta) return false;
@@ -215,12 +231,8 @@
       // leave Free on an empty/loading surface. Open the shell first, then
       // activate the exact installed CTA after the first click has completed.
       const modalTrigger = findReadyBookingModalTrigger();
-      if (!modalTrigger) {
-          cta.click();
-          return true;
-      }
-
-      modalTrigger.click();
+      if (modalTrigger) modalTrigger.click();
+      else if (!openBookingModalFromRegistry()) return false;
       window.setTimeout(function () {
           const currentCta = findReadyCallTypeCta(type);
           if (currentCta) currentCta.click();
