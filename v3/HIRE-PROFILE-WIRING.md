@@ -241,8 +241,12 @@ The native Free and Paid Services cards are type-specific shortcuts.
 the exact matching authored chooser CTA. The CTA must carry its matching
 `data-free-call-v3="ready"` or `data-paid-call-v3="ready"` installation marker,
 an accepted `data-config`, and an available chooser row. The Services card clicks
-that CTA so the matching GitHub controller and native Webflow modal lifecycle
-remain authoritative while the generic chooser step is skipped. A missing,
+the ready `popup-booking-main` trigger first, then activates that exact CTA on
+the next task. This preserves the authored two-dialog lifecycle while the
+generic chooser does not remain visible. A migrated profile with no authored
+main trigger opens `popup-booking-main` through the Lumos modal registry before
+activating the ready CTA. If neither entry path can open the authored dialog, the
+shortcut fails closed. A missing,
 hidden, unavailable, or uninstalled matching CTA fails closed. Generic Book Call
 buttons retain `data-modal-trigger="popup-booking-main"` and continue to open the
 Free/Paid chooser. The direct card click does not itself perform booking,

@@ -3176,6 +3176,29 @@ The scheduling auth bridge allowlists these paid-call paths:
 Xano derives the Brand identity and payment environment from the Bearer token.
 The browser sends neither field. The controller uses this sequence:
 
+```mermaid
+flowchart TD
+    A[Read authenticated availability] --> B[Render the 14-day calendar]
+    B --> C[Brand selects and confirms a slot]
+    C --> D[Read canonical payment readiness]
+    D --> E{Bookable?}
+    E -- Yes --> K[Retain the confirmed slot]
+    E -- No --> F[Open native Stripe Card Element]
+    F --> G{Card details complete?}
+    G -- No --> X[Stop and show an inline error]
+    G -- Yes --> H[Create and confirm the SetupIntent]
+    H --> I[Set the PaymentMethod as default]
+    I --> J[Recheck canonical payment readiness]
+    J --> L{Bookable now?}
+    L -- No --> X
+    L -- Yes --> K
+    K --> M[Validate optional guest addresses]
+    M --> N[Submit the booking request]
+    N --> O{Xano rechecks slot, price, readiness, revision, and authority}
+    O -- Pass --> P[Create the provider booking]
+    O -- Fail --> X
+```
+
 1. Read the next 14 days through authenticated
    `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
    the provider credential and private Scheduler session off the browser.

@@ -194,6 +194,52 @@
       }) || null;
   }
 
+  function findReadyBookingModalTrigger() {
+      return Array.from(document.querySelectorAll(
+          '[data-modal-trigger="popup-booking-main"]'
+      )).find(function (trigger) {
+          return !trigger.hasAttribute('data-booking-trigger-unavailable') &&
+              trigger.getAttribute('aria-disabled') !== 'true' &&
+              typeof trigger.click === 'function';
+      }) || null;
+  }
+
+  function openBookingModalFromRegistry() {
+      const modal = window.lumos && window.lumos.modal;
+      const entry = modal && modal.list
+          ? modal.list['popup-booking-main']
+          : null;
+      if (!entry || typeof entry.open !== 'function') return false;
+      if (entry.el && entry.el.open) return true;
+
+      try {
+          entry.open();
+          return true;
+      } catch (_error) {
+          return false;
+      }
+  }
+
+  function openReadyCallType(type) {
+      const cta = findReadyCallTypeCta(type);
+      if (!cta) return false;
+
+      // The authored modal library expects the normal two-dialog sequence:
+      // open popup-booking-main, then open the selected popup-booking flow.
+      // A direct Services-card click used to invoke only the second trigger.
+      // That could run the controller while its dialog was still closed and
+      // leave Free on an empty/loading surface. Open the shell first, then
+      // activate the exact installed CTA after the first click has completed.
+      const modalTrigger = findReadyBookingModalTrigger();
+      if (modalTrigger) modalTrigger.click();
+      else if (!openBookingModalFromRegistry()) return false;
+      window.setTimeout(function () {
+          const currentCta = findReadyCallTypeCta(type);
+          if (currentCta) currentCta.click();
+      }, 0);
+      return true;
+  }
+
   function wireCallServiceCardsToDirectEntry() {
       document.querySelectorAll('#services [data-service-card="component"]').forEach(function (card) {
           // The native Webflow service cards identify the call type through
@@ -213,8 +259,7 @@
           card.addEventListener('click', function (event) {
               event.preventDefault();
               event.stopImmediatePropagation();
-              const cta = findReadyCallTypeCta(type);
-              if (cta) cta.click();
+              openReadyCallType(type);
           }, true);
       });
   }

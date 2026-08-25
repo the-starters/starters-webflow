@@ -1858,12 +1858,11 @@ test('the generic Book Call button keeps the authored Free/Paid chooser entry', 
   assert.equal(freeClicks, 0)
 })
 
-test('a Free service card skips the chooser and clicks only the ready Free CTA', async () => {
+test('a Free service card opens the modal shell before the ready Free CTA', async () => {
   const page = makePage()
-  let chooserClicks = 0
-  let freeClicks = 0
-  page.bookingButton.click = () => { chooserClicks += 1 }
-  page.freeModalCta.click = () => { freeClicks += 1 }
+  const clickOrder = []
+  page.bookingButton.click = () => { clickOrder.push('shell') }
+  page.freeModalCta.click = () => { clickOrder.push('free') }
   const context = makeContext({
     page,
     member: {
@@ -1901,18 +1900,17 @@ test('a Free service card skips the chooser and clicks only the ready Free CTA',
     preventDefault() {},
     stopImmediatePropagation() {},
   })
-  assert.equal(freeClicks, 1)
-  assert.equal(chooserClicks, 0)
+  await settle()
+  assert.deepEqual(clickOrder, ['shell', 'free'])
 })
 
-test('a Paid service card skips the chooser and clicks only the ready Paid CTA', async () => {
+test('a Paid service card opens the modal shell before the ready Paid CTA', async () => {
   // Production Webflow markup identifies this card with has-connection="paid"
   // and does not author data-type on the service card itself.
   const page = makePage({ includeFreeCard: false, includeCallDataType: false })
-  let chooserClicks = 0
-  let paidClicks = 0
-  page.bookingButton.click = () => { chooserClicks += 1 }
-  page.paidModalCta.click = () => { paidClicks += 1 }
+  const clickOrder = []
+  page.bookingButton.click = () => { clickOrder.push('shell') }
+  page.paidModalCta.click = () => { clickOrder.push('paid') }
   const context = makeContext({
     page,
     member: {
@@ -1961,14 +1959,18 @@ test('a Paid service card skips the chooser and clicks only the ready Paid CTA',
   })
   assert.equal(prevented, 1)
   assert.equal(stopped, 1)
-  assert.equal(paidClicks, 1)
-  assert.equal(chooserClicks, 0)
+  await settle()
+  assert.deepEqual(clickOrder, ['shell', 'paid'])
 })
 
 test('a migrated profile without the legacy Book Call button still uses the direct Free CTA', async () => {
   const page = makePage({ includeBookingButton: false })
-  let freeClicks = 0
-  page.freeModalCta.click = () => { freeClicks += 1 }
+  const clickOrder = []
+  page.bookingDialog.open = false
+  page.freeModalCta.click = () => {
+    assert.equal(page.bookingDialog.open, true)
+    clickOrder.push('free')
+  }
   const context = makeContext({
     page,
     member: {
@@ -1979,6 +1981,19 @@ test('a migrated profile without the legacy Book Call button still uses the dire
     },
     omitInitialFreeController: true,
   })
+  context.lumos = {
+    modal: {
+      list: {
+        'popup-booking-main': {
+          el: page.bookingDialog,
+          open: () => {
+            page.bookingDialog.open = true
+            clickOrder.push('shell')
+          },
+        },
+      },
+    },
+  }
   context.xanoAuthFetch = async (url) => ({
     ok: true,
     status: 200,
@@ -2009,7 +2024,50 @@ test('a migrated profile without the legacy Book Call button still uses the dire
     preventDefault() {},
     stopImmediatePropagation() {},
   })
-  assert.equal(freeClicks, 1)
+  await settle()
+  assert.deepEqual(clickOrder, ['shell', 'free'])
+})
+
+test('a migrated profile fails closed when no trigger or modal registry exists', async () => {
+  const page = makePage({ includeBookingButton: false })
+  let freeClicks = 0
+  page.freeModalCta.click = () => { freeClicks += 1 }
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    freeController: {
+      getStarterByMemberId: async () => ({
+        nylas_grant_id: 'grant_prod',
+        nylas_grant_email: 'starter@example.com',
+      }),
+      getConfigs: async () => [{
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+      }],
+      installFreeBookingController: () => {
+        page.freeModalCta.setAttribute('data-free-call-v3', 'ready')
+        return true
+      },
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  freeCard.listeners.click[0]({
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  })
+  await settle()
+  assert.equal(freeClicks, 0)
 })
 
 test('a migrated profile without the legacy Book Call button stays closed before discovery succeeds', () => {
