@@ -965,7 +965,6 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     xanoAuthFetch: global.xanoAuthFetch,
   }
   const requests = []
-  let resolveReadiness
   const priceText = { textContent: '$50' }
   const item = {
     style: {},
@@ -1033,9 +1032,7 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
   global.xanoAuthFetch = async (url, options) => {
     requests.push({ url, options })
     if (url.endsWith(api.READINESS_PATH)) {
-      return new Promise((resolve) => {
-        resolveReadiness = () => resolve(response({ environment: 'live', bookable: true }))
-      })
+      return response({ environment: 'live', bookable: true })
     }
     return response({ booking: { booking_id: 'booking_one', row_id: 905 } })
   }
@@ -1063,10 +1060,9 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     assert.equal(priceText.textContent, '$5')
     const firstClick = cta.onclick({ preventDefault() {} })
     const secondClick = cta.onclick({ preventDefault() {} })
-    assert.equal(requests.filter(({ url }) => url.endsWith(api.READINESS_PATH)).length, 1)
-    resolveReadiness()
     await Promise.all([firstClick, secondClick])
     assert.equal(calendarCount, 1)
+    assert.equal(requests.filter(({ url }) => url.endsWith(api.READINESS_PATH)).length, 0)
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.wrapper.getAttribute('aria-hidden'), 'true')
     calendarOptions.onSelectionChange({
@@ -1147,12 +1143,13 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
   }
 })
 
-test('Free selection invalidates a pending Paid readiness response', async () => {
+test('Free selection invalidates a pending Paid calendar response', async () => {
   const previous = {
     document: global.document,
     xanoAuthFetch: global.xanoAuthFetch,
   }
-  let resolveReadiness
+  let resolveCalendar
+  let calendarOptions
   const container = new CalendarElement('div')
   const guestUi = makeGuestUi()
   container.textContent = 'Free scheduler'
@@ -1169,16 +1166,25 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
   }
   const freeListeners = {}
   const modalClose = guestControl()
+  const topic = { value: '' }
+  const context = { value: '' }
+  const steps = [
+    { style: {}, getAttribute: () => 'default' },
+    { style: {}, getAttribute: () => 'success' },
+  ]
   const free = {
     addEventListener(name, listener) { freeListeners[name] = listener },
   }
   const popup = {
     querySelector(selector) {
       if (selector === '[nylas-container]') return container
+      if (selector === '[name="topic"], [booking-topic]') return topic
+      if (selector === '[name="context"], [booking-context]') return context
       return guestQuery(guestUi, selector)
     },
     querySelectorAll(selector) {
       if (selector === '[data-modal-close], [booking-popup-close], [popup-booking-close]') return [modalClose]
+      if (selector === '[schedule-step]') return steps
       return guestQueryAll(guestUi, selector)
     },
   }
@@ -1191,9 +1197,6 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
       return selector.includes('data-type="free"') ? [free] : [paid]
     },
   }
-  global.xanoAuthFetch = async () => new Promise((resolve) => {
-    resolveReadiness = () => resolve(response({ bookable: true }))
-  })
   let mounts = 0
 
   try {
@@ -1206,25 +1209,42 @@ test('Free selection invalidates a pending Paid readiness response', async () =>
         currency: 'usd',
         price_cents: 500,
       },
-      mountCalendar() { mounts += 1 },
+      mountCalendar(options) {
+        mounts += 1
+        calendarOptions = options
+        return new Promise((resolve) => { resolveCalendar = resolve })
+      },
     }), true)
     guestUi.wrapper.style.display = 'flex'
     guestUi.rows[0].field.value = 'close@example.com'
+    topic.value = 'Old topic'
+    context.value = 'Old context'
+    steps[0].style.display = 'none'
+    steps[1].style.display = 'flex'
+    container.textContent = 'Old calendar'
     modalClose.listeners.click()
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.rows[0].field.value, '')
+    assert.equal(topic.value, '')
+    assert.equal(context.value, '')
+    assert.equal(container.textContent, '')
+    assert.equal(steps[0].style.display, 'flex')
+    assert.equal(steps[1].style.display, 'none')
     const pending = paid.onclick({ preventDefault() {} })
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.wrapper.getAttribute('aria-hidden'), 'true')
     assert.equal(container.textContent, 'Loading available times...')
     assert.equal(container.getAttribute('data-paid-calendar-state'), 'loading')
+    assert.equal(mounts, 1)
+    assert.equal(calendarOptions.isCurrent(), true)
     freeListeners.click()
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.rows[0].field.value, '')
     container.textContent = 'Free scheduler'
-    resolveReadiness()
+    assert.equal(calendarOptions.isCurrent(), false)
+    resolveCalendar({ slots: [] })
     await pending
-    assert.equal(mounts, 0)
+    assert.equal(mounts, 1)
     assert.equal(container.textContent, 'Free scheduler')
   } finally {
     global.document = previous.document
@@ -1237,7 +1257,7 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
     document: global.document,
     xanoAuthFetch: global.xanoAuthFetch,
   }
-  const readinessResolvers = []
+  let resolveFirstCalendar
   const container = new CalendarElement('div')
   const guestUi = makeGuestUi()
   const price = { textContent: '$50' }
@@ -1271,9 +1291,6 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
       return selector.includes('data-type="free"') ? [free] : [paid]
     },
   }
-  global.xanoAuthFetch = async () => new Promise((resolve) => {
-    readinessResolvers.push(function () { resolve(response({ bookable: true })) })
-  })
   const mounts = []
 
   try {
@@ -1287,7 +1304,10 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
       },
       grantId: 'grant_test',
       mountCalendar(options) {
-        mounts.push(options.config)
+        mounts.push(options)
+        if (mounts.length === 1) {
+          return new Promise((resolve) => { resolveFirstCalendar = resolve })
+        }
         return Promise.resolve({ slots: [] })
       },
     }), true)
@@ -1296,15 +1316,15 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
     container.textContent = 'Free scheduler'
     const second = paid.onclick({ preventDefault() {} })
     assert.equal(container.textContent, 'Loading available times...')
-    assert.equal(readinessResolvers.length, 1)
-    readinessResolvers[0]()
-    await new Promise((resolve) => setImmediate(resolve))
-    assert.equal(readinessResolvers.length, 2)
-    readinessResolvers[1]()
-    await Promise.all([first, second])
     assert.equal(mounts.length, 1)
-    assert.equal(mounts[0].grant_id, 'grant_test')
-    assert.equal(mounts[0].duration, 60)
+    assert.equal(mounts[0].isCurrent(), false)
+    resolveFirstCalendar({ slots: [] })
+    await new Promise((resolve) => setImmediate(resolve))
+    await Promise.all([first, second])
+    assert.equal(mounts.length, 2)
+    assert.equal(mounts[1].isCurrent(), true)
+    assert.equal(mounts[1].config.grant_id, 'grant_test')
+    assert.equal(mounts[1].config.duration, 60)
   } finally {
     global.document = previous.document
     global.xanoAuthFetch = previous.xanoAuthFetch
@@ -1332,6 +1352,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
   }
   const guestUi = makeGuestUi()
   const calendarContainer = new CalendarElement('div')
+  let calendarOptions
   const popup = {
     querySelector(selector) {
       if (selector === '[nylas-container]') return calendarContainer
@@ -1343,10 +1364,37 @@ test('card setup retries reuse the same setup and default-selection attempts', a
     disabled: false,
     addEventListener(name, listener) { listeners[name] = listener },
   }
-  const cardMount = {}
-  const errorText = { textContent: '' }
-  const statusText = { textContent: '' }
-  const openCard = { click() {} }
+  const cardMount = {
+    attrs: {},
+    setAttribute(name, value) { this.attrs[name] = value },
+  }
+  const errorText = {
+    textContent: '',
+    attrs: {},
+    setAttribute(name, value) { this.attrs[name] = value },
+  }
+  const statusText = {
+    textContent: '',
+    attrs: {},
+    setAttribute(name, value) { this.attrs[name] = value },
+  }
+  const cardLabel = {
+    id: '',
+    textContent: 'Payment Methods',
+    setAttribute(name, value) { if (name === 'id') this.id = value },
+  }
+  const staleAction = { style: {} }
+  const paymentModal = {
+    attrs: {},
+    querySelector(selector) {
+      if (selector === '[pm-use-this]') return staleAction
+      return null
+    },
+    querySelectorAll() { return [cardLabel] },
+    setAttribute(name, value) { this.attrs[name] = value },
+  }
+  let openCardClicks = 0
+  const openCard = { click() { openCardClicks += 1 } }
   const closeCard = { click() {} }
   global.document = {
     querySelector(selector) {
@@ -1355,15 +1403,28 @@ test('card setup retries reuse the same setup and default-selection attempts', a
       if (selector.includes('[save-card-btn]')) return save
       if (selector.includes('[card-error]')) return errorText
       if (selector.includes('[save-card-status]')) return statusText
+      if (selector === '[popup-stripe-card]') return paymentModal
       if (selector === '[popup-stripe-card-open]') return openCard
       if (selector === '[popup-stripe-card-close]') return closeCard
       return null
     },
     querySelectorAll() { return [cta] },
   }
-  const card = { mount() {}, on() {} }
+  let cardChange
+  let cardCreateOptions
+  const card = {
+    mount() {},
+    clear() {},
+    on(name, listener) { if (name === 'change') cardChange = listener },
+  }
   global.Stripe = () => ({
-    elements: () => ({ create: () => card }),
+    elements: () => ({
+      create(type, options) {
+        assert.equal(type, 'card')
+        cardCreateOptions = options
+        return card
+      },
+    }),
     confirmCardSetup: async () => ({
       setupIntent: { payment_method: 'pm_retry_card' },
     }),
@@ -1387,6 +1448,9 @@ test('card setup retries reuse the same setup and default-selection attempts', a
     if (url.endsWith(api.SETUP_PATH)) {
       return response({ client_secret: 'seti_retry_secret' })
     }
+    if (url.endsWith(api.BOOKING_PATH)) {
+      return response({ booking: { booking_id: 'booking_card_ready', row_id: 906 } })
+    }
     throw new Error('Unexpected request: ' + url)
   }
 
@@ -1401,14 +1465,40 @@ test('card setup retries reuse the same setup and default-selection attempts', a
         price_cents: 1250,
       },
       starterSlug: 'jp-testiz-d',
-      mountCalendar() { return Promise.resolve({ slots: [] }) },
+      mountCalendar(options) {
+        calendarOptions = options
+        return Promise.resolve({ slots: [] })
+      },
     }), true)
     assert.equal(priceText.textContent, '$12.50')
+    assert.equal(cardLabel.id, 'paid-card-details-label')
+    assert.equal(cardMount.attrs['aria-labelledby'], 'paid-card-details-label')
+    assert.equal(paymentModal.attrs.role, 'dialog')
+    assert.equal(paymentModal.attrs['aria-modal'], 'true')
+    assert.equal(paymentModal.attrs['aria-labelledby'], 'paid-card-details-label')
+    assert.equal(errorText.attrs.role, 'alert')
+    assert.equal(errorText.attrs['aria-live'], 'assertive')
+    assert.equal(statusText.attrs.role, 'status')
+    assert.equal(statusText.attrs['aria-live'], 'polite')
+    assert.equal(staleAction.style.display, 'none')
     await cta.onclick({ preventDefault() {} })
+    await calendarOptions.onConfirm({
+      start: 1787000000000,
+      end: 1787003600000,
+      timezone: 'Pacific/Auckland',
+    })
+    assert.equal(openCardClicks, 1)
+    assert.equal(cardCreateOptions.hidePostalCode, true)
+    assert.equal(cardCreateOptions.style.base['::placeholder'].color, '#74786f')
+    assert.equal(requests.filter(({ url }) => url.endsWith(api.SETUP_PATH)).length, 0)
     const saveEvent = {
       preventDefault() {},
       stopImmediatePropagation() {},
     }
+    await listeners.click(saveEvent)
+    assert.equal(errorText.textContent, 'Enter complete card details.')
+    assert.equal(requests.filter(({ url }) => url.endsWith(api.SETUP_PATH)).length, 0)
+    cardChange({ complete: true })
     await listeners.click(saveEvent)
     await listeners.click(saveEvent)
 
