@@ -28,6 +28,8 @@ in [README.md](README.md) and in the root
 - [x] Show the pending-review confirmation after a Work Highlight update, keep the
       approved version described as live, and restore the shared generic modal copy
       after the modal closes.
+- [x] Keep an image-picker Escape from clearing the selected Work Highlight behind
+      a still-visible edit modal, and close any stale restored modal on `pageshow`.
 
 ## 🧪 Automated evidence
 
@@ -51,6 +53,7 @@ Run this coverage with:
 node --test starter-edit-profile.test.js
 node --test v3/profile-form/company-experience-date-hydration.test.js
 node --test v3/starter-edit-profile/portfolio-pending-success.test.js
+node --test v3/starter-edit-profile/portfolio-modal-state.test.js
 ```
 
 ## 🚀 Release and live verification

@@ -46,6 +46,12 @@ function createStarterEditPortfolioSuccessController(options) {
   return { showForSubmit };
 }
 
+function createStarterEditPortfolioModalLifecycle(options) {
+  options.eventTarget.addEventListener('pageshow', function () {
+    if (!options.hasActivePortfolio()) options.closeModal();
+  });
+}
+
 async function commitStarterEditPortfolioDrafts(options) {
   for (const draft of options.createDrafts) {
     await options.commitCreateDraft(draft);
@@ -520,6 +526,14 @@ async function commitStarterEditPortfolioDrafts(options) {
 
         notifyModalClose.dispatchEvent(new Event('click', { bubbles: true }));
       }
+
+      createStarterEditPortfolioModalLifecycle({
+        eventTarget: window,
+        hasActivePortfolio: function () {
+          return Boolean(activePortfolio);
+        },
+        closeModal: closeModal,
+      });
 
       function updateCreateSubmitState() {
         if (!createSubmit) return;
@@ -1220,13 +1234,6 @@ async function commitStarterEditPortfolioDrafts(options) {
           console.error(error);
           openNotifyModal(getErrorMessage(error, 'Failed to open portfolio'));
         }
-      });
-
-      document.addEventListener('keydown', function (event) {
-        if (event.key !== 'Escape') return;
-        closeNotifyModal();
-        closeRemoveModal();
-        closeModal();
       });
 
       if (imagesInp) {
