@@ -425,6 +425,7 @@ test('shared call calendar renders dates and times and submits only the selected
     Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000) / 86400000) * 86400 +
     12 * 60 * 60
   const secondStart = firstStart + 30 * 60
+  const thirdStart = firstStart + 24 * 60 * 60
   global.document = {
     createElement(tagName) { return new CalendarElement(tagName) },
   }
@@ -433,6 +434,7 @@ test('shared call calendar renders dates and times and submits only the selected
     time_slots: [
       { start_time: firstStart, end_time: firstStart + 15 * 60 },
       { start_time: secondStart, end_time: secondStart + 15 * 60 },
+      { start_time: thirdStart, end_time: thirdStart + 15 * 60 },
     ],
   })
 
@@ -451,12 +453,14 @@ test('shared call calendar renders dates and times and submits only the selected
         await new Promise((resolve) => { resolveConfirmation = resolve })
       },
     })
-    assert.equal(result.slots.length, 2)
+    assert.equal(result.slots.length, 3)
     assert.equal(container.getAttribute('data-paid-calendar-state'), 'ready')
     const timeButtons = container.querySelectorAll('[data-paid-calendar-slot]')
+    const dateButtons = container.querySelectorAll('[data-paid-calendar-date]')
     const confirm = container.querySelectorAll('[data-paid-calendar-element]')
       .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
     assert.equal(timeButtons.length, 2)
+    assert.equal(dateButtons.length, 2)
     assert.equal(confirm.textContent, 'Request free call')
     assert.equal(confirm.disabled, true)
     assert.deepEqual(selections, [null])
@@ -467,7 +471,10 @@ test('shared call calendar renders dates and times and submits only the selected
     await new Promise((resolve) => setImmediate(resolve))
     assert.equal(timeButtons[0].disabled, true)
     assert.equal(timeButtons[1].disabled, true)
+    assert.equal(dateButtons[0].disabled, true)
+    assert.equal(dateButtons[1].disabled, true)
     timeButtons[0].listeners.click()
+    dateButtons[1].listeners.click()
     assert.deepEqual(selections[1], result.slots[1])
     resolveConfirmation()
     await pendingConfirmation
@@ -1614,6 +1621,7 @@ function makePaidLifecycleFixture(fetch) {
   }
   const cardListeners = {}
   let cardCreates = 0
+  let cardConfirmations = 0
   let saveBindings = 0
   const originalSaveAdd = save.addEventListener
   save.addEventListener = function (name, listener) {
@@ -1631,7 +1639,10 @@ function makePaidLifecycleFixture(fetch) {
         }
       },
     }),
-    confirmCardSetup: async () => ({ setupIntent: { payment_method: 'pm_lifecycle' } }),
+    confirmCardSetup: async () => {
+      cardConfirmations += 1
+      return { setupIntent: { payment_method: 'pm_lifecycle' } }
+    },
   })
   global.xanoAuthFetch = fetch
   api.installPaidBookingController({
@@ -1659,6 +1670,7 @@ function makePaidLifecycleFixture(fetch) {
   return {
     calendars,
     cardListeners,
+    getCardConfirmations: () => cardConfirmations,
     getCardCreates: () => cardCreates,
     getOpenCount: () => openCount,
     getSaveBindings: () => saveBindings,
@@ -1805,6 +1817,49 @@ test('the latest Paid confirmation owns an overlapping readiness response', asyn
     resolveFirstReadiness()
     await first
     assert.deepEqual(bookingStarts, [secondSlot.start])
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('booking retry reuses completed card setup and booking attempt', async () => {
+  let readinessCount = 0
+  let setupCount = 0
+  let defaultCount = 0
+  const bookingBodies = []
+  const fixture = makePaidLifecycleFixture(async (url, options) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({ environment: 'test', bookable: readinessCount >= 3 })
+    }
+    if (url.endsWith(api.SETUP_PATH)) {
+      setupCount += 1
+      return response({ client_secret: 'seti_booking_retry' })
+    }
+    if (url.endsWith(api.SET_DEFAULT_PATH)) {
+      defaultCount += 1
+      return response({ readiness: 'ready' })
+    }
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingBodies.push(options.body)
+      if (bookingBodies.length === 1) throw new Error('temporary booking failure')
+      return response({ booking: { booking_id: 'booking_retry', row_id: 905 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[0].options.onConfirm(slot)
+    fixture.cardListeners.change({ complete: true })
+    const saveEvent = { preventDefault() {}, stopImmediatePropagation() {} }
+    await fixture.save.listeners.click[0](saveEvent)
+    await fixture.save.listeners.click[0](saveEvent)
+    assert.equal(setupCount, 1)
+    assert.equal(defaultCount, 1)
+    assert.equal(fixture.getCardConfirmations(), 1)
+    assert.equal(bookingBodies.length, 2)
+    assert.equal(new Set(bookingBodies).size, 1)
   } finally {
     fixture.restore()
   }

@@ -598,6 +598,7 @@
           return [available, available ? 'scheduling-preview-available-date' : '', available ? 'Available' : 'Unavailable']
         },
         onSelect: function (dateText) {
+          if (confirmationPending) return
           selectedDate = dateText
           renderTimes()
         },
@@ -611,6 +612,7 @@
       dateKeys.forEach(function (key) {
         const button = global.document.createElement('button')
         button.type = 'button'
+        button.setAttribute('data-paid-calendar-date', key)
         button.textContent = new Intl.DateTimeFormat('en-US', {
           weekday: 'short',
           month: 'short',
@@ -618,6 +620,7 @@
           timeZone: timezone,
         }).format(new Date(groups[key][0].start))
         button.addEventListener('click', function () {
+          if (confirmationPending) return
           selectedDate = key
           renderTimes()
         })
@@ -629,6 +632,12 @@
       if (!selectedSlot || confirm.disabled || confirmationPending) return
       confirmationPending = true
       confirm.disabled = true
+      Array.from(calendarHost.querySelectorAll('[data-paid-calendar-date]')).forEach(function (button) {
+        button.disabled = true
+      })
+      if ($ && $.fn && $.fn.datepicker) {
+        $(calendarHost).datepicker('option', 'disabled', true)
+      }
       Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (button) {
         button.disabled = true
       })
@@ -645,6 +654,12 @@
       } finally {
         confirmationPending = false
         if (isCurrent()) {
+          Array.from(calendarHost.querySelectorAll('[data-paid-calendar-date]')).forEach(function (button) {
+            button.disabled = false
+          })
+          if ($ && $.fn && $.fn.datepicker) {
+            $(calendarHost).datepicker('option', 'disabled', false)
+          }
           Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (button) {
             button.disabled = false
           })
@@ -754,6 +769,7 @@
     let cardSetupAttempt = null
     let defaultSelectionAttempt = null
     let defaultSelectionPaymentMethod = ''
+    let paymentReadyGeneration = 0
     let paymentUiGeneration = 0
     let pendingPaidSlot = null
     let pendingPaidSlotGeneration = 0
@@ -832,6 +848,7 @@
 
     function resetPaymentUi() {
       paymentUiGeneration += 1
+      paymentReadyGeneration = 0
       cardComplete = false
       const nodes = paymentNodes()
       if (nodes.error) nodes.error.textContent = ''
@@ -1066,42 +1083,49 @@
           event.preventDefault()
           event.stopImmediatePropagation()
           if (save.disabled) return
-          if (!cardComplete) {
+          const attemptGeneration = paymentUiGeneration
+          const paymentAlreadyReady = paymentReadyGeneration === attemptGeneration
+          if (!paymentAlreadyReady && !cardComplete) {
             errorText.textContent = 'Enter complete card details.'
             statusText.textContent = ''
             return
           }
-          const attemptGeneration = paymentUiGeneration
           save.disabled = true
           errorText.textContent = ''
-          statusText.textContent = 'Saving...'
+          statusText.textContent = paymentAlreadyReady ? 'Sending...' : 'Saving...'
           try {
-            if (!cardSetupAttempt) cardSetupAttempt = createSetupAttempt()
-            const setup = await cardSetupAttempt.run()
-            const confirmed = await stripe.confirmCardSetup(setup.client_secret, {
-              payment_method: {
-                card: cardElement,
-                billing_details: {
-                  name: settings.brandName || '',
-                  email: settings.brandEmail || '',
+            if (!paymentAlreadyReady) {
+              if (!cardSetupAttempt) cardSetupAttempt = createSetupAttempt()
+              const setup = await cardSetupAttempt.run()
+              const confirmed = await stripe.confirmCardSetup(setup.client_secret, {
+                payment_method: {
+                  card: cardElement,
+                  billing_details: {
+                    name: settings.brandName || '',
+                    email: settings.brandEmail || '',
+                  },
                 },
-              },
-            })
-            if (confirmed.error) throw new Error(confirmed.error.message || 'Card setup failed')
-            const paymentMethod = confirmed.setupIntent && confirmed.setupIntent.payment_method
-            if (!defaultSelectionAttempt || defaultSelectionPaymentMethod !== paymentMethod) {
-              defaultSelectionPaymentMethod = paymentMethod
-              defaultSelectionAttempt = createDefaultSelectionAttempt(paymentMethod)
+              })
+              if (confirmed.error) throw new Error(confirmed.error.message || 'Card setup failed')
+              const paymentMethod = confirmed.setupIntent && confirmed.setupIntent.payment_method
+              if (!defaultSelectionAttempt || defaultSelectionPaymentMethod !== paymentMethod) {
+                defaultSelectionPaymentMethod = paymentMethod
+                defaultSelectionAttempt = createDefaultSelectionAttempt(paymentMethod)
+              }
+              await defaultSelectionAttempt.run()
+              const readiness = await getReadiness()
+              if (!readiness.bookable) throw new Error('The payment method is not ready')
+              if (attemptGeneration !== paymentUiGeneration) return
+              cardSetupAttempt = null
+              defaultSelectionAttempt = null
+              defaultSelectionPaymentMethod = ''
+              paymentReadyGeneration = attemptGeneration
+              statusText.textContent = 'Card saved. Sending...'
             }
-            await defaultSelectionAttempt.run()
-            const readiness = await getReadiness()
-            if (!readiness.bookable) throw new Error('The payment method is not ready')
             if (attemptGeneration !== paymentUiGeneration) return
-            cardSetupAttempt = null
-            defaultSelectionAttempt = null
-            defaultSelectionPaymentMethod = ''
-            statusText.textContent = 'Card saved.'
             await resumePendingPaidBooking()
+            if (attemptGeneration !== paymentUiGeneration) return
+            statusText.textContent = 'Card saved.'
             const close = document.querySelector('[popup-stripe-card-close]')
             if (close) close.click()
           } catch (error) {
