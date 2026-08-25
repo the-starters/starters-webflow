@@ -77,7 +77,7 @@ function createControllerFixture() {
   const video = { id: 202, video_url: 'https://example.com/video.mp4' };
   const grid = createElement();
   const template = createElement();
-  const editModal = createElement({ visible: false });
+  const editModal = createElement({ open: false, visible: false });
   const editModalTrigger = createElement();
   const editModalClose = createElement();
   const editForm = createElement();
@@ -94,6 +94,9 @@ function createControllerFixture() {
   const notifyModalClose = createElement();
   const notificationText = createElement();
   const notifications = [];
+  const timers = new Map();
+  let currentTime = 0;
+  let nextTimerId = 1;
   const authoredElements = new Map([
     ['[data-highlights]', grid],
     ['[data-modal-target="portfolio-edit"]', editModal],
@@ -126,8 +129,19 @@ function createControllerFixture() {
     return null;
   };
   grid.querySelector = (selector) => selector === '.portfolio_card' ? template : null;
-  editModalTrigger.addEventListener('click', () => { editModal.visible = true; });
-  editModalClose.addEventListener('click', () => { editModal.visible = false; });
+  editForm.reset = () => {
+    editForm.resetCount = (editForm.resetCount || 0) + 1;
+    editTitle.value = '';
+    editDescription.value = '';
+  };
+  editModalTrigger.addEventListener('click', () => {
+    editModal.open = true;
+    editModal.visible = true;
+  });
+  editModalClose.addEventListener('click', () => {
+    editModal.open = false;
+    editModal.visible = false;
+  });
   removeModalTrigger.addEventListener('click', () => { removeModal.visible = true; });
   removeModalClose.addEventListener('click', () => { removeModal.visible = false; });
   notifyModalTrigger.addEventListener('click', () => {
@@ -167,7 +181,12 @@ function createControllerFixture() {
     },
     FormData,
     URL,
-    setTimeout: (callback) => callback(),
+    setTimeout(callback, delay) {
+      const timerId = nextTimerId++;
+      timers.set(timerId, { callback, runAt: currentTime + delay });
+      return timerId;
+    },
+    clearTimeout(timerId) { timers.delete(timerId); },
     setLoader() {},
   });
   context.window.fetch = context.fetch;
@@ -187,6 +206,16 @@ function createControllerFixture() {
       new vm.Script(source, { filename: 'portfolio-crud.js' }).runInContext(context);
       await document.dispatchEvent({ type: 'DOMContentLoaded' });
       await memberBoot;
+    },
+    advanceTime(milliseconds) {
+      currentTime += milliseconds;
+      const ready = Array.from(timers.entries())
+        .filter(([, timer]) => timer.runAt <= currentTime)
+        .sort((left, right) => left[1].runAt - right[1].runAt);
+      for (const [timerId, timer] of ready) {
+        if (!timers.delete(timerId)) continue;
+        timer.callback();
+      }
     },
     document,
     window,
@@ -210,11 +239,13 @@ test('portfolio lifecycle closes only a stale restored modal', async () => {
   const context = loadLifecycle();
   const eventTarget = createEventTarget();
   let hasActivePortfolio = true;
+  let isModalOpen = true;
   let closeCount = 0;
 
   context.createStarterEditPortfolioModalLifecycle({
     eventTarget,
     hasActivePortfolio: () => hasActivePortfolio,
+    isModalOpen: () => isModalOpen,
     closeModal: () => { closeCount += 1; },
   });
 
@@ -222,8 +253,30 @@ test('portfolio lifecycle closes only a stale restored modal', async () => {
   assert.equal(closeCount, 0);
 
   hasActivePortfolio = false;
+  isModalOpen = false;
+  await eventTarget.dispatchEvent({ type: 'pageshow' });
+  assert.equal(closeCount, 0);
+
+  isModalOpen = true;
   await eventTarget.dispatchEvent({ type: 'pageshow' });
   assert.equal(closeCount, 1);
+});
+
+test('closed-page pageshow cannot reset a quickly opened highlight', async () => {
+  const fixture = createControllerFixture();
+  await fixture.boot();
+
+  assert.equal(fixture.editModal.open, false);
+  await fixture.window.dispatchEvent({ type: 'pageshow' });
+  await fixture.grid.dispatchEvent({ type: 'click', target: fixture.editButton });
+  fixture.advanceTime(301);
+
+  assert.equal(fixture.editModal.visible, true);
+  assert.equal(fixture.editTitle.value, 'Selected highlight');
+  assert.equal(fixture.editImages.children.length, 1);
+  assert.equal(fixture.editImages.children[0].children[0].src, 'https://example.com/image.jpg?tpl=large');
+  assert.equal(fixture.editVideos.children.length, 1);
+  assert.equal(fixture.editVideos.children[0].children[0].src, 'https://example.com/video.mp4');
 });
 
 test('document Escape preserves the active highlight and its media', async () => {
