@@ -10,8 +10,9 @@ payload.
 - Free Call duration: `30` minutes.
 - Price: `$0`.
 - Nylas service type: public Free Call configuration.
-- The browser mutation payload contains only `config_id`, `expected_revision`, and
-  `idempotency_key`.
+- The browser mutation payload contains the public `description` plus `config_id`,
+  `expected_revision`, and `idempotency_key`. Xano still fixes the provider title, duration,
+  and price.
 - Initial and terminal UI state always comes from
   `GET starter/free-call-settings/get/v3`.
 
@@ -49,6 +50,8 @@ For future Designer edits, prefer the stable contract:
 - Native form: `data-call-settings-element="form"`
 - Editor panel: `data-call-settings-element="panel"`
 - Radios: `data-call-settings-input="enabled|disabled"`
+- Public description: `data-call-settings-input="description"`. The legacy
+  `data-call-settings-input="title"` and `name="call-description"` selectors remain compatible.
 - Actions: `data-call-settings-action="open|close|submit"`
 - Optional outputs: `data-call-settings-output="status|on|off|price"`; a canonical `on` or `off`
   marker always wins over the authored pill copy above
@@ -88,7 +91,7 @@ The controller emits these window events:
 - `starterFreeCallWriteError` — `{ action: 'upsert'|'disable', message }`; never emitted for a
   missing or changed Memberstack session, because nothing was written
 
-A missing or changed Memberstack session fails closed: the cached Free state clears, the title,
+A missing or changed Memberstack session fails closed: the cached Free state clears, the description,
 duration, price, and prerequisite paint reset, save disables, `data-free-call-settings` becomes
 `error`, and the status reads `Sign in to manage free calls.`
 

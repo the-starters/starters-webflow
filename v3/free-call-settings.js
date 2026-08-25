@@ -3,7 +3,7 @@
 
   // Native Webflow form controller for Starter-owned free consultation calls.
   // Xano owns the title, duration, price, provider payload, and environment.
-  // The browser only submits service identity, revision, and idempotency intent.
+  // The browser submits the public description plus guarded service intent.
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
   const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
   const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
@@ -291,7 +291,13 @@
 
   function field(name) {
     if (name === 'enabled' || name === 'disabled') return radioPair()[name]
-    return qs('[data-call-settings-input="' + name + '"]', root)
+    const canonical = qs('[data-call-settings-input="' + name + '"]', root)
+    if (canonical) return canonical
+    if (name !== 'description') return null
+    return (
+      qs('[data-call-settings-input="title"]', root) ||
+      qs('[name="call-description"]', root)
+    )
   }
 
   function action(name) {
@@ -395,8 +401,8 @@
     const pair = radioPair()
     setRadioChecked(pair.enabled, false)
     setRadioChecked(pair.disabled, true)
-    const titleInput = field('title')
-    if (titleInput) titleInput.value = ''
+    const descriptionInput = field('description')
+    if (descriptionInput) descriptionInput.value = ''
     qsa('[data-free-call-prerequisite]', uiScope || root).forEach(function (item) {
       item.setAttribute('data-ready', 'false')
     })
@@ -460,11 +466,11 @@
     const pair = radioPair()
     setRadioChecked(pair.enabled, Boolean(service))
     setRadioChecked(pair.disabled, !service)
-    const titleInput = field('title')
-    if (titleInput) {
-      titleInput.value = service ? service.title || '' : ''
-      titleInput.readOnly = true
-      titleInput.setAttribute('aria-readonly', 'true')
+    const descriptionInput = field('description')
+    if (descriptionInput) {
+      descriptionInput.value = value.public_description || ''
+      descriptionInput.readOnly = false
+      descriptionInput.setAttribute('aria-readonly', 'false')
     }
     root.setAttribute(
       'data-free-call-duration-current',
@@ -568,8 +574,14 @@
     setStatus('saving')
     try {
       const service = canonicalService(settings)
+      const descriptionInput = field('description')
+      const description = String((descriptionInput && descriptionInput.value) || '').trim()
+      if (description.length > 60) {
+        throw new Error('Free-call description must be 60 characters or fewer.')
+      }
       await xanoRequest('/starter/free-call-settings/upsert/v3', 'POST', {
         config_id: service ? service.config_id : null,
+        description: description,
         expected_revision: service ? Number(service.revision || 0) : 0,
         idempotency_key: idempotencyKey('upsert'),
       })
