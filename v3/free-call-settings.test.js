@@ -71,6 +71,7 @@ class El {
 
 function canonical(overrides = {}) {
   return {
+    public_description: overrides.public_description || '',
     readiness: {
       calendar_connected: true,
       availability_configured: true,
@@ -123,7 +124,7 @@ function buildDom(withRoot = true, publishedRoot = false, authoredPills = false,
   const yesLabel = new El('label')
   const noVisual = new El('div', { class: 'radio-filter_check w-radio-input w--redirected-checked' })
   const yesVisual = new El('div', { class: 'radio-filter_check w-radio-input' })
-  const title = new El('input', { 'data-call-settings-input': 'title' })
+  const title = new El('input', { 'data-call-settings-input': 'description' })
   const close = new El('div', { 'data-call-settings-action': 'close' })
   const save = new El('div', { 'data-call-settings-action': 'submit' })
   const prerequisites = ['calendar', 'availability', 'enabled', 'bookable']
@@ -378,6 +379,7 @@ test('hydrates the published Free radio group from canonical GET', async () => {
   const active = service()
   const result = load({
     initial: canonical({
+      public_description: 'Free growth review',
       services: [active],
       readiness: { free_call_enabled: true, bookable: true },
     }),
@@ -391,8 +393,8 @@ test('hydrates the published Free radio group from canonical GET', async () => {
   assert.equal(result.dom.no.checked, false)
   assert.equal(result.dom.yes.getAttribute('data-call-settings-input'), 'enabled')
   assert.equal(result.dom.no.getAttribute('data-call-settings-input'), 'disabled')
-  assert.equal(result.dom.title.value, active.title)
-  assert.equal(result.dom.title.readOnly, true)
+  assert.equal(result.dom.title.value, 'Free growth review')
+  assert.equal(result.dom.title.readOnly, false)
   assert.equal(result.dom.root.getAttribute('data-free-call-duration-required'), '30')
   assert.equal(result.dom.root.getAttribute('data-free-call-price-cents'), '0')
   assert.equal(result.dom.root.getAttribute('data-free-call-bookable'), 'true')
@@ -551,6 +553,7 @@ test('published sibling Paid actions never bind the Free controller and Free act
   assert.equal(freePosts.length, 1)
   assert.deepEqual(freePosts[0].body, {
     config_id: null,
+    description: '',
     expected_revision: 0,
     idempotency_key: 'free-call-upsert:uuid-fixed',
   })
@@ -563,7 +566,7 @@ test('published sibling Paid actions never bind the Free controller and Free act
   }, paidControlsBeforeFreeActions)
 })
 
-test('upsert sends only config, revision, and idempotency then requires 30-minute/$0 readback', async () => {
+test('upsert sends description plus guarded service intent then requires 30-minute/$0 readback', async () => {
   const legacy = service({ duration: 15, price_cents: 100, revision: 2 })
   const result = load({
     initial: canonical({ services: [legacy], readiness: { free_call_enabled: true, bookable: true } }),
@@ -585,11 +588,13 @@ test('upsert sends only config, revision, and idempotency then requires 30-minut
   const upsert = result.calls.find((call) => call.path === '/starter/free-call-settings/upsert/v3')
   assert.deepEqual(upsert.body, {
     config_id: 'cfg-free-1',
+    description: '',
     expected_revision: 2,
     idempotency_key: 'free-call-upsert:uuid-fixed',
   })
   assert.deepEqual(Object.keys(upsert.body).sort(), [
     'config_id',
+    'description',
     'expected_revision',
     'idempotency_key',
   ])
@@ -597,7 +602,7 @@ test('upsert sends only config, revision, and idempotency then requires 30-minut
   assert.equal(result.dom.root.getAttribute('data-free-call-price-cents'), '0')
 })
 
-test('new Free enable sends null config and revision zero without browser-authored service values', async () => {
+test('new Free enable sends null config and revision zero while Xano retains service ownership', async () => {
   const result = load({
     initial: canonical(),
     routes: {
@@ -616,9 +621,83 @@ test('new Free enable sends null config and revision zero without browser-author
 
   assert.deepEqual(result.calls.find((call) => call.method === 'POST').body, {
     config_id: null,
+    description: '',
     expected_revision: 0,
     idempotency_key: 'free-call-upsert:uuid-fixed',
   })
+})
+
+test('Free description loads from canonical profile intent and is sent with the guarded upsert', async () => {
+  const result = load({
+    initial: canonical({ public_description: 'Growth strategy review' }),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({ revision: 1 })
+        setState(canonical({
+          public_description: body.description,
+          services: [saved],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Growth strategy review')
+  result.dom.title.value = 'Marketplace growth plan'
+  result.dom.yes.checked = true
+  result.dom.no.checked = false
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/free-call-settings/upsert/v3')
+  assert.equal(upsert.body.description, 'Marketplace growth plan')
+  assert.equal(result.dom.title.value, 'Marketplace growth plan')
+  assert.equal(result.dom.title.readOnly, false)
+})
+
+test('a stale Free description readback leaves the editor open and reports an error', async () => {
+  const result = load({
+    initial: canonical({
+      public_description: 'Old description',
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ setState }) => {
+        setState(canonical({
+          public_description: 'Old description',
+          services: [service({ revision: 5 })],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+  await result.dom.open.dispatch('click')
+  result.dom.title.value = 'New description'
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
+  assert.match(result.dom.status.textContent, /description did not match canonical readback/)
+  assert.equal(result.dom.panel.style.display, 'flex')
+  assert.equal(result.events.some((event) => event.type === 'starterFreeCallWriteSuccess'), false)
+})
+
+test('Free description longer than 60 characters fails before any write', async () => {
+  const result = load({ initial: canonical() })
+  await settle()
+  result.dom.title.value = 'x'.repeat(61)
+  result.dom.yes.checked = true
+  result.dom.no.checked = false
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.dom.status.textContent, 'Free-call description must be 60 characters or fewer.')
 })
 
 test('No plus Update sends the guarded disable payload and verifies canonical absence', async () => {
@@ -814,6 +893,7 @@ test('a stored duration or price outside the fixed contract stays unbookable and
 test('a lost session clears the whole canonical paint, not just the radios', async () => {
   const result = load({
     initial: canonical({
+      public_description: 'Member A Free Call',
       services: [service({ title: 'Member A Free Call' })],
       readiness: { free_call_enabled: true, bookable: true },
     }),
@@ -844,6 +924,7 @@ test('a connection-state refresh repaints canonically and survives a transient f
   let failNextRead = false
   const result = load({
     initial: canonical({
+      public_description: 'Member A Free Call',
       services: [service({ title: 'Member A Free Call' })],
       readiness: { free_call_enabled: true, bookable: true },
     }),

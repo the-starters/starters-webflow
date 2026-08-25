@@ -10,8 +10,12 @@ payload.
 - Free Call duration: `30` minutes.
 - Price: `$0`.
 - Nylas service type: public Free Call configuration.
-- The browser mutation payload contains only `config_id`, `expected_revision`, and
-  `idempotency_key`.
+- The browser mutation payload contains the public `description` plus `config_id`,
+  `expected_revision`, and `idempotency_key`. Xano still fixes the provider title, duration,
+  and price.
+- The browser trims the public description and rejects more than `60` characters before any write.
+  Xano returns it as `public_description` and projects the same value to the public Webflow profile
+  and Algolia record.
 - Initial and terminal UI state always comes from
   `GET starter/free-call-settings/get/v3`.
 
@@ -49,6 +53,8 @@ For future Designer edits, prefer the stable contract:
 - Native form: `data-call-settings-element="form"`
 - Editor panel: `data-call-settings-element="panel"`
 - Radios: `data-call-settings-input="enabled|disabled"`
+- Public description: `data-call-settings-input="description"`. The legacy
+  `data-call-settings-input="title"` and `name="call-description"` selectors remain compatible.
 - Actions: `data-call-settings-action="open|close|submit"`
 - Optional outputs: `data-call-settings-output="status|on|off|price"`; a canonical `on` or `off`
   marker always wins over the authored pill copy above
@@ -88,7 +94,7 @@ The controller emits these window events:
 - `starterFreeCallWriteError` — `{ action: 'upsert'|'disable', message }`; never emitted for a
   missing or changed Memberstack session, because nothing was written
 
-A missing or changed Memberstack session fails closed: the cached Free state clears, the title,
+A missing or changed Memberstack session fails closed: the cached Free state clears, the description,
 duration, price, and prerequisite paint reset, save disables, `data-free-call-settings` becomes
 `error`, and the status reads `Sign in to manage free calls.`
 
@@ -135,8 +141,8 @@ calls, reminders, and email canaries stay under the separate-approval rule owned
 
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion boot, the
 root-first/sibling-later card recovery, the published `consulting-calls-free` hydration,
-Free/Paid card isolation in both directions, the three-field upsert and guarded disable payloads,
-the in-flight double-Update dedup, the
+Free/Paid card isolation in both directions, the four-field upsert and guarded disable payloads,
+the canonical description and fixed-product readbacks, the in-flight double-Update dedup, the
 off-contract duration or price paint, the expired-session fail-closed writes, the authored
 status-pill resolution and its drifted-copy diagnostic, and the `w--redirected-checked` radio sync
 are executable regressions in `v3/free-call-settings.test.js`. The remaining legs need a live
@@ -159,8 +165,10 @@ order, after the PR merges:
 3. With both cards present, confirm isolation by hand in both directions: Edit, Cancel, and Update
    on the Free card must never move the Paid card's controls, and the reverse, and each card must
    keep its own editor-open attribute.
-4. On the Free card, pick Yes and click Update by hand. The request body must carry only `config_id`,
-   `expected_revision`, and `idempotency_key`, and the card must reach the canonical readback state
+4. On the Free card, enter a distinct description, pick Yes, and click Update by hand. The request
+   body must carry only `config_id`, `description`, `expected_revision`, and `idempotency_key`.
+   Confirm the canonical readback returns the submitted `public_description`, the public Webflow
+   profile and Algolia record show the same description, and the card reaches the canonical state
    with `data-free-call-duration-current="30"` and `data-free-call-price-cents="0"`.
 5. On a TEST fixture stored at a duration other than `30` or a price other than `0`, confirm the
    card reads `data-free-call-bookable="false"` and shows the real stored price, and that an Update
