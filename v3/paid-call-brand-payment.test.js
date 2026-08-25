@@ -1455,7 +1455,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
       readinessCount += 1
       return response({
         environment: 'test',
-        bookable: readinessCount >= 3,
+        bookable: readinessCount >= 2,
       })
     }
     if (url.endsWith(api.SET_DEFAULT_PATH)) {
@@ -1538,7 +1538,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
   }
 })
 
-function makePaidLifecycleFixture(fetch) {
+function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   const previous = {
     document: global.document,
     Stripe: global.Stripe,
@@ -1589,11 +1589,13 @@ function makePaidLifecycleFixture(fetch) {
   }
   const topic = { value: '' }
   const context = { value: '' }
+  const paidText = { textContent: 'Choose a time for your paid call.' }
   const popup = {
     querySelector(selector) {
       if (selector === '[nylas-container]') return container
       if (selector === '[name="topic"], [booking-topic]') return topic
       if (selector === '[name="context"], [booking-context]') return context
+      if (selector === '[paid-call-text]') return paidText
       return null
     },
     querySelectorAll(selector) {
@@ -1668,6 +1670,7 @@ function makePaidLifecycleFixture(fetch) {
     mountCalendar(options) {
       const state = { clearCount: 0, options }
       calendars.push(state)
+      if (fixtureOptions.mountCalendar) return fixtureOptions.mountCalendar(options, state)
       return Promise.resolve({
         slots: [],
         clearSelection() {
@@ -1687,6 +1690,7 @@ function makePaidLifecycleFixture(fetch) {
     getSaveBindings: () => saveBindings,
     mainClose,
     paid,
+    paidText,
     paymentClose,
     paymentModal,
     restore() {
@@ -1706,7 +1710,7 @@ test('canceling card setup clears the selected slot before a later save', async 
   const fixture = makePaidLifecycleFixture(async (url) => {
     if (url.endsWith(api.READINESS_PATH)) {
       readinessCount += 1
-      return response({ environment: 'test', bookable: readinessCount >= 3 })
+      return response({ environment: 'test', bookable: readinessCount >= 2 })
     }
     if (url.endsWith(api.SETUP_PATH)) return response({ client_secret: 'seti_close' })
     if (url.endsWith(api.SET_DEFAULT_PATH)) return response({ readiness: 'ready' })
@@ -1726,6 +1730,54 @@ test('canceling card setup clears the selected slot before a later save', async 
     fixture.cardListeners.change({ complete: true })
     await fixture.save.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
     assert.equal(bookingCount, 0)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('selected-slot readiness controls card setup without a second read', async () => {
+  let readinessCount = 0
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({ environment: 'test', bookable: readinessCount > 1 })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[0].options.onConfirm({
+      start: 1787000000000,
+      end: 1787003600000,
+      timezone: 'UTC',
+    })
+    assert.equal(readinessCount, 1)
+    assert.equal(fixture.getCardCreates(), 1)
+    assert.equal(fixture.getOpenCount(), 1)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('main modal reset restores authored Paid copy after calendar failure', async () => {
+  let mountCount = 0
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    throw new Error('Unexpected request: ' + url)
+  }, {
+    mountCalendar() {
+      mountCount += 1
+      if (mountCount === 1) return Promise.reject(new Error('calendar unavailable'))
+      return Promise.resolve({ slots: [] })
+    },
+  })
+  try {
+    await fixture.paid.onclick({ preventDefault() {} })
+    assert.equal(fixture.paidText.textContent, 'We could not book this call. Please try again.')
+    fixture.mainClose.click()
+    assert.equal(fixture.paidText.textContent, 'Choose a time for your paid call.')
+    await fixture.paid.onclick({ preventDefault() {} })
+    assert.equal(fixture.paidText.textContent, 'Choose a time for your paid call.')
+    assert.equal(mountCount, 2)
   } finally {
     fixture.restore()
   }
@@ -1821,13 +1873,13 @@ test('a reset booking blocks a changed command while one is in flight', async ()
 
 test('overlapping paid generations share one card setup installation', async () => {
   let readinessCount = 0
-  let resolveInstallReadiness
+  let resolveFirstReadiness
   const fixture = makePaidLifecycleFixture(async (url) => {
     if (url.endsWith(api.READINESS_PATH)) {
       readinessCount += 1
-      if (readinessCount === 2) {
+      if (readinessCount === 1) {
         return new Promise((resolve) => {
-          resolveInstallReadiness = () => resolve(response({ environment: 'test', bookable: false }))
+          resolveFirstReadiness = () => resolve(response({ environment: 'test', bookable: false }))
         })
       }
       return response({ environment: 'test', bookable: false })
@@ -1842,8 +1894,8 @@ test('overlapping paid generations share one card setup installation', async () 
     fixture.mainClose.click()
     await fixture.paid.onclick({ preventDefault() {} })
     const second = fixture.calendars[1].options.onConfirm(slot)
-    await new Promise((resolve) => setImmediate(resolve))
-    resolveInstallReadiness()
+    await second
+    resolveFirstReadiness()
     await Promise.all([first, second])
     assert.equal(fixture.getCardCreates(), 1)
     assert.equal(fixture.getSaveBindings(), 1)
@@ -1897,7 +1949,7 @@ test('booking retry reuses completed card setup and booking attempt', async () =
   const fixture = makePaidLifecycleFixture(async (url, options) => {
     if (url.endsWith(api.READINESS_PATH)) {
       readinessCount += 1
-      return response({ environment: 'test', bookable: readinessCount >= 3 })
+      return response({ environment: 'test', bookable: readinessCount >= 2 })
     }
     if (url.endsWith(api.SETUP_PATH)) {
       setupCount += 1
@@ -1941,7 +1993,7 @@ test('stale card save cannot mutate a reopened payment generation', async () => 
   const fixture = makePaidLifecycleFixture(async (url, options) => {
     if (url.endsWith(api.READINESS_PATH)) {
       readinessCount += 1
-      return response({ environment: 'test', bookable: readinessCount >= 4 })
+      return response({ environment: 'test', bookable: readinessCount >= 3 })
     }
     if (url.endsWith(api.SETUP_PATH)) {
       setupBodies.push(options.body)

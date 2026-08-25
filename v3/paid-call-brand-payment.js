@@ -731,6 +731,10 @@
     const popup = document.querySelector('[popup-booking]')
     const container = popup && popup.querySelector('[nylas-container]')
     if (!ctas.length || !popup || !container) return false
+    const paidCallMessage = popup.querySelector('[paid-call-text]')
+    const authoredPaidCallText = paidCallMessage
+      ? String(paidCallMessage.textContent || '')
+      : ''
     const guestHookSelectors = [
       '[data-call-guest-fields]',
       '[data-call-guest-list]',
@@ -914,6 +918,7 @@
       if (typeof container.removeAttribute === 'function') {
         container.removeAttribute('data-paid-calendar-state')
       }
+      if (paidCallMessage) paidCallMessage.textContent = authoredPaidCallText
       resetPaymentUi()
       switchStep(popup, 'default')
     }
@@ -968,8 +973,7 @@
       console.error('[paid-call] booking failed', error)
       container.setAttribute('data-paid-calendar-state', 'error')
       container.textContent = 'We could not load the calendar. Please try again.'
-      const message = popup.querySelector('[paid-call-text]')
-      if (message) message.textContent = 'We could not book this call. Please try again.'
+      if (paidCallMessage) paidCallMessage.textContent = 'We could not book this call. Please try again.'
     }
 
     function showPaidSuccess() {
@@ -1075,7 +1079,7 @@
       return ownsSurface(generation) ? result : undefined
     }
 
-    async function installCardSetup() {
+    async function installCardSetup(readiness) {
       if (cardSetupInstalled) return
       if (!cardSetupInstallPromise) cardSetupInstallPromise = (async function () {
         const nodes = paymentNodes()
@@ -1087,8 +1091,7 @@
           throw new Error('The authored payment form is incomplete')
         }
         const Stripe = await loadStripe()
-        const initialReadiness = await getReadiness()
-        const stripe = Stripe(initialReadiness.environment === 'test' ? STRIPE_PUBLIC_KEY_TEST : STRIPE_PUBLIC_KEY_LIVE)
+        const stripe = Stripe(readiness.environment === 'test' ? STRIPE_PUBLIC_KEY_TEST : STRIPE_PUBLIC_KEY_LIVE)
         cardElement = stripe.elements().create('card', {
           hidePostalCode: true,
           style: {
@@ -1204,7 +1207,7 @@
         await submitBooking(slot, generation, confirmation)
         return
       }
-      await installCardSetup()
+      await installCardSetup(readiness)
       if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return
       resetPaymentUi()
       const openCard = document.querySelector('[popup-stripe-card-open]')
