@@ -20,6 +20,7 @@
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const chooserBindings = new WeakMap()
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
+  const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
 
   function getBookingSurfaceOwnership() {
     const existing = global.StartersBookingSurfaceOwnership
@@ -41,6 +42,57 @@
     }
     global.StartersBookingSurfaceOwnership = ownership
     return ownership
+  }
+
+  function getBookingSurfaceLifecycle() {
+    const existing = global.StartersBookingSurfaceLifecycle
+    if (
+      existing &&
+      typeof existing.register === 'function' &&
+      typeof existing.reset === 'function'
+    ) return existing
+    const bindings = new WeakMap()
+    const lifecycle = {
+      register: function (popup, container, onReset) {
+        let binding = bindings.get(popup)
+        if (!binding) {
+          binding = { container, resets: new Set() }
+          bindings.set(popup, binding)
+          Array.from(popup.querySelectorAll(
+            '[data-modal-close], [booking-popup-close], [popup-booking-close]',
+          )).forEach(function (control) {
+            if (typeof control.addEventListener === 'function') {
+              control.addEventListener('click', function () { lifecycle.reset(popup) })
+            }
+          })
+          if (typeof popup.addEventListener === 'function') {
+            popup.addEventListener('cancel', function () { lifecycle.reset(popup) })
+          }
+          if (typeof global.addEventListener === 'function') {
+            global.addEventListener('modal-close', function (event) {
+              const modal = event && event.detail && event.detail.modal
+              if (
+                modal === popup ||
+                modal === 'popup-booking' ||
+                (modal && typeof modal.hasAttribute === 'function' && modal.hasAttribute('popup-booking'))
+              ) lifecycle.reset(popup)
+            })
+          }
+        }
+        if (binding.container !== container) return false
+        binding.resets.add(onReset)
+        return true
+      },
+      reset: function (popup, nextType) {
+        const binding = bindings.get(popup)
+        if (!binding) return 0
+        const generation = bookingSurfaceOwnership.claim(binding.container)
+        binding.resets.forEach(function (reset) { reset(generation, nextType || '') })
+        return generation
+      },
+    }
+    global.StartersBookingSurfaceLifecycle = lifecycle
+    return lifecycle
   }
 
   function clean(value) {
@@ -388,10 +440,36 @@
     }
     if (!state.brandEmail) return false
 
+    let clearFreeCalendarSelection = null
+
+    function clearField(selector) {
+      const field = popup.querySelector(selector)
+      if (field && 'value' in Object(field)) field.value = ''
+    }
+
+    function resetFreeUi() {
+      if (clearFreeCalendarSelection) clearFreeCalendarSelection()
+      clearFreeCalendarSelection = null
+      guestUi.hide()
+      clearField('[name="topic"], [booking-topic]')
+      clearField('[name="context"], [booking-context]')
+      container.textContent = ''
+      if (typeof container.removeAttribute === 'function') {
+        container.removeAttribute('data-paid-calendar-state')
+      }
+      switchStep(popup, 'default')
+      ctas.forEach(function (cta) {
+        const binding = chooserBindings.get(cta)
+        if (!binding) return
+        binding.bookingAttempt = null
+        binding.bookingFingerprint = ''
+      })
+    }
+
     ctas.forEach(function (cta) {
       const binding = chooserBindings.get(cta) || {}
       binding.state = Object.assign({}, state, { cta })
-      binding.bookingLock = false
+      binding.bookingLocks = new Set()
       binding.bookingAttempt = null
       binding.bookingFingerprint = ''
       chooserBindings.set(cta, binding)
@@ -402,7 +480,7 @@
       cta.onclick = async function (event) {
         event.preventDefault()
         const current = binding.state
-        const generation = bookingSurfaceOwnership.claim(container)
+        const generation = bookingSurfaceLifecycle.reset(popup, 'free')
         container.textContent = 'Loading available times...'
         container.setAttribute('data-paid-calendar-state', 'loading')
         guestUi.hide()
@@ -411,7 +489,7 @@
           element.style.display = element.getAttribute('data-type') === 'free' ? 'flex' : 'none'
         })
         try {
-          await current.bookingApi.mountPaidCalendar({
+          const result = await current.bookingApi.mountPaidCalendar({
             container,
             config: current.config,
             confirmText: 'Request free call',
@@ -419,7 +497,10 @@
               return bookingSurfaceOwnership.owns(container, generation)
             },
             onConfirm: async function (slot) {
-              if (binding.bookingLock) return
+              if (
+                !bookingSurfaceOwnership.owns(container, generation) ||
+                binding.bookingLocks.has(generation)
+              ) return
               let guests
               try {
                 guests = guestUi.read([
@@ -448,18 +529,20 @@
                 binding.bookingFingerprint = fingerprint
                 binding.bookingAttempt = current.bookingApi.createBookingAttempt(input)
               }
-              binding.bookingLock = true
+              const attempt = binding.bookingAttempt
+              binding.bookingLocks.add(generation)
               try {
-                const result = await binding.bookingAttempt.run()
+                const result = await attempt.run()
                 if (!canonicalBookingId(result)) {
                   throw new Error('The canonical booking response is incomplete')
                 }
+                if (!bookingSurfaceOwnership.owns(container, generation)) return result
                 showFreeSuccess(current.popup)
                 binding.bookingAttempt = null
                 binding.bookingFingerprint = ''
                 return result
               } finally {
-                binding.bookingLock = false
+                binding.bookingLocks.delete(generation)
               }
             },
             onSelectionChange: function (slot) {
@@ -472,6 +555,11 @@
               guestUi.show()
             },
           })
+          if (bookingSurfaceOwnership.owns(container, generation)) {
+            clearFreeCalendarSelection = result && typeof result.clearSelection === 'function'
+              ? result.clearSelection
+              : null
+          }
         } catch (error) {
           if (!bookingSurfaceOwnership.owns(container, generation)) return
           container.setAttribute('data-paid-calendar-state', 'error')
@@ -480,6 +568,9 @@
         }
       }
     })
+
+    if (!bookingSurfaceLifecycle.register(popup, container, resetFreeUi)) return false
+    bookingSurfaceLifecycle.reset(popup)
 
     mainButtons.forEach(function (button) {
       button.onclick = async function (event) {

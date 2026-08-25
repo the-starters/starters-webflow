@@ -420,6 +420,7 @@ test('shared call calendar renders dates and times and submits only the selected
   const container = new CalendarElement('div')
   const submissions = []
   const selections = []
+  let resolveConfirmation
   const firstStart =
     Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000) / 86400000) * 86400 +
     12 * 60 * 60
@@ -445,7 +446,10 @@ test('shared call calendar renders dates and times and submits only the selected
       },
       confirmText: 'Request free call',
       onSelectionChange(slot) { selections.push(slot) },
-      async onConfirm(slot) { submissions.push(slot) },
+      async onConfirm(slot) {
+        submissions.push(slot)
+        await new Promise((resolve) => { resolveConfirmation = resolve })
+      },
     })
     assert.equal(result.slots.length, 2)
     assert.equal(container.getAttribute('data-paid-calendar-state'), 'ready')
@@ -459,7 +463,14 @@ test('shared call calendar renders dates and times and submits only the selected
     timeButtons[1].listeners.click()
     assert.equal(confirm.disabled, false)
     assert.deepEqual(selections[1], result.slots[1])
-    await confirm.listeners.click()
+    const pendingConfirmation = confirm.listeners.click()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(timeButtons[0].disabled, true)
+    assert.equal(timeButtons[1].disabled, true)
+    timeButtons[0].listeners.click()
+    assert.deepEqual(selections[1], result.slots[1])
+    resolveConfirmation()
+    await pendingConfirmation
     assert.equal(submissions.length, 1)
     assert.deepEqual(submissions[0], {
       start: secondStart * 1000,
@@ -1758,6 +1769,42 @@ test('overlapping paid generations share one card setup installation', async () 
     assert.equal(fixture.getCardCreates(), 1)
     assert.equal(fixture.getSaveBindings(), 1)
     assert.equal(fixture.getOpenCount(), 1)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('the latest Paid confirmation owns an overlapping readiness response', async () => {
+  let readinessCount = 0
+  let resolveFirstReadiness
+  const bookingStarts = []
+  const fixture = makePaidLifecycleFixture(async (url, options) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      if (readinessCount === 1) {
+        return new Promise((resolve) => {
+          resolveFirstReadiness = () => resolve(response({ environment: 'test', bookable: true }))
+        })
+      }
+      return response({ environment: 'test', bookable: true })
+    }
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingStarts.push(JSON.parse(options.body).start)
+      return response({ booking: { booking_id: 'latest-slot', row_id: 904 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const firstSlot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    const secondSlot = { start: 1787007200000, end: 1787010800000, timezone: 'UTC' }
+    await fixture.paid.onclick({ preventDefault() {} })
+    const first = fixture.calendars[0].options.onConfirm(firstSlot)
+    await new Promise((resolve) => setImmediate(resolve))
+    const second = fixture.calendars[0].options.onConfirm(secondSlot)
+    await second
+    resolveFirstReadiness()
+    await first
+    assert.deepEqual(bookingStarts, [secondSlot.start])
   } finally {
     fixture.restore()
   }

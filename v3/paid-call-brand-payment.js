@@ -28,6 +28,7 @@
   const MAX_GUEST_EMAILS = 5
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
+  const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
   const guardedGuestSubmitTargets = new WeakSet()
 
   function getBookingSurfaceOwnership() {
@@ -50,6 +51,57 @@
     }
     global.StartersBookingSurfaceOwnership = ownership
     return ownership
+  }
+
+  function getBookingSurfaceLifecycle() {
+    const existing = global.StartersBookingSurfaceLifecycle
+    if (
+      existing &&
+      typeof existing.register === 'function' &&
+      typeof existing.reset === 'function'
+    ) return existing
+    const bindings = new WeakMap()
+    const lifecycle = {
+      register: function (popup, container, onReset) {
+        let binding = bindings.get(popup)
+        if (!binding) {
+          binding = { container, resets: new Set() }
+          bindings.set(popup, binding)
+          Array.from(popup.querySelectorAll(
+            '[data-modal-close], [booking-popup-close], [popup-booking-close]',
+          )).forEach(function (control) {
+            if (typeof control.addEventListener === 'function') {
+              control.addEventListener('click', function () { lifecycle.reset(popup) })
+            }
+          })
+          if (typeof popup.addEventListener === 'function') {
+            popup.addEventListener('cancel', function () { lifecycle.reset(popup) })
+          }
+          if (typeof global.addEventListener === 'function') {
+            global.addEventListener('modal-close', function (event) {
+              const modal = event && event.detail && event.detail.modal
+              if (
+                modal === popup ||
+                modal === 'popup-booking' ||
+                (modal && typeof modal.hasAttribute === 'function' && modal.hasAttribute('popup-booking'))
+              ) lifecycle.reset(popup)
+            })
+          }
+        }
+        if (binding.container !== container) return false
+        binding.resets.add(onReset)
+        return true
+      },
+      reset: function (popup, nextType) {
+        const binding = bindings.get(popup)
+        if (!binding) return 0
+        const generation = bookingSurfaceOwnership.claim(binding.container)
+        binding.resets.forEach(function (reset) { reset(generation, nextType || '') })
+        return generation
+      },
+    }
+    global.StartersBookingSurfaceLifecycle = lifecycle
+    return lifecycle
   }
 
   function isStagingHost() {
@@ -453,6 +505,7 @@
     })
     let selectedDate = dateKeys[0]
     let selectedSlot = null
+    let confirmationPending = false
 
     const shell = applyStyles(global.document.createElement('div'), {
       display: 'grid',
@@ -516,6 +569,7 @@
           cursor: 'pointer',
         })
         button.addEventListener('click', function () {
+          if (confirmationPending) return
           Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (candidate) {
             candidate.setAttribute('aria-pressed', candidate === button ? 'true' : 'false')
             candidate.style.background = candidate === button ? '#1f211d' : '#f3f4ef'
@@ -572,8 +626,12 @@
     }
 
     confirm.addEventListener('click', async function () {
-      if (!selectedSlot || confirm.disabled) return
+      if (!selectedSlot || confirm.disabled || confirmationPending) return
+      confirmationPending = true
       confirm.disabled = true
+      Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (button) {
+        button.disabled = true
+      })
       status.textContent = 'Sending your request...'
       try {
         await onConfirm({
@@ -584,7 +642,14 @@
       } catch (error) {
         console.error('[paid-call] booking failed', error)
         status.textContent = 'We could not book this call. Please try again.'
-        confirm.disabled = false
+      } finally {
+        confirmationPending = false
+        if (isCurrent()) {
+          Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (button) {
+            button.disabled = false
+          })
+          confirm.disabled = !selectedSlot
+        }
       }
     })
 
@@ -692,18 +757,16 @@
     let paymentUiGeneration = 0
     let pendingPaidSlot = null
     let pendingPaidSlotGeneration = 0
+    let pendingPaidConfirmation = 0
     let clearPaidCalendarSelection = null
     let paidClickLock = false
     const bookingLocks = new Set()
+    let paidConfirmationSequence = 0
     let bookingAttempt = null
     let activeBookingFingerprint = ''
     let activePaidGeneration = 0
     let queuedPaidGeneration = 0
     let activeSurfaceType = ''
-
-    function nextSurfaceGeneration() {
-      return bookingSurfaceOwnership.claim(container)
-    }
 
     function ownsSurface(generation) {
       return bookingSurfaceOwnership.owns(container, generation)
@@ -780,6 +843,7 @@
     function clearPendingPaidSelection() {
       pendingPaidSlot = null
       pendingPaidSlotGeneration = 0
+      pendingPaidConfirmation = 0
       if (clearPaidCalendarSelection) clearPaidCalendarSelection()
       resetGuestUi()
       setGuestUiVisible(false)
@@ -790,11 +854,11 @@
       clearPendingPaidSelection()
     }
 
-    function resetBookingUi(nextType) {
-      const generation = nextSurfaceGeneration()
+    function resetBookingUi(generation, nextType) {
       activePaidGeneration = generation
       activeSurfaceType = nextType || ''
       queuedPaidGeneration = 0
+      paidConfirmationSequence += 1
       resetGuestUi()
       setGuestUiVisible(false)
       clearPendingPaidSelection()
@@ -809,11 +873,10 @@
       }
       resetPaymentUi()
       switchStep(popup, 'default')
-      return generation
     }
 
     function claimPaidSurface() {
-      const generation = resetBookingUi('paid')
+      const generation = bookingSurfaceLifecycle.reset(popup, 'paid')
       container.textContent = 'Loading available times...'
       container.setAttribute('data-paid-calendar-state', 'loading')
       return generation
@@ -886,8 +949,12 @@
       switchStep(popup, 'success')
     }
 
-    async function submitBooking(slot, generation) {
-      if (!ownsSurface(generation) || bookingLocks.has(generation)) return
+    async function submitBooking(slot, generation, confirmation) {
+      if (
+        !ownsSurface(generation) ||
+        confirmation !== paidConfirmationSequence ||
+        bookingLocks.has(generation)
+      ) return
       let guestEmails
       try {
         guestEmails = guestUiEnabled
@@ -919,11 +986,12 @@
       bookingLocks.add(generation)
       try {
         const result = await attempt.run()
-        if (!ownsSurface(generation)) return result
+        if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return result
         resetGuestUi()
         setGuestUiVisible(false)
         pendingPaidSlot = null
         pendingPaidSlotGeneration = 0
+        pendingPaidConfirmation = 0
         showPaidSuccess()
         return result
       } finally {
@@ -942,9 +1010,11 @@
         onConfirm: function (slot) { return confirmPaidSlot(slot, generation) },
         onSelectionChange: function (slot) {
           if (!ownsSurface(generation)) return
+          paidConfirmationSequence += 1
           if (!slot) {
             pendingPaidSlot = null
             pendingPaidSlotGeneration = 0
+            pendingPaidConfirmation = 0
             resetGuestUi()
             setGuestUiVisible(false)
             return
@@ -1031,10 +1101,9 @@
             defaultSelectionAttempt = null
             defaultSelectionPaymentMethod = ''
             statusText.textContent = 'Card saved.'
-            const pendingBooking = resumePendingPaidBooking()
+            await resumePendingPaidBooking()
             const close = document.querySelector('[popup-stripe-card-close]')
             if (close) close.click()
-            await pendingBooking
           } catch (error) {
             if (attemptGeneration !== paymentUiGeneration) return
             errorText.textContent = error.message || 'Card setup failed'
@@ -1056,22 +1125,25 @@
     async function resumePendingPaidBooking() {
       const slot = pendingPaidSlot
       const generation = pendingPaidSlotGeneration
+      const confirmation = pendingPaidConfirmation
       if (!slot || !generation || !ownsSurface(generation)) return
-      await submitBooking(slot, generation)
+      await submitBooking(slot, generation, confirmation)
     }
 
     async function confirmPaidSlot(slot, generation) {
       if (!slot || !ownsSurface(generation)) return
+      const confirmation = ++paidConfirmationSequence
       pendingPaidSlot = slot
       pendingPaidSlotGeneration = generation
+      pendingPaidConfirmation = confirmation
       const readiness = await getReadiness()
-      if (!ownsSurface(generation)) return
+      if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return
       if (readiness.bookable) {
-        await submitBooking(slot, generation)
+        await submitBooking(slot, generation, confirmation)
         return
       }
       await installCardSetup()
-      if (!ownsSurface(generation)) return
+      if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return
       resetPaymentUi()
       const openCard = document.querySelector('[popup-stripe-card-open]')
       if (!openCard) throw new Error('The payment form opener is unavailable')
@@ -1108,7 +1180,7 @@
     )).forEach(function (cta) {
       if (typeof cta.addEventListener === 'function') {
         cta.addEventListener('click', function () {
-          resetBookingUi('free')
+          bookingSurfaceLifecycle.reset(popup, 'free')
         }, true)
       }
     })
@@ -1144,14 +1216,6 @@
       })
     }
 
-    Array.from(popup.querySelectorAll(
-      '[data-modal-close], [booking-popup-close], [popup-booking-close]',
-    )).forEach(function (control) {
-      if (typeof control.addEventListener === 'function') {
-        control.addEventListener('click', resetBookingUi)
-      }
-    })
-
     Array.from(document.querySelectorAll(
       '[popup-stripe-card] [data-modal-close], [popup-stripe-card-close]',
     )).forEach(function (control) {
@@ -1164,22 +1228,15 @@
       global.addEventListener('modal-close', function (event) {
         const modal = event && event.detail && event.detail.modal
         if (
-          modal === popup ||
-          modal === 'popup-booking' ||
-          (modal && typeof modal.hasAttribute === 'function' && modal.hasAttribute('popup-booking'))
-        ) {
-          resetBookingUi()
-          return
-        }
-        if (
           modal === 'popup-stripe-card' ||
           (modal && typeof modal.hasAttribute === 'function' && modal.hasAttribute('popup-stripe-card'))
         ) cancelPaymentUi()
       })
     }
 
+    if (!bookingSurfaceLifecycle.register(popup, container, resetBookingUi)) return false
     installPaymentAccessibility()
-    resetBookingUi()
+    bookingSurfaceLifecycle.reset(popup)
 
     bindings.forEach(function (binding) {
       const cta = binding.cta
