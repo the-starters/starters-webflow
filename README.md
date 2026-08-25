@@ -308,6 +308,7 @@ Algolia filter chrome for the Starters browse list; each carries its `// Docs:` 
 - `starters-list-filter/custom-algolia-scripts/clear-filter-visibility/clear-filter-visibility.js` — shows Clear only when something is selected ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/clear-filter-visibility))
 - `starters-list-filter/custom-algolia-scripts/filter-visibility-empty.js` — hides filter groups with no facet values ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/filter-visibility-empty))
 - `starters-list-filter/custom-algolia-scripts/range-backfill-rate.js` — backfills the rate range control's bounds ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/range-backfill-rate))
+- `starters-list-filter/custom-algolia-scripts/range-handle-gap.js` — keeps the rate slider's two thumbs a minimum distance apart so they can't overlap ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/range-handle-gap))
 - `starters-list-filter/custom-algolia-scripts/scroll-filter.js` — scroll handling for the filter column ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/scroll-filter))
 
 ### Algolia result modifiers (`algolia-result-modifiers/`)
