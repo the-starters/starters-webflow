@@ -22,9 +22,14 @@ const WRAPPER_SEL = '[fs-rangeslider-element="wrapper"]'
  * schedules (enforce() runs on a setTimeout(0)) so resize behaviour is
  * deterministic without real timers.
  *
- * @param {{rootFontSize?: number}} [options] root font-size px for rem parsing
+ * `observerLog` records every MutationObserver the script builds — what it was
+ * pointed at, its filter, how often it was disconnected, and the callback, so a
+ * test can deliver a mutation by hand.
+ *
+ * @param {{rootFontSize?: number, finsweet?: object}} [options]
  * @returns {{parseGapPx: Function, patchPair: Function, onRangeslider: Function,
- *   DEFAULT_GAP_PX: number, GAP_ATTR: string, flush: Function}}
+ *   DEFAULT_GAP_PX: number, GAP_ATTR: string, flush: Function,
+ *   observerLog: object[], deliver: Function, loadAgain: Function, context: object}}
  */
 function loadInternals(options = {}) {
   const rootFontSize = options.rootFontSize === undefined ? 16 : options.rootFontSize
@@ -36,9 +41,9 @@ function loadInternals(options = {}) {
 
   assert.notEqual(exposed, source, 'failed to inject the test tail')
 
-  const noop = () => {}
   const timers = []
   const htmlAttrs = new Map()
+  const observerLog = []
 
   const context = {
     document: {
@@ -51,12 +56,20 @@ function loadInternals(options = {}) {
       setTimeout: (fn) => timers.push(fn),
       getComputedStyle: () => ({ fontSize: `${rootFontSize}px` }),
       MutationObserver: function MutationObserver(callback) {
-        this.callback = callback
-        this.observe = noop
-        this.disconnect = noop
+        const record = { callback, target: null, options: null, disconnects: 0 }
+        observerLog.push(record)
+        this.observe = (target, opts) => {
+          record.target = target
+          record.options = opts
+        }
+        this.disconnect = () => {
+          record.disconnects += 1
+        }
       },
     },
   }
+
+  if (options.finsweet) context.window.FinsweetAttributes = options.finsweet
 
   vm.createContext(context)
   vm.runInContext(exposed, context)
@@ -71,7 +84,81 @@ function loadInternals(options = {}) {
     }
   }
 
-  return Object.assign({ flush }, context.__internals)
+  return Object.assign(
+    {
+      flush,
+      observerLog,
+      context,
+      /** Hands the script a mutation the way a real MutationObserver would. */
+      deliver: (record) => record.callback([{ attributeName: 'starters-rangeslider-gap' }], record),
+      /** Re-runs the very same IIFE source in this same sandbox. */
+      loadAgain: () => vm.runInContext(exposed, context),
+    },
+    context.__internals,
+  )
+}
+
+/**
+ * A synchronously-settled stand-in for the loader's `module.loading` promise, so
+ * the resolve -> callback hop stays on the test's own stack (no microtasks, no
+ * real timers).
+ */
+function makeThenable() {
+  const subscribers = []
+  let settled = false
+  let result
+
+  return {
+    then(fn) {
+      if (settled) fn(result)
+      else subscribers.push(fn)
+      return this
+    },
+    resolve(value) {
+      settled = true
+      result = value
+      while (subscribers.length) subscribers.shift()(value)
+    },
+  }
+}
+
+/**
+ * A fake `window.FinsweetAttributes` shaped like the real loaded API rather than
+ * the bare bootstrap array: entries pushed as ['rangeslider', cb] are resolved
+ * against `modules.rangeslider.loading`, and restart() swaps that thenable for a
+ * fresh one synchronously the way load() does.
+ */
+function makeFinsweetApi() {
+  const pushes = []
+  const restarts = []
+
+  const api = {
+    pushes,
+    restarts,
+    modules: {
+      rangeslider: {
+        loading: makeThenable(),
+        restart() {
+          restarts.push(1)
+          api.modules.rangeslider.loading = makeThenable()
+        },
+      },
+    },
+    push(entry) {
+      pushes.push(entry)
+      const name = entry && entry[0]
+      const cb = entry && entry[1]
+      const mod = api.modules[name]
+      if (mod && mod.loading && typeof cb === 'function') mod.loading.then(cb)
+      return pushes.length
+    },
+    /** Hands the currently-subscribed callbacks a module result (the handle groups). */
+    resolveLoading(result) {
+      api.modules.rangeslider.loading.resolve(result)
+    },
+  }
+
+  return api
 }
 
 /**
@@ -444,4 +531,173 @@ test('the min thumb is only pulled down when the max thumb has nowhere left to g
 
   resizeTrack(slider, 2000)
   assert.equal(slider.minHandle.currentValue, 460, 'the min thumb debt is repaid too')
+})
+
+// --- module lifecycle -------------------------------------------------------
+
+test('a Finsweet restart re-registers the fix onto the rebuilt handles', () => {
+  const api = makeFinsweetApi()
+  const internals = loadInternals({ finsweet: api })
+
+  // The IIFE registers against the loader's current loading promise.
+  assert.equal(api.pushes.length, 1)
+  assert.equal(api.pushes[0][0], 'rangeslider')
+
+  const pairA = makeSlider()
+  api.resolveLoading([pairA.handles])
+  internals.flush()
+  pairA.maxHandle.setValue(100, true)
+  assert.equal(pairA.maxHandle.currentValue, 145)
+
+  // restart() destroys the instances and builds new, UNPATCHED ones. The
+  // wrapper has to re-register against the freshly swapped loading promise or
+  // the fix silently switches itself off for the rest of the page's life.
+  api.modules.rangeslider.restart()
+  assert.equal(api.restarts.length, 1)
+  assert.equal(api.pushes.length, 2, 'restart must re-register')
+
+  const pairB = makeSlider()
+  api.resolveLoading([pairB.handles])
+  internals.flush()
+  assert.equal(pairB.maxHandle.startersGapPatched, true)
+  pairB.maxHandle.setValue(100, true)
+  assert.equal(pairB.maxHandle.currentValue, 145, 'the clamp must engage on the rebuilt pair')
+})
+
+test('re-wrapping restart is idempotent, so restarts do not compound', () => {
+  const api = makeFinsweetApi()
+  const internals = loadInternals({ finsweet: api })
+
+  api.resolveLoading([makeSlider().handles])
+  internals.flush()
+
+  api.modules.rangeslider.restart()
+  api.resolveLoading([makeSlider().handles])
+  internals.flush()
+
+  const observersBefore = internals.observerLog.length
+  api.modules.rangeslider.restart()
+  assert.equal(api.pushes.length, 3, 'each restart re-registers exactly once, never 2^n times')
+
+  const pairC = makeSlider()
+  api.resolveLoading([pairC.handles])
+  internals.flush()
+
+  // A double-wrapped restart would run the callback twice per load and stand up
+  // two observers for the one wrapper.
+  assert.equal(internals.observerLog.length - observersBefore, 1)
+  pairC.maxHandle.setValue(100, true)
+  assert.equal(pairC.maxHandle.currentValue, 145)
+})
+
+test('a new module load disconnects the previous pair’s attribute observer', () => {
+  const internals = loadInternals()
+
+  const pairA = makeSlider()
+  internals.onRangeslider([pairA.handles])
+  internals.flush()
+
+  assert.equal(internals.observerLog.length, 1)
+  assert.equal(internals.observerLog[0].target, pairA.wrapper)
+  assert.equal(internals.observerLog[0].options.attributes, true)
+  // Array.from: the filter is built inside the vm, so it is a foreign-realm Array.
+  assert.deepEqual(
+    Array.from(internals.observerLog[0].options.attributeFilter),
+    [internals.GAP_ATTR],
+  )
+  assert.equal(internals.observerLog[0].disconnects, 0)
+
+  const pairB = makeSlider()
+  internals.onRangeslider([pairB.handles])
+  internals.flush()
+
+  assert.equal(internals.observerLog[0].disconnects, 1, 'the old observer must be dropped')
+  assert.equal(internals.observerLog.length, 2)
+  assert.equal(internals.observerLog[1].disconnects, 0, 'the live observer must survive')
+})
+
+test('an attribute mutation re-opens the pair on its own, with no move to trigger it', () => {
+  const slider = setup({ startMin: 200, startMax: 330, trackWidth: 328 })
+  assert.equal(slider.maxHandle.currentValue, 330) // 130 apart, legal at a 48px gap
+
+  // Editing the attribute alone changes nothing: it is the observer delivery
+  // that has to schedule the pass.
+  slider.wrapper.setAttribute(slider.GAP_ATTR, '96')
+  slider.flush()
+  assert.equal(slider.maxHandle.currentValue, 330)
+
+  const record = slider.observerLog[slider.observerLog.length - 1]
+  slider.deliver(record)
+  slider.flush()
+
+  // ceil((96 + 32) * 470 / 328) = 184, so the max thumb is pushed to 200 + 184
+  // by the scheduled enforce — no setValue was issued by this test.
+  assert.equal(slider.maxHandle.currentValue, 384)
+  assert.equal(slider.maxHandle.inputElement.value, '384.00')
+})
+
+test('a thumb measured at zero width keeps reserving the last good pill width', () => {
+  const slider = setup()
+
+  // The group is hidden (0x0) by the time the gap attribute changes, so the
+  // re-measure comes back empty. Forgetting the pill width would silently
+  // shrink the reservation by a whole thumb.
+  slider.minHandle.element.offsetWidth = 0
+  slider.maxHandle.element.offsetWidth = 0
+  slider.wrapper.setAttribute(slider.GAP_ATTR, '48px') // same gap, fresh cache key
+
+  slider.maxHandle.setValue(100, true)
+  assert.equal(slider.maxHandle.currentValue, 145, 'must still reserve 48px + a 32px pill')
+  assert.notEqual(slider.maxHandle.currentValue, 99, 'a forgotten pill width would land here')
+})
+
+test('loading the script a second time is completely inert', () => {
+  const api = makeFinsweetApi()
+  const internals = loadInternals({ finsweet: api })
+  const firstInternals = internals.context.__internals
+
+  internals.loadAgain()
+
+  // The init guard bails before the injected tail, so the second body never ran.
+  assert.equal(internals.context.__internals, firstInternals, 'the second load executed')
+  assert.equal(api.pushes.length, 1, 'a second registration would double every callback')
+
+  const pair = makeSlider()
+  api.resolveLoading([pair.handles])
+  internals.flush()
+
+  assert.equal(internals.observerLog.length, 1, 'one observer per wrapper, not one per load')
+  pair.maxHandle.setValue(100, true)
+  assert.equal(pair.maxHandle.currentValue, 145)
+})
+
+test('a pending pass from a retired pair never writes into the rebuilt slider', () => {
+  const internals = loadInternals()
+
+  const pairA = makeSlider({ startMin: 200, startMax: 260, trackWidth: 668 })
+  internals.onRangeslider([pairA.handles])
+  internals.flush()
+  assert.equal(pairA.maxHandle.currentValue, 260) // 60 apart needs 57: legal
+  const writesA = pairA.maxHandle.inputWrites
+
+  // A resize queues a pass for pair A…
+  pairA.minHandle.updateTrackWidth(328)
+  pairA.maxHandle.updateTrackWidth(328)
+
+  // …but the module reloads first, destroying those instances.
+  const pairB = makeSlider({ startMin: 200, startMax: 260, trackWidth: 328 })
+  internals.onRangeslider([pairB.handles])
+
+  internals.flush()
+
+  // Pair A's queued pass must have become a no-op. Un-retired it would push the
+  // dead max thumb to 315 and write 315.00 into an input the new slider owns.
+  assert.equal(pairA.maxHandle.currentValue, 260)
+  assert.equal(pairA.minHandle.currentValue, 200)
+  assert.equal(pairA.maxHandle.inputWrites, writesA)
+  assert.equal(pairA.maxHandle.inputElement.value, '260.00')
+
+  // Pair B is unaffected: its own arrival pass ran and its clamp is live.
+  assert.equal(pairB.maxHandle.currentValue, 315) // 200 + 115
+  assert.equal(pairB.maxHandle.setValue(250, true), false)
 })

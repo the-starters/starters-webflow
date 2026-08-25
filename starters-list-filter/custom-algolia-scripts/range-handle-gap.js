@@ -54,9 +54,11 @@
 // So on every track-width change the pair is re-opened to the gap the new width needs,
 // preferring to push the MAX thumb up (a wider, less restrictive rate filter) and only
 // pulling the MIN thumb down if the max is already at the ceiling. Where the thumb stood
-// before that push is remembered as a debt, so a track that grows back repays it instead of
-// ratcheting the range open one rotation at a time — and a widening track can never move a
-// thumb past where it stood on its own. This is the one case where the script moves a thumb on
+// before that push is remembered as a debt, repaid at the FIRST GAP-SAFE OPPORTUNITY — the
+// track growing back is the usual one, but any enforce pass (a height-only resize, a gap
+// attribute edit) repays early when the user has since opened room, rather than ratcheting
+// the range open one rotation at a time. Repayment can never move a thumb past where it
+// stood before the push. This is the one case where the script moves a thumb on
 // its own; it writes through the normal setValue path, so the input, the label, the fill and
 // the wf-algolia listeners all stay in step.
 // If a pair is somehow still closer than the gap (authored that way via fs-rangeslider-start
@@ -81,6 +83,11 @@
   // Live attribute observers, one per patched pair. Dropped and rebuilt on every module
   // (re)load so a restart() can never leave an observer driving destroyed handle instances.
   var observers = []
+
+  // Kill switches for the previous load's pairs: restart() destroys the handle instances,
+  // so a pending scheduled enforce from an old closure must become a no-op, not a write
+  // into the rebuilt slider's inputs.
+  var retired = []
 
   var num = function (v) { var n = parseFloat(v); return isFinite(n) ? n : null }
 
@@ -144,6 +151,10 @@
       if (need > range) need = range
       return need < step ? step : need
     }
+
+    // Flipped by the next module (re)load: a restart() destroys these handle instances,
+    // and a pending setTimeout enforce or a late observer delivery must not drive them.
+    var dead = false
 
     // Where a thumb stood before a SHRINKING track forced this script to push it — the debt
     // owed back to the user. A track that grows again repays it, so rotating a phone twice
@@ -216,7 +227,7 @@
       pending = true
       window.setTimeout(function () {
         pending = false
-        enforce()
+        if (!dead) enforce()
       }, 0)
     }
 
@@ -277,6 +288,8 @@
     patch(a)
     patch(b)
 
+    retired.push(function () { dead = true })
+
     if (wrapper && window.MutationObserver) {
       var mo = new window.MutationObserver(schedule)
       mo.observe(wrapper, { attributes: true, attributeFilter: [GAP_ATTR] })
@@ -296,6 +309,10 @@
       try { observers[o].disconnect() } catch (e) {}
     }
     observers = []
+    for (var r = 0; r < retired.length; r++) {
+      try { retired[r]() } catch (e) {}
+    }
+    retired = []
 
     try { wrapRestart() } catch (e) {}
 
