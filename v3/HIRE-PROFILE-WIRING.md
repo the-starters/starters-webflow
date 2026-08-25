@@ -195,8 +195,10 @@ canary from legacy Webflow or Algolia call flags.
 3. Eligible signed-in Brand: canonical discovery keeps every call projection
    closed until its exact controller installs. A successful Free install reveals
    every Free projection; a successful Paid install reveals every Paid
-   projection. Each revealed call card opens the authored chooser, including on
-   a migrated profile whose legacy Book Call button is absent. A failed Paid
+   projection. Generic Book Call buttons open the authored chooser. A Free or
+   Paid Services card reuses its exact installed chooser CTA and opens that call
+   flow directly, including on a migrated profile whose legacy Book Call button
+   is absent. A failed Paid
    install leaves Paid hidden without closing an installed Free option. Each
    non-call card opens Start a Project with its exact native Services preset.
 4. `document.documentElement` carries `data-v3-algolia-status="ready"`.
@@ -234,15 +236,17 @@ removes legacy visibility from the matching hero, sticky-header, Services, and
 chooser projection so stale Webflow or Algolia intent cannot advertise an
 unbookable call.
 
-The native Free and Paid service cards are shortcuts to that same authored
-chooser. `hire-profile.js` removes their retired direct-scheduler attributes and
-opens `popup-booking-main` only after canonical discovery enables the booking
-surface. It clicks an enabled authored chooser trigger when one exists. On a
-migrated profile without the legacy Book Call button, it opens the existing
-native Webflow dialog through `window.lumos.modal`, with the dialog's native
-`showModal()` method as a fallback. The card click does not perform booking,
-payment, or Stripe-readiness work. The selected chooser option remains the only
-path into the Free or Paid calendar.
+The native Free and Paid Services cards are type-specific shortcuts.
+`hire-profile.js` removes their retired direct-scheduler attributes, then finds
+the exact matching authored chooser CTA. The CTA must carry its matching
+`data-free-call-v3="ready"` or `data-paid-call-v3="ready"` installation marker,
+an accepted `data-config`, and an available chooser row. The Services card clicks
+that CTA so the matching GitHub controller and native Webflow modal lifecycle
+remain authoritative while the generic chooser step is skipped. A missing,
+hidden, unavailable, or uninstalled matching CTA fails closed. Generic Book Call
+buttons retain `data-modal-trigger="popup-booking-main"` and continue to open the
+Free/Paid chooser. The direct card click does not itself perform booking,
+payment, or Stripe-readiness work.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
@@ -261,9 +265,11 @@ fallback when the SDK payload omits `planConnections`; it cannot override
 supplied plan state. Regression coverage in
 [`hire-profile.test.js`](hire-profile.test.js) includes Test Brand and Brand
 Free plan-only members, plus empty, inactive, and cross-role plan states.
-Paid-call selection remains gated by the existing canonical configuration and
-Stripe-readiness checks. This routing change does not trigger Stripe, reminders,
-transactional email, or a booking submission by itself.
+Paid direct entry remains gated by the existing canonical configuration.
+Stripe readiness is read only after the Brand confirms a slot, and booking
+submission remains gated by that canonical result. This routing change does not
+trigger Stripe, reminders, transactional email, or a booking submission by
+itself.
 
 `nylas_configurations/get_bookable/v3` owns the authoritative bookable-set
 filter. `hire-profile.js` applies a second, fail-closed check before it gives

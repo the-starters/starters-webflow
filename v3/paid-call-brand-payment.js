@@ -28,6 +28,7 @@
   const MAX_GUEST_EMAILS = 5
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
+  const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
   const guardedGuestSubmitTargets = new WeakSet()
 
   function getBookingSurfaceOwnership() {
@@ -50,6 +51,89 @@
     }
     global.StartersBookingSurfaceOwnership = ownership
     return ownership
+  }
+
+  function getBookingSurfaceLifecycle() {
+    const existing = global.StartersBookingSurfaceLifecycle
+    if (
+      existing &&
+      typeof existing.register === 'function' &&
+      typeof existing.reset === 'function' &&
+      typeof existing.runBooking === 'function'
+    ) return existing
+    const bindings = new WeakMap()
+    const bookingStates = new WeakMap()
+    const lifecycle = {
+      register: function (popup, container, onReset) {
+        let binding = bindings.get(popup)
+        if (!binding) {
+          binding = { container, resets: new Set() }
+          bindings.set(popup, binding)
+          Array.from(popup.querySelectorAll(
+            '[data-modal-close], [booking-popup-close], [popup-booking-close]',
+          )).forEach(function (control) {
+            if (typeof control.addEventListener === 'function') {
+              control.addEventListener('click', function () { lifecycle.reset(popup) })
+            }
+          })
+          if (typeof popup.addEventListener === 'function') {
+            popup.addEventListener('cancel', function () { lifecycle.reset(popup) })
+          }
+          if (typeof global.addEventListener === 'function') {
+            global.addEventListener('modal-close', function (event) {
+              const modal = event && event.detail && event.detail.modal
+              if (
+                modal === popup ||
+                modal === 'popup-booking' ||
+                (modal && typeof modal.hasAttribute === 'function' && modal.hasAttribute('popup-booking'))
+              ) lifecycle.reset(popup)
+            })
+          }
+        }
+        if (binding.container !== container) return false
+        binding.resets.add(onReset)
+        return true
+      },
+      reset: function (popup, nextType) {
+        const binding = bindings.get(popup)
+        if (!binding) return 0
+        const generation = bookingSurfaceOwnership.claim(binding.container)
+        binding.resets.forEach(function (reset) { reset(generation, nextType || '') })
+        return generation
+      },
+      runBooking: function (container, fingerprint, createAttempt, validateResult) {
+        let state = bookingStates.get(container)
+        if (!state) {
+          state = { active: null, attempts: new Map() }
+          bookingStates.set(container, state)
+        }
+        let entry = state.active
+        if (entry && entry.fingerprint !== fingerprint) {
+          throw new Error('Another booking request is still being processed')
+        }
+        if (!entry) {
+          entry = state.attempts.get(fingerprint)
+          if (!entry) {
+            entry = { attempt: createAttempt(), fingerprint, inFlight: null }
+            state.attempts.set(fingerprint, entry)
+          }
+          state.active = entry
+        }
+        if (!entry.inFlight) {
+          entry.inFlight = entry.attempt.run().then(function (result) {
+            if (validateResult) validateResult(result)
+            if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
+            return result
+          }).finally(function () {
+            if (state.active === entry) state.active = null
+            entry.inFlight = null
+          })
+        }
+        return entry.inFlight
+      },
+    }
+    global.StartersBookingSurfaceLifecycle = lifecycle
+    return lifecycle
   }
 
   function isStagingHost() {
@@ -453,6 +537,7 @@
     })
     let selectedDate = dateKeys[0]
     let selectedSlot = null
+    let confirmationPending = false
 
     const shell = applyStyles(global.document.createElement('div'), {
       display: 'grid',
@@ -481,11 +566,21 @@
     confirm.textContent = String(settings.confirmText || 'Request paid call')
     confirm.setAttribute('data-paid-calendar-element', 'confirm')
 
-    function renderTimes() {
-      times.textContent = ''
+    function clearSelection() {
       selectedSlot = null
       onSelectionChange(null)
       confirm.disabled = true
+      status.textContent = ''
+      Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (candidate) {
+        candidate.setAttribute('aria-pressed', 'false')
+        candidate.style.background = '#f3f4ef'
+        candidate.style.color = '#1f211d'
+      })
+    }
+
+    function renderTimes() {
+      clearSelection()
+      times.textContent = ''
       groups[selectedDate].forEach(function (slot) {
         const button = global.document.createElement('button')
         button.type = 'button'
@@ -506,6 +601,7 @@
           cursor: 'pointer',
         })
         button.addEventListener('click', function () {
+          if (confirmationPending) return
           Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (candidate) {
             candidate.setAttribute('aria-pressed', candidate === button ? 'true' : 'false')
             candidate.style.background = candidate === button ? '#1f211d' : '#f3f4ef'
@@ -534,6 +630,7 @@
           return [available, available ? 'scheduling-preview-available-date' : '', available ? 'Available' : 'Unavailable']
         },
         onSelect: function (dateText) {
+          if (confirmationPending) return
           selectedDate = dateText
           renderTimes()
         },
@@ -547,6 +644,7 @@
       dateKeys.forEach(function (key) {
         const button = global.document.createElement('button')
         button.type = 'button'
+        button.setAttribute('data-paid-calendar-date', key)
         button.textContent = new Intl.DateTimeFormat('en-US', {
           weekday: 'short',
           month: 'short',
@@ -554,6 +652,7 @@
           timeZone: timezone,
         }).format(new Date(groups[key][0].start))
         button.addEventListener('click', function () {
+          if (confirmationPending) return
           selectedDate = key
           renderTimes()
         })
@@ -562,8 +661,18 @@
     }
 
     confirm.addEventListener('click', async function () {
-      if (!selectedSlot || confirm.disabled) return
+      if (!selectedSlot || confirm.disabled || confirmationPending) return
+      confirmationPending = true
       confirm.disabled = true
+      Array.from(calendarHost.querySelectorAll('[data-paid-calendar-date]')).forEach(function (button) {
+        button.disabled = true
+      })
+      if ($ && $.fn && $.fn.datepicker) {
+        $(calendarHost).datepicker('option', 'disabled', true)
+      }
+      Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (button) {
+        button.disabled = true
+      })
       status.textContent = 'Sending your request...'
       try {
         await onConfirm({
@@ -574,7 +683,20 @@
       } catch (error) {
         console.error('[paid-call] booking failed', error)
         status.textContent = 'We could not book this call. Please try again.'
-        confirm.disabled = false
+      } finally {
+        confirmationPending = false
+        if (isCurrent()) {
+          Array.from(calendarHost.querySelectorAll('[data-paid-calendar-date]')).forEach(function (button) {
+            button.disabled = false
+          })
+          if ($ && $.fn && $.fn.datepicker) {
+            $(calendarHost).datepicker('option', 'disabled', false)
+          }
+          Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (button) {
+            button.disabled = false
+          })
+          confirm.disabled = !selectedSlot
+        }
       }
     })
 
@@ -584,7 +706,7 @@
     shell.appendChild(status)
     container.appendChild(shell)
     renderTimes()
-    return { slots, timezone }
+    return { slots, timezone, clearSelection }
   }
 
   function installPaidBookingController(options) {
@@ -609,6 +731,10 @@
     const popup = document.querySelector('[popup-booking]')
     const container = popup && popup.querySelector('[nylas-container]')
     if (!ctas.length || !popup || !container) return false
+    const paidCallMessage = popup.querySelector('[paid-call-text]')
+    const authoredPaidCallText = paidCallMessage
+      ? String(paidCallMessage.textContent || '')
+      : ''
     const guestHookSelectors = [
       '[data-call-guest-fields]',
       '[data-call-guest-list]',
@@ -673,30 +799,132 @@
     if (guestUiEnabled) installGuestFormSubmitGuard(guestWrapper)
 
     let cardElement = null
+    let cardComplete = false
     let cardSetupInstalled = false
-    let cardSetupAttempt = null
-    let defaultSelectionAttempt = null
-    let defaultSelectionPaymentMethod = ''
+    let cardSetupInstallPromise = null
+    const paymentAttempts = new Map()
+    let paymentUiGeneration = 0
+    let pendingPaidSlot = null
+    let pendingPaidSlotGeneration = 0
+    let pendingPaidConfirmation = 0
+    let clearPaidCalendarSelection = null
     let paidClickLock = false
-    let bookingLock = false
-    let bookingAttempt = null
-    let activeBookingFingerprint = ''
+    const bookingLocks = new Set()
+    let paidConfirmationSequence = 0
     let activePaidGeneration = 0
     let queuedPaidGeneration = 0
-
-    function nextSurfaceGeneration() {
-      return bookingSurfaceOwnership.claim(container)
-    }
+    let activeSurfaceType = ''
 
     function ownsSurface(generation) {
       return bookingSurfaceOwnership.owns(container, generation)
     }
 
-    function claimPaidSurface() {
-      const generation = nextSurfaceGeneration()
-      activePaidGeneration = generation
+    function clearField(selector) {
+      const field = popup.querySelector(selector)
+      if (field && 'value' in Object(field)) field.value = ''
+    }
+
+    function paymentNodes() {
+      return {
+        mount: document.querySelector('[popup-stripe-card] [card-element], [card-element]'),
+        save: document.querySelector('[popup-stripe-card] [save-card-btn], [save-card-btn]'),
+        error: document.querySelector('[popup-stripe-card] [card-error], [card-error]'),
+        status: document.querySelector('[popup-stripe-card] [save-card-status], [save-card-status]'),
+      }
+    }
+
+    function installPaymentAccessibility() {
+      const paymentModal = document.querySelector('[popup-stripe-card]')
+      const nodes = paymentNodes()
+      if (!paymentModal) return
+
+      let label = null
+      if (typeof paymentModal.querySelector === 'function') {
+        label = paymentModal.querySelector('[data-payment-card-label]')
+      }
+      if (!label && typeof paymentModal.querySelectorAll === 'function') {
+        label = Array.from(paymentModal.querySelectorAll('h1, h2, h3, h4, h5, h6, p, div')).find(function (node) {
+          const text = String(node && node.textContent || '').trim()
+          return text === 'Card details' || text === 'Payment Methods'
+        }) || null
+      }
+
+      if (label) {
+        const labelId = label.id || 'paid-card-details-label'
+        if (!label.id && typeof label.setAttribute === 'function') label.setAttribute('id', labelId)
+        if (nodes.mount && typeof nodes.mount.setAttribute === 'function') {
+          nodes.mount.setAttribute('aria-labelledby', labelId)
+        }
+        if (typeof paymentModal.setAttribute === 'function') {
+          paymentModal.setAttribute('role', 'dialog')
+          paymentModal.setAttribute('aria-modal', 'true')
+          paymentModal.setAttribute('aria-labelledby', labelId)
+        }
+      }
+
+      if (nodes.error && typeof nodes.error.setAttribute === 'function') {
+        nodes.error.setAttribute('role', 'alert')
+        nodes.error.setAttribute('aria-live', 'assertive')
+      }
+      if (nodes.status && typeof nodes.status.setAttribute === 'function') {
+        nodes.status.setAttribute('role', 'status')
+        nodes.status.setAttribute('aria-live', 'polite')
+      }
+
+      const staleAction = typeof paymentModal.querySelector === 'function'
+        ? paymentModal.querySelector('[pm-use-this]')
+        : null
+      if (staleAction && staleAction.style) staleAction.style.display = 'none'
+    }
+
+    function resetPaymentUi() {
+      const previousGeneration = paymentUiGeneration
+      paymentUiGeneration += 1
+      paymentAttempts.delete(previousGeneration)
+      cardComplete = false
+      const nodes = paymentNodes()
+      if (nodes.error) nodes.error.textContent = ''
+      if (nodes.status) nodes.status.textContent = ''
+      if (nodes.save) nodes.save.disabled = false
+      if (cardElement && typeof cardElement.clear === 'function') cardElement.clear()
+    }
+
+    function clearPendingPaidSelection() {
+      pendingPaidSlot = null
+      pendingPaidSlotGeneration = 0
+      pendingPaidConfirmation = 0
+      if (clearPaidCalendarSelection) clearPaidCalendarSelection()
       resetGuestUi()
       setGuestUiVisible(false)
+    }
+
+    function cancelPaymentUi() {
+      resetPaymentUi()
+      clearPendingPaidSelection()
+    }
+
+    function resetBookingUi(generation, nextType) {
+      activePaidGeneration = generation
+      activeSurfaceType = nextType || ''
+      queuedPaidGeneration = 0
+      paidConfirmationSequence += 1
+      resetGuestUi()
+      setGuestUiVisible(false)
+      clearPendingPaidSelection()
+      clearPaidCalendarSelection = null
+      clearField('[name="topic"], [booking-topic]')
+      clearField('[name="context"], [booking-context]')
+      container.textContent = ''
+      if (typeof container.removeAttribute === 'function') {
+        container.removeAttribute('data-paid-calendar-state')
+      }
+      if (paidCallMessage) paidCallMessage.textContent = authoredPaidCallText
+      resetPaymentUi()
+      switchStep(popup, 'default')
+    }
+
+    function claimPaidSurface() {
+      const generation = bookingSurfaceLifecycle.reset(popup, 'paid')
       container.textContent = 'Loading available times...'
       container.setAttribute('data-paid-calendar-state', 'loading')
       return generation
@@ -741,19 +969,11 @@
       updateGuestControls()
     }
 
-    function closeGuestUi() {
-      resetGuestUi()
-      setGuestUiVisible(false)
-      bookingAttempt = null
-      activeBookingFingerprint = ''
-    }
-
     function showBookingError(error) {
       console.error('[paid-call] booking failed', error)
       container.setAttribute('data-paid-calendar-state', 'error')
       container.textContent = 'We could not load the calendar. Please try again.'
-      const message = popup.querySelector('[paid-call-text]')
-      if (message) message.textContent = 'We could not book this call. Please try again.'
+      if (paidCallMessage) paidCallMessage.textContent = 'We could not book this call. Please try again.'
     }
 
     function showPaidSuccess() {
@@ -776,8 +996,12 @@
       switchStep(popup, 'success')
     }
 
-    async function submitBooking(slot) {
-      if (bookingLock) return
+    async function submitBooking(slot, generation, confirmation) {
+      if (
+        !ownsSurface(generation) ||
+        confirmation !== paidConfirmationSequence ||
+        bookingLocks.has(generation)
+      ) return
       let guestEmails
       try {
         guestEmails = guestUiEnabled
@@ -801,18 +1025,23 @@
         starter_email: settings.starterEmail,
       }
       const fingerprint = bookingRequestFingerprint(bookingInput)
-      if (!bookingAttempt || activeBookingFingerprint !== fingerprint) {
-        activeBookingFingerprint = fingerprint
-        bookingAttempt = createBookingAttempt(bookingInput)
-      }
-      bookingLock = true
+      bookingLocks.add(generation)
       try {
-        const result = await bookingAttempt.run()
-        closeGuestUi()
+        const result = await bookingSurfaceLifecycle.runBooking(
+          container,
+          fingerprint,
+          function () { return createBookingAttempt(bookingInput) },
+        )
+        if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return result
+        resetGuestUi()
+        setGuestUiVisible(false)
+        pendingPaidSlot = null
+        pendingPaidSlotGeneration = 0
+        pendingPaidConfirmation = 0
         showPaidSuccess()
         return result
       } finally {
-        bookingLock = false
+        bookingLocks.delete(generation)
       }
     }
 
@@ -824,10 +1053,14 @@
       const result = await mount({
         container,
         config: availabilityConfig,
-        onConfirm: submitBooking,
+        onConfirm: function (slot) { return confirmPaidSlot(slot, generation) },
         onSelectionChange: function (slot) {
           if (!ownsSurface(generation)) return
+          paidConfirmationSequence += 1
           if (!slot) {
+            pendingPaidSlot = null
+            pendingPaidSlotGeneration = 0
+            pendingPaidConfirmation = 0
             resetGuestUi()
             setGuestUiVisible(false)
             return
@@ -838,84 +1071,153 @@
         },
         isCurrent: function () { return ownsSurface(generation) },
       })
+      if (ownsSurface(generation)) {
+        clearPaidCalendarSelection = result && typeof result.clearSelection === 'function'
+          ? result.clearSelection
+          : null
+      }
       return ownsSurface(generation) ? result : undefined
     }
 
-    async function installCardSetup(onReady) {
+    async function installCardSetup(readiness) {
       if (cardSetupInstalled) return
-      const cardMount = document.querySelector('[popup-stripe-card] [card-element], [card-element]')
-      const save = document.querySelector('[popup-stripe-card] [save-card-btn], [save-card-btn]')
-      const errorText = document.querySelector('[popup-stripe-card] [card-error], [card-error]')
-      const statusText = document.querySelector('[popup-stripe-card] [save-card-status], [save-card-status]')
-      if (!cardMount || !save || !errorText || !statusText) {
-        throw new Error('The authored payment form is incomplete')
-      }
-      const Stripe = await loadStripe()
-      const initialReadiness = await getReadiness()
-      const stripe = Stripe(initialReadiness.environment === 'test' ? STRIPE_PUBLIC_KEY_TEST : STRIPE_PUBLIC_KEY_LIVE)
-      cardElement = stripe.elements().create('card', { hidePostalCode: true })
-      cardElement.mount(cardMount)
-      cardElement.on('change', function (event) {
-        errorText.textContent = event.error ? event.error.message : ''
-      })
-      save.addEventListener('click', async function (event) {
-        event.preventDefault()
-        event.stopImmediatePropagation()
-        if (save.disabled) return
-        save.disabled = true
-        errorText.textContent = ''
-        statusText.textContent = 'Saving...'
-        try {
-          if (!cardSetupAttempt) cardSetupAttempt = createSetupAttempt()
-          const setup = await cardSetupAttempt.run()
-          const confirmed = await stripe.confirmCardSetup(setup.client_secret, {
-            payment_method: {
-              card: cardElement,
-              billing_details: {
-                name: settings.brandName || '',
-                email: settings.brandEmail || '',
-              },
-            },
-          })
-          if (confirmed.error) throw new Error(confirmed.error.message || 'Card setup failed')
-          const paymentMethod = confirmed.setupIntent && confirmed.setupIntent.payment_method
-          if (!defaultSelectionAttempt || defaultSelectionPaymentMethod !== paymentMethod) {
-            defaultSelectionPaymentMethod = paymentMethod
-            defaultSelectionAttempt = createDefaultSelectionAttempt(paymentMethod)
-          }
-          await defaultSelectionAttempt.run()
-          const readiness = await getReadiness()
-          if (!readiness.bookable) throw new Error('The payment method is not ready')
-          cardSetupAttempt = null
-          defaultSelectionAttempt = null
-          defaultSelectionPaymentMethod = ''
-          statusText.textContent = 'Card saved.'
-          const close = document.querySelector('[popup-stripe-card-close]')
-          if (close) close.click()
-          await onReady()
-        } catch (error) {
-          errorText.textContent = error.message || 'Card setup failed'
-          statusText.textContent = ''
-        } finally {
-          save.disabled = false
+      if (!cardSetupInstallPromise) cardSetupInstallPromise = (async function () {
+        const nodes = paymentNodes()
+        const cardMount = nodes.mount
+        const save = nodes.save
+        const errorText = nodes.error
+        const statusText = nodes.status
+        if (!cardMount || !save || !errorText || !statusText) {
+          throw new Error('The authored payment form is incomplete')
         }
-      }, true)
-      cardSetupInstalled = true
+        const Stripe = await loadStripe()
+        const stripe = Stripe(readiness.environment === 'test' ? STRIPE_PUBLIC_KEY_TEST : STRIPE_PUBLIC_KEY_LIVE)
+        cardElement = stripe.elements().create('card', {
+          hidePostalCode: true,
+          style: {
+            base: {
+              color: '#1f211d',
+              '::placeholder': { color: '#74786f' },
+            },
+            invalid: { color: '#b42318' },
+          },
+        })
+        cardElement.mount(cardMount)
+        cardElement.on('change', function (event) {
+          cardComplete = Boolean(event && event.complete)
+          errorText.textContent = event.error ? event.error.message : ''
+        })
+        save.addEventListener('click', async function (event) {
+          event.preventDefault()
+          event.stopImmediatePropagation()
+          if (save.disabled) return
+          const attemptGeneration = paymentUiGeneration
+          let paymentAttempt = paymentAttempts.get(attemptGeneration)
+          if (!paymentAttempt) {
+            paymentAttempt = {
+              defaultAttempt: null,
+              defaultPaymentMethod: '',
+              ready: false,
+              setupAttempt: null,
+            }
+            paymentAttempts.set(attemptGeneration, paymentAttempt)
+          }
+          const paymentAlreadyReady = paymentAttempt.ready
+          if (!paymentAlreadyReady && !cardComplete) {
+            errorText.textContent = 'Enter complete card details.'
+            statusText.textContent = ''
+            return
+          }
+          save.disabled = true
+          errorText.textContent = ''
+          statusText.textContent = paymentAlreadyReady ? 'Sending...' : 'Saving...'
+          try {
+            if (!paymentAlreadyReady) {
+              if (!paymentAttempt.setupAttempt) paymentAttempt.setupAttempt = createSetupAttempt()
+              const setup = await paymentAttempt.setupAttempt.run()
+              if (attemptGeneration !== paymentUiGeneration) return
+              const confirmed = await stripe.confirmCardSetup(setup.client_secret, {
+                payment_method: {
+                  card: cardElement,
+                  billing_details: {
+                    name: settings.brandName || '',
+                    email: settings.brandEmail || '',
+                  },
+                },
+              })
+              if (attemptGeneration !== paymentUiGeneration) return
+              if (confirmed.error) throw new Error(confirmed.error.message || 'Card setup failed')
+              const paymentMethod = confirmed.setupIntent && confirmed.setupIntent.payment_method
+              if (!paymentAttempt.defaultAttempt || paymentAttempt.defaultPaymentMethod !== paymentMethod) {
+                paymentAttempt.defaultPaymentMethod = paymentMethod
+                paymentAttempt.defaultAttempt = createDefaultSelectionAttempt(paymentMethod)
+              }
+              await paymentAttempt.defaultAttempt.run()
+              if (attemptGeneration !== paymentUiGeneration) return
+              const readiness = await getReadiness()
+              if (attemptGeneration !== paymentUiGeneration) return
+              if (!readiness.bookable) throw new Error('The payment method is not ready')
+              paymentAttempt.setupAttempt = null
+              paymentAttempt.defaultAttempt = null
+              paymentAttempt.defaultPaymentMethod = ''
+              paymentAttempt.ready = true
+              statusText.textContent = 'Card saved. Sending...'
+            }
+            if (attemptGeneration !== paymentUiGeneration) return
+            await resumePendingPaidBooking()
+            if (attemptGeneration !== paymentUiGeneration) return
+            statusText.textContent = 'Card saved.'
+            const close = document.querySelector('[popup-stripe-card-close]')
+            if (close) close.click()
+          } catch (error) {
+            if (attemptGeneration !== paymentUiGeneration) return
+            errorText.textContent = error.message || 'Card setup failed'
+            statusText.textContent = ''
+          } finally {
+            if (attemptGeneration === paymentUiGeneration) save.disabled = false
+          }
+        }, true)
+        cardSetupInstalled = true
+      })()
+      try {
+        await cardSetupInstallPromise
+      } catch (error) {
+        cardSetupInstallPromise = null
+        throw error
+      }
+    }
+
+    async function resumePendingPaidBooking() {
+      const slot = pendingPaidSlot
+      const generation = pendingPaidSlotGeneration
+      const confirmation = pendingPaidConfirmation
+      if (!slot || !generation || !ownsSurface(generation)) return
+      await submitBooking(slot, generation, confirmation)
+    }
+
+    async function confirmPaidSlot(slot, generation) {
+      if (!slot || !ownsSurface(generation)) return
+      const confirmation = ++paidConfirmationSequence
+      pendingPaidSlot = slot
+      pendingPaidSlotGeneration = generation
+      pendingPaidConfirmation = confirmation
+      const readiness = await getReadiness()
+      if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return
+      if (readiness.bookable) {
+        await submitBooking(slot, generation, confirmation)
+        return
+      }
+      await installCardSetup(readiness)
+      if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return
+      resetPaymentUi()
+      const openCard = document.querySelector('[popup-stripe-card-open]')
+      if (!openCard) throw new Error('The payment form opener is unavailable')
+      openCard.click()
     }
 
     async function runPaidSelection(generation) {
       try {
-        const readiness = await getReadiness()
-        if (!ownsSurface(generation)) return
-        if (readiness.bookable) {
-          await mountCalendar(generation)
-          return
-        }
-        await installCardSetup(function () { return mountCalendar(activePaidGeneration) })
-        if (!ownsSurface(generation)) return
-        const openCard = document.querySelector('[popup-stripe-card-open]')
-        if (!openCard) throw new Error('The payment form opener is unavailable')
-        openCard.click()
+        await mountCalendar(generation)
       } catch (error) {
         if (ownsSurface(generation)) showBookingError(error)
       }
@@ -923,7 +1225,7 @@
 
     async function paidClick(event) {
       event.preventDefault()
-      if (paidClickLock && ownsSurface(activePaidGeneration)) return
+      if (paidClickLock && activeSurfaceType === 'paid' && ownsSurface(activePaidGeneration)) return
       queuedPaidGeneration = claimPaidSurface()
       if (paidClickLock) return
       paidClickLock = true
@@ -943,8 +1245,7 @@
     )).forEach(function (cta) {
       if (typeof cta.addEventListener === 'function') {
         cta.addEventListener('click', function () {
-          closeGuestUi()
-          nextSurfaceGeneration()
+          bookingSurfaceLifecycle.reset(popup, 'free')
         }, true)
       }
     })
@@ -980,15 +1281,32 @@
       })
     }
 
-    Array.from(popup.querySelectorAll(
-      '[data-modal-close], [booking-popup-close], [popup-booking-close]',
+    Array.from(document.querySelectorAll(
+      '[popup-stripe-card] [data-modal-close], [popup-stripe-card-close]',
     )).forEach(function (control) {
       if (typeof control.addEventListener === 'function') {
-        control.addEventListener('click', closeGuestUi)
+        control.addEventListener('click', cancelPaymentUi)
       }
     })
 
-    closeGuestUi()
+    const paymentModal = document.querySelector('[popup-stripe-card]')
+    if (paymentModal && typeof paymentModal.addEventListener === 'function') {
+      paymentModal.addEventListener('cancel', cancelPaymentUi)
+    }
+
+    if (typeof global.addEventListener === 'function') {
+      global.addEventListener('modal-close', function (event) {
+        const modal = event && event.detail && event.detail.modal
+        if (
+          modal === 'popup-stripe-card' ||
+          (modal && typeof modal.hasAttribute === 'function' && modal.hasAttribute('popup-stripe-card'))
+        ) cancelPaymentUi()
+      })
+    }
+
+    if (!bookingSurfaceLifecycle.register(popup, container, resetBookingUi)) return false
+    installPaymentAccessibility()
+    bookingSurfaceLifecycle.reset(popup)
 
     bindings.forEach(function (binding) {
       const cta = binding.cta

@@ -3176,24 +3176,25 @@ The scheduling auth bridge allowlists these paid-call paths:
 Xano derives the Brand identity and payment environment from the Bearer token.
 The browser sends neither field. The controller uses this sequence:
 
-1. Call `StartersPaidCallBrandPayment.createSetupAttempt()` once for the current
-   card-setup attempt.
-2. Retry that attempt through its `.run()` method with the same idempotency key
-   until Xano returns the Stripe SetupIntent client secret or a terminal error.
-3. Give that client secret to Stripe.js and let Stripe Elements collect and
-   confirm the card. Never send raw card data through Webflow or Xano.
-4. After Stripe.js returns a `pm_...` PaymentMethod ID, call
-   `createDefaultSelectionAttempt(paymentMethodId)` once for that intentional
-   selection.
-5. Retry the returned selection attempt through `.run()` with its captured key.
-   Create a new attempt for every later intentional selection, including an
-   A-to-B-to-A sequence.
-6. Read readiness again. Only a canonical `bookable=true` result can continue.
-7. Read the next 14 days through authenticated
+1. Read the next 14 days through authenticated
    `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
    the provider credential and private Scheduler session off the browser.
-8. Render the month calendar and time buttons inside the authored
+2. Render the month calendar and time buttons inside the authored
    `[nylas-container]` mount. The selected slot is advisory only.
+3. When the Brand confirms a slot, read payment readiness. A canonical
+   `bookable=true` result can continue directly to the booking command.
+4. If no ready payment method exists, retain that exact selected slot and open
+   the native Stripe Card Element dialog. Incomplete card details stop before a
+   SetupIntent request and show an inline error.
+5. Call `StartersPaidCallBrandPayment.createSetupAttempt()` once for the current
+   card-setup attempt. Retry its `.run()` method with the same idempotency key
+   until Xano returns the Stripe SetupIntent client secret or a terminal error.
+6. Give that client secret to Stripe.js and let Stripe Elements collect and
+   confirm the card. Never send raw card data through Webflow or Xano.
+7. After Stripe.js returns a `pm_...` PaymentMethod ID, call
+   `createDefaultSelectionAttempt(paymentMethodId)` once for that intentional
+   selection. Retry the returned attempt with its captured key.
+8. Read readiness again. Only `bookable=true` can resume the retained slot.
 9. When the optional native Paid guest form is installed, read its
    `[data-call-guest-email]` fields, normalize and validate at most five guest
    addresses, and exclude duplicates plus the Brand and Starter addresses.
@@ -3203,6 +3204,23 @@ The browser sends neither field. The controller uses this sequence:
    `brand/booking/request/v3`. Xano rechecks the exact slot, price, payment
    readiness, configuration revision, and booking authority before it creates
    the provider booking.
+
+Closing the main booking modal, its backdrop, or ESC invalidates the shared
+calendar generation and restores `schedule-step="default"`. It also clears the
+selected slot, guest fields, topic, context, calendar, errors, status text, and
+Stripe Card Element. Closing only the Stripe dialog clears its card/error state,
+retained slot, and Paid guest state without creating a booking. Direct Free and
+Paid Services cards skip the chooser; generic Book Call buttons continue to open
+it.
+
+The native `[popup-stripe-card]` component must keep its visible payment title
+(`Payment Methods` today; `Card details` is also supported) and retain
+`[card-element]`, `[card-error]`,
+`[save-card-status]`, `[save-card-btn]`, and `[popup-stripe-card-close]`. The
+controller links that native title to the dialog and Card Element, applies live
+regions to the authored error and status nodes, and hides the retired
+`[pm-use-this]` action. Stripe Elements supplies the card-number, expiry, and
+CVC placeholders; raw card data never enters Webflow or Xano.
 
 The authoritative Free controller ownership and chooser contract lives in
 [`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
@@ -3218,10 +3236,10 @@ replaces that node's CMS or Designer text with the canonical USD value from
 currency, non-integer price, or price below 100 cents makes installation fail
 closed.
 
-While a Paid readiness request is pending, another click on the same current
-Paid choice is ignored. A Free choice invalidates that request. If the member
-then chooses Paid again, the controller runs only that latest Paid choice after
-the stale request settles.
+While a Paid calendar load is pending, another click on the same current Paid
+choice is ignored. A Free choice invalidates that load. If the member then
+chooses Paid again, the controller runs only that latest Paid choice after the
+stale load settles.
 
 The booking payload contains only the Starter slug, configuration ID, selected
 slot, timezone, optional topic/context, optional canonical `guest_emails`, and a

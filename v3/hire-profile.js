@@ -178,56 +178,43 @@
       return changed;
   }
 
-  function openBookingChooser() {
-      const chooser = Array.from(
-          document.querySelectorAll('[data-modal-trigger="popup-booking-main"]')
-      ).find(function (trigger) {
-          return !trigger.hasAttribute('data-booking-trigger-unavailable') &&
-              trigger.getAttribute('aria-disabled') !== 'true';
-      });
-      if (chooser && typeof chooser.click === 'function') {
-          chooser.click();
-          return true;
-      }
-
-      // Some migrated CMS profiles do not render the legacy Book Call button,
-      // but they still contain the native Webflow booking dialog and service
-      // cards. Open that authored dialog through its existing Lumos controller
-      // so canonical booking discovery, not the legacy button, owns access.
-      const dialog = document.querySelector('[data-modal-target="popup-booking-main"]');
-      if (!dialog || dialog.hasAttribute('data-booking-surface-unavailable')) return false;
-
-      const modalController = window.lumos && window.lumos.modal;
-      if (modalController && typeof modalController.open === 'function') {
-          modalController.open('popup-booking-main');
-          return true;
-      }
-      if (typeof dialog.showModal === 'function') {
-          dialog.showModal();
-          return true;
-      }
-      return false;
+  function findReadyCallTypeCta(type) {
+      const readyAttribute = type === 'paid'
+          ? 'data-paid-call-v3'
+          : 'data-free-call-v3';
+      return Array.from(document.querySelectorAll(
+          '[call-type-item] [booking-popup-open][data-type="' + type + '"][data-config]'
+      )).find(function (cta) {
+          const item = cta.closest('[call-type-item]');
+          return item &&
+              !item.hasAttribute('data-booking-unavailable') &&
+              item.getAttribute('aria-hidden') !== 'true' &&
+              cta.getAttribute(readyAttribute) === 'ready' &&
+              typeof cta.click === 'function';
+      }) || null;
   }
 
-  function wireCallServiceCardsToChooser() {
+  function wireCallServiceCardsToDirectEntry() {
       document.querySelectorAll('#services [data-service-card="component"]').forEach(function (card) {
           // The native Webflow service cards identify the call type through
           // has-connection. Keep data-type as a compatibility hook for older
           // saved markup and focused fixtures.
           const type = card.getAttribute('data-type') || card.getAttribute('has-connection');
           if (type !== 'free' && type !== 'paid') return;
-          if (card.getAttribute('data-call-service-chooser') === 'ready') return;
+          if (card.getAttribute('data-call-service-direct') === 'ready') return;
 
-          // Service cards are shortcuts to the authored Free/Paid chooser.
-          // They must not invoke the retired direct scheduler handler, which
-          // performs a Starter-owned Stripe readiness check as the Brand.
+          // Service cards are type-specific shortcuts. They reuse the exact
+          // installed chooser CTA so the matching GitHub controller and native
+          // Webflow modal lifecycle stay authoritative, without showing the
+          // generic Free/Paid choice first.
           card.removeAttribute('booking-popup-open');
           card.removeAttribute('data-modal-trigger');
-          card.setAttribute('data-call-service-chooser', 'ready');
+          card.setAttribute('data-call-service-direct', 'ready');
           card.addEventListener('click', function (event) {
               event.preventDefault();
               event.stopImmediatePropagation();
-              openBookingChooser();
+              const cta = findReadyCallTypeCta(type);
+              if (cta) cta.click();
           }, true);
       });
   }
@@ -247,7 +234,7 @@
   // Webflow authors the structural Book Call triggers and dialog. Canonical
   // environment-scoped discovery is the only code path that may enable them.
   setBookingButtonAvailable(false);
-  wireCallServiceCardsToChooser();
+  wireCallServiceCardsToDirectEntry();
 
   // Page-embed contract. This file is deferred, so all of these are already
   // defined in the normal case; stand down loudly rather than throwing if not.
@@ -466,7 +453,9 @@
   }
 
   // Park the beside-services calendar experiment. The live Hire experience
-  // uses the existing two-step modal: Book Call -> Free/Paid -> calendar.
+  // keeps the generic two-step modal: Book Call -> Free/Paid -> calendar.
+  // Type-specific Services cards reuse the installed matching CTA and go
+  // straight to that call type's calendar.
   // Keep the authored panel available for a future opt-in, but never let
   // leftover preview markup take ownership of booking cards.
   const INLINE_BOOKING_WRAPPER = document.querySelector('[data-availability-element="wrapper"]');
