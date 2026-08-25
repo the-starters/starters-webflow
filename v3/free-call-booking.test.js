@@ -456,6 +456,34 @@ test('Free-only modal close resets fields and ignores stale booking success', as
   })
 })
 
+test('Free reopen reuses the in-flight canonical booking attempt', async () => {
+  const fixture = chooserFixture()
+  let resolveBooking
+  const booking = bookingApiFixture({
+    run: () => new Promise((resolve) => {
+      resolveBooking = () => resolve({
+        booking: { booking_id: 'shared-free', row_id: 904 },
+      })
+    }),
+  })
+  await withGlobals({ document: fixture.document }, async () => {
+    const slot = { start: 1, end: 2, timezone: 'UTC' }
+    api.installFreeBookingController(installSettings(booking.bookingApi))
+    await fixture.cta.onclick(event())
+    const stale = booking.state.mounts[0].onConfirm(slot)
+    await new Promise((resolve) => setImmediate(resolve))
+    fixture.close.listeners.click[0](event())
+    await fixture.cta.onclick(event())
+    const current = booking.state.mounts[1].onConfirm(slot)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(booking.state.attempts, 1)
+    assert.equal(booking.state.runs, 1)
+    resolveBooking()
+    await Promise.all([stale, current])
+    assert.equal(fixture.successStep.style.display, 'flex')
+  })
+})
+
 test('Free install fails closed without the shared canonical booking client', async () => {
   const fixture = chooserFixture()
   await withGlobals({ document: fixture.document }, async () => {

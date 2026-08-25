@@ -458,20 +458,13 @@
         container.removeAttribute('data-paid-calendar-state')
       }
       switchStep(popup, 'default')
-      ctas.forEach(function (cta) {
-        const binding = chooserBindings.get(cta)
-        if (!binding) return
-        binding.bookingAttempt = null
-        binding.bookingFingerprint = ''
-      })
     }
 
     ctas.forEach(function (cta) {
       const binding = chooserBindings.get(cta) || {}
       binding.state = Object.assign({}, state, { cta })
-      binding.bookingLocks = new Set()
-      binding.bookingAttempt = null
-      binding.bookingFingerprint = ''
+      binding.bookingLocks = binding.bookingLocks || new Set()
+      binding.bookingAttempts = binding.bookingAttempts || new Map()
       chooserBindings.set(cta, binding)
       cta.setAttribute('data-config', configId)
       cta.setAttribute('data-free-call-v3', 'ready')
@@ -525,21 +518,34 @@
                 starter_email: current.starterEmail,
               }
               const fingerprint = current.bookingApi.bookingRequestFingerprint(input)
-              if (!binding.bookingAttempt || binding.bookingFingerprint !== fingerprint) {
-                binding.bookingFingerprint = fingerprint
-                binding.bookingAttempt = current.bookingApi.createBookingAttempt(input)
+              let entry = binding.bookingAttempts.get(fingerprint)
+              if (!entry) {
+                entry = {
+                  attempt: current.bookingApi.createBookingAttempt(input),
+                  inFlight: null,
+                  result: null,
+                }
+                binding.bookingAttempts.set(fingerprint, entry)
               }
-              const attempt = binding.bookingAttempt
               binding.bookingLocks.add(generation)
               try {
-                const result = await attempt.run()
-                if (!canonicalBookingId(result)) {
-                  throw new Error('The canonical booking response is incomplete')
+                if (!entry.inFlight && !entry.result) {
+                  entry.inFlight = entry.attempt.run().then(function (result) {
+                    if (!canonicalBookingId(result)) {
+                      throw new Error('The canonical booking response is incomplete')
+                    }
+                    entry.result = result
+                    return result
+                  }).finally(function () {
+                    entry.inFlight = null
+                  })
                 }
+                const result = entry.result || await entry.inFlight
                 if (!bookingSurfaceOwnership.owns(container, generation)) return result
+                if (binding.bookingAttempts.get(fingerprint) === entry) {
+                  binding.bookingAttempts.delete(fingerprint)
+                }
                 showFreeSuccess(current.popup)
-                binding.bookingAttempt = null
-                binding.bookingFingerprint = ''
                 return result
               } finally {
                 binding.bookingLocks.delete(generation)

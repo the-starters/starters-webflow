@@ -1718,7 +1718,7 @@ test('closing card setup clears the selected slot before a later save', async ()
   }
 })
 
-test('a reset booking cannot overwrite or block the current generation', async () => {
+test('a reset booking reuses the in-flight canonical attempt', async () => {
   let bookingCount = 0
   let resolveStaleBooking
   const fixture = makePaidLifecycleFixture(async (url) => {
@@ -1739,12 +1739,13 @@ test('a reset booking cannot overwrite or block the current generation', async (
     await new Promise((resolve) => setImmediate(resolve))
     fixture.mainClose.click()
     await fixture.paid.onclick({ preventDefault() {} })
-    await fixture.calendars[1].options.onConfirm(slot)
-    assert.equal(bookingCount, 2)
+    const current = fixture.calendars[1].options.onConfirm(slot)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(bookingCount, 1)
+    resolveStaleBooking()
+    await Promise.all([stale, current])
     assert.equal(fixture.steps[1].style.display, 'flex')
     fixture.mainClose.click()
-    resolveStaleBooking()
-    await stale
     assert.equal(fixture.steps[0].style.display, 'flex')
     assert.equal(fixture.steps[1].style.display, 'none')
   } finally {
@@ -1860,6 +1861,64 @@ test('booking retry reuses completed card setup and booking attempt', async () =
     assert.equal(fixture.getCardConfirmations(), 1)
     assert.equal(bookingBodies.length, 2)
     assert.equal(new Set(bookingBodies).size, 1)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('stale card save cannot mutate a reopened payment generation', async () => {
+  let readinessCount = 0
+  let defaultCount = 0
+  let bookingCount = 0
+  const setupBodies = []
+  const setupResolvers = []
+  const fixture = makePaidLifecycleFixture(async (url, options) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({ environment: 'test', bookable: readinessCount >= 4 })
+    }
+    if (url.endsWith(api.SETUP_PATH)) {
+      setupBodies.push(options.body)
+      return new Promise((resolve) => {
+        setupResolvers.push(() => resolve(response({
+          client_secret: 'seti_generation_' + setupResolvers.length,
+        })))
+      })
+    }
+    if (url.endsWith(api.SET_DEFAULT_PATH)) {
+      defaultCount += 1
+      return response({ readiness: 'ready' })
+    }
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingCount += 1
+      return response({ booking: { booking_id: 'current-payment', row_id: 906 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    const saveEvent = { preventDefault() {}, stopImmediatePropagation() {} }
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[0].options.onConfirm(slot)
+    fixture.cardListeners.change({ complete: true })
+    const staleSave = fixture.save.listeners.click[0](saveEvent)
+    await new Promise((resolve) => setImmediate(resolve))
+    fixture.paymentClose.click()
+    await fixture.calendars[0].options.onConfirm(slot)
+    fixture.cardListeners.change({ complete: true })
+    const currentSave = fixture.save.listeners.click[0](saveEvent)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(setupResolvers.length, 2)
+    setupResolvers[0]()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(fixture.getCardConfirmations(), 0)
+    assert.equal(fixture.save.disabled, true)
+    setupResolvers[1]()
+    await Promise.all([staleSave, currentSave])
+    assert.equal(new Set(setupBodies).size, 2)
+    assert.equal(fixture.getCardConfirmations(), 1)
+    assert.equal(defaultCount, 1)
+    assert.equal(bookingCount, 1)
   } finally {
     fixture.restore()
   }

@@ -766,10 +766,7 @@
     let cardComplete = false
     let cardSetupInstalled = false
     let cardSetupInstallPromise = null
-    let cardSetupAttempt = null
-    let defaultSelectionAttempt = null
-    let defaultSelectionPaymentMethod = ''
-    let paymentReadyGeneration = 0
+    const paymentAttempts = new Map()
     let paymentUiGeneration = 0
     let pendingPaidSlot = null
     let pendingPaidSlotGeneration = 0
@@ -777,9 +774,8 @@
     let clearPaidCalendarSelection = null
     let paidClickLock = false
     const bookingLocks = new Set()
+    const bookingAttempts = new Map()
     let paidConfirmationSequence = 0
-    let bookingAttempt = null
-    let activeBookingFingerprint = ''
     let activePaidGeneration = 0
     let queuedPaidGeneration = 0
     let activeSurfaceType = ''
@@ -847,8 +843,9 @@
     }
 
     function resetPaymentUi() {
+      const previousGeneration = paymentUiGeneration
       paymentUiGeneration += 1
-      paymentReadyGeneration = 0
+      paymentAttempts.delete(previousGeneration)
       cardComplete = false
       const nodes = paymentNodes()
       if (nodes.error) nodes.error.textContent = ''
@@ -882,8 +879,6 @@
       clearPaidCalendarSelection = null
       clearField('[name="topic"], [booking-topic]')
       clearField('[name="context"], [booking-context]')
-      bookingAttempt = null
-      activeBookingFingerprint = ''
       container.textContent = ''
       if (typeof container.removeAttribute === 'function') {
         container.removeAttribute('data-paid-calendar-state')
@@ -995,20 +990,33 @@
         starter_email: settings.starterEmail,
       }
       const fingerprint = bookingRequestFingerprint(bookingInput)
-      if (!bookingAttempt || activeBookingFingerprint !== fingerprint) {
-        activeBookingFingerprint = fingerprint
-        bookingAttempt = createBookingAttempt(bookingInput)
+      let entry = bookingAttempts.get(fingerprint)
+      if (!entry) {
+        entry = {
+          attempt: createBookingAttempt(bookingInput),
+          inFlight: null,
+          result: null,
+        }
+        bookingAttempts.set(fingerprint, entry)
       }
-      const attempt = bookingAttempt
       bookingLocks.add(generation)
       try {
-        const result = await attempt.run()
+        if (!entry.inFlight && !entry.result) {
+          entry.inFlight = entry.attempt.run().then(function (result) {
+            entry.result = result
+            return result
+          }).finally(function () {
+            entry.inFlight = null
+          })
+        }
+        const result = entry.result || await entry.inFlight
         if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return result
         resetGuestUi()
         setGuestUiVisible(false)
         pendingPaidSlot = null
         pendingPaidSlotGeneration = 0
         pendingPaidConfirmation = 0
+        if (bookingAttempts.get(fingerprint) === entry) bookingAttempts.delete(fingerprint)
         showPaidSuccess()
         return result
       } finally {
@@ -1084,7 +1092,17 @@
           event.stopImmediatePropagation()
           if (save.disabled) return
           const attemptGeneration = paymentUiGeneration
-          const paymentAlreadyReady = paymentReadyGeneration === attemptGeneration
+          let paymentAttempt = paymentAttempts.get(attemptGeneration)
+          if (!paymentAttempt) {
+            paymentAttempt = {
+              defaultAttempt: null,
+              defaultPaymentMethod: '',
+              ready: false,
+              setupAttempt: null,
+            }
+            paymentAttempts.set(attemptGeneration, paymentAttempt)
+          }
+          const paymentAlreadyReady = paymentAttempt.ready
           if (!paymentAlreadyReady && !cardComplete) {
             errorText.textContent = 'Enter complete card details.'
             statusText.textContent = ''
@@ -1095,8 +1113,9 @@
           statusText.textContent = paymentAlreadyReady ? 'Sending...' : 'Saving...'
           try {
             if (!paymentAlreadyReady) {
-              if (!cardSetupAttempt) cardSetupAttempt = createSetupAttempt()
-              const setup = await cardSetupAttempt.run()
+              if (!paymentAttempt.setupAttempt) paymentAttempt.setupAttempt = createSetupAttempt()
+              const setup = await paymentAttempt.setupAttempt.run()
+              if (attemptGeneration !== paymentUiGeneration) return
               const confirmed = await stripe.confirmCardSetup(setup.client_secret, {
                 payment_method: {
                   card: cardElement,
@@ -1106,20 +1125,22 @@
                   },
                 },
               })
+              if (attemptGeneration !== paymentUiGeneration) return
               if (confirmed.error) throw new Error(confirmed.error.message || 'Card setup failed')
               const paymentMethod = confirmed.setupIntent && confirmed.setupIntent.payment_method
-              if (!defaultSelectionAttempt || defaultSelectionPaymentMethod !== paymentMethod) {
-                defaultSelectionPaymentMethod = paymentMethod
-                defaultSelectionAttempt = createDefaultSelectionAttempt(paymentMethod)
+              if (!paymentAttempt.defaultAttempt || paymentAttempt.defaultPaymentMethod !== paymentMethod) {
+                paymentAttempt.defaultPaymentMethod = paymentMethod
+                paymentAttempt.defaultAttempt = createDefaultSelectionAttempt(paymentMethod)
               }
-              await defaultSelectionAttempt.run()
-              const readiness = await getReadiness()
-              if (!readiness.bookable) throw new Error('The payment method is not ready')
+              await paymentAttempt.defaultAttempt.run()
               if (attemptGeneration !== paymentUiGeneration) return
-              cardSetupAttempt = null
-              defaultSelectionAttempt = null
-              defaultSelectionPaymentMethod = ''
-              paymentReadyGeneration = attemptGeneration
+              const readiness = await getReadiness()
+              if (attemptGeneration !== paymentUiGeneration) return
+              if (!readiness.bookable) throw new Error('The payment method is not ready')
+              paymentAttempt.setupAttempt = null
+              paymentAttempt.defaultAttempt = null
+              paymentAttempt.defaultPaymentMethod = ''
+              paymentAttempt.ready = true
               statusText.textContent = 'Card saved. Sending...'
             }
             if (attemptGeneration !== paymentUiGeneration) return
@@ -1133,7 +1154,7 @@
             errorText.textContent = error.message || 'Card setup failed'
             statusText.textContent = ''
           } finally {
-            save.disabled = false
+            if (attemptGeneration === paymentUiGeneration) save.disabled = false
           }
         }, true)
         cardSetupInstalled = true
