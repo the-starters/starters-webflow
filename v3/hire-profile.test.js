@@ -1858,12 +1858,11 @@ test('the generic Book Call button keeps the authored Free/Paid chooser entry', 
   assert.equal(freeClicks, 0)
 })
 
-test('a Free service card skips the chooser and clicks only the ready Free CTA', async () => {
+test('a Free service card opens the modal shell before the ready Free CTA', async () => {
   const page = makePage()
-  let chooserClicks = 0
-  let freeClicks = 0
-  page.bookingButton.click = () => { chooserClicks += 1 }
-  page.freeModalCta.click = () => { freeClicks += 1 }
+  const clickOrder = []
+  page.bookingButton.click = () => { clickOrder.push('shell') }
+  page.freeModalCta.click = () => { clickOrder.push('free') }
   const context = makeContext({
     page,
     member: {
@@ -1901,18 +1900,17 @@ test('a Free service card skips the chooser and clicks only the ready Free CTA',
     preventDefault() {},
     stopImmediatePropagation() {},
   })
-  assert.equal(freeClicks, 1)
-  assert.equal(chooserClicks, 0)
+  await settle()
+  assert.deepEqual(clickOrder, ['shell', 'free'])
 })
 
-test('a Paid service card skips the chooser and clicks only the ready Paid CTA', async () => {
+test('a Paid service card opens the modal shell before the ready Paid CTA', async () => {
   // Production Webflow markup identifies this card with has-connection="paid"
   // and does not author data-type on the service card itself.
   const page = makePage({ includeFreeCard: false, includeCallDataType: false })
-  let chooserClicks = 0
-  let paidClicks = 0
-  page.bookingButton.click = () => { chooserClicks += 1 }
-  page.paidModalCta.click = () => { paidClicks += 1 }
+  const clickOrder = []
+  page.bookingButton.click = () => { clickOrder.push('shell') }
+  page.paidModalCta.click = () => { clickOrder.push('paid') }
   const context = makeContext({
     page,
     member: {
@@ -1961,8 +1959,8 @@ test('a Paid service card skips the chooser and clicks only the ready Paid CTA',
   })
   assert.equal(prevented, 1)
   assert.equal(stopped, 1)
-  assert.equal(paidClicks, 1)
-  assert.equal(chooserClicks, 0)
+  await settle()
+  assert.deepEqual(clickOrder, ['shell', 'paid'])
 })
 
 test('a migrated profile without the legacy Book Call button still uses the direct Free CTA', async () => {
