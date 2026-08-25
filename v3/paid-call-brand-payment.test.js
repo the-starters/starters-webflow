@@ -1519,3 +1519,246 @@ test('card setup retries reuse the same setup and default-selection attempts', a
     global.xanoAuthFetch = previous.xanoAuthFetch
   }
 })
+
+function makePaidLifecycleFixture(fetch) {
+  const previous = {
+    document: global.document,
+    Stripe: global.Stripe,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const container = new CalendarElement('div')
+  const calendars = []
+  const steps = [
+    { style: {}, getAttribute: () => 'default' },
+    { style: {}, getAttribute: () => 'success' },
+  ]
+  function control() {
+    const listeners = {}
+    return {
+      disabled: false,
+      listeners,
+      addEventListener(name, listener) {
+        if (!listeners[name]) listeners[name] = []
+        listeners[name].push(listener)
+      },
+      click() {
+        ;(listeners.click || []).forEach(function (listener) {
+          listener({ preventDefault() {}, stopImmediatePropagation() {} })
+        })
+      },
+    }
+  }
+  const mainClose = control()
+  const paymentClose = control()
+  const save = control()
+  const cardMount = { setAttribute() {} }
+  const errorText = { textContent: '', setAttribute() {} }
+  const statusText = { textContent: '', setAttribute() {} }
+  const paymentModal = {
+    querySelector() { return null },
+    querySelectorAll() { return [] },
+    setAttribute() {},
+  }
+  const topic = { value: '' }
+  const context = { value: '' }
+  const popup = {
+    querySelector(selector) {
+      if (selector === '[nylas-container]') return container
+      if (selector === '[name="topic"], [booking-topic]') return topic
+      if (selector === '[name="context"], [booking-context]') return context
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector === '[data-modal-close], [booking-popup-close], [popup-booking-close]') return [mainClose]
+      if (selector === '[schedule-step]') return steps
+      return []
+    },
+  }
+  const price = { textContent: '' }
+  const item = { style: {}, querySelector: () => price }
+  const paid = {
+    getAttribute(name) { return name === 'data-config' ? 'config_paid' : null },
+    setAttribute() {},
+    closest() { return item },
+  }
+  let openCount = 0
+  const openPayment = { click() { openCount += 1 } }
+  global.document = {
+    querySelector(selector) {
+      if (selector === '[popup-booking]') return popup
+      if (selector.includes('[card-element]')) return cardMount
+      if (selector.includes('[save-card-btn]')) return save
+      if (selector.includes('[card-error]')) return errorText
+      if (selector.includes('[save-card-status]')) return statusText
+      if (selector === '[popup-stripe-card]') return paymentModal
+      if (selector === '[popup-stripe-card-open]') return openPayment
+      if (selector === '[popup-stripe-card-close]') return paymentClose
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector.includes('data-type="paid"')) return [paid]
+      if (selector === '[popup-stripe-card] [data-modal-close], [popup-stripe-card-close]') return [paymentClose]
+      return []
+    },
+  }
+  const cardListeners = {}
+  let cardCreates = 0
+  let saveBindings = 0
+  const originalSaveAdd = save.addEventListener
+  save.addEventListener = function (name, listener) {
+    if (name === 'click') saveBindings += 1
+    originalSaveAdd.call(save, name, listener)
+  }
+  global.Stripe = () => ({
+    elements: () => ({
+      create() {
+        cardCreates += 1
+        return {
+          clear() {},
+          mount() {},
+          on(name, listener) { cardListeners[name] = listener },
+        }
+      },
+    }),
+    confirmCardSetup: async () => ({ setupIntent: { payment_method: 'pm_lifecycle' } }),
+  })
+  global.xanoAuthFetch = fetch
+  api.installPaidBookingController({
+    config: {
+      config_id: 'config_paid',
+      grant_id: 'grant_test',
+      duration: 60,
+      is_paid: true,
+      currency: 'USD',
+      price_cents: 500,
+    },
+    starterSlug: 'lifecycle-test',
+    mountCalendar(options) {
+      const state = { clearCount: 0, options }
+      calendars.push(state)
+      return Promise.resolve({
+        slots: [],
+        clearSelection() {
+          state.clearCount += 1
+          options.onSelectionChange(null)
+        },
+      })
+    },
+  })
+  return {
+    calendars,
+    cardListeners,
+    getCardCreates: () => cardCreates,
+    getOpenCount: () => openCount,
+    getSaveBindings: () => saveBindings,
+    mainClose,
+    paid,
+    paymentClose,
+    restore() {
+      global.document = previous.document
+      global.Stripe = previous.Stripe
+      global.xanoAuthFetch = previous.xanoAuthFetch
+    },
+    save,
+    steps,
+  }
+}
+
+test('closing card setup clears the selected slot before a later save', async () => {
+  let readinessCount = 0
+  let bookingCount = 0
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({ environment: 'test', bookable: readinessCount >= 3 })
+    }
+    if (url.endsWith(api.SETUP_PATH)) return response({ client_secret: 'seti_close' })
+    if (url.endsWith(api.SET_DEFAULT_PATH)) return response({ readiness: 'ready' })
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingCount += 1
+      return response({ booking: { booking_id: 'unexpected', row_id: 1 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    await fixture.paid.onclick({ preventDefault() {} })
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    await fixture.calendars[0].options.onConfirm(slot)
+    assert.equal(fixture.getOpenCount(), 1)
+    fixture.paymentClose.click()
+    assert.equal(fixture.calendars[0].clearCount, 1)
+    fixture.cardListeners.change({ complete: true })
+    await fixture.save.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+    assert.equal(bookingCount, 0)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('a reset booking cannot overwrite or block the current generation', async () => {
+  let bookingCount = 0
+  let resolveStaleBooking
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) return response({ environment: 'test', bookable: true })
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingCount += 1
+      if (bookingCount === 1) {
+        return new Promise((resolve) => { resolveStaleBooking = () => resolve(response({ booking: { booking_id: 'stale', row_id: 1 } })) })
+      }
+      return response({ booking: { booking_id: 'current', row_id: 2 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    await fixture.paid.onclick({ preventDefault() {} })
+    const stale = fixture.calendars[0].options.onConfirm(slot)
+    await new Promise((resolve) => setImmediate(resolve))
+    fixture.mainClose.click()
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[1].options.onConfirm(slot)
+    assert.equal(bookingCount, 2)
+    assert.equal(fixture.steps[1].style.display, 'flex')
+    fixture.mainClose.click()
+    resolveStaleBooking()
+    await stale
+    assert.equal(fixture.steps[0].style.display, 'flex')
+    assert.equal(fixture.steps[1].style.display, 'none')
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('overlapping paid generations share one card setup installation', async () => {
+  let readinessCount = 0
+  let resolveInstallReadiness
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      if (readinessCount === 2) {
+        return new Promise((resolve) => {
+          resolveInstallReadiness = () => resolve(response({ environment: 'test', bookable: false }))
+        })
+      }
+      return response({ environment: 'test', bookable: false })
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    await fixture.paid.onclick({ preventDefault() {} })
+    const first = fixture.calendars[0].options.onConfirm(slot)
+    await new Promise((resolve) => setImmediate(resolve))
+    fixture.mainClose.click()
+    await fixture.paid.onclick({ preventDefault() {} })
+    const second = fixture.calendars[1].options.onConfirm(slot)
+    await new Promise((resolve) => setImmediate(resolve))
+    resolveInstallReadiness()
+    await Promise.all([first, second])
+    assert.equal(fixture.getCardCreates(), 1)
+    assert.equal(fixture.getSaveBindings(), 1)
+    assert.equal(fixture.getOpenCount(), 1)
+  } finally {
+    fixture.restore()
+  }
+})
