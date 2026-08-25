@@ -230,9 +230,8 @@
       handle.setValue = function (value, updateInput) {
         var sibling = this.sibling
         var need = sibling ? gapValue(this) : null
+        var slot = this.index === 0 ? 0 : 1
         if (need !== null && isFinite(value)) {
-          // a move the user asked for is a fresh statement of intent: nothing is owed back
-          if (!enforcing) owed[this.index === 0 ? 0 : 1] = null
           if (this.index === 0) {
             // Min thumb: never climb past the ceiling the max thumb imposes.
             var ceiling = sibling.currentValue - need
@@ -257,7 +256,13 @@
             }
           }
         }
-        return origSetValue.call(this, value, updateInput)
+        var committed = origSetValue.call(this, value, updateInput)
+        // A move the user actually COMMITTED is a fresh statement of intent, so nothing is
+        // owed back on that thumb. A move we refused (held against the wall) is not: clearing
+        // the debt there would forget a push the user never got the chance to undo, and the
+        // thumb would not return on a track that grows back.
+        if (committed && !enforcing) owed[slot] = null
+        return committed
       }
 
       if (typeof origUpdateTrackWidth === 'function') {
