@@ -1,11 +1,18 @@
 // millify embed — format long numbers as 1.2K / 3.4M via data-millify attributes
 // Formatting algorithm adapted from millify v6.1.0 (MIT) — https://www.npmjs.com/package/millify
+//
+// Contract: refuse rather than approximate. Any value this cannot render exactly
+// leaves the element's text untouched instead of showing a rounded-off guess —
+// a value we cannot represent is usually a data bug, and leaving it visible is
+// what surfaces it. Do not "fix" this into a dash or a zero.
 
 (function () {
   if (window.__startersMillifyInit) return;
   window.__startersMillifyInit = true;
 
-  var DEFAULT_UNITS = ['', 'K', 'M', 'B', 'T', 'P', 'E'];
+  // Stops at P. The MAX_SAFE_INTEGER guard below caps input at ~9.007e15, so an
+  // 'E' (1e18) unit could never be emitted — it only advertised a range we refuse.
+  var DEFAULT_UNITS = ['', 'K', 'M', 'B', 'T', 'P'];
   var MAX = Number.MAX_SAFE_INTEGER;
   var MIN = Number.MIN_SAFE_INTEGER;
 
@@ -45,6 +52,11 @@
     // Values beyond the safe integer range are ambiguous — leave them alone.
     if (num > MAX || num < MIN) return { ok: false };
 
+    // An authored ceiling (data-millify-max) is a domain guard, not a formatting
+    // one: a value above it is bad data rather than a very large number, so it
+    // gets the same refusal as anything else we cannot honestly render.
+    if (opts.max != null && Math.abs(num) > opts.max) return { ok: false };
+
     var units = opts.units;
     var precision = opts.precision;
 
@@ -81,16 +93,12 @@
     var dot = str.indexOf('.');
     var digits = dot === -1 ? 0 : str.length - dot - 1;
 
-    var locales;
-    try {
-      locales = (navigator && (navigator.languages || navigator.language)) || undefined;
-    } catch (e) {
-      locales = undefined;
-    }
-
+    // Pinned to en-US rather than the visitor's locale: every consumer renders a
+    // USD price, and a European locale turns "$1.5K" into "$1,5K" — which reads
+    // as a typo at best and as a hundredfold error at worst.
     var formatted;
     try {
-      formatted = value.toLocaleString(locales, {
+      formatted = value.toLocaleString('en-US', {
         minimumFractionDigits: digits,
         // Pin the max to the same count so an already-rounded value with more
         // than 3 decimals (high precision) is not silently re-rounded.
@@ -131,6 +139,17 @@
       }
     }
 
+    var max = null;
+    var mAttr = el.getAttribute('data-millify-max');
+    if (mAttr !== null && mAttr.trim() !== '') {
+      var m = Number(mAttr);
+      if (isFinite(m) && m > 0) {
+        max = m;
+      } else {
+        devWarn('invalid data-millify-max (ignored):', mAttr, el);
+      }
+    }
+
     var space = el.getAttribute('data-millify-space') === 'true';
     var lowercase = el.getAttribute('data-millify-lowercase') === 'true';
 
@@ -143,7 +162,7 @@
       if (parts.length >= 1) units = parts;
     }
 
-    return { precision: precision, space: space, lowercase: lowercase, units: units };
+    return { precision: precision, space: space, lowercase: lowercase, units: units, max: max };
   }
 
   // --- element processing ---------------------------------------------------
