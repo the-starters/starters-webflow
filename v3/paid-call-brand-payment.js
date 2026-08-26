@@ -27,6 +27,7 @@
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  const BOOKING_CLOSE_SELECTOR = '[data-modal-close], [booking-popup-close], [popup-booking-close]'
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
   const guardedGuestSubmitTargets = new WeakSet()
@@ -69,9 +70,7 @@
         if (!binding) {
           binding = { container, resets: new Set() }
           bindings.set(popup, binding)
-          Array.from(popup.querySelectorAll(
-            '[data-modal-close], [booking-popup-close], [popup-booking-close]',
-          )).forEach(function (control) {
+          Array.from(popup.querySelectorAll(BOOKING_CLOSE_SELECTOR)).forEach(function (control) {
             if (typeof control.addEventListener === 'function') {
               control.addEventListener('click', function () { lifecycle.reset(popup) })
             }
@@ -1012,7 +1011,7 @@
           control.addEventListener('click', function (event) {
             event.preventDefault()
             event.stopImmediatePropagation()
-            const close = popup.querySelector('[booking-popup-close]')
+            const close = popup.querySelector(BOOKING_CLOSE_SELECTOR)
             if (close && typeof close.click === 'function') {
               close.click()
               return

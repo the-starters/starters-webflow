@@ -1046,7 +1046,7 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
       if (selector === '[nylas-container]') return container
       if (selector === '[booking-success-text]') return successText
       if (selector === '[paid-call-text]') return paidText
-      if (selector === '[booking-popup-close]') return popupClose
+      if (selector === '[data-modal-close], [booking-popup-close], [popup-booking-close]') return popupClose
       return guestQuery(guestUi, selector)
     },
     querySelectorAll(selector) {
