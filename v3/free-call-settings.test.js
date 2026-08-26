@@ -801,8 +801,12 @@ test('double Update while an upsert is in flight produces one write', async () =
   await Promise.all([result.dom.save.dispatch('click'), result.dom.save.dispatch('click')])
   await settle(2)
   assert.equal(result.calls.filter((call) => call.method === 'POST').length, 1)
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-busy'), 'true')
   pending.resolve({ ok: true, status: 200, json: async () => ({ service: service() }) })
   await settle()
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.dom.save.getAttribute('aria-busy'), 'false')
 })
 
 test('a noncanonical upsert readback leaves the editor open and reports an error', async () => {

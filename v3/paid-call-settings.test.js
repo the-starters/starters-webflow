@@ -1574,10 +1574,14 @@ test('native submit and Update click share one in-flight write lock', async () =
   await result.dom.form.dispatch('submit')
   await settle(2)
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 1)
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-busy'), 'true')
 
   const saved = service({ price_cents: 15000, revision: 1 })
   pending.resolve({ ok: true, status: 200, json: async () => ({ service: saved }) })
   await settle()
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.dom.save.getAttribute('aria-busy'), 'false')
 })
 
 test('upsert sends product intent and revision, then trusts canonical readback', async () => {
