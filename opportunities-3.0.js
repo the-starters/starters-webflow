@@ -3217,16 +3217,28 @@
   }
 
   async function resolveProjectInvoiceActionId(action, card) {
-    let invoiceId = Number(action && action.getAttribute('data-project-invoice-id'))
-    if (Number.isInteger(invoiceId) && invoiceId > 0) return invoiceId
-
-    // Invoice rows live inside lazy project details. A row can hydrate after the
-    // project projection's initial decoration pass, and browser observers are
-    // best-effort. Resolve from the canonical project projection again at click
-    // time so a visible eligible action never becomes a silent no-op.
     try {
       const project = await currentProjectContext(card)
       decorateProjectInvoiceActions(card, project)
+      const row = action && action.closest && action.closest('[data-wf-xano-nest-clone]')
+      const target = row && row.parentNode
+      if (!target || !target.matches(PROJECT_INVOICE_TARGET_SELECTOR)) return 0
+      const rows = Array.from(target.children || []).filter((candidate) =>
+        candidate.hasAttribute && candidate.hasAttribute('data-wf-xano-nest-clone'),
+      )
+      const invoice = project && Array.isArray(project.invoices)
+        ? project.invoices[rows.indexOf(row)]
+        : null
+      const invoiceId = Number(invoice && invoice.id)
+      const eligible = Boolean(
+        projectWorkflowRole === 'starter' &&
+        invoice &&
+        invoice.cancel_eligible === true &&
+        String(invoice.status || '').toLowerCase() === 'unpaid' &&
+        Number.isInteger(invoiceId) &&
+        invoiceId > 0,
+      )
+      return eligible ? invoiceId : 0
     } catch (error) {
       showProjectActionFeedback(
         action,
@@ -3236,9 +3248,6 @@
       )
       return 0
     }
-
-    invoiceId = Number(action && action.getAttribute('data-project-invoice-id'))
-    return Number.isInteger(invoiceId) && invoiceId > 0 ? invoiceId : 0
   }
 
   async function cancelProjectInvoice(action, card) {
