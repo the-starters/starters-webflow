@@ -226,7 +226,7 @@
 
       // The authored modal library expects the normal two-dialog sequence:
       // open popup-booking-main, then open the selected popup-booking flow.
-      // A direct Services-card click used to invoke only the second trigger.
+      // A direct call-service click used to invoke only the second trigger.
       // That could run the controller while its dialog was still closed and
       // leave Free on an empty/loading surface. Open the shell first, then
       // activate the exact installed CTA after the first click has completed.
@@ -241,7 +241,11 @@
   }
 
   function wireCallServiceCardsToDirectEntry() {
-      document.querySelectorAll('#services [data-service-card="component"]').forEach(function (card) {
+      // Call service cards are authored in both the profile hero and #services.
+      // Bind by the shared component contract instead of the section location so
+      // both placements use the same direct Free/Paid modal path. The chooser's
+      // own CTAs are not service-card components and remain untouched.
+      document.querySelectorAll('[data-service-card="component"]').forEach(function (card) {
           // The native Webflow service cards identify the call type through
           // has-connection. Keep data-type as a compatibility hook for older
           // saved markup and focused fixtures.

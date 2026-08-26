@@ -167,6 +167,7 @@ function makePage({
   includeNativeFreeTemplate = false,
   includeCallDataType = true,
   includeBookingButton = true,
+  includeHeroCallCards = false,
 } = {}) {
   const root = makeElement('body')
 
@@ -192,6 +193,27 @@ function makePage({
   })
   client.textContent = 'Globex'
   root.appendChild(client)
+
+  let heroFreeCard = null
+  let heroPaidCard = null
+  if (includeHeroCallCards) {
+    heroFreeCard = makeElement('div', {
+      'data-service-card': 'component',
+      'has-connection': 'free',
+      'data-type': 'free',
+      'data-modal-trigger': 'popup-booking',
+      'booking-popup-open': '',
+    }, ['service-tout_component'])
+    heroPaidCard = makeElement('div', {
+      'data-service-card': 'component',
+      'has-connection': 'paid',
+      'data-type': 'paid',
+      'data-modal-trigger': 'popup-booking',
+      'booking-popup-open': '',
+    }, ['service-tout_component'])
+    root.appendChild(heroFreeCard)
+    root.appendChild(heroPaidCard)
+  }
 
   // Services section with the Default card the rate cards are cloned from.
   const services = makeElement('div', { id: 'services' })
@@ -302,6 +324,8 @@ function makePage({
     bookingButtonWrapper,
     bookingButton,
     bookingDialog,
+    heroFreeCard,
+    heroPaidCard,
   }
 }
 
@@ -1975,6 +1999,67 @@ test('a Paid service card opens the modal shell before the ready Paid CTA', asyn
   assert.equal(stopped, 1)
   await settle()
   assert.deepEqual(clickOrder, ['shell', 'paid'])
+})
+
+test('hero Free and Paid service rows use the same direct entry as Services cards', async () => {
+  const page = makePage({ includeHeroCallCards: true })
+  const clickOrder = []
+  page.bookingButton.click = () => { clickOrder.push('shell') }
+  page.freeModalCta.click = () => { clickOrder.push('free') }
+  page.paidModalCta.click = () => { clickOrder.push('paid') }
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+      getConfigs: async () => [{
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+      }, {
+        config_id: 'paid_live',
+        is_paid: true,
+        active: true,
+        data_environment: 'production',
+        payment_environment: 'live',
+        currency: 'usd',
+        price_cents: 100,
+        duration: 60,
+      }],
+      installFreeBookingController: () => {
+        page.freeModalCta.setAttribute('data-free-call-v3', 'ready')
+        return true
+      },
+    },
+    paidController: {
+      installPaidBookingController: () => {
+        page.paidModalCta.setAttribute('data-paid-call-v3', 'ready')
+        return true
+      },
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  for (const card of [page.heroFreeCard, page.heroPaidCard]) {
+    assert.equal(card.getAttribute('booking-popup-open'), null)
+    assert.equal(card.getAttribute('data-modal-trigger'), null)
+    assert.equal(card.getAttribute('data-call-service-direct'), 'ready')
+    assert.equal(card.listeners.click.length, 1)
+  }
+
+  page.heroFreeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  await settle()
+  page.heroPaidCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  await settle()
+  assert.deepEqual(clickOrder, ['shell', 'free', 'shell', 'paid'])
 })
 
 test('a migrated profile without the legacy Book Call button still uses the direct Free CTA', async () => {
