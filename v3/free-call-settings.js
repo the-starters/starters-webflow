@@ -34,6 +34,11 @@
   let sessionMemberId = null
   let settings = null
   let busy = false
+  // Only a real radio change may turn an existing service off. Published
+  // Webflow forms can briefly expose stale checked properties while their
+  // redirected radio UI hydrates. Treating that transient DOM state as intent
+  // made an unchanged Update click call the destructive disable endpoint.
+  let explicitIntent = null
   let refreshVersion = 0
   let bound = false
   let wiredMemberstack = null
@@ -487,6 +492,7 @@
   function render(value) {
     settings = value
     const service = canonicalService(value)
+    explicitIntent = null
     const readiness = readinessState(value)
     const contractMatches = validateService(service)
     const bookable = readiness.bookable && contractMatches
@@ -587,7 +593,7 @@
       setMessage('Free-call controls are not configured correctly.')
       return null
     }
-    if (!pair.enabled.checked) {
+    if (!canonicalService(settings) && !pair.enabled.checked) {
       setMessage('Turn on free calls before you save these settings.')
       return null
     }
@@ -677,10 +683,17 @@
 
   async function submitIntent() {
     const pair = radioPair()
-    if (pair.disabled && pair.disabled.checked && (!pair.enabled || !pair.enabled.checked)) {
+    const service = canonicalService(settings)
+    if (explicitIntent === 'disabled') {
       const result = await disable()
       if (result) setCardEditorOpen(false)
       return result
+    }
+    if (!service && explicitIntent !== 'enabled') {
+      if (!pair.enabled || !pair.enabled.checked || (pair.disabled && pair.disabled.checked)) {
+        setCardEditorOpen(false)
+        return settings
+      }
     }
     const result = await save()
     if (result) setCardEditorOpen(false)
@@ -769,12 +782,14 @@
     const pair = radioPair()
     if (pair.enabled) {
       pair.enabled.addEventListener('change', function () {
+        if (pair.enabled.checked) explicitIntent = 'enabled'
         setRadioChecked(pair.enabled, pair.enabled.checked)
         if (pair.enabled.checked) setRadioChecked(pair.disabled, false)
       })
     }
     if (pair.disabled) {
       pair.disabled.addEventListener('change', function () {
+        if (pair.disabled.checked) explicitIntent = 'disabled'
         setRadioChecked(pair.disabled, pair.disabled.checked)
         if (pair.disabled.checked) setRadioChecked(pair.enabled, false)
       })
