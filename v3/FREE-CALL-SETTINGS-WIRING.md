@@ -94,6 +94,12 @@ The controller emits these window events:
 - `starterFreeCallWriteError` — `{ action: 'upsert'|'disable', message }`; never emitted for a
   missing or changed Memberstack session, because nothing was written
 
+While a mutation is in flight, the authored Update control gets
+`data-call-settings-busy="true"` and `aria-busy="true"`. The controller adds a small spinner after
+the existing button content and temporarily hides an authored SVG or
+`data-call-settings-icon="success"` icon. It resets both attributes to `false` when the mutation
+settles. The same in-flight lock prevents a second click from starting a duplicate write.
+
 A missing or changed Memberstack session fails closed: the cached Free state clears, the description,
 duration, price, and prerequisite paint reset, save disables, `data-free-call-settings` becomes
 `error`, and the status reads `Sign in to manage free calls.`
@@ -142,7 +148,8 @@ calls, reminders, and email canaries stay under the separate-approval rule owned
 Automated tests cover the controller in a synthetic DOM only: the delayed-insertion boot, the
 root-first/sibling-later card recovery, the published `consulting-calls-free` hydration,
 Free/Paid card isolation in both directions, the four-field upsert and guarded disable payloads,
-the canonical description and fixed-product readbacks, the in-flight double-Update dedup, the
+the canonical description and fixed-product readbacks, the in-flight double-Update dedup and
+Update busy-state lifecycle, the
 off-contract duration or price paint, the expired-session fail-closed writes, the authored
 status-pill resolution and its drifted-copy diagnostic, and the `w--redirected-checked` radio sync
 are executable regressions in `v3/free-call-settings.test.js`. The remaining legs need a live
@@ -153,11 +160,9 @@ local phase cannot read the live authored DOM either. The release owner runs the
 order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm the served
-   asset is the new build: the served `v3/free-call-settings.js` must contain the late-sibling
-   recovery, `watchUiScope` together with `paintStatusPills`. The previous build
-   already shipped the file itself, and `v3/scheduling-auth.js` already authenticated
-   `starter/free-call-settings/get/v3`, so neither can tell this release from the one before it;
-   always check a marker this release introduced.
+   asset is the new build: the served `v3/free-call-settings.js` must contain `paintSaveBusy`
+   together with `BUSY_STYLE_ID`. The previous build already shipped the late-sibling recovery and
+   `paintStatusPills`, so those markers cannot tell this release from the one before it.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Free card reaches
    `data-free-call-settings="ready"` with canonical values, including a reload where Webflow or
    Memberstack inserts the card late. Confirm exactly one status pill renders in each state, and
@@ -167,6 +172,9 @@ order, after the PR merges:
    keep its own editor-open attribute.
 4. On the Free card, enter a distinct description, pick Yes, and click Update by hand. The request
    body must carry only `config_id`, `description`, `expected_revision`, and `idempotency_key`.
+   While the write is in flight, confirm the Update control shows its spinner and has
+   `aria-busy="true"`; a second click must not start another request. Confirm the busy state clears
+   when the write settles.
    Confirm the canonical readback returns the submitted `public_description`, the public Webflow
    profile and Algolia record show the same description, and the card reaches the canonical state
    with `data-free-call-duration-current="30"` and `data-free-call-price-cents="0"`.
