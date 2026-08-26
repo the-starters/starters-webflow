@@ -1169,6 +1169,102 @@ test('Starter invoice cancellation requires exact CANCEL and refreshes the canon
   assert.ok(await waitFor(() => wrap.style.display === 'none'))
 })
 
+test('dashboard invoice rows show Cancelled and remove payable actions for canonical void invoices', async () => {
+  const voidLabel = el('div', { class: 'label_text' })
+  voidLabel.textContent = 'Incomplete'
+  const voidBadge = el('div', { 'wf-xano-if': "status === 'void'" }, [voidLabel])
+  const voidView = productButtonWrapFixture({
+    buttonTag: 'a',
+    buttonAttrs: { href: '#payment_link', 'wf-xano-link': 'payment_link' },
+    label: 'View Invoice',
+  })
+  const voidRow = el('div', { 'data-wf-xano-nest-clone': '' }, [voidBadge, voidView.wrap])
+
+  const unpaidView = productButtonWrapFixture({
+    buttonTag: 'a',
+    buttonAttrs: {
+      href: 'https://buy.stripe.com/test-link',
+      'wf-xano-link': 'payment_link',
+    },
+    label: 'View Invoice',
+  })
+  const unpaidRow = el('div', { 'data-wf-xano-nest-clone': '' }, [unpaidView.wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [voidRow, unpaidRow],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  const state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        lifecycle_state: 'active',
+        invoices: [
+          {
+            id: 901,
+            status: 'void',
+            status_display: 'Cancelled',
+            payment_link: null,
+            invoice_link: null,
+            cancel_eligible: false,
+          },
+          {
+            id: 902,
+            status: 'unpaid',
+            status_display: 'Unpaid',
+            payment_link: 'https://buy.stripe.com/test-link',
+            cancel_eligible: false,
+          },
+        ],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh: () => Promise.resolve(state),
+    subscribe(handler) {
+      handler(state)
+      return () => {}
+    },
+  }
+
+  await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-brand-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => voidLabel.textContent === 'Cancelled'))
+  assert.equal(voidRow.getAttribute('data-project-invoice-id'), '901')
+  assert.equal(voidRow.getAttribute('data-project-invoice-status'), 'void')
+  assert.equal(voidView.button.getAttribute('href'), null)
+  assert.equal(voidView.wrap.style.display, 'none')
+  assert.equal(voidView.wrap.getAttribute('aria-hidden'), 'true')
+
+  assert.equal(unpaidRow.getAttribute('data-project-invoice-id'), '902')
+  assert.equal(unpaidRow.getAttribute('data-project-invoice-status'), 'unpaid')
+  assert.equal(unpaidView.wrap.style.display, '')
+  assert.equal(unpaidView.button.getAttribute('href'), 'https://buy.stripe.com/test-link')
+  assert.equal(unpaidView.button.getAttribute('target'), '_blank')
+  assert.equal(unpaidView.button.getAttribute('rel'), 'noopener noreferrer')
+})
+
 test('Starter invoice cancellation resolves a lazy row that hydrated after initial decoration', async () => {
   const initialAction = el('button', { 'data-project-invoice-action': 'cancel' })
   const initialWrap = el('div', { class: 'button_main-wrap' }, [initialAction])

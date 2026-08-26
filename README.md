@@ -1047,8 +1047,15 @@ current unpaid status, and the Stripe Payment Link mapping. A successful cancel
 makes the provider link unpayable, stores canonical `status=void` with display
 label `Cancelled`, and queues the Brand notification exactly once. The
 controller then refreshes the existing wf-xano project page so the cancelled
-state replaces the action in place. A failed request leaves the row available
-for a retry and shows the endpoint's safe action message when present.
+state replaces the action in place. Each rendered invoice row receives the
+canonical `data-project-invoice-id` and `data-project-invoice-status`
+attributes. Canonical `void` rows paint the projected `Cancelled` label even
+though the older shared Webflow component still authors that pill as
+`Incomplete`. If the refreshed invoice has no `payment_link` or `invoice_link`,
+the controller removes the anchor target and hides the full `View Invoice`
+button wrapper. Payable rows keep `_blank` plus `noopener noreferrer`. A failed
+request leaves the row available for a retry and shows the endpoint's safe
+action message when present.
 
 The existing `[wf-xano-link="project-end"]` or
 `[wf-xano-link="project-decline"]` control is upgraded to
