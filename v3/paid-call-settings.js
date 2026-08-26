@@ -24,6 +24,7 @@
   const FIXED_DURATION_MINUTES = 60
   const VALIDATED_FIELD_NAMES = ['title', 'price']
   const ROOT_WAIT_TIMEOUT_MS = 10000
+  const BUSY_STYLE_ID = 'ts-call-settings-busy-style'
   const PAID_RADIO_GROUP_NAMES = [
     'consulting-calls-paid',
     'paid-consulting-calls',
@@ -586,6 +587,7 @@
 
   function setBusy(nextBusy) {
     busy = nextBusy
+    paintSaveBusy(nextBusy)
     const buttons = ['open', 'close', 'save', 'disable'].map(action).filter(Boolean)
     buttons.forEach(function (button) {
       button.style.pointerEvents = nextBusy ? 'none' : ''
@@ -611,6 +613,31 @@
       ? button
       : qs('button, input', button)
     if (nativeButton) nativeButton.disabled = !enabled
+  }
+
+  function ensureBusyStyles() {
+    if (!document.head || typeof document.createElement !== 'function') return
+    if (document.getElementById && document.getElementById(BUSY_STYLE_ID)) return
+    const style = document.createElement('style')
+    style.id = BUSY_STYLE_ID
+    style.textContent =
+      '@keyframes ts-call-settings-spin{to{transform:rotate(360deg)}}' +
+      '[data-call-settings-busy="true"]::after{' +
+      'content:"";display:inline-block;width:.85em;height:.85em;margin-left:.5em;' +
+      'border:2px solid currentColor;border-right-color:transparent;border-radius:50%;' +
+      'vertical-align:-.1em;animation:ts-call-settings-spin .7s linear infinite}' +
+      '[data-call-settings-busy="true"] svg,' +
+      '[data-call-settings-busy="true"] [data-call-settings-icon="success"]{' +
+      'display:none!important}'
+    document.head.appendChild(style)
+  }
+
+  function paintSaveBusy(nextBusy) {
+    const saveButton = action('save')
+    if (!saveButton) return
+    ensureBusyStyles()
+    saveButton.setAttribute('data-call-settings-busy', nextBusy ? 'true' : 'false')
+    saveButton.setAttribute('aria-busy', nextBusy ? 'true' : 'false')
   }
 
   function clearRenderedState(message) {
