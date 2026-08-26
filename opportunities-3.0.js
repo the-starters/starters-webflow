@@ -3187,6 +3187,9 @@
         const invoice = project && Array.isArray(project.invoices) ? project.invoices[index] : null
         $$(PROJECT_INVOICE_CANCEL_SELECTOR, row).forEach((action) => {
           const invoiceId = Number(invoice && invoice.id)
+          const decoratedInvoiceId = action.getAttribute('data-project-invoice-id')
+          const nextInvoiceId = invoiceId > 0 ? String(invoiceId) : null
+          if (decoratedInvoiceId !== nextInvoiceId) delete action.dataset.invoiceCancelKey
           if (invoiceId > 0) action.setAttribute('data-project-invoice-id', String(invoiceId))
           else action.removeAttribute('data-project-invoice-id')
           const eligible = Boolean(

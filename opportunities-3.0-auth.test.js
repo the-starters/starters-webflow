@@ -1167,6 +1167,89 @@ test('Starter invoice cancellation requires exact CANCEL and refreshes the canon
   assert.ok(await waitFor(() => wrap.style.display === 'none'))
 })
 
+test('reused invoice rows create a new cancellation key for the new invoice', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const handlers = new Set()
+  let state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        lifecycle_state: 'active',
+        invoices: [{ id: 901, status: 'unpaid', cancel_eligible: true }],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh() {
+      state = {
+        ...state,
+        data: {
+          items: [{
+            id: 746,
+            lifecycle_state: 'active',
+            invoices: [{ id: 902, status: 'unpaid', cancel_eligible: true }],
+          }],
+        },
+      }
+      handlers.forEach((handler) => handler(state))
+      return Promise.resolve(state)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const cancelBodies = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/cancel/v3')) {
+        const body = JSON.parse(init.body)
+        cancelBodies.push(body)
+        return response({ invoice_id: body.invoice_id, status: 'void', replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: () => 'CANCEL',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '901'))
+  bridge.dispatchDocument('click', clickEvent(action).event)
+  assert.ok(await waitFor(() => cancelBodies.length === 1))
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '902'))
+
+  bridge.dispatchDocument('click', clickEvent(action).event)
+  assert.ok(await waitFor(() => cancelBodies.length === 2))
+
+  assert.match(cancelBodies[0].idempotency_key, /^invoice-cancel-ui:901:/)
+  assert.match(cancelBodies[1].idempotency_key, /^invoice-cancel-ui:902:/)
+  assert.notEqual(cancelBodies[1].idempotency_key, cancelBodies[0].idempotency_key)
+})
+
 test('Brand dashboard always hides the shared Cancel Invoice control', async () => {
   const action = el('button', { 'data-project-invoice-action': 'cancel' })
   const wrap = el('div', { class: 'button_main-wrap' }, [action])
