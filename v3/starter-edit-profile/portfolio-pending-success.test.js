@@ -35,7 +35,7 @@ function createEventTarget() {
   }
 }
 
-test('portfolio submit shows pending update copy until the shared modal closes', async () => {
+test('portfolio submit shows instant-live update copy until the shared modal closes', async () => {
   const context = loadController()
   const modal = createEventTarget()
   const closeEventTarget = createEventTarget()
@@ -71,7 +71,7 @@ test('portfolio submit shows pending update copy until the shared modal closes',
   assert.equal(shownCopy[0].heading, 'Highlight submitted')
   assert.equal(
     shownCopy[0].message,
-    'Your changes were saved and sent for review. Your currently approved highlight stays live until the update is approved.',
+    'Your changes were saved and are now live.',
   )
   modal.dispatchEvent({ type: 'click' })
   assert.equal(heading.textContent, 'Highlight submitted')
