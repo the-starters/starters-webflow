@@ -3169,6 +3169,52 @@
     if (label && target.textContent.trim() !== label) target.textContent = label
   }
 
+  function decorateProjectInvoiceRows(card, project) {
+    if (!card) return
+    $$(PROJECT_INVOICE_TARGET_SELECTOR, card).forEach((target) => {
+      const rows = Array.from(target.children || []).filter((row) =>
+        row.hasAttribute && row.hasAttribute('data-wf-xano-nest-clone'),
+      )
+      rows.forEach((row, index) => {
+        const invoice = project && Array.isArray(project.invoices) ? project.invoices[index] : null
+        const invoiceId = Number(invoice && invoice.id)
+        const status = String(invoice && invoice.status || '').trim().toLowerCase()
+        if (invoiceId > 0) row.setAttribute('data-project-invoice-id', String(invoiceId))
+        else row.removeAttribute('data-project-invoice-id')
+        if (status) row.setAttribute('data-project-invoice-status', status)
+        else row.removeAttribute('data-project-invoice-status')
+
+        // The shared Webflow component historically labels canonical void rows
+        // as "Incomplete". Keep Xano's `void` value canonical while painting the
+        // approved user-facing label from the projection.
+        if (status === 'void') {
+          $$('[wf-xano-if]', row).forEach((badge) => {
+            const condition = String(badge.getAttribute('wf-xano-if') || '')
+            if (!/status\s*===\s*['"]void['"]/.test(condition)) return
+            const label = $('.label_text', badge)
+            const text = String(invoice.status_display || 'Cancelled')
+            if (label && label.textContent.trim() !== text) label.textContent = text
+          })
+        }
+
+        const payableLink = String(
+          invoice && (invoice.payment_link || invoice.invoice_link) || '',
+        ).trim()
+        const hasPayableLink = /^https:\/\/[^\s]+$/i.test(payableLink)
+        $$('[wf-xano-link="payment_link"]', row).forEach((link) => {
+          if (hasPayableLink) {
+            link.setAttribute('href', payableLink)
+            link.setAttribute('target', '_blank')
+            link.setAttribute('rel', 'noopener noreferrer')
+          } else {
+            link.removeAttribute('href')
+          }
+          setProjectActionVisible(link, hasPayableLink)
+        })
+      })
+    })
+  }
+
   function decorateProjectInvoiceLinks(card) {
     if (!card) return
     $$('[wf-xano-link="payment_link"]', card).forEach((link) => {
@@ -3292,7 +3338,7 @@
     const project = projectContextFromCard(card)
     paintProjectTimeline(card, project)
     paintProjectContractPanel(card, project)
-    decorateProjectInvoiceLinks(card)
+    decorateProjectInvoiceRows(card, project)
     decorateProjectInvoiceActions(card, project)
     if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'contract') {
       currentProjectContractActions(projectIdFromCard(card)).forEach((contract) => {
@@ -6465,6 +6511,7 @@
     prepareInvoiceModal,
     paintInvoiceSuccess,
     decorateProjectInvoiceLinks,
+    decorateProjectInvoiceRows,
     decorateProjectInvoiceActions,
     cancelProjectInvoice,
     requestInvoiceSubmit,
