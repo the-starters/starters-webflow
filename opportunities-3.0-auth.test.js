@@ -1276,6 +1276,25 @@ test('dashboard invoice rows show Cancelled and remove payable actions for canon
   bridge.notifyMutations()
   await new Promise(setImmediate)
   assert.equal(voidLabelWrites, 1)
+
+  if (process.env.INVOICE_VOID_ROW_EVIDENCE === '1') {
+    console.log(JSON.stringify({
+      surface: 'Brand dashboard invoice rows',
+      void_invoice: {
+        id: voidRow.getAttribute('data-project-invoice-id'),
+        canonical_status: voidRow.getAttribute('data-project-invoice-status'),
+        visible_label: voidLabel.textContent,
+        view_invoice_href: voidView.button.getAttribute('href'),
+        view_invoice_visible: voidView.wrap.style.display !== 'none',
+      },
+      unpaid_invoice: {
+        id: unpaidRow.getAttribute('data-project-invoice-id'),
+        canonical_status: unpaidRow.getAttribute('data-project-invoice-status'),
+        view_invoice_href: unpaidView.button.getAttribute('href'),
+        opens_in_new_tab: unpaidView.button.getAttribute('target') === '_blank',
+      },
+    }))
+  }
 })
 
 test('Starter invoice cancellation resolves a lazy row that hydrated after initial decoration', async () => {
