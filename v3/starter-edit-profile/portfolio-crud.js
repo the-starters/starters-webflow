@@ -7,7 +7,7 @@ function getStarterEditPortfolioSuccessCopy(updatedHighlightCount) {
   if (!Number.isInteger(updatedHighlightCount) || updatedHighlightCount < 1) return null;
   return {
     heading: 'Highlight submitted',
-    message: 'Your changes were saved and sent for review. Your currently approved highlight stays live until the update is approved.',
+    message: 'Your changes were saved and are now live.',
   };
 }
 
