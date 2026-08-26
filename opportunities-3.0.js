@@ -3306,6 +3306,9 @@
     if (!projectWorkflowRole || role !== projectWorkflowRole) {
       $$(PROJECT_CARD_SELECTOR).forEach((card) => {
         setProjectPanelNodeVisible($(PROJECT_CONTRACT_PANEL_SELECTOR, card), false)
+        $$(PROJECT_INVOICE_CANCEL_SELECTOR, card).forEach((action) => {
+          setProjectActionVisible(action, false)
+        })
         $$(PROJECT_CONTRACT_SELECTOR, card).forEach((contract) => {
           if (!contract.hasAttribute('data-project-contract-action')) {
             contract.setAttribute('data-project-action', 'contract')

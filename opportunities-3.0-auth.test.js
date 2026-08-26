@@ -54,6 +54,7 @@ async function loadBridge(
     search = '',
     wfXano = null,
     getXanoAuthToken = null,
+    getCurrentMemberImpl = null,
     workflowDiagnostics = false,
     autoLoadWorkflowDiagnostics = false,
     workflowDiagnosticsReady = null,
@@ -126,7 +127,8 @@ async function loadBridge(
   const copiedDiagnostics = []
   const window = {
     $memberstackDom: {
-      getCurrentMember: async () => ({ data: typeof member === 'function' ? member() : member }),
+      getCurrentMember: getCurrentMemberImpl ||
+        (async () => ({ data: typeof member === 'function' ? member() : member })),
       getMemberCookie: async () => 'memberstack-a',
       onAuthChange(listener) {
         authChange = listener
@@ -1290,6 +1292,53 @@ test('Brand dashboard always hides the shared Cancel Invoice control', async () 
 
   assert.ok(await waitFor(() => wrap.style.display === 'none'))
   assert.equal(action.getAttribute('data-project-invoice-id'), '901')
+})
+
+test('Brand dashboard hides Cancel Invoice while authorization is unresolved', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  const currentMember = deferred()
+
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 746,
+            lifecycle_state: 'active',
+            invoices: [{ id: 901, status: 'unpaid', cancel_eligible: true }],
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      pathname: '/brand-dashboard',
+      getCurrentMemberImpl: () => currentMember.promise,
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.equal(wrap.style.display, 'none')
+
+  currentMember.resolve({ data: paidBrandMember })
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '901'))
+  assert.equal(wrap.style.display, 'none')
+  assert.equal(bridge.consoleErrors.length, 0)
 })
 
 test('Brand dashboard action wiring starts only after the stable paid-Brand gate', async () => {
