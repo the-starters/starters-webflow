@@ -1290,8 +1290,8 @@ test('Brand dashboard always hides the shared Cancel Invoice control', async () 
     },
   )
 
-  assert.ok(await waitFor(() => wrap.style.display === 'none'))
-  assert.equal(action.getAttribute('data-project-invoice-id'), '901')
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '901'))
+  assert.equal(wrap.style.display, 'none')
 })
 
 test('Brand dashboard hides Cancel Invoice while authorization is unresolved', async () => {
