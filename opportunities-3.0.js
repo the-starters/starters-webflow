@@ -333,6 +333,7 @@
     'brand/opportunities/reopen': 'opportunity_reopened',
     'starter/applications/submit': 'application_submitted',
     'starter/applications/update': 'application_updated',
+    'invoices/cancel/v3': 'invoice_cancelled',
   }
 
   const DIAGNOSTIC_CALLS = {
@@ -350,6 +351,7 @@
     'brand/call-reviews/eligibility/v3': { workflow: 'call_review', resource_type: 'booking' },
     'brand/call-reviews/submit/v3': { workflow: 'call_review', resource_type: 'review' },
     'invoices/create/v3': { workflow: 'generate_invoice', resource_type: 'invoice' },
+    'invoices/cancel/v3': { workflow: 'cancel_invoice', resource_type: 'invoice' },
   }
   const responseDiagnostics = new WeakMap()
 
@@ -589,6 +591,7 @@
     callReviewSubmit: (payload) =>
       call('brand/call-reviews/submit/v3', { body: payload, base: XANO_V3_BASE }),
     invoiceCreate: (payload) => call('invoices/create/v3', { body: payload }),
+    invoiceCancel: (payload) => call('invoices/cancel/v3', { body: payload }),
     // starter / talent
     starterProfile: () => call('starter/profile/me', { body: {} }),
     starterMatchContext: () => call('starter/profile/match-context', { body: {} }),
@@ -2362,6 +2365,9 @@
     '[wf-xano-link="project-end"], [wf-xano-link="project-decline"], [data-project-action="end"]'
   const PROJECT_REVIEW_SELECTOR =
     '[wf-xano-link="review_starter"], [data-project-action="review"]'
+  const PROJECT_INVOICE_CANCEL_SELECTOR = '[data-project-invoice-action="cancel"]'
+  const PROJECT_INVOICE_TARGET_SELECTOR =
+    '[wf-xano-element="nest-target"][wf-xano-field="invoices"]'
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
   const PROJECT_REQUEST_PARTIES = ['brand', 'starter']
@@ -2412,6 +2418,7 @@
   let projectWorkflowProjectionUnsubscribe = null
   let projectWorkflowProjectionInstance = null
   let projectWorkflowActionLocks = new Map()
+  let projectInvoiceCancellationLocks = new Set()
   let projectWorkflowFeedbackElement = null
   let projectWorkflowFeedbackTimer = null
   const projectContractObjectUrls = new Map()
@@ -3170,11 +3177,86 @@
     })
   }
 
+  function decorateProjectInvoiceActions(card, project) {
+    if (!card) return
+    $$(PROJECT_INVOICE_TARGET_SELECTOR, card).forEach((target) => {
+      const rows = Array.from(target.children || []).filter((row) =>
+        row.hasAttribute && row.hasAttribute('data-wf-xano-nest-clone'),
+      )
+      rows.forEach((row, index) => {
+        const invoice = project && Array.isArray(project.invoices) ? project.invoices[index] : null
+        $$(PROJECT_INVOICE_CANCEL_SELECTOR, row).forEach((action) => {
+          const invoiceId = Number(invoice && invoice.id)
+          if (invoiceId > 0) action.setAttribute('data-project-invoice-id', String(invoiceId))
+          else action.removeAttribute('data-project-invoice-id')
+          const eligible = Boolean(
+            projectWorkflowRole === 'starter' &&
+            invoice &&
+            invoice.cancel_eligible === true &&
+            String(invoice.status || '').toLowerCase() === 'unpaid' &&
+            invoiceId > 0,
+          )
+          setProjectActionVisible(action, eligible)
+          setProjectActionWaiting(action, eligible && projectInvoiceCancellationLocks.has(invoiceId))
+        })
+      })
+    })
+  }
+
+  function projectInvoiceCancelKey(action, invoiceId) {
+    if (action.dataset.invoiceCancelKey) return action.dataset.invoiceCancelKey
+    const uuid =
+      window.crypto && typeof window.crypto.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
+    action.dataset.invoiceCancelKey = 'invoice-cancel-ui:' + invoiceId + ':' + uuid
+    return action.dataset.invoiceCancelKey
+  }
+
+  async function cancelProjectInvoice(action, card) {
+    if (projectWorkflowRole !== 'starter') return false
+    const invoiceId = Number(action && action.getAttribute('data-project-invoice-id'))
+    if (!Number.isInteger(invoiceId) || invoiceId < 1 || projectInvoiceCancellationLocks.has(invoiceId)) {
+      return false
+    }
+    const confirmation = window.prompt(
+      'Type CANCEL to cancel this invoice. The payment link will stop working.',
+    )
+    if (confirmation !== 'CANCEL') return false
+
+    projectInvoiceCancellationLocks.add(invoiceId)
+    setProjectActionWaiting(action, true)
+    try {
+      await API.invoiceCancel({
+        invoice_id: invoiceId,
+        expected_status: 'unpaid',
+        idempotency_key: projectInvoiceCancelKey(action, invoiceId),
+        dry_run: false,
+      })
+      showProjectWorkflowFeedback('Invoice cancelled.')
+      await refreshProjectWorkflowBestEffort('starter', 'invoice cancellation')
+      return true
+    } catch (error) {
+      showProjectActionFeedback(
+        action,
+        projectActionErrorMessage(error, 'Invoice could not be cancelled.'),
+        true,
+        diagnosticForError(error),
+      )
+      return false
+    } finally {
+      projectInvoiceCancellationLocks.delete(invoiceId)
+      setProjectActionWaiting(action, false)
+      decorateProjectInvoiceActions(card, projectContextFromCard(card))
+    }
+  }
+
   function decorateProjectCard(card) {
     const project = projectContextFromCard(card)
     paintProjectTimeline(card, project)
     paintProjectContractPanel(card, project)
     decorateProjectInvoiceLinks(card)
+    decorateProjectInvoiceActions(card, project)
     if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'contract') {
       currentProjectContractActions(projectIdFromCard(card)).forEach((contract) => {
         setOpportunityActionPending(projectActionWrap(contract), true)
@@ -4009,6 +4091,7 @@
     projectWorkflowProjectionUnsubscribe = null
     projectWorkflowProjectionInstance = null
     projectWorkflowActionLocks = new Map()
+    projectInvoiceCancellationLocks = new Set()
     revokeProjectContractObjectUrls()
     window.clearTimeout(projectWorkflowFeedbackTimer)
     projectWorkflowFeedbackTimer = null
@@ -4061,7 +4144,8 @@
       const target = event.target
       const action = target && target.closest
         ? target.closest(
-            PROJECT_CONTRACT_SELECTOR + ', ' + PROJECT_END_SELECTOR + ', ' + PROJECT_REVIEW_SELECTOR,
+            PROJECT_CONTRACT_SELECTOR + ', ' + PROJECT_END_SELECTOR + ', ' + PROJECT_REVIEW_SELECTOR +
+              ', ' + PROJECT_INVOICE_CANCEL_SELECTOR,
           )
         : null
       if (!action) return
@@ -4070,7 +4154,8 @@
       event.preventDefault()
       event.stopPropagation()
       if (action.getAttribute('data-project-action-waiting') === 'true') return
-      if (action.matches(PROJECT_CONTRACT_SELECTOR)) await openProjectContract(action, card)
+      if (action.matches(PROJECT_INVOICE_CANCEL_SELECTOR)) await cancelProjectInvoice(action, card)
+      else if (action.matches(PROJECT_CONTRACT_SELECTOR)) await openProjectContract(action, card)
       else if (action.matches(PROJECT_END_SELECTOR)) await mutateProjectLifecycle(action, card)
       else if (binding.role === 'brand') await openProjectReview(action, card)
     }
@@ -6340,6 +6425,8 @@
     prepareInvoiceModal,
     paintInvoiceSuccess,
     decorateProjectInvoiceLinks,
+    decorateProjectInvoiceActions,
+    cancelProjectInvoice,
     requestInvoiceSubmit,
     invoiceSubmitControl,
     setInvoiceSubmitDisabled,

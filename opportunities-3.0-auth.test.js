@@ -59,6 +59,7 @@ async function loadBridge(
     workflowDiagnosticsReady = null,
     setTimeoutImpl = setTimeout,
     nowImpl = null,
+    promptImpl = () => null,
   } = {},
 ) {
   const documentListeners = new Map()
@@ -149,6 +150,7 @@ async function loadBridge(
     },
     setInterval,
     setTimeout: setTimeoutImpl,
+    prompt: promptImpl,
   }
   window.CustomEvent = class CustomEvent {
     constructor(type, options) {
@@ -444,6 +446,36 @@ test('invoiceCreate sends the V3 invoice payload through the authenticated Xano 
     description: 'August test invoice',
     idempotency_key: 'invoice-v3-675-test',
   })
+})
+
+test('invoiceCancel sends the authenticated cancellation contract to Xano', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/cancel/v3')) {
+        return response({ invoice_id: 901, status: 'void', replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember },
+  )
+  const payload = {
+    invoice_id: 901,
+    expected_status: 'unpaid',
+    idempotency_key: 'invoice-cancel-ui:901:test',
+    dry_run: false,
+  }
+
+  const result = await bridge.API.invoiceCancel(payload)
+
+  assert.equal(result.status, 'void')
+  assert.match(requests[1].url, /\/invoices\/cancel\/v3$/)
+  assert.equal(requests[1].init.method, 'POST')
+  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[1].init.body), payload)
 })
 
 test('mutation diagnostics retain only safe invoice lifecycle fields', async () => {
@@ -1042,6 +1074,139 @@ test('project dashboard keeps the direct timeline_display binding as a fallback'
   )
 
   assert.ok(await waitFor(() => timeline.textContent === 'August 6–31, 2026'))
+})
+
+test('Starter invoice cancellation requires exact CANCEL and refreshes the canonical row', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'Cancel Invoice'
+  const wrap = el('div', { class: 'button_main-wrap' }, [action, label])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const handlers = new Set()
+  let state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        lifecycle_state: 'active',
+        invoices: [{ id: 901, status: 'unpaid', cancel_eligible: true }],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  let refreshCount = 0
+  const instance = {
+    getState: () => state,
+    refresh() {
+      refreshCount += 1
+      state = {
+        ...state,
+        data: {
+          items: [{
+            id: 746,
+            lifecycle_state: 'active',
+            invoices: [{ id: 901, status: 'void', cancel_eligible: false }],
+          }],
+        },
+      }
+      handlers.forEach((handler) => handler(state))
+      return Promise.resolve(state)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const prompts = ['cancel', 'CANCEL']
+  const cancelBodies = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/cancel/v3')) {
+        cancelBodies.push(JSON.parse(init.body))
+        return response({ invoice_id: 901, status: 'void', replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: () => prompts.shift(),
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '901'))
+  assert.equal(wrap.style.display, '')
+
+  bridge.dispatchDocument('click', clickEvent(action).event)
+  await new Promise(setImmediate)
+  assert.equal(cancelBodies.length, 0)
+
+  bridge.dispatchDocument('click', clickEvent(action).event)
+  assert.ok(await waitFor(() => cancelBodies.length === 1))
+  assert.equal(cancelBodies[0].invoice_id, 901)
+  assert.equal(cancelBodies[0].expected_status, 'unpaid')
+  assert.equal(cancelBodies[0].dry_run, false)
+  assert.match(cancelBodies[0].idempotency_key, /^invoice-cancel-ui:901:/)
+  assert.ok(await waitFor(() => refreshCount === 1))
+  assert.ok(await waitFor(() => wrap.style.display === 'none'))
+})
+
+test('Brand dashboard always hides the shared Cancel Invoice control', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+
+  await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 746,
+            lifecycle_state: 'active',
+            invoices: [{ id: 901, status: 'unpaid', cancel_eligible: true }],
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => wrap.style.display === 'none'))
+  assert.equal(action.getAttribute('data-project-invoice-id'), '901')
 })
 
 test('Brand dashboard action wiring starts only after the stable paid-Brand gate', async () => {
