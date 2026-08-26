@@ -1034,7 +1034,11 @@ control hidden until the exact `/starter-dashboard` role gate resolves and the
 matching canonical invoice has a positive id, `status=unpaid`, and
 `cancel_eligible=true`. Brand sessions and unresolved roles always keep it
 hidden. Clicking an eligible control uses a browser prompt; only the exact,
-case-sensitive text `CANCEL` proceeds. A modal remains a future enhancement.
+case-sensitive text `CANCEL` proceeds. At click time, the controller resolves
+the current canonical project, maps the clicked lazy-hydrated nested row to its
+current invoice, and rechecks that invoice's id, unpaid status, and cancellation
+eligibility before showing the prompt. It does not trust a missing or stale
+`data-project-invoice-id` decoration. A modal remains a future enhancement.
 
 The browser posts `invoice_id`, `expected_status=unpaid`, `dry_run=false`, and a
 retry-stable idempotency key to authenticated Xano `invoices/cancel/v3`. Xano
