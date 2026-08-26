@@ -131,7 +131,7 @@ function buildDom(withRoot = true, cardMode = false, shared = false, priceTile =
     const close = new El('div', { 'data-availability-action': 'item-form-close' })
     const save = new El('div', { 'data-availability-action': 'item-form-submit' })
     const saveIcon = new El('div', { 'data-opp-element': 'loading-hide' })
-    const saveSpinner = new El('div', { 'data-button-spinner': '', 'aria-hidden': 'true' })
+    const saveSpinner = new El('svg', { 'data-button-spinner': '', 'aria-hidden': 'true' })
     saveSpinner.style.display = 'none'
     save.append(saveIcon, saveSpinner)
     const statusOutput = new El('p', { 'data-call-settings-output': 'status' })
@@ -1609,7 +1609,7 @@ test('native submit and Update click share one in-flight write lock', async () =
   assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'true')
   assert.equal(result.dom.save.getAttribute('aria-busy'), 'true')
   assert.equal(result.dom.save.getAttribute('data-opp-loading'), 'true')
-  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, '')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, 'flex')
   assert.equal(result.dom.save.querySelector('[data-button-spinner]').getAttribute('aria-hidden'), 'false')
   assert.equal(result.dom.save.querySelector('[data-opp-element="loading-hide"]').style.display, 'none')
 

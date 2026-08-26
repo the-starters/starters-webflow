@@ -128,7 +128,7 @@ function buildDom(withRoot = true, publishedRoot = false, authoredPills = false,
   const close = new El('div', { 'data-call-settings-action': 'close' })
   const save = new El('div', { 'data-call-settings-action': 'submit' })
   const saveIcon = new El('div', { 'data-opp-element': 'loading-hide' })
-  const saveSpinner = new El('div', { 'data-button-spinner': '', 'aria-hidden': 'true' })
+  const saveSpinner = new El('svg', { 'data-button-spinner': '', 'aria-hidden': 'true' })
   saveSpinner.style.display = 'none'
   save.append(saveIcon, saveSpinner)
   const prerequisites = ['calendar', 'availability', 'enabled', 'bookable']
@@ -832,7 +832,7 @@ test('double Update while an upsert is in flight produces one write', async () =
   assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'true')
   assert.equal(result.dom.save.getAttribute('aria-busy'), 'true')
   assert.equal(result.dom.save.getAttribute('data-opp-loading'), 'true')
-  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, '')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, 'flex')
   assert.equal(result.dom.save.querySelector('[data-button-spinner]').getAttribute('aria-hidden'), 'false')
   assert.equal(result.dom.save.querySelector('[data-opp-element="loading-hide"]').style.display, 'none')
   pending.resolve({ ok: true, status: 200, json: async () => ({ service: service() }) })

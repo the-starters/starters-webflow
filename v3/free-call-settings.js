@@ -397,8 +397,9 @@
       'content:"";display:inline-block;width:.85em;height:.85em;margin-left:.5em;' +
       'border:2px solid currentColor;border-right-color:transparent;border-radius:50%;' +
       'vertical-align:-.1em;animation:ts-call-settings-spin .7s linear infinite}' +
-      '[data-call-settings-busy="true"] svg,' +
-      '[data-call-settings-busy="true"] [data-call-settings-icon="success"]{' +
+      '[data-call-settings-busy="true"] [data-call-settings-icon="success"],' +
+      '[data-call-settings-busy="true"] [data-opp-element="loading-hide"],' +
+      '[data-call-settings-busy="true"] [loading-hide]{' +
       'display:none!important}'
     document.head.appendChild(style)
   }
@@ -419,7 +420,7 @@
     if (spinner) {
       spinner.hidden = !nextBusy
       spinner.setAttribute('aria-hidden', nextBusy ? 'false' : 'true')
-      spinner.style.display = nextBusy ? '' : 'none'
+      spinner.style.display = nextBusy ? 'flex' : 'none'
     }
     if (successIcon) {
       successIcon.hidden = nextBusy
