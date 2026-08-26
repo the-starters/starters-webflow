@@ -196,9 +196,9 @@ canary from legacy Webflow or Algolia call flags.
    closed until its exact controller installs. A successful Free install reveals
    every Free projection; a successful Paid install reveals every Paid
    projection. Generic Book Call buttons open the authored chooser. A Free or
-   Paid Services card reuses its exact installed chooser CTA and opens that call
-   flow directly, including on a migrated profile whose legacy Book Call button
-   is absent. A failed Paid
+   Paid call service in the hero or Services section reuses its exact installed
+   chooser CTA and opens that call flow directly, including on a migrated
+   profile whose legacy Book Call button is absent. A failed Paid
    install leaves Paid hidden without closing an installed Free option. Each
    non-call card opens Start a Project with its exact native Services preset.
 4. `document.documentElement` carries `data-v3-algolia-status="ready"`.
@@ -236,20 +236,21 @@ removes legacy visibility from the matching hero, sticky-header, Services, and
 chooser projection so stale Webflow or Algolia intent cannot advertise an
 unbookable call.
 
-The native Free and Paid Services cards are type-specific shortcuts.
+The native Free and Paid call service components in the hero and Services
+section are type-specific shortcuts.
 `hire-profile.js` removes their retired direct-scheduler attributes, then finds
 the exact matching authored chooser CTA. The CTA must carry its matching
 `data-free-call-v3="ready"` or `data-paid-call-v3="ready"` installation marker,
-an accepted `data-config`, and an available chooser row. The Services card clicks
-the ready `popup-booking-main` trigger first, then activates that exact CTA on
-the next task. This preserves the authored two-dialog lifecycle while the
-generic chooser does not remain visible. A migrated profile with no authored
-main trigger opens `popup-booking-main` through the Lumos modal registry before
-activating the ready CTA. If neither entry path can open the authored dialog, the
-shortcut fails closed. A missing,
+an accepted `data-config`, and an available chooser row. The service component
+clicks the ready `popup-booking-main` trigger first, then activates that exact
+CTA on the next task. This preserves the authored two-dialog lifecycle while
+the generic chooser does not remain visible. A migrated profile with no
+authored main trigger opens `popup-booking-main` through the Lumos modal
+registry before activating the ready CTA. If neither entry path can open the
+authored dialog, the shortcut fails closed. A missing,
 hidden, unavailable, or uninstalled matching CTA fails closed. Generic Book Call
 buttons retain `data-modal-trigger="popup-booking-main"` and continue to open the
-Free/Paid chooser. The direct card click does not itself perform booking,
+Free/Paid chooser. The direct service click does not itself perform booking,
 payment, or Stripe-readiness work.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.

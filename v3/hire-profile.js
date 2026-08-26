@@ -226,7 +226,7 @@
 
       // The authored modal library expects the normal two-dialog sequence:
       // open popup-booking-main, then open the selected popup-booking flow.
-      // A direct Services-card click used to invoke only the second trigger.
+      // A direct call-service click used to invoke only the second trigger.
       // That could run the controller while its dialog was still closed and
       // leave Free on an empty/loading surface. Open the shell first, then
       // activate the exact installed CTA after the first click has completed.

@@ -3232,9 +3232,9 @@ Closing the main booking modal, its backdrop, or ESC invalidates the shared
 calendar generation and restores `schedule-step="default"`. It also clears the
 selected slot, guest fields, topic, context, calendar, errors, status text, and
 Stripe Card Element. Closing only the Stripe dialog clears its card/error state,
-retained slot, and Paid guest state without creating a booking. Direct Free and
-Paid Services cards skip the chooser; generic Book Call buttons continue to open
-it.
+retained slot, and Paid guest state without creating a booking. Direct
+call-service routing and generic chooser behavior are owned by
+[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
 
 The native `[popup-stripe-card]` component must keep its visible payment title
 (`Payment Methods` today; `Card details` is also supported) and retain
