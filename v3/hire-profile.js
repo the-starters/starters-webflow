@@ -241,7 +241,11 @@
   }
 
   function wireCallServiceCardsToDirectEntry() {
-      document.querySelectorAll('#services [data-service-card="component"]').forEach(function (card) {
+      // Call service cards are authored in both the profile hero and #services.
+      // Bind by the shared component contract instead of the section location so
+      // both placements use the same direct Free/Paid modal path. The chooser's
+      // own CTAs are not service-card components and remain untouched.
+      document.querySelectorAll('[data-service-card="component"]').forEach(function (card) {
           // The native Webflow service cards identify the call type through
           // has-connection. Keep data-type as a compatibility hook for older
           // saved markup and focused fixtures.
