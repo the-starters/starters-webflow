@@ -22,6 +22,7 @@
   const FIXED_DURATION_MINUTES = 30
   const ROOT_WAIT_TIMEOUT_MS = 10000
   const FREE_RADIO_GROUP_NAME = 'consulting-calls-free'
+  const BUSY_STYLE_ID = 'ts-call-settings-busy-style'
 
   const hostname = window.location.hostname
   if (hostname !== STAGING_HOST && !PRODUCTION_HOSTS.has(hostname)) return
@@ -380,8 +381,34 @@
     if (nativeButton) nativeButton.disabled = !enabled
   }
 
+  function ensureBusyStyles() {
+    if (!document.head || typeof document.createElement !== 'function') return
+    if (document.getElementById && document.getElementById(BUSY_STYLE_ID)) return
+    const style = document.createElement('style')
+    style.id = BUSY_STYLE_ID
+    style.textContent =
+      '@keyframes ts-call-settings-spin{to{transform:rotate(360deg)}}' +
+      '[data-call-settings-busy="true"]::after{' +
+      'content:"";display:inline-block;width:.85em;height:.85em;margin-left:.5em;' +
+      'border:2px solid currentColor;border-right-color:transparent;border-radius:50%;' +
+      'vertical-align:-.1em;animation:ts-call-settings-spin .7s linear infinite}' +
+      '[data-call-settings-busy="true"] svg,' +
+      '[data-call-settings-busy="true"] [data-call-settings-icon="success"]{' +
+      'display:none!important}'
+    document.head.appendChild(style)
+  }
+
+  function paintSaveBusy(nextBusy) {
+    const saveButton = action('save')
+    if (!saveButton) return
+    ensureBusyStyles()
+    saveButton.setAttribute('data-call-settings-busy', nextBusy ? 'true' : 'false')
+    saveButton.setAttribute('aria-busy', nextBusy ? 'true' : 'false')
+  }
+
   function setBusy(nextBusy) {
     busy = nextBusy
+    paintSaveBusy(nextBusy)
     const buttons = ['open', 'close', 'save'].map(action).filter(Boolean)
     buttons.forEach(function (button) {
       button.style.pointerEvents = nextBusy ? 'none' : ''
