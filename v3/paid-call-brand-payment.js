@@ -27,6 +27,7 @@
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  const BOOKING_CLOSE_SELECTOR = '[data-modal-close], [booking-popup-close], [popup-booking-close]'
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
   const guardedGuestSubmitTargets = new WeakSet()
@@ -69,9 +70,7 @@
         if (!binding) {
           binding = { container, resets: new Set() }
           bindings.set(popup, binding)
-          Array.from(popup.querySelectorAll(
-            '[data-modal-close], [booking-popup-close], [popup-booking-close]',
-          )).forEach(function (control) {
+          Array.from(popup.querySelectorAll(BOOKING_CLOSE_SELECTOR)).forEach(function (control) {
             if (typeof control.addEventListener === 'function') {
               control.addEventListener('click', function () { lifecycle.reset(popup) })
             }
@@ -980,15 +979,60 @@
       popup.querySelectorAll('[success-call-buttons]').forEach(function (element) {
         element.style.display = element.getAttribute('data-type') === 'paid' ? 'flex' : 'none'
       })
+
+      // The canonical V3 booking command has already checked the Brand's
+      // payment readiness and created the call request. The old Paid success
+      // buttons belonged to the retired two-phase flow. Its Confirm handler
+      // expects a legacy unique ID, then hides every step when that ID is not
+      // present. Keep the native button, but make it a safe Close action and
+      // hide the obsolete payment-method change action.
+      popup.querySelectorAll(
+        '[success-call-buttons][data-type="paid"] [booking-pm-action]',
+      ).forEach(function (control) {
+        const action = control.getAttribute('booking-pm-action')
+        if (action === 'change') {
+          control.style.display = 'none'
+          control.setAttribute('aria-hidden', 'true')
+          return
+        }
+        if (action !== 'confirm') return
+        control.textContent = 'Close'
+        control.style.display = ''
+        control.setAttribute('aria-hidden', 'false')
+        control.setAttribute('data-paid-call-success-action', 'close')
+        if (typeof control.removeAttribute === 'function') {
+          control.removeAttribute('data-unique-id')
+        }
+        if (control.classList && typeof control.classList.remove === 'function') {
+          control.classList.remove('disabled')
+        }
+        if (!control.__startersPaidSuccessCloseBound && typeof control.addEventListener === 'function') {
+          control.__startersPaidSuccessCloseBound = true
+          control.addEventListener('click', function (event) {
+            event.preventDefault()
+            event.stopImmediatePropagation()
+            const close = popup.querySelector(BOOKING_CLOSE_SELECTOR)
+            if (close && typeof close.click === 'function') {
+              close.click()
+              return
+            }
+            bookingSurfaceLifecycle.reset(popup)
+          }, true)
+        }
+      })
       popup.querySelectorAll('[schedule-step="success"] [booking-element="paid-meeting"]').forEach(function (element) {
         element.textContent = 'Paid Call'
       })
-      popup.querySelectorAll('[schedule-step="success"] *').forEach(function (element) {
-        if (/^Your card ending in .+ will be charged for this call\.$/i.test(String(element.textContent || '').trim())) {
-          element.style.display = ''
-          element.setAttribute('aria-hidden', 'false')
+      // Do not display the Designer placeholder card digits. The canonical
+      // readiness contract intentionally returns no card details, so generic
+      // truthful copy is safer than stale or guessed last-four digits.
+      if (paidCallMessage) {
+        paidCallMessage.textContent = 'Your saved payment method will be used for this call.'
+        if (paidCallMessage.style) paidCallMessage.style.display = ''
+        if (typeof paidCallMessage.setAttribute === 'function') {
+          paidCallMessage.setAttribute('aria-hidden', 'false')
         }
-      })
+      }
       const successText = popup.querySelector('[booking-success-text]')
       if (successText) {
         successText.textContent = 'Your paid call request was sent. We will notify you when the Starter confirms it.'
