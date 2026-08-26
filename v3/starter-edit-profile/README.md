@@ -20,9 +20,11 @@ Replace only an exact live inline body whose index and SHA-256 match the capture
 | 90 | `v3/starter-edit-profile/company-experience-crud.js` | Edit-profile company-experience CRUD |
 | 91 | `v3/build-profile/work-dates.js` | Work-date validation and current-role state |
 
-Work Highlight updates enter moderation. After an update succeeds, the portfolio
-controller replaces the shared generic live-message with a pending-review
-confirmation, then restores the shared modal copy when it closes.
+Work Highlight updates are approved and live immediately. After an update
+succeeds, the portfolio controller replaces the shared generic message with
+`Your changes were saved and are now live.`, then restores the shared modal copy
+when it closes. Keep the pending and rejected status-badge rendering until the
+legacy rows with those statuses have been backfilled.
 
 ### Work Highlight modal lifecycle
 
@@ -37,9 +39,9 @@ The Edit portfolio controllers are the only Work Highlights owners on
 `/starter-edit-profile`. The Build portfolio controllers fail closed outside the
 two exact Build routes, even if an obsolete nested Webflow component still loads
 their files. This prevents duplicate immediate Build writes from bypassing the
-Edit draft and moderation boundary. Structural Webflow cleanup must still remove
-the obsolete nested Build component; the code gate is the runtime safety boundary
-until that component repair is published.
+Edit controller and racing its write. Structural Webflow cleanup must still
+remove the obsolete nested Build component; the code gate is the runtime safety
+boundary until that component repair is published.
 
 `company-experience-crud.js` deliberately diverges from the live body it was captured
 from: it carries the work-experience date fix, whose contract is shared with Build

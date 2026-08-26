@@ -1,6 +1,6 @@
 # 🧭 Starter Profile Reliability Progress Checklist
 
-Last updated: 2026-08-24
+Last updated: 2026-08-27
 
 This checklist tracks release-safe implementation evidence for the
 `/starter-edit-profile` reliability workflow. The workspace operator checklist
@@ -25,9 +25,8 @@ in [README.md](README.md) and in the root
       [Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
 - [x] Re-serialize an untouched work-experience date as its original canonical string,
       so editing another field cannot rewrite a stored date.
-- [x] Show the pending-review confirmation after a Work Highlight update, keep the
-      approved version described as live, and restore the shared generic modal copy
-      after the modal closes.
+- [x] Preserve the instant-live Work Highlight update and shared-modal restoration
+      contract owned by [README.md](README.md#in-place-loader-replacements).
 - [x] Preserve the [Work Highlight modal lifecycle](README.md#work-highlight-modal-lifecycle).
 
 ## 🧪 Automated evidence
@@ -43,7 +42,7 @@ in [README.md](README.md) and in the root
       nor the widget's own `dateFormat` can parse, keep `Present` out of the picker and
       the baseline, and preserve untouched canonical date strings while a changed field
       still submits its new value.
-- [x] Portfolio update submissions use the pending-review copy until close, while
+- [x] Portfolio update submissions use the instant-live copy until close, while
       create-only and delete-only submissions keep the shared generic copy.
 
 Run this coverage with:
@@ -66,9 +65,10 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
       stored date, including a day-precision record on its exact day, a current role
       still reads `Present`, and saving an unrelated field leaves both stored dates
       unchanged in Xano.
-- [ ] Retest an existing Work Highlight update in production: the modal says the
-      update is pending review, the approved highlight stays live, and the shared
-      generic copy returns after close.
+- [ ] Retest an existing Work Highlight update in production against the
+      [authoritative success-copy contract](README.md#in-place-loader-replacements),
+      confirm the edit is live immediately, and confirm the shared generic copy
+      returns after close.
 
 ## 🛑 Stop conditions
 
