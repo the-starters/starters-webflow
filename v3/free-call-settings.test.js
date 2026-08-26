@@ -725,6 +725,30 @@ test('No plus Update sends the guarded disable payload and verifies canonical ab
   assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
 })
 
+test('a stale checked No state cannot disable an active Free service without a change event', async () => {
+  const result = load({
+    initial: canonical({ services: [service()], readiness: { free_call_enabled: true, bookable: true } }),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ setState }) => {
+        const saved = service({ revision: 5 })
+        setState(canonical({ services: [saved], readiness: { free_call_enabled: true, bookable: true } }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  // Reproduce the published Webflow hydration race without a user change.
+  result.dom.no.checked = true
+  result.dom.yes.checked = false
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/free-call-settings/disable/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/free-call-settings/upsert/v3').length, 1)
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+})
+
 test('No while already off closes the native editor without a write', async () => {
   const result = load({ initial: canonical() })
   await settle()

@@ -42,6 +42,9 @@
   let sessionMemberId = null
   let settings = null
   let busy = false
+  // Disable is destructive, so only a real user radio change may request it.
+  // The native Webflow radio DOM can expose a stale checked state during load.
+  let explicitIntent = null
   let refreshVersion = 0
   let bound = false
   let wiredMemberstack = null
@@ -688,6 +691,7 @@
   function render(value) {
     settings = value
     const service = canonicalService(value)
+    explicitIntent = null
     const readiness = readinessState(value)
     const durationMatches = !service || Number(service.duration) === FIXED_DURATION_MINUTES
     const bookable = readiness.bookable && durationMatches
@@ -790,10 +794,17 @@
     if (cardMode) {
       const enabledInput = field('enabled')
       const disabledInput = disabledField()
-      if (disabledInput && disabledInput.checked && (!enabledInput || !enabledInput.checked)) {
+      const service = canonicalService(settings)
+      if (explicitIntent === 'disabled') {
         const result = await disable()
         if (result) setCardEditorOpen(false)
         return result
+      }
+      if (!service && explicitIntent !== 'enabled') {
+        if (!enabledInput || !enabledInput.checked || (disabledInput && disabledInput.checked)) {
+          setCardEditorOpen(false)
+          return settings
+        }
       }
     }
     const result = await save()
@@ -804,7 +815,7 @@
   async function save() {
     if (busy) return null
     const enabledInput = field('enabled')
-    if (enabledInput && !enabledInput.checked) {
+    if (!canonicalService(settings) && enabledInput && !enabledInput.checked) {
       setMessage('Turn on paid calls before you save these settings.')
       return null
     }
@@ -1013,6 +1024,7 @@
     const enabledInput = field('enabled')
     if (enabledInput) {
       enabledInput.addEventListener('change', function () {
+        if (enabledInput.checked) explicitIntent = 'enabled'
         const disabledInput = disabledField()
         setRadioChecked(enabledInput, enabledInput.checked)
         if (cardMode && enabledInput.checked) setRadioChecked(disabledInput, false)
@@ -1025,6 +1037,7 @@
     const disabledInput = disabledField()
     if (disabledInput) {
       disabledInput.addEventListener('change', function () {
+        if (disabledInput.checked) explicitIntent = 'disabled'
         setRadioChecked(disabledInput, disabledInput.checked)
         if (disabledInput.checked) setRadioChecked(enabledInput, false)
         clearFieldValidity()
