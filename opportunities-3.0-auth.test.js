@@ -1171,7 +1171,15 @@ test('Starter invoice cancellation requires exact CANCEL and refreshes the canon
 
 test('dashboard invoice rows show Cancelled and remove payable actions for canonical void invoices', async () => {
   const voidLabel = el('div', { class: 'label_text' })
-  voidLabel.textContent = 'Incomplete'
+  let voidLabelText = 'Incomplete'
+  let voidLabelWrites = 0
+  Object.defineProperty(voidLabel, 'textContent', {
+    get: () => voidLabelText,
+    set: (value) => {
+      voidLabelText = value
+      voidLabelWrites += 1
+    },
+  })
   const voidBadge = el('div', { 'wf-xano-if': "status === 'void'" }, [voidLabel])
   const voidView = productButtonWrapFixture({
     buttonTag: 'a',
@@ -1232,7 +1240,7 @@ test('dashboard invoice rows show Cancelled and remove payable actions for canon
     },
   }
 
-  await loadBridge(
+  const bridge = await loadBridge(
     async (input) => {
       const url = String(input)
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
@@ -1263,6 +1271,11 @@ test('dashboard invoice rows show Cancelled and remove payable actions for canon
   assert.equal(unpaidView.button.getAttribute('href'), 'https://buy.stripe.com/test-link')
   assert.equal(unpaidView.button.getAttribute('target'), '_blank')
   assert.equal(unpaidView.button.getAttribute('rel'), 'noopener noreferrer')
+
+  assert.equal(voidLabelWrites, 1)
+  bridge.notifyMutations()
+  await new Promise(setImmediate)
+  assert.equal(voidLabelWrites, 1)
 })
 
 test('Starter invoice cancellation resolves a lazy row that hydrated after initial decoration', async () => {

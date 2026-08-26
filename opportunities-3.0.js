@@ -3192,7 +3192,8 @@
             const condition = String(badge.getAttribute('wf-xano-if') || '')
             if (!/status\s*===\s*['"]void['"]/.test(condition)) return
             const label = $('.label_text', badge)
-            if (label) label.textContent = String(invoice.status_display || 'Cancelled')
+            const text = String(invoice.status_display || 'Cancelled')
+            if (label && label.textContent.trim() !== text) label.textContent = text
           })
         }
 
