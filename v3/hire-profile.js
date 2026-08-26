@@ -977,6 +977,11 @@
 
               reconcileInstalledBookingModalOptions(installedConfigs);
               const callSurfacesChanged = syncCanonicalCallSurfaces(installedConfigs);
+              // The hero call rows can be inserted after the controller's
+              // initial DOM scan. Re-run the idempotent binding after canonical
+              // discovery so late-rendered hero and Services cards get the same
+              // direct Free/Paid entry contract.
+              wireCallServiceCardsToDirectEntry();
               if (callSurfacesChanged) refreshEmptySectionNav();
               if (!bookingSurfaceAvailable) return;
               setBookingButtonAvailable(true);
