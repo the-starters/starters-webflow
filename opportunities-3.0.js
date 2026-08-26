@@ -3216,10 +3216,35 @@
     return action.dataset.invoiceCancelKey
   }
 
+  async function resolveProjectInvoiceActionId(action, card) {
+    let invoiceId = Number(action && action.getAttribute('data-project-invoice-id'))
+    if (Number.isInteger(invoiceId) && invoiceId > 0) return invoiceId
+
+    // Invoice rows live inside lazy project details. A row can hydrate after the
+    // project projection's initial decoration pass, and browser observers are
+    // best-effort. Resolve from the canonical project projection again at click
+    // time so a visible eligible action never becomes a silent no-op.
+    try {
+      const project = await currentProjectContext(card)
+      decorateProjectInvoiceActions(card, project)
+    } catch (error) {
+      showProjectActionFeedback(
+        action,
+        projectActionErrorMessage(error, 'Invoice could not be loaded. Please try again.'),
+        true,
+        diagnosticForError(error),
+      )
+      return 0
+    }
+
+    invoiceId = Number(action && action.getAttribute('data-project-invoice-id'))
+    return Number.isInteger(invoiceId) && invoiceId > 0 ? invoiceId : 0
+  }
+
   async function cancelProjectInvoice(action, card) {
     if (projectWorkflowRole !== 'starter') return false
-    const invoiceId = Number(action && action.getAttribute('data-project-invoice-id'))
-    if (!Number.isInteger(invoiceId) || invoiceId < 1 || projectInvoiceCancellationLocks.has(invoiceId)) {
+    const invoiceId = await resolveProjectInvoiceActionId(action, card)
+    if (!invoiceId || projectInvoiceCancellationLocks.has(invoiceId)) {
       return false
     }
     const confirmation = window.prompt(
