@@ -1169,6 +1169,163 @@ test('Starter invoice cancellation requires exact CANCEL and refreshes the canon
   assert.ok(await waitFor(() => wrap.style.display === 'none'))
 })
 
+test('Starter invoice cancellation resolves a lazy row that hydrated after initial decoration', async () => {
+  const initialAction = el('button', { 'data-project-invoice-action': 'cancel' })
+  const initialWrap = el('div', { class: 'button_main-wrap' }, [initialAction])
+  const initialRow = el('div', { 'data-wf-xano-nest-clone': '' }, [initialWrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [initialRow],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        lifecycle_state: 'active',
+        invoices: [
+          { id: 900, status: 'unpaid', cancel_eligible: true },
+          { id: 901, status: 'unpaid', cancel_eligible: true },
+        ],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh: () => Promise.resolve(state),
+    subscribe(handler) {
+      handler(state)
+      return () => {}
+    },
+  }
+  const cancelBodies = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/cancel/v3')) {
+        cancelBodies.push(JSON.parse(init.body))
+        return response({ invoice_id: 901, status: 'void', replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: () => 'CANCEL',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  assert.ok(await waitFor(() => initialAction.getAttribute('data-project-invoice-id') === '900'))
+  invoices.appendChild(row)
+
+  assert.equal(action.getAttribute('data-project-invoice-id'), null)
+  bridge.dispatchDocument('click', clickEvent(action).event)
+
+  assert.ok(await waitFor(() => cancelBodies.length === 1))
+  assert.equal(action.getAttribute('data-project-invoice-id'), '901')
+  assert.equal(cancelBodies[0].invoice_id, 901)
+})
+
+test('Starter invoice cancellation ignores stale DOM identity and canonical ineligibility', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const handlers = new Set()
+  let state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        lifecycle_state: 'active',
+        invoices: [{ id: 901, status: 'unpaid', cancel_eligible: true }],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const setInvoice = (invoice) => {
+    state = {
+      ...state,
+      data: { items: [{ id: 746, lifecycle_state: 'active', invoices: [invoice] }] },
+    }
+    handlers.forEach((handler) => handler(state))
+  }
+  const instance = {
+    getState: () => state,
+    refresh: () => Promise.resolve(state),
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const cancelBodies = []
+  let promptCount = 0
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/cancel/v3')) {
+        cancelBodies.push(JSON.parse(init.body))
+        return response({ invoice_id: 902, status: 'void', replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: () => {
+        promptCount += 1
+        return 'CANCEL'
+      },
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '901'))
+  setInvoice({ id: 902, status: 'unpaid', cancel_eligible: true })
+  action.setAttribute('data-project-invoice-id', '901')
+  bridge.dispatchDocument('click', clickEvent(action).event)
+
+  assert.ok(await waitFor(() => cancelBodies.length === 1))
+  assert.equal(cancelBodies[0].invoice_id, 902)
+  assert.equal(promptCount, 1)
+
+  setInvoice({ id: 903, status: 'void', cancel_eligible: false })
+  action.setAttribute('data-project-invoice-id', '902')
+  wrap.style.display = ''
+  bridge.dispatchDocument('click', clickEvent(action).event)
+  await new Promise(setImmediate)
+
+  assert.equal(cancelBodies.length, 1)
+  assert.equal(promptCount, 1)
+})
+
 test('reused invoice rows create a new cancellation key for the new invoice', async () => {
   const action = el('button', { 'data-project-invoice-action': 'cancel' })
   const wrap = el('div', { class: 'button_main-wrap' }, [action])

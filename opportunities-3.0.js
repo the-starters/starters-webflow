@@ -3216,10 +3216,44 @@
     return action.dataset.invoiceCancelKey
   }
 
+  async function resolveProjectInvoiceActionId(action, card) {
+    try {
+      const project = await currentProjectContext(card)
+      decorateProjectInvoiceActions(card, project)
+      const row = action && action.closest && action.closest('[data-wf-xano-nest-clone]')
+      const target = row && row.parentNode
+      if (!target || !target.matches(PROJECT_INVOICE_TARGET_SELECTOR)) return 0
+      const rows = Array.from(target.children || []).filter((candidate) =>
+        candidate.hasAttribute && candidate.hasAttribute('data-wf-xano-nest-clone'),
+      )
+      const invoice = project && Array.isArray(project.invoices)
+        ? project.invoices[rows.indexOf(row)]
+        : null
+      const invoiceId = Number(invoice && invoice.id)
+      const eligible = Boolean(
+        projectWorkflowRole === 'starter' &&
+        invoice &&
+        invoice.cancel_eligible === true &&
+        String(invoice.status || '').toLowerCase() === 'unpaid' &&
+        Number.isInteger(invoiceId) &&
+        invoiceId > 0,
+      )
+      return eligible ? invoiceId : 0
+    } catch (error) {
+      showProjectActionFeedback(
+        action,
+        projectActionErrorMessage(error, 'Invoice could not be loaded. Please try again.'),
+        true,
+        diagnosticForError(error),
+      )
+      return 0
+    }
+  }
+
   async function cancelProjectInvoice(action, card) {
     if (projectWorkflowRole !== 'starter') return false
-    const invoiceId = Number(action && action.getAttribute('data-project-invoice-id'))
-    if (!Number.isInteger(invoiceId) || invoiceId < 1 || projectInvoiceCancellationLocks.has(invoiceId)) {
+    const invoiceId = await resolveProjectInvoiceActionId(action, card)
+    if (!invoiceId || projectInvoiceCancellationLocks.has(invoiceId)) {
       return false
     }
     const confirmation = window.prompt(
