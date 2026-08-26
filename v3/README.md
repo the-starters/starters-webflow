@@ -3228,6 +3228,15 @@ flowchart TD
    readiness, configuration revision, and booking authority before it creates
    the provider booking.
 
+After Xano returns canonical booking proof, the success step is terminal. The
+controller replaces the retired Paid `Confirm payment method` action with a
+safe `Close` action and hides `Change payment method`. Payment readiness was
+already confirmed before the booking command, and changing the method after
+booking would not change the booking's server-owned payment snapshot. The
+success copy says that the saved payment method will be used. It does not show
+the Designer placeholder last-four digits because the readiness DTO does not
+return card details.
+
 Closing the main booking modal, its backdrop, or ESC invalidates the shared
 calendar generation and restores `schedule-step="default"`. It also clears the
 selected slot, guest fields, topic, context, calendar, errors, status text, and

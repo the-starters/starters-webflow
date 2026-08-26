@@ -1006,15 +1006,33 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     style: { display: 'none' },
     getAttribute(name) { return this.attrs[name] || null },
   }
+  function paymentAction(action, text) {
+    return {
+      attrs: { 'booking-pm-action': action, 'data-unique-id': 'legacy-booking-id' },
+      style: {},
+      textContent: text,
+      listeners: [],
+      classList: { remove() {} },
+      getAttribute(name) { return this.attrs[name] || null },
+      setAttribute(name, value) { this.attrs[name] = String(value) },
+      removeAttribute(name) { delete this.attrs[name] },
+      addEventListener(name, listener, options) {
+        this.listeners.push({ name, listener, capture: options === true })
+      },
+    }
+  }
+  const changePayment = paymentAction('change', 'Change payment method')
+  const confirmPayment = paymentAction('confirm', 'Confirm payment method')
+  let closeClicks = 0
+  const popupClose = { click() { closeClicks += 1 } }
   const successCallType = { textContent: 'Free Call' }
-  const cardNotice = {
+  const paidText = {
     attrs: { 'aria-hidden': 'true' },
     style: { display: 'none' },
     textContent: 'Your card ending in 1234 will be charged for this call.',
     getAttribute(name) { return this.attrs[name] || null },
     setAttribute(name, value) { this.attrs[name] = String(value) },
   }
-  const paidText = { textContent: '' }
   const guestUi = makeGuestUi(['not-an-email'])
   const guestField = guestUi.rows[0].field
   const guestError = guestUi.error
@@ -1028,6 +1046,7 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
       if (selector === '[nylas-container]') return container
       if (selector === '[booking-success-text]') return successText
       if (selector === '[paid-call-text]') return paidText
+      if (selector === '[booking-popup-close]') return popupClose
       return guestQuery(guestUi, selector)
     },
     querySelectorAll(selector) {
@@ -1035,8 +1054,10 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
       if (guestNodes.length) return guestNodes
       if (selector === '[schedule-step]') return steps
       if (selector === '[success-call-buttons]') return [freeButtons, paidButtons]
+      if (selector === '[success-call-buttons][data-type="paid"] [booking-pm-action]') {
+        return [changePayment, confirmPayment]
+      }
       if (selector === '[schedule-step="success"] [booking-element="paid-meeting"]') return [successCallType]
-      if (selector === '[schedule-step="success"] *') return [successCallType, cardNotice]
       return []
     },
   }
@@ -1152,8 +1173,25 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     assert.equal(freeButtons.style.display, 'none')
     assert.equal(paidButtons.style.display, 'flex')
     assert.equal(successCallType.textContent, 'Paid Call')
-    assert.equal(cardNotice.style.display, '')
-    assert.equal(cardNotice.getAttribute('aria-hidden'), 'false')
+    assert.equal(paidText.textContent, 'Your saved payment method will be used for this call.')
+    assert.equal(paidText.style.display, '')
+    assert.equal(paidText.getAttribute('aria-hidden'), 'false')
+    assert.equal(changePayment.style.display, 'none')
+    assert.equal(changePayment.getAttribute('aria-hidden'), 'true')
+    assert.equal(confirmPayment.textContent, 'Close')
+    assert.equal(confirmPayment.getAttribute('data-unique-id'), null)
+    assert.equal(confirmPayment.getAttribute('data-paid-call-success-action'), 'close')
+    const closeBinding = confirmPayment.listeners.find(function (listener) {
+      return listener.name === 'click' && listener.capture
+    })
+    assert.ok(closeBinding)
+    let stopped = false
+    closeBinding.listener({
+      preventDefault() {},
+      stopImmediatePropagation() { stopped = true },
+    })
+    assert.equal(stopped, true)
+    assert.equal(closeClicks, 1)
     assert.equal(steps[1].style.display, 'flex')
   } finally {
     global.document = previous.document
