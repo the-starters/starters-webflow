@@ -130,6 +130,10 @@ function buildDom(withRoot = true, cardMode = false, shared = false, priceTile =
     const buttonRow = new El('div')
     const close = new El('div', { 'data-availability-action': 'item-form-close' })
     const save = new El('div', { 'data-availability-action': 'item-form-submit' })
+    const saveIcon = new El('div', { 'data-opp-element': 'loading-hide' })
+    const saveSpinner = new El('div', { 'data-button-spinner': '', 'aria-hidden': 'true' })
+    saveSpinner.style.display = 'none'
+    save.append(saveIcon, saveSpinner)
     const statusOutput = new El('p', { 'data-call-settings-output': 'status' })
     const priceOutput = priceTile.canonical === false
       ? null
@@ -1604,12 +1608,20 @@ test('native submit and Update click share one in-flight write lock', async () =
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 1)
   assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'true')
   assert.equal(result.dom.save.getAttribute('aria-busy'), 'true')
+  assert.equal(result.dom.save.getAttribute('data-opp-loading'), 'true')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, '')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').getAttribute('aria-hidden'), 'false')
+  assert.equal(result.dom.save.querySelector('[data-opp-element="loading-hide"]').style.display, 'none')
 
   const saved = service({ price_cents: 15000, revision: 1 })
   pending.resolve({ ok: true, status: 200, json: async () => ({ service: saved }) })
   await settle()
   assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
   assert.equal(result.dom.save.getAttribute('aria-busy'), 'false')
+  assert.equal(result.dom.save.getAttribute('data-opp-loading'), 'false')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, 'none')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').getAttribute('aria-hidden'), 'true')
+  assert.equal(result.dom.save.querySelector('[data-opp-element="loading-hide"]').style.display, '')
 })
 
 test('upsert sends product intent and revision, then trusts canonical readback', async () => {

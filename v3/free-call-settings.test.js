@@ -127,6 +127,10 @@ function buildDom(withRoot = true, publishedRoot = false, authoredPills = false,
   const title = new El('input', { 'data-call-settings-input': 'description' })
   const close = new El('div', { 'data-call-settings-action': 'close' })
   const save = new El('div', { 'data-call-settings-action': 'submit' })
+  const saveIcon = new El('div', { 'data-opp-element': 'loading-hide' })
+  const saveSpinner = new El('div', { 'data-button-spinner': '', 'aria-hidden': 'true' })
+  saveSpinner.style.display = 'none'
+  save.append(saveIcon, saveSpinner)
   const prerequisites = ['calendar', 'availability', 'enabled', 'bookable']
     .map((name) => new El('div', { 'data-free-call-prerequisite': name }))
   noLabel.append(noVisual, no)
@@ -827,10 +831,18 @@ test('double Update while an upsert is in flight produces one write', async () =
   assert.equal(result.calls.filter((call) => call.method === 'POST').length, 1)
   assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'true')
   assert.equal(result.dom.save.getAttribute('aria-busy'), 'true')
+  assert.equal(result.dom.save.getAttribute('data-opp-loading'), 'true')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, '')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').getAttribute('aria-hidden'), 'false')
+  assert.equal(result.dom.save.querySelector('[data-opp-element="loading-hide"]').style.display, 'none')
   pending.resolve({ ok: true, status: 200, json: async () => ({ service: service() }) })
   await settle()
   assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
   assert.equal(result.dom.save.getAttribute('aria-busy'), 'false')
+  assert.equal(result.dom.save.getAttribute('data-opp-loading'), 'false')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, 'none')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').getAttribute('aria-hidden'), 'true')
+  assert.equal(result.dom.save.querySelector('[data-opp-element="loading-hide"]').style.display, '')
 })
 
 test('a noncanonical upsert readback leaves the editor open and reports an error', async () => {

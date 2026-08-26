@@ -393,7 +393,7 @@
     style.id = BUSY_STYLE_ID
     style.textContent =
       '@keyframes ts-call-settings-spin{to{transform:rotate(360deg)}}' +
-      '[data-call-settings-busy="true"]::after{' +
+      '[data-call-settings-busy="true"]:not([data-call-settings-native-spinner="true"])::after{' +
       'content:"";display:inline-block;width:.85em;height:.85em;margin-left:.5em;' +
       'border:2px solid currentColor;border-right-color:transparent;border-radius:50%;' +
       'vertical-align:-.1em;animation:ts-call-settings-spin .7s linear infinite}' +
@@ -407,8 +407,24 @@
     const saveButton = action('save')
     if (!saveButton) return
     ensureBusyStyles()
+    const spinner = qs('[data-button-spinner], [loading-spinner]', saveButton)
+    const successIcon = qs(
+      '[data-call-settings-icon="success"], [data-opp-element="loading-hide"], [loading-hide]',
+      saveButton
+    )
+    saveButton.setAttribute('data-call-settings-native-spinner', spinner ? 'true' : 'false')
+    saveButton.setAttribute('data-opp-loading', nextBusy ? 'true' : 'false')
     saveButton.setAttribute('data-call-settings-busy', nextBusy ? 'true' : 'false')
     saveButton.setAttribute('aria-busy', nextBusy ? 'true' : 'false')
+    if (spinner) {
+      spinner.hidden = !nextBusy
+      spinner.setAttribute('aria-hidden', nextBusy ? 'false' : 'true')
+      spinner.style.display = nextBusy ? '' : 'none'
+    }
+    if (successIcon) {
+      successIcon.hidden = nextBusy
+      successIcon.style.display = nextBusy ? 'none' : ''
+    }
   }
 
   function setBusy(nextBusy) {
