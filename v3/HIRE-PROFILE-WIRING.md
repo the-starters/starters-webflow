@@ -254,9 +254,10 @@ Free/Paid chooser. The direct service click does not itself perform booking,
 payment, or Stripe-readiness work.
 
 The controller repeats this idempotent shortcut binding after canonical call
-discovery. This covers hero call components that Webflow inserts after the
-initial deferred-script scan while keeping the generic Book Call chooser
-unchanged.
+discovery and observes later child insertions. Element identity, not the copied
+diagnostic attribute, owns the listener guard. This covers hero call components
+that Webflow inserts or clones after the initial deferred-script scan while
+keeping the generic Book Call chooser unchanged.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact

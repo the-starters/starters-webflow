@@ -240,6 +240,8 @@
       return true;
   }
 
+  const directCallServiceCards = new WeakSet();
+
   function wireCallServiceCardsToDirectEntry() {
       // Call service cards are authored in both the profile hero and #services.
       // Bind by the shared component contract instead of the section location so
@@ -251,7 +253,10 @@
           // saved markup and focused fixtures.
           const type = card.getAttribute('data-type') || card.getAttribute('has-connection');
           if (type !== 'free' && type !== 'paid') return;
-          if (card.getAttribute('data-call-service-direct') === 'ready') return;
+          // A cloned DOM node copies attributes but not listeners. Track actual
+          // listener ownership by element identity instead of trusting the
+          // diagnostic attribute as the binding guard.
+          if (directCallServiceCards.has(card)) return;
 
           // Service cards are type-specific shortcuts. They reuse the exact
           // installed chooser CTA so the matching GitHub controller and native
@@ -265,7 +270,19 @@
               event.stopImmediatePropagation();
               openReadyCallType(type);
           }, true);
+          directCallServiceCards.add(card);
       });
+  }
+
+  function observeCallServiceCards() {
+      if (typeof MutationObserver !== 'function' || !document.body) return;
+      const observer = new MutationObserver(function (records) {
+          if (!records.some(function (record) {
+              return record && record.type === 'childList' && record.addedNodes && record.addedNodes.length;
+          })) return;
+          wireCallServiceCardsToDirectEntry();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
   }
 
   function isBlockedProductionBookingSurface() {
@@ -284,6 +301,7 @@
   // environment-scoped discovery is the only code path that may enable them.
   setBookingButtonAvailable(false);
   wireCallServiceCardsToDirectEntry();
+  observeCallServiceCards();
 
   // Page-embed contract. This file is deferred, so all of these are already
   // defined in the normal case; stand down loudly rather than throwing if not.
