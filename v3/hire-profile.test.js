@@ -353,6 +353,7 @@ function makeContext({
   const emptyNavRefreshCalls = []
   const requestedObjectIds = []
   const requestedUrls = []
+  const mutationObserverCallbacks = []
   const root = page ? page.root : makeElement('body')
   const head = makeElement('head')
 
@@ -425,7 +426,8 @@ function makeContext({
     IntersectionObserver: function () {
       return { observe() {} }
     },
-    MutationObserver: function () {
+    MutationObserver: function (callback) {
+      mutationObserverCallbacks.push(callback)
       return { observe() {} }
     },
     qs: (s, scope) => (scope || documentObject).querySelector(s),
@@ -483,6 +485,7 @@ function makeContext({
   context.emptyNavRefreshCalls = emptyNavRefreshCalls
   context.requestedObjectIds = requestedObjectIds
   context.requestedUrls = requestedUrls
+  context.mutationObserverCallbacks = mutationObserverCallbacks
   return context
 }
 
@@ -2062,15 +2065,13 @@ test('hero Free and Paid service rows use the same direct entry as Services card
   assert.deepEqual(clickOrder, ['shell', 'free', 'shell', 'paid'])
 })
 
-test('late-rendered hero call rows are wired after canonical discovery', async () => {
+test('hero call rows inserted after canonical discovery are wired by the live observer', async () => {
   const page = makePage()
   const clickOrder = []
   page.bookingButton.click = () => { clickOrder.push('shell') }
   page.freeModalCta.click = () => { clickOrder.push('free') }
   page.paidModalCta.click = () => { clickOrder.push('paid') }
 
-  let heroFreeCard
-  let heroPaidCard
   const context = makeContext({
     page,
     member: {
@@ -2081,22 +2082,7 @@ test('late-rendered hero call rows are wired after canonical discovery', async (
     },
     freeController: {
       getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
-      getConfigs: async () => {
-        heroFreeCard = makeElement('div', {
-          'data-service-card': 'component',
-          'has-connection': 'free',
-          'data-modal-trigger': 'popup-booking',
-          'booking-popup-open': '',
-        })
-        heroPaidCard = makeElement('div', {
-          'data-service-card': 'component',
-          'has-connection': 'paid',
-          'data-modal-trigger': 'popup-booking',
-          'booking-popup-open': '',
-        })
-        page.root.appendChild(heroFreeCard)
-        page.root.appendChild(heroPaidCard)
-        return [{
+      getConfigs: async () => [{
           config_id: 'free_live',
           is_paid: false,
           active: true,
@@ -2110,8 +2096,7 @@ test('late-rendered hero call rows are wired after canonical discovery', async (
           currency: 'usd',
           price_cents: 100,
           duration: 60,
-        }]
-      },
+        }],
       installFreeBookingController: () => {
         page.freeModalCta.setAttribute('data-free-call-v3', 'ready')
         return true
@@ -2128,6 +2113,24 @@ test('late-rendered hero call rows are wired after canonical discovery', async (
   vm.runInContext(source, context)
   await settle()
 
+  const heroFreeCard = makeElement('div', {
+    'data-service-card': 'component',
+    'has-connection': 'free',
+    'data-modal-trigger': 'popup-booking',
+    'booking-popup-open': '',
+  })
+  const heroPaidCard = makeElement('div', {
+    'data-service-card': 'component',
+    'has-connection': 'paid',
+    'data-modal-trigger': 'popup-booking',
+    'booking-popup-open': '',
+  })
+  page.root.appendChild(heroFreeCard)
+  page.root.appendChild(heroPaidCard)
+  for (const callback of context.mutationObserverCallbacks) {
+    callback([{ type: 'childList', addedNodes: [heroFreeCard, heroPaidCard] }])
+  }
+
   for (const card of [heroFreeCard, heroPaidCard]) {
     assert.equal(card.getAttribute('booking-popup-open'), null)
     assert.equal(card.getAttribute('data-modal-trigger'), null)
@@ -2140,6 +2143,46 @@ test('late-rendered hero call rows are wired after canonical discovery', async (
   heroPaidCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
   await settle()
   assert.deepEqual(clickOrder, ['shell', 'free', 'shell', 'paid'])
+})
+
+test('a cloned ready call card receives its own direct-entry listener', async () => {
+  const page = makePage({ includeHeroCallCards: true })
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+      getConfigs: async () => [{
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+      }],
+      installFreeBookingController: () => {
+        page.freeModalCta.setAttribute('data-free-call-v3', 'ready')
+        return true
+      },
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const clone = page.heroFreeCard.cloneNode(true)
+  assert.equal(clone.getAttribute('data-call-service-direct'), 'ready')
+  assert.equal((clone.listeners.click || []).length, 0)
+  page.root.appendChild(clone)
+  for (const callback of context.mutationObserverCallbacks) {
+    callback([{ type: 'childList', addedNodes: [clone] }])
+  }
+
+  assert.equal(clone.getAttribute('data-call-service-direct'), 'ready')
+  assert.equal(clone.listeners.click.length, 1)
 })
 
 test('a migrated profile without the legacy Book Call button still uses the direct Free CTA', async () => {
