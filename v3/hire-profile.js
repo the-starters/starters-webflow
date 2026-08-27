@@ -711,16 +711,14 @@
       const retainerRate = parseFloat(record['retainer-rate']);
       const cards = [];
 
-      // The leading \u00A0 is the gap between the title and the slash: the
-      // title-wrapper is a gapless flex row, so the description <p> sits flush
-      // against the title and a plain leading space would be collapsed at the
-      // start of its line box. Delete the \u00A0 if the wrapper ever gains a
-      // CSS gap, or the spacing doubles.
+      // Freelance prices a unit, so its label reads under the amount ($135
+      // "/hour"). Retainer quotes a starting price, so its label reads above
+      // the amount ("from" $5.5K) — same element, opposite side.
       if (rate > 0) {
-          cards.push({ title: 'Freelance', description: '\u00A0/hour', price: rate });
+          cards.push({ title: 'Freelance', unit: '/hour', unitPosition: 'below', price: rate });
       }
       if (record['retainer-enabled'] && retainerRate > 0) {
-          cards.push({ title: 'Retainer', description: '\u00A0/month', price: retainerRate });
+          cards.push({ title: 'Retainer', unit: 'from', unitPosition: 'above', price: retainerRate });
       }
 
       cards.reverse().forEach(function (card) {
@@ -754,14 +752,7 @@
           if (bookingContent) bookingContent.remove();
 
           const titleEl = el.querySelector('[data-service-card-element="title"]');
-          if (titleEl) {
-              titleEl.textContent = card.title;
-
-              const description = document.createElement('p');
-              description.className = 'service-card_description';
-              description.textContent = card.description;
-              titleEl.parentElement.appendChild(description);
-          }
+          if (titleEl) titleEl.textContent = card.title;
 
           // Hand millify the raw value through its explicit attribute; a stale
           // data-millify-raw on the clone would make it re-parse formatted text.
@@ -776,6 +767,35 @@
               priceEl.removeAttribute('data-millify-max');
               priceEl.setAttribute('data-millify', String(card.price));
               priceEl.textContent = String(card.price);
+          }
+
+          // The label belongs inside the green price chip, stacked with the
+          // amount, not beside the title. The chip layout is a centred column
+          // flex carrying the system row gap, so the <p> needs no spacing of
+          // its own. service-card_description is deliberately NOT reused: it
+          // carries word-break:break-all and the body-regular size from the
+          // Designer stylesheet. Placed last so the price write above can
+          // never clobber it.
+          //
+          // Anchored on [data-millify] rather than on the chip's Designer
+          // class: data-millify is the contract this file already depends on,
+          // while a class rename in Webflow would silently ship a chip with no
+          // label at all. The hook sits on a span inside the price <p>, so the
+          // paragraph is its nearest <p> and the layout is that <p>'s parent.
+          const pricePara = priceEl ? priceEl.closest('p') : null;
+          const priceLayout = pricePara ? pricePara.parentElement : null;
+          if (priceLayout) {
+              const unit = document.createElement('p');
+              unit.className = 'service-card_price-unit text-size-small line-height-100';
+              unit.textContent = card.unit;
+
+              if (card.unitPosition === 'above') {
+                  priceLayout.insertBefore(unit, pricePara);
+              } else {
+                  priceLayout.appendChild(unit);
+              }
+          } else {
+              console.warn('Rate services:', 'Price paragraph not found; chip label skipped');
           }
 
           el.style.display = 'block';
