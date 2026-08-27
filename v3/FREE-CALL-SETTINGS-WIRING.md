@@ -95,10 +95,14 @@ The controller emits these window events:
   missing or changed Memberstack session, because nothing was written
 
 While a mutation is in flight, the authored Update control gets
-`data-call-settings-busy="true"` and `aria-busy="true"`. The controller adds a small spinner after
-the existing button content and temporarily hides an authored SVG or
-`data-call-settings-icon="success"` icon. It resets both attributes to `false` when the mutation
-settles. The same in-flight lock prevents a second click from starting a duplicate write.
+`data-call-settings-busy="true"`, `data-opp-loading="true"`, and `aria-busy="true"`. When the
+control contains an authored `[data-button-spinner]` or `[loading-spinner]`, the controller shows
+that spinner and does not generate a fallback. It temporarily hides only the authored success icon
+marked with `data-call-settings-icon="success"`, `data-opp-element="loading-hide"`, or
+`loading-hide`; other SVG content stays unchanged. Without an authored spinner, the controller
+adds a small CSS spinner after the existing button content. It restores the authored icon and
+resets the busy attributes when the mutation and canonical readback settle. The same in-flight lock
+prevents a second click from starting a duplicate write.
 
 A missing or changed Memberstack session fails closed: the cached Free state clears, the description,
 duration, price, and prerequisite paint reset, save disables, `data-free-call-settings` becomes
@@ -160,8 +164,9 @@ local phase cannot read the live authored DOM either. The release owner runs the
 order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm the served
-   asset is the new build: the served `v3/free-call-settings.js` must contain `paintSaveBusy`
-   together with `BUSY_STYLE_ID`. The previous build already shipped the late-sibling recovery and
+   asset is the new build: the served `v3/free-call-settings.js` must contain
+   `data-call-settings-native-spinner` together with `data-button-spinner`. The previous build
+   already shipped `paintSaveBusy`, `BUSY_STYLE_ID`, the late-sibling recovery, and
    `paintStatusPills`, so those markers cannot tell this release from the one before it.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Free card reaches
    `data-free-call-settings="ready"` with canonical values, including a reload where Webflow or
@@ -172,9 +177,10 @@ order, after the PR merges:
    keep its own editor-open attribute.
 4. On the Free card, enter a distinct description, pick Yes, and click Update by hand. The request
    body must carry only `config_id`, `description`, `expected_revision`, and `idempotency_key`.
-   While the write is in flight, confirm the Update control shows its spinner and has
-   `aria-busy="true"`; a second click must not start another request. Confirm the busy state clears
-   when the write settles.
+   While the write and canonical readback are in flight, confirm the Update control shows its
+   authored spinner, hides its authored success icon, and has `aria-busy="true"`; a second click
+   must not start another request. Confirm the spinner hides, the success icon returns, and the busy
+   state clears only after canonical readback settles.
    Confirm the canonical readback returns the submitted `public_description`, the public Webflow
    profile and Algolia record show the same description, and the card reaches the canonical state
    with `data-free-call-duration-current="30"` and `data-free-call-price-cents="0"`.
