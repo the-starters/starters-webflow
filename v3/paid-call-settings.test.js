@@ -432,6 +432,10 @@ function load(options = {}) {
       if (authChange) return authChange(nextMember)
       return null
     },
+    rotateAuthScope: async () => {
+      authScope = {}
+      return authChange ? authChange(activeMember) : null
+    },
     switchAuthScopeWithNullNotice: async (nextMember) => {
       activeMember = nextMember
       authSessionActive = Boolean(nextMember && nextMember.id)
@@ -2038,6 +2042,53 @@ test('a transient empty auth notification preserves and refreshes the Paid canon
     result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length,
     readsBefore + 1,
   )
+})
+
+test('same-member cookie rotation reloads Paid and keeps Update usable', async () => {
+  let reads = 0
+  let writes = 0
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ title: 'Original Paid Call', price_cents: 100 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        writes += 1
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 3,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  await result.rotateAuthScope()
+  await settle()
+
+  assert.equal(reads, 2)
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(writes, 1)
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
 })
 
 test('Paid Update is blocked while a null-auth canonical read is unresolved', async () => {

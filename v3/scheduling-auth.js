@@ -321,6 +321,7 @@
       return originalFetch(request)
     }
 
+    await authReconciliation
     const generation = sessionGeneration
     const token = await getXanoAuthToken()
     assertSessionGeneration(generation)
@@ -333,6 +334,7 @@
       return originalFetch(request)
     }
 
+    await authReconciliation
     const generation = sessionGeneration
     let token
     try {

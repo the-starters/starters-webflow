@@ -552,3 +552,33 @@ test('a transient null auth change preserves an in-flight owner request', async 
   assert.equal(await window.__tsSchedulingAuthGetScope(), scopeBefore)
   assert.equal(tradeCount, 1)
 })
+
+test('a request queued behind cookie reconciliation uses the new generation', async () => {
+  for (const fetchName of ['xanoAuthFetch', 'fetch']) {
+    let memberstackToken = 'memberstack-a'
+    let tradeCount = 0
+    const nativeFetch = async (request) => {
+      if (requestUrl(request).includes('/auth/trade-token/v3')) {
+        tradeCount += 1
+        return response({ authToken: `xano-${tradeCount}` })
+      }
+      return response({})
+    }
+    const memberstack = {
+      getMemberCookie: async () => memberstackToken,
+      onAuthChange(listener) {
+        this.listener = listener
+      },
+    }
+    const { authChange, window } = loadBridge(nativeFetch, { memberstack })
+    await window.__tsSchedulingAuthGetScope()
+
+    memberstackToken = 'memberstack-b'
+    const reconciliation = authChange({ id: 'member-a' })
+    const request = window[fetchName](SCHEDULING_URL)
+
+    assert.equal((await request).status, 200)
+    await reconciliation
+    assert.equal(tradeCount, 2)
+  }
+})

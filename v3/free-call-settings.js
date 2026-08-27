@@ -836,9 +836,23 @@
   async function handleAuthChange(nextMemberValue) {
     const notifiedMember = authMember(nextMemberValue)
     if (notifiedMember && notifiedMember.id) {
-      if (notifiedMember.id === sessionMemberId && settings) return settings
       const transition = beginAuthTransition()
       try {
+        if (notifiedMember.id === sessionMemberId && settings) {
+          let scope
+          try {
+            scope = await currentAuthScope()
+          } catch (error) {
+            if (authTransitionPending === transition) failClosedSession(error)
+            return null
+          }
+          if (
+            authTransitionPending !== transition ||
+            notifiedMember.id !== sessionMemberId ||
+            !settings
+          ) return null
+          if (scope === sessionAuthScope) return settings
+        }
         return await loadSession(notifiedMember, false)
       } finally {
         finishAuthTransition(transition)

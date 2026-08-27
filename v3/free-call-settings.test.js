@@ -365,6 +365,10 @@ function load(options = {}) {
       authSessionActive = Boolean(member && member.id)
       return authChange ? authChange(member) : null
     },
+    rotateAuthScope: async () => {
+      authScope = {}
+      return authChange ? authChange(activeMember) : null
+    },
     switchAuthScopeWithNullNotice: async (member) => {
       activeMember = member
       authSessionActive = Boolean(member && member.id)
@@ -1225,6 +1229,49 @@ test('a transient empty auth notification preserves and refreshes the Free canon
     result.calls.filter((call) => call.path === '/starter/free-call-settings/get/v3').length,
     readsBefore + 1,
   )
+})
+
+test('same-member cookie rotation reloads Free and keeps Update usable', async () => {
+  let reads = 0
+  let writes = 0
+  const result = load({
+    initial: canonical({
+      public_description: 'Original Free Call',
+      services: [service({ title: 'Original Free Call' })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/free-call-settings/upsert/v3': ({ setState }) => {
+        writes += 1
+        const saved = service({ revision: 3 })
+        setState(canonical({
+          public_description: 'Original Free Call',
+          services: [saved],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  await result.rotateAuthScope()
+  await settle()
+
+  assert.equal(reads, 2)
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(writes, 1)
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
 })
 
 test('Free Update is blocked while a null-auth canonical read is unresolved', async () => {
