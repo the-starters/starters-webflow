@@ -1083,10 +1083,23 @@
         return render(canonical)
       } catch (error) {
         if (!currentRender(version, memberId)) return null
-        if (!failClosedSession(error)) {
-          setStatus('error')
-          setMessage('Paid-call settings could not be refreshed. Your account was not changed.')
+        if (failClosedSession(error)) return null
+        if (pendingWrite && pendingWrite.canonical) {
+          try {
+            assertAuthScope(await currentAuthScope())
+          } catch (scopeError) {
+            if (!currentRender(version, memberId)) return null
+            if (!failClosedSession(scopeError)) {
+              setStatus('error')
+              setMessage('Paid-call settings could not be refreshed. Your account was not changed.')
+            }
+            return null
+          }
+          if (!currentRender(version, memberId)) return null
+          return render(pendingWrite.canonical)
         }
+        setStatus('error')
+        setMessage('Paid-call settings could not be refreshed. Your account was not changed.')
         return null
       }
     } finally {
