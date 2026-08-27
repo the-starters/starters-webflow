@@ -2023,7 +2023,10 @@ stage adapter; that loader is the authoritative script order. At boot it loads
 missing or invalid optional module times out after five seconds without blocking
 the canonical dashboard reader and leaves its controls hidden. If that script
 loads after the fallback, the controller still wires its valid module exactly
-once.
+once. Injected module URLs inherit the exact query string from the
+`dashboard-calls.js` loader URL, so the footer's cache-key bump also refreshes
+all three modules. A bare loader keeps the module URLs bare. An existing module
+script, including a versioned one, is reused instead of duplicated.
 
 The controller obtains the current Memberstack member, reads
 `booking_record/get/v3` through `window.xanoAuthFetch` with that member's ID,

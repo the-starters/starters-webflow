@@ -366,3 +366,131 @@ test('Details exposes the decline reason step alongside decline', () => {
   assert.equal(switchDeclineReason.hidden, false)
   assert.equal(decline.hidden, false)
 })
+
+test('injected module scripts inherit the loader cache key', async () => {
+  const originalDocument = global.document
+  const originalSetTimeout = global.setTimeout
+  const originalActions = global.StartersDashboardCallActions
+  const appended = []
+
+  function harness(loaderSrc) {
+    return {
+      createElement() {
+        return {
+          addEventListener() {},
+          setAttribute() {},
+        }
+      },
+      head: {
+        appendChild(script) {
+          appended.push(script.src)
+        },
+      },
+      querySelector(selector) {
+        if (
+          selector === 'script[src*="/v3/dashboard-calls.js"]' &&
+          loaderSrc
+        ) {
+          return {
+            getAttribute(name) {
+              return name === 'src' ? loaderSrc : null
+            },
+          }
+        }
+        return null
+      },
+    }
+  }
+
+  global.setTimeout = function (fn) {
+    fn()
+    return 0
+  }
+  delete global.StartersDashboardCallActions
+
+  try {
+    global.document = harness(
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/dashboard-calls.js?v=1.59.408',
+    )
+    assert.equal(dashboard.moduleCacheSuffix(), '?v=1.59.408')
+    await dashboard.loadDashboardModule({
+      globalName: 'StartersDashboardCallActions',
+      path: 'dashboard-call-actions.js',
+      marker: 'data-starters-dashboard-call-actions',
+    })
+    assert.equal(
+      appended[appended.length - 1],
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/dashboard-call-actions.js?v=1.59.408',
+    )
+
+    global.document = harness(
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/dashboard-calls.js',
+    )
+    assert.equal(dashboard.moduleCacheSuffix(), '')
+    await dashboard.loadDashboardModule({
+      globalName: 'StartersDashboardCallActions',
+      path: 'dashboard-call-actions.js',
+      marker: 'data-starters-dashboard-call-actions',
+    })
+    assert.equal(
+      appended[appended.length - 1],
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/dashboard-call-actions.js',
+    )
+  } finally {
+    global.document = originalDocument
+    global.setTimeout = originalSetTimeout
+    global.StartersDashboardCallActions = originalActions
+  }
+})
+
+test('an already-present versioned module script tag is reused, not duplicated', async () => {
+  const originalDocument = global.document
+  const originalSetTimeout = global.setTimeout
+  const originalActions = global.StartersDashboardCallActions
+  const appended = []
+  const existing = {
+    listeners: {},
+    addEventListener(name, listener) {
+      this.listeners[name] = listener
+    },
+  }
+
+  global.document = {
+    createElement() {
+      return { addEventListener() {}, setAttribute() {} }
+    },
+    head: {
+      appendChild(script) {
+        appended.push(script)
+      },
+    },
+    querySelector(selector) {
+      if (
+        selector ===
+        'script[data-starters-dashboard-call-actions], script[src*="/v3/dashboard-call-actions.js"]'
+      ) {
+        return existing
+      }
+      return null
+    },
+  }
+  global.setTimeout = function (fn) {
+    fn()
+    return 0
+  }
+  delete global.StartersDashboardCallActions
+
+  try {
+    await dashboard.loadDashboardModule({
+      globalName: 'StartersDashboardCallActions',
+      path: 'dashboard-call-actions.js',
+      marker: 'data-starters-dashboard-call-actions',
+    })
+    assert.equal(appended.length, 0)
+    assert.equal(typeof existing.listeners.load, 'function')
+  } finally {
+    global.document = originalDocument
+    global.setTimeout = originalSetTimeout
+    global.StartersDashboardCallActions = originalActions
+  }
+})
