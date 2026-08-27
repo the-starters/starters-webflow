@@ -1941,11 +1941,6 @@
               maxLength: 65,
               key: 'title',
           },
-          {
-              selector: '[portfolio-description]',
-              maxLength: 250,
-              key: 'description',
-          },
       ];
 
       let isUpdating = false;

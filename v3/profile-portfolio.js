@@ -254,13 +254,9 @@
       if (modalTitle) modalTitle.textContent = truncateText(portfolio.title || '', 150);
 
       if (modalDescription) {
-        // Hand the "see more" clamp in hire-profile.js a clean slate, or it
-        // treats the previous case study's text as the current full text.
-        var oldToggle = modal.querySelector('[data-toggle-for="description"]');
-        if (oldToggle) oldToggle.remove();
-        delete modalDescription.dataset.fullTextdescription;
-        delete modalDescription.dataset.expandeddescription;
-
+        // In full. The modal is the read-the-whole-thing surface, so nothing
+        // clamps this text — see v3/hire-profile.js, which clamps card titles
+        // only.
         modalDescription.style.whiteSpace = 'pre-line';
         modalDescription.textContent = portfolio.description || '';
       }

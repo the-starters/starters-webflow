@@ -143,8 +143,10 @@ function makeEnv({
       description: {
         textContent: '',
         style: {},
-        dataset: { fullTextdescription: 'previous case study', expandeddescription: 'true' },
+        dataset: {},
       },
+      // A leftover "See more" control from the old clamp. The renderer must not
+      // reach for it any more: descriptions render in full.
       descriptionToggle: { removed: false, remove() { this.removed = true } },
       images: mediaContainer(),
       videos: mediaContainer(),
@@ -609,18 +611,37 @@ test('fills the description without a title element present', async () => {
   assert.equal(env.modalDescription.textContent, 'The story')
 })
 
-test('resets the see-more clamp state before writing a new description', async () => {
-  const env = makeEnv({ response: [{ id: 1, description: 'Fresh copy' }] })
+test('replaces the description when a second case study is opened', async () => {
+  const env = makeEnv({
+    response: [
+      { id: 1, description: 'First story' },
+      { id: 2, description: 'Fresh copy' },
+    ],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+  await env.appendedCards[1].openButton.click()
+  await settle()
+
+  assert.equal(env.modalDescription.textContent, 'Fresh copy')
+})
+
+test('shows a long description in full, with no See more inside the modal', async () => {
+  // The modal is the read-it-all surface: nothing clamps this text.
+  const longDescription = 'A very long project story. '.repeat(40)
+  const env = makeEnv({ response: [{ id: 1, description: longDescription }] })
   env.document.dispatch('DOMContentLoaded')
   await settle()
 
   await env.appendedCards[0].openButton.click()
   await settle()
 
-  assert.equal(env.descriptionToggle.removed, true, 'the previous See more control is gone')
-  assert.equal(env.modalDescription.dataset.fullTextdescription, undefined)
-  assert.equal(env.modalDescription.dataset.expandeddescription, undefined)
-  assert.equal(env.modalDescription.textContent, 'Fresh copy')
+  assert.ok(longDescription.length > 250, 'the fixture is past the old clamp threshold')
+  assert.equal(env.modalDescription.textContent, longDescription)
+  assert.equal(env.descriptionToggle.removed, false, 'no See more control is involved any more')
 })
 
 test('shows a loader in both media areas while media loads and clears it on settle', async () => {

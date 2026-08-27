@@ -72,6 +72,12 @@ the case-study title into it (truncated at 150 characters); when it does not, th
 renderer skips it silently. The static "About the project" heading must not carry
 the attribute.
 
+`portfolio-description` renders the case study in full, with `white-space:
+pre-line` so the writer's line breaks survive. Nothing truncates it and there is
+no "See more" control inside the modal — the modal is already the expanded view.
+Card titles still clamp at 65 characters; that clamp lives in
+`v3/hire-profile.js` and is the only one left.
+
 `data-highlights-loader` is an optional element authored inside the modal — its
 copy and styling are the designer's. Author it **outside** the Images and Videos
 containers: the first fill empties those containers, which would destroy a loader
