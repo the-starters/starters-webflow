@@ -352,9 +352,9 @@
   function installBridge() {
     window.getXanoAuthToken = getXanoAuthToken
     window.__tsSchedulingAuthGetScope = getAuthScope
-    // Keep an owner-specific reference for the routing adapter. Other page
-    // bundles still expose compatibility bridges on window.xanoAuthFetch and
-    // can replace that mutable global after this script has installed.
+    // Keep an owner-specific reference for the routing adapter and call-settings
+    // controllers. Other page bundles still expose compatibility bridges on
+    // window.xanoAuthFetch and can replace that mutable global after install.
     window.__tsSchedulingAuthFetch = xanoAuthFetch
     window.xanoAuthFetch = xanoAuthFetch
     window.fetch = authenticatedFetch
