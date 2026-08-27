@@ -295,7 +295,7 @@
   // Presentation for one wrapper: hide the off rules' rows and register its
   // icon pairs with the form's shared rules. Missing rows are tolerated
   // (Designer-side visibility bindings stay a valid alternative to the
-  // auto-hide). Returns how many rows it found.
+  // auto-hide) and reported once, together, on staging.
   function normalize(wrapper, active, rules) {
     var missing = [];
     for (var i = 0; i < RULE_NAMES.length; i++) {
