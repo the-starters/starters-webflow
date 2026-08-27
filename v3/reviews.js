@@ -118,7 +118,7 @@
     if (!slug) return null
     var roots = documentObject.querySelectorAll
       ? documentObject.querySelectorAll(PROFILE_ROOT)
-      : []
+      : [documentObject.querySelector(PROFILE_ROOT)].filter(Boolean)
     if (!roots.length) return null
     // Fail closed FIRST, before anything below can bail: hide and empty every
     // authored marker (the live template has shipped duplicates — a second

@@ -2758,7 +2758,12 @@ second review write.
 
 On the public profile, author exactly one section with
 `data-reviews-v3="profile"` and exactly one descendant list target with
-`data-reviews-v3-list="reviews"`. The adapter derives the decoded slug only
+`data-reviews-v3-list="reviews"`. The live template has shipped duplicate
+markers before, so the adapter tolerates them defensively: every marker is
+hidden and has its list emptied at configuration time, but only the first in
+document order is configured and painted — a duplicate never publishes its
+placeholder cards, and never becomes a second wf-xano wrapper. The adapter
+derives the decoded slug only
 from the canonical `/hire/{slug}` path, configures that section as the
 `starter-reviews` wf-xano wrapper, and sets `wf-xano-param-starter_slug` before
 initializing it. It does not discover the surface through classes, heading
@@ -2778,7 +2783,10 @@ Reviews section, use `data-reviews-v3-summary-average` and
 `data-reviews-v3-summary-block`. The adapter paints both surfaces from the same
 Xano result. A positive approved review count shows the summary row and formats
 the average with one decimal, including whole-number averages such as `5.0`.
-A zero count paints the zero values, then hides the summary row. The existing
+A zero count paints the zero values, then hides the summary row. The summary
+row is also hidden at configuration time, before any result: like the section,
+it ships pre-filled by Designer, so it fails closed and is revealed only by a
+positive approved count. The existing
 `#rating` plus adjacent count span remains a temporary compatibility target for
 the current Hire template. Its published `.profile-hero_card-progress` ancestor
 is also a temporary summary-row fallback until Designer publishes the canonical
@@ -2813,6 +2821,11 @@ Whichever profile tab points at the section is hidden and revealed with it. The
 adapter reads the section's own `data-toc-section` key and toggles every
 `[data-hide-when-empty-id="<key>"]` element, which is the tab contract owned by
 [`utils/section-custom-toc/hide-empty-sections.js`](../utils/section-custom-toc/hide-empty-sections.js).
+Elements this adapter hides are stamped with the module-owned
+`data-reviews-v3-hidden` marker. It deliberately does not reuse that engine's
+`data-starters-section-hidden`, whose value stores the inline display the
+engine will restore — sharing it would let each writer corrupt the other's
+bookkeeping if the section's engine attribute is ever re-enabled.
 That shared engine cannot pair them itself on the current Hire template, because
 the template ships the section's `data-hide-when-empty-section` attribute
 disabled (prefixed `xdata-`) and the engine's fail-safe then leaves the tab

@@ -261,6 +261,63 @@ test('hides the authored hero summary placeholder at configuration time', () => 
   assert.equal(fixture.summaryBlockEl.style.display, 'none')
 })
 
+test('a revealed primary never re-touches the hidden duplicate', () => {
+  const fixture = documentFixture()
+  const dupList = new Element({ 'data-reviews-v3-list': 'reviews' })
+  dupList.appendChild(new Element())
+  const dupRoot = new Element({ 'data-reviews-v3': 'profile' })
+  dupRoot.children['[data-reviews-v3-list="reviews"]'] = dupList
+  const baseQsa = fixture.querySelectorAll.bind(fixture)
+  fixture.querySelectorAll = (selector) =>
+    selector === '[data-reviews-v3="profile"]' ? [fixture.root, dupRoot] : baseQsa(selector)
+
+  const { api } = load({ document: fixture, pathname: '/hire/elvis-p' })
+  api.paintProfile(fixture, fixture.root, {
+    raw: { reviews: [{ review_id: 7, rating: 5 }], aggregate: { review_count: 1, average_rating: 5 } },
+  })
+
+  assert.equal(fixture.root.hidden, false)
+  assert.equal(dupRoot.hidden, true)
+  assert.equal(dupRoot.style.display, 'none')
+  assert.equal(dupList.childNodes.length, 0)
+})
+
+test('a throwing tab selector still leaves the section configured and hidden', () => {
+  const fixture = documentFixture()
+  fixture.root.setAttribute('data-toc-section', 'rev"iews')
+  const baseQsa = fixture.querySelectorAll.bind(fixture)
+  fixture.querySelectorAll = (selector) => {
+    if (selector.indexOf('data-hide-when-empty-id') !== -1) {
+      throw new SyntaxError('invalid selector')
+    }
+    return baseQsa(selector)
+  }
+
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+
+  // A bad authored key must not abort the module after the hide.
+  assert.equal(fixture.root.hidden, true)
+  assert.equal(fixture.root.getAttribute('wf-xano-source'), 'opp30:starter/reviews/summary')
+})
+
+test('empties the list via textContent when replaceChildren is unavailable', () => {
+  const fixture = documentFixture()
+  fixture.list.appendChild(new Element())
+  fixture.list.replaceChildren = undefined
+  fixture.list.textContent = 'placeholder'
+
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+
+  assert.equal(fixture.list.textContent, '')
+})
+
+test('the header @release marker matches the exported release property', () => {
+  const headerMatch = SOURCE.match(/@release (v\d+\.\d+\.\d+)/)
+  assert.ok(headerMatch, 'reviews.js must carry an @release header')
+  const { api } = load()
+  assert.equal(api.release, headerMatch[1])
+})
+
 test('initializes the profile wrapper when wf-xano already booted', () => {
   const fixture = documentFixture()
   const initialized = []
