@@ -1004,6 +1004,26 @@ async function testDynamicRequiredCaptureBlocksBeforeLoading() {
   assert.equal(environment.button.style.pointerEvents ?? '', '')
 }
 
+async function testPersonalDetailsValidationBoundary() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }))
+
+  assert.equal(
+    environment.window.StartersStarterEditProfile.validatePersonalDetails().valid,
+    true,
+  )
+
+  environment.fields['[name="first-name"]'].value = ''
+
+  assert.equal(
+    environment.window.StartersStarterEditProfile.validatePersonalDetails().valid,
+    false,
+  )
+}
+
 Promise.all([
   testSuccess(),
   testLateLoadInitializesImmediately(),
@@ -1037,6 +1057,7 @@ Promise.all([
   testConditionalLocationRequirementTransitions(),
   testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
   testDynamicRequiredCaptureBlocksBeforeLoading(),
+  testPersonalDetailsValidationBoundary(),
 ])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {

@@ -765,6 +765,17 @@
     }, 0)
   }
 
+  function starterPersonalDetailsValid() {
+    var controller = window.StartersStarterEditProfile
+    if (!controller || typeof controller.validatePersonalDetails !== 'function') return false
+    try {
+      var result = controller.validatePersonalDetails()
+      return !!(result && result.valid)
+    } catch (_) {
+      return false
+    }
+  }
+
   function securityModeOwnsRole(mode, role) {
     if (mode === 'brand') return role === 'brand-free' || role === 'brand-paid'
     if (mode === 'identity') {
@@ -832,8 +843,7 @@
 
         var email = trim(emailInput.value).toLowerCase()
         if (!EMAIL_PATTERN.test(email)) return
-        var profileWasValid =
-          typeof form.checkValidity !== 'function' || form.checkValidity()
+        var profileWasValid = starterPersonalDetailsValid()
 
         event.preventDefault()
         if (typeof event.stopImmediatePropagation === 'function') {

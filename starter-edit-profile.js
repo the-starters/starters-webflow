@@ -375,6 +375,12 @@ function validateOwnedStep(stepIndex, { report = false } = {}) {
 	return { valid: failures.length === 0, failures };
 }
 
+window.StartersStarterEditProfile = Object.assign(window.StartersStarterEditProfile || {}, {
+	validatePersonalDetails(options = {}) {
+		return validateOwnedStep(1, options);
+	},
+});
+
 function handleCustomSelects() {
 	if (typeof window.handleCustomSelects === 'function') {
 		window.handleCustomSelects();

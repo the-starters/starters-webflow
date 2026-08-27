@@ -284,6 +284,16 @@ function loadController(options = {}) {
     $memberstackDom: options.memberstackMissing ? undefined : memberstack,
     StartersBrandAccountConfig: options.config || {},
     StartersV3RouteGuard: options.routeGuard,
+    StartersStarterEditProfile: options.starterEditProfile || {
+      validatePersonalDetails() {
+        return {
+          valid:
+            !starterProfileForm ||
+            typeof starterProfileForm.checkValidity !== 'function' ||
+            starterProfileForm.checkValidity(),
+        }
+      },
+    },
     StartersTrack: {
       track(name, payload) {
         tracked.push({ name, payload })
@@ -1873,6 +1883,36 @@ test('valid Starter profile click changes Memberstack email before replaying the
   assert.equal(starterProfileForm.nativeClicks, 1)
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.getAttribute('data-brand-account-native-replay'), 'false')
+})
+
+test('valid Personal Details replay ignores invalid required fields in later steps', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+    valid: false,
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    starterEditProfile: {
+      validatePersonalDetails: () => ({ valid: true, failures: [] }),
+    },
+  })
+
+  starterProfileForm.inputEmail('talent-next@example.com')
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+  )
+  assert.equal(starterProfileForm.nativeClicks, 1)
+  assert.equal(starterProfileForm.nativeSubmits, 0)
+  assert.equal(starterProfileForm.validityReports, 0)
 })
 
 test('valid Starter profile click does not save profile fields when the email change fails', async () => {
