@@ -75,12 +75,14 @@ the attribute.
 `portfolio-description` renders the case study in full, with `white-space:
 pre-line` so the writer's line breaks survive. Nothing truncates it and there is
 no "See more" control inside the modal — the modal is already the expanded view.
-The see-more clamp in `v3/hire-profile.js` now covers card titles only (65
-characters). The modal title's own 150-character truncation, above, is
-unaffected and still lives in this script. When releasing this change, publish
-the `hire-profile.js` and `profile-portfolio.js` embeds together: an older
-`hire-profile.js` still clamping descriptions can leave an orphaned "See more"
-button under a description this script has since replaced.
+The see-more JavaScript is gone from `v3/hire-profile.js` entirely; card titles
+are shortened by the Designer's CSS line clamp (2 lines), not by script.
+
+Before writing the description the renderer removes any
+`[data-toggle-for="description"]` element inside the modal. A viewer whose
+browser still holds an older `hire-profile.js` gets that script's "See more"
+control, and its empty-description path returns before cleaning up — leaving the
+previous case study's toggle over the previous case study's text.
 
 `data-highlights-loader` is an optional element authored inside the modal — its
 copy and styling are the designer's. Author it **outside** the Images and Videos

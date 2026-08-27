@@ -4487,9 +4487,10 @@ test('owner gate: a missing free data_environment fails closed', async () => {
   assert.deepEqual(run.controller.calls.map((c) => c.configId), ['cfg_owner_paid'])
 })
 
-test('a case-study description renders in full while card titles still clamp', () => {
-  // The Highlights modal is the read-it-all surface, so nothing shortens the
-  // description. Card titles sit in a grid and still shorten at 65 characters.
+test('this file shortens no portfolio text and builds no See more control', () => {
+  // The "See more" utility is gone. The Highlights modal is the read-it-all
+  // surface, and card titles are shortened by the Designer's CSS line clamp,
+  // not here — [data-portfolio-card-title] matches nothing on the live page.
   const context = makeContext({ page: makePage() })
   const longText = 'A very long project story. '.repeat(20)
 
@@ -4503,7 +4504,12 @@ test('a case-study description renders in full while card titles still clamp', (
   vm.createContext(context)
   vm.runInContext(source, context)
 
-  assert.ok(longText.length > 250, 'the fixture is past the clamp the description used to get')
+  assert.ok(longText.length > 250, 'the fixture is past the clamp both used to get')
   assert.equal(description.textContent, longText)
-  assert.equal(cardTitle.textContent, `${longText.slice(0, 65).trim()}...`)
+  assert.equal(cardTitle.textContent, longText)
+  assert.equal(
+    context.document.querySelectorAll('.portfolio-text-toggle').length,
+    0,
+    'no toggle is created for either selector',
+  )
 })

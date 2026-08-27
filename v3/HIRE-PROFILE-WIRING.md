@@ -81,7 +81,7 @@ remain deferred (`paid-call-brand-payment.js`,
 | Freelance / Retainer rate cards | everyone | this file / Algolia record, cloned from the section's Default card |
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
-| Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more (card titles) |
+| Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all |
 
 The runtime no longer calls `api:SYL06lUR/companies`,
 `edit_profile/starter/get_also_worked_with`, or `profile/get_companies`.

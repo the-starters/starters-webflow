@@ -19,7 +19,7 @@
  *    Starter members keep the live-derived owner toggles.
  *  - Freelance/Retainer rate cards, cloned from the section's Default card.
  *  - Small page utilities that shipped in the same footer (rate formatting,
- *    rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more).
+ *    rating average, dropdowns, anchor scroll, mobile TOC, view-all).
  *
  * SCOPING: every original <script> block keeps its own IIFE. The blocks were
  * separate scripts, so merging them into one shared scope would collide (two
@@ -1927,102 +1927,4 @@
 
       sections.forEach((sec) => observer.observe(sec));
   })();
-})();
-
-/* ---- portfolio see-more (was a separate footer <script>) ---- */
-(function () {
-  'use strict';
-
-  // "See more" button
-  document.addEventListener('DOMContentLoaded', () => {
-      const configs = [
-          {
-              selector: '[data-portfolio-card-title]',
-              maxLength: 65,
-              key: 'title',
-          },
-      ];
-
-      let isUpdating = false;
-
-      function truncateText(text, maxLength) {
-          return text.slice(0, maxLength).trim() + '...';
-      }
-
-      function processElement(el, maxLength, key) {
-          if (isUpdating) return;
-
-          const currentText = el.textContent.trim();
-          if (!currentText) return;
-
-          const fullTextAttr = `fullText${key}`;
-          const expandedAttr = `expanded${key}`;
-          const savedFullText = el.dataset[fullTextAttr];
-
-          if (savedFullText && (currentText === savedFullText || currentText === truncateText(savedFullText, maxLength))) {
-              return;
-          }
-
-          const oldButton = el.parentElement?.querySelector(`.portfolio-text-toggle[data-toggle-for="${key}"]`);
-
-          if (oldButton) oldButton.remove();
-
-          delete el.dataset[expandedAttr];
-          el.dataset[fullTextAttr] = currentText;
-
-          if (currentText.length <= maxLength) return;
-
-          const fullText = currentText;
-          const shortText = truncateText(fullText, maxLength);
-
-          isUpdating = true;
-          el.textContent = shortText;
-          isUpdating = false;
-
-          const button = document.createElement('div');
-          button.className = 'portfolio-text-toggle';
-          button.dataset.toggleFor = key;
-          button.textContent = 'See more';
-
-          button.addEventListener('click', () => {
-              const expanded = el.dataset[expandedAttr] === 'true';
-
-              isUpdating = true;
-
-              if (expanded) {
-                  el.textContent = shortText;
-                  button.textContent = 'See more';
-                  el.dataset[expandedAttr] = 'false';
-              } else {
-                  el.textContent = fullText;
-                  button.textContent = 'See less';
-                  el.dataset[expandedAttr] = 'true';
-              }
-
-              isUpdating = false;
-          });
-
-          el.insertAdjacentElement('afterend', button);
-      }
-
-      function scan() {
-          if (isUpdating) return;
-
-          configs.forEach(({ selector, maxLength, key }) => {
-              document.querySelectorAll(selector).forEach((el) => {
-                  processElement(el, maxLength, key);
-              });
-          });
-      }
-
-      scan();
-
-      const observer = new MutationObserver(scan);
-
-      observer.observe(document.body, {
-          childList: true,
-          subtree: true,
-          characterData: true,
-      });
-  });
 })();
