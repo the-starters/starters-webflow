@@ -198,7 +198,8 @@ tile with a trailing cents fragment alone, Designer-copy restore, and Free-sibli
 isolation — plus the authored status-pill resolution and its drifted-copy diagnostic, the
 `w--redirected-checked` radio sync, and the field validation lifecycle, including that a
 rejected rate never blocks a later turn-off, plus the shared native-submit/Update write lock and
-Update busy-state lifecycle — are executable regressions in
+Update busy-state lifecycle, and the scoped native error message with its retry and refresh
+clearing — are executable regressions in
 `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a live
 Xano TEST configuration, and an asset that only exists once the tag is published, so they
 are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io`
@@ -208,10 +209,10 @@ The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
    the served asset is the new build: the served file must contain
-   `data-call-settings-native-spinner` together with `data-button-spinner`. The previous build
-   already shipped `paintSaveBusy`, `BUSY_STYLE_ID`, the late-sibling recovery,
-   `paintStatusPills`, and the other compatibility markers, so none of those can tell this release
-   from the one before it.
+   `data-call-settings-error-message` together with `.w-form-fail`. The previous build already
+   shipped `data-call-settings-native-spinner`, `data-button-spinner`, `paintSaveBusy`,
+   `BUSY_STYLE_ID`, the late-sibling recovery, `paintStatusPills`, and the other compatibility
+   markers, so none of those can tell this release from the one before it.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
    card reaches `data-paid-call-settings="ready"` with canonical values, including a
    reload where Webflow or Memberstack inserts the Paid card late.
@@ -243,8 +244,12 @@ The release owner runs them by hand, in this order, after the PR merges:
    bound shapes — most often the amount is split across more than the `$` and number pair,
    such as a separate cents span — so report the real structure instead of widening the
    fallback by guess, and prefer adding `data-call-settings-output="price"` in Designer.
-6. Human-click a TEST booking against a TEST Stripe configuration only, then reconcile
-   it in the paid-call dry run. Never run a live-money production charge.
+6. Use a pre-existing TEST service with an in-flight TEST booking, pick No, and click Update.
+   Confirm Xano blocks the disable, the existing scoped `.w-form-fail` block shows the exact Xano
+   message, the editor stays open, and canonical state stays on. A retry must clear the old message
+   while its request is pending, and a successful canonical refresh must leave the block hidden.
+   Reconcile the unchanged fixture in the paid-call dry run. Do not create a booking, payment,
+   email, or other workflow side effect, and never run a live-money production charge.
 
 Record the served-asset check and the TEST booking reconciliation result before the
 form is activated for any Starter outside TEST.
