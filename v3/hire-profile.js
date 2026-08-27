@@ -440,11 +440,14 @@
 
           item.querySelectorAll('[booking-popup-open][data-type]').forEach(function (cta) {
               const type = cta.getAttribute('data-type');
-              const record = records.find(function (candidate) {
-                  if (type === 'paid') return candidate.is_paid === true;
-                  if (type === 'free') return candidate.is_paid === false;
-                  return false;
-              });
+              // Classified through the shared predicate so this lookup and the
+              // painters can never disagree about what a record is. The
+              // membership test stays: `recordForType` reads anything that is
+              // not paid as free, and a CTA carrying some third data-type must
+              // still match nothing.
+              const record = (type === 'free' || type === 'paid')
+                  ? recordForType(records, type)
+                  : null;
 
               if (record) {
                   cta.setAttribute('data-config', record.config_id);
@@ -516,9 +519,12 @@
   function syncCanonicalCallSurfaces(configs) {
       const records = Array.isArray(configs) ? configs : [];
       let changed = false;
+      // Same shared predicate as the painters and the chooser lookup, so one
+      // record set cannot be read as free by one of them and as nothing by
+      // another.
       const availability = {
-          free: records.some(function (record) { return record && record.is_paid === false; }),
-          paid: records.some(function (record) { return record && record.is_paid === true; }),
+          free: !!recordForType(records, 'free'),
+          paid: !!recordForType(records, 'paid'),
       };
 
       ['free', 'paid'].forEach(function (type) {
