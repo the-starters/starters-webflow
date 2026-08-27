@@ -344,6 +344,7 @@ function load(options = {}) {
       activeMember = member
       return authChange ? authChange(member) : null
     },
+    notifyAuthChange: async (member) => (authChange ? authChange(member) : null),
     revealRoot: () => {
       rootAvailable = true
       observers.filter((observer) => observer.active).forEach((observer) => observer.callback())
@@ -1138,6 +1139,37 @@ test('a lost session clears the whole canonical paint, not just the radios', asy
     result.dom.prerequisites.map((row) => row.getAttribute('data-ready')),
     ['false', 'false', 'false', 'false'],
   )
+})
+
+test('a transient empty auth notification keeps the current Free canonical paint', async () => {
+  const result = load({
+    initial: canonical({
+      public_description: 'Member A Free Call',
+      services: [service({ title: 'Member A Free Call' })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  const readsBefore = result.calls.filter(
+    (call) => call.path === '/starter/free-call-settings/get/v3',
+  ).length
+  await result.notifyAuthChange(null)
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member A Free Call')
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/free-call-settings/get/v3').length,
+    readsBefore,
+  )
+
+  await result.changeMember(null)
+  await settle()
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
+  assert.equal(result.dom.save.disabled, true)
 })
 
 test('a connection-state refresh repaints canonically and survives a transient failure', async () => {

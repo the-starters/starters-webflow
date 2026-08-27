@@ -413,6 +413,7 @@ function load(options = {}) {
       if (authChange) return authChange(nextMember)
       return null
     },
+    notifyAuthChange: async (nextMember) => (authChange ? authChange(nextMember) : null),
     expireMemberSilently: () => { activeMember = null },
     installMemberstack: () => { window.$memberstackDom = memberstack },
     flushTimers: () => {
@@ -1943,6 +1944,31 @@ test('auth changes clear prior settings and load the next member canonically', a
   assert.equal(result.dom.title.value, '')
   assert.equal(result.dom.price.value, '')
   assert.equal(result.dom.save.disabled, true)
+})
+
+test('a transient empty auth notification keeps the current Paid canonical paint', async () => {
+  const result = load({
+    initial: canonical({
+      services: [service({ title: 'Paid Consultation Call', price_cents: 100, revision: 8 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  const readsBefore = result.calls.filter(
+    (call) => call.path === '/starter/paid-call-settings/get/v3',
+  ).length
+  await result.notifyAuthChange(null)
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Paid Consultation Call')
+  assert.equal(result.dom.price.value, 1)
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length,
+    readsBefore,
+  )
 })
 
 test('late Memberstack arrival still wires auth changes', async () => {

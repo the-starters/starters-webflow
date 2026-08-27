@@ -757,6 +757,19 @@
     return value && Object.prototype.hasOwnProperty.call(value, 'data') ? value.data : value
   }
 
+  async function handleAuthChange(nextMemberValue) {
+    let member = authMember(nextMemberValue)
+    if (!member || !member.id) {
+      try {
+        member = await currentMember(true)
+      } catch (error) {
+        member = null
+      }
+    }
+    if (member && member.id === sessionMemberId && settings) return settings
+    return loadSession(member, false)
+  }
+
   async function loadSession(memberValue, useSharedMember) {
     const version = ++refreshVersion
     clearRenderedState('Loading free-call settings…')
@@ -800,9 +813,7 @@
     const resolvers = memberstackReadyResolvers
     memberstackReadyResolvers = []
     resolvers.forEach(function (resolve) { resolve(memberstack) })
-    memberstack.onAuthChange(function (nextMember) {
-      return loadSession(authMember(nextMember), false)
-    })
+    memberstack.onAuthChange(handleAuthChange)
   }
 
   function waitForMemberstack() {
