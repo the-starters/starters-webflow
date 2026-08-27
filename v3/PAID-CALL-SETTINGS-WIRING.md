@@ -147,16 +147,18 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - An empty Memberstack auth notification is not logout proof by itself. The scheduling auth bridge
   reconciles that notification against the live Memberstack cookie. While the cookie still belongs
   to the current auth scope, the controller keeps the cached Paid paint and reloads canonical
-  settings through the bridge. If an Update just completed its canonical readback, that verified
-  result remains the fallback when the extra auth-triggered settings read fails. Readiness refreshes
-  wait for the write and auth reconciliation, then coalesce into one canonical re-read.
-- A confirmed missing or changed Memberstack session still fails closed. An upsert, a turn off, or a
-  readiness refresh that reports `MEMBER_SESSION_MISSING` or `MEMBER_SCOPE_CHANGED` clears the
-  cached Paid state instead of leaving stale enabled controls: inputs reset, both actions disable,
-  `data-paid-call-settings` becomes `error`, and the status reads `Sign in to manage paid calls.` A
-  newer logout or account switch always supersedes an older same-member revalidation or post-write
-  repaint. No `starterPaidCallWriteError` event is emitted for that class of failure, because
-  nothing was written and the card is inert until the next auth change or reload.
+  settings through the bridge. Update stays disabled, and the mutation guard blocks writes, until
+  that auth reconciliation and canonical read finish. If an Update just completed its canonical
+  readback, that verified result remains the fallback when the extra auth-triggered settings read
+  fails. Readiness refreshes wait for the write and auth reconciliation, then coalesce into one
+  canonical re-read.
+- A confirmed missing or changed Memberstack session, or the final `401` after the bridge's one token
+  refresh, still fails closed. An upsert, a turn off, or a readiness refresh with that result clears
+  the cached Paid state instead of leaving stale enabled controls: inputs reset, both actions
+  disable, `data-paid-call-settings` becomes `error`, and the status reads `Sign in to manage paid
+  calls.` A newer logout or account switch always supersedes an older same-member revalidation or
+  post-write repaint. No `starterPaidCallWriteError` event is emitted for that class of failure,
+  because nothing was written and the card is inert until the next auth change or reload.
 - Every failed request uses the scoped native Webflow `.w-form-fail` block. The controller writes
   the exact server message into its existing inner `div`, or an optional
   `[data-call-settings-error-message]`, and exposes it as an alert. When the card has an authored
@@ -187,7 +189,11 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`. Its bookable-slots preview does read the canonical Paid service to render duration and price read-only; the admission rules for that card live in [Booking-stage availability section](README.md#booking-stage-availability-section).
 - Calendar transitions carry a one-use intent captured from canonical paid-call GET through the existing OAuth session envelope, then recreate it through paid-call upsert and canonical readback.
 - The Xano projection function remains the only writer to `freelancers_v3.Paid_Call_Enabled` and `Paid_Call_Rate` for this flow.
-- `scheduling-auth.js` authenticates only the three exact `/v3` endpoint paths. `scheduling-v3-stage.js` maps their reviewed unversioned names to those paths and blocks lookalikes.
+- The controller uses the owner-specific fetch reference retained by `scheduling-auth.js`. It accepts
+  `window.xanoAuthFetch` as a compatibility fallback only while
+  `window.__tsSchedulingAuthBridgeOwner` still identifies `scheduling-auth` as its owner. The bridge
+  authenticates only the three exact `/v3` endpoint paths. `scheduling-v3-stage.js` maps their
+  reviewed unversioned names to those paths and blocks lookalikes.
 
 ### Environment in the canonical GET payload
 
@@ -222,8 +228,9 @@ isolation — plus the authored status-pill resolution and its drifted-copy diag
 `w--redirected-checked` radio sync, and the field validation lifecycle, including that a
 rejected rate never blocks a later turn-off, plus the shared native-submit/Update write lock and
 Update busy-state lifecycle, and the scoped native error message with its retry and refresh
-clearing, transient empty-auth recovery, post-write canonical fallback, coalesced prerequisite
-refresh, and logout and account-switch precedence — are executable regressions in
+clearing, transient empty-auth recovery, the auth-transition mutation lock, final-`401` clearing,
+the owned fetch fallback, post-write canonical fallback, coalesced prerequisite refresh, and logout
+and account-switch precedence — are executable regressions in
 `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a live
 Xano TEST configuration, and an asset that only exists once the tag is published, so they
 are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io`
