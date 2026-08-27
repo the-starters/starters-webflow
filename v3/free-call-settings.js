@@ -221,6 +221,7 @@
     if (typeof authFetch !== 'function') {
       throw new Error('xanoAuthFetch is unavailable')
     }
+    assertAuthScope(await currentAuthScope())
     const response = await authFetch(API_BASE + path, {
       method: method,
       headers: {
@@ -230,6 +231,7 @@
       body: payload === undefined ? undefined : JSON.stringify(payload),
     })
     const data = await response.json().catch(function () { return null })
+    assertAuthScope(await currentAuthScope())
     if (!response.ok) {
       const serverMessage = data && (data.message || data.error)
       throw Object.assign(new Error(serverMessage || path + ' failed (' + response.status + ')'), {
@@ -847,16 +849,22 @@
       const memberId = sessionMemberId
       if (!memberId || !settings) return loadSession(undefined, false)
       const pendingWrite = activeWrite && activeWrite.memberId === memberId ? activeWrite : null
-      const version = ++refreshVersion
       setActionEnabled(action('save'), false)
+      if (pendingWrite) {
+        await pendingWrite.done
+        if (authTransitionPending !== transition) return null
+        if (pendingWrite.failed) return null
+      }
+      if (memberId !== sessionMemberId || !settings) return null
+      const version = ++refreshVersion
       setStatus('loading')
       try {
-        if (pendingWrite) await pendingWrite.done
         if (!currentRender(version, memberId)) return null
         assertAuthScope(await currentAuthScope())
         const canonical = await readCanonicalSettings()
         if (!currentRender(version, memberId)) return null
         assertAuthScope(await currentAuthScope())
+        prerequisiteRefreshQueued = false
         return render(canonical)
       } catch (error) {
         if (!currentRender(version, memberId)) return null

@@ -2214,7 +2214,14 @@ test('a failed post-write auth read falls back to the verified Paid update', asy
   assert.equal(result.dom.price.value, 475)
   assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
   assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
   assert.equal(reads, 3)
+
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.calls.filter(
+    (call) => call.path === '/starter/paid-call-settings/upsert/v3',
+  ).length, 2)
 })
 
 test('prerequisite events coalesce behind Paid write auth recovery', async () => {
@@ -2313,6 +2320,51 @@ test('queued prerequisite events do not erase a failed Paid write error', async 
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
   assert.equal(result.dom.nativeError.style.display, 'block')
   assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
+  assert.equal(
+    result.dom.nativeErrorMessage.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+})
+
+test('a null auth notice does not leave a failed Paid write busy or erase its error', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const active = canonical({
+    services: [service({ price_cents: 100 })],
+    readiness: { paid_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => ({
+        ok: true,
+        status: 200,
+        json: async () => active,
+      }),
+      '/starter/paid-call-settings/upsert/v3': () => {
+        postStarted.resolve()
+        return finishPost.promise
+      },
+    },
+  })
+  await settle()
+
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const authTransition = result.notifyAuthChange(null)
+  finishPost.resolve({
+    ok: false,
+    status: 400,
+    json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+  })
+  await authTransition
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, 'none')
   assert.equal(
     result.dom.nativeErrorMessage.textContent,
     'Resolve in-flight bookings before updating this service',

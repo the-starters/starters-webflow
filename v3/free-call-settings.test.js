@@ -1389,7 +1389,15 @@ test('a failed post-write auth read falls back to the verified Free update', asy
   assert.equal(result.dom.title.value, 'Updated Free Call')
   assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
   assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, 'none')
   assert.equal(reads, 3)
+
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.calls.filter(
+    (call) => call.path === '/starter/free-call-settings/upsert/v3',
+  ).length, 2)
 })
 
 test('a prerequisite event queues behind Free write auth recovery', async () => {
@@ -1481,6 +1489,51 @@ test('a queued prerequisite event does not erase a failed Free write error', asy
   assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
   assert.equal(result.dom.nativeError.style.display, 'block')
   assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
+  assert.equal(
+    result.dom.nativeErrorMessage.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+})
+
+test('a null auth notice does not leave a failed Free write busy or erase its error', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const active = canonical({
+    public_description: 'Original Free Call',
+    services: [service()],
+    readiness: { free_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    initial: active,
+    routes: {
+      '/starter/free-call-settings/get/v3': () => ({
+        ok: true,
+        status: 200,
+        json: async () => active,
+      }),
+      '/starter/free-call-settings/upsert/v3': () => {
+        postStarted.resolve()
+        return finishPost.promise
+      },
+    },
+  })
+  await settle()
+
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const authTransition = result.notifyAuthChange(null)
+  finishPost.resolve({
+    ok: false,
+    status: 400,
+    json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+  })
+  await authTransition
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, 'none')
   assert.equal(
     result.dom.nativeErrorMessage.textContent,
     'Resolve in-flight bookings before updating this service',
