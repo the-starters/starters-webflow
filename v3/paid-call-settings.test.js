@@ -6,6 +6,13 @@ const vm = require('node:vm')
 const SOURCE = fs.readFileSync(require.resolve('./paid-call-settings.js'), 'utf8')
 const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 
+test('the Paid error visibility rule outranks Webflow hide utilities', () => {
+  assert.match(
+    SOURCE,
+    /\[data-call-settings-error-visible="true"\]\.w-form-fail\{display:block!important\}/,
+  )
+})
+
 function deferred() {
   let resolve
   const promise = new Promise((done) => { resolve = done })
