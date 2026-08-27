@@ -24,6 +24,10 @@
 // On each checklist row inside the wrapper:
 //   starters-password-validation-rule="characters|special|capitalization|numbers"
 //   starters-password-validation-icon="valid" / "invalid"
+// Author the invalid icon visible and the valid icon hidden. A wired form has
+// both overwritten from the first paint, so the authoring only shows through
+// on a fail-open instance — where it is what makes the checklist read as a
+// plain unchecked list rather than a row of green ticks.
 
 (function () {
   if (window.__startersPasswordValidationInit) return;
@@ -38,6 +42,9 @@
 
   // Rule predicates. Adding a rule is one entry here plus one Webflow
   // attribute — the key IS the attribute suffix and the row's rule value.
+  // Every predicate must return false for the empty string: the checklist
+  // renders pass/fail from the first paint, so a rule that passes vacuously
+  // on '' would show pre-checked on a blank form.
   var RULES = {
     'characters': function (value, count) {
       return value.length >= count;
@@ -414,8 +421,6 @@
       normalize(wrappers[w], active, rules);
     }
 
-    var touched = false;
-
     // Returns the verdict rather than stashing it, so no caller can ever
     // adjudicate on a copy that has gone stale.
     function render() {
@@ -428,13 +433,12 @@
         try { pass = !!r.fn(value, r.arg); } catch (e) { pass = false; }
         if (!pass) allPass = false;
 
+        // Every active row states where it stands from the very first render,
+        // including the one at wiring time: an empty field meets no rule, so
+        // the checklist reads as unchecked boxes that fill in as rules pass.
         for (var k = 0; k < r.icons.length; k++) {
           var pair = r.icons[k];
-          if (!touched) {
-            // Neutral initial state: no red crosses before the user types.
-            hide(pair.yes);
-            hide(pair.no);
-          } else if (pass) {
+          if (pass) {
             show(pair.yes);
             hide(pair.no);
           } else {
@@ -448,38 +452,26 @@
       return allPass;
     }
 
-    input.addEventListener('input', function () {
-      touched = true;
-      render();
-    });
+    input.addEventListener('input', render);
 
-    // A field someone (or something) filled counts as typed once the user
-    // leaves it, or once the browser fires `change` — some autofill paths fire
-    // one, some the other, and some neither until then. An empty field is left
-    // alone, so simply tabbing past earns no red crosses.
-    //
-    // These are the real escape hatch from a stale-value lockout: a natively
-    // disabled default submit button blocks implicit submission, so the user
-    // cannot reach the submit handler to have it recompute for them.
-    function revalidateIfFilled() {
-      if ((input.value || '') === '') return;
-      touched = true;
-      render();
-    }
-    input.addEventListener('focusout', revalidateIfFilled);
-    input.addEventListener('change', revalidateIfFilled);
+    // Autofill and password-manager paths are inconsistent: some fire `input`,
+    // some only `change`, some nothing until the field is left. Binding all
+    // three covers every variant that emits anything, and the blur re-checks
+    // the field afterwards. A purely programmatic write to input.value fires
+    // no event at all — nothing can catch that at write time, which is why the
+    // submit handler recomputes rather than trusting the last render.
+    input.addEventListener('change', render);
+    input.addEventListener('focusout', render);
 
     form.addEventListener('submit', function (event) {
       // Recompute FIRST, then adjudicate on what came back.
-      touched = true;
       if (!render()) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }
     }, true);
 
-    // Non-empty at init (autofill, browser restore) counts as typed.
-    if ((input.value || '') !== '') touched = true;
+    // First paint: states every active rule, met or not.
     render();
 
     // Only a genuinely wired form is marked. A form that bailed out stays
