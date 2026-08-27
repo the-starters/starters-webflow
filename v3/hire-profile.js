@@ -1,6 +1,8 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
+ * @release v1.59.405
+ *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
  * GitHub instead of in Webflow. Same intent as v3/profile-portfolio.js.
@@ -61,6 +63,166 @@
       ].join('');
       (document.head || document.documentElement).appendChild(style);
   }
+
+  /** Formats through the page's shared millify, falling back to the raw number. */
+  function formatRateText(value) {
+      try {
+          const millify = window.__startersMillify;
+          if (typeof millify === 'function') {
+              const result = millify(String(value), {});
+              if (result && result.ok && typeof result.text === 'string') return result.text;
+          }
+      } catch (_error) {
+          /* a formatter that throws must never cost the repaint */
+      }
+      return String(value);
+  }
+
+  function paintRateElement(el, value) {
+      const text = formatRateText(value);
+      if (el.hasAttribute('call-type-price')) {
+          el.textContent = '$' + text;
+          return;
+      }
+      // millify only re-processes ADDED nodes, so setting the attribute on an
+      // element already in the DOM would never repaint on its own. Write the
+      // canonical value, drop the stale raw (it would make millify re-parse our
+      // own formatted text), and paint the text here.
+      el.removeAttribute('data-millify-raw');
+      el.setAttribute('data-millify', String(value));
+      el.textContent = text;
+  }
+
+  /**
+   * WAVE-1 2e. The rate lives in four stores and the CMS-bound `[data-millify]`
+   * surfaces are never re-painted after a settings save, so a stale CMS rate
+   * outlives the change (VERIFIED: trent reads 150 in Algolia and $250 in the
+   * markup). Repaint every rate display from the SAME canonical source the
+   * booking popup already trusts — the accepted Nylas configuration's
+   * `price_cents` — and let the CMS value degrade to a cosmetic fallback for
+   * viewers who never reach canonical discovery. Xano's projection is not
+   * touched; that is a separate post-launch item.
+   */
+  /**
+   * Every surface that belongs to one call type: the hero and Services call
+   * cards, plus the chooser row, which is identified by the type of the CTA it
+   * contains rather than by an attribute of its own.
+   */
+  function callSurfacesFor(type) {
+      const surfaces = Array.from(document.querySelectorAll(
+          '[has-connection="' + type + '"], [data-type="' + type + '"]'
+      ));
+      document.querySelectorAll('[call-type-item]').forEach(function (item) {
+          if (item.querySelector('[booking-popup-open][data-type="' + type + '"]')) {
+              surfaces.push(item);
+          }
+      });
+      return surfaces.filter(function (surface) {
+          return !surface.hasAttribute('data-runtime-call-template');
+      });
+  }
+
+  function repaintCanonicalRateSurfaces(configs) {
+      const records = Array.isArray(configs) ? configs : [];
+      ['free', 'paid'].forEach(function (type) {
+          const record = records.find(function (candidate) {
+              return candidate && candidate.is_paid === (type === 'paid');
+          });
+          if (!record) return;
+          const cents = Number(record.price_cents);
+          if (!Number.isFinite(cents) || cents < 0) return;
+          const value = cents / 100;
+
+          callSurfacesFor(type).forEach(function (surface) {
+              surface.querySelectorAll('[data-millify], [call-type-price]').forEach(function (el) {
+                  paintRateElement(el, value);
+              });
+          });
+      });
+  }
+
+  /* ---- next-available-slot paint-on-load ----
+     Q6 REVERSED (Jerico, 2026-08-27): the paid card's "Next Available" row
+     STAYS and must show real data, and the free card must paint on load too.
+     Until now `free-call-booking.js` was the sole writer (its `updateNearestSlot`)
+     and it only ran after a Book Call click, on the free row — so every other
+     slot hook showed a Designer placeholder forever.
+
+     The Designer sentinels this must overwrite are `00:00pm on 00/00` for the
+     slot and `$00` for the chooser price (they replace the older
+     `11:00pm on 12/10` / `$50`). Nothing here pattern-matches those strings: a
+     sentinel is by definition whatever has not been painted yet, so the writer
+     simply always writes, and NEVER leaves a hook showing one — an empty
+     availability answer and a failed request both write the no-slots copy
+     rather than letting a fake time stand. */
+  const NO_SLOTS_TEXT = 'No available slots';
+
+  /**
+   * `HH:MMAM on MM/DD` — the same shape free-call-booking.js's own
+   * `nextSlotText` produces, so a hook painted here and one painted by the
+   * click path cannot disagree. That helper is not exported, but the formatter
+   * underneath it is.
+   */
+  function nextSlotText(seconds) {
+      const format = (freeCallBooking && freeCallBooking.formatWithTimezone) ||
+          window.formatWithTimezone;
+      if (typeof format !== 'function') return null;
+      const list = (format(seconds * 1000, { month: '2-digit' }) || {}).list;
+      if (!list || !list.hour || !list.month) return null;
+      return list.hour + ':' + list.minute + list.dayPeriod +
+          ' on ' + list.month + '/' + list.day;
+  }
+
+  function paintSlotSurfaces(type, text, state) {
+      callSurfacesFor(type).forEach(function (surface) {
+          surface.querySelectorAll('[next-available-slot]').forEach(function (el) {
+              el.textContent = text;
+              el.setAttribute('data-next-slot-state', state);
+          });
+      });
+  }
+
+  /**
+   * One availability request per accepted configuration, asked through the
+   * booking controller's exported `getNearestSlot`. That export owns the
+   * minimum booking notice (24h on production, 5 minutes on staging) in both
+   * the query window it builds and the filter it applies to the answer —
+   * fetching availability here instead would silently drop it.
+   */
+  function paintNextAvailableSlots(configs, grantId) {
+      const records = Array.isArray(configs) ? configs : [];
+      if (!grantId) return;
+      if (!freeCallBooking || typeof freeCallBooking.getNearestSlot !== 'function') {
+          console.warn('[hire-profile] booking controller cannot supply availability; next-slot rows left as authored');
+          return;
+      }
+
+      ['free', 'paid'].forEach(function (type) {
+          const record = records.find(function (candidate) {
+              return candidate && candidate.is_paid === (type === 'paid');
+          });
+          if (!record || !record.config_id) return;
+
+          Promise.resolve()
+              .then(function () {
+                  return freeCallBooking.getNearestSlot(grantId, record.config_id);
+              })
+              .then(function (slot) {
+                  const text = Number.isFinite(Number(slot)) && Number(slot) > 0
+                      ? nextSlotText(Number(slot))
+                      : null;
+                  if (text) paintSlotSurfaces(type, text, 'painted');
+                  else paintSlotSurfaces(type, NO_SLOTS_TEXT, 'empty');
+              })
+              .catch(function (error) {
+                  // Never leave a placeholder time standing: showing an invented
+                  // slot is worse than admitting there is nothing to show.
+                  console.warn('[hire-profile] ' + type + ' availability lookup failed:', error);
+                  paintSlotSurfaces(type, NO_SLOTS_TEXT, 'error');
+              });
+      });
+  }
+
 
   function primeBookingModalOptions(configs) {
       const records = Array.isArray(configs) ? configs : [];
@@ -725,6 +887,7 @@
           list.prepend(buildRateCard(template, card));
       });
 
+
       function buildRateCard(sourceTemplate, card) {
           const el = sourceTemplate.cloneNode(true);
 
@@ -963,6 +1126,11 @@
           // GET CONFIGS
           const configs = selectBookableConfigurations(await freeCallBooking.getConfigs(grant_id));
           primeBookingModalOptions(configs);
+          // The accepted canonical set is the same source the booking popup's
+          // CTA trusts, so every rate display on the page can be brought onto
+          // it here — before any controller install, because a stale price is a
+          // display fault rather than a booking one.
+          repaintCanonicalRateSurfaces(configs);
           if (
               Array.isArray(configs) &&
               configs.length &&
@@ -1042,6 +1210,13 @@
               }
 
               reconcileInstalledBookingModalOptions(installedConfigs);
+              // Only INSTALLED configurations get an availability request. A
+              // rejected or uninstallable call type keeps its structural hide,
+              // so painting it would both waste the request and break the
+              // standing contract that an empty or rejected set never asks for
+              // a nearest slot. Fire and forget: a slow answer must not hold up
+              // the rest of discovery.
+              paintNextAvailableSlots(installedConfigs, grant_id);
               const callSurfacesChanged = syncCanonicalCallSurfaces(installedConfigs);
               // The hero call rows can be inserted after the controller's
               // initial DOM scan. Re-run the idempotent binding after canonical

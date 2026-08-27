@@ -277,6 +277,66 @@ contract at all. A missing or unmatched option fails closed. Logged-out cards
 keep the signup-attribution modal, and Talent or unknown roles do not get the
 Brand project trigger.
 
+
+## Rate surfaces are repainted from the canonical source
+
+The rate lives in four stores and the CMS-bound `[data-millify]` surfaces were
+never re-painted after a settings save, so a stale CMS rate outlived the change
+(verified: trent reads `150` in Algolia and `$250` in the markup). Every rate
+display — card, tout, and the chooser's `[call-type-price]` — is repainted from
+the same canonical source the booking popup's CTA already trusts: the accepted
+Nylas configuration's `price_cents`. The CMS value degrades to a cosmetic
+fallback for viewers who never reach canonical discovery, and Xano's projection
+is untouched (a separate post-launch item).
+
+`millify` only re-processes **added** nodes, so setting `data-millify` on an
+element already in the DOM would never repaint on its own. The repaint writes the
+canonical value, drops the stale `data-millify-raw` (which would otherwise make
+millify re-parse its own formatted output), and paints the text through
+`window.__startersMillify` when the page provides it.
+
+## Next Available is painted on load, for both call types
+
+Q6 is **reversed** (Jerico, 2026-08-27): the paid card's "Next Available" row
+stays and must show real data. Previously `free-call-booking.js` was the sole
+slot writer — its `updateNearestSlot` ran only after a Book Call click and only
+on the free row — so every other hook showed a Designer placeholder forever.
+
+This file now paints every `[next-available-slot]` hook on load: the free and
+paid Services cards and both chooser rows (four hooks per profile, verified on
+production 2026-08-27). The text shape is `HH:MMAM on MM/DD`, matching
+`free-call-booking.js`'s own `nextSlotText`, so a hook painted here and one
+painted by the click path cannot disagree. That helper is not exported, but the
+`formatWithTimezone` underneath it is.
+
+Availability is asked **only** through the controller's exported
+`getNearestSlot`. That export owns the minimum booking notice — 24 hours on
+production, 5 minutes on staging — in both the window it queries and the filter
+it applies to the answer, so fetching availability here instead would silently
+drop it.
+
+Only **installed** configurations are asked. A rejected or uninstallable call
+type keeps its structural hide, so painting it would waste the request and break
+the standing contract that an empty or rejected set never requests a nearest
+slot. The paint is fire-and-forget: a slow availability answer must not hold up
+either controller's install.
+
+### Sentinels
+
+The Designer placeholders are `00:00pm on 00/00` for the slot and `$00` for the
+chooser price. They replace the older `11:00pm on 12/10` and `$50`, but that swap only
+partially landed — served markup still carries `11:00PM on 12/10` twice and `$50`
+in `call-type_price-text`, alongside one `00:00`. QA must therefore treat **both
+generations** as "unpainted".
+
+Nothing in the runtime pattern-matches them: a sentinel is by definition whatever
+has not been painted yet, so the writer simply always writes. It also never
+leaves one standing — an empty availability answer and a failed request both
+write `No available slots`, because showing an invented time is worse than
+admitting there is nothing to show. Each hook carries
+`data-next-slot-state="painted" | "empty" | "error"` so QA can tell the three
+apart without reading the copy.
+
 The rate cards also get their chip label from this file, and the two cards
 label differently. Freelance prices a unit, so it renders `/hour` under the
 amount. Retainer quotes a starting price, so it renders `from` above the
@@ -403,3 +463,30 @@ owners from binding the same click.
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code
 fault. Card rendering is verified on production.
+
+## QA venue limits for the call-surface rules
+
+Both the canonical rate repaint and the next-slot paint are only observable to a
+**logged-in Brand**: `hire-profile.js` returns before booking discovery when
+there is no `MEMBER.id`, so every `[has-connection]` call card stays
+`display:none` for an anonymous viewer and neither writer ever runs. An anonymous
+prod or staging check that comes back clean has therefore not exercised them.
+
+The other half of the squeeze: sandbox members exist only on staging, and the
+staging index holds no production starters, so there is no venue where a member
+session and a rendered call card meet. Machine verification of the logged-in
+half is impossible from this harness. Final acceptance is a console paste from a
+logged-in browser.
+
+## Not owned here — `No button group "step-1" in scope`
+
+The `[data-form-flow="generate-contract"] No button group "step-1" in scope`
+warning on every profile load comes from
+`global-embeds/step-flow/step-flow.js:959`, not from this file. The
+generate-contract form's authored markup carries two `data-form-flow-step`
+elements with **empty** ids and a single `data-form-flow-button-group="step-2"`,
+so step-flow's `STEP1_ID` never resolves (verified on
+`www.thestarters.com/hire/trent`, 2026-08-27). The fix is in Webflow — author
+`step-1` on the first step and its button group — and is independent of the
+service-card wiring: the warning also fires on staging where the wiring never
+runs at all.
