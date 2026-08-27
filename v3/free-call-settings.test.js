@@ -743,6 +743,7 @@ test('a guarded Free update mirrors the error to both outputs and clears the nat
     'Resolve in-flight bookings before updating this service',
   )
   assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'false')
   assert.equal(result.dom.nativeError.getAttribute('role'), 'alert')
   assert.equal(result.dom.panel.style.display, 'flex')
@@ -755,6 +756,7 @@ test('a guarded Free update mirrors the error to both outputs and clears the nat
   assert.equal(result.dom.status.textContent, 'Free calls are on and bookable.')
   assert.equal(result.dom.nativeErrorMessage.textContent, '')
   assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'false')
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')
 })
 
@@ -781,6 +783,7 @@ test('an invalid Free retry clears the request error without a second write', as
   await settle()
 
   assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
 
   result.dom.form.reportValidity = () => {
     validityChecks += 1
@@ -1316,6 +1319,7 @@ test('a queued prerequisite event does not erase a failed Free write error', asy
   assert.equal(reads, 1)
   assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
   assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
   assert.equal(
     result.dom.nativeErrorMessage.textContent,
     'Resolve in-flight bookings before updating this service',
