@@ -82,8 +82,11 @@ function makeEnv({
   hasLoader = true,
   staleModalCopy = false,
   modalOpenAtLoad = false,
+  captureTimers = false,
+  hasCardList = true,
 } = {}) {
   const listeners = {}
+  const pendingTimers = []
   const requests = []
   const appendedIds = []
   const appendedCards = []
@@ -198,6 +201,12 @@ function makeEnv({
       // A card child that is not the open control — a thumbnail, say. Clicking
       // it must still fill, because the Designer can move data-modal-trigger.
       const otherChild = interactiveElement()
+      // An `<a href="#">` open control: the default must be suppressed or the
+      // page jumps to the top.
+      const anchorControl = interactiveElement({ href: '#' })
+      // A legacy-attributed anchor nested inside an attribute-carrying wrapper.
+      // closest() finds the inner anchor, never the wrapper.
+      const nestedLegacyAnchor = interactiveElement({ 'show-portfolio': '' })
       const cardListeners = {}
       const card = {
         classList: classList(),
@@ -206,6 +215,8 @@ function makeEnv({
         defaultPrevented: false,
         openButton,
         otherChild,
+        anchorControl,
+        nestedLegacyAnchor,
         thumb,
         addEventListener(type, handler) { addListener(cardListeners, type, handler) },
         // Clicks on card children bubble to the card, as they do in a browser.
@@ -226,6 +237,8 @@ function makeEnv({
       }
       openButton.click = () => card.click(openButton)
       otherChild.click = () => card.click(otherChild)
+      anchorControl.click = () => card.click(anchorControl)
+      nestedLegacyAnchor.click = () => card.click(nestedLegacyAnchor)
       return card
     },
   }
@@ -284,7 +297,9 @@ function makeEnv({
       return element
     },
     querySelector(selector) {
-      if (selector === '[data-highlights]' || selector === '.case-studies-wrapper') return wrapper
+      if (selector === '[data-highlights]' || selector === '.case-studies-wrapper') {
+        return hasCardList ? wrapper : null
+      }
       if (selector === '[portfolio-section]') return section
       if (selector === '#portfolio-block') return block
       if (selector === '[data-btn-view-all]') return viewAllButton
@@ -344,7 +359,13 @@ function makeEnv({
     document,
     console: { info() {}, warn() {}, error(message) { errors.push(message) } },
     fetch: window.fetch,
-    setTimeout,
+    // Held rather than run when the test wants to control when a deferred
+    // callback lands relative to other work.
+    setTimeout(handler, delay) {
+      if (!captureTimers) return setTimeout(handler, delay)
+      pendingTimers.push(handler)
+      return pendingTimers.length
+    },
     Promise,
     encodeURIComponent,
   }
@@ -357,6 +378,23 @@ function makeEnv({
     document,
     window,
     stale,
+    // lumos calls showModal() before dispatching, so the dialog is already open
+    // when the event lands. Model both together.
+    openLumosModal() {
+      live.modal.open = true
+      return window.dispatch('modal-open', { modal: live.modal })
+    },
+    closeLumosModal() {
+      live.modal.open = false
+      return window.dispatch('modal-close', { modal: live.modal })
+    },
+    flushTimers() {
+      const queued = pendingTimers.splice(0, pendingTimers.length)
+      queued.forEach((handler) => handler())
+    },
+    mediaRequestCount() {
+      return requests.filter((url) => url.includes('/Get_public_portfolio_')).length
+    },
     wrapper,
     requests,
     appendedIds,
@@ -800,6 +838,63 @@ test('paints the loading state even after a text-only case study hid the section
   )
 })
 
+test('hides a pending media section when there is no authored loader', async () => {
+  const media = deferredMedia()
+  const env = makeEnv({
+    response: [
+      { id: 1, title: 'With media' },
+      { id: 2, title: 'Also with media' },
+    ],
+    hasLoader: false,
+    mediaFetch: (url) => media.fetch(url),
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  env.appendedCards[0].openButton.click()
+  await settle()
+  media.resolve('Get_public_portfolio_images?portfolio_id=1', [{ image_url: '/vault/one.png' }])
+  media.resolve('Get_public_portfolio_videos?portfolio_id=1', [{ video_url: '/vault/one.mp4' }])
+  await settle()
+  assert.equal(env.modalImages.contentWrapper.style.display, '')
+
+  env.appendedCards[1].openButton.click()
+  await settle()
+
+  assert.equal(
+    env.modalImages.contentWrapper.style.display,
+    'none',
+    'no loading text means no empty heading either',
+  )
+  assert.equal(env.modalVideos.contentWrapper.style.display, 'none')
+
+  media.resolve('Get_public_portfolio_images?portfolio_id=2', [{ image_url: '/vault/two.png' }])
+  media.resolve('Get_public_portfolio_videos?portfolio_id=2', [])
+  await settle()
+
+  assert.equal(env.modalImages.contentWrapper.style.display, '')
+  assert.equal(env.modalVideos.contentWrapper.style.display, 'none')
+})
+
+test('skips a media row whose file field is not a URL', async () => {
+  const env = makeEnv({
+    response: [{ id: 1, thumbnail_url: { path: '/vault/thumb.png' } }],
+    imageRows: [{ image_url: { path: '/vault/one.png', meta: {} } }],
+    videoRows: [{ video_url: 42 }],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(env.modalImages.children.length, 0)
+  assert.equal(env.modalImages.contentWrapper.style.display, 'none')
+  assert.equal(env.modalVideos.children.length, 0)
+  assert.equal(env.modalVideos.contentWrapper.style.display, 'none')
+  assert.deepEqual(env.errors, [], 'a Xano file object must not throw')
+})
+
 test('fills the native dialog, not a stale copy of the modal earlier in the page', async () => {
   const env = makeEnv({
     response: [{ id: 1, title: 'Rebrand for Acme' }],
@@ -834,7 +929,34 @@ test('fills from any click on the card, not only the open control', async () => 
   )
 })
 
-test('suppresses the default only for the card open control', async () => {
+test('stops an href="#" open control from jumping the page', async () => {
+  const env = makeEnv({ response: [{ id: 1, title: 'Rebrand for Acme' }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].anchorControl.click()
+  await settle()
+
+  assert.equal(env.appendedCards[0].defaultPrevented, true)
+  assert.equal(env.modalTitle.textContent, 'Rebrand for Acme')
+})
+
+test('stops a legacy anchor nested inside the open control from navigating', async () => {
+  const env = makeEnv({ response: [{ id: 1, title: 'Rebrand for Acme' }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].nestedLegacyAnchor.click()
+  await settle()
+
+  assert.equal(
+    env.appendedCards[0].defaultPrevented,
+    true,
+    'the nearest match is the inner anchor, not the wrapper that carries the attribute',
+  )
+})
+
+test('suppresses the default for the attribute-carrying open control', async () => {
   const env = makeEnv({ response: [{ id: 1, title: 'Rebrand for Acme' }] })
   env.document.dispatch('DOMContentLoaded')
   await settle()
@@ -842,7 +964,20 @@ test('suppresses the default only for the card open control', async () => {
   await env.appendedCards[0].openButton.click()
   await settle()
 
-  assert.equal(env.appendedCards[0].defaultPrevented, true, 'an href="#" control must not jump')
+  assert.equal(env.appendedCards[0].defaultPrevented, true)
+})
+
+test('touches nothing on a page that has the modal but no Highlights section', async () => {
+  const env = makeEnv({ response: [{ id: 1, title: 'First case study' }], hasCardList: false })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.equal(env.loader.style.display, undefined, 'the authored loader is left as designed')
+
+  await env.openLumosModal()
+  await settle()
+
+  assert.equal(env.modalTitle.textContent, '', 'and no listener was registered to fill it')
 })
 
 test('hides the authored loader before any case study is opened', async () => {
@@ -868,25 +1003,50 @@ test('fills the first case study when lumos opens the modal without a card click
   await settle()
   assert.equal(env.modalTitle.textContent, '')
 
-  await env.window.dispatch('modal-open', { modal: env.modal })
+  await env.openLumosModal()
   await settle()
 
   assert.equal(env.modalTitle.textContent, 'First case study')
 })
 
-test('fills a deep-linked modal that opened before the case studies arrived', async () => {
+test('does not fill a modal the visitor dismissed while the case studies loaded', async () => {
   let resolveResponse
   const responsePromise = new Promise((resolve) => { resolveResponse = resolve })
   const env = makeEnv({ responsePromise })
 
   env.document.dispatch('DOMContentLoaded')
-  await env.window.dispatch('modal-open', { modal: env.modal })
-  assert.equal(env.modalTitle.textContent, '', 'nothing to fill with yet')
+  await env.openLumosModal()
+  // Escape, before the approved read answers.
+  env.modal.open = false
 
   resolveResponse({ ok: true, json: () => Promise.resolve([{ id: 1, title: 'First case study' }]) })
   await settle()
 
-  assert.equal(env.modalTitle.textContent, 'First case study')
+  assert.equal(env.modalTitle.textContent, '', 'nothing is written into a closed dialog')
+  assert.equal(env.mediaRequestCount(), 0, 'and no media is fetched for it')
+})
+
+test('lets a card click win over an open event dispatched in the same click', async () => {
+  // lumos binds on document; a capture-phase listener would run before the card
+  // handler. The deferred default fill must lose either way.
+  const env = makeEnv({
+    response: [
+      { id: 1, title: 'First case study' },
+      { id: 2, title: 'Second case study' },
+    ],
+    captureTimers: true,
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.openLumosModal()
+  await env.appendedCards[1].openButton.click()
+  await settle()
+  env.flushTimers()
+  await settle()
+
+  assert.equal(env.modalTitle.textContent, 'Second case study')
+  assert.equal(env.mediaRequestCount(), 2, 'exactly one fill, not two')
 })
 
 test('fills a modal lumos opened before this script started listening', async () => {
@@ -945,7 +1105,7 @@ test('leaves a card-opened modal alone when the open event arrives', async () =>
   await settle()
   const requestsAfterClick = env.requests.length
 
-  await env.window.dispatch('modal-open', { modal: env.modal })
+  await env.openLumosModal()
   await settle()
 
   assert.equal(env.modalTitle.textContent, 'Second case study')

@@ -58,7 +58,11 @@ Hire template → Page Settings → Custom Code → **Head Code**:
 | Loading text (optional) | `data-highlights-loader` | None |
 
 The five modal rows below the root are looked up **inside** the modal root, so a
-duplicate elsewhere on the page is never filled. The root itself is resolved as
+duplicate elsewhere on the page is never filled. The Images and Videos containers
+must each sit in their **own** `.portfolio_modal-content-wrapper`: the renderer
+shows and hides a section through that wrapper, so a shared one would make both
+sections' visibility depend on whichever media response happened to land last.
+The live markup already complies. The root itself is resolved as
 `dialog[wf-portfolio-element="modal"]` first, so a stale non-dialog copy earlier
 in the page cannot win the match and swallow every fill.
 
@@ -74,7 +78,8 @@ authored inside one. The renderer hides the authored original at load and only
 ever clones it, dropping a clone into the Images and Videos containers while
 their reads are in flight and removing each clone when its read settles.
 Text-only case studies therefore show both loaders briefly before their sections
-hide. Without the element there is simply no loading text; the data still fills.
+hide. Without the element there is no loading text at all: each section stays
+hidden while its read runs, then appears if the case study has that media.
 
 The modal's close control, backdrop and content wrapper are **not** part of this
 script's contract — dismissal belongs to the lumos modal system (see "Who owns

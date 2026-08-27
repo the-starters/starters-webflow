@@ -110,18 +110,16 @@
       ? pick('[wf-portfolio-element="videos"]', '.portfolio_modal-videos', modal)
       : null;
     // Authored loading text. Absent until the Designer adds it — optional. It is
-    // only ever cloned, so the authored original is hidden for good right here:
-    // lumos can open the dialog without us (a ?modal-id=highlights deep link),
-    // and an original left visible would show loading text with nothing loading.
+    // only ever cloned; the authored original is hidden once this script claims
+    // the section, below.
     var loaderTemplate = modal ? modal.querySelector('[data-highlights-loader]') : null;
-    if (loaderTemplate) loaderTemplate.style.display = 'none';
     // Guards against a slow response from an earlier card overwriting a newer one.
     var fillToken = 0;
     var loadedPortfolios = [];
-    var openedWithoutFill = false;
 
+    /** Xano file fields are not always strings; anything else has no URL. */
     function getAssetUrl(value) {
-      if (!value) return '';
+      if (typeof value !== 'string' || !value) return '';
       if (value.startsWith('http')) return value;
       if (value.startsWith('/')) return XANO_BASE_URL + value;
       return value;
@@ -156,7 +154,14 @@
     function startMediaSlot(container) {
       if (!container) return null;
       container.innerHTML = '';
-      if (!loaderTemplate) return null;
+
+      if (!loaderTemplate) {
+        // Nothing to show while the read runs, so keep the section out of the
+        // way rather than leaving the previous case study's heading over an
+        // empty container.
+        toggleModalBlock(container, false);
+        return null;
+      }
 
       // The previous case study may have left this section hidden. Reveal it so
       // the loading state actually paints; the settle-time render decides the
@@ -258,18 +263,9 @@
     }
 
     /**
-     * lumos can open this dialog without a card click — a ?modal-id=highlights
-     * deep link, or any stray trigger — which would otherwise show the authored
-     * placeholder copy. Fill the first case study for those opens only.
-     */
-    function fillDefaultPortfolio() {
-      if (fillToken !== 0 || !loadedPortfolios.length) return;
-      fillModal(loadedPortfolios[0]);
-    }
-
-    /**
-     * Is lumos already showing the dialog? `showModal()` sets the native `open`
-     * state, so this answers the question without having witnessed the event.
+     * Is lumos showing the dialog right now? `showModal()` sets the native
+     * `open` state, so this answers the question without having witnessed the
+     * event that opened it.
      */
     function modalIsOpen() {
       if (!modal) return false;
@@ -277,31 +273,49 @@
       return typeof modal.hasAttribute === 'function' && modal.hasAttribute('open');
     }
 
-    // Catches a stray open that happens later. It cannot catch the deep-link
-    // open: lumos dispatches modal-open synchronously inside its own
-    // DOMContentLoaded handler, which runs before this one on the live page —
-    // the event is already gone by the time this listener exists. The dialog's
-    // open state is checked once the rows arrive instead.
-    window.addEventListener('modal-open', function (event) {
-      if (!modal || !event || !event.detail || event.detail.modal !== modal) return;
-      if (fillToken !== 0) return;
-      // A deep-link open lands before the approved read answers, so remember it
-      // and fill as soon as the rows arrive.
-      openedWithoutFill = true;
-      fillDefaultPortfolio();
-    });
+    /**
+     * lumos can open this dialog without a card click — a ?modal-id=highlights
+     * deep link, or any stray trigger — which would otherwise show the authored
+     * placeholder copy. Fill the first case study for those opens only, and only
+     * while the dialog is actually open: a visitor who dismissed it during the
+     * approved read must not have media fetched into a closed modal behind them.
+     */
+    function fillDefaultPortfolio() {
+      if (fillToken !== 0 || !loadedPortfolios.length || !modalIsOpen()) return;
+      fillModal(loadedPortfolios[0]);
+    }
 
-    // Closing a <dialog> does not stop its media. Without this, a video the
-    // visitor started keeps playing behind the dismissed modal.
-    window.addEventListener('modal-close', function (event) {
-      if (!modal || !modalVideos || !event || !event.detail || event.detail.modal !== modal) return;
-      if (typeof modalVideos.querySelectorAll !== 'function') return;
+    function wireLumosEvents() {
+      // Catches an open that happens after this script is listening. It cannot
+      // catch a deep-link open: lumos dispatches modal-open synchronously inside
+      // its own DOMContentLoaded handler, which runs before this one on the live
+      // page. The dialog's open state is checked once the rows arrive instead.
+      window.addEventListener('modal-open', function (event) {
+        if (!modal || !event || !event.detail || event.detail.modal !== modal) return;
 
-      var playing = modalVideos.querySelectorAll('video');
-      Array.prototype.forEach.call(playing, function (video) {
-        if (video && typeof video.pause === 'function') video.pause();
+        // Deferred so a card click filling on this same click always wins,
+        // whichever listener the browser runs first. By the time this runs, a
+        // card handler has bumped the token and this becomes a no-op.
+        setTimeout(function () {
+          if (fillToken !== 0) return;
+          fillDefaultPortfolio();
+        }, 0);
       });
-    });
+
+      // Closing a <dialog> does not stop its media. Without this, a video the
+      // visitor started keeps playing behind the dismissed modal.
+      window.addEventListener('modal-close', function (event) {
+        if (!modal || !modalVideos || !event || !event.detail || event.detail.modal !== modal) {
+          return;
+        }
+        if (typeof modalVideos.querySelectorAll !== 'function') return;
+
+        var playing = modalVideos.querySelectorAll('video');
+        Array.prototype.forEach.call(playing, function (video) {
+          if (video && typeof video.pause === 'function') video.pause();
+        });
+      });
+    }
 
     function createCard(portfolio) {
       var card = template.cloneNode(true);
@@ -311,9 +325,6 @@
       var image = pick('[wf-portfolio-element="thumb"]', '.portfolio_card-thumb', card);
       var title = pick('[wf-portfolio-element="title"]', '.portfolio_card-title', card);
       var idBlock = card.querySelector('.portfolio_card-id');
-      var openButton =
-        card.querySelector('[wf-portfolio-element="open"]') ||
-        card.querySelector('[show-portfolio], [aria-label="open-modal"]');
 
       if (image) {
         image.src = getThumbUrl(portfolio.thumbnail_url || portfolio.featured_image_url);
@@ -331,22 +342,17 @@
       // harmless; missing the click that does open is not.
       card.addEventListener('click', async function (event) {
         var target = event.target;
-        var closest =
-          target && typeof target.closest === 'function'
-            ? function (selector) {
-                return target.closest(selector);
-              }
-            : function () {
-                return null;
-              };
-
         // preventDefault keeps `<a href="#">` controls from jumping the page. It
         // does not stop propagation, so lumos still sees the click and opens.
-        var onOpenControl =
-          !!openButton &&
-          closest('[wf-portfolio-element="open"], [show-portfolio], [aria-label="open-modal"]') ===
-            openButton;
-        if (onOpenControl || closest('a[href="#"]')) event.preventDefault();
+        // Containment, not identity: a legacy-attributed anchor nested inside an
+        // attribute-carrying wrapper must be caught too, or the page navigates.
+        var control =
+          target && typeof target.closest === 'function'
+            ? target.closest(
+                '[wf-portfolio-element="open"], [show-portfolio], [aria-label="open-modal"], a[href="#"]',
+              )
+            : null;
+        if (control) event.preventDefault();
 
         await fillModal(portfolio);
       });
@@ -419,6 +425,16 @@
     if (wrapper.hasAttribute(OWNED)) return;
     wrapper.setAttribute(OWNED, 'cdn');
 
+    // Everything below runs once per page. Nothing above this guard touches the
+    // modal or binds a listener, so a second copy of this script stays inert.
+    //
+    // The loader is only ever cloned, so its authored original is hidden for
+    // good: lumos can open the dialog without us (a ?modal-id=highlights deep
+    // link), and an original left visible would show loading text with nothing
+    // loading.
+    if (loaderTemplate) loaderTemplate.style.display = 'none';
+    wireLumosEvents();
+
     var canRevealPortfolios = false;
     var viewAllButton = document.querySelector('[data-btn-view-all]');
 
@@ -472,7 +488,8 @@
 
     // A deep link opened the dialog before these rows existed; fill it now. The
     // open state is authoritative — the modal-open event may have been
-    // dispatched before this script's listener existed.
-    if (openedWithoutFill || modalIsOpen()) fillDefaultPortfolio();
+    // dispatched before this script's listener existed, and a visitor may have
+    // dismissed the dialog while the read was in flight.
+    if (modalIsOpen()) fillDefaultPortfolio();
   });
 })();
