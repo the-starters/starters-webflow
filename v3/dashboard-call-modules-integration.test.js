@@ -510,6 +510,7 @@ test('Details exposes the reschedule propose and respond chains by eligibility',
     config_id: 'config-1',
     grant_id: 'grant-1',
     duration: 30,
+    is_paid: false,
     data_environment: 'test',
     status: 'confirmed',
     start: Date.now() + 60 * 60 * 1000,
@@ -532,4 +533,36 @@ test('Details exposes the reschedule propose and respond chains by eligibility',
   dashboard.configureDetailActions(modal, 'starter', 'confirmed', proposedBooking, Date.now())
   assert.equal(accept.hidden, true)
   assert.equal(keep.hidden, true)
+})
+
+test('Details creates and exposes the module-rendered decline response action', () => {
+  const originalActions = global.StartersDashboardCallActions
+  const accept = button('confirm-reschedule')
+  const generatedDecline = button('reschedule-decline')
+  const buttons = [accept]
+  const modal = {
+    ownerDocument: {},
+    querySelectorAll() {
+      return buttons
+    },
+  }
+  try {
+    global.StartersDashboardCallActions = {
+      wire() {},
+      ensureRescheduleViews(document, target) {
+        assert.equal(document, modal.ownerDocument)
+        assert.equal(target, modal)
+        buttons.push(generatedDecline)
+        return true
+      },
+      canRespondReschedule() {
+        return true
+      },
+    }
+    dashboard.configureDetailActions(modal, 'brand', 'rescheduled', {}, Date.now())
+    assert.equal(accept.hidden, false)
+    assert.equal(generatedDecline.hidden, false)
+  } finally {
+    global.StartersDashboardCallActions = originalActions
+  }
 })

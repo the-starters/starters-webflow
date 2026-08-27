@@ -108,6 +108,13 @@
     return clean(source && source.memberstack_id)
   }
 
+  function freeBooking(booking) {
+    const value = booking && (
+      booking.is_paid != null ? booking.is_paid : booking.paid_meeting
+    )
+    return value === false || value === 0 || clean(value).toLowerCase() === 'false'
+  }
+
   function canDecline(role, booking) {
     return (
       role === 'starter' &&
@@ -135,6 +142,7 @@
     const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
     return (
       (role === 'starter' || role === 'brand') &&
+      freeBooking(booking) &&
       bookingStatus(booking) === 'confirmed' &&
       actorMemberId(role, booking) !== '' &&
       clean(booking && booking.grant_id) !== '' &&
@@ -150,6 +158,7 @@
     const proposer = clean(booking && booking.rescheduled_by).toLowerCase()
     return (
       (role === 'starter' || role === 'brand') &&
+      freeBooking(booking) &&
       bookingStatus(booking) === 'rescheduled' &&
       ['starter', 'brand'].includes(proposer) &&
       proposer !== role &&
@@ -719,11 +728,32 @@
     return true
   }
 
+  function resetRescheduleState(modal) {
+    if (!modal || typeof modal.querySelector !== 'function') return false
+    modal.__startersRescheduleCalendarToken = null
+    const reason = modal.querySelector('[booking-reschedule-reason]')
+    if (reason) reason.value = ''
+    const calendar = modal.querySelector('[booking-reschedule-calendar]')
+    if (calendar) calendar.textContent = ''
+    return true
+  }
+
   async function mountRescheduleCalendar(document, modal, booking, role, reason, restart) {
     const container = modal && modal.querySelector('[booking-reschedule-calendar]')
     if (!container) return false
+    const bookingId = clean(booking && booking.booking_id)
+    const mountToken = {}
+    modal.__startersRescheduleCalendarToken = mountToken
+    const isCurrent = function () {
+      return (
+        modal.__startersRescheduleCalendarToken === mountToken &&
+        clean(modal.getAttribute && modal.getAttribute('data-booking-id')) === bookingId &&
+        modal.querySelector('[booking-reschedule-calendar]') === container
+      )
+    }
     container.textContent = 'Loading available times...'
     const calendarModule = await loadCalendarModule(document)
+    if (!isCurrent()) return false
     if (!calendarModule) {
       container.textContent = 'The calendar could not load. Please try again.'
       return false
@@ -737,12 +767,17 @@
         duration: Number(booking && booking.duration),
       },
       confirmText: 'Propose new time',
+      isCurrent,
       onConfirm: async function (slot) {
+        if (!isCurrent()) return null
         const result = await proposeReschedule(booking, role, reason, {
           start: Number(slot && slot.start),
           end: Number(slot && slot.end),
         })
         if (!result) throw new Error(KINDS['reschedule-propose'].failureMessage)
+        if (!isCurrent()) return result
+        const reasonField = modal.querySelector('[booking-reschedule-reason]')
+        if (reasonField) reasonField.value = ''
         switchPopupContent(modal, KINDS['reschedule-propose'].successContent)
         restartAfterModalClose(document, modal, restart)
       },
@@ -875,8 +910,10 @@
     canProposeReschedule,
     canRespondReschedule,
     ensureRescheduleViews,
+    mountRescheduleCalendar,
     proposeReschedule,
     respondReschedule,
+    resetRescheduleState,
     cancelAttemptKey,
     cancelBooking,
     cancelPayload,

@@ -598,6 +598,7 @@ function rescheduleBooking(overrides) {
       config_id: 'config-test-1',
       grant_id: 'grant-test-1',
       duration: 30,
+      is_paid: false,
       data_environment: 'test',
       status: 'confirmed',
       start: Date.now() + 60 * 60 * 1000,
@@ -617,6 +618,11 @@ test('reschedule proposal eligibility requires a booked future call with calenda
   assert.equal(api.canProposeReschedule('starter', { ...booking, start: Date.now() - 1000 }), false)
   assert.equal(api.canProposeReschedule('starter', { ...booking, grant_id: '' }), false)
   assert.equal(api.canProposeReschedule('starter', { ...booking, duration: 0 }), false)
+  assert.equal(api.canProposeReschedule('starter', { ...booking, is_paid: true }), false)
+  assert.equal(api.canProposeReschedule('starter', { ...booking, is_paid: 'true' }), false)
+  assert.equal(api.canProposeReschedule('starter', { ...booking, is_paid: undefined, paid_meeting: true }), false)
+  assert.equal(api.canProposeReschedule('starter', { ...booking, is_paid: undefined, paid_meeting: false }), true)
+  assert.equal(api.canProposeReschedule('starter', { ...booking, is_paid: undefined, paid_meeting: undefined }), false)
 })
 
 test('only the counterpart can respond to a pending proposal', () => {
@@ -625,6 +631,7 @@ test('only the counterpart can respond to a pending proposal', () => {
   assert.equal(api.canRespondReschedule('starter', booking), false)
   assert.equal(api.canRespondReschedule('brand', { ...booking, status: 'confirmed' }), false)
   assert.equal(api.canRespondReschedule('brand', { ...booking, rescheduled_by: '' }), false)
+  assert.equal(api.canRespondReschedule('brand', { ...booking, is_paid: true }), false)
 })
 
 test('a reschedule proposal posts slot, reason, and a durable propose key', async () => {
@@ -750,4 +757,95 @@ test('an ambiguous reschedule response retains the same idempotency key', async 
     global.sessionStorage = originalStorage
     global.crypto = originalCrypto
   }
+})
+
+test('reschedule calendar mounts stay scoped to the active modal booking', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const mounts = []
+  const requests = []
+  const container = { textContent: '' }
+  const reasonField = { value: 'Need a later time' }
+  let bookingId = 'booking-a'
+  const modal = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? bookingId : null
+    },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      if (selector === '[booking-reschedule-reason]') return reasonField
+      return null
+    },
+    querySelectorAll() {
+      return []
+    },
+  }
+  try {
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar(options) {
+        mounts.push(options)
+        return { slots: [] }
+      },
+    }
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000006'
+      },
+    }
+    global.xanoAuthFetch = async function (_url, options) {
+      requests.push(JSON.parse(options.body))
+      return {
+        ok: true,
+        async json() {
+          return {
+            reschedule: {
+              booking_id: bookingId,
+              status: 'rescheduled',
+            },
+          }
+        },
+      }
+    }
+    const bookingA = rescheduleBooking({ booking_id: 'booking-a' })
+    await api.mountRescheduleCalendar({}, modal, bookingA, 'starter', reasonField.value)
+    bookingId = 'booking-b'
+    const bookingB = rescheduleBooking({ booking_id: 'booking-b' })
+    await api.mountRescheduleCalendar({}, modal, bookingB, 'starter', reasonField.value)
+
+    assert.equal(mounts[0].isCurrent(), false)
+    assert.equal(mounts[1].isCurrent(), true)
+    const start = Date.now() + 2 * 60 * 60 * 1000
+    await mounts[0].onConfirm({ start, end: start + 30 * 60 * 1000 })
+    assert.equal(requests.length, 0)
+    await mounts[1].onConfirm({ start, end: start + 30 * 60 * 1000 })
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].booking_id, 'booking-b')
+    assert.equal(reasonField.value, '')
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('resetting reschedule state clears booking-scoped input and calendar', () => {
+  const reason = { value: 'Old reason' }
+  const calendar = { textContent: 'Old calendar' }
+  const modal = {
+    __startersRescheduleCalendarToken: {},
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-reason]') return reason
+      if (selector === '[booking-reschedule-calendar]') return calendar
+      return null
+    },
+  }
+  assert.equal(api.resetRescheduleState(modal), true)
+  assert.equal(reason.value, '')
+  assert.equal(calendar.textContent, '')
+  assert.equal(modal.__startersRescheduleCalendarToken, null)
 })
