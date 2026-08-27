@@ -618,20 +618,9 @@ allowlist. Its authoritative host and path boundary is documented in the
 [`v3/README.md` scheduling section](v3/README.md#scheduling-auth). It temporarily
 retains the previous legacy availability/configuration/starter paths as exact
 compatibility entries for staging pages that do not yet load the stage adapter.
-It maintains a member-scoped token cache, adds `Authorization: Bearer <token>` without
-changing the effective request method, body, or other options, and supports string,
-`URL`, and `Request` inputs. Requests that already provide `Authorization`, other Xano
-API groups, other origins, and calls outside the documented page boundary pass
-through unchanged, except that scheduling-group requests on the protected production
-`/hire/jp-dionisio` profile are contained with HTTP `410` as documented in the
-authoritative boundary.
-
-A scoped `401` clears the cached token, trades the current Memberstack JWT once,
-and retries the same request once. A failed refresh preserves the original `401`.
-Legacy plain-`fetch()` callers fall back to one unauthenticated request if initial token
-acquisition fails; direct `window.xanoAuthFetch()` callers receive that error instead.
-Network failures remain fetch rejections. A Memberstack account change invalidates both
-token acquisition and in-flight scoped responses with `MEMBER_SCOPE_CHANGED`.
+The authoritative V3 scheduling section owns the token cache, request-shape,
+Memberstack auth-reconciliation, retry, and failure contracts. Keep this overview
+as a pointer so those security details have one source of truth.
 
 Load `v3/scheduling-auth.js` with `defer` on the pages approved in that boundary.
 It installs before Memberstack is ready and supersedes the legacy

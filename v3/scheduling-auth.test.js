@@ -515,11 +515,183 @@ test('auth changes invalidate cache and in-flight scheduling responses', async (
   await new Promise(setImmediate)
 
   memberstackToken = 'memberstack-b'
-  authChange({ id: 'member-b' })
+  authChange(null)
   pendingScheduling.resolve(response({}))
 
   await assert.rejects(firstRequest, (error) => error.code === 'MEMBER_SCOPE_CHANGED')
   const result = await window.xanoAuthFetch(SCHEDULING_URL)
   assert.equal(result.status, 200)
   assert.equal(tradeCount, 2)
+})
+
+test('a transient null auth change preserves an in-flight owner request', async () => {
+  const pendingScheduling = deferred()
+  let tradeCount = 0
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      tradeCount += 1
+      return response({ authToken: 'xano-a' })
+    }
+    return pendingScheduling.promise
+  }
+  const memberstack = {
+    getMemberCookie: async () => 'memberstack-a',
+    onAuthChange(listener) {
+      this.listener = listener
+    },
+  }
+  const { authChange, window } = loadBridge(nativeFetch, { memberstack })
+  const scopeBefore = await window.__tsSchedulingAuthGetScope()
+  const request = window.xanoAuthFetch(SCHEDULING_URL)
+  await new Promise(setImmediate)
+
+  await authChange(null)
+  pendingScheduling.resolve(response({}))
+
+  assert.equal((await request).status, 200)
+  assert.equal(await window.__tsSchedulingAuthGetScope(), scopeBefore)
+  assert.equal(tradeCount, 1)
+})
+
+test('a request queued behind cookie reconciliation uses the new generation', async () => {
+  for (const fetchName of ['xanoAuthFetch', 'fetch']) {
+    let memberstackToken = 'memberstack-a'
+    let tradeCount = 0
+    const nativeFetch = async (request) => {
+      if (requestUrl(request).includes('/auth/trade-token/v3')) {
+        tradeCount += 1
+        return response({ authToken: `xano-${tradeCount}` })
+      }
+      return response({})
+    }
+    const memberstack = {
+      getMemberCookie: async () => memberstackToken,
+      onAuthChange(listener) {
+        this.listener = listener
+      },
+    }
+    const { authChange, window } = loadBridge(nativeFetch, { memberstack })
+    await window.__tsSchedulingAuthGetScope()
+
+    memberstackToken = 'memberstack-b'
+    const reconciliation = authChange({ id: 'member-a' })
+    const request = window[fetchName](SCHEDULING_URL)
+
+    assert.equal((await request).status, 200)
+    await reconciliation
+    assert.equal(tradeCount, 2)
+  }
+})
+
+test('an expected owner scope blocks stale POST dispatch after cookie rotation', async () => {
+  let memberstackToken = 'memberstack-a'
+  const dispatchedBodies = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: `xano-${memberstackToken}` })
+    }
+    dispatchedBodies.push(await request.text())
+    return response({})
+  }
+  const memberstack = {
+    getMemberCookie: async () => memberstackToken,
+    onAuthChange(listener) {
+      this.listener = listener
+    },
+  }
+  const { authChange, window } = loadBridge(nativeFetch, { memberstack })
+  const expectedScope = await window.__tsSchedulingAuthGetScope()
+
+  memberstackToken = 'memberstack-b'
+  const reconciliation = authChange({ id: 'member-a' })
+  const staleWrite = window.__tsSchedulingAuthFetch(SCHEDULING_URL, {
+    method: 'POST',
+    body: JSON.stringify({ duration: 60 }),
+  }, expectedScope)
+
+  await assert.rejects(staleWrite, (error) => error.code === 'MEMBER_SCOPE_CHANGED')
+  await reconciliation
+  assert.deepEqual(dispatchedBodies, [])
+
+  const currentScope = await window.__tsSchedulingAuthGetScope()
+  const currentWrite = await window.__tsSchedulingAuthFetch(SCHEDULING_URL, {
+    method: 'POST',
+    body: JSON.stringify({ duration: 60 }),
+  }, currentScope)
+  assert.equal(currentWrite.status, 200)
+  assert.deepEqual(dispatchedBodies, [JSON.stringify({ duration: 60 })])
+})
+
+test('cookie rotation changes scope after a failed refresh clears token fields', async () => {
+  let memberstackToken = 'memberstack-a'
+  let tradeCount = 0
+  const dispatchedBodies = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      tradeCount += 1
+      return tradeCount === 2
+        ? response({ message: 'unavailable' }, 503)
+        : response({ authToken: `xano-${memberstackToken}` })
+    }
+    const body = await request.text()
+    if (body) dispatchedBodies.push(body)
+    return response({}, 401)
+  }
+  const memberstack = {
+    getMemberCookie: async () => memberstackToken,
+    onAuthChange(listener) {
+      this.listener = listener
+    },
+  }
+  const { authChange, window } = loadBridge(nativeFetch, { memberstack })
+  const memberAScope = await window.__tsSchedulingAuthGetScope()
+  assert.equal((await window.__tsSchedulingAuthFetch(SCHEDULING_URL)).status, 401)
+
+  memberstackToken = 'memberstack-b'
+  const reconciliation = authChange({ id: 'member-b' })
+  const staleWrite = window.__tsSchedulingAuthFetch(SCHEDULING_URL, {
+    method: 'POST',
+    body: JSON.stringify({ owner: 'member-a' }),
+  }, memberAScope)
+
+  await assert.rejects(staleWrite, (error) => error.code === 'MEMBER_SCOPE_CHANGED')
+  await reconciliation
+  assert.deepEqual(dispatchedBodies, [])
+})
+
+test('reconciliation queued during token lookup blocks dispatch', async () => {
+  let memberstackToken = 'memberstack-a'
+  let cookieReads = 0
+  const dispatchedBodies = []
+  const memberstack = {
+    async getMemberCookie() {
+      cookieReads += 1
+      if (cookieReads === 3) {
+        memberstackToken = 'memberstack-b'
+        this.listener({ id: 'member-b' })
+        return 'memberstack-a'
+      }
+      return memberstackToken
+    },
+    onAuthChange(listener) {
+      this.listener = listener
+    },
+  }
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-a' })
+    }
+    dispatchedBodies.push(await request.text())
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch, { memberstack })
+  const memberAScope = await window.__tsSchedulingAuthGetScope()
+
+  const staleWrite = window.__tsSchedulingAuthFetch(SCHEDULING_URL, {
+    method: 'POST',
+    body: JSON.stringify({ owner: 'member-a' }),
+  }, memberAScope)
+
+  await assert.rejects(staleWrite, (error) => error.code === 'MEMBER_SCOPE_CHANGED')
+  assert.deepEqual(dispatchedBodies, [])
 })
