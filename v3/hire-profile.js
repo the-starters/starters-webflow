@@ -436,8 +436,10 @@
                   degradeSlot(type, 'error');
               })
               .catch(function (error) {
-                  // Never leave a placeholder time standing: showing an invented
-                  // slot is worse than admitting there is nothing to show.
+                  // A rejected lookup is a fault, so the owner call site keeps
+                  // its authored row; for every other viewer a placeholder time
+                  // never survives, because showing an invented slot is worse
+                  // than admitting there is nothing to show.
                   console.warn('[hire-profile] ' + type + ' availability lookup failed:', error);
                   degradeSlot(type, 'error');
               });
