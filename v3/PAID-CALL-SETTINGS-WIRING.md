@@ -162,11 +162,14 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   rejected rate therefore never keeps the form invalid afterwards, and turning paid calls off with
   No plus Update stays reachable even though the disable path never reads the rate.
 - While a mutation is in flight, the authored Update control gets
-  `data-call-settings-busy="true"` and `aria-busy="true"`. The controller adds a small spinner after
-  the existing button content and temporarily hides an authored SVG or
-  `data-call-settings-icon="success"` icon. It resets both attributes to `false` when the mutation
-  settles. The same in-flight lock covers native submit and Update click, so they cannot start
-  duplicate writes.
+  `data-call-settings-busy="true"`, `data-opp-loading="true"`, and `aria-busy="true"`. When the
+  control contains an authored `[data-button-spinner]` or `[loading-spinner]`, the controller shows
+  that spinner and does not generate a fallback. It temporarily hides only the authored success
+  icon marked with `data-call-settings-icon="success"`, `data-opp-element="loading-hide"`, or
+  `loading-hide`; other SVG content stays unchanged. Without an authored spinner, the controller
+  adds a small CSS spinner after the existing button content. It restores the authored icon and
+  resets the busy attributes when the mutation and canonical readback settle. The same in-flight
+  lock covers native submit and Update click, so they cannot start duplicate writes.
 - The browser sends product intent only. It never sends a member ID, grant ID, calendar ID, Stripe account ID, or payment environment.
 - Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`. Its bookable-slots preview does read the canonical Paid service to render duration and price read-only; the admission rules for that card live in [Booking-stage availability section](README.md#booking-stage-availability-section).
 - Calendar transitions carry a one-use intent captured from canonical paid-call GET through the existing OAuth session envelope, then recreate it through paid-call upsert and canonical readback.
@@ -198,8 +201,9 @@ read the live authored DOM.
 The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
-   the served asset is the new build: the served file must contain `paintSaveBusy` together with
-   `BUSY_STYLE_ID`. The previous build already shipped the late-sibling recovery,
+   the served asset is the new build: the served file must contain
+   `data-call-settings-native-spinner` together with `data-button-spinner`. The previous build
+   already shipped `paintSaveBusy`, `BUSY_STYLE_ID`, the late-sibling recovery,
    `paintStatusPills`, and the other compatibility markers, so none of those can tell this release
    from the one before it.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Paid
@@ -207,11 +211,13 @@ The release owner runs them by hand, in this order, after the PR merges:
    reload where Webflow or Memberstack inserts the Paid card late.
 3. On that same card, pick Yes, fill the title and rate, and click Update by hand. The
    browser must no longer block the click on the No radio, and the card must reach the
-   canonical readback state. While the write is in flight, confirm the Update control shows its
-   spinner and has `aria-busy="true"`; a native submit followed by an Update click must still start
-   only one request, and the busy state must clear when the write settles. Confirm this on whichever
-   way the authored Update control is wired, and confirm a still-required empty field still blocks
-   the write, per the native validation rule in
+   canonical readback state. While the write and canonical readback are in flight, confirm the
+   Update control shows its authored spinner, hides its authored success icon, and has
+   `aria-busy="true"`; a native submit followed by an Update click must still start only one
+   request. Confirm the spinner hides, the success icon returns, and the busy state clears only
+   after canonical readback settles. Confirm this on whichever way the authored Update control is
+   wired, and confirm a still-required empty field still blocks the write, per the native
+   validation rule in
    [Authority and behavior](#authority-and-behavior).
    Then confirm the validation lifecycle by hand: enter a sub-dollar rate such as `0.5`,
    click Update, and confirm the browser shows the rate message and no write happens; then
