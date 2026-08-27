@@ -261,10 +261,21 @@ keeping the generic Book Call chooser unchanged.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
-native `Services` option. Freelance and Retainer rate cards map to the authored
-`Freelance work` option. A missing or unmatched option fails closed. Logged-out
-cards keep the signup-attribution modal, and Talent or unknown roles do not get
-the Brand project trigger.
+native `Services` option. The consumer here is [`project-form.js`](project-form.js),
+not the `freelancer-cms/pre-fill-attr-val.js` embed, which is not loaded on
+`/hire/<slug>`. The stamped `data-sp-fill-category` is therefore `service`,
+singular: `project-form.js` routes a category normalizing to `service` straight
+to the form's native `Services` field, and that native priority is what stops a
+stale tagged helper from taking the preset. `Services` would normalize to
+`services`, miss the route, and fall through to the tagged-helper lookup. The
+two rate cards map to different options. Freelance takes `Freelance work`.
+Retainer prefers its own
+`Monthly retainer` option and falls back to `Freelance work` when that option
+is absent, since `Monthly retainer` is gated in the Designer by
+`element-visibility="Retainer Enabled"` and an approximate service beats no
+contract at all. A missing or unmatched option fails closed. Logged-out cards
+keep the signup-attribution modal, and Talent or unknown roles do not get the
+Brand project trigger.
 
 The rate cards also get their chip label from this file, and the two cards
 label differently. Freelance prices a unit, so it renders `/hour` under the

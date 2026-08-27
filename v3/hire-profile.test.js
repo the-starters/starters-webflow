@@ -2735,9 +2735,13 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
 
   const contractDialog = makeElement('dialog', { 'data-modal-target': 'generate-contract' })
   const serviceSelect = makeElement('select', { name: 'Services' })
+  // Mirrors the authored select. 'Monthly retainer' is gated in the Designer by
+  // element-visibility="Retainer Enabled" but is present in the DOM regardless,
+  // which is why the retainer card can resolve it.
   serviceSelect.options = [
     { value: '', textContent: 'Select one...' },
     { value: 'Freelance work', textContent: 'Freelance work' },
+    { value: 'Monthly retainer', textContent: 'Monthly retainer' },
     { value: 'asdf', textContent: 'asdf' },
     { value: 'Free Call', textContent: 'Free Call' },
     { value: 'Paid Consulting Call', textContent: 'Paid Consulting Call' },
@@ -2773,12 +2777,24 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
   assert.ok(retainerCard)
   for (const [card, service] of [
     [freelanceCard, 'Freelance work'],
-    [retainerCard, 'Freelance work'],
+    [retainerCard, 'Monthly retainer'],
     [cmsCard, 'asdf'],
   ]) {
     assert.equal(card.getAttribute('data-modal-trigger'), 'generate-contract', service)
     assert.equal(card.getAttribute('data-sp-fill'), 'button')
-    assert.equal(card.getAttribute('data-sp-fill-category'), 'service')
+    // Byte-exact 'service': v3/project-form.js (the engine actually loaded on
+    // /hire/<slug>) routes normalizedName(category) === 'service' to the form's
+    // native Services field. 'Services' normalizes to 'services', misses that
+    // route, and falls through to the tagged-helper lookup the native priority
+    // exists to prevent.
+    assert.equal(card.getAttribute('data-sp-fill-category'), 'service', service)
+    for (const wrong of ['Services', 'services']) {
+      assert.notEqual(
+        card.getAttribute('data-sp-fill-category'),
+        wrong,
+        `${wrong} would normalize past the native Services route in project-form.js`,
+      )
+    }
     assert.equal(card.getAttribute('data-sp-fill-value'), service)
   }
 
@@ -2812,6 +2828,51 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
   assert.equal(paidCard.getAttribute('data-call-service-direct'), 'ready')
   assert.equal(paidCard.getAttribute('data-sp-fill'), null)
   assert.equal(paidCard.getAttribute('data-sp-fill-value'), null)
+  assert.equal(freeCard.getAttribute('data-sp-fill-category'), null)
+  assert.equal(paidCard.getAttribute('data-sp-fill-category'), null)
+})
+
+test('a retainer falls back to Freelance work when the native retainer option is absent', async () => {
+  // 'Monthly retainer' is gated by element-visibility="Retainer Enabled". If a
+  // site ever ships without it, the retainer card must still open a contract
+  // on the closest authored service rather than going inert: an approximate
+  // service beats no contract at all, and the brand can correct it in the form.
+  const page = makePage()
+  const contractDialog = makeElement('dialog', { 'data-modal-target': 'generate-contract' })
+  const serviceSelect = makeElement('select', { name: 'Services' })
+  serviceSelect.options = [
+    { value: '', textContent: 'Select one...' },
+    { value: 'Freelance work', textContent: 'Freelance work' },
+  ]
+  contractDialog.appendChild(serviceSelect)
+  page.root.appendChild(contractDialog)
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '2500', 'retainer-enabled': true },
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => null,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const retainerCard = page.servicesList.children.find(
+    (card) => card.getAttribute('data-rate-card') === 'retainer',
+  )
+  assert.ok(retainerCard, 'the retainer card must still render')
+  assert.equal(retainerCard.getAttribute('data-modal-trigger'), 'generate-contract')
+  assert.equal(retainerCard.getAttribute('data-sp-fill-category'), 'service')
+  assert.equal(
+    retainerCard.getAttribute('data-sp-fill-value'),
+    'Freelance work',
+    'the retainer must fall back to the authored Freelance work option',
+  )
 })
 
 test('a page without the hide-empty hook still renders its cards', async () => {
