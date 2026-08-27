@@ -1,7 +1,7 @@
 /**
  * V3 reviews page integration.
  *
- * @release v1.59.397
+ * @release v1.59.398
  *
  * Designer owns the public Reviews section. This module only:
  *   - derives the public-profile slug from /hire/{slug} and configures the
@@ -349,7 +349,7 @@
   }
 
   var api = {
-    release: 'v1.59.397',
+    release: 'v1.59.398',
     profileSlug: profileSlug,
     configureProfileRoot: configureProfileRoot,
     paintProfile: paintProfile,
