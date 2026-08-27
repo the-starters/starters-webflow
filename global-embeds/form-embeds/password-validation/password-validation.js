@@ -103,21 +103,51 @@
   // "At least {count} characters" -> "At least 8 characters". Walks text nodes
   // so the row's icons (and any nested text blocks) survive untouched, and
   // rewrites nothing at all when the token is absent.
+  //
+  // The authored text is cached on the node the first time it is seen, and
+  // every pass re-renders from that cache rather than from what the previous
+  // pass wrote. A wrapper that failed open renders its fallback count and
+  // stays eligible for rescan(); once its attributes arrive, the rescan has to
+  // be able to replace that number with the one now being enforced, which is
+  // impossible once the token has been overwritten.
   var COUNT_TOKEN = '{count}';
+  var TEMPLATE_PROP = '__startersPasswordValidationTemplate';
+
+  function countTemplate(textNode) {
+    var cached = textNode[TEMPLATE_PROP];
+    if (typeof cached === 'string') return cached;
+    var text = textNode.nodeValue;
+    if (!text || text.indexOf(COUNT_TOKEN) === -1) return null;
+    textNode[TEMPLATE_PROP] = text;
+    return text;
+  }
 
   function substituteCount(node, count) {
     if (!node || !node.childNodes) return;
     for (var i = 0; i < node.childNodes.length; i++) {
       var child = node.childNodes[i];
       if (child.nodeType === 3) {
-        var text = child.nodeValue;
-        if (text && text.indexOf(COUNT_TOKEN) !== -1) {
-          child.nodeValue = text.split(COUNT_TOKEN).join(count);
-        }
+        var template = countTemplate(child);
+        if (template !== null) child.nodeValue = template.split(COUNT_TOKEN).join(count);
       } else if (child.nodeType === 1) {
         substituteCount(child, count);
       }
     }
+  }
+
+  // Asks the authored copy, not the rendered copy: a row that already had its
+  // token substituted by an earlier pass is still a row that uses the token.
+  function usesCountToken(node) {
+    if (!node || !node.childNodes) return false;
+    for (var i = 0; i < node.childNodes.length; i++) {
+      var child = node.childNodes[i];
+      if (child.nodeType === 3) {
+        if (countTemplate(child) !== null) return true;
+      } else if (child.nodeType === 1 && usesCountToken(child)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // Webflow renders a boolean component property as the string "true"/"false".
@@ -249,7 +279,7 @@
     );
   }
 
-  // Fill in {count} across every wrapper, once, before anything can bail out.
+  // Fill in {count} across every wrapper, before anything can bail out.
   // With a primary the ENFORCED count is used everywhere, so the copy can
   // never advertise a number the form is not enforcing; with no primary each
   // wrapper falls back to its own.
@@ -314,7 +344,6 @@
     }
     var count = wrapper ? readCount(wrapper) : null;
 
-    // Checked before renderCopy, which is what removes the token.
     if (wrapper) warnOnCountDrift(wrappers, active, count);
 
     // Copy is rendered before any bail-out below. Substitution changes no
@@ -484,7 +513,7 @@
       var row = wrappers[i].querySelector('[' + RULE_ATTR + '="characters"]');
       if (!row || seen.indexOf(row) !== -1) continue;
       seen.push(row);
-      if (row.textContent && row.textContent.indexOf(COUNT_TOKEN) !== -1) continue;
+      if (usesCountToken(row)) continue;
       devWarn(
         'the characters row does not use the ' + COUNT_TOKEN + ' token, so its ' +
         'copy can drift from the ' + count + ' actually being enforced.',

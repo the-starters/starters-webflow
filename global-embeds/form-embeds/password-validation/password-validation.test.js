@@ -1650,3 +1650,75 @@ test('r2-6b: a checklist with no wrapper attributes IS the typo this catches', (
   assert.match(app.warnings[0], /4 checklist rows/)
   assert.equal(f.button.disabled, undefined, 'and it still fails open')
 })
+
+// ===========================================================================
+// Round 3 — the rendered count follows the enforced count across a rescan
+//
+// A wrapper that fails open still renders its fallback number, and stays
+// eligible for rescan(). Substituting in place would burn that number into
+// the copy, so a later rescan enforcing a different one would advertise the
+// old figure and additionally accuse the row of not using the token.
+// ===========================================================================
+
+test('r3-1: a bail-open wrapper re-renders the enforced count on rescan', () => {
+  const f = makeForm(ZERO_RULES)
+  const app = mount(h('body', {}, [f.form]), onStaging())
+
+  assert.equal(f.rows.characters.textContent, 'At least 8 characters', 'the fallback renders')
+  assert.equal(app.warnings.length, 1, 'and the zero-rules warning is the only one')
+  assert.match(app.warnings[0], /zero active rules/)
+
+  // the CMS-bound component properties arrive and the page asks for another pass
+  f.wrapper.setAttribute(P + 'characters', 'true')
+  f.wrapper.setAttribute(P + 'character-count', '12')
+  app.window.startersPasswordValidation.rescan()
+
+  assert.equal(
+    f.rows.characters.textContent,
+    'At least 12 characters',
+    'the copy shows the count now being enforced, not the fallback',
+  )
+  assert.equal(app.warnings.length, 1, 'and no false drift warning about the token')
+
+  f.input.value = 'abcdefghijkl'
+  dispatch(f.input, 'input')
+  assert.equal(isOpen(f.button), true, '12 characters passes the enforced rule')
+})
+
+test('r3-1: a rescan after the count changes re-renders every wrapper', () => {
+  const first = buildWrapper({ characters: 'true', 'character-count': '6' })
+  const second = buildWrapper({ 'character-count': '6' }, { heading: 'Needs {count} characters' })
+  const input = h('input', { type: 'password', 'data-ms-member': 'password' })
+  const button = h('button', { type: 'submit', 'ms-code-submit-button': '' })
+  // no input yet, so the form bails and stays eligible for a rescan
+  const form = h('form', {}, [first.wrapper, second.wrapper, button])
+  const app = mount(h('body', {}, [form]))
+
+  assert.equal(first.rows.characters.textContent, 'At least 6 characters')
+  assert.equal(second.wrapper.textContent.includes('Needs 6 characters'), true)
+
+  first.wrapper.setAttribute(P + 'character-count', '10')
+  form.append(input)
+  app.window.startersPasswordValidation.rescan()
+
+  assert.equal(first.rows.characters.textContent, 'At least 10 characters')
+  assert.equal(
+    second.wrapper.textContent.includes('Needs 10 characters'),
+    true,
+    'the second instance follows the enforced count too',
+  )
+})
+
+test('r3-1: a row authored without the token still warns after a rescan', () => {
+  const f = makeForm(ZERO_RULES, { text: { characters: 'At least 8 characters' } })
+  const app = mount(h('body', {}, [f.form]), onStaging())
+  assert.equal(app.warnings.length, 1, 'only the zero-rules warning so far')
+
+  f.wrapper.setAttribute(P + 'characters', 'true')
+  f.wrapper.setAttribute(P + 'character-count', '12')
+  app.window.startersPasswordValidation.rescan()
+
+  const drift = app.warnings.filter((w) => /\{count\}/.test(w))
+  assert.equal(drift.length, 1, 'hard-coded copy is still called out')
+  assert.match(drift[0], /12/)
+})
