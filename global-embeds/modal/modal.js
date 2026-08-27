@@ -51,10 +51,19 @@
     
                 if (new URLSearchParams(location.search).get("modal-id") === modalId) openModal(), history.replaceState({}, "", ((u) => (u.searchParams.delete("modal-id"), u))(new URL(location.href)));
                 modal.addEventListener("cancel", (e) => (e.preventDefault(), closeModal()));
-                modal.addEventListener("click", (e) => e.target.closest("[data-modal-close]") && closeModal());
+                modal.addEventListener("click", (e) => {
+                    if (!e.target.closest("[data-modal-close]")) return;
+                    const anchor = e.target.closest("a");
+                    if (anchor?.getAttribute("href")?.startsWith("#")) e.preventDefault();
+                    closeModal();
+                });
                 document.addEventListener("click", (e) => {
                     const trigger = e.target.closest(`[data-modal-trigger='${modalId}'], a[href='#${modalId}']`);
                     if (!trigger) return;
+                    // The same click already reached the dialog's own close listener above, so a
+                    // close control inside a dialog must never double as an open trigger.
+                    const closer = e.target.closest("[data-modal-close]");
+                    if (closer?.closest(".modal_dialog")) return;
                     if (trigger.tagName === "A") e.preventDefault();
                     openModal();
                 });

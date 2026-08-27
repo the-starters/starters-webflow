@@ -253,6 +253,16 @@ function makeEnv({
     },
     /** A `[data-modal-close]` control inside a dialog. */
     closeControlIn(dialog) { return dialog.append(h('button', { 'data-modal-close': '' })) },
+    /** A `[data-modal-close]` anchor inside a dialog — the shape that used to reopen. */
+    closeAnchorIn(dialog, href) { return dialog.append(h('a', { 'data-modal-close': '', href })) },
+    /** The Webflow link-block shape: the label inside the close anchor takes the click. */
+    closeAnchorLabelIn(dialog, href) {
+      const label = h('span')
+      dialog.append(h('a', { 'data-modal-close': '', href }, [label]))
+      return label
+    },
+    /** A `[data-modal-close]` anchor authored in the page, outside every dialog. */
+    closeAnchorInPage(href) { return inPage(h('a', { 'data-modal-close': '', href })) },
     /** A `[data-close-all-modals]` control anywhere in the page. */
     closeAllControl(tag = 'button') { return inPage(h(tag, { 'data-close-all-modals': '' })) },
     /** A click on something the modal system does not care about. */
@@ -271,6 +281,26 @@ function makeEnv({
     },
     /** A click inside a dialog, bubbled to the dialog's own listener. */
     clickInDialog(dialog, target) { return fire(dialog, 'click', target) },
+    /**
+     * One real click, all the way up: the containing dialog's own listener runs
+     * first, then — unless propagation was stopped — the document delegation, both
+     * handed the same event object. That is what the browser does, and it is the
+     * only way to see the two layers reacting to a single click; `clickInDialog`
+     * and `clickDocument` each fire one layer in isolation. Outside a dialog it is
+     * just a document-level click.
+     */
+    clickThrough(target) {
+      const event = makeEvent('click', target)
+      event.propagationStopped = false
+      event.stopPropagation = () => { event.propagationStopped = true }
+
+      const dialog = target.closest('.modal_dialog')
+      if (dialog) (dialog._listeners.get('click') || []).forEach((listener) => listener(event))
+      if (!event.propagationStopped) {
+        ;(documentListeners.get('click') || []).forEach((listener) => listener(event))
+      }
+      return event
+    },
     /** The native `cancel` the Escape key raises on an open dialog. */
     cancel(dialog) { return fire(dialog, 'cancel', dialog) },
     focusable,
@@ -673,4 +703,151 @@ test('builds a different entrance for each authored variant', () => {
     ['fromTo', '.modal_backdrop', ['opacity']],
     ['from', '.modal_content', ['opacity', 'y']],
   ])
+})
+
+test('a close control naming another modal closes this one and opens nothing', () => {
+  // The click that dismisses the dialog keeps bubbling to the document, where
+  // every modal's trigger delegation is listening. A close control is a close
+  // control: switching modals is custom code, not an authored attribute pair.
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  const event = env.clickThrough(env.closeAnchorIn(dialog, '#modal-b'))
+
+  assert.equal(dialog.open, false)
+  assert.equal(env.dialogsById['modal-b'].open, false, 'the href it carries must not open anything')
+  assert.equal(event.defaultPrevented, true, 'and the page must not jump to that hash either')
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'], 'one click, one close, no reopen')
+})
+
+test('a close control naming its own modal does not reopen it', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  env.clickThrough(env.closeAnchorIn(dialog, '#modal-a'))
+
+  assert.equal(dialog.open, false, 'a modal that reopens itself on close cannot be dismissed at all')
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'])
+})
+
+test('a close control that also carries a trigger attribute only closes', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  const control = dialog.append(h('button', { 'data-modal-close': '', 'data-modal-trigger': 'modal-b' }))
+  env.clickThrough(control)
+
+  assert.equal(dialog.open, false)
+  assert.equal(env.dialogsById['modal-b'].open, false, 'the trigger attribute is ignored on a close control')
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'])
+})
+
+test('a plain trigger inside an open modal still opens the modal it names', () => {
+  // Characterization: without a close attribute the guard does not apply, so an
+  // in-dialog trigger opens the second modal on top of the first — both dialogs
+  // stay open. Pinned so that stacking becomes a deliberate change.
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  const event = env.clickThrough(dialog.append(h('a', { href: '#modal-b' })))
+
+  assert.equal(env.dialogsById['modal-b'].open, true)
+  assert.equal(dialog.open, true, 'the modal it was clicked from is left where it was')
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(env.types(), ['modal-open', 'modal-open'])
+})
+
+test('an anchor close control does not scroll the page to the top', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  const event = env.clickThrough(env.closeAnchorIn(dialog, '#'))
+
+  assert.equal(dialog.open, false)
+  assert.equal(event.defaultPrevented, true, 'href="#" would otherwise jump the page as it closes')
+})
+
+test('a button close control keeps its default behaviour', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  const event = env.clickThrough(env.closeControlIn(dialog))
+
+  assert.equal(dialog.open, false)
+  assert.equal(event.defaultPrevented, false, 'a button inside a form must still submit')
+})
+
+test('a close control that links somewhere real closes and lets the link follow', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  const event = env.clickThrough(env.closeAnchorIn(dialog, '/pricing'))
+
+  assert.equal(dialog.open, false, 'a nav link in a menu modal closes it on the way out')
+  assert.equal(event.defaultPrevented, false, 'and still navigates')
+})
+
+test('a close control outside every dialog is just a trigger', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const event = env.clickThrough(env.closeAnchorInPage('#modal-b'))
+
+  assert.equal(env.dialogsById['modal-b'].open, true, 'the guard is scoped to controls inside a dialog')
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(env.types(), ['modal-open'])
+})
+
+test('a label inside a close anchor closes without reopening either', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  // Webflow link blocks put the text in a child element, so the click target is
+  // neither the close control nor the anchor that carries the href.
+  const event = env.clickThrough(env.closeAnchorLabelIn(dialog, '#modal-b'))
+
+  assert.equal(dialog.open, false)
+  assert.equal(env.dialogsById['modal-b'].open, false)
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'])
+})
+
+test('the animated close runs its exit and still opens nothing', () => {
+  const env = makeEnv({ gsap: true })
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  const event = env.clickThrough(env.closeAnchorIn(dialog, '#modal-b'))
+
+  assert.equal(dialog.tl.reversed, true, 'the exit animation runs instead of a hard close')
+  assert.equal(dialog.open, false)
+  assert.equal(env.dialogsById['modal-b'].open, false, 'the dialog is still open when the document sees the click')
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'])
 })
