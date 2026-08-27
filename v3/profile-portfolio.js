@@ -1,7 +1,7 @@
 /**
  * V3 profile portfolio / case-study renderer — /hire/<slug>
  *
- * Ported verbatim (behaviour-for-behaviour) from the on-canvas Code Embed that
+ * Ported (behaviour-for-behaviour) from the on-canvas Code Embed that
  * previously lived inside the "Embed Code" component on the hire template, so
  * that this logic lives in GitHub instead of in Webflow. See
  * platform-ops/migrations/2026-08-14-legacy-case-studies/renderer-location-findings.md
@@ -11,6 +11,26 @@
  * via freelancers_v3 (#82) and returns approved public rows only. As of
  * 2026-08-15 that table also holds 1,439 imported
  * legacy V2 case studies, which are TEXT ONLY.
+ *
+ * OWNERSHIP SPLIT — this file fills data, it does not present anything.
+ *
+ * The Highlights modal is a native `<dialog data-modal-target="highlights">`
+ * driven by the lumos modal system (`global-embeds/modal/modal.js`). Lumos owns
+ * opening (through the card's authored `data-modal-trigger`), closing (its
+ * `data-modal-close` controls and the dialog `cancel`/Escape event), the GSAP
+ * open/close animation, focus restore and page-scroll locking. This renderer
+ * owns the card list and the modal's DATA only: on card click it populates the
+ * dialog's title, description, images and videos. It must never write to the
+ * dialog's `style` — inline display writes stomp the GSAP timeline and the
+ * modal loses its animation.
+ *
+ * It listens to two lumos events for data-side housekeeping only: `modal-open`
+ * fills the first case study when the dialog is opened without a card click,
+ * and `modal-close` pauses any video the visitor left playing, which
+ * `dialog.close()` does not do. For a `?modal-id=highlights` deep link the
+ * event is unreachable — lumos dispatches it from its own DOMContentLoaded
+ * handler, before this one runs — so the dialog's open state is checked once
+ * the approved rows arrive.
  *
  * Five deliberate changes from the embed:
  *
@@ -26,8 +46,8 @@
  *     shows an empty "Images" heading.
  *  4. Only three case studies show initially. The authored View all control
  *     reveals the complete approved set when more case studies exist.
- *  5. The modal closes from its close control, scrim, or Escape key. Modal
- *     behaviour is wired by `wf-portfolio-element` attributes first.
+ *  5. Every modal lookup is scoped INSIDE the modal root, so an older hidden
+ *     copy of the modal elsewhere in the DOM can never intercept the data.
  *
  * Ownership: this CDN file is the only Highlights renderer. The legacy on-canvas
  * owner-read embed must be removed in the same Webflow whole-block cutover.
@@ -74,23 +94,31 @@
       : null;
     if (template) template.classList.add('hidden');
 
-    var modal = pick('[wf-portfolio-element="modal"]', '.portfolio_modal-component');
-    var modalContent = modal
-      ? pick('[wf-portfolio-element="content"]', '.portfolio_modal-content', modal)
+    // The live modal is the native lumos <dialog>. Preferring it by tag name
+    // stops a stale non-dialog copy earlier in the document from winning the
+    // first match and swallowing every fill.
+    var modal =
+      document.querySelector('dialog[wf-portfolio-element="modal"]') ||
+      pick('[wf-portfolio-element="modal"]', '.portfolio_modal-component');
+    // Every modal lookup below is scoped to this root, for the same reason.
+    var modalTitle = modal ? modal.querySelector('[portfolio-title]') : null;
+    var modalDescription = modal ? modal.querySelector('[portfolio-description]') : null;
+    var modalImages = modal
+      ? pick('[wf-portfolio-element="images"]', '.portfolio_modal-images', modal)
       : null;
-    var modalScrim = modal
-      ? pick('[wf-portfolio-element="scrim"]', '.portfolio_modal-background', modal)
+    var modalVideos = modal
+      ? pick('[wf-portfolio-element="videos"]', '.portfolio_modal-videos', modal)
       : null;
-    var modalTitle = document.querySelector('[portfolio-title]');
-    var modalDescription = document.querySelector('[portfolio-description]');
-    var modalImages = pick('[wf-portfolio-element="images"]', '.portfolio_modal-images');
-    var modalVideos = pick('[wf-portfolio-element="videos"]', '.portfolio_modal-videos');
-    var lastModalTrigger = null;
-    var bodyOverflowBeforeOpen = '';
-
-    function isModalOpen() {
-      return !!modal && modal.style.display !== 'none';
-    }
+    // Authored loading text. Absent until the Designer adds it — optional. It is
+    // only ever cloned, so the authored original is hidden for good right here:
+    // lumos can open the dialog without us (a ?modal-id=highlights deep link),
+    // and an original left visible would show loading text with nothing loading.
+    var loaderTemplate = modal ? modal.querySelector('[data-highlights-loader]') : null;
+    if (loaderTemplate) loaderTemplate.style.display = 'none';
+    // Guards against a slow response from an earlier card overwriting a newer one.
+    var fillToken = 0;
+    var loadedPortfolios = [];
+    var openedWithoutFill = false;
 
     function getAssetUrl(value) {
       if (!value) return '';
@@ -99,10 +127,16 @@
       return value;
     }
 
+    /** Ask Xano for the large rendition without breaking an existing query. */
+    function tplLarge(url) {
+      if (!url) return '';
+      return url + (url.indexOf('?') > -1 ? '&' : '?') + 'tpl=large';
+    }
+
     function getThumbUrl(value) {
       var url = getAssetUrl(value);
       if (!url) return PLACEHOLDER_THUMB;
-      return url + '?tpl=large';
+      return tplLarge(url);
     }
 
     function truncateText(text, maxLength) {
@@ -118,14 +152,87 @@
       contentWrapper.style.display = hasContent ? '' : 'none';
     }
 
-    async function openModal(portfolio, trigger) {
-      if (!modal) return;
+    /** Empty a media container and drop in a loader clone while its fetch runs. */
+    function startMediaSlot(container) {
+      if (!container) return null;
+      container.innerHTML = '';
+      if (!loaderTemplate) return null;
 
-      if (!isModalOpen()) bodyOverflowBeforeOpen = document.body.style.overflow || '';
-      lastModalTrigger = trigger || document.activeElement || null;
+      // The previous case study may have left this section hidden. Reveal it so
+      // the loading state actually paints; the settle-time render decides the
+      // section's final visibility.
+      toggleModalBlock(container, true);
+
+      var clone = loaderTemplate.cloneNode(true);
+      clone.style.display = '';
+      container.appendChild(clone);
+      return clone;
+    }
+
+    function removeLoader(clone) {
+      if (!clone) return;
+      if (typeof clone.remove === 'function') clone.remove();
+      else if (clone.parentNode) clone.parentNode.removeChild(clone);
+    }
+
+    /** Rows whose asset URL is blank would render a broken element — drop them. */
+    function withUsableAsset(rows, key) {
+      return rows.filter(function (row) {
+        return !!getAssetUrl(row[key]);
+      });
+    }
+
+    function renderImages(container, loaderClone, images, portfolio) {
+      if (!container) return;
+      removeLoader(loaderClone);
+
+      var usable = withUsableAsset(images, 'image_url');
+      // Legacy case studies are text-only; without this the "Images" heading
+      // renders with nothing under it. Mirrors the videos behaviour below.
+      toggleModalBlock(container, usable.length > 0);
+
+      usable.forEach(function (imageItem) {
+        var img = document.createElement('img');
+        img.src = tplLarge(getAssetUrl(imageItem.image_url));
+        img.alt = portfolio.title || '';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.className = 'portfolio_modal-image';
+        container.appendChild(img);
+      });
+    }
+
+    function renderVideos(container, loaderClone, videos) {
+      if (!container) return;
+      removeLoader(loaderClone);
+
+      var usable = withUsableAsset(videos, 'video_url');
+      toggleModalBlock(container, usable.length > 0);
+
+      usable.forEach(function (videoItem) {
+        var video = document.createElement('video');
+        video.src = getAssetUrl(videoItem.video_url);
+        video.controls = true;
+        video.className = 'portfolio_modal-video';
+        container.appendChild(video);
+      });
+    }
+
+    /**
+     * Populate the dialog for one case study. Presentation (open, close,
+     * animation, focus, scroll lock) belongs to the lumos modal system, which
+     * receives the same click through the card's authored `data-modal-trigger`.
+     */
+    function fillModal(portfolio) {
+      if (!modal) return Promise.resolve();
+
+      var token = ++fillToken;
 
       if (modalTitle) modalTitle.textContent = truncateText(portfolio.title || '', 150);
+
       if (modalDescription) {
+        // Hand the "see more" clamp in hire-profile.js a clean slate, or it
+        // treats the previous case study's text as the current full text.
         var oldToggle = modal.querySelector('[data-toggle-for="description"]');
         if (oldToggle) oldToggle.remove();
         delete modalDescription.dataset.fullTextdescription;
@@ -135,81 +242,66 @@
         modalDescription.textContent = portfolio.description || '';
       }
 
-      var images = await getPublicPortfolioImages(portfolio.id);
-      var videos = await getPublicPortfolioVideos(portfolio.id);
+      var imagesLoader = startMediaSlot(modalImages);
+      var videosLoader = startMediaSlot(modalVideos);
 
-      if (modalImages) {
-        modalImages.innerHTML = '';
-        // Legacy case studies are text-only; without this the "Images" heading
-        // renders with nothing under it. Mirrors the videos behaviour below.
-        toggleModalBlock(modalImages, images.length > 0);
-
-        images.forEach(function (imageItem) {
-          var img = document.createElement('img');
-          img.src = getAssetUrl(imageItem.image_url) + '?tpl=large';
-          img.alt = portfolio.title || '';
-          img.loading = 'lazy';
-          img.decoding = 'async';
-          img.className = 'portfolio_modal-image';
-          modalImages.appendChild(img);
-        });
-      }
-
-      if (modalVideos) {
-        modalVideos.innerHTML = '';
-        toggleModalBlock(modalVideos, videos.length > 0);
-
-        videos.forEach(function (videoItem) {
-          var video = document.createElement('video');
-          video.src = getAssetUrl(videoItem.video_url);
-          video.controls = true;
-          video.className = 'portfolio_modal-video';
-          modalVideos.appendChild(video);
-        });
-      }
-
-      modal.style.display = 'flex';
-      document.body.style.overflow = 'hidden';
+      return Promise.all([
+        getPublicPortfolioImages(portfolio.id).then(function (images) {
+          if (token !== fillToken) return;
+          renderImages(modalImages, imagesLoader, images, portfolio);
+        }),
+        getPublicPortfolioVideos(portfolio.id).then(function (videos) {
+          if (token !== fillToken) return;
+          renderVideos(modalVideos, videosLoader, videos);
+        }),
+      ]);
     }
 
-    function closeModal(options) {
-      if (!modal) return;
-      var restoreFocus = !options || options.restoreFocus !== false;
-      modal.style.display = 'none';
-      document.body.style.overflow = bodyOverflowBeforeOpen;
-
-      if (modalContent) modalContent.scrollTop = 0;
-
-      if (restoreFocus && lastModalTrigger && typeof lastModalTrigger.focus === 'function') {
-        lastModalTrigger.focus();
-      }
-      lastModalTrigger = null;
+    /**
+     * lumos can open this dialog without a card click — a ?modal-id=highlights
+     * deep link, or any stray trigger — which would otherwise show the authored
+     * placeholder copy. Fill the first case study for those opens only.
+     */
+    function fillDefaultPortfolio() {
+      if (fillToken !== 0 || !loadedPortfolios.length) return;
+      fillModal(loadedPortfolios[0]);
     }
 
-    function wireModalDismiss() {
-      if (!modal) return;
+    /**
+     * Is lumos already showing the dialog? `showModal()` sets the native `open`
+     * state, so this answers the question without having witnessed the event.
+     */
+    function modalIsOpen() {
+      if (!modal) return false;
+      if (typeof modal.open === 'boolean') return modal.open;
+      return typeof modal.hasAttribute === 'function' && modal.hasAttribute('open');
+    }
 
-      modal.addEventListener('click', function (event) {
-        var target = event.target;
-        var closeControl =
-          target && typeof target.closest === 'function'
-            ? target.closest(
-                '[wf-portfolio-element="close"], [data-modal-close], [aria-label="close-modal"], .portfolio_modal-close',
-              )
-            : null;
+    // Catches a stray open that happens later. It cannot catch the deep-link
+    // open: lumos dispatches modal-open synchronously inside its own
+    // DOMContentLoaded handler, which runs before this one on the live page —
+    // the event is already gone by the time this listener exists. The dialog's
+    // open state is checked once the rows arrive instead.
+    window.addEventListener('modal-open', function (event) {
+      if (!modal || !event || !event.detail || event.detail.modal !== modal) return;
+      if (fillToken !== 0) return;
+      // A deep-link open lands before the approved read answers, so remember it
+      // and fill as soon as the rows arrive.
+      openedWithoutFill = true;
+      fillDefaultPortfolio();
+    });
 
-        if (closeControl || target === modal || (modalScrim && target === modalScrim)) {
-          event.preventDefault();
-          closeModal();
-        }
+    // Closing a <dialog> does not stop its media. Without this, a video the
+    // visitor started keeps playing behind the dismissed modal.
+    window.addEventListener('modal-close', function (event) {
+      if (!modal || !modalVideos || !event || !event.detail || event.detail.modal !== modal) return;
+      if (typeof modalVideos.querySelectorAll !== 'function') return;
+
+      var playing = modalVideos.querySelectorAll('video');
+      Array.prototype.forEach.call(playing, function (video) {
+        if (video && typeof video.pause === 'function') video.pause();
       });
-
-      document.addEventListener('keydown', function (event) {
-        if (event.key !== 'Escape' || !isModalOpen()) return;
-        event.preventDefault();
-        closeModal();
-      });
-    }
+    });
 
     function createCard(portfolio) {
       var card = template.cloneNode(true);
@@ -232,12 +324,32 @@
       if (title) title.textContent = portfolio.title || '';
       if (idBlock) idBlock.textContent = portfolio.id || '';
 
-      if (openButton) {
-        openButton.addEventListener('click', async function (event) {
-          event.preventDefault();
-          await openModal(portfolio, openButton);
-        });
-      }
+      // Fill on ANY click inside the card, not just the open control. lumos
+      // opens from whichever element carries data-modal-trigger, and nothing
+      // pins that to the open control — hire-profile.js rewrites trigger
+      // attributes on this page. Filling on a click that does not open is
+      // harmless; missing the click that does open is not.
+      card.addEventListener('click', async function (event) {
+        var target = event.target;
+        var closest =
+          target && typeof target.closest === 'function'
+            ? function (selector) {
+                return target.closest(selector);
+              }
+            : function () {
+                return null;
+              };
+
+        // preventDefault keeps `<a href="#">` controls from jumping the page. It
+        // does not stop propagation, so lumos still sees the click and opens.
+        var onOpenControl =
+          !!openButton &&
+          closest('[wf-portfolio-element="open"], [show-portfolio], [aria-label="open-modal"]') ===
+            openButton;
+        if (onOpenControl || closest('a[href="#"]')) event.preventDefault();
+
+        await fillModal(portfolio);
+      });
 
       return card;
     }
@@ -265,41 +377,47 @@
     }
 
     async function getPublicPortfolioImages(portfolioId) {
-      var response = await fetch(
-        XANO_BASE_URL +
-          '/api:PmBJV0AG/Get_public_portfolio_images?portfolio_id=' +
-          encodeURIComponent(portfolioId),
-      );
-      var data = await response.json();
-      if (!response.ok) {
-        console.error('Images error:', data);
+      try {
+        var response = await fetch(
+          XANO_BASE_URL +
+            '/api:PmBJV0AG/Get_public_portfolio_images?portfolio_id=' +
+            encodeURIComponent(portfolioId),
+        );
+        var data = await response.json();
+        if (!response.ok) {
+          console.error('Images error:', data);
+          return [];
+        }
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        console.error('Images error:', error);
         return [];
       }
-      return Array.isArray(data) ? data : [];
     }
 
     async function getPublicPortfolioVideos(portfolioId) {
-      var response = await fetch(
-        XANO_BASE_URL +
-          '/api:PmBJV0AG/Get_public_portfolio_videos?portfolio_id=' +
-          encodeURIComponent(portfolioId),
-      );
-      var data = await response.json();
-      if (!response.ok) {
-        console.error('Videos error:', data);
+      try {
+        var response = await fetch(
+          XANO_BASE_URL +
+            '/api:PmBJV0AG/Get_public_portfolio_videos?portfolio_id=' +
+            encodeURIComponent(portfolioId),
+        );
+        var data = await response.json();
+        if (!response.ok) {
+          console.error('Videos error:', data);
+          return [];
+        }
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        console.error('Videos error:', error);
         return [];
       }
-      return Array.isArray(data) ? data : [];
     }
-
-    wireModalDismiss();
 
     if (!wrapper || !template) return;
 
     if (wrapper.hasAttribute(OWNED)) return;
     wrapper.setAttribute(OWNED, 'cdn');
-
-    closeModal({ restoreFocus: false });
 
     var canRevealPortfolios = false;
     var viewAllButton = document.querySelector('[data-btn-view-all]');
@@ -327,6 +445,7 @@
       return;
     }
 
+    loadedPortfolios = portfolios;
     template.classList.add('hidden');
 
     if (!portfolios.length) {
@@ -350,5 +469,10 @@
 
     canRevealPortfolios = portfolios.length > INITIAL_VISIBLE_COUNT;
     if (viewAllButton && canRevealPortfolios) viewAllButton.style.display = '';
+
+    // A deep link opened the dialog before these rows existed; fill it now. The
+    // open state is authoritative — the modal-open event may have been
+    // dispatched before this script's listener existed.
+    if (openedWithoutFill || modalIsOpen()) fillDefaultPortfolio();
   });
 })();

@@ -9,8 +9,10 @@ const vm = require('node:vm')
 const SOURCE = fs.readFileSync(path.join(__dirname, 'profile-portfolio.js'), 'utf8')
 
 /**
- * Minimal DOM stub. Only the surface `profile-portfolio.js` touches before it
- * decides whether to render: attribute lookups and the DOMContentLoaded listener.
+ * Minimal DOM stub. Only the surface `profile-portfolio.js` touches: attribute
+ * lookups, the DOMContentLoaded listener, the card list, and the modal elements
+ * it fills. Presentation of the modal belongs to the lumos modal system, so the
+ * stub deliberately offers no open/close machinery.
  */
 function classList() {
   const values = new Set()
@@ -21,11 +23,65 @@ function classList() {
   }
 }
 
+/** A modal media container: emptied with innerHTML, filled with appendChild. */
+function mediaContainer() {
+  const children = []
+  const contentWrapper = { style: {} }
+  return {
+    children,
+    contentWrapper,
+    set innerHTML(value) { if (value === '') children.length = 0 },
+    get innerHTML() { return '' },
+    appendChild(child) {
+      children.push(child)
+      child.parentNode = this
+    },
+    removeChild(child) {
+      const index = children.indexOf(child)
+      if (index > -1) children.splice(index, 1)
+    },
+    querySelectorAll(selector) {
+      return children.filter((child) => child.tag === selector)
+    },
+    closest(selector) {
+      return selector.includes('portfolio_modal-content-wrapper') ? contentWrapper : null
+    },
+  }
+}
+
+/** The authored `[data-highlights-loader]` element the renderer clones. */
+function loaderElement() {
+  return {
+    style: {},
+    isLoader: true,
+    cloneNode() {
+      const clone = {
+        style: {},
+        isLoader: true,
+        parentNode: null,
+        remove() {
+          if (clone.parentNode) clone.parentNode.removeChild(clone)
+        },
+      }
+      return clone
+    },
+  }
+}
+
 function makeEnv({
   response = [],
   responseOk = true,
   responsePromise,
   memberstackId = 'mem_test_starter',
+  imageRows = [],
+  videoRows = [],
+  imagesOk = true,
+  videosOk = true,
+  mediaFetch = null,
+  hasModalTitle = true,
+  hasLoader = true,
+  staleModalCopy = false,
+  modalOpenAtLoad = false,
 } = {}) {
   const listeners = {}
   const requests = []
@@ -69,45 +125,108 @@ function makeEnv({
     }
   }
 
-  const modalContent = { scrollTop: 25 }
-  const modalScrim = interactiveElement({ 'wf-portfolio-element': 'scrim' })
-  const modalClose = interactiveElement({ 'wf-portfolio-element': 'close' })
-  const modalListeners = {}
-  const modal = {
-    style: { display: 'flex' },
-    addEventListener(type, handler) { addListener(modalListeners, type, handler) },
-    click(target) {
-      return dispatchListeners(modalListeners, 'click', {
-        target,
-        preventDefault() {},
-      })
-    },
-    querySelector(selector) {
-      if (selector === '[wf-portfolio-element="content"]') return modalContent
-      if (selector === '[wf-portfolio-element="scrim"]') return modalScrim
-      return null
-    },
+  // Same attributes as the real modal children, but OUTSIDE the modal root —
+  // stands in for the old hidden modal still present in the published DOM.
+  const decoyTitle = { textContent: 'DECOY TITLE' }
+  const decoyDescription = { textContent: 'DECOY DESCRIPTION', style: {}, dataset: {} }
+  const decoyImages = mediaContainer()
+  const decoyVideos = mediaContainer()
+
+  function modalStub({ withTitle = true, withLoader = true, openAtLoad = false } = {}) {
+    const parts = {
+      title: withTitle ? { textContent: '' } : null,
+      description: {
+        textContent: '',
+        style: {},
+        dataset: { fullTextdescription: 'previous case study', expandeddescription: 'true' },
+      },
+      descriptionToggle: { removed: false, remove() { this.removed = true } },
+      images: mediaContainer(),
+      videos: mediaContainer(),
+      loader: withLoader ? loaderElement() : null,
+    }
+    const modalListeners = {}
+    parts.modal = {
+      style: {},
+      addEventListener(type, handler) { addListener(modalListeners, type, handler) },
+      click(target) {
+        return dispatchListeners(modalListeners, 'click', { target, preventDefault() {} })
+      },
+      // showModal() sets the native open state; the renderer reads it to notice
+      // a dialog lumos opened before this script's listeners existed.
+      hasAttribute(name) { return name === 'open' && !!openAtLoad },
+      querySelector(selector) {
+        if (selector === '[portfolio-title]') return parts.title
+        if (selector === '[portfolio-description]') return parts.description
+        if (selector === '[wf-portfolio-element="images"]') return parts.images
+        if (selector === '[wf-portfolio-element="videos"]') return parts.videos
+        if (selector === '[data-highlights-loader]') return parts.loader
+        if (selector === '[data-toggle-for="description"]') return parts.descriptionToggle
+        return null
+      },
+    }
+    // `true` models a real <dialog> (an `open` property); `'attribute'` models a
+    // host that only reflects the attribute.
+    if (openAtLoad === true) parts.modal.open = true
+    return parts
   }
+
+  const live = modalStub({
+    withTitle: hasModalTitle,
+    withLoader: hasLoader,
+    openAtLoad: modalOpenAtLoad,
+  })
+  // An older non-dialog copy of the modal, earlier in document order, so the
+  // plain attribute selector would find it first.
+  const stale = staleModalCopy ? modalStub() : null
+
+  const modal = live.modal
+  const modalTitle = live.title
+  const modalDescription = live.description
+  const descriptionToggle = live.descriptionToggle
+  const modalImages = live.images
+  const modalVideos = live.videos
+  const loader = live.loader
 
   const template = {
     classList: classList(),
     style: {},
     cloneNode() {
       const idBlock = { textContent: '' }
+      const thumb = { src: '' }
       const openButton = interactiveElement({ 'wf-portfolio-element': 'open' })
-      return {
+      // A card child that is not the open control — a thumbnail, say. Clicking
+      // it must still fill, because the Designer can move data-modal-trigger.
+      const otherChild = interactiveElement()
+      const cardListeners = {}
+      const card = {
         classList: classList(),
         style: {},
         attrs: {},
+        defaultPrevented: false,
+        openButton,
+        otherChild,
+        thumb,
+        addEventListener(type, handler) { addListener(cardListeners, type, handler) },
+        // Clicks on card children bubble to the card, as they do in a browser.
+        click(target = openButton) {
+          return dispatchListeners(cardListeners, 'click', {
+            target,
+            preventDefault() { card.defaultPrevented = true },
+          })
+        },
         setAttribute(name, value) { this.attrs[name] = value },
         querySelector(selector) {
           if (selector === '.portfolio_card-id') return idBlock
+          if (selector === '[wf-portfolio-element="thumb"]') return thumb
           if (selector === '[wf-portfolio-element="open"]') return openButton
           return null
         },
-        openButton,
         get portfolioId() { return idBlock.textContent },
       }
+      openButton.click = () => card.click(openButton)
+      otherChild.click = () => card.click(otherChild)
+      return card
     },
   }
 
@@ -159,12 +278,24 @@ function makeEnv({
     dispatch(type, event) {
       return dispatchListeners(listeners, type, event)
     },
+    createElement(tag) {
+      const element = { tag, className: '', parentNode: null, paused: false }
+      if (tag === 'video') element.pause = () => { element.paused = true }
+      return element
+    },
     querySelector(selector) {
       if (selector === '[data-highlights]' || selector === '.case-studies-wrapper') return wrapper
       if (selector === '[portfolio-section]') return section
       if (selector === '#portfolio-block') return block
       if (selector === '[data-btn-view-all]') return viewAllButton
-      if (selector === '[wf-portfolio-element="modal"]') return modal
+      if (selector === 'dialog[wf-portfolio-element="modal"]') return modal
+      if (selector === '[wf-portfolio-element="modal"]') return (stale || live).modal
+      // Document-wide lookups for modal children must never win: these decoys
+      // sit outside the modal root and stand in for the stale hidden modal.
+      if (selector === '[portfolio-title]') return decoyTitle
+      if (selector === '[portfolio-description]') return decoyDescription
+      if (selector === '[wf-portfolio-element="images"]') return decoyImages
+      if (selector === '[wf-portfolio-element="videos"]') return decoyVideos
       return null
     },
     querySelectorAll(selector) {
@@ -177,14 +308,32 @@ function makeEnv({
     body: { style: {} },
   }
 
+  const windowListeners = {}
   const window = {
     starter_memberstack_id: memberstackId,
     location: { hostname: 'the-starters-3-0.webflow.io' },
     document,
+    addEventListener(type, handler) {
+      addListener(windowListeners, type, handler)
+    },
+    // Stands in for the lumos modal system's modal-open / modal-close events.
+    dispatch(type, detail) {
+      return dispatchListeners(windowListeners, type, { detail })
+    },
     fetch(url) {
       requests.push(url)
       if (url.includes('/Get_approved_portfolios?')) {
         return responsePromise || Promise.resolve({ ok: responseOk, json: () => Promise.resolve(response) })
+      }
+      if (mediaFetch) {
+        const controlled = mediaFetch(url)
+        if (controlled) return controlled
+      }
+      if (url.includes('/Get_public_portfolio_images?')) {
+        return Promise.resolve({ ok: imagesOk, json: () => Promise.resolve(imageRows) })
+      }
+      if (url.includes('/Get_public_portfolio_videos?')) {
+        return Promise.resolve({ ok: videosOk, json: () => Promise.resolve(videoRows) })
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
     },
@@ -206,6 +355,8 @@ function makeEnv({
 
   return {
     document,
+    window,
+    stale,
     wrapper,
     requests,
     appendedIds,
@@ -214,13 +365,50 @@ function makeEnv({
     section,
     viewAllButton,
     modal,
-    modalContent,
-    modalScrim,
-    modalClose,
+    modalTitle,
+    modalDescription,
+    modalImages,
+    modalVideos,
+    descriptionToggle,
+    loader,
+    decoyTitle,
+    decoyDescription,
+    decoyImages,
+    decoyVideos,
   }
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10))
+
+/** Media fetches held open until the test resolves them, keyed by request URL. */
+function deferredMedia() {
+  const entries = new Map()
+
+  function slot(url) {
+    let entry = entries.get(url)
+    if (!entry) {
+      entry = {}
+      entry.promise = new Promise((resolve) => { entry.resolve = resolve })
+      entries.set(url, entry)
+    }
+    return entry
+  }
+
+  return {
+    fetch(url) {
+      if (!url.includes('/Get_public_portfolio_')) return null
+      return slot(url).promise
+    },
+    resolve(match, rows) {
+      const url = [...entries.keys()].find((key) => key.includes(match))
+      assert.ok(url, `no pending media request matching ${match}`)
+      entries.get(url).resolve({ ok: true, json: () => Promise.resolve(rows) })
+    },
+    pending(match) {
+      return [...entries.keys()].some((key) => key.includes(match))
+    },
+  }
+}
 
 test('is the single renderer and reads approved public portfolios only', async () => {
   const env = makeEnv()
@@ -325,56 +513,514 @@ test('does not treat a failed public read as an empty portfolio list', async () 
   assert.deepEqual(env.errors, ['Portfolio: approved public read failed'])
 })
 
-test('closes the modal from the custom-attribute close control', async () => {
-  const env = makeEnv({ response: [{ id: 1, title: 'Case study' }] })
+test('fills only the elements inside the modal root, never a duplicate outside it', async () => {
+  const env = makeEnv({
+    response: [{ id: 1, title: 'Rebrand for Acme', description: 'Line one\nLine two' }],
+    imageRows: [{ image_url: '/vault/one.png' }],
+  })
   env.document.dispatch('DOMContentLoaded')
   await settle()
 
-  env.appendedCards[0].openButton.click()
+  await env.appendedCards[0].openButton.click()
   await settle()
-  assert.equal(env.modal.style.display, 'flex')
-  assert.equal(env.document.body.style.overflow, 'hidden')
 
-  await env.modal.click(env.modalClose)
+  assert.equal(env.modalTitle.textContent, 'Rebrand for Acme')
+  assert.equal(env.modalDescription.textContent, 'Line one\nLine two')
+  assert.equal(env.modalDescription.style.whiteSpace, 'pre-line')
+  assert.equal(env.modalImages.children.length, 1)
 
-  assert.equal(env.modal.style.display, 'none')
-  assert.equal(env.document.body.style.overflow, '')
-  assert.equal(env.modalContent.scrollTop, 0)
-  assert.equal(env.appendedCards[0].openButton.focused, true)
+  assert.equal(env.decoyTitle.textContent, 'DECOY TITLE')
+  assert.equal(env.decoyDescription.textContent, 'DECOY DESCRIPTION')
+  assert.deepEqual(env.decoyDescription.style, {})
+  assert.equal(env.decoyImages.children.length, 0)
+  assert.equal(env.decoyVideos.children.length, 0)
 })
 
-test('closes the modal from the custom-attribute scrim', async () => {
-  const env = makeEnv({ response: [{ id: 1 }] })
+test('truncates a very long case-study title', async () => {
+  const longTitle = 'x'.repeat(200)
+  const env = makeEnv({ response: [{ id: 1, title: longTitle }] })
   env.document.dispatch('DOMContentLoaded')
   await settle()
-  env.appendedCards[0].openButton.click()
+
+  await env.appendedCards[0].openButton.click()
   await settle()
 
-  await env.modal.click(env.modalScrim)
-
-  assert.equal(env.modal.style.display, 'none')
+  assert.equal(env.modalTitle.textContent, `${'x'.repeat(150)}...`)
 })
 
-test('closes the open modal with Escape', async () => {
-  const env = makeEnv({ response: [{ id: 1 }] })
+test('fills the description without a title element present', async () => {
+  const env = makeEnv({
+    response: [{ id: 1, title: 'Rebrand for Acme', description: 'The story' }],
+    hasModalTitle: false,
+  })
   env.document.dispatch('DOMContentLoaded')
   await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(env.modalTitle, null)
+  assert.equal(env.modalDescription.textContent, 'The story')
+})
+
+test('resets the see-more clamp state before writing a new description', async () => {
+  const env = makeEnv({ response: [{ id: 1, description: 'Fresh copy' }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(env.descriptionToggle.removed, true, 'the previous See more control is gone')
+  assert.equal(env.modalDescription.dataset.fullTextdescription, undefined)
+  assert.equal(env.modalDescription.dataset.expandeddescription, undefined)
+  assert.equal(env.modalDescription.textContent, 'Fresh copy')
+})
+
+test('shows a loader in both media areas while media loads and clears it on settle', async () => {
+  const media = deferredMedia()
+  const env = makeEnv({
+    response: [{ id: 1, title: 'Rebrand for Acme' }],
+    mediaFetch: (url) => media.fetch(url),
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
   env.appendedCards[0].openButton.click()
   await settle()
 
+  assert.equal(env.modalImages.children.length, 1)
+  assert.equal(env.modalImages.children[0].isLoader, true)
+  assert.equal(env.modalVideos.children.length, 1)
+  assert.equal(env.modalVideos.children[0].isLoader, true)
+  assert.equal(env.loader.style.display, 'none', 'the authored original stays hidden')
+  assert.equal(env.modalImages.children[0].style.display, '', 'the clone is visible')
+
+  media.resolve('Get_public_portfolio_images?portfolio_id=1', [{ image_url: '/vault/one.png' }])
+  media.resolve('Get_public_portfolio_videos?portfolio_id=1', [{ video_url: '/vault/one.mp4' }])
+  await settle()
+
+  assert.deepEqual(env.modalImages.children.map((child) => child.tag), ['img'])
+  assert.deepEqual(env.modalVideos.children.map((child) => child.tag), ['video'])
+})
+
+test('fills media when the Designer has not authored a loader element', async () => {
+  const env = makeEnv({
+    response: [{ id: 1, title: 'Rebrand for Acme' }],
+    imageRows: [{ image_url: '/vault/one.png' }],
+    videoRows: [{ video_url: '/vault/one.mp4' }],
+    hasLoader: false,
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(env.loader, null)
+  assert.deepEqual(env.modalImages.children.map((child) => child.tag), ['img'])
+  assert.deepEqual(env.modalVideos.children.map((child) => child.tag), ['video'])
+  assert.deepEqual(env.errors, [])
+})
+
+test('fetches images and videos together rather than one after the other', async () => {
+  const media = deferredMedia()
+  const env = makeEnv({
+    response: [{ id: 1 }],
+    mediaFetch: (url) => media.fetch(url),
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(media.pending('Get_public_portfolio_images?portfolio_id=1'), true)
+  assert.equal(
+    media.pending('Get_public_portfolio_videos?portfolio_id=1'),
+    true,
+    'the videos read starts without waiting for images',
+  )
+})
+
+test('never lets a superseded case study overwrite the open one', async () => {
+  const media = deferredMedia()
+  const env = makeEnv({
+    response: [
+      { id: 1, title: 'First case study' },
+      { id: 2, title: 'Second case study' },
+    ],
+    mediaFetch: (url) => media.fetch(url),
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  env.appendedCards[0].openButton.click()
+  await settle()
+  env.appendedCards[1].openButton.click()
+  await settle()
+
+  media.resolve('Get_public_portfolio_images?portfolio_id=2', [{ image_url: '/vault/second.png' }])
+  media.resolve('Get_public_portfolio_videos?portfolio_id=2', [])
+  await settle()
+
+  // The slow first request lands after the visitor already moved on.
+  media.resolve('Get_public_portfolio_images?portfolio_id=1', [{ image_url: '/vault/first.png' }])
+  media.resolve('Get_public_portfolio_videos?portfolio_id=1', [{ video_url: '/vault/first.mp4' }])
+  await settle()
+
+  assert.equal(env.modalTitle.textContent, 'Second case study')
+  assert.deepEqual(
+    env.modalImages.children.map((child) => child.src),
+    ['https://x08a-5ko8-jj1r.n7c.xano.io/vault/second.png?tpl=large'],
+  )
+  assert.equal(env.modalVideos.children.length, 0)
+  assert.equal(env.modalVideos.contentWrapper.style.display, 'none')
+})
+
+test('hides the images and videos blocks for a text-only case study', async () => {
+  const env = makeEnv({ response: [{ id: 1, title: 'Legacy import', description: 'Text only' }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(env.modalImages.contentWrapper.style.display, 'none')
+  assert.equal(env.modalVideos.contentWrapper.style.display, 'none')
+  assert.equal(env.modalImages.children.length, 0, 'the loader clone is gone')
+  assert.equal(env.modalVideos.children.length, 0)
+})
+
+test('hides a media block and reports it when the read fails', async () => {
+  const env = makeEnv({
+    response: [{ id: 1 }],
+    imageRows: { code: 'ERROR_NOT_FOUND' },
+    imagesOk: false,
+    videoRows: [{ video_url: '/vault/one.mp4' }],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(env.modalImages.children.length, 0)
+  assert.equal(env.modalImages.contentWrapper.style.display, 'none')
+  assert.deepEqual(env.errors, ['Images error:'])
+  assert.deepEqual(env.modalVideos.children.map((child) => child.tag), ['video'])
+  assert.equal(env.modalVideos.contentWrapper.style.display, '')
+})
+
+test('leaves no earlier media behind when a new case study is opened', async () => {
+  const env = makeEnv({
+    response: [
+      { id: 1, title: 'First' },
+      { id: 2, title: 'Second' },
+    ],
+    imageRows: [{ image_url: '/vault/shared.png' }],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+  await env.appendedCards[1].openButton.click()
+  await settle()
+
+  assert.equal(env.modalImages.children.length, 1, 'the previous case study left nothing behind')
+})
+
+test('never writes to the modal element, so lumos keeps control of presentation', async () => {
+  const env = makeEnv({
+    response: [{ id: 1, title: 'Rebrand for Acme' }],
+    imageRows: [{ image_url: '/vault/one.png' }],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.deepEqual(env.modal.style, {}, 'init leaves the dialog untouched')
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+  assert.deepEqual(env.modal.style, {}, 'filling the dialog leaves its style untouched')
+  assert.deepEqual(env.document.body.style, {}, 'page scroll locking belongs to lumos')
+
+  // Dismissal is the lumos modal system's job: these must be inert here.
   await env.document.dispatch('keydown', { key: 'Escape', preventDefault() {} })
+  await env.modal.click(env.modal)
+  await settle()
 
-  assert.equal(env.modal.style.display, 'none')
+  assert.deepEqual(env.modal.style, {}, 'close paths are not this script\'s to handle')
+  assert.equal(env.modalImages.children.length, 1, 'and they do not clear filled data')
 })
 
-test('keeps the modal open for clicks inside its content', async () => {
+test('paints the loading state even after a text-only case study hid the section', async () => {
+  const media = deferredMedia()
+  const env = makeEnv({
+    response: [
+      { id: 1, title: 'Text only' },
+      { id: 2, title: 'With media' },
+    ],
+    mediaFetch: (url) => media.fetch(url),
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  env.appendedCards[0].openButton.click()
+  await settle()
+  media.resolve('Get_public_portfolio_images?portfolio_id=1', [])
+  media.resolve('Get_public_portfolio_videos?portfolio_id=1', [])
+  await settle()
+
+  assert.equal(env.modalImages.contentWrapper.style.display, 'none')
+  assert.equal(env.modalVideos.contentWrapper.style.display, 'none')
+
+  env.appendedCards[1].openButton.click()
+  await settle()
+
+  assert.equal(
+    env.modalImages.contentWrapper.style.display,
+    '',
+    'the Images section is visible while its loader shows',
+  )
+  assert.equal(env.modalImages.children[0].isLoader, true)
+  assert.equal(env.modalVideos.contentWrapper.style.display, '')
+  assert.equal(env.modalVideos.children[0].isLoader, true)
+
+  media.resolve('Get_public_portfolio_images?portfolio_id=2', [{ image_url: '/vault/two.png' }])
+  media.resolve('Get_public_portfolio_videos?portfolio_id=2', [])
+  await settle()
+
+  assert.equal(env.modalImages.contentWrapper.style.display, '')
+  assert.equal(
+    env.modalVideos.contentWrapper.style.display,
+    'none',
+    'and the section hides again once its empty result lands',
+  )
+})
+
+test('fills the native dialog, not a stale copy of the modal earlier in the page', async () => {
+  const env = makeEnv({
+    response: [{ id: 1, title: 'Rebrand for Acme' }],
+    imageRows: [{ image_url: '/vault/one.png' }],
+    staleModalCopy: true,
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(env.modalTitle.textContent, 'Rebrand for Acme')
+  assert.equal(env.modalImages.children.length, 1)
+  assert.equal(env.stale.title.textContent, '', 'the stale copy is never filled')
+  assert.equal(env.stale.images.children.length, 0)
+})
+
+test('fills from any click on the card, not only the open control', async () => {
+  const env = makeEnv({ response: [{ id: 1, title: 'Rebrand for Acme' }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].otherChild.click()
+  await settle()
+
+  assert.equal(env.modalTitle.textContent, 'Rebrand for Acme')
+  assert.equal(
+    env.appendedCards[0].defaultPrevented,
+    false,
+    'a click that is not on the open control keeps its default behaviour',
+  )
+})
+
+test('suppresses the default only for the card open control', async () => {
+  const env = makeEnv({ response: [{ id: 1, title: 'Rebrand for Acme' }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(env.appendedCards[0].defaultPrevented, true, 'an href="#" control must not jump')
+})
+
+test('hides the authored loader before any case study is opened', async () => {
   const env = makeEnv({ response: [{ id: 1 }] })
   env.document.dispatch('DOMContentLoaded')
   await settle()
-  env.appendedCards[0].openButton.click()
+
+  assert.equal(
+    env.loader.style.display,
+    'none',
+    'a deep-linked open must not show loading text with nothing loading',
+  )
+})
+
+test('fills the first case study when lumos opens the modal without a card click', async () => {
+  const env = makeEnv({
+    response: [
+      { id: 1, title: 'First case study' },
+      { id: 2, title: 'Second case study' },
+    ],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+  assert.equal(env.modalTitle.textContent, '')
+
+  await env.window.dispatch('modal-open', { modal: env.modal })
   await settle()
 
-  await env.modal.click(env.modalContent)
+  assert.equal(env.modalTitle.textContent, 'First case study')
+})
 
-  assert.equal(env.modal.style.display, 'flex')
+test('fills a deep-linked modal that opened before the case studies arrived', async () => {
+  let resolveResponse
+  const responsePromise = new Promise((resolve) => { resolveResponse = resolve })
+  const env = makeEnv({ responsePromise })
+
+  env.document.dispatch('DOMContentLoaded')
+  await env.window.dispatch('modal-open', { modal: env.modal })
+  assert.equal(env.modalTitle.textContent, '', 'nothing to fill with yet')
+
+  resolveResponse({ ok: true, json: () => Promise.resolve([{ id: 1, title: 'First case study' }]) })
+  await settle()
+
+  assert.equal(env.modalTitle.textContent, 'First case study')
+})
+
+test('fills a modal lumos opened before this script started listening', async () => {
+  // The deep-link case on the live page: lumos runs its DOMContentLoaded
+  // handler first and dispatches modal-open before our listener exists, so the
+  // event never reaches us. Only the dialog's open state gives it away.
+  const env = makeEnv({
+    response: [
+      { id: 1, title: 'First case study' },
+      { id: 2, title: 'Second case study' },
+    ],
+    modalOpenAtLoad: true,
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.equal(env.modalTitle.textContent, 'First case study')
+})
+
+test('reads the open state from the attribute when there is no open property', async () => {
+  const env = makeEnv({
+    response: [{ id: 1, title: 'First case study' }],
+    modalOpenAtLoad: 'attribute',
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.equal(env.modal.open, undefined)
+  assert.equal(env.modalTitle.textContent, 'First case study')
+})
+
+test('does not fill a modal that is closed when the case studies arrive', async () => {
+  const env = makeEnv({ response: [{ id: 1, title: 'First case study' }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.equal(env.modalTitle.textContent, '', 'the authored copy is left alone until a card click')
+  assert.equal(
+    env.requests.filter((url) => url.includes('/Get_public_portfolio_')).length,
+    0,
+    'and no media is read for a modal nobody opened',
+  )
+})
+
+test('leaves a card-opened modal alone when the open event arrives', async () => {
+  const env = makeEnv({
+    response: [
+      { id: 1, title: 'First case study' },
+      { id: 2, title: 'Second case study' },
+    ],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[1].openButton.click()
+  await settle()
+  const requestsAfterClick = env.requests.length
+
+  await env.window.dispatch('modal-open', { modal: env.modal })
+  await settle()
+
+  assert.equal(env.modalTitle.textContent, 'Second case study')
+  assert.equal(env.requests.length, requestsAfterClick, 'no second round of media reads')
+})
+
+test('ignores open and close events belonging to another modal', async () => {
+  const env = makeEnv({
+    response: [{ id: 1, title: 'First case study' }],
+    videoRows: [{ video_url: '/vault/one.mp4' }],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.window.dispatch('modal-open', { modal: { style: {} } })
+  await settle()
+  assert.equal(env.modalTitle.textContent, '')
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+  await env.window.dispatch('modal-close', { modal: { style: {} } })
+
+  assert.deepEqual(env.modalVideos.children.map((child) => child.paused), [false])
+})
+
+test('skips media rows that carry no file and hides the empty section', async () => {
+  const env = makeEnv({
+    response: [{ id: 1 }],
+    imageRows: [{ image_url: '' }],
+    videoRows: [{ video_url: null }],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(env.modalImages.children.length, 0, 'no element with an empty src')
+  assert.equal(env.modalImages.contentWrapper.style.display, 'none')
+  assert.equal(env.modalVideos.children.length, 0)
+  assert.equal(env.modalVideos.contentWrapper.style.display, 'none')
+})
+
+test('asks for the large rendition without breaking an existing query string', async () => {
+  const env = makeEnv({
+    response: [{ id: 1, thumbnail_url: 'https://cdn.example.com/thumb.png?v=2' }],
+    imageRows: [{ image_url: 'https://cdn.example.com/one.png?signature=abc' }],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.equal(env.appendedCards[0].thumb.src, 'https://cdn.example.com/thumb.png?v=2&tpl=large')
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(
+    env.modalImages.children[0].src,
+    'https://cdn.example.com/one.png?signature=abc&tpl=large',
+  )
+})
+
+test('pauses modal videos when lumos closes the modal', async () => {
+  const env = makeEnv({
+    response: [{ id: 1 }],
+    videoRows: [{ video_url: '/vault/one.mp4' }, { video_url: '/vault/two.mp4' }],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+  assert.deepEqual(env.modalVideos.children.map((child) => child.paused), [false, false])
+
+  await env.window.dispatch('modal-close', { modal: env.modal })
+
+  assert.deepEqual(env.modalVideos.children.map((child) => child.paused), [true, true])
 })
