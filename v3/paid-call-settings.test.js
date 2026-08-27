@@ -2093,6 +2093,53 @@ test('prerequisite events coalesce behind Paid write auth recovery', async () =>
   assert.equal(reads, 4)
 })
 
+test('queued prerequisite events do not erase a failed Paid write error', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  let reads = 0
+  const active = canonical({
+    services: [service({ price_cents: 100 })],
+    readiness: { paid_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => active }
+      },
+      '/starter/paid-call-settings/upsert/v3': () => {
+        postStarted.resolve()
+        return finishPost.promise
+      },
+    },
+  })
+  await settle()
+
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged')
+  await result.dispatchWindow('starterStripeConnectReady')
+  assert.equal(reads, 1)
+
+  finishPost.resolve({
+    ok: false,
+    status: 400,
+    json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+  })
+  await settle()
+
+  assert.equal(reads, 1)
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(
+    result.dom.nativeErrorMessage.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+})
+
 test('logout supersedes pending Paid write revalidation', async () => {
   const postStarted = deferred()
   const finishPost = deferred()

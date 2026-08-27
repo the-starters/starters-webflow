@@ -754,6 +754,10 @@
   function finishWrite(write) {
     if (activeWrite === write) activeWrite = null
     write.resolve()
+    if (write.failed) {
+      prerequisiteRefreshQueued = false
+      return
+    }
     flushQueuedPrerequisiteRefresh()
   }
 
@@ -942,6 +946,7 @@
       emit('starterPaidCallWriteSuccess', { action: 'upsert', configId: saved.config_id })
       return canonical
     } catch (error) {
+      write.failed = true
       if (currentRender(version, memberId)) {
         if (!failClosedSession(error)) {
           setStatus('error')
@@ -1006,6 +1011,7 @@
       emit('starterPaidCallWriteSuccess', { action: 'disable', configId: service.config_id })
       return canonical
     } catch (error) {
+      write.failed = true
       if (currentRender(version, memberId)) {
         if (!failClosedSession(error)) {
           setStatus('error')
