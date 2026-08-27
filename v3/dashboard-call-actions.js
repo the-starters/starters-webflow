@@ -1,11 +1,10 @@
 /**
  * Canonical dashboard call lifecycle actions.
  *
- * Webflow owns the authored modal and reason fields. This module binds those
- * elements and sends only environment-safe commands that have a published V3
- * contract: Starter decline of a pending call, and Starter or Brand cancel of
- * a booked (confirmed/rescheduled) call. Reschedule stays hidden until its
- * canonical lifecycle contract ships.
+ * Webflow owns the base modal plus the decline and cancel reason fields. This
+ * module binds those elements, renders the missing reschedule views, and sends
+ * only environment-safe commands with published V3 contracts: decline, cancel,
+ * and propose-then-confirm reschedule for eligible Free calls.
  */
 ;(function (global) {
   'use strict'
