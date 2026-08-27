@@ -915,6 +915,7 @@
       ) {
         throw new Error('Paid-call settings did not match canonical readback')
       }
+      write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
       emit('starterPaidCallWriteSuccess', { action: 'upsert', configId: saved.config_id })
@@ -973,6 +974,7 @@
       if (canonicalService(canonical)) {
         throw new Error('Paid-call service remained active after canonical readback')
       }
+      write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
       setMessage('Paid calls are off.')
@@ -1058,7 +1060,26 @@
         }
         if (liveMember.id !== member.id) return loadSession(liveMember, false)
       }
-      const canonical = await readCanonicalSettings()
+      let canonical
+      try {
+        canonical = await readCanonicalSettings()
+      } catch (error) {
+        if (!pendingWrite || !pendingWrite.canonical) throw error
+        let fallbackMember = null
+        try {
+          fallbackMember = await currentMember(true)
+        } catch (memberError) {
+          fallbackMember = null
+        }
+        if (!currentRender(version, member.id)) return null
+        if (!fallbackMember || !fallbackMember.id) {
+          setStatus('error')
+          clearRenderedState('Sign in to manage paid calls.')
+          return null
+        }
+        if (fallbackMember.id !== member.id) return loadSession(fallbackMember, false)
+        return render(pendingWrite.canonical)
+      }
       if (!currentRender(version, member.id)) return null
       return render(canonical)
     } catch (error) {

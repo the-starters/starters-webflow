@@ -1978,7 +1978,7 @@ test('a transient empty auth notification suspends and restores the Paid canonic
   )
 })
 
-test('an early failing empty-auth read cannot hide a successful Paid update', async () => {
+test('a failed post-write auth read falls back to the verified Paid update', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
   let reads = 0
@@ -1992,6 +1992,9 @@ test('an early failing empty-auth read cannot hide a successful Paid update', as
       '/starter/paid-call-settings/get/v3': ({ state }) => {
         reads += 1
         if (reads > 1 && !postFinished) {
+          return { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+        }
+        if (reads === 3) {
           return { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
         }
         return { ok: true, status: 200, json: async () => state }
@@ -2039,6 +2042,9 @@ test('an early failing empty-auth read cannot hide a successful Paid update', as
 test('logout supersedes pending Paid write revalidation', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
+  const transitionStarted = deferred()
+  const failTransition = deferred()
+  let reads = 0
   const result = load({
     initial: canonical({
       services: [service()],
@@ -2046,15 +2052,28 @@ test('logout supersedes pending Paid write revalidation', async () => {
     }),
     routes: {
       '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        if (reads === 3) {
+          transitionStarted.resolve()
+          return failTransition.promise
+        }
         return { ok: true, status: 200, json: async () => state }
       },
-      '/starter/paid-call-settings/upsert/v3': () => {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
         postStarted.resolve()
-        return finishPost.promise.then(() => ({
-          ok: true,
-          status: 200,
-          json: async () => ({ service: service({ revision: 5 }) }),
-        }))
+        return finishPost.promise.then(() => {
+          const saved = service({
+            title: body.title,
+            price_cents: body.price_cents,
+            duration: body.duration_minutes,
+            revision: 5,
+          })
+          setState(canonical({
+            services: [saved],
+            readiness: { paid_call_enabled: true, bookable: true },
+          }))
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        })
       },
     },
   })
@@ -2066,9 +2085,15 @@ test('logout supersedes pending Paid write revalidation', async () => {
   await postStarted.promise
   const staleTransition = result.notifyAuthChange(null)
   await settle()
+  finishPost.resolve()
+  await transitionStarted.promise
   result.expireMemberSilently()
   await result.notifyAuthChange(null)
-  finishPost.resolve()
+  failTransition.resolve({
+    ok: false,
+    status: 503,
+    json: async () => ({ message: 'temporarily unavailable' }),
+  })
   await staleTransition
   await settle()
 
@@ -2080,6 +2105,9 @@ test('logout supersedes pending Paid write revalidation', async () => {
 test('account switch supersedes pending Paid write revalidation', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
+  const transitionStarted = deferred()
+  const failTransition = deferred()
+  let memberAReads = 0
   const result = load({
     initial: canonical({
       services: [service()],
@@ -2100,15 +2128,28 @@ test('account switch supersedes pending Paid write revalidation', async () => {
             }),
           }
         }
+        memberAReads += 1
+        if (memberAReads === 3) {
+          transitionStarted.resolve()
+          return failTransition.promise
+        }
         return { ok: true, status: 200, json: async () => state }
       },
-      '/starter/paid-call-settings/upsert/v3': () => {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
         postStarted.resolve()
-        return finishPost.promise.then(() => ({
-          ok: true,
-          status: 200,
-          json: async () => ({ service: service({ revision: 5 }) }),
-        }))
+        return finishPost.promise.then(() => {
+          const saved = service({
+            title: body.title,
+            price_cents: body.price_cents,
+            duration: body.duration_minutes,
+            revision: 5,
+          })
+          setState(canonical({
+            services: [saved],
+            readiness: { paid_call_enabled: true, bookable: true },
+          }))
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        })
       },
     },
   })
@@ -2120,8 +2161,14 @@ test('account switch supersedes pending Paid write revalidation', async () => {
   await postStarted.promise
   const staleTransition = result.notifyAuthChange(null)
   await settle()
-  await result.changeMember({ id: 'member-b' })
   finishPost.resolve()
+  await transitionStarted.promise
+  await result.changeMember({ id: 'member-b' })
+  failTransition.resolve({
+    ok: false,
+    status: 503,
+    json: async () => ({ message: 'temporarily unavailable' }),
+  })
   await staleTransition
   await settle()
 
