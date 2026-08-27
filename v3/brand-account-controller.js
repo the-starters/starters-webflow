@@ -33,9 +33,10 @@
  * existing submit owners. The configured identity-scoped mode resolves the
  * current member through the canonical route-guard role contract, claims Brand
  * and Talent Account Security, and guards the visible Talent edit-profile form.
- * A valid changed login email can save independently when other required
- * profile fields are incomplete; a valid full-profile submit changes the login
- * email first and then replays its Designer-authored Xano submission:
+ * A valid changed login email can save independently when Personal Details is
+ * invalid. When Personal Details is valid, the controller changes the login
+ * email first and then authorizes one replay of its Designer-authored Xano save;
+ * required fields in later sections do not block that replay:
  *   window.StartersBrandAccountConfig = { guardSecurityForm: 'identity' }
  * The legacy `brand` mode remains supported for a rollback-safe rollout.
  */
@@ -754,6 +755,51 @@
     }, 0)
   }
 
+  function replayStarterProfileClick(form, submitter, proof) {
+    var controller = window.StartersStarterEditProfile
+    if (
+      !submitter ||
+      typeof submitter.click !== 'function' ||
+      !controller ||
+      typeof controller.authorizePersonalDetailsReplay !== 'function' ||
+      !controller.authorizePersonalDetailsReplay(form, proof)
+    ) {
+      return false
+    }
+    form.setAttribute('data-brand-account-native-replay', 'true')
+    window.setTimeout(function () {
+      try {
+        submitter.click()
+      } finally {
+        if (typeof controller.clearPersonalDetailsReplay === 'function') {
+          controller.clearPersonalDetailsReplay(form)
+        }
+        form.setAttribute('data-brand-account-native-replay', 'false')
+      }
+    }, 0)
+    return true
+  }
+
+  function starterPersonalDetailsValid() {
+    var controller = window.StartersStarterEditProfile
+    if (!controller || typeof controller.validatePersonalDetails !== 'function') return false
+    try {
+      var result = controller.validatePersonalDetails()
+      return !!(result && result.valid)
+    } catch (_) {
+      return false
+    }
+  }
+
+  async function starterProfileAuthorityConfirmed(memberId, email) {
+    try {
+      var member = await currentMember(memberstack())
+      return member.id === memberId && memberEmail(member) === email
+    } catch (_) {
+      return false
+    }
+  }
+
   function securityModeOwnsRole(mode, role) {
     if (mode === 'brand') return role === 'brand-free' || role === 'brand-paid'
     if (mode === 'identity') {
@@ -771,13 +817,22 @@
     form.setAttribute('data-starter-identity-bound', 'true')
     var busy = false
     var ownsSubmission = false
+    var submissionMemberId = ''
     var profileEmailInput = form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
     var profileEmailBaseline = trim(profileEmailInput && profileEmailInput.value).toLowerCase()
     var profileEmailChanged = false
 
+    function currentProfileEmail() {
+      return trim(profileEmailInput && profileEmailInput.value).toLowerCase()
+    }
+
+    function profileEmailMatches(value) {
+      return currentProfileEmail() === trim(value).toLowerCase()
+    }
+
     function rememberProfileEmail(value) {
       profileEmailBaseline = trim(value).toLowerCase()
-      profileEmailChanged = false
+      profileEmailChanged = currentProfileEmail() !== profileEmailBaseline
     }
 
     if (profileEmailInput && typeof profileEmailInput.addEventListener === 'function') {
@@ -791,16 +846,15 @@
       })
     }
 
-    // Native constraint validation prevents the form's submit event from
-    // firing when an unrelated required profile field is incomplete. The
-    // authored submit disables pointer events in that state, so its direct
-    // wrapper receives the click. Keep that validation for profile saves, but
-    // let a valid changed login email use the identity path independently. A
-    // later complete profile save sees an unchanged email and replays the
-    // authored form normally.
+    // The authored profile controller handles button clicks directly, so even
+    // a valid form does not produce the native submit event intercepted below.
+    // Own every real changed-email click first. Invalid Personal Details can
+    // still save the login email independently; valid Personal Details replays
+    // the authored click after Memberstack accepts the identity change.
     form.addEventListener(
       'click',
       function (event) {
+        if (form.getAttribute('data-brand-account-native-replay') === 'true') return
         var submit =
           form.querySelector('[data-edit-submit]') || form.querySelector('[type="submit"]')
         var clickedSubmit =
@@ -810,7 +864,6 @@
             event.target === submit.parentElement)
         if (!clickedSubmit || busy) return
         if (!profileEmailChanged) return
-        if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
 
         var emailInput = profileEmailInput || form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
         if (
@@ -823,6 +876,7 @@
 
         var email = trim(emailInput.value).toLowerCase()
         if (!EMAIL_PATTERN.test(email)) return
+        var profileWasValid = starterPersonalDetailsValid()
 
         event.preventDefault()
         if (typeof event.stopImmediatePropagation === 'function') {
@@ -830,16 +884,18 @@
         }
         busy = true
         ownsSubmission = false
+        submissionMemberId = ''
 
         Promise.resolve()
           .then(async function () {
             var guard = window.StartersV3RouteGuard
-            if (!guard || typeof guard.memberRole !== 'function') return false
+            if (!guard || typeof guard.memberRole !== 'function') return null
             var member = await currentMember(memberstack())
-            if (guard.memberRole(member) !== 'talent') return false
+            if (guard.memberRole(member) !== 'talent') return null
+            submissionMemberId = member.id
             if (memberEmail(member) === email) {
               rememberProfileEmail(email)
-              return false
+              return { confirmed: true, memberId: submissionMemberId }
             }
 
             ownsSubmission = true
@@ -855,18 +911,56 @@
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: true,
             })
-            setMessage(form, 'success', '', receipt)
-            return true
+            var confirmed = await starterProfileAuthorityConfirmed(submissionMemberId, email)
+            if (!confirmed) profileEmailChanged = true
+            return {
+              confirmed: confirmed,
+              changed: true,
+              memberId: submissionMemberId,
+              receipt: receipt,
+            }
           })
-          .then(function (owned) {
-            if (!owned && typeof form.reportValidity === 'function') {
+          .then(function (result) {
+            if (!result) return
+            if (!result.confirmed) {
+              if (result.changed) setMessage(form, 'success', '', result.receipt)
+              return
+            }
+            if (profileWasValid && profileEmailMatches(email)) {
+              var replayed = replayStarterProfileClick(form, submit, {
+                memberId: result.memberId,
+                email: email,
+                onRejected: function () {
+                  profileEmailChanged = true
+                },
+              })
+              if (!replayed && result.changed) setMessage(form, 'success', '', result.receipt)
+            } else if (result.changed) {
+              setMessage(form, 'success', '', result.receipt)
+            } else if (typeof form.reportValidity === 'function') {
               form.reportValidity()
             }
           })
-          .catch(function (error) {
+          .catch(async function (error) {
             if (!ownsSubmission) {
-              if (typeof form.reportValidity === 'function') form.reportValidity()
+              if (!profileWasValid && typeof form.reportValidity === 'function') {
+                form.reportValidity()
+              }
               return
+            }
+            if (error && error.passwordEmailAttempted) {
+              rememberProfileEmail(email)
+              var confirmed = await starterProfileAuthorityConfirmed(submissionMemberId, email)
+              if (!confirmed) profileEmailChanged = true
+              if (confirmed && profileWasValid && profileEmailMatches(email)) {
+                replayStarterProfileClick(form, submit, {
+                  memberId: submissionMemberId,
+                  email: email,
+                  onRejected: function () {
+                    profileEmailChanged = true
+                  },
+                })
+              }
             }
             var receipt = diagnosticComplete(form, {
               result: 'failed',
@@ -904,12 +998,15 @@
         Promise.resolve()
           .then(async function () {
             var guard = window.StartersV3RouteGuard
-            if (!guard || typeof guard.memberRole !== 'function') return false
+            if (!guard || typeof guard.memberRole !== 'function') return null
             var member = await currentMember(memberstack())
-            if (guard.memberRole(member) !== 'talent') return false
+            if (guard.memberRole(member) !== 'talent') return null
 
-            if (!EMAIL_PATTERN.test(email)) return false
-            if (memberEmail(member) === email) return false
+            if (!EMAIL_PATTERN.test(email)) return null
+            if (memberEmail(member) === email) {
+              rememberProfileEmail(email)
+              return { confirmed: true }
+            }
 
             ownsSubmission = true
             setBusy(form, true)
@@ -924,18 +1021,18 @@
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: true,
             })
-            return true
+            return { confirmed: true }
           })
-          .then(function () {
-            replayNativeSubmit(form, submitter)
+          .then(function (result) {
+            if (result && result.confirmed && profileEmailMatches(email)) {
+              replayNativeSubmit(form, submitter)
+            }
           })
           .catch(function (error) {
-            if (!ownsSubmission) {
-              replayNativeSubmit(form, submitter)
-              return
-            }
+            if (!ownsSubmission) return
             if (error && error.passwordEmailAttempted) {
-              replayNativeSubmit(form, submitter)
+              rememberProfileEmail(email)
+              if (profileEmailMatches(email)) replayNativeSubmit(form, submitter)
             }
             var receipt = diagnosticComplete(form, {
               result: 'failed',

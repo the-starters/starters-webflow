@@ -98,16 +98,16 @@ keeps its existing authenticated Xano submission owner:
 ```
 
 On `/starter-edit-profile`, the controller reads the form's first email input.
-When the whole form is valid, it updates a changed Talent login email in
-Memberstack and then replays the same native submission. When unrelated required
-profile fields are incomplete, clicking submit still saves a natively valid,
-changed login email through Memberstack without submitting the incomplete
-profile to Xano. The guard only owns this click after a trusted user input event
-changes the login email. The Xano profile prefill emits untrusted input events;
-those events update the email baseline but do not activate identity ownership.
-An unchanged email leaves every section click with the existing Xano profile
-handler, even when required fields in other hidden tabs make the whole form
-invalid. Keep `data-edit-submit` on the Designer-authored submit control and keep
+When the Personal Details section is valid, it updates a changed Talent login
+email in Memberstack and then authorizes one replay of the existing authored
+button click. Required fields in other sections do not block that replay. When
+Personal Details is invalid, clicking submit can still save a natively valid,
+changed login email through Memberstack without submitting the invalid profile
+to Xano. The guard only owns this click after a trusted user input event changes
+the login email. The Xano profile prefill emits untrusted input events; those
+events update the email baseline but do not activate identity ownership. An
+unchanged email leaves every section click with the existing Xano profile
+handler. Keep `data-edit-submit` on the Designer-authored submit control and keep
 that control directly inside its existing wrapper. The invalid-profile state
 can disable pointer events on the control, so the controller recognizes the
 click that lands on that direct wrapper; it does not treat higher ancestors as
@@ -270,22 +270,23 @@ sitewide:
   `#wf-form-Account-Security` for `brand-free`, `brand-paid`, or `talent`. On
   `/starter-edit-profile`, the same setting also guards the visible
   `#wf-form-Build-Form-Full-Profile` for Talent. A natively valid changed email
-  can be written to Memberstack even while unrelated required profile fields
-  are incomplete, without running the Xano profile save. On a valid full-profile
-  submit, the email is written first and the existing Designer-authored submit
-  is replayed so its authenticated Xano save continues unchanged. An unchanged
-  email preserves native full-profile validation without an auth mutation or
-  reset email.
+  can be written to Memberstack even while Personal Details is invalid, without
+  running the Xano profile save. When Personal Details is valid, the email is
+  written first and the existing Designer-authored button click is replayed so
+  its authenticated Xano save continues unchanged. Required fields in later
+  sections do not block this section-scoped replay. An unchanged email preserves
+  the authored profile handler without an auth mutation or reset email.
 - `guardSecurityForm: 'brand'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
   `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. This is the
   rollback switch if Starter interception must be disabled without changing
   Brand behavior.
 - With either setting, unmapped, conflicted, logged-out, or unreadable identity
-  states retain the form's existing native handler. Account Security therefore
-  stays Memberstack-native, while `/starter-edit-profile` replays its existing
-  authenticated Xano submission. With `brand`, Talent also retains that native
-  path without login-email interception.
+  states fail closed for a changed login email: they do not replay the profile
+  save. Account Security stays Memberstack-native, while a confirmed Talent
+  identity on `/starter-edit-profile` replays its existing authenticated Xano
+  submission. With `brand`, Talent retains the native path without login-email
+  interception.
 
 The ordinary Account Profile form outside `/starter-edit-profile` remains
 Memberstack-native. Endpoint #1513 must route each `member.updated` event by
@@ -376,6 +377,9 @@ projection.
   Forgot Password is the recovery path.
 - Account Security and the guarded Talent edit-profile form attempt that email
   only after a changed login email has been saved successfully.
+- A failed or unconfirmed changed login-email write blocks the guarded Talent
+  profile replay. Before replay, the controller re-reads Memberstack and requires
+  the same stable member ID and normalized login email that initiated the save.
 - An independent Talent login-email save requires the authored email input to
   pass native constraint validation and the normalized email to differ from the
   current Memberstack login email. It does not bypass or submit unrelated
@@ -391,7 +395,9 @@ projection.
 - If the reset-email result is failed or ambiguous, the durable account changes
   remain saved and the UI directs the member to the standard Forgot Password
   flow for an explicit recovery attempt. On `/starter-edit-profile`, the native
-  Xano profile submission is still replayed after that email-side-effect failure.
+  Xano profile submission is still replayed after that email-side-effect failure
+  when Personal Details remains valid and the same Memberstack identity and
+  normalized email are confirmed. The recovery error copy remains visible.
 - Successful password-token redemption is the ownership proof. The controller
   does not claim Memberstack `verified=true` without separately observed state.
 - `completed-brand-profile` is the final durable Build Account write. Any

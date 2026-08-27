@@ -337,6 +337,7 @@ function createEnvironment(fetchImpl, {
 
   return {
     button,
+    form,
     modalEvents,
     modalApiCalls,
     memberAuthUpdates,
@@ -1004,6 +1005,127 @@ async function testDynamicRequiredCaptureBlocksBeforeLoading() {
   assert.equal(environment.button.style.pointerEvents ?? '', '')
 }
 
+async function testPersonalDetailsValidationBoundary() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }))
+
+  assert.equal(
+    environment.window.StartersStarterEditProfile.validatePersonalDetails().valid,
+    true,
+  )
+
+  environment.fields['[name="first-name"]'].value = ''
+
+  assert.equal(
+    environment.window.StartersStarterEditProfile.validatePersonalDetails().valid,
+    false,
+  )
+}
+
+async function testReplayProofRejectsChangedMemberAtCapture() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  })
+  environment.window.MEMBER.auth.email = 'new@example.com'
+  let rejected = 0
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_test', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+  environment.switchMember({
+    id: 'mem_other',
+    auth: { email: 'new@example.com' },
+    customFields: {},
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.equal(rejected, 1)
+}
+
+async function testReplayProofRejectsChangedMemberAtRevalidation() {
+  const diagnostics = deferred()
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    workflowDiagnosticsReady: diagnostics.promise,
+  })
+  environment.window.MEMBER.auth.email = 'new@example.com'
+  let rejected = 0
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_test', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+
+  const submission = submit(environment)
+  await new Promise(setImmediate)
+  environment.switchMember({
+    id: 'mem_other',
+    auth: { email: 'new@example.com' },
+    customFields: {},
+  })
+  diagnostics.resolve(null)
+  await submission
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.equal(rejected, 1)
+}
+
+async function testInvalidReplayRequiresExactFreshMemberProofAfterCorrection() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }))
+  environment.window.MEMBER.auth.email = 'new@example.com'
+  environment.fields['[name="first-name"]'].value = ''
+  let rejected = 0
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_test', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+  const nextMember = {
+    id: 'mem_other',
+    auth: { email: 'other@example.com' },
+    customFields: {},
+  }
+  environment.switchMember(nextMember)
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(rejected, 1)
+
+  environment.fields['[name="first-name"]'].value = 'Corrected'
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_other', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(rejected, 2)
+
+  nextMember.auth.email = 'new@example.com'
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_other', email: 'new@example.com' },
+  )
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 1)
+  assert.match(environment.requests[0][0], /\/mem_other$/)
+  assert.equal(JSON.parse(environment.requests[0][1].body).Email, 'new@example.com')
+}
+
 Promise.all([
   testSuccess(),
   testLateLoadInitializesImmediately(),
@@ -1037,6 +1159,10 @@ Promise.all([
   testConditionalLocationRequirementTransitions(),
   testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
   testDynamicRequiredCaptureBlocksBeforeLoading(),
+  testPersonalDetailsValidationBoundary(),
+  testReplayProofRejectsChangedMemberAtCapture(),
+  testReplayProofRejectsChangedMemberAtRevalidation(),
+  testInvalidReplayRequiresExactFreshMemberProofAfterCorrection(),
 ])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {

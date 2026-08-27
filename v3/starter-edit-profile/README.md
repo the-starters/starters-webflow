@@ -64,10 +64,15 @@ section owns that shared loader contract.
 ## Validation and submit ownership
 
 After the approved whole-block cutover, `starter-edit-profile.js` is the only
-validation owner for its main section-submit buttons. It owns steps 1, 2, 5, 6,
-and 7 through an explicit published-markup contract. The Companies controller
-owns step 3 and the Portfolio controller owns step 4. No second controller may
-disable, intercept, or validate the same submit path.
+profile-validation owner for its main section-submit buttons. It owns steps 1,
+2, 5, 6, and 7 through an explicit published-markup contract. The Companies
+controller owns step 3 and the Portfolio controller owns step 4. The configured
+`v3/brand-account-controller.js` identity guard may capture a real changed-email
+click on Personal Details, but it calls this controller's step 1 validator and
+can only authorize one replay after Memberstack confirms the same member ID and
+normalized login email. It does not add a second profile validator or Xano
+writer. No other controller may disable, intercept, or validate the same submit
+path.
 
 The main form must not opt into sitewide `utils/wf-validate.js`. Its capture-phase
 submit gate can run before the page controller. The live inline validator must be
