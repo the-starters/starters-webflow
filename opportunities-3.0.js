@@ -2428,6 +2428,7 @@
   let activeReviewModal = null
   let projectReviewOpenGeneration = 0
   let callReviewDeepLinkGeneration = -1
+  let projectReviewDeepLinkGeneration = -1
   let reviewSubmitting = false
 
   function normalizedDashboardPath() {
@@ -3995,6 +3996,7 @@
 
   async function openCallReviewFromEmail() {
     if (projectWorkflowRole !== 'brand') return false
+    if (String(urlParam('review_project') || '').trim()) return false
     const bookingId = String(urlParam('review_booking') || '').trim()
     if (!bookingId || bookingId.length > 255) return false
     if (callReviewDeepLinkGeneration === _memberScopeGeneration) return false
@@ -4031,6 +4033,21 @@
       )
       return false
     }
+  }
+
+  function openProjectReviewFromEmail() {
+    if (projectWorkflowRole !== 'brand') return false
+    if (String(urlParam('review_booking') || '').trim()) return false
+    const projectIdParam = String(urlParam('review_project') || '').trim()
+    if (!/^[1-9]\d{0,9}$/.test(projectIdParam)) return false
+    if (projectReviewDeepLinkGeneration === _memberScopeGeneration) return false
+    projectReviewDeepLinkGeneration = _memberScopeGeneration
+    const project = projectWorkflowItems.get(Number(projectIdParam))
+    if (!project || !prepareProjectReview(project)) {
+      showProjectLifecycleFeedback('', 'This project is not ready for a review.', true)
+      return false
+    }
+    return true
   }
 
   async function openProjectReview(action, card) {
@@ -4191,6 +4208,7 @@
     activeReviewModal = null
     reviewSubmitting = false
     callReviewDeepLinkGeneration = -1
+    projectReviewDeepLinkGeneration = -1
     const reviewModal = projectReviewModal()
     clearProjectReviewContext(reviewModal, true)
     if (projectWorkflowObserver) projectWorkflowObserver.disconnect()
@@ -4326,6 +4344,7 @@
     try {
       await refreshProjectWorkflow(role)
       await callReviewOpen
+      if (role === 'brand') openProjectReviewFromEmail()
       return true
     } catch (error) {
       await callReviewOpen

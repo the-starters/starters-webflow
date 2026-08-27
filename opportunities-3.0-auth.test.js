@@ -4673,6 +4673,105 @@ test('call-review email deep link validates the booking before opening and submi
   assert.equal(requests.filter((request) => request.type === 'submit').length, 1)
 })
 
+test('project-review email deep link opens only the eligible authenticated project', async () => {
+  const form = el('form')
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = 'Rate your project with [Starter Name]'
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [modal])
+  let projectRequests = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        projectRequests += 1
+        return response({
+          items: [
+            {
+              id: 675,
+              lifecycle_state: 'completed',
+              review_eligible: true,
+              has_review: false,
+              starter_name: 'Brian',
+            },
+            {
+              id: 676,
+              lifecycle_state: 'completed',
+              review_eligible: false,
+              has_review: true,
+              starter_name: 'Other Starter',
+            },
+          ],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_project=675&utm_source=mandrill',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => modal.getAttribute('open') === ''))
+  assert.equal(projectRequests, 1)
+  assert.equal(starterName.textContent, 'Rate your project with Brian')
+
+  bridge.dispatchWindow('focus')
+  await new Promise(setImmediate)
+  assert.equal(starterName.textContent, 'Rate your project with Brian')
+})
+
+test('project-review email deep link fails closed for an ineligible project', async () => {
+  const form = el('form')
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = '[Starter Name]'
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [modal])
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 676,
+            lifecycle_state: 'completed',
+            review_eligible: false,
+            has_review: true,
+            starter_name: 'Brian',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_project=676&utm_source=mandrill',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  await new Promise(setImmediate)
+  await new Promise(setImmediate)
+  assert.equal(modal.getAttribute('open'), null)
+  assert.equal(starterName.textContent, '[Starter Name]')
+  assert.ok(bridge.consoleErrors.length === 0)
+})
+
 test('pending call-review eligibility cannot replace a newer project review', async () => {
   const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [review])
