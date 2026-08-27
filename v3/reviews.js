@@ -1,6 +1,8 @@
 /**
  * V3 reviews page integration.
  *
+ * @release v1.59.397
+ *
  * Designer owns the public Reviews section. This module only:
  *   - derives the public-profile slug from /hire/{slug} and configures the
  *     authored Reviews section as a wf-xano wrapper before it loads;
@@ -52,8 +54,18 @@
     if (!element || !element.style) return
     element.hidden = !visible
     element.style.display = visible ? '' : 'none'
-    if (visible) element.removeAttribute('data-starters-section-hidden')
-    else element.setAttribute('data-starters-section-hidden', '')
+    // Module-owned marker. `data-starters-section-hidden` belongs to
+    // hide-empty-sections.js, whose contract stores the pre-hide inline
+    // display in the attribute value — sharing it would make that engine
+    // treat this module's hides as its own the day Designer re-enables it.
+    if (visible) element.removeAttribute('data-reviews-v3-hidden')
+    else element.setAttribute('data-reviews-v3-hidden', '')
+  }
+
+  function emptyElement(element) {
+    if (!element) return
+    if (element.replaceChildren) element.replaceChildren()
+    else element.textContent = ''
   }
 
   /**
@@ -75,9 +87,15 @@
     if (!documentObject || !documentObject.querySelectorAll || !root || !root.getAttribute) return []
     var key = root.getAttribute('data-toc-section')
     if (!key) return []
-    return documentObject.querySelectorAll(
-      '[data-hide-when-empty-id="' + key + '"]',
-    ) || []
+    // The key is Designer-authored; a quote or bracket in it would make the
+    // selector throw after the section is already hidden, aborting the IIFE.
+    try {
+      return documentObject.querySelectorAll(
+        '[data-hide-when-empty-id="' + key + '"]',
+      )
+    } catch (_) {
+      return []
+    }
   }
 
   /**
@@ -98,8 +116,21 @@
     if (!documentObject || !documentObject.querySelector) return null
     var slug = profileSlug(pathname)
     if (!slug) return null
-    var root = documentObject.querySelector(PROFILE_ROOT)
-    if (!root) return null
+    var roots = documentObject.querySelectorAll
+      ? documentObject.querySelectorAll(PROFILE_ROOT)
+      : []
+    if (!roots.length) return null
+    // Fail closed FIRST, before anything below can bail: hide and empty every
+    // authored marker (the live template has shipped duplicates — a second
+    // marker left unhandled keeps publishing its placeholder cards), and hide
+    // the authored hero summary placeholder, which lives outside the section.
+    Array.prototype.forEach.call(roots, function (authoredRoot) {
+      var authoredList = authoredRoot.querySelector && authoredRoot.querySelector(PROFILE_LIST)
+      if (authoredList) emptyElement(authoredList)
+      setProfileRootVisible(documentObject, authoredRoot, false)
+    })
+    toggleSummaryBlocks(documentObject, false)
+    var root = roots[0]
     var list = root.querySelector && root.querySelector(PROFILE_LIST)
     if (!list) return null
     root.setAttribute('wf-xano-element', 'wrapper')
@@ -110,6 +141,9 @@
     root.setAttribute('wf-xano-param-starter_slug', slug)
     list.setAttribute('wf-xano-element', 'list')
     list.setAttribute('aria-live', 'polite')
+    // The list was already emptied above, so an authored template that sat
+    // inside the list target is gone by now and a fresh hidden one is created
+    // here rather than found-then-deleted.
     if (!root.querySelector('[wf-xano-element="template"]')) {
       var template = documentObject.createElement('div')
       template.setAttribute('wf-xano-element', 'template')
@@ -117,10 +151,6 @@
       template.hidden = true
       root.appendChild(template)
     }
-    // Hide before wf-xano runs, and drop the authored placeholder cards with
-    // it. Only an approved, non-empty result reveals the section again.
-    if (list.replaceChildren) list.replaceChildren()
-    setProfileRootVisible(documentObject, root, false)
     return root
   }
 
@@ -155,7 +185,7 @@
     var target = configuredProfileList(documentObject, root)
     if (!target) return false
     var approved = Array.isArray(items) ? items : []
-    target.replaceChildren()
+    emptyElement(target)
     target.style.cssText = approved.length
       ? 'display:grid;border:1px solid #d8d9d3;border-radius:3px;overflow:hidden;background:#fff;'
       : ''
@@ -319,6 +349,7 @@
   }
 
   var api = {
+    release: 'v1.59.397',
     profileSlug: profileSlug,
     configureProfileRoot: configureProfileRoot,
     paintProfile: paintProfile,
