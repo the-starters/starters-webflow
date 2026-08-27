@@ -1276,6 +1276,52 @@ test('a prerequisite event queues behind Free write auth recovery', async () => 
   assert.equal(reads, 4)
 })
 
+test('a queued prerequisite event does not erase a failed Free write error', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  let reads = 0
+  const active = canonical({
+    public_description: 'Original Free Call',
+    services: [service()],
+    readiness: { free_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    initial: active,
+    routes: {
+      '/starter/free-call-settings/get/v3': () => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => active }
+      },
+      '/starter/free-call-settings/upsert/v3': () => {
+        postStarted.resolve()
+        return finishPost.promise
+      },
+    },
+  })
+  await settle()
+
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  assert.equal(reads, 1)
+
+  finishPost.resolve({
+    ok: false,
+    status: 400,
+    json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+  })
+  await settle()
+
+  assert.equal(reads, 1)
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(
+    result.dom.nativeErrorMessage.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+})
+
 test('logout supersedes pending Free write revalidation', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
