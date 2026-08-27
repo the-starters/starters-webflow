@@ -108,11 +108,12 @@ A missing or changed Memberstack session fails closed: the cached Free state cle
 duration, price, and prerequisite paint reset, save disables, `data-free-call-settings` becomes
 `error`, and the status reads `Sign in to manage free calls.`
 
-If the card has no authored `[data-call-settings-output="status"]`, a failed request uses the scoped
-native Webflow `.w-form-fail` block. The controller writes the exact server message into its existing
-inner `div`, or an optional `[data-call-settings-error-message]`, and exposes it as an alert. A retry,
-canonical refresh, or other non-error state clears and hides that block. The controller does not
-create form markup and never changes canonical state to simulate success.
+Every failed request uses the scoped native Webflow `.w-form-fail` block. The controller writes the
+exact server message into its existing inner `div`, or an optional
+`[data-call-settings-error-message]`, and exposes it as an alert. When the card has an authored
+`[data-call-settings-output="status"]`, the controller mirrors the same message there. A retry,
+canonical refresh, or other non-error state clears and hides the native block. The controller does
+not create form markup and never changes canonical state to simulate success.
 
 `starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read. It never
 clears the session or resets an in-progress Yes/No selection.

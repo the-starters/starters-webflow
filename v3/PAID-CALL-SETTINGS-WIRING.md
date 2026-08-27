@@ -150,11 +150,12 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   `data-paid-call-settings` becomes `error`, and the status reads `Sign in to manage paid calls.`
   No `starterPaidCallWriteError` event is emitted for that class of failure, because nothing was
   written and the card is inert until the next auth change or reload.
-- If the card has no authored `[data-call-settings-output="status"]`, a failed request uses the
-  scoped native Webflow `.w-form-fail` block. The controller writes the exact server message into
-  its existing inner `div`, or an optional `[data-call-settings-error-message]`, and exposes it as
-  an alert. A retry, canonical refresh, or other non-error state clears and hides that block. The
-  controller does not create form markup and never changes canonical state to simulate success.
+- Every failed request uses the scoped native Webflow `.w-form-fail` block. The controller writes
+  the exact server message into its existing inner `div`, or an optional
+  `[data-call-settings-error-message]`, and exposes it as an alert. When the card has an authored
+  `[data-call-settings-output="status"]`, the controller mirrors the same message there. A retry,
+  canonical refresh, or other non-error state clears and hides the native block. The controller
+  does not create form markup and never changes canonical state to simulate success.
 - The native Webflow form still owns which fields are required and still shows its own
   validation UI. An authored Update control wired as a plain element is intercepted, so the
   controller runs that form's constraint validation before writing; an invalid form blocks the
