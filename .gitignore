@@ -3,6 +3,10 @@
 # Local-only demo pages & test harnesses — never commit.
 local-demos/
 
+# Local agent-skills mirror of the tracked .claude/skills (created by the
+# skills distribution tooling) — never commit.
+.agents/
+
 # Credentials and captured sessions. The staging-qa harness lives OUTSIDE this
 # repo (../staging-qa/), so these rules are a second line of defence only: they
 # exist so that a script dropped in here by mistake still cannot publish a
