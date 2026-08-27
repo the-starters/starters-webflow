@@ -62,7 +62,8 @@ duplicate elsewhere on the page is never filled. The Images and Videos container
 must each sit in their **own** `.portfolio_modal-content-wrapper`: the renderer
 shows and hides a section through that wrapper, so a shared one would make both
 sections' visibility depend on whichever media response happened to land last.
-The live markup already complies. The root itself is resolved as
+The live markup already complies (verified on staging 2026-08-27); re-verify if
+the modal's markup is restructured. The root itself is resolved as
 `dialog[wf-portfolio-element="modal"]` first, so a stale non-dialog copy earlier
 in the page cannot win the match and swallow every fill.
 
@@ -103,15 +104,22 @@ behaving like a modal.
 
 The renderer listens to two lumos events for data-side housekeeping only:
 `modal-open` fills the first case study when the dialog is opened without a card
-click, and `modal-close` pauses any playing video, which `dialog.close()` does
-not do on its own.
+click **and no case study has been viewed yet**, and `modal-close` pauses any
+playing video, which `dialog.close()` does not do on its own. Once a visitor has
+opened a case study, a later stray open leaves what they were last looking at.
 
 A `?modal-id=highlights` deep link cannot be caught that way: lumos dispatches
 `modal-open` synchronously inside its own `DOMContentLoaded` handler, which runs
 before this script's, so the event is gone before the listener exists. The
 renderer therefore also checks the dialog's `open` state once the approved rows
-arrive, and fills the first case study if it is already showing. Do not replace
+arrive, and fills the first case study if it is still showing. Do not replace
 that check with the event — script order on the page is not a guarantee.
+
+If the resolved modal root has no `data-modal-target`, the renderer logs one
+warning at init. That means it matched an element lumos does not manage — almost
+always the stale copy of the old modal — which would fill silently and never
+open. The warning is staging-only (`*.webflow.io`, localhost, `*.trycloudflare.com`)
+unless `window.STARTERS_DEBUG === true`; production stays quiet.
 
 Also required: the page's existing `starter_memberstack_id` global (or a
 `data-starter-memberstack-id` attribute on any element). The renderer calls

@@ -84,6 +84,7 @@ function makeEnv({
   modalOpenAtLoad = false,
   captureTimers = false,
   hasCardList = true,
+  modalTarget = 'highlights',
 } = {}) {
   const listeners = {}
   const pendingTimers = []
@@ -91,6 +92,7 @@ function makeEnv({
   const appendedIds = []
   const appendedCards = []
   const errors = []
+  const warnings = []
 
   function addListener(store, type, handler) {
     if (!store[type]) store[type] = []
@@ -158,6 +160,7 @@ function makeEnv({
       // showModal() sets the native open state; the renderer reads it to notice
       // a dialog lumos opened before this script's listeners existed.
       hasAttribute(name) { return name === 'open' && !!openAtLoad },
+      getAttribute(name) { return name === 'data-modal-target' ? modalTarget : null },
       querySelector(selector) {
         if (selector === '[portfolio-title]') return parts.title
         if (selector === '[portfolio-description]') return parts.description
@@ -357,7 +360,11 @@ function makeEnv({
   const context = {
     window,
     document,
-    console: { info() {}, warn() {}, error(message) { errors.push(message) } },
+    console: {
+      info() {},
+      warn(prefix, message) { warnings.push(message === undefined ? prefix : message) },
+      error(message) { errors.push(message) },
+    },
     fetch: window.fetch,
     // Held rather than run when the test wants to control when a deferred
     // callback lands relative to other work.
@@ -400,6 +407,7 @@ function makeEnv({
     appendedIds,
     appendedCards,
     errors,
+    warnings,
     section,
     viewAllButton,
     modal,
@@ -876,14 +884,20 @@ test('hides a pending media section when there is no authored loader', async () 
   assert.equal(env.modalVideos.contentWrapper.style.display, 'none')
 })
 
-test('skips a media row whose file field is not a URL', async () => {
+test('skips a media row that is missing or whose file field is not a URL', async () => {
   const env = makeEnv({
     response: [{ id: 1, thumbnail_url: { path: '/vault/thumb.png' } }],
-    imageRows: [{ image_url: { path: '/vault/one.png', meta: {} } }],
-    videoRows: [{ video_url: 42 }],
+    imageRows: [{ image_url: { path: '/vault/one.png', meta: {} } }, null],
+    videoRows: [null, { video_url: 42 }],
   })
   env.document.dispatch('DOMContentLoaded')
   await settle()
+
+  assert.equal(
+    env.appendedCards[0].thumb.src,
+    'https://cdn.prod.website-files.com/plugins/Basic/assets/placeholder.60f9b1840c.svg',
+    'a file object falls back to the placeholder, not "[object Object]?tpl=large"',
+  )
 
   await env.appendedCards[0].openButton.click()
   await settle()
@@ -892,7 +906,30 @@ test('skips a media row whose file field is not a URL', async () => {
   assert.equal(env.modalImages.contentWrapper.style.display, 'none')
   assert.equal(env.modalVideos.children.length, 0)
   assert.equal(env.modalVideos.contentWrapper.style.display, 'none')
-  assert.deepEqual(env.errors, [], 'a Xano file object must not throw')
+  assert.deepEqual(env.errors, [], 'a null row or a Xano file object must not throw')
+})
+
+test('warns on staging when the modal root is not a dialog lumos manages', async () => {
+  const env = makeEnv({ response: [{ id: 1 }], modalTarget: null })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.deepEqual(env.warnings, [
+    'modal root has no data-modal-target — lumos will not open this element',
+  ])
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.equal(env.warnings.length, 1, 'once at init, not once per fill')
+})
+
+test('says nothing about a properly wired modal', async () => {
+  const env = makeEnv({ response: [{ id: 1 }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.deepEqual(env.warnings, [])
 })
 
 test('fills the native dialog, not a stale copy of the modal earlier in the page', async () => {

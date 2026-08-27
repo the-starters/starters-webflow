@@ -66,6 +66,23 @@
     return root.querySelector(attrSelector) || root.querySelector(classSelector);
   }
 
+  function stagingHost(hostname) {
+    var host = hostname || '';
+    return (
+      /(\.|^)webflow\.io$/.test(host) ||
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      /(\.|^)trycloudflare\.com$/.test(host)
+    );
+  }
+
+  // STARTERS_DEBUG may turn logging on in production. It never changes what this
+  // script does — only whether it says anything about it.
+  function diagnosticsEnabled() {
+    if (window.STARTERS_DEBUG === true) return true;
+    return stagingHost((window.location && window.location.hostname) || '');
+  }
+
   function getMemberstackId() {
     if (typeof window.starter_memberstack_id === 'string' && window.starter_memberstack_id) {
       return window.starter_memberstack_id;
@@ -183,6 +200,7 @@
     /** Rows whose asset URL is blank would render a broken element — drop them. */
     function withUsableAsset(rows, key) {
       return rows.filter(function (row) {
+        if (!row) return false;
         return !!getAssetUrl(row[key]);
       });
     }
@@ -276,9 +294,11 @@
     /**
      * lumos can open this dialog without a card click — a ?modal-id=highlights
      * deep link, or any stray trigger — which would otherwise show the authored
-     * placeholder copy. Fill the first case study for those opens only, and only
-     * while the dialog is actually open: a visitor who dismissed it during the
-     * approved read must not have media fetched into a closed modal behind them.
+     * placeholder copy. Fill the first case study only while no case study has
+     * been viewed yet: once the visitor has opened one, a later stray open keeps
+     * what they were last looking at. And only while the dialog is actually
+     * open, so a visitor who dismissed it during the approved read does not have
+     * media fetched into a closed modal behind them.
      */
     function fillDefaultPortfolio() {
       if (fillToken !== 0 || !loadedPortfolios.length || !modalIsOpen()) return;
@@ -433,6 +453,22 @@
     // link), and an original left visible would show loading text with nothing
     // loading.
     if (loaderTemplate) loaderTemplate.style.display = 'none';
+
+    // A dialog with no data-modal-target is not one lumos manages — almost
+    // certainly the stale copy of the old modal, which would fill silently and
+    // never open. Staging and debug only; production stays quiet.
+    if (
+      modal &&
+      typeof modal.getAttribute === 'function' &&
+      !modal.getAttribute('data-modal-target') &&
+      diagnosticsEnabled()
+    ) {
+      console.warn(
+        'Portfolio:',
+        'modal root has no data-modal-target — lumos will not open this element',
+      );
+    }
+
     wireLumosEvents();
 
     var canRevealPortfolios = false;
