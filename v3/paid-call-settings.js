@@ -674,7 +674,7 @@
       '[data-call-settings-busy="true"] [data-opp-element="loading-hide"],' +
       '[data-call-settings-busy="true"] [loading-hide]{' +
       'display:none!important}' +
-      '[data-call-settings-error-visible="true"]{display:block!important}'
+      '[data-call-settings-error-visible="true"].w-form-fail{display:block!important}'
     document.head.appendChild(style)
   }
 
