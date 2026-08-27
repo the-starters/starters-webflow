@@ -4270,3 +4270,170 @@ test('owner paint: a signed-in Brand still uses canonical discovery, not the set
   assert.equal(requests.length, 0, 'a brand never reaches the owner settings path')
   assert.deepEqual(calls.map((c) => c.configId).sort(), ['cfg_free', 'cfg_paid'])
 })
+
+/* -------------------- WAVE-1 owner-path paint: admission gates ------------- */
+
+/**
+ * The owner runs the SAME admission rules as every brand viewer.
+ *
+ * `readiness.bookable` says the starter finished setting the service up; it
+ * does not say the service is shaped like something anybody could book. A
+ * half-configured record that reaches only the owner's screen is the worst
+ * kind, because the owner has no second view to notice it against.
+ */
+function ownerFreeService(overrides = {}) {
+  return Object.assign({}, ownerFreeSettings().services[0], overrides)
+}
+function ownerPaidService(overrides = {}) {
+  return Object.assign({}, ownerPaidSettings().services[0], overrides)
+}
+
+/** Runs the owner path and hands back the surfaces the gates decide about. */
+async function runOwnerGate({ free, paid, slots = {}, location } = {}) {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const chooserFreePrice = addFreeChooserPrice(page)
+  const paidPrice = addPaidPriceSurface(page)
+  const controller = ownerController({
+    free: free === undefined ? ownerFreeSettings() : free,
+    paid: paid === undefined ? ownerPaidSettings() : paid,
+    slots: Object.assign({ cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID }, slots),
+  })
+  const context = ownerContext(page, controller, location ? { location } : {})
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  return { page, hooks, chooserFreePrice, paidPrice, controller, context }
+}
+
+test('owner gate: a free service priced above zero is never painted', async () => {
+  const run = await runOwnerGate({
+    free: ownerFreeSettings({ services: [ownerFreeService({ price_cents: 5000 })] }),
+  })
+
+  // A "free" call quoted at $50 is exactly what the brand admission rule
+  // exists to refuse, and the owner must not be the one viewer who sees it.
+  assert.equal(run.chooserFreePrice.textContent, PRICE_SENTINEL)
+  assert.equal(run.hooks.cardFree.textContent, SLOT_SENTINEL)
+  assert.deepEqual(run.controller.calls.map((c) => c.configId), ['cfg_owner_paid'])
+  assert.ok(
+    run.context.warnings.some((l) => l.includes('owner free-call service did not pass')),
+    'expected an admission warning, got: ' + JSON.stringify(run.context.warnings),
+  )
+})
+
+test('owner gate: a free service of the wrong length is never painted', async () => {
+  const run = await runOwnerGate({
+    free: ownerFreeSettings({ services: [ownerFreeService({ duration: 45 })] }),
+  })
+
+  assert.equal(run.chooserFreePrice.textContent, PRICE_SENTINEL)
+  assert.deepEqual(run.controller.calls.map((c) => c.configId), ['cfg_owner_paid'])
+})
+
+test('owner gate: a cross-environment settings record is never painted', async () => {
+  // The host is production; the payload reports the test data environment.
+  const run = await runOwnerGate({
+    free: ownerFreeSettings({ data_environment: 'test' }),
+    paid: ownerPaidSettings({ services: [ownerPaidService({ payment_environment: 'test' })] }),
+  })
+
+  assert.equal(run.chooserFreePrice.textContent, PRICE_SENTINEL)
+  assert.equal(run.paidPrice.textContent, '999')
+  assert.equal(run.controller.calls.length, 0, 'a cross-environment record earns no availability request')
+})
+
+test('owner gate: a paid service in another currency is never painted', async () => {
+  const run = await runOwnerGate({
+    paid: ownerPaidSettings({ services: [ownerPaidService({ currency: 'EUR' })] }),
+  })
+
+  assert.equal(run.paidPrice.textContent, '999')
+  assert.deepEqual(run.controller.calls.map((c) => c.configId), ['cfg_owner_free'])
+})
+
+test('owner gate: a paid service below the minimum charge is never painted', async () => {
+  const run = await runOwnerGate({
+    paid: ownerPaidSettings({ services: [ownerPaidService({ price_cents: 50 })] }),
+  })
+
+  assert.equal(run.paidPrice.textContent, '999')
+  assert.deepEqual(run.controller.calls.map((c) => c.configId), ['cfg_owner_free'])
+})
+
+test('owner gate: an unknown host paints nothing at all', async () => {
+  const run = await runOwnerGate({
+    location: { hostname: 'localhost', pathname: '/hire/ashna-rana' },
+  })
+
+  assert.equal(run.chooserFreePrice.textContent, PRICE_SENTINEL)
+  assert.equal(run.paidPrice.textContent, '999')
+  assert.equal(run.controller.calls.length, 0)
+})
+
+test('owner gate: the staging host admits the staging environments', async () => {
+  const run = await runOwnerGate({
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/ashna-rana' },
+    free: ownerFreeSettings({ data_environment: 'test' }),
+    paid: ownerPaidSettings({
+      stripe_environment: 'test',
+      services: [ownerPaidService({ payment_environment: 'test' })],
+    }),
+  })
+
+  assert.equal(run.chooserFreePrice.textContent, '$0')
+  assert.equal(run.paidPrice.textContent, '250')
+  assert.deepEqual(
+    run.controller.calls.map((c) => c.configId).sort(),
+    ['cfg_owner_free', 'cfg_owner_paid'],
+  )
+})
+
+test('owner gate: a service that names its length duration_minutes is honored', async () => {
+  // Paid is the load-bearing case: its rule demands exactly 60 with no
+  // null tolerance, so reading only `duration` would reject the record.
+  const service = ownerPaidService({ duration_minutes: 60 })
+  delete service.duration
+  const run = await runOwnerGate({ paid: ownerPaidSettings({ services: [service] }) })
+
+  assert.equal(run.paidPrice.textContent, '250')
+  assert.equal(run.hooks.cardPaid.textContent, '09:00AM on 03/06')
+})
+
+test('owner gate: a paid service reads its environment from the payload when absent', async () => {
+  const service = ownerPaidService()
+  delete service.payment_environment
+  const run = await runOwnerGate({
+    paid: ownerPaidSettings({ stripe_environment: 'live', services: [service] }),
+  })
+
+  assert.equal(run.paidPrice.textContent, '250')
+})
+
+test('owner paint: a bridge that throws synchronously costs one call type, not both', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const chooserFreePrice = addFreeChooserPrice(page)
+  const controller = ownerController({
+    slots: { cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID },
+  })
+  const authenticated = controller.authenticatedRequest
+  controller.authenticatedRequest = (path, method) => {
+    // An unavailable xanoAuthFetch is raised this way, before any promise
+    // exists to attach a rejection handler to.
+    if (path === OWNER_PAID_SETTINGS_PATH) throw new Error('xanoAuthFetch is unavailable')
+    return authenticated(path, method)
+  }
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+
+  assert.doesNotThrow(() => vm.runInContext(source, context))
+  await settle()
+
+  assert.equal(chooserFreePrice.textContent, '$0', 'the free paint survives the paid throw')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
+})

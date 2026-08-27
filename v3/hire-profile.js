@@ -877,31 +877,60 @@
       return role === 'brand-free' || role === 'brand-paid' || role === 'legacy-brand';
   }
 
-  function selectBookableConfigurations(records) {
-      if (!Array.isArray(records)) return [];
-
+  /**
+   * The environments this host may book in, or null when the host is neither
+   * the Webflow test host nor production.
+   *
+   * One reader for the brand admission filter AND the owner's, so the two can
+   * never drift onto different environment rules.
+   */
+  function bookableEnvironments() {
       const isTestHost = location.hostname === 'the-starters-3-0.webflow.io';
       const isProductionHost = location.hostname === 'thestarters.com' ||
           location.hostname === 'www.thestarters.com';
-      if (!isTestHost && !isProductionHost) return [];
+      if (!isTestHost && !isProductionHost) return null;
+      return {
+          data: isTestHost ? 'test' : 'production',
+          payment: isTestHost ? 'test' : 'live',
+      };
+  }
 
-      const expectedDataEnvironment = isTestHost ? 'test' : 'production';
-      const expectedPaymentEnvironment = isTestHost ? 'test' : 'live';
+  /**
+   * The shape every record must satisfy before ANY surface may show it, for
+   * any viewer. `environments` comes from `bookableEnvironments()`.
+   *
+   * The owner path runs the same predicate over its own settings records:
+   * showing a starter a rate no brand viewer would ever see — a "free" call
+   * priced above zero, a cross-environment record on staging, a paid service
+   * quoted in the wrong currency — is a worse fault than leaving the CMS value
+   * standing, because the owner has no way to tell it is not what visitors get.
+   */
+  function isBookableRecordShape(record, environments) {
+      if (!record || !record.config_id || record.active !== true) return false;
+      if (!environments) return false;
+      if (record.data_environment !== environments.data) return false;
+      if (record.is_paid === true) {
+          const priceCents = Number(record.price_cents);
+          const duration = Number(record.duration);
+          return record.payment_environment === environments.payment &&
+              String(record.currency || '').toUpperCase() === 'USD' &&
+              Number.isInteger(priceCents) &&
+              priceCents >= 100 &&
+              duration === 60;
+      }
+      return record.is_paid === false &&
+          (record.price_cents == null || Number(record.price_cents) === 0) &&
+          (record.duration == null || Number(record.duration) === 30);
+  }
+
+  function selectBookableConfigurations(records) {
+      if (!Array.isArray(records)) return [];
+
+      const environments = bookableEnvironments();
+      if (!environments) return [];
+
       const active = records.filter(function (record) {
-          if (!record || !record.config_id || record.active !== true) return false;
-          if (record.data_environment !== expectedDataEnvironment) return false;
-          if (record.is_paid === true) {
-              const priceCents = Number(record.price_cents);
-              const duration = Number(record.duration);
-              return record.payment_environment === expectedPaymentEnvironment &&
-                  String(record.currency || '').toUpperCase() === 'USD' &&
-                  Number.isInteger(priceCents) &&
-                  priceCents >= 100 &&
-                  duration === 60;
-          }
-          return record.is_paid === false &&
-              (record.price_cents == null || Number(record.price_cents) === 0) &&
-              (record.duration == null || Number(record.duration) === 30);
+          return isBookableRecordShape(record, environments);
       });
       const configIds = new Set();
       const hasDuplicateConfigId = active.some(function (record) {
@@ -964,7 +993,15 @@
       if (!freeCallBooking || typeof freeCallBooking.authenticatedRequest !== 'function') {
           return Promise.reject(new Error('the booking controller cannot make authenticated requests'));
       }
-      return Promise.resolve(freeCallBooking.authenticatedRequest(path, 'GET'));
+      try {
+          return Promise.resolve(freeCallBooking.authenticatedRequest(path, 'GET'));
+      } catch (error) {
+          // A bridge that throws SYNCHRONOUSLY — an unavailable
+          // `xanoAuthFetch` is raised that way — would otherwise escape this
+          // call's own rejection handler and cost BOTH call types their paint
+          // instead of one.
+          return Promise.reject(error);
+      }
   }
 
   /**
@@ -977,6 +1014,19 @@
    * availability request — the same rule the brand path applies by keying on
    * its INSTALLED set rather than its accepted one.
    */
+  /**
+   * The settings payloads name a service's length as either `duration` or
+   * `duration_minutes`. Same tolerance `free-call-settings.js` applies
+   * (`serviceDuration`, :558). The raw value is kept rather than coerced, so
+   * an absent duration stays absent and the admission rule's own `== null`
+   * tolerance still decides it.
+   */
+  function ownerServiceDuration(service) {
+      return service.duration === undefined || service.duration === null
+          ? service.duration_minutes
+          : service.duration;
+  }
+
   function ownerRecordFrom(settings, isPaid) {
       const label = isPaid ? 'paid' : 'free';
       if (!settings || !Array.isArray(settings.services)) return null;
@@ -996,15 +1046,41 @@
           return null;
       }
 
+      const environments = bookableEnvironments();
       const service = active[0];
+      // The two settings endpoints report environment differently from
+      // `get_bookable/v3`: the free payload carries `data_environment` at the
+      // top level, and the paid payload carries `stripe_environment` at the top
+      // level with `payment_environment` on each service. Each reported
+      // environment is checked against the host. `data_environment` is not
+      // something the PAID payload returns at either level, and its environment
+      // authority is the payment environment that IS returned, so that field is
+      // filled from the host rather than invented from a value we do not have.
       const record = {
           is_paid: isPaid,
           price_cents: service.price_cents,
           config_id: service.config_id,
-          duration: service.duration,
+          duration: ownerServiceDuration(service),
           active: true,
+          data_environment: isPaid && settings.data_environment === undefined
+              ? (environments && environments.data)
+              : settings.data_environment,
       };
-      if (isPaid) record.currency = service.currency;
+      if (isPaid) {
+          record.currency = service.currency;
+          record.payment_environment = service.payment_environment === undefined
+              ? settings.stripe_environment
+              : service.payment_environment;
+      }
+
+      // The same admission gate every brand viewer's records go through. An
+      // owner must never be shown a value that would be rejected before it
+      // could reach anybody else's screen.
+      if (!isBookableRecordShape(record, environments)) {
+          console.warn('[hire-profile] the owner ' + label +
+              '-call service did not pass the bookable admission rules; its row was left alone');
+          return null;
+      }
       return record;
   }
 

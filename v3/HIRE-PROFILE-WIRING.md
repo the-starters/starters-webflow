@@ -572,6 +572,28 @@ active service for a type is a reconciliation case, not a choice, so that type
 is left alone with a warning rather than painted from whichever record came
 first.
 
+Every owner record then goes through `isBookableRecordShape`, the **same**
+admission rules `selectBookableConfigurations` runs over a brand viewer's
+records — host environment, and the free/paid price, currency and duration
+contracts described above. `bookableEnvironments()` is the single reader for
+both. Readiness says a starter finished setting a service up; it does not say
+the service is shaped like something anybody could book, and a half-configured
+record that reaches only the owner's screen is the worst kind — the owner has
+no second view to notice it against. A free service priced above zero, a
+cross-environment record on staging, or a paid service quoted in the wrong
+currency is refused with a warning and leaves the authored row standing.
+
+Two shape details differ from `get_bookable/v3` and are handled at the mapping
+step. The settings payloads name a service's length as either `duration` or
+`duration_minutes` (the tolerance `free-call-settings.js` already applies), and
+they report environment differently: free carries `data_environment` at the top
+level, paid carries `stripe_environment` at the top level with
+`payment_environment` on each service. Each environment an endpoint reports is
+checked against the host. `data_environment` is not returned by the paid payload
+at either level, so that field is filled from the host rather than invented —
+the paid record's environment authority is the payment environment, which is
+checked.
+
 **A revealed but not-yet-bookable owner keeps the authored row and the CMS
 rate, deliberately.** The reveal runs off calendar and Stripe connection state,
 so an owner mid-setup — calendar connected, availability not configured yet, or
