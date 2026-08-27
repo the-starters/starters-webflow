@@ -238,9 +238,6 @@ function load(options = {}) {
     dom.no.setAttribute('value', options.radioValues.no)
     dom.yes.setAttribute('value', options.radioValues.yes)
   }
-  if (dom.status && options.withoutStatusOutput === true) {
-    delete dom.status.attributes['data-call-settings-output']
-  }
   if (dom.form && options.reportValidity !== undefined) {
     dom.form.reportValidity = () => options.reportValidity
   }
@@ -704,7 +701,7 @@ test('a stale Free description readback leaves the editor open and reports an er
   assert.equal(result.events.some((event) => event.type === 'starterFreeCallWriteSuccess'), false)
 })
 
-test('a guarded Free update uses the scoped native Webflow error block and clears it after retry', async () => {
+test('a guarded Free update mirrors the error to both outputs and clears the native block on retry', async () => {
   let attempts = 0
   const active = canonical({
     public_description: 'Growth review',
@@ -712,7 +709,6 @@ test('a guarded Free update uses the scoped native Webflow error block and clear
     readiness: { free_call_enabled: true, bookable: true },
   })
   const result = load({
-    withoutStatusOutput: true,
     initial: active,
     routes: {
       '/starter/free-call-settings/upsert/v3': ({ setState }) => {
@@ -736,6 +732,10 @@ test('a guarded Free update uses the scoped native Webflow error block and clear
 
   assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
   assert.equal(
+    result.dom.status.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+  assert.equal(
     result.dom.nativeErrorMessage.textContent,
     'Resolve in-flight bookings before updating this service',
   )
@@ -749,6 +749,7 @@ test('a guarded Free update uses the scoped native Webflow error block and clear
   await settle()
 
   assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+  assert.equal(result.dom.status.textContent, 'Free calls are on and bookable.')
   assert.equal(result.dom.nativeErrorMessage.textContent, '')
   assert.equal(result.dom.nativeError.style.display, 'none')
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')

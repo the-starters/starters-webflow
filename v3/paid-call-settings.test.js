@@ -272,9 +272,6 @@ function load(options = {}) {
     options.authoredPills === true,
     options.pillLabels || {},
   )
-  if (dom.statusOutput && options.withoutStatusOutput === true) {
-    delete dom.statusOutput.attributes['data-call-settings-output']
-  }
   const delayedSiblings = options.rootFirst === true && dom.card
     ? dom.card.children.filter((item) => item !== dom.formWrapper)
     : []
@@ -1214,7 +1211,7 @@ test('an expired session fails a Paid update closed before any POST', async () =
   assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
 })
 
-test('a guarded Paid update uses the scoped native Webflow error block and clears it after retry', async () => {
+test('a guarded Paid update mirrors the error to both outputs and clears the native block on retry', async () => {
   let attempts = 0
   const active = canonical({
     services: [service({ price_cents: 100 })],
@@ -1222,7 +1219,6 @@ test('a guarded Paid update uses the scoped native Webflow error block and clear
   })
   const result = load({
     cardMode: true,
-    withoutStatusOutput: true,
     initial: active,
     routes: {
       '/starter/paid-call-settings/upsert/v3': ({ setState }) => {
@@ -1250,6 +1246,10 @@ test('a guarded Paid update uses the scoped native Webflow error block and clear
 
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
   assert.equal(
+    result.dom.statusOutput.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+  assert.equal(
     result.dom.nativeErrorMessage.textContent,
     'Resolve in-flight bookings before updating this service',
   )
@@ -1263,6 +1263,7 @@ test('a guarded Paid update uses the scoped native Webflow error block and clear
   await settle()
 
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
   assert.equal(result.dom.nativeErrorMessage.textContent, '')
   assert.equal(result.dom.nativeError.style.display, 'none')
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')

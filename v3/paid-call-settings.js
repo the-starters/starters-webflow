@@ -420,10 +420,7 @@
     const target =
       qs('[data-call-settings-output="status"]', uiScope || root) ||
       qs('[data-paid-call-element="status"]', root)
-    if (target) {
-      target.textContent = message || ''
-      return
-    }
+    if (target) target.textContent = message || ''
     const nativeError = findNativeError()
     if (!nativeError) return
     const text = document.documentElement.getAttribute(STATUS_ATTRIBUTE) === 'error'
@@ -1001,8 +998,8 @@
       return render(canonical)
     } catch (error) {
       if (version === refreshVersion) {
-        clearRenderedState('Paid-call settings are unavailable. Your account was not changed.')
         setStatus('error')
+        clearRenderedState('Paid-call settings are unavailable. Your account was not changed.')
         console.warn('[paid-call-settings] initialization failed:', error && error.message)
       }
       return null
