@@ -16,6 +16,9 @@
   const AVAILABILITY_PATH = '/scheduler/get_availability/v3'
   const BOOKING_PATH = '/brand/booking/request/v3'
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  // The one copy of this string. hire-profile.js's load-time painter imports it
+  // rather than duplicating it, so the two writers cannot drift apart.
+  const NO_SLOTS_TEXT = 'No available slots'
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const chooserBindings = new WeakMap()
@@ -416,10 +419,25 @@
     return list.hour + ':' + list.minute + list.dayPeriod + ' on ' + list.month + '/' + list.day
   }
 
-  function updateNearestSlot(state, value) {
+  /**
+   * Writes one slot hook and records WHY it says what it says.
+   *
+   * The state attribute matters because three of the four strings this writes
+   * are not times: 'Loading...', the no-slots copy, and the no-slots copy again
+   * after a failure all read as "no time" to a human but mean different things
+   * to QA. hire-profile.js's load-time painter stamps the same attribute, so a
+   * hook is self-describing whichever writer got there last.
+   *
+   * The equality check is not micro-optimisation: two body-wide MutationObservers
+   * (millify's and the portfolio see-more's) wake on every text write, so
+   * rewriting an identical string costs real work for no change.
+   */
+  function updateNearestSlot(state, value, slotState) {
     const item = state.cta.closest('[call-type-item]') || state.cta
     const target = item.querySelector('[next-available-slot]')
-    if (target) target.textContent = value
+    if (!target) return
+    if (target.textContent !== value) target.textContent = value
+    if (slotState) target.setAttribute('data-next-slot-state', slotState)
   }
 
   function installFreeBookingController(options) {
@@ -598,12 +616,13 @@
     mainButtons.forEach(function (button) {
       button.onclick = async function (event) {
         event.preventDefault()
-        updateNearestSlot(state, 'Loading...')
+        updateNearestSlot(state, 'Loading...', 'loading')
         try {
           const slot = await getNearestSlot(state.grantId, state.configId)
-          updateNearestSlot(state, slot ? nextSlotText(slot) : 'No available slots')
+          if (slot) updateNearestSlot(state, nextSlotText(slot), 'painted')
+          else updateNearestSlot(state, NO_SLOTS_TEXT, 'empty')
         } catch (error) {
-          updateNearestSlot(state, 'No available slots')
+          updateNearestSlot(state, NO_SLOTS_TEXT, 'error')
           console.error('[free-call-booking] availability failed:', error)
         }
       }
@@ -620,12 +639,14 @@
     authenticatedRequest,
     availabilityPath,
     canonicalBookingId,
+    NO_SLOTS_TEXT,
     formatWithTimezone,
     getConfigs,
     getNearestSlot,
     getStarterByMemberId,
     installFreeBookingController,
     minimumBookingNoticeMinutes,
+    nextSlotText,
   }
 
   if (isCommonJs) {

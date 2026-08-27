@@ -16,6 +16,29 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./hire-profile.js'), 'utf8')
+const millifySource = fs.readFileSync(require.resolve('../global-embeds/millify.js'), 'utf8')
+
+/**
+ * The REAL millify, not a stub.
+ *
+ * A stub of the shape `(input) => ({ok: true, text: ...})` ignores its options
+ * argument, and that is exactly what let the repaint ship calling
+ * `millify(value, {})`: millifyCore reads `units.length` unconditionally, so an
+ * options object without `units` throws a TypeError for every value on earth.
+ * The throw was swallowed and the raw number painted -- $1500 where the page
+ * should read $1.5K. Driving the real module is the only stub-proof guard.
+ */
+function realMillify() {
+  const context = {
+    document: { readyState: 'complete', addEventListener() {}, querySelectorAll: () => [], body: null },
+    console: { warn() {}, log() {} },
+    Number, String, Math, Intl, parseFloat, isNaN,
+  }
+  context.window = context
+  vm.createContext(context)
+  vm.runInContext(millifySource, context)
+  return context.__startersMillify
+}
 const freeBookingSource = fs.readFileSync(require.resolve('./free-call-booking.js'), 'utf8')
 
 /* ------------------------------------------------------------------ DOM --- */
@@ -2968,7 +2991,7 @@ test('2e: paid rate surfaces are repainted from the canonical Nylas price, not t
   // The CMS-bound markup says 250; the canonical config says 25000 cents.
   const paidCardPrice = page.servicesList.querySelector('[data-millify]')
   paidCardPrice.textContent = '250'
-  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  const paidSurface = makeElement('div', { 'data-service-card': 'component', 'has-connection': 'paid' })
   const paidSurfacePrice = makeElement('span', { 'data-millify': '' })
   paidSurfacePrice.textContent = '250'
   paidSurface.appendChild(paidSurfacePrice)
@@ -2991,7 +3014,14 @@ test('2e: paid rate surfaces are repainted from the canonical Nylas price, not t
 
   assert.equal(paidSurfacePrice.getAttribute('data-millify'), '250', 'canonical 25000 cents = $250')
   assert.equal(paidSurfacePrice.textContent, '250')
-  assert.equal(page.paidModalPrice.textContent, '$250', 'the chooser price placeholder is repainted too')
+  // [call-type-price] belongs to the Paid controller, which writes
+  // canonicalPaidPrice at install (paid-call-brand-payment.js:1359) AFTER this
+  // runs. A write here would be dead code and a second format of one number.
+  assert.equal(
+    page.paidModalPrice.textContent,
+    '$50',
+    'the repaint leaves the paid chooser price to its real owner',
+  )
 })
 
 test('2e: the free chooser price is repainted to zero from the canonical config', async () => {
@@ -3045,7 +3075,7 @@ test('2e: with no canonical configuration the CMS value is left alone as a cosme
 test('2e: a repaint uses the shared millify formatter when the page provides one', async () => {
   const page = makePage({ includeFreeCard: false })
   addContractDialog(page)
-  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  const paidSurface = makeElement('div', { 'data-service-card': 'component', 'has-connection': 'paid' })
   const paidSurfacePrice = makeElement('span', { 'data-millify': '', 'data-millify-raw': '250' })
   paidSurfacePrice.textContent = '250'
   paidSurface.appendChild(paidSurfacePrice)
@@ -3062,7 +3092,7 @@ test('2e: a repaint uses the shared millify formatter when the page provides one
     },
     paidController: { installPaidBookingController: () => true },
   })
-  context.__startersMillify = (input) => ({ ok: true, text: String(Number(input) / 1000) + 'K', raw: Number(input) })
+  context.__startersMillify = realMillify()
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
@@ -3205,8 +3235,10 @@ test('2f: the new Designer sentinels are always overwritten', async () => {
   for (const [key, hook] of Object.entries(hooks)) {
     assert.notEqual(hook.textContent, SLOT_SENTINEL, `${key} must not keep the slot sentinel`)
   }
-  assert.notEqual(page.paidModalPrice.textContent, PRICE_SENTINEL, 'the $00 price sentinel must go')
-  assert.equal(page.paidModalPrice.textContent, '$250')
+  // The paid chooser price is NOT this file's to write: the Paid controller
+  // owns [call-type-price] and writes canonicalPaidPrice at install. In this
+  // fixture that controller is a stub, so the sentinel legitimately survives.
+  assert.equal(page.paidModalPrice.textContent, PRICE_SENTINEL)
 })
 
 test('2f: the writer goes through the shared getNearestSlot so the notice window applies', async () => {
@@ -3288,7 +3320,7 @@ test('2f: a profile with no canonical configuration paints nothing', async () =>
   assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL, 'nothing to paint means nothing is touched')
 })
 
-test('2f: a controller without getNearestSlot degrades without throwing', async () => {
+test('2f: a controller without getNearestSlot clears the sentinel instead of keeping it', async () => {
   const page = makePage()
   const hooks = addSlotHooks(page)
   addContractDialog(page)
@@ -3299,7 +3331,33 @@ test('2f: a controller without getNearestSlot degrades without throwing', async 
 
   assert.doesNotThrow(() => vm.runInContext(source, context))
   await settle()
-  assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL)
+  // This test used to assert the sentinel SURVIVED, which locked in the exact
+  // bug the writer exists to prevent and contradicted the wiring doc's promise
+  // that a placeholder is never left standing.
+  assert.equal(hooks.cardFree.textContent, 'No available slots')
+  assert.equal(hooks.cardFree.getAttribute('data-next-slot-state'), 'error')
+  assert.equal(hooks.cardPaid.textContent, 'No available slots')
+})
+
+test('2f: a missing Nylas grant leaves no sentinel a viewer can see', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const controller = slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, [])
+  controller.getStarterByMemberId = async () => ({ nylas_grant_id: '', nylas_grant_email: '' })
+  const context = slotContext(page, controller)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // The painter's own no-grant guard is belt-and-braces for a direct caller:
+  // discovery never reaches it, because no grant means no accepted config and
+  // syncCanonicalCallSurfaces([]) has already closed every call surface. The
+  // sentinel survives in the DOM but on a card no viewer can see, which is the
+  // contract that actually matters here.
+  const freeCard = hooks.cardFree.parentElement
+  assert.equal(freeCard.hasAttribute('data-canonical-call-unavailable'), true)
+  assert.equal(freeCard.style.display, 'none')
 })
 
 test('2f: an uninstallable call type gets no availability request and keeps its hide', async () => {
@@ -3348,7 +3406,6 @@ test('2f: 12/10-era sentinel remnants are overwritten as readily as the new ones
   assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
   assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06')
   assert.equal(hooks.chooserPaid.textContent, '09:00AM on 03/06', 'a bare 00:00 remnant goes too')
-  assert.equal(page.paidModalPrice.textContent, '$250')
 })
 
 test('the free chooser row survives: hide-free-when-paid is not in this bundle', async () => {
@@ -3377,4 +3434,273 @@ test('the free chooser row survives: hide-free-when-paid is not in this bundle',
   assert.equal(page.freeModalOption.hasAttribute('data-booking-unavailable'), false)
   assert.equal(page.paidModalOption.hasAttribute('data-booking-unavailable'), false)
   assert.equal(page.freeModalOption.style.display, 'block')
+})
+
+/* ---------------------------------- rate-paint fast-follow (v1.59.406) ----- */
+
+/** A paid call card carrying one millify price hook, as production authors it. */
+function addPaidCard(page, attrs = {}) {
+  const card = makeElement('div', {
+    'data-service-card': 'component', 'data-type': 'paid', 'has-connection': 'paid',
+  })
+  const price = makeElement('span', Object.assign({ 'data-millify': '' }, attrs))
+  price.textContent = '250'
+  card.appendChild(price)
+  page.servicesList.appendChild(card)
+  return { card, price }
+}
+
+function paidContext(page, config, extra = {}) {
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: BRAND_MEMBER,
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [config],
+    },
+    paidController: { installPaidBookingController: () => true },
+    ...extra,
+  })
+  context.__startersMillify = realMillify()
+  return context
+}
+
+test('rate paint: a four-figure rate renders millified, not as a raw number', async () => {
+  const page = makePage({ includeFreeCard: false })
+  const paid = addPaidCard(page)
+  addContractDialog(page)
+  // $1,500. Calling millify with {} threw on units.length for EVERY value, the
+  // catch swallowed it, and this painted "1500".
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 150000 })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paid.price.textContent, '1.5K')
+  assert.equal(paid.price.getAttribute('data-millify'), '1500')
+})
+
+test('rate paint: authored data-millify-* options are honored', async () => {
+  const page = makePage({ includeFreeCard: false })
+  const paid = addPaidCard(page, { 'data-millify-precision': '2', 'data-millify-space': 'true' })
+  addContractDialog(page)
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 152500 })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paid.price.textContent, '1.52 K', 'precision 2 and the authored space')
+})
+
+test('rate paint: a value over data-millify-max is refused, not approximated', async () => {
+  const page = makePage({ includeFreeCard: false })
+  const paid = addPaidCard(page, { 'data-millify-max': '1000' })
+  addContractDialog(page)
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // millify's contract is refuse-rather-than-approximate: the ceiling exists to
+  // make bad data visible, so the authored text stands untouched.
+  assert.equal(paid.price.textContent, '250')
+  assert.ok(context.warnings.some((line) => line.includes('millify refused')))
+})
+
+test('rate paint: a repainted hook drops the authored ceiling', async () => {
+  const page = makePage({ includeFreeCard: false })
+  const paid = addPaidCard(page, { 'data-millify-max': '100000', 'data-millify-raw': '250' })
+  addContractDialog(page)
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paid.price.textContent, '5.5K')
+  // The ceiling was sized for the CMS value. Left in place, a later re-process
+  // fails('max') and reverts to the raw number.
+  assert.equal(paid.price.getAttribute('data-millify-max'), null)
+  assert.equal(paid.price.getAttribute('data-millify-raw'), null)
+})
+
+test('rate paint: odd cents keep both decimals, matching canonicalPaidPrice', async () => {
+  const page = makePage({ includeFreeCard: false })
+  const paid = addPaidCard(page)
+  addContractDialog(page)
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 25050 })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paid.price.getAttribute('data-millify'), '250.50')
+})
+
+test('rate paint: a free config with no price_cents still clears the chooser sentinel', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  page.paidModalPrice.textContent = '$00'
+  const freePrice = makeElement('span', { 'call-type-price': '' })
+  freePrice.textContent = '$00'
+  page.freeModalOption.appendChild(freePrice)
+
+  // selectBookableConfigurations deliberately admits a Free record with no
+  // price_cents. Number(undefined) is NaN, which used to bail and leave $00 on
+  // a VISIBLE free chooser row.
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: BRAND_MEMBER,
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [{ config_id: 'cfg_free', active: true, is_paid: false, data_environment: 'production' }],
+      installFreeBookingController: () => true,
+    },
+  })
+  context.__startersMillify = realMillify()
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(freePrice.textContent, '$0')
+})
+
+test('rate paint: a free config never overwrites an authored card rate with zero', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const freeCard = makeElement('div', {
+    'data-service-card': 'component', 'data-type': 'free', 'has-connection': 'free',
+  })
+  const freeCardPrice = makeElement('span', { 'data-millify': '' })
+  freeCardPrice.textContent = '95'
+  freeCard.appendChild(freeCardPrice)
+  page.servicesList.appendChild(freeCard)
+
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: BRAND_MEMBER,
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [FREE_CONFIG],
+      installFreeBookingController: () => true,
+    },
+  })
+  context.__startersMillify = realMillify()
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(freeCardPrice.textContent, '95', 'the chooser is the one intentional $0')
+})
+
+test('rate paint: only the anchored price hook is written, not every number', async () => {
+  const page = makePage({ includeFreeCard: false })
+  const card = makeElement('div', {
+    'data-service-card': 'component', 'data-type': 'paid', 'has-connection': 'paid',
+  })
+  const price = makeElement('span', { 'data-millify': '' })
+  price.textContent = '250'
+  const duration = makeElement('span', { 'data-millify': '' })
+  duration.textContent = '60'
+  card.appendChild(price)
+  card.appendChild(duration)
+  page.servicesList.appendChild(card)
+  addContractDialog(page)
+
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(price.textContent, '5.5K')
+  assert.equal(duration.textContent, '60', 'a duration must never be painted with the price')
+})
+
+test('rate paint: a card inserted after discovery is painted by the observer', async () => {
+  const page = makePage({ includeFreeCard: false })
+  addPaidCard(page)
+  addContractDialog(page)
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // Webflow can insert or clone hero call components after the initial scan;
+  // the file already re-runs its card wiring for exactly that reason.
+  const late = makeElement('div', {
+    'data-service-card': 'component', 'data-type': 'paid', 'has-connection': 'paid',
+  })
+  const latePrice = makeElement('span', { 'data-millify': '' })
+  latePrice.textContent = '250'
+  const lateSlot = makeElement('div', { 'next-available-slot': '' })
+  lateSlot.textContent = '00:00pm on 00/00'
+  late.appendChild(latePrice)
+  late.appendChild(lateSlot)
+  page.servicesList.appendChild(late)
+
+  context.mutationObserverCallbacks.forEach((cb) =>
+    cb([{ type: 'childList', addedNodes: [late] }]))
+  await settle()
+
+  assert.equal(latePrice.textContent, '5.5K', 'a late card must not keep the stale CMS price')
+  assert.notEqual(lateSlot.textContent, '00:00pm on 00/00', 'nor the slot sentinel')
+})
+
+test('rate paint: repainting an already-painted card is a byte-identical no-op', async () => {
+  const page = makePage({ includeFreeCard: false })
+  const paid = addPaidCard(page)
+  addContractDialog(page)
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const before = {
+    text: paid.price.textContent,
+    millify: paid.price.getAttribute('data-millify'),
+  }
+  context.mutationObserverCallbacks.forEach((cb) =>
+    cb([{ type: 'childList', addedNodes: [paid.card] }]))
+  await settle()
+
+  assert.equal(paid.price.textContent, before.text)
+  assert.equal(paid.price.getAttribute('data-millify'), before.millify)
+})
+
+test('rate paint: an accepted but uninstallable paid card is never priced', async () => {
+  const page = makePage({ includeFreeCard: false })
+  const paid = addPaidCard(page)
+  addContractDialog(page)
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 }, {
+    paidController: { installPaidBookingController: () => false },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // Showing a canonical price on a card nobody can book is one hide-regression
+  // away from being visible, so both painters key on the INSTALLED set.
+  assert.equal(paid.price.textContent, '250')
+})
+
+test('slot paint: a real slot that cannot be formatted is an error, not an empty calendar', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const controller = slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, [])
+  // Version skew: an older controller exports getNearestSlot but no formatter.
+  delete controller.formatWithTimezone
+  delete controller.nextSlotText
+  const context = slotContext(page, controller)
+  delete context.formatWithTimezone
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(
+    hooks.cardFree.getAttribute('data-next-slot-state'),
+    'error',
+    'calling this empty would send a reader to the wrong system entirely',
+  )
 })
