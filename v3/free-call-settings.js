@@ -32,6 +32,7 @@
   let root = null
   let uiScope = null
   let sessionMemberId = null
+  let sessionAuthScope = null
   let settings = null
   let busy = false
   // Only a real radio change may turn an existing service off. Published
@@ -234,6 +235,21 @@
       })
     }
     return data
+  }
+
+  async function currentAuthScope() {
+    if (typeof window.__tsSchedulingAuthGetScope !== 'function') {
+      throw new Error('Scheduling auth scope is unavailable')
+    }
+    return window.__tsSchedulingAuthGetScope()
+  }
+
+  function assertAuthScope(scope) {
+    if (!sessionAuthScope || scope !== sessionAuthScope) {
+      throw Object.assign(new Error('Member session changed during free-call request'), {
+        code: 'MEMBER_SCOPE_CHANGED',
+      })
+    }
   }
 
   function canonicalService(value) {
@@ -482,6 +498,7 @@
     settings = null
     setBusy(false)
     sessionMemberId = null
+    sessionAuthScope = null
     const pair = radioPair()
     setRadioChecked(pair.enabled, false)
     setRadioChecked(pair.disabled, true)
@@ -831,8 +848,10 @@
       try {
         if (pendingWrite) await pendingWrite.done
         if (!currentRender(version, memberId)) return null
+        assertAuthScope(await currentAuthScope())
         const canonical = await readCanonicalSettings()
         if (!currentRender(version, memberId)) return null
+        assertAuthScope(await currentAuthScope())
         return render(canonical)
       } catch (error) {
         if (!currentRender(version, memberId)) return null
@@ -862,6 +881,8 @@
         return null
       }
       sessionMemberId = member.id
+      sessionAuthScope = await currentAuthScope()
+      if (!currentRender(version, member.id)) return null
       const pendingWrite = activeWrite && activeWrite.memberId === member.id ? activeWrite : null
       if (pendingWrite) {
         await pendingWrite.done

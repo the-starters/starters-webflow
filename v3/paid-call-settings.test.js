@@ -316,6 +316,7 @@ function load(options = {}) {
   let state = options.initial || canonical()
   let activeMember = { id: options.memberId || 'member-a' }
   let authSessionActive = true
+  let authScope = {}
   let currentMemberReader = () => activeMember
   let authChange = null
   const routes = options.routes || {}
@@ -384,6 +385,10 @@ function load(options = {}) {
     },
     dispatchEvent(event) { events.push(event) },
     __tsSchedulingAuthFetch: schedulingAuthFetch,
+    __tsSchedulingAuthGetScope: async () => {
+      if (!authSessionActive) throw new Error('No Memberstack session')
+      return authScope
+    },
     xanoAuthFetch: schedulingAuthFetch,
   }
   if (!options.withoutMemberstackAtLoad) window.$memberstackDom = memberstack
@@ -421,14 +426,21 @@ function load(options = {}) {
     window,
     document,
     changeMember: async (nextMember) => {
+      if (!activeMember || !nextMember || activeMember.id !== nextMember.id) authScope = {}
       activeMember = nextMember
       authSessionActive = Boolean(nextMember && nextMember.id)
       if (authChange) return authChange(nextMember)
       return null
     },
+    switchAuthScopeWithNullNotice: async (nextMember) => {
+      activeMember = nextMember
+      authSessionActive = Boolean(nextMember && nextMember.id)
+      authScope = {}
+      return authChange ? authChange(null) : null
+    },
     setCurrentMemberReader: (reader) => { currentMemberReader = reader },
     notifyAuthChange: async (nextMember) => (authChange ? authChange(nextMember) : null),
-    expireMemberSilently: () => { activeMember = null; authSessionActive = false },
+    expireMemberSilently: () => { activeMember = null; authSessionActive = false; authScope = {} },
     installMemberstack: () => { window.$memberstackDom = memberstack },
     flushTimers: () => {
       const pending = timers.splice(0)
@@ -2026,6 +2038,41 @@ test('a transient empty auth notification preserves and refreshes the Paid canon
     result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length,
     readsBefore + 1,
   )
+})
+
+test('an owner-changing null auth notification cannot repaint Paid settings', async () => {
+  const result = load({
+    initial: canonical({
+      services: [service({ title: 'Member A Call', price_cents: 12500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ member }) => ({
+        ok: true,
+        status: 200,
+        json: async () => canonical({
+          services: [service({
+            config_id: member.id === 'member-b' ? 'cfg-paid-b' : 'cfg-paid-a',
+            title: member.id === 'member-b' ? 'Member B Call' : 'Member A Call',
+            price_cents: member.id === 'member-b' ? 45000 : 12500,
+          })],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }),
+      }),
+    },
+  })
+  await settle()
+
+  await result.switchAuthScopeWithNullNotice({ id: 'member-b' })
+  await settle()
+
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'false')
+  assert.equal(result.dom.status.textContent, 'Sign in to manage paid calls.')
+  assert.equal(result.calls.filter(
+    (call) => call.path === '/starter/paid-call-settings/get/v3',
+  ).length, 1)
 })
 
 test('a failed post-write auth read falls back to the verified Paid update', async () => {

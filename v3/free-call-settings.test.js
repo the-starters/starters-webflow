@@ -260,6 +260,7 @@ function load(options = {}) {
   let state = options.initial || canonical()
   let activeMember = { id: options.memberId || 'member-free-a' }
   let authSessionActive = true
+  let authScope = {}
   let currentMemberReader = () => activeMember
   let authChange = null
   const routes = options.routes || {}
@@ -321,6 +322,10 @@ function load(options = {}) {
     },
     dispatchEvent(event) { events.push(event) },
     __tsSchedulingAuthFetch: schedulingAuthFetch,
+    __tsSchedulingAuthGetScope: async () => {
+      if (!authSessionActive) throw new Error('No Memberstack session')
+      return authScope
+    },
     xanoAuthFetch: schedulingAuthFetch,
   }
   if (!options.withoutMemberstackAtLoad) window.$memberstackDom = memberstack
@@ -352,12 +357,19 @@ function load(options = {}) {
     warnings,
     window,
     document,
-    expireMember: () => { activeMember = null; authSessionActive = false },
+    expireMember: () => { activeMember = null; authSessionActive = false; authScope = {} },
     setCurrentMemberReader: (reader) => { currentMemberReader = reader },
     changeMember: async (member) => {
+      if (!activeMember || !member || activeMember.id !== member.id) authScope = {}
       activeMember = member
       authSessionActive = Boolean(member && member.id)
       return authChange ? authChange(member) : null
+    },
+    switchAuthScopeWithNullNotice: async (member) => {
+      activeMember = member
+      authSessionActive = Boolean(member && member.id)
+      authScope = {}
+      return authChange ? authChange(null) : null
     },
     notifyAuthChange: async (member) => (authChange ? authChange(member) : null),
     revealRoot: () => {
@@ -1213,6 +1225,38 @@ test('a transient empty auth notification preserves and refreshes the Free canon
     result.calls.filter((call) => call.path === '/starter/free-call-settings/get/v3').length,
     readsBefore + 1,
   )
+})
+
+test('an owner-changing null auth notification cannot repaint Free settings', async () => {
+  const result = load({
+    initial: canonical({
+      public_description: 'Member A Free Call',
+      services: [service({ title: 'Member A Free Call' })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ member }) => ({
+        ok: true,
+        status: 200,
+        json: async () => canonical({
+          public_description: member.id === 'member-free-b' ? 'Member B Free Call' : 'Member A Free Call',
+          services: [service({ title: member.id === 'member-free-b' ? 'Member B Free Call' : 'Member A Free Call' })],
+          readiness: { free_call_enabled: true, bookable: true },
+        }),
+      }),
+    },
+  })
+  await settle()
+
+  await result.switchAuthScopeWithNullNotice({ id: 'member-free-b' })
+  await settle()
+
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
+  assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.')
+  assert.equal(result.calls.filter(
+    (call) => call.path === '/starter/free-call-settings/get/v3',
+  ).length, 1)
 })
 
 test('a failed post-write auth read falls back to the verified Free update', async () => {
