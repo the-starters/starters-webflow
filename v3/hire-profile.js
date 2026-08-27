@@ -711,11 +711,15 @@
       const retainerRate = parseFloat(record['retainer-rate']);
       const cards = [];
 
+      // The leading \u00A0 is the gap between the title and the slash: the
+      // title-wrapper is a gapless flex row, so the description <p> sits flush
+      // against the title and a plain leading space would be collapsed at the
+      // start of its line box.
       if (rate > 0) {
-          cards.push({ title: 'Freelance', description: '/ hour', price: rate });
+          cards.push({ title: 'Freelance', description: '\u00A0/ hour', price: rate });
       }
       if (record['retainer-enabled'] && retainerRate > 0) {
-          cards.push({ title: 'Retainer', description: '/ month', price: retainerRate });
+          cards.push({ title: 'Retainer', description: '\u00A0/ month', price: retainerRate });
       }
 
       cards.reverse().forEach(function (card) {
