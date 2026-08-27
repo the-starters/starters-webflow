@@ -2758,7 +2758,12 @@ second review write.
 
 On the public profile, author exactly one section with
 `data-reviews-v3="profile"` and exactly one descendant list target with
-`data-reviews-v3-list="reviews"`. The adapter derives the decoded slug only
+`data-reviews-v3-list="reviews"`. The live template has shipped duplicate
+markers before, so the adapter tolerates them defensively: every marker is
+hidden and has its list emptied at configuration time, but only the first in
+document order is configured and painted — a duplicate never publishes its
+placeholder cards, and never becomes a second wf-xano wrapper. The adapter
+derives the decoded slug only
 from the canonical `/hire/{slug}` path, configures that section as the
 `starter-reviews` wf-xano wrapper, and sets `wf-xano-param-starter_slug` before
 initializing it. It does not discover the surface through classes, heading
@@ -2778,7 +2783,10 @@ Reviews section, use `data-reviews-v3-summary-average` and
 `data-reviews-v3-summary-block`. The adapter paints both surfaces from the same
 Xano result. A positive approved review count shows the summary row and formats
 the average with one decimal, including whole-number averages such as `5.0`.
-A zero count paints the zero values, then hides the summary row. The existing
+A zero count paints the zero values, then hides the summary row. The summary
+row is also hidden at configuration time, before any result: like the section,
+it ships pre-filled by Designer, so it fails closed and is revealed only by a
+positive approved count. The existing
 `#rating` plus adjacent count span remains a temporary compatibility target for
 the current Hire template. Its published `.profile-hero_card-progress` ancestor
 is also a temporary summary-row fallback until Designer publishes the canonical
@@ -2801,11 +2809,38 @@ plain list Div. The legacy Reviews CMS Collection List is not a data source and
 must not be retained as a second review projection; Xano is the only review
 store and public read authority.
 
+The authored Reviews section is **hidden by default**. The adapter hides it, and
+empties its authored list target, at configuration time — before wf-xano runs —
+and reveals it again only when Xano positively reports at least one approved
+review. Absence of a result is treated as "no reviews", never as "keep showing
+what Designer authored", so a failed, blocked, or still-in-flight reviews
+request leaves the section hidden rather than publishing the template's
+placeholder cards. Aggregate values are still painted for a zero count.
+
+Whichever profile tab points at the section is hidden and revealed with it. The
+adapter reads the section's own `data-toc-section` key and toggles every
+`[data-hide-when-empty-id="<key>"]` element, which is the tab contract owned by
+[`utils/section-custom-toc/hide-empty-sections.js`](../utils/section-custom-toc/hide-empty-sections.js).
+The adapter carries the repo's release marker: an `@release vX.Y.Z` header
+comment and a matching `release` property on `window.StartersReviewsV3`, kept
+in sync by a unit test, so the served jsDelivr bytes are version-verifiable.
+
+Elements this adapter hides are stamped with the module-owned
+`data-reviews-v3-hidden` marker. It deliberately does not reuse that engine's
+`data-starters-section-hidden`, whose value stores the inline display the
+engine will restore — sharing it would let each writer corrupt the other's
+bookkeeping if the section's engine attribute is ever re-enabled.
+That shared engine cannot pair them itself on the current Hire template, because
+the template ships the section's `data-hide-when-empty-section` attribute
+disabled (prefixed `xdata-`) and the engine's fail-safe then leaves the tab
+visible. If Designer re-enables that attribute, make the shared engine the sole
+owner of the pair instead of running both — and note its `data-empty-watch`
+selector must then be `[data-review-id]`, since the adapter replaces the
+authored `.profile-content_reviews_list_item` cards with its own.
+
 The adapter also accepts `items` for the review array, `aggregates` for the
 aggregate object, and the wf-xano raw-item fallback. Aggregate values are never
-recalculated from a paginated review list. The authored Reviews section is
-shown only when the approved review array is non-empty; zero aggregate values
-are still painted when it is empty. Approved reviews render as stacked,
+recalculated from a paginated review list. Approved reviews render as stacked,
 bordered cards with five Bootstrap star icons, a `Verified Review` badge, the
 review text, and reviewer identity from `brand.full_name` with
 `brand.company_name` as its fallback. Cards are constructed with DOM nodes and
@@ -2826,6 +2861,13 @@ python3 -m http.server 8765 --bind 127.0.0.1
 The harness runs the real adapter against an isolated approved-review fixture;
 it changes the browser history to `/hire/review-harness` so the adapter uses its
 canonical route gate, and never reads or writes production business data.
+
+`starter/reviews/summary` enforces a Starter-environment origin allowlist that
+admits `thestarters.com` and `www.thestarters.com` but **not**
+`the-starters-3-0.webflow.io`. The Reviews surface therefore has no happy path on
+staging: every staging profile lands in wf-xano's `is-wf-xano-error` state, which
+makes staging a permanent fixture for the *error* path and never for the
+populated one. Verify the populated path against production (read-only) instead.
 
 ## Brand and Starter Dashboard messages tile
 

@@ -34,7 +34,10 @@ class Element {
 }
 
 function documentFixture() {
-  const root = new Element({ 'data-reviews-v3': 'profile' })
+  // `data-toc-section` is what the published Hire template carries on the
+  // Reviews wrapper, and it is the key the profile tab is tagged with.
+  const root = new Element({ 'data-reviews-v3': 'profile', 'data-toc-section': 'reviews' })
+  const reviewsTab = new Element({ 'data-hide-when-empty-id': 'reviews' })
   const average = new Element()
   const count = new Element()
   const summaryAverage = new Element()
@@ -53,6 +56,7 @@ function documentFixture() {
   const listeners = {}
   return {
     root,
+    reviewsTab,
     average,
     count,
     summaryAverage,
@@ -77,6 +81,10 @@ function documentFixture() {
       }
       if (selector === '[data-reviews-v3-summary-count], #rating + span') {
         return [summaryCount, legacySummaryCount]
+      }
+      if (selector === '[data-hide-when-empty-id="reviews"]') return [reviewsTab]
+      if (selector === '[data-reviews-v3="profile"]') {
+        return root.getAttribute('data-reviews-v3') === 'profile' ? [root] : []
       }
       return []
     },
@@ -123,6 +131,83 @@ test('configures the public wrapper with a slug before wf-xano boot', () => {
   assert.equal(fixture.root.childNodes[0].hidden, true)
 })
 
+test('hides the authored section and drops its placeholder cards at configuration', () => {
+  const fixture = documentFixture()
+  const placeholderOne = new Element()
+  const placeholderTwo = new Element()
+  fixture.list.appendChild(placeholderOne)
+  fixture.list.appendChild(placeholderTwo)
+
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+
+  // The Designer section ships visible and pre-filled with placeholder
+  // "Verified Review" cards. Revealing it only after the approved response
+  // arrives published those placeholders for the length of the request.
+  assert.equal(fixture.root.hidden, true)
+  assert.equal(fixture.root.style.display, 'none')
+  assert.equal(fixture.root.getAttribute('data-reviews-v3-hidden'), '')
+  // The shared hide-empty engine owns `data-starters-section-hidden` (its
+  // value stores the display to restore) — this module must not stamp it.
+  assert.equal(fixture.root.getAttribute('data-starters-section-hidden'), null)
+  assert.equal(fixture.list.childNodes.length, 0)
+  // A visible tab pointing at a hidden section is the other half of the bug.
+  assert.equal(fixture.reviewsTab.hidden, true)
+  assert.equal(fixture.reviewsTab.style.display, 'none')
+})
+
+test('reveals the profile tab with the section, and only with it', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture, pathname: '/hire/elvis-p' })
+  assert.equal(fixture.reviewsTab.hidden, true)
+
+  api.paintProfile(fixture, fixture.root, {
+    raw: { reviews: [{ review_id: 7, rating: 5 }], aggregate: { review_count: 1, average_rating: 5 } },
+  })
+  assert.equal(fixture.reviewsTab.hidden, false)
+  assert.equal(fixture.reviewsTab.style.display, '')
+  assert.equal(fixture.reviewsTab.getAttribute('data-reviews-v3-hidden'), null)
+
+  api.paintProfile(fixture, fixture.root, {
+    raw: { reviews: [], aggregate: { review_count: 0, average_rating: 0 } },
+  })
+  assert.equal(fixture.reviewsTab.hidden, true)
+  assert.equal(fixture.reviewsTab.style.display, 'none')
+})
+
+test('leaves the tab alone when the section carries no toc key', () => {
+  const fixture = documentFixture()
+  fixture.root.removeAttribute('data-toc-section')
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+  assert.equal(fixture.root.hidden, true)
+  assert.equal(fixture.reviewsTab.hidden, false)
+})
+
+test('leaves a non-profile page untouched at configuration', () => {
+  const fixture = documentFixture()
+  fixture.list.appendChild(new Element())
+
+  load({ document: fixture, pathname: '/brand-dashboard' })
+
+  assert.equal(fixture.root.hidden, false)
+  assert.equal(fixture.root.style.display, '')
+  assert.equal(fixture.list.childNodes.length, 1)
+})
+
+test('keeps the authored section hidden when no approved result ever arrives', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture, pathname: '/hire/elvis-p' })
+  const handlers = {}
+  const instance = { on(name, handler) { handlers[name] = handler } }
+
+  // The wf-xano request errors (the reviews endpoint rejects non-production
+  // origins, so this is the permanent staging state) — `results` never fires.
+  api.wireInstances({ get() { return instance } }, fixture, fixture.root)
+
+  assert.equal(typeof handlers.results, 'function')
+  assert.equal(fixture.root.hidden, true)
+  assert.equal(fixture.root.style.display, 'none')
+})
+
 test('fails closed when the authored profile review attributes are absent', () => {
   const fixture = documentFixture()
   fixture.root.removeAttribute('data-reviews-v3')
@@ -140,6 +225,97 @@ test('fails closed when the authored review list target is absent', () => {
   const { api } = load({ document: fixture, pathname: '/hire/jp-dionisio' })
   assert.equal(api.configureProfileRoot(fixture, '/hire/jp-dionisio'), null)
   assert.equal(fixture.root.getAttribute('wf-xano-source'), null)
+  // "Fails closed" must mean HIDDEN, not merely unwired: a missing list
+  // target used to return before the hide, publishing the placeholder cards.
+  assert.equal(fixture.root.hidden, true)
+  assert.equal(fixture.root.style.display, 'none')
+})
+
+test('hides and empties every duplicate profile marker, wiring only the first', () => {
+  const fixture = documentFixture()
+  const dupList = new Element({ 'data-reviews-v3-list': 'reviews' })
+  dupList.appendChild(new Element())
+  const dupRoot = new Element({ 'data-reviews-v3': 'profile' })
+  dupRoot.children['[data-reviews-v3-list="reviews"]'] = dupList
+  const baseQsa = fixture.querySelectorAll.bind(fixture)
+  fixture.querySelectorAll = (selector) =>
+    selector === '[data-reviews-v3="profile"]' ? [fixture.root, dupRoot] : baseQsa(selector)
+
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+
+  // The live template has shipped duplicate markers; a second one left
+  // unhandled keeps publishing its authored placeholder cards.
+  assert.equal(dupRoot.hidden, true)
+  assert.equal(dupRoot.style.display, 'none')
+  assert.equal(dupList.childNodes.length, 0)
+  assert.equal(dupRoot.getAttribute('wf-xano-source'), null)
+  assert.equal(fixture.root.getAttribute('wf-xano-source'), 'opp30:starter/reviews/summary')
+})
+
+test('hides the authored hero summary placeholder at configuration time', () => {
+  const fixture = documentFixture()
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+  // The summary lives outside the section, pre-filled by Designer; it must
+  // fail closed with the section, not only be corrected after a result.
+  assert.equal(fixture.summaryBlockEl.hidden, true)
+  assert.equal(fixture.summaryBlockEl.style.display, 'none')
+})
+
+test('a revealed primary never re-touches the hidden duplicate', () => {
+  const fixture = documentFixture()
+  const dupList = new Element({ 'data-reviews-v3-list': 'reviews' })
+  dupList.appendChild(new Element())
+  const dupRoot = new Element({ 'data-reviews-v3': 'profile' })
+  dupRoot.children['[data-reviews-v3-list="reviews"]'] = dupList
+  const baseQsa = fixture.querySelectorAll.bind(fixture)
+  fixture.querySelectorAll = (selector) =>
+    selector === '[data-reviews-v3="profile"]' ? [fixture.root, dupRoot] : baseQsa(selector)
+
+  const { api } = load({ document: fixture, pathname: '/hire/elvis-p' })
+  api.paintProfile(fixture, fixture.root, {
+    raw: { reviews: [{ review_id: 7, rating: 5 }], aggregate: { review_count: 1, average_rating: 5 } },
+  })
+
+  assert.equal(fixture.root.hidden, false)
+  assert.equal(dupRoot.hidden, true)
+  assert.equal(dupRoot.style.display, 'none')
+  assert.equal(dupList.childNodes.length, 0)
+})
+
+test('a throwing tab selector still leaves the section configured and hidden', () => {
+  const fixture = documentFixture()
+  fixture.root.setAttribute('data-toc-section', 'rev"iews')
+  const baseQsa = fixture.querySelectorAll.bind(fixture)
+  fixture.querySelectorAll = (selector) => {
+    if (selector.indexOf('data-hide-when-empty-id') !== -1) {
+      throw new SyntaxError('invalid selector')
+    }
+    return baseQsa(selector)
+  }
+
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+
+  // A bad authored key must not abort the module after the hide.
+  assert.equal(fixture.root.hidden, true)
+  assert.equal(fixture.root.getAttribute('wf-xano-source'), 'opp30:starter/reviews/summary')
+})
+
+test('empties the list via textContent when replaceChildren is unavailable', () => {
+  const fixture = documentFixture()
+  fixture.list.appendChild(new Element())
+  fixture.list.replaceChildren = undefined
+  fixture.list.textContent = 'placeholder'
+
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+
+  assert.equal(fixture.list.textContent, '')
+})
+
+test('the header @release marker matches the exported release property', () => {
+  const headerMatch = SOURCE.match(/@release (v\d+\.\d+\.\d+)/)
+  assert.ok(headerMatch, 'reviews.js must carry an @release header')
+  const { api } = load()
+  assert.equal(api.release, headerMatch[1])
 })
 
 test('initializes the profile wrapper when wf-xano already booted', () => {

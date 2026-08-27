@@ -1,12 +1,25 @@
 /**
  * V3 reviews page integration.
  *
+ * @release v1.59.398
+ *
  * Designer owns the public Reviews section. This module only:
  *   - derives the public-profile slug from /hire/{slug} and configures the
  *     authored Reviews section as a wf-xano wrapper before it loads;
+ *   - hides that section, and empties its authored placeholder cards, at
+ *     configuration time, so the section is revealed only once Xano has
+ *     positively reported at least one approved review;
  *   - projects Xano's approved aggregate into the authored profile summary;
  *   - replaces the legacy CMS projection inside the attributed Reviews list
  *     target with sanitized cards from Xano's approved response.
+ *
+ * The section is hidden-by-default on purpose. The authored Designer section
+ * ships visible and pre-populated with placeholder "Verified Review" cards, so
+ * waiting for the approved response before hiding it published fabricated
+ * reviews for the length of that request, and published them permanently
+ * whenever the request failed. Absence of a positive approved result is
+ * therefore treated as "no reviews", never as "keep showing what Designer
+ * authored".
  *
  * Xano remains authoritative for identity, project completion, one-review
  * enforcement, moderation, points, reversals, aggregates, and ranking.
@@ -37,12 +50,87 @@
     }
   }
 
+  function setElementVisible(element, visible) {
+    if (!element || !element.style) return
+    element.hidden = !visible
+    element.style.display = visible ? '' : 'none'
+    // Module-owned marker. `data-starters-section-hidden` belongs to
+    // hide-empty-sections.js, whose contract stores the pre-hide inline
+    // display in the attribute value — sharing it would make that engine
+    // treat this module's hides as its own the day Designer re-enables it.
+    if (visible) element.removeAttribute('data-reviews-v3-hidden')
+    else element.setAttribute('data-reviews-v3-hidden', '')
+  }
+
+  function emptyElement(element) {
+    if (!element) return
+    if (element.replaceChildren) element.replaceChildren()
+    else element.textContent = ''
+  }
+
+  /**
+   * The profile tab bar tags each tab with the key of the section it reveals,
+   * using the shared hide-when-empty contract from
+   * `utils/section-custom-toc/hide-empty-sections.js`
+   * (`data-hide-when-empty-id="<key>"`). The Reviews section's own key is
+   * carried by `data-toc-section`, so the tab is resolved from the page's
+   * markup rather than from a hard-coded string.
+   *
+   * That shared engine cannot do this itself here: the Hire template ships the
+   * section's `data-hide-when-empty-section` attribute disabled (prefixed
+   * `xdata-`), so the engine finds no section for the `reviews` key and, by its
+   * documented fail-safe, leaves the tab visible. Until Designer re-enables it,
+   * this module is the only writer for the pair. If it is ever re-enabled, make
+   * that engine the sole owner rather than running both.
+   */
+  function sectionTabs(documentObject, root) {
+    if (!documentObject || !documentObject.querySelectorAll || !root || !root.getAttribute) return []
+    var key = root.getAttribute('data-toc-section')
+    if (!key) return []
+    // The key is Designer-authored; a quote or bracket in it would make the
+    // selector throw after the section is already hidden, aborting the IIFE.
+    try {
+      return documentObject.querySelectorAll(
+        '[data-hide-when-empty-id="' + key + '"]',
+      )
+    } catch (_) {
+      return []
+    }
+  }
+
+  /**
+   * Single writer for the authored section's visibility, and for the profile
+   * tab that points at it. `display` and the `hidden` property are both set:
+   * Webflow's published CSS can carry a `display` rule that beats the `hidden`
+   * attribute's UA style, and the `hidden` property is what assistive
+   * technology reads.
+   */
+  function setProfileRootVisible(documentObject, root, visible) {
+    setElementVisible(root, visible)
+    Array.prototype.forEach.call(sectionTabs(documentObject, root), function (tab) {
+      setElementVisible(tab, visible)
+    })
+  }
+
   function configureProfileRoot(documentObject, pathname) {
     if (!documentObject || !documentObject.querySelector) return null
     var slug = profileSlug(pathname)
     if (!slug) return null
-    var root = documentObject.querySelector(PROFILE_ROOT)
-    if (!root) return null
+    var roots = documentObject.querySelectorAll
+      ? documentObject.querySelectorAll(PROFILE_ROOT)
+      : [documentObject.querySelector(PROFILE_ROOT)].filter(Boolean)
+    if (!roots.length) return null
+    // Fail closed FIRST, before anything below can bail: hide and empty every
+    // authored marker (the live template has shipped duplicates — a second
+    // marker left unhandled keeps publishing its placeholder cards), and hide
+    // the authored hero summary placeholder, which lives outside the section.
+    Array.prototype.forEach.call(roots, function (authoredRoot) {
+      var authoredList = authoredRoot.querySelector && authoredRoot.querySelector(PROFILE_LIST)
+      if (authoredList) emptyElement(authoredList)
+      setProfileRootVisible(documentObject, authoredRoot, false)
+    })
+    toggleSummaryBlocks(documentObject, false)
+    var root = roots[0]
     var list = root.querySelector && root.querySelector(PROFILE_LIST)
     if (!list) return null
     root.setAttribute('wf-xano-element', 'wrapper')
@@ -53,6 +141,9 @@
     root.setAttribute('wf-xano-param-starter_slug', slug)
     list.setAttribute('wf-xano-element', 'list')
     list.setAttribute('aria-live', 'polite')
+    // The list was already emptied above, so an authored template that sat
+    // inside the list target is gone by now and a fresh hidden one is created
+    // here rather than found-then-deleted.
     if (!root.querySelector('[wf-xano-element="template"]')) {
       var template = documentObject.createElement('div')
       template.setAttribute('wf-xano-element', 'template')
@@ -94,7 +185,7 @@
     var target = configuredProfileList(documentObject, root)
     if (!target) return false
     var approved = Array.isArray(items) ? items : []
-    target.replaceChildren()
+    emptyElement(target)
     target.style.cssText = approved.length
       ? 'display:grid;border:1px solid #d8d9d3;border-radius:3px;overflow:hidden;background:#fff;'
       : ''
@@ -241,10 +332,7 @@
     toggleSummaryBlocks(documentObject, count > 0)
     renderProfileReviews(documentObject, root, items)
 
-    root.hidden = items.length === 0
-    root.style.display = items.length > 0 ? '' : 'none'
-    if (items.length > 0) root.removeAttribute('data-starters-section-hidden')
-    else root.setAttribute('data-starters-section-hidden', '')
+    setProfileRootVisible(documentObject, root, items.length > 0)
     return true
   }
 
@@ -261,6 +349,7 @@
   }
 
   var api = {
+    release: 'v1.59.398',
     profileSlug: profileSlug,
     configureProfileRoot: configureProfileRoot,
     paintProfile: paintProfile,
