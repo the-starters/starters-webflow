@@ -754,15 +754,29 @@
     }, 0)
   }
 
-  function replayStarterProfileClick(form, submitter) {
+  function replayStarterProfileClick(form, submitter, proof) {
+    var controller = window.StartersStarterEditProfile
+    if (
+      !submitter ||
+      typeof submitter.click !== 'function' ||
+      !controller ||
+      typeof controller.authorizePersonalDetailsReplay !== 'function' ||
+      !controller.authorizePersonalDetailsReplay(form, proof)
+    ) {
+      return false
+    }
     form.setAttribute('data-brand-account-native-replay', 'true')
     window.setTimeout(function () {
       try {
-        if (submitter && typeof submitter.click === 'function') submitter.click()
+        submitter.click()
       } finally {
+        if (typeof controller.clearPersonalDetailsReplay === 'function') {
+          controller.clearPersonalDetailsReplay(form)
+        }
         form.setAttribute('data-brand-account-native-replay', 'false')
       }
     }, 0)
+    return true
   }
 
   function starterPersonalDetailsValid() {
@@ -771,6 +785,15 @@
     try {
       var result = controller.validatePersonalDetails()
       return !!(result && result.valid)
+    } catch (_) {
+      return false
+    }
+  }
+
+  async function starterProfileAuthorityConfirmed(memberId, email) {
+    try {
+      var member = await currentMember(memberstack())
+      return member.id === memberId && memberEmail(member) === email
     } catch (_) {
       return false
     }
@@ -793,6 +816,7 @@
     form.setAttribute('data-starter-identity-bound', 'true')
     var busy = false
     var ownsSubmission = false
+    var submissionMemberId = ''
     var profileEmailInput = form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
     var profileEmailBaseline = trim(profileEmailInput && profileEmailInput.value).toLowerCase()
     var profileEmailChanged = false
@@ -859,6 +883,7 @@
         }
         busy = true
         ownsSubmission = false
+        submissionMemberId = ''
 
         Promise.resolve()
           .then(async function () {
@@ -866,9 +891,10 @@
             if (!guard || typeof guard.memberRole !== 'function') return null
             var member = await currentMember(memberstack())
             if (guard.memberRole(member) !== 'talent') return null
+            submissionMemberId = member.id
             if (memberEmail(member) === email) {
               rememberProfileEmail(email)
-              return { confirmed: true }
+              return { confirmed: true, memberId: submissionMemberId }
             }
 
             ownsSubmission = true
@@ -884,19 +910,37 @@
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: true,
             })
-            return { confirmed: true, changed: true, receipt: receipt }
+            var confirmed = await starterProfileAuthorityConfirmed(submissionMemberId, email)
+            if (!confirmed) profileEmailChanged = true
+            return {
+              confirmed: confirmed,
+              changed: true,
+              memberId: submissionMemberId,
+              receipt: receipt,
+            }
           })
           .then(function (result) {
-            if (!result || !result.confirmed) return
+            if (!result) return
+            if (!result.confirmed) {
+              if (result.changed) setMessage(form, 'success', '', result.receipt)
+              return
+            }
             if (profileWasValid && profileEmailMatches(email)) {
-              replayStarterProfileClick(form, submit)
+              var replayed = replayStarterProfileClick(form, submit, {
+                memberId: result.memberId,
+                email: email,
+                onRejected: function () {
+                  profileEmailChanged = true
+                },
+              })
+              if (!replayed && result.changed) setMessage(form, 'success', '', result.receipt)
             } else if (result.changed) {
               setMessage(form, 'success', '', result.receipt)
             } else if (typeof form.reportValidity === 'function') {
               form.reportValidity()
             }
           })
-          .catch(function (error) {
+          .catch(async function (error) {
             if (!ownsSubmission) {
               if (!profileWasValid && typeof form.reportValidity === 'function') {
                 form.reportValidity()
@@ -905,8 +949,16 @@
             }
             if (error && error.passwordEmailAttempted) {
               rememberProfileEmail(email)
-              if (profileWasValid && profileEmailMatches(email)) {
-                replayStarterProfileClick(form, submit)
+              var confirmed = await starterProfileAuthorityConfirmed(submissionMemberId, email)
+              if (!confirmed) profileEmailChanged = true
+              if (confirmed && profileWasValid && profileEmailMatches(email)) {
+                replayStarterProfileClick(form, submit, {
+                  memberId: submissionMemberId,
+                  email: email,
+                  onRejected: function () {
+                    profileEmailChanged = true
+                  },
+                })
               }
             }
             var receipt = diagnosticComplete(form, {

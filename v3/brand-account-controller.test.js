@@ -213,6 +213,7 @@ function loadController(options = {}) {
   const calls = []
   const tracked = []
   const redirects = []
+  const starterReplayProofs = []
   let longTimer = 0
   const mutationObservers = []
 
@@ -288,7 +289,7 @@ function loadController(options = {}) {
     $memberstackDom: options.memberstackMissing ? undefined : memberstack,
     StartersBrandAccountConfig: options.config || {},
     StartersV3RouteGuard: options.routeGuard,
-    StartersStarterEditProfile: options.starterEditProfile || {
+    StartersStarterEditProfile: Object.assign({
       validatePersonalDetails() {
         return {
           valid:
@@ -297,7 +298,12 @@ function loadController(options = {}) {
             starterProfileForm.checkValidity(),
         }
       },
-    },
+      authorizePersonalDetailsReplay(form, proof) {
+        starterReplayProofs.push({ form, proof })
+        return true
+      },
+      clearPersonalDetailsReplay() {},
+    }, options.starterEditProfile || {}),
     StartersTrack: {
       track(name, payload) {
         tracked.push({ name, payload })
@@ -409,6 +415,7 @@ function loadController(options = {}) {
     storage,
     storageWrites,
     tracked,
+    starterReplayProofs,
     window,
   }
 }
@@ -1711,7 +1718,7 @@ test('visible Starter Edit Profile changes email independently when unrelated re
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.validityReports, 0)
@@ -1742,7 +1749,7 @@ test('independent Starter email accepts a click from nested submit content', asy
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
@@ -1778,7 +1785,7 @@ test('independent Starter email accepts the disabled authored submit wrapper cli
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
@@ -1848,7 +1855,7 @@ test('independent Starter email change preserves its validated click-time snapsh
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.deepEqual(plain(environment.calls[2].payload), {
     email: 'validated@example.com',
@@ -1879,7 +1886,7 @@ test('valid Starter profile click changes Memberstack email before replaying the
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.deepEqual(plain(environment.calls[2].payload), {
     email: 'talent-next@example.com',
@@ -1912,7 +1919,7 @@ test('valid Personal Details replay ignores invalid required fields in later ste
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeClicks, 1)
   assert.equal(starterProfileForm.nativeSubmits, 0)
@@ -1971,10 +1978,14 @@ test('valid Starter profile click still saves profile fields after a reset email
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeClicks, 1)
   assert.equal(starterProfileForm.wrapper.fail.style.display, 'block')
+  assert.deepEqual(plain(environment.starterReplayProofs[0].proof), {
+    memberId: 'mem_sb_brand',
+    email: 'talent-next@example.com',
+  })
 })
 
 test('valid non-Talent profile click does not replay a changed email', async () => {
@@ -2119,6 +2130,54 @@ test('email drift during reset failure blocks replay and remains changed', async
     [{ email: 'email-a@example.com' }, { email: 'email-b@example.com' }],
   )
   assert.equal(starterProfileForm.nativeClicks, 1)
+})
+
+test('session change during reset completion blocks replay and requires a fresh click', async () => {
+  for (const resetOutcome of ['success', 'failure']) {
+    const starterProfileForm = makeForm('starter-profile', {
+      email: 'talent-old@example.com',
+    })
+    const reset = deferred()
+    let currentMember = {
+      id: 'mem_member_a',
+      auth: { email: 'talent-old@example.com' },
+    }
+    const environment = loadController({
+      buildForm: null,
+      starterProfileForm,
+      pathname: '/starter-edit-profile',
+      config: { guardSecurityForm: 'identity' },
+      routeGuard: { memberRole: () => 'talent' },
+      getCurrentMember: async () => ({ data: currentMember }),
+      updateMemberAuth: async (payload) => {
+        currentMember.auth.email = payload.email
+      },
+      sendMemberResetPasswordEmail: async () => reset.promise,
+    })
+
+    starterProfileForm.inputEmail('member-a-next@example.com')
+    starterProfileForm.clickSubmit()
+    await flush()
+    currentMember = {
+      id: 'mem_member_b',
+      auth: { email: 'member-b@example.com' },
+    }
+    if (resetOutcome === 'success') reset.resolve({ ok: true })
+    else reset.reject(new Error('reset failed'))
+    await settle(12)
+
+    assert.equal(starterProfileForm.nativeClicks, 0, resetOutcome)
+    assert.equal(environment.starterReplayProofs.length, 0, resetOutcome)
+
+    starterProfileForm.clickSubmit()
+    await settle(12)
+
+    assert.deepEqual(
+      plain(environment.calls.filter((call) => call.method === 'updateMemberAuth').at(-1).payload),
+      { email: 'member-a-next@example.com' },
+      resetOutcome,
+    )
+  }
 })
 
 test('invalid email stays native so browser validation remains authoritative', async () => {

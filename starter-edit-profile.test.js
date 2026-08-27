@@ -337,6 +337,7 @@ function createEnvironment(fetchImpl, {
 
   return {
     button,
+    form,
     modalEvents,
     modalApiCalls,
     memberAuthUpdates,
@@ -1024,6 +1025,58 @@ async function testPersonalDetailsValidationBoundary() {
   )
 }
 
+async function testReplayProofRejectsChangedMemberAtCapture() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  })
+  environment.window.MEMBER.auth.email = 'new@example.com'
+  let rejected = 0
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_test', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+  environment.switchMember({
+    id: 'mem_other',
+    auth: { email: 'new@example.com' },
+    customFields: {},
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.equal(rejected, 1)
+}
+
+async function testReplayProofRejectsChangedMemberAtRevalidation() {
+  const diagnostics = deferred()
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    workflowDiagnosticsReady: diagnostics.promise,
+  })
+  environment.window.MEMBER.auth.email = 'new@example.com'
+  let rejected = 0
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_test', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+
+  const submission = submit(environment)
+  await new Promise(setImmediate)
+  environment.switchMember({
+    id: 'mem_other',
+    auth: { email: 'new@example.com' },
+    customFields: {},
+  })
+  diagnostics.resolve(null)
+  await submission
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.equal(rejected, 1)
+}
+
 Promise.all([
   testSuccess(),
   testLateLoadInitializesImmediately(),
@@ -1058,6 +1111,8 @@ Promise.all([
   testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
   testDynamicRequiredCaptureBlocksBeforeLoading(),
   testPersonalDetailsValidationBoundary(),
+  testReplayProofRejectsChangedMemberAtCapture(),
+  testReplayProofRejectsChangedMemberAtRevalidation(),
 ])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {

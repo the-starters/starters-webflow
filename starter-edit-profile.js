@@ -24,9 +24,51 @@ const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
 let observedMemberstackClient = null;
+const personalDetailsReplayProofs = new WeakMap();
 
 function memberFromResult(result) {
 	return result?.data || result?.member || result || null;
+}
+
+function normalizedEmail(value) {
+	return String(value ?? '').trim().toLowerCase();
+}
+
+function memberEmail(member) {
+	return normalizedEmail(member?.auth?.email || member?.email || '');
+}
+
+function authorizePersonalDetailsReplay(form, proof) {
+	const memberId = String(proof?.memberId || '').trim();
+	const email = normalizedEmail(proof?.email);
+	if (!form || !memberId || !email) return false;
+	personalDetailsReplayProofs.set(form, { memberId, email });
+	const storedProof = personalDetailsReplayProofs.get(form);
+	if (typeof proof.onRejected === 'function') storedProof.onRejected = proof.onRejected;
+	return true;
+}
+
+function takePersonalDetailsReplay(form) {
+	const proof = personalDetailsReplayProofs.get(form) || null;
+	personalDetailsReplayProofs.delete(form);
+	return proof;
+}
+
+function clearPersonalDetailsReplay(form) {
+	personalDetailsReplayProofs.delete(form);
+}
+
+function replayProofMatches(scope, proof) {
+	if (!proof) return true;
+	return Boolean(
+		scope?.member?.id === proof.memberId &&
+		memberEmail(scope.member) === proof.email &&
+		normalizedEmail(qs('[name="email"]', stepElement(1))?.value) === proof.email
+	);
+}
+
+function rejectReplayProof(proof) {
+	if (typeof proof?.onRejected === 'function') proof.onRejected();
 }
 
 function memberScopeChangedError() {
@@ -379,6 +421,8 @@ window.StartersStarterEditProfile = Object.assign(window.StartersStarterEditProf
 	validatePersonalDetails(options = {}) {
 		return validateOwnedStep(1, options);
 	},
+	authorizePersonalDetailsReplay,
+	clearPersonalDetailsReplay,
 });
 
 function handleCustomSelects() {
@@ -538,6 +582,7 @@ onDomReady(function () {
 
 				submitButton.addEventListener('click', async (event) => {
 					event.preventDefault();
+					const replayProof = stepIndex === 1 ? takePersonalDetailsReplay(form) : null;
 
 					const validation = validateOwnedStep(stepIndex, { report: true });
 					if (!validation.valid) {
@@ -551,17 +596,19 @@ onDomReady(function () {
 						return;
 					}
 
-					await submitStep(stepIndex, submitButton);
+					await submitStep(stepIndex, submitButton, replayProof);
 				});
 			});
 		}
 
-		async function submitStep(stepIndex, submitButton) {
+		async function submitStep(stepIndex, submitButton, replayProof = null) {
 			setSubmitLoading(submitButton, true);
 			let memberScope;
 			try {
 				memberScope = await captureMemberScope();
+				if (!replayProofMatches(memberScope, replayProof)) throw memberScopeChangedError();
 			} catch (error) {
+				rejectReplayProof(replayProof);
 				await workflowDiagnosticsReady;
 				const diagnostic = recordProfileDiagnostic(null, {
 					result: 'failed',
@@ -689,8 +736,12 @@ onDomReady(function () {
 			});
 
 			try {
-				await revalidateMemberScope(memberScope);
+				const currentMember = await revalidateMemberScope(memberScope);
+				if (!replayProofMatches({ ...memberScope, member: currentMember }, replayProof)) {
+					throw memberScopeChangedError();
+				}
 			} catch (error) {
+				rejectReplayProof(replayProof);
 				diagnostic = recordProfileDiagnostic(diagnostic, {
 					result: 'failed',
 					stage: 'auth',
