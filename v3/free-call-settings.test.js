@@ -252,6 +252,7 @@ function load(options = {}) {
   let rootAvailable = options.withRoot !== false && options.rootDelayed !== true
   let state = options.initial || canonical()
   let activeMember = { id: options.memberId || 'member-free-a' }
+  let currentMemberReader = () => activeMember
   let authChange = null
   const routes = options.routes || {}
 
@@ -272,7 +273,7 @@ function load(options = {}) {
   }
 
   const memberstack = {
-    getCurrentMember: async () => ({ data: activeMember }),
+    getCurrentMember: async () => ({ data: await currentMemberReader() }),
     onAuthChange(listener) { authChange = listener },
   }
 
@@ -340,6 +341,7 @@ function load(options = {}) {
     window,
     document,
     expireMember: () => { activeMember = null },
+    setCurrentMemberReader: (reader) => { currentMemberReader = reader },
     changeMember: async (member) => {
       activeMember = member
       return authChange ? authChange(member) : null
@@ -1141,7 +1143,7 @@ test('a lost session clears the whole canonical paint, not just the radios', asy
   )
 })
 
-test('a transient empty auth notification keeps the current Free canonical paint', async () => {
+test('a transient empty auth notification suspends and restores the Free canonical paint', async () => {
   const result = load({
     initial: canonical({
       public_description: 'Member A Free Call',
@@ -1154,7 +1156,12 @@ test('a transient empty auth notification keeps the current Free canonical paint
   const readsBefore = result.calls.filter(
     (call) => call.path === '/starter/free-call-settings/get/v3',
   ).length
-  await result.notifyAuthChange(null)
+  const transition = result.notifyAuthChange(null)
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+
+  await transition
   await settle()
 
   assert.equal(result.dom.title.value, 'Member A Free Call')
@@ -1162,14 +1169,67 @@ test('a transient empty auth notification keeps the current Free canonical paint
   assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
   assert.equal(
     result.calls.filter((call) => call.path === '/starter/free-call-settings/get/v3').length,
-    readsBefore,
+    readsBefore + 1,
   )
+})
 
-  await result.changeMember(null)
+test('a stale Free same-member revalidation cannot repaint after logout', async () => {
+  const staleMember = deferred()
+  const result = load({
+    initial: canonical({
+      public_description: 'Member A Free Call',
+      services: [service({ title: 'Member A Free Call' })],
+    }),
+  })
   await settle()
+
+  result.setCurrentMemberReader(() => staleMember.promise)
+  const staleTransition = result.notifyAuthChange(null)
+  assert.equal(result.dom.title.value, '')
+
+  result.expireMember()
+  result.setCurrentMemberReader(() => null)
+  await result.notifyAuthChange(null)
+  staleMember.resolve({ id: 'member-free-a' })
+  await staleTransition
+  await settle()
+
   assert.equal(result.dom.title.value, '')
   assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
-  assert.equal(result.dom.save.disabled, true)
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.')
+})
+
+test('a newer Free account switch supersedes pending empty-auth revalidation', async () => {
+  const staleMember = deferred()
+  const result = load({
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ member }) => ({
+        ok: true,
+        status: 200,
+        json: async () => canonical({
+          public_description: member.id === 'member-free-b' ? 'Member B Free Call' : 'Member A Free Call',
+          services: [service({
+            config_id: member.id === 'member-free-b' ? 'cfg-free-b' : 'cfg-free-a',
+            title: member.id === 'member-free-b' ? 'Member B Free Call' : 'Member A Free Call',
+          })],
+        }),
+      }),
+    },
+  })
+  await settle()
+
+  result.setCurrentMemberReader(() => staleMember.promise)
+  const staleTransition = result.notifyAuthChange(null)
+  result.setCurrentMemberReader(() => ({ id: 'member-free-b' }))
+  await result.changeMember({ id: 'member-free-b' })
+  staleMember.resolve({ id: 'member-free-a' })
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member B Free Call')
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
 })
 
 test('a connection-state refresh repaints canonically and survives a transient failure', async () => {

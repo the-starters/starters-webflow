@@ -758,15 +758,26 @@
   }
 
   async function handleAuthChange(nextMemberValue) {
-    let member = authMember(nextMemberValue)
-    if (!member || !member.id) {
-      try {
-        member = await currentMember(true)
-      } catch (error) {
-        member = null
-      }
+    const notifiedMember = authMember(nextMemberValue)
+    if (notifiedMember && notifiedMember.id) {
+      if (notifiedMember.id === sessionMemberId && settings) return settings
+      return loadSession(notifiedMember, false)
     }
-    if (member && member.id === sessionMemberId && settings) return settings
+    const version = ++refreshVersion
+    clearRenderedState('Checking your account…')
+    setStatus('loading')
+    let member = null
+    try {
+      member = await currentMember(true)
+    } catch (error) {
+      member = null
+    }
+    if (version !== refreshVersion) return null
+    if (!member || !member.id) {
+      setStatus('error')
+      setMessage('Sign in to manage free calls.')
+      return null
+    }
     return loadSession(member, false)
   }
 

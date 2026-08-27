@@ -308,6 +308,7 @@ function load(options = {}) {
   let rootAvailable = options.withRoot !== false && options.rootDelayed !== true
   let state = options.initial || canonical()
   let activeMember = { id: options.memberId || 'member-a' }
+  let currentMemberReader = () => activeMember
   let authChange = null
   const routes = options.routes || {}
 
@@ -335,7 +336,7 @@ function load(options = {}) {
   }
 
   const memberstack = {
-    getCurrentMember: async () => ({ data: activeMember }),
+    getCurrentMember: async () => ({ data: await currentMemberReader() }),
     onAuthChange(listener) { authChange = listener },
   }
   const window = {
@@ -413,6 +414,7 @@ function load(options = {}) {
       if (authChange) return authChange(nextMember)
       return null
     },
+    setCurrentMemberReader: (reader) => { currentMemberReader = reader },
     notifyAuthChange: async (nextMember) => (authChange ? authChange(nextMember) : null),
     expireMemberSilently: () => { activeMember = null },
     installMemberstack: () => { window.$memberstackDom = memberstack },
@@ -1946,7 +1948,7 @@ test('auth changes clear prior settings and load the next member canonically', a
   assert.equal(result.dom.save.disabled, true)
 })
 
-test('a transient empty auth notification keeps the current Paid canonical paint', async () => {
+test('a transient empty auth notification suspends and restores the Paid canonical paint', async () => {
   const result = load({
     initial: canonical({
       services: [service({ title: 'Paid Consultation Call', price_cents: 100, revision: 8 })],
@@ -1958,7 +1960,12 @@ test('a transient empty auth notification keeps the current Paid canonical paint
   const readsBefore = result.calls.filter(
     (call) => call.path === '/starter/paid-call-settings/get/v3',
   ).length
-  await result.notifyAuthChange(null)
+  const transition = result.notifyAuthChange(null)
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.save.disabled, true)
+
+  await transition
   await settle()
 
   assert.equal(result.dom.title.value, 'Paid Consultation Call')
@@ -1967,8 +1974,66 @@ test('a transient empty auth notification keeps the current Paid canonical paint
   assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
   assert.equal(
     result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length,
-    readsBefore,
+    readsBefore + 1,
   )
+})
+
+test('a stale Paid same-member revalidation cannot repaint after logout', async () => {
+  const staleMember = deferred()
+  const result = load({
+    initial: canonical({
+      services: [service({ title: 'Paid Consultation Call', price_cents: 100 })],
+    }),
+  })
+  await settle()
+
+  result.setCurrentMemberReader(() => staleMember.promise)
+  const staleTransition = result.notifyAuthChange(null)
+  assert.equal(result.dom.title.value, '')
+
+  result.expireMemberSilently()
+  result.setCurrentMemberReader(() => null)
+  await result.notifyAuthChange(null)
+  staleMember.resolve({ id: 'member-a' })
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.save.disabled, true)
+  assert.equal(result.dom.status.textContent, 'Sign in to manage paid calls.')
+})
+
+test('a newer Paid account switch supersedes pending empty-auth revalidation', async () => {
+  const staleMember = deferred()
+  const result = load({
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ member }) => ({
+        ok: true,
+        status: 200,
+        json: async () => canonical({
+          services: [service({
+            config_id: member.id === 'member-b' ? 'cfg-paid-b' : 'cfg-paid-a',
+            title: member.id === 'member-b' ? 'Member B Call' : 'Member A Call',
+            price_cents: member.id === 'member-b' ? 45000 : 12500,
+          })],
+        }),
+      }),
+    },
+  })
+  await settle()
+
+  result.setCurrentMemberReader(() => staleMember.promise)
+  const staleTransition = result.notifyAuthChange(null)
+  result.setCurrentMemberReader(() => ({ id: 'member-b' }))
+  await result.changeMember({ id: 'member-b' })
+  staleMember.resolve({ id: 'member-a' })
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member B Call')
+  assert.equal(result.dom.price.value, 450)
+  assert.equal(result.dom.enabled.checked, true)
 })
 
 test('late Memberstack arrival still wires auth changes', async () => {
