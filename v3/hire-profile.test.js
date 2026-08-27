@@ -4486,3 +4486,24 @@ test('owner gate: a missing free data_environment fails closed', async () => {
   assert.equal(run.hooks.cardFree.textContent, SLOT_SENTINEL)
   assert.deepEqual(run.controller.calls.map((c) => c.configId), ['cfg_owner_paid'])
 })
+
+test('a case-study description renders in full while card titles still clamp', () => {
+  // The Highlights modal is the read-it-all surface, so nothing shortens the
+  // description. Card titles sit in a grid and still shorten at 65 characters.
+  const context = makeContext({ page: makePage() })
+  const longText = 'A very long project story. '.repeat(20)
+
+  const description = makeElement('p', { 'portfolio-description': '' })
+  description.textContent = longText
+  const cardTitle = makeElement('h3', { 'data-portfolio-card-title': '' })
+  cardTitle.textContent = longText
+  context.document.body.appendChild(description)
+  context.document.body.appendChild(cardTitle)
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  assert.ok(longText.length > 250, 'the fixture is past the clamp the description used to get')
+  assert.equal(description.textContent, longText)
+  assert.equal(cardTitle.textContent, `${longText.slice(0, 65).trim()}...`)
+})
