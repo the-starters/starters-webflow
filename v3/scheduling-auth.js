@@ -134,6 +134,8 @@
   let tokenRequest = null
   let sessionGeneration = 0
   let tokenRevision = 0
+  let sessionScope = {}
+  let authReconciliation = Promise.resolve()
   let wiredMemberstack = null
 
   function schedulingUrl(input) {
@@ -170,9 +172,28 @@
   function resetSession() {
     sessionGeneration += 1
     tokenRevision += 1
+    sessionScope = {}
     xanoAuthToken = null
     xanoAuthTokenMemberstackToken = null
     tokenRequest = null
+  }
+
+  function reconcileAuthChange() {
+    const memberstack = window.$memberstackDom
+    authReconciliation = authReconciliation.catch(function () {}).then(async function () {
+      let memberstackToken = null
+      try {
+        memberstackToken = await memberstack.getMemberCookie()
+      } catch (error) {
+        memberstackToken = null
+      }
+      const scopedToken = xanoAuthTokenMemberstackToken ||
+        (tokenRequest && tokenRequest.memberstackToken)
+      if (!memberstackToken || (scopedToken && scopedToken !== memberstackToken)) {
+        resetSession()
+      }
+    })
+    return authReconciliation
   }
 
   function wireAuthChanges() {
@@ -183,10 +204,11 @@
     }
     if (memberstack === wiredMemberstack) return
     wiredMemberstack = memberstack
-    memberstack.onAuthChange(resetSession)
+    memberstack.onAuthChange(reconcileAuthChange)
   }
 
   async function getXanoAuthToken(options) {
+    await authReconciliation
     const forceRefresh = Boolean(options && options.forceRefresh)
     const memberstack = window.$memberstackDom
     if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
@@ -259,6 +281,12 @@
     }
   }
 
+  async function getAuthScope() {
+    await authReconciliation
+    await getXanoAuthToken()
+    return sessionScope
+  }
+
   function withAuthorization(request, token) {
     const headers = new Headers(request.headers)
     headers.set('Authorization', 'Bearer ' + token)
@@ -267,6 +295,7 @@
 
   async function fetchWithToken(request, token, generation) {
     let response = await originalFetch(withAuthorization(request, token))
+    await authReconciliation
     assertSessionGeneration(generation)
     if (response.status !== 401) return response
 
@@ -278,6 +307,7 @@
     }
     assertSessionGeneration(generation)
     response = await originalFetch(withAuthorization(request, token))
+    await authReconciliation
     assertSessionGeneration(generation)
     return response
   }
@@ -318,6 +348,7 @@
 
   function installBridge() {
     window.getXanoAuthToken = getXanoAuthToken
+    window.__tsSchedulingAuthGetScope = getAuthScope
     // Keep an owner-specific reference for the routing adapter. Other page
     // bundles still expose compatibility bridges on window.xanoAuthFetch and
     // can replace that mutable global after this script has installed.

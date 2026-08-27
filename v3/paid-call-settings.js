@@ -40,6 +40,7 @@
   let uiScope = null
   let cardMode = false
   let sessionMemberId = null
+  let sessionAuthScope = null
   let settings = null
   let busy = false
   // Disable is destructive, so only a real user radio change may request it.
@@ -257,6 +258,21 @@
       })
     }
     return data
+  }
+
+  async function currentAuthScope() {
+    if (typeof window.__tsSchedulingAuthGetScope !== 'function') {
+      throw new Error('Scheduling auth scope is unavailable')
+    }
+    return window.__tsSchedulingAuthGetScope()
+  }
+
+  function assertAuthScope(scope) {
+    if (!sessionAuthScope || scope !== sessionAuthScope) {
+      throw Object.assign(new Error('Member session changed during paid-call request'), {
+        code: 'MEMBER_SCOPE_CHANGED',
+      })
+    }
   }
 
   function canonicalService(value) {
@@ -699,6 +715,7 @@
     settings = null
     setBusy(false)
     sessionMemberId = null
+    sessionAuthScope = null
     const enabledInput = field('enabled')
     const titleInput = field('title')
     const priceInput = field('price')
@@ -1053,8 +1070,10 @@
       try {
         if (pendingWrite) await pendingWrite.done
         if (!currentRender(version, memberId)) return null
+        assertAuthScope(await currentAuthScope())
         const canonical = await readCanonicalSettings()
         if (!currentRender(version, memberId)) return null
+        assertAuthScope(await currentAuthScope())
         return render(canonical)
       } catch (error) {
         if (!currentRender(version, memberId)) return null
@@ -1084,6 +1103,8 @@
         return null
       }
       sessionMemberId = member.id
+      sessionAuthScope = await currentAuthScope()
+      if (!currentRender(version, member.id)) return null
       const pendingWrite = activeWrite && activeWrite.memberId === member.id ? activeWrite : null
       if (pendingWrite) {
         await pendingWrite.done

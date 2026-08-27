@@ -515,11 +515,40 @@ test('auth changes invalidate cache and in-flight scheduling responses', async (
   await new Promise(setImmediate)
 
   memberstackToken = 'memberstack-b'
-  authChange({ id: 'member-b' })
+  authChange(null)
   pendingScheduling.resolve(response({}))
 
   await assert.rejects(firstRequest, (error) => error.code === 'MEMBER_SCOPE_CHANGED')
   const result = await window.xanoAuthFetch(SCHEDULING_URL)
   assert.equal(result.status, 200)
   assert.equal(tradeCount, 2)
+})
+
+test('a transient null auth change preserves an in-flight owner request', async () => {
+  const pendingScheduling = deferred()
+  let tradeCount = 0
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      tradeCount += 1
+      return response({ authToken: 'xano-a' })
+    }
+    return pendingScheduling.promise
+  }
+  const memberstack = {
+    getMemberCookie: async () => 'memberstack-a',
+    onAuthChange(listener) {
+      this.listener = listener
+    },
+  }
+  const { authChange, window } = loadBridge(nativeFetch, { memberstack })
+  const scopeBefore = await window.__tsSchedulingAuthGetScope()
+  const request = window.xanoAuthFetch(SCHEDULING_URL)
+  await new Promise(setImmediate)
+
+  await authChange(null)
+  pendingScheduling.resolve(response({}))
+
+  assert.equal((await request).status, 200)
+  assert.equal(await window.__tsSchedulingAuthGetScope(), scopeBefore)
+  assert.equal(tradeCount, 1)
 })
