@@ -15,8 +15,11 @@
 //
 // One validated instance per form, however many wrappers it holds — Webflow's
 // way to vary a component per breakpoint is two instances in one form, so all
-// of them are rendered and flip together, with the first one's config ruling.
-// A misconfigured instance fails open and says so on staging; it never gates.
+// of them are rendered and flip together. The first wrapper that enables a
+// rule sets the config; wrappers that enable nothing configure nothing. A form
+// no wrapper configures fails open and says so on staging; it never gates.
+//
+// Forms added after load: call window.startersPasswordValidation.rescan().
 //
 // On each checklist row inside the wrapper:
 //   starters-password-validation-rule="characters|special|capitalization|numbers"
@@ -31,6 +34,7 @@
   var RULE_ATTR = PREFIX + 'rule';
   var ICON_ATTR = PREFIX + 'icon';
   var DEFAULT_COUNT = 8;
+  var WIRED_FLAG = '__startersPasswordValidation';
 
   // Rule predicates. Adding a rule is one entry here plus one Webflow
   // attribute — the key IS the attribute suffix and the row's rule value.
@@ -145,20 +149,77 @@
     return theme && theme !== DISABLED_THEME ? theme : DEFAULT_THEME;
   }
 
-  function setDisabled(button, authoredTheme, isDisabled) {
-    if (!button) return;
-    if (isDisabled) {
-      button.classList.add('disabled');
-      button.disabled = true;
-      button.setAttribute('disabled', 'disabled');
-      button.setAttribute('aria-disabled', 'true');
-      if (authoredTheme !== null) button.setAttribute(THEME_ATTR, DISABLED_THEME);
+  // [ms-code-submit-button] can land on the wrap or on the control inside it,
+  // and the theme can sit on either, so three roles are resolved separately:
+  //   root       — the marked element; keeps the `disabled` class
+  //   actionable — the thing a user actually activates
+  //   themeEl    — the element carrying data-button-theme, if any
+  var ACTIONABLE_SELF = 'button,input[type="submit"],input[type="button"],a';
+  var ACTIONABLE_INNER = 'button,input[type="submit"],a,.clickable_btn,.clickable_link';
+  var NATIVE_CONTROL = 'button,input';
+
+  function resolveButton(root, form) {
+    if (!root) return null;
+
+    var actionable = root.matches && root.matches(ACTIONABLE_SELF)
+      ? root
+      : root.querySelector(ACTIONABLE_INNER) || root;
+
+    // The theme lives on the element that carries it: the marked element, the
+    // wrap around it, or the control inside it — searched in that order.
+    var themeEl = null;
+    if (root.hasAttribute(THEME_ATTR)) {
+      themeEl = root;
     } else {
-      button.classList.remove('disabled');
-      button.disabled = false;
-      button.removeAttribute('disabled');
-      button.removeAttribute('aria-disabled');
-      if (authoredTheme !== null) button.setAttribute(THEME_ATTR, authoredTheme);
+      for (var node = root.parentElement; node && node !== form; node = node.parentElement) {
+        if (node.hasAttribute && node.hasAttribute(THEME_ATTR)) {
+          themeEl = node;
+          break;
+        }
+      }
+      if (!themeEl) themeEl = root.querySelector('[' + THEME_ATTR + ']');
+    }
+
+    return {
+      root: root,
+      actionable: actionable,
+      themeEl: themeEl,
+      // Only a real control has a disabled property worth setting; writing one
+      // onto a div or an anchor invents an attribute the browser ignores.
+      native: !!(actionable.matches && actionable.matches(NATIVE_CONTROL)),
+      theme: readAuthoredTheme(themeEl)
+    };
+  }
+
+  function setDisabled(button, isDisabled) {
+    if (!button) return;
+    var themeEl = button.themeEl;
+    var actionable = button.actionable;
+
+    if (isDisabled) {
+      button.root.classList.add('disabled');
+      if (themeEl) {
+        themeEl.setAttribute(THEME_ATTR, DISABLED_THEME);
+        if (themeEl !== actionable) themeEl.setAttribute('aria-disabled', 'true');
+      }
+      actionable.setAttribute('aria-disabled', 'true');
+      if (button.native) {
+        actionable.disabled = true;
+        actionable.setAttribute('disabled', 'disabled');
+        actionable.setAttribute('tabindex', '-1');
+      }
+    } else {
+      button.root.classList.remove('disabled');
+      if (themeEl) {
+        if (button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
+        if (themeEl !== actionable) themeEl.removeAttribute('aria-disabled');
+      }
+      actionable.removeAttribute('aria-disabled');
+      if (button.native) {
+        actionable.disabled = false;
+        actionable.removeAttribute('disabled');
+        actionable.removeAttribute('tabindex');
+      }
     }
   }
 
@@ -170,25 +231,40 @@
     return active;
   }
 
-  function warnIfConfigDiffers(wrapper, primary) {
-    if (
-      activeRules(wrapper).join('|') === activeRules(primary).join('|') &&
-      readCount(wrapper) === readCount(primary)
-    ) return;
+  // Compared against the config actually being ENFORCED, not re-derived from
+  // the primary wrapper — the enforced values are the only ones that matter,
+  // and re-deriving them here is how the two drift apart.
+  function warnIfConfigDiffers(wrapper, active, count) {
+    var mine = activeRules(wrapper);
+    // A wrapper that enables nothing is not asserting a config (an all-off
+    // responsive instance, an ancestor carrying only the count), so it cannot
+    // clash with one.
+    if (!mine.length) return;
+    if (mine.join('|') === active.join('|') && readCount(wrapper) === count) return;
     devWarn(
-      'a second wrapper in this form differs from the first — the first one ' +
-      'sets the rules for the whole form, so this instance is being rendered ' +
-      "with the first wrapper's config.",
+      'this wrapper differs from the one driving the form — the first wrapper ' +
+      'with active rules sets the config, so this instance is being rendered ' +
+      'with rules [' + active.join(', ') + '] and count ' + count + '.',
       wrapper
     );
   }
 
-  // Presentation for one wrapper: hide the off rules' rows, fill in {count}
-  // anywhere inside it, and register its icon pairs with the form's shared
-  // rules. Missing rows are tolerated (Designer-side visibility bindings stay
-  // a valid alternative to the auto-hide). Returns how many rows it found.
-  function normalize(wrapper, active, count, rules) {
-    var found = 0;
+  // Fill in {count} across every wrapper, once, before anything can bail out.
+  // With a primary the ENFORCED count is used everywhere, so the copy can
+  // never advertise a number the form is not enforcing; with no primary each
+  // wrapper falls back to its own.
+  function renderCopy(wrappers, count) {
+    for (var i = 0; i < wrappers.length; i++) {
+      substituteCount(wrappers[i], count === null ? readCount(wrappers[i]) : count);
+    }
+  }
+
+  // Presentation for one wrapper: hide the off rules' rows and register its
+  // icon pairs with the form's shared rules. Missing rows are tolerated
+  // (Designer-side visibility bindings stay a valid alternative to the
+  // auto-hide). Returns how many rows it found.
+  function normalize(wrapper, active, rules) {
+    var missing = [];
     for (var i = 0; i < RULE_NAMES.length; i++) {
       var name = RULE_NAMES[i];
       var row = wrapper.querySelector('[' + RULE_ATTR + '="' + name + '"]');
@@ -196,8 +272,10 @@
         hide(row);
         continue;
       }
-      if (!row) continue;
-      found++;
+      if (!row) {
+        missing.push(name);
+        continue;
+      }
       for (var j = 0; j < rules.length; j++) {
         if (rules[j].name !== name) continue;
         rules[j].icons.push({
@@ -206,12 +284,45 @@
         });
       }
     }
-    // Once per wrapper, so a heading above the list can carry the token too.
-    substituteCount(wrapper, count);
-    return found;
+    if (missing.length) {
+      // Not necessarily a bug: a Designer-bound visibility can legitimately
+      // replace the auto-hide. It is worth naming, because a typo'd rule value
+      // looks exactly the same.
+      devWarn(
+        'no checklist row for: ' + missing.join(', ') + ' — ' +
+        (missing.length === 1 ? 'that rule is' : 'those rules are') +
+        ' enforced but invisible here. Expected ' + RULE_ATTR +
+        '="<rule>" inside this wrapper; fine if you bind that row yourself.',
+        wrapper
+      );
+    }
   }
 
   function setUp(wrappers, form) {
+    // Config comes from the first wrapper that actually enables a rule — not
+    // simply the first one found. A stray count on an ancestor section, or a
+    // responsive instance left at its defaults, is discovered first but
+    // configures nothing, and must not decide the form's fate.
+    var wrapper = null;
+    var active = [];
+    for (var p = 0; p < wrappers.length; p++) {
+      var candidate = activeRules(wrappers[p]);
+      if (!candidate.length) continue;
+      wrapper = wrappers[p];
+      active = candidate;
+      break;
+    }
+    var count = wrapper ? readCount(wrapper) : null;
+
+    // Checked before renderCopy, which is what removes the token.
+    if (wrapper) warnOnCountDrift(wrappers, active, count);
+
+    // Copy is rendered before any bail-out below. Substitution changes no
+    // gating and no visibility, and a literal "{count}" left on screen is a
+    // bug the user can read — failing open is about not gating, not about
+    // abandoning the page mid-render.
+    renderCopy(wrappers, count);
+
     var input = form.querySelector('input[data-ms-member="password"]');
     if (!input) {
       devWarn(
@@ -222,29 +333,22 @@
       return;
     }
 
-    // Config comes from the FIRST wrapper. A responsive component is authored
-    // as two instances in one form (one hidden per breakpoint); they are meant
-    // to agree, so one of them is the source of truth and a disagreement is a
-    // staging warning rather than two competing gates.
-    var wrapper = wrappers[0];
-    var count = readCount(wrapper);
-    var active = activeRules(wrapper);
-
-    // Nothing to enforce: fail open, leaving the form exactly as authored — no
-    // gating, no submit blocker, no rows or icons touched. A forgotten
-    // component property must never be able to brick signup, so the only
-    // signal is a staging-side console warning.
-    if (!active.length) {
+    // Nothing to enforce anywhere: fail open, leaving the form exactly as
+    // authored — no gating, no submit blocker, no rows or icons touched. A
+    // forgotten component property must never be able to brick signup, so the
+    // only signal is a staging-side console warning.
+    if (!wrapper) {
       devWarn(
-        'wrapper has zero active rules — every ' + PREFIX + '* toggle is off or invalid, ' +
-        'so this form is not being validated.',
-        wrapper
+        'zero active rules across all ' + wrappers.length + ' wrapper' +
+        (wrappers.length === 1 ? '' : 's') + ' in this form — every ' + PREFIX +
+        '* toggle is off or invalid, so this form is not being validated.',
+        wrappers[0]
       );
       return;
     }
 
-    var button = form.querySelector('[ms-code-submit-button]');
-    if (!button) {
+    var buttonRoot = form.querySelector('[ms-code-submit-button]');
+    if (!buttonRoot) {
       // Not fatal — the Enter-key blocker still gates the form — but it means
       // the visible CTA never greys out, which is always a wiring mistake.
       devWarn(
@@ -253,7 +357,17 @@
         form
       );
     }
-    var authoredTheme = readAuthoredTheme(button);
+    var button = resolveButton(buttonRoot, form);
+    if (button && !button.themeEl && !button.native) {
+      // Nothing to grey and nothing to disable: the CTA will look and behave
+      // identical whether the password passes or not.
+      devWarn(
+        'the [ms-code-submit-button] CTA cannot be greyed out or disabled — it ' +
+        'carries no ' + THEME_ATTR + ' and contains no button, input or link. ' +
+        'The Enter key is still blocked.',
+        buttonRoot
+      );
+    }
 
     // One entry per active rule; its icon pairs are collected from EVERY
     // wrapper in the form, so a second (responsive) instance flips in step
@@ -263,26 +377,15 @@
       rules.push({ name: active[r], fn: RULES[active[r]], arg: count, icons: [] });
     }
 
-    var foundRows = 0;
     for (var w = 0; w < wrappers.length; w++) {
-      if (w > 0) warnIfConfigDiffers(wrappers[w], wrapper);
-      foundRows += normalize(wrappers[w], active, count, rules);
+      if (wrappers[w] !== wrapper) warnIfConfigDiffers(wrappers[w], active, count);
+      normalize(wrappers[w], active, rules);
     }
 
-    // Every active rule resolved to nothing on screen: the rules are still
-    // enforced, but the user is being gated with no visible explanation.
-    if (!foundRows) {
-      devWarn(
-        'active rules (' + active.join(', ') + ') but no checklist rows — the ' +
-        'user sees no reason for the disabled button. Check the ' + RULE_ATTR +
-        ' values.',
-        wrapper
-      );
-    }
-
-    var isValid = false;
     var touched = false;
 
+    // Returns the verdict rather than stashing it, so no caller can ever
+    // adjudicate on a copy that has gone stale.
     function render() {
       var value = input.value || '';
       var allPass = true;
@@ -309,8 +412,8 @@
         }
       }
 
-      isValid = allPass;
-      setDisabled(button, authoredTheme, !isValid);
+      setDisabled(button, !allPass);
+      return allPass;
     }
 
     input.addEventListener('input', function () {
@@ -318,22 +421,26 @@
       render();
     });
 
-    // Blurring a field someone (or something) filled counts as typing. An
-    // empty field is left alone, so simply tabbing past earns no red crosses.
-    input.addEventListener('focusout', function () {
+    // A field someone (or something) filled counts as typed once the user
+    // leaves it, or once the browser fires `change` — some autofill paths fire
+    // one, some the other, and some neither until then. An empty field is left
+    // alone, so simply tabbing past earns no red crosses.
+    //
+    // These are the real escape hatch from a stale-value lockout: a natively
+    // disabled default submit button blocks implicit submission, so the user
+    // cannot reach the submit handler to have it recompute for them.
+    function revalidateIfFilled() {
       if ((input.value || '') === '') return;
       touched = true;
       render();
-    });
+    }
+    input.addEventListener('focusout', revalidateIfFilled);
+    input.addEventListener('change', revalidateIfFilled);
 
     form.addEventListener('submit', function (event) {
-      // Recompute FIRST, then adjudicate. Writing input.value fires no event,
-      // so a password manager or a script can leave the cached validity stale
-      // — and with the button disabled, a stale "invalid" would lock the form
-      // with no way out.
+      // Recompute FIRST, then adjudicate on what came back.
       touched = true;
-      render();
-      if (!isValid) {
+      if (!render()) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }
@@ -342,19 +449,64 @@
     // Non-empty at init (autofill, browser restore) counts as typed.
     if ((input.value || '') !== '') touched = true;
     render();
+
+    // Only a genuinely wired form is marked. A form that bailed out stays
+    // unmarked so a later rescan can pick it up once the missing piece (an
+    // input, a CMS-bound attribute) has arrived.
+    form[WIRED_FLAG] = true;
+  }
+
+  // Rows authored without a wrapper around them: the checklist is on the page
+  // and does nothing. Usually a typo'd or missing wrapper attribute, so it is
+  // reported once for the page rather than once per row.
+  function warnOnOrphanRows() {
+    var rows = document.querySelectorAll('[' + RULE_ATTR + ']');
+    var orphans = [];
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].closest && rows[i].closest(WRAPPER_SELECTOR)) continue;
+      orphans.push(rows[i].getAttribute(RULE_ATTR));
+    }
+    if (!orphans.length) return;
+    devWarn(
+      orphans.length + ' checklist row' + (orphans.length === 1 ? '' : 's') +
+      ' (' + orphans.join(', ') + ') sit outside any wrapper, so ' +
+      (orphans.length === 1 ? 'it does' : 'they do') + ' nothing. Check for a ' +
+      'missing or misspelled ' + PREFIX + '* attribute on the component root.'
+    );
+  }
+
+  // A characters row whose copy does not use the token is a number that can
+  // drift away from the one being enforced the moment either is edited.
+  function warnOnCountDrift(wrappers, active, count) {
+    if (active.indexOf('characters') === -1) return;
+    var seen = [];
+    for (var i = 0; i < wrappers.length; i++) {
+      var row = wrappers[i].querySelector('[' + RULE_ATTR + '="characters"]');
+      if (!row || seen.indexOf(row) !== -1) continue;
+      seen.push(row);
+      if (row.textContent && row.textContent.indexOf(COUNT_TOKEN) !== -1) continue;
+      devWarn(
+        'the characters row does not use the ' + COUNT_TOKEN + ' token, so its ' +
+        'copy can drift from the ' + count + ' actually being enforced.',
+        row
+      );
+    }
   }
 
   function init() {
     var wrappers = document.querySelectorAll(WRAPPER_SELECTOR);
+    warnOnOrphanRows();
 
     // Group every wrapper by its form: one validated instance per form, no
     // matter how many wrappers the Designer authored into it.
-    var forms = [];
-    var groups = [];
+    var instances = [];
     for (var i = 0; i < wrappers.length; i++) {
       var wrapper = wrappers[i];
       var form = wrapper.closest ? wrapper.closest('form') : null;
       if (!form) {
+        // No form means no primary to borrow a count from, so this wrapper's
+        // own count renders its copy before we give up on it.
+        substituteCount(wrapper, readCount(wrapper));
         devWarn(
           'wrapper is not inside a <form>, so its password input and submit ' +
           'button cannot be found — this instance does nothing.',
@@ -362,17 +514,28 @@
         );
         continue;
       }
-      var at = forms.indexOf(form);
-      if (at === -1) {
-        forms.push(form);
-        groups.push([wrapper]);
-      } else {
-        groups[at].push(wrapper);
+      if (form[WIRED_FLAG]) continue;
+
+      var instance = null;
+      for (var j = 0; j < instances.length; j++) {
+        if (instances[j].form === form) {
+          instance = instances[j];
+          break;
+        }
       }
+      if (instance) instance.wrappers.push(wrapper);
+      else instances.push({ form: form, wrappers: [wrapper] });
     }
 
-    for (var j = 0; j < forms.length; j++) setUp(groups[j], forms[j]);
+    for (var k = 0; k < instances.length; k++) {
+      setUp(instances[k].wrappers, instances[k].form);
+    }
   }
+
+  // Forms injected after load (modals, CMS tabs, step flows) are invisible to
+  // the one-shot init, so the page can ask for another pass. Already-wired
+  // forms are skipped, making repeated calls harmless.
+  window.startersPasswordValidation = { rescan: init };
 
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);

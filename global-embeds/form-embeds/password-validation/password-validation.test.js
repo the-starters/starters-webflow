@@ -4,14 +4,7 @@ const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
-const SCRIPT_PATH = path.join(
-  __dirname,
-  'global-embeds',
-  'form-embeds',
-  'password-validation',
-  'password-validation.js',
-)
-const source = fs.readFileSync(SCRIPT_PATH, 'utf8')
+const source = fs.readFileSync(path.join(__dirname, 'password-validation.js'), 'utf8')
 
 /** the attribute prefix that IS the component's public API */
 const P = 'starters-password-validation-'
@@ -19,9 +12,10 @@ const P = 'starters-password-validation-'
 // ---------------------------------------------------------------------------
 // Minimal DOM. Only what password-validation.js actually touches: attributes,
 // classes, style.display, text nodes (the {count} token lives in one), a tiny
-// selector engine (tag / [attr] / [attr="v"] / comma groups), closest('form'),
-// and a dispatcher with real capture-then-bubble ordering so a capture-phase
-// submit blocker can be observed beating a page's bubble-phase handler.
+// selector engine (tag / [attr] / [attr="v"] / .class / comma groups),
+// matches(), closest('form'), and a dispatcher with real capture-then-bubble
+// ordering so a capture-phase submit blocker can be observed beating a page's
+// bubble-phase handler.
 // ---------------------------------------------------------------------------
 
 /**
@@ -38,6 +32,8 @@ function matchesSimple(el, sel) {
       const value = el.getAttribute(m[1])
       if (value === null) return false
       if (m[2] !== undefined && value !== m[2]) return false
+    } else if ((m = /^\.([\w-]+)/.exec(rest))) {
+      if (!el.classList.contains(m[1])) return false
     } else if ((m = /^([a-zA-Z][\w-]*)/.exec(rest))) {
       if (el.tagName !== m[1].toUpperCase()) return false
     } else {
@@ -127,6 +123,9 @@ class Element {
   }
   querySelector(selector) {
     return this.querySelectorAll(selector)[0] || null
+  }
+  matches(selector) {
+    return matches(this, selector)
   }
   closest(selector) {
     let node = this
@@ -718,10 +717,12 @@ test('03: a zero-rule wrapper touches no rows and no icons', () => {
     assert.equal(f.rows[name].style.display, undefined, name + ' row untouched')
     assert.equal(iconState(f.rows[name]), 'untouched', name + ' icons untouched')
   })
+  // {count} IS substituted even here: it is pure copy, gating-inert, and a raw
+  // token on screen is a bug the user can see. Fail-open is about gating.
   assert.equal(
     f.rows.characters.textContent,
-    'At least {count} characters',
-    'not even {count} is substituted',
+    'At least 8 characters',
+    'copy is still rendered; only gating is withheld',
   )
 })
 
@@ -770,7 +771,7 @@ test('03: a configured wrapper never warns, on staging or anywhere else', () => 
   dispatch(app.form, 'submit')
   assert.deepEqual(app.warnings, [], 'and not while validating either')
 
-  const noWrapper = makeForm({}, { noWrapper: true })
+  const noWrapper = makeForm({}, { noWrapper: true, rows: [] })
   const quiet = mount(h('body', {}, [noWrapper.form]), { hostname: 'the-starters-3-0.webflow.io' })
   assert.deepEqual(quiet.warnings, [], 'a page with no wrapper has nothing to warn about')
 })
@@ -820,7 +821,8 @@ test('fix2: active rules that resolve no rows at all warn', () => {
   const app = setup({ characters: 'true', numbers: 'true' }, { rows: [], mount: onStaging() })
 
   assert.equal(app.warnings.length, 1)
-  assert.match(app.warnings[0], /no checklist rows/)
+  assert.match(app.warnings[0], /no checklist row for/)
+  assert.match(app.warnings[0], /characters, numbers/, 'names which rules are missing')
   assert.equal(isGated(app.button), true, 'but the rules are still enforced')
 })
 
@@ -833,7 +835,9 @@ test('fix2: a count-only wrapper is detected and reported, not ignored', () => {
 })
 
 test('fix2: a password form with no wrapper stays silent (login pages)', () => {
-  const f = makeForm({}, { noWrapper: true })
+  // a login form: a password field and nothing else — no wrapper, and no
+  // checklist markup either
+  const f = makeForm({}, { noWrapper: true, rows: [] })
   const app = mount(h('body', {}, [f.form]), onStaging())
 
   assert.deepEqual(app.warnings, [], 'no wrapper is a legitimate shape, not a misconfiguration')
@@ -1154,4 +1158,495 @@ test('fix9: a row with no icon elements still validates and gates', () => {
   assert.equal(isOpen(app.button), true)
   dispatch(app.form, 'submit')
   assert.equal(app.submits.length, 1, 'and nothing threw on the way')
+})
+
+// ===========================================================================
+// Round 2 — the CTA is a wrap plus a control, not one element
+//
+// The design system puts data-button-theme on a .button_main-wrap and the real
+// control inside it, so [ms-code-submit-button] may land on either. Treating
+// that one element as both the theme target and the thing to disable greys the
+// wrong node, or nothing at all. Resolution now splits: themeEl carries the
+// look, actionable takes the native disabling, the marked element keeps the
+// class. Reference: form-validation.js setButtonEnabled.
+// ===========================================================================
+
+/**
+ * A form whose CTA subtree is supplied by the caller.
+ * @param {Element} area the button area appended into the form
+ * @param {object} [mountOpts]
+ */
+function buttonForm(area, mountOpts) {
+  const built = buildWrapper({ characters: 'true', 'character-count': '4' }, {})
+  const input = h('input', { type: 'password', 'data-ms-member': 'password' })
+  const form = h('form', {}, [input, built.wrapper, area])
+  const submits = []
+  form.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submits.push(event)
+  })
+  const app = mount(h('body', {}, [form]), mountOpts || {})
+  return Object.assign({ rows: built.rows, input, form, submits }, app)
+}
+
+const aria = (el) => el.getAttribute('aria-disabled')
+const theme = (el) => el.getAttribute('data-button-theme')
+
+test('r2-1: theme on the wrap, marker on the wrap, control inside', () => {
+  const control = h('button', { type: 'submit' })
+  const wrap = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [control])
+  const app = buttonForm(wrap)
+
+  assert.equal(wrap.classList.contains('disabled'), true, 'class stays on the marked element')
+  assert.equal(theme(wrap), 'disabled', 'the wrap is what gets greyed')
+  assert.equal(aria(wrap), 'true', 'announced on the wrap')
+  assert.equal(aria(control), 'true', 'and on the control')
+  assert.equal(control.disabled, true, 'the real control is what gets natively disabled')
+  assert.equal(control.getAttribute('tabindex'), '-1')
+  assert.equal(wrap.disabled, undefined, 'the wrap is not a control — never natively disabled')
+
+  type(app, 'abcd')
+  assert.equal(wrap.classList.contains('disabled'), false)
+  assert.equal(theme(wrap), 'black', 'authored theme restored')
+  assert.equal(aria(wrap), null)
+  assert.equal(aria(control), null)
+  assert.equal(control.disabled, false)
+  assert.equal(control.getAttribute('tabindex'), null, 'tabindex removed on enable')
+})
+
+test('r2-1: marker on the wrap, theme on the inner control', () => {
+  const control = h('button', { type: 'submit', 'data-button-theme': 'black' })
+  const wrap = h('div', { 'ms-code-submit-button': '' }, [control])
+  const app = buttonForm(wrap)
+
+  assert.equal(wrap.classList.contains('disabled'), true)
+  assert.equal(theme(control), 'disabled', 'found by descendant lookup')
+  assert.equal(theme(wrap), null, 'the wrap never grows a theme it did not have')
+  assert.equal(aria(control), 'true')
+  assert.equal(control.disabled, true)
+
+  type(app, 'abcd')
+  assert.equal(theme(control), 'black')
+  assert.equal(aria(control), null)
+  assert.equal(control.disabled, false)
+})
+
+test('r2-1: marker on the control, theme on the ancestor wrap', () => {
+  const control = h('button', { type: 'submit', 'ms-code-submit-button': '' })
+  const wrap = h('div', { 'data-button-theme': 'black', class: 'button_main-wrap' }, [control])
+  const app = buttonForm(wrap)
+
+  assert.equal(control.classList.contains('disabled'), true, 'class on the marked element')
+  assert.equal(theme(wrap), 'disabled', 'nearest themed ancestor inside the form')
+  assert.equal(aria(wrap), 'true')
+  assert.equal(aria(control), 'true')
+  assert.equal(control.disabled, true)
+
+  type(app, 'abcd')
+  assert.equal(theme(wrap), 'black')
+  assert.equal(aria(wrap), null)
+  assert.equal(control.disabled, false)
+})
+
+test('r2-1: an anchor CTA is themed and announced, never natively disabled', () => {
+  const link = h('a', { class: 'clickable_link', href: '/next' })
+  const wrap = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [link])
+  const app = buttonForm(wrap, onStaging())
+
+  assert.deepEqual(app.warnings, [], 'themed + resolvable is a supported shape')
+  assert.equal(theme(wrap), 'disabled')
+  assert.equal(aria(link), 'true', 'the anchor is announced disabled')
+  assert.equal(link.disabled, undefined, 'an <a> has no disabled property to set')
+  assert.equal(link.getAttribute('disabled'), null, 'and must not be given a meaningless one')
+
+  type(app, 'abcd')
+  assert.equal(theme(wrap), 'black')
+  assert.equal(aria(link), null)
+})
+
+test('r2-1: a bare button still works exactly as before', () => {
+  const button = h('button', { type: 'submit', 'ms-code-submit-button': '' })
+  const app = buttonForm(button, onStaging())
+
+  assert.deepEqual(app.warnings, [], 'a native control needs no theme to be gateable')
+  assert.equal(isGated(button), true)
+  assert.equal(button.getAttribute('tabindex'), '-1')
+  assert.equal(button.hasAttribute('data-button-theme'), false, 'no theme invented')
+
+  type(app, 'abcd')
+  assert.equal(isOpen(button), true)
+  assert.equal(button.getAttribute('tabindex'), null)
+})
+
+test('r2-1: an unstylable, ungateable CTA warns', () => {
+  const wrap = h('div', { 'ms-code-submit-button': '' }, [h('span', {}, ['Sign up'])])
+  const app = buttonForm(wrap, onStaging())
+
+  assert.equal(app.warnings.length, 1, 'no theme to swap AND no control to disable')
+  assert.match(app.warnings[0], /cannot be greyed out or disabled/)
+
+  // it still fails safe: the Enter-key gate is independent of the button
+  assert.equal(dispatch(app.form, 'submit').defaultPrevented, true)
+  assert.equal(app.submits.length, 0)
+})
+
+test('r2-1: a themed div CTA with no native control does NOT warn', () => {
+  const wrap = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [
+    h('span', {}, ['Sign up']),
+  ])
+  const app = buttonForm(wrap, onStaging())
+
+  assert.deepEqual(app.warnings, [], 'it can at least be greyed, so it is not a dead end')
+  assert.equal(theme(wrap), 'disabled')
+})
+
+// ===========================================================================
+// Round 2 — the primary wrapper is the first CONFIGURED one
+//
+// Taking wrappers[0] blindly meant one stray attribute on an ancestor section,
+// or a responsive first instance left at its defaults, silently failed the
+// whole form open. The form is now driven by the first wrapper that actually
+// enables a rule.
+// ===========================================================================
+
+/**
+ * @param {Element[]} wrappers in document order inside the form
+ * @param {object} [mountOpts]
+ */
+function wrappersForm(wrappers, mountOpts) {
+  const input = h('input', { type: 'password', 'data-ms-member': 'password' })
+  const button = h('button', { type: 'submit', 'ms-code-submit-button': '' })
+  const form = h('form', {}, [input].concat(wrappers, [button]))
+  const submits = []
+  form.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submits.push(event)
+  })
+  const app = mount(h('body', {}, [form]), mountOpts || {})
+  return Object.assign({ input, button, form, submits }, app)
+}
+
+test('r2-2: a count-only ancestor no longer fails the whole form open', () => {
+  const inner = buildWrapper({ characters: 'true', 'character-count': '4' }, {})
+  // the real-world shape: someone put the count on a section that WRAPS the
+  // component, so it is discovered first
+  const section = h('section', { [P + 'character-count']: '4' }, [inner.wrapper])
+  const app = wrappersForm([section], onStaging())
+
+  assert.deepEqual(app.warnings, [], 'the configured wrapper inside it is found')
+  assert.equal(isGated(app.button), true, 'the form really is gated')
+
+  app.input.value = 'abc'
+  dispatch(app.input, 'input')
+  assert.equal(iconState(inner.rows.characters), 'fail')
+  assert.equal(isGated(app.button), true)
+
+  app.input.value = 'abcd'
+  dispatch(app.input, 'input')
+  assert.equal(iconState(inner.rows.characters), 'pass')
+  assert.equal(isOpen(app.button), true)
+})
+
+test('r2-2: a responsive pair whose first instance is left at defaults still gates', () => {
+  const off = buildWrapper({ characters: 'false' }, {})
+  const on = buildWrapper({ characters: 'true', 'character-count': '4', numbers: 'true' }, {})
+  const app = wrappersForm([off.wrapper, on.wrapper], onStaging())
+
+  assert.deepEqual(app.warnings, [], 'an all-off instance asserts no config, so it is not a clash')
+  assert.equal(isGated(app.button), true)
+
+  app.input.value = 'abcd'
+  dispatch(app.input, 'input')
+  assert.equal(isGated(app.button), true, "the second wrapper's numbers rule is enforced")
+
+  app.input.value = 'abc1'
+  dispatch(app.input, 'input')
+  assert.equal(isOpen(app.button), true)
+  // and the defaulted instance is still normalized to the enforced config
+  assert.equal(iconState(off.rows.characters), 'pass', 'it renders in step')
+  assert.equal(iconState(off.rows.numbers), 'pass')
+})
+
+test('r2-2: only when NO wrapper configures anything does the form fail open', () => {
+  const a = buildWrapper({ characters: 'false' }, {})
+  const b = buildWrapper({ 'character-count': '8' }, {})
+  const app = wrappersForm([a.wrapper, b.wrapper], onStaging())
+
+  assert.equal(app.warnings.length, 1)
+  assert.match(app.warnings[0], /zero active rules/)
+  assert.match(app.warnings[0], /2 wrapper/, 'says how many were checked')
+  assert.equal(app.button.disabled, undefined, 'fails open')
+  dispatch(app.form, 'submit')
+  assert.equal(app.submits.length, 1)
+})
+
+test('r2-2: the enforced config comes from the first CONFIGURED wrapper', () => {
+  const off = buildWrapper({ special: 'false' }, {})
+  const first = buildWrapper({ characters: 'true', 'character-count': '4' }, {})
+  const second = buildWrapper({ characters: 'true', 'character-count': '12' }, {})
+  const app = wrappersForm([off.wrapper, first.wrapper, second.wrapper], onStaging())
+
+  assert.equal(app.warnings.length, 1, 'only the genuinely clashing wrapper is reported')
+  assert.match(app.warnings[0], /differs/)
+
+  app.input.value = 'abcd'
+  dispatch(app.input, 'input')
+  assert.equal(isOpen(app.button), true, "4 wins, not 12 and not the all-off wrapper's default")
+})
+
+// ===========================================================================
+// Round 2 — copy renders even when gating does not
+//
+// Failing open is about not gating. It was never about leaving a literal
+// "{count}" on the page for a user to read, so every detected wrapper gets its
+// token substituted before any bail-out.
+// ===========================================================================
+
+test('r2-3: a zero-rules wrapper still renders its count copy', () => {
+  const f = makeForm({ characters: 'false', 'character-count': '12' })
+  mount(h('body', {}, [f.form]))
+
+  assert.equal(f.rows.characters.textContent, 'At least 12 characters', 'its own count is used')
+  assert.equal(f.rows.characters.style.display, undefined, 'rows still untouched')
+  assert.equal(iconState(f.rows.characters), 'untouched', 'icons still untouched')
+  assert.equal(f.button.disabled, undefined, 'and gating is still withheld')
+})
+
+test('r2-3: a form with no password input still renders its count copy', () => {
+  const f = makeForm({ characters: 'true', 'character-count': '6' }, { noInput: true })
+  const app = mount(h('body', {}, [f.form]), onStaging())
+
+  assert.equal(f.rows.characters.textContent, 'At least 6 characters')
+  assert.equal(app.warnings.length, 1, 'and it still reports the real problem')
+  assert.match(app.warnings[0], /no password input/)
+})
+
+test('r2-3: a wrapper outside any form still renders its own count copy', () => {
+  const f = makeForm({ characters: 'true', 'character-count': '10' }, { wrapperOutsideForm: true })
+  const app = mount(h('body', {}, [f.form, f.wrapper]), onStaging())
+
+  assert.equal(f.rows.characters.textContent, 'At least 10 characters', "its own readCount")
+  assert.match(app.warnings[0], /not inside a <form>/)
+})
+
+test('r2-3: on a bail-out the count still defaults to 8 when unset', () => {
+  const f = makeForm({ characters: 'false' })
+  mount(h('body', {}, [f.form]))
+  assert.equal(f.rows.characters.textContent, 'At least 8 characters')
+})
+
+test('r2-3: when a primary exists, every wrapper renders the ENFORCED count', () => {
+  const first = buildWrapper({ characters: 'true', 'character-count': '4' }, {})
+  const other = buildWrapper({ 'character-count': '99' }, {})
+  const app = wrappersForm([first.wrapper, other.wrapper])
+
+  assert.equal(first.rows.characters.textContent, 'At least 4 characters')
+  assert.equal(
+    other.rows.characters.textContent,
+    'At least 4 characters',
+    'not 99 — the copy must match what is enforced',
+  )
+})
+
+// ===========================================================================
+// Round 2 — `change` joins `focusout` as an escape hatch
+//
+// Some autofill paths fire `change` without `input`, and some fire neither
+// until the field is left. Both events now revalidate a filled field, with the
+// same guard: an empty one earns no crosses.
+// ===========================================================================
+
+test('r2-4: a change event revalidates a filled field', () => {
+  const app = setup({ characters: 'true', 'character-count': '4', numbers: 'true' })
+
+  app.input.value = 'abc1'
+  dispatch(app.input, 'change')
+
+  assert.equal(iconState(app.rows.characters), 'pass')
+  assert.equal(iconState(app.rows.numbers), 'pass')
+  assert.equal(isOpen(app.button), true)
+})
+
+test('r2-4: a change event on an empty field shows no crosses', () => {
+  const app = setup({ characters: 'true', numbers: 'true' })
+
+  dispatch(app.input, 'change')
+
+  assert.equal(iconState(app.rows.characters), 'neutral')
+  assert.equal(iconState(app.rows.numbers), 'neutral')
+  assert.equal(isGated(app.button), true)
+})
+
+test('r2-4: a change event reveals the failing rules on a bad value', () => {
+  const app = setup({ characters: 'true', 'character-count': '8' })
+
+  app.input.value = 'abc'
+  dispatch(app.input, 'change')
+
+  assert.equal(iconState(app.rows.characters), 'fail')
+  assert.equal(isGated(app.button), true)
+})
+
+test('r2-4: input, focusout and change are each bound exactly once', () => {
+  const app = setup({ characters: 'true' })
+
+  assert.equal(app.input.listenerCount('input'), 1)
+  assert.equal(app.input.listenerCount('focusout'), 1)
+  assert.equal(app.input.listenerCount('change'), 1)
+})
+
+// ===========================================================================
+// Round 2 — rescan for forms that arrive after load
+//
+// Modals, CMS tabs and step flows inject their markup long after
+// DOMContentLoaded. Without a way back in, those forms shipped ungated.
+// ===========================================================================
+
+test('r2-5: rescan wires a form injected after load', () => {
+  const first = makeForm({ characters: 'true', 'character-count': '4' })
+  const root = h('body', {}, [first.form])
+  const app = mount(root)
+  assert.equal(isGated(first.button), true)
+
+  // a modal opens and drops a second signup form into the page
+  const late = makeForm({ characters: 'true', 'character-count': '6', numbers: 'true' })
+  root.append(late.form)
+  assert.equal(late.input.listenerCount('input'), 0, 'not wired by the original pass')
+  assert.equal(late.rows.characters.textContent, 'At least {count} characters', 'nor rendered')
+
+  app.window.startersPasswordValidation.rescan()
+
+  assert.equal(late.input.listenerCount('input'), 1, 'the late form is wired')
+  assert.equal(late.rows.characters.textContent, 'At least 6 characters')
+  assert.equal(isGated(late.button), true)
+
+  late.input.value = 'abc123'
+  dispatch(late.input, 'input')
+  assert.equal(isOpen(late.button), true)
+  assert.equal(isGated(first.button), true, 'and the original form is unaffected')
+})
+
+test('r2-5: rescan never double-binds an already-wired form', () => {
+  const f = makeForm({ characters: 'true', 'character-count': '4' })
+  const app = mount(h('body', {}, [f.form]))
+
+  app.window.startersPasswordValidation.rescan()
+  app.window.startersPasswordValidation.rescan()
+
+  assert.equal(f.input.listenerCount('input'), 1, 'still one input listener')
+  assert.equal(f.input.listenerCount('focusout'), 1)
+  assert.equal(f.input.listenerCount('change'), 1)
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus one gate')
+
+  // and one blocked submit stays one blocked submit
+  const event = dispatch(f.form, 'submit')
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(f.submits.length, 0)
+})
+
+test('r2-5: rescan is exposed even on a page with no wrapper at all', () => {
+  const f = makeForm({}, { noWrapper: true })
+  const app = mount(h('body', {}, [f.form]))
+
+  assert.equal(typeof app.window.startersPasswordValidation.rescan, 'function')
+  app.window.startersPasswordValidation.rescan()
+  assert.equal(f.button.disabled, undefined, 'and still does nothing observable')
+})
+
+// ===========================================================================
+// Round 2 — diagnostics that name the thing that is wrong
+//
+// "Some rows are missing somewhere in this form" is not actionable. Each warn
+// now names the wrapper and the specific rules, catches rows authored outside
+// any wrapper, and catches copy whose number can drift from the enforced one.
+// ===========================================================================
+
+test('r2-6a: a missing row is reported per rule, not as an all-or-nothing total', () => {
+  const app = setup(
+    { characters: 'true', 'character-count': '4', numbers: 'true', special: 'true' },
+    { rows: ['characters'], mount: onStaging() },
+  )
+
+  assert.equal(app.warnings.length, 1)
+  assert.match(app.warnings[0], /no checklist row for/)
+  assert.match(app.warnings[0], /special, numbers|numbers, special/, 'names both missing rules')
+  assert.equal(app.warnings[0].includes('characters,'), false, 'and not the one that IS present')
+})
+
+test('r2-6a: each wrapper is reported separately', () => {
+  const full = buildWrapper({ characters: 'true', 'character-count': '4', numbers: 'true' }, {})
+  const partial = buildWrapper({ characters: 'true', 'character-count': '4', numbers: 'true' }, {
+    rows: ['characters'],
+  })
+  const app = wrappersForm([full.wrapper, partial.wrapper], onStaging())
+
+  assert.equal(app.warnings.length, 1, 'only the incomplete wrapper is reported')
+  assert.match(app.warnings[0], /numbers/)
+})
+
+test('r2-6a: a complete checklist reports nothing', () => {
+  const app = setup({ characters: 'true', 'character-count': '4', numbers: 'true' }, {
+    mount: onStaging(),
+  })
+  assert.deepEqual(app.warnings, [])
+})
+
+test('r2-6b: rows authored outside any wrapper are reported once', () => {
+  const stray = ruleRow('numbers', 'One number')
+  const f = makeForm({ characters: 'true', 'character-count': '4' })
+  f.form.append(stray) // authored in the form, but the wrapper attrs were never set
+  const app = mount(h('body', {}, [f.form]), onStaging())
+
+  const orphan = app.warnings.filter((w) => /outside any/.test(w))
+  assert.equal(orphan.length, 1, 'one warn covering the orphans, not one per row')
+  assert.match(orphan[0], /numbers/)
+})
+
+test('r2-6b: rows correctly inside a wrapper are never called orphans', () => {
+  const app = setup({ characters: 'true', 'character-count': '4', numbers: 'true' }, {
+    mount: onStaging(),
+  })
+  assert.equal(app.warnings.filter((w) => /outside any/.test(w)).length, 0)
+})
+
+test('r2-6c: an active characters row with no {count} token warns about drift', () => {
+  const app = setup(
+    { characters: 'true', 'character-count': '12' },
+    { text: { characters: 'At least 8 characters' }, mount: onStaging() },
+  )
+
+  assert.equal(app.warnings.length, 1)
+  assert.match(app.warnings[0], /\{count\}/, 'the fix is named in the message')
+  assert.match(app.warnings[0], /12/, 'and so is the number actually enforced')
+  assert.equal(
+    app.rows.characters.textContent,
+    'At least 8 characters',
+    'the copy is left exactly as authored — this is a warning, not a rewrite',
+  )
+})
+
+test('r2-6c: a row using the token never warns', () => {
+  const app = setup({ characters: 'true', 'character-count': '12' }, { mount: onStaging() })
+  assert.deepEqual(app.warnings, [])
+  assert.equal(app.rows.characters.textContent, 'At least 12 characters')
+})
+
+test('r2-6c: drift is only checked when characters is actually enforced', () => {
+  const app = setup(
+    { numbers: 'true', characters: 'false' },
+    { text: { characters: 'At least 8 characters' }, mount: onStaging() },
+  )
+  assert.deepEqual(app.warnings, [], 'a hidden, unenforced row cannot drift from anything')
+})
+
+test('r2-6b: a checklist with no wrapper attributes IS the typo this catches', () => {
+  // same markup as a working component, minus the wrapper attributes: the
+  // rows render and nothing validates, which is exactly the silent failure
+  const f = makeForm({}, { noWrapper: true })
+  const app = mount(h('body', {}, [f.form]), onStaging())
+
+  assert.equal(app.warnings.length, 1)
+  assert.match(app.warnings[0], /outside any wrapper/)
+  assert.match(app.warnings[0], /4 checklist rows/)
+  assert.equal(f.button.disabled, undefined, 'and it still fails open')
 })
