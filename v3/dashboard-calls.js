@@ -95,6 +95,19 @@
     return value && typeof value.wire === 'function'
   }
 
+  function moduleCacheSuffix() {
+    const document = global.document
+    const loader =
+      document &&
+      typeof document.querySelector === 'function' &&
+      document.querySelector('script[src*="/v3/dashboard-calls.js"]')
+    const src = clean(loader && loader.getAttribute('src'))
+    const query = src.indexOf('?')
+    if (query === -1) return ''
+    const suffix = src.slice(query + 1)
+    return suffix ? '?' + suffix : ''
+  }
+
   function loadDashboardModule(spec, onAvailable) {
     let delivered = false
     function deliver(value) {
@@ -111,7 +124,7 @@
     }
     return new Promise(function (resolve) {
       let script = global.document.querySelector(
-        'script[' + spec.marker + '], script[src$="/v3/' + spec.path + '"]',
+        'script[' + spec.marker + '], script[src*="/v3/' + spec.path + '"]',
       )
       let settled = false
       function finish() {
@@ -122,7 +135,7 @@
       }
       if (!script) {
         script = global.document.createElement('script')
-        script.src = DASHBOARD_MODULE_BASE + spec.path
+        script.src = DASHBOARD_MODULE_BASE + spec.path + moduleCacheSuffix()
         script.defer = true
         script.setAttribute(spec.marker, '')
         ;(global.document.head || global.document.documentElement).appendChild(script)
@@ -1758,6 +1771,7 @@
     bookingForActionTarget,
     loadDashboardCallModules,
     loadDashboardModule,
+    moduleCacheSuffix,
     validDashboardModule,
     wireDashboardCallModules,
     wireBookingActions,
