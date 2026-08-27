@@ -1090,17 +1090,15 @@ test('fix5: blurring an emptied field walks the checklist back down', () => {
   assert.equal(iconState(app.rows.characters), 'pass')
   assert.equal(isOpen(app.button), true)
 
-  // cleared programmatically, so no input event fires — only the blur is left
-  // to notice. A listener that skipped empty values would strand the green
-  // ticks and the open button on a field with nothing in it.
-  app.input.value = ''
+  // a listener that skipped empty values would strand the green ticks and the
+  // open button on a field with nothing in it
+  silentFill(app, '')
   dispatch(app.input, 'focusout')
 
   assert.equal(iconState(app.rows.characters), 'fail')
   assert.equal(iconState(app.rows.numbers), 'fail')
   assert.equal(isGated(app.button), true, 'and the button re-gates')
 })
-
 
 // ===========================================================================
 // Fix round — {count} is a wrapper-wide token, not a row-only one
@@ -1857,3 +1855,25 @@ test('r4: the first render is a real evaluation, not a blanket fail', () => {
   assert.equal(isGated(f.button), true)
 })
 
+// ---------------------------------------------------------------------------
+// The empty-string invariant, executable rather than prose
+// ---------------------------------------------------------------------------
+
+test('r4: every rule in RULES fails on an empty string', () => {
+  // The checklist renders pass/fail from the first paint, so a predicate that
+  // passed vacuously on '' would show pre-checked on a blank form. The script
+  // exports nothing, so the map's keys are read back out of its source: adding
+  // an entry to RULES without adding it to ALL_RULES — and so to every fixture
+  // and to this loop — fails here first, with the name of the new rule.
+  const block = /var RULES = \{([\s\S]*?)\n  \};/.exec(source)
+  assert.ok(block, 'the RULES map is still recognisable in the source')
+  const declared = [...block[1].matchAll(/^ {4}'([\w-]+)':/gm)].map((m) => m[1])
+
+  assert.deepEqual(declared, ALL_RULES, 'a new RULES entry must be added to ALL_RULES')
+
+  declared.forEach((rule) => {
+    const app = setup({ [rule]: 'true' })
+    assert.equal(iconState(app.rows[rule]), 'fail', rule + ' must not pass on an empty field')
+    assert.equal(isGated(app.button), true, rule + ' must gate an empty field')
+  })
+})
