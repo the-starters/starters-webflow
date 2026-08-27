@@ -77,7 +77,10 @@ pre-line` so the writer's line breaks survive. Nothing truncates it and there is
 no "See more" control inside the modal — the modal is already the expanded view.
 The see-more clamp in `v3/hire-profile.js` now covers card titles only (65
 characters). The modal title's own 150-character truncation, above, is
-unaffected and still lives in this script.
+unaffected and still lives in this script. When releasing this change, publish
+the `hire-profile.js` and `profile-portfolio.js` embeds together: an older
+`hire-profile.js` still clamping descriptions can leave an orphaned "See more"
+button under a description this script has since replaced.
 
 `data-highlights-loader` is an optional element authored inside the modal — its
 copy and styling are the designer's. Author it **outside** the Images and Videos
