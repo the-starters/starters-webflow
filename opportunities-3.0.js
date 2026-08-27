@@ -2428,6 +2428,7 @@
   let activeReviewModal = null
   let projectReviewOpenGeneration = 0
   let callReviewDeepLinkGeneration = -1
+  let projectReviewDeepLinkGeneration = -1
   let reviewSubmitting = false
 
   function normalizedDashboardPath() {
@@ -2469,8 +2470,7 @@
         : []
   }
 
-  async function fetchProjectWorkflowItems(role) {
-    const items = []
+  async function fetchProjectWorkflowPages(role, visit) {
     const seenProjectIds = new Set()
     const seenPages = new Set()
     let page = 1
@@ -2481,14 +2481,17 @@
           ? await API.brandProjectList(page)
           : await API.starterProjectList(page)
       const batch = projectItems(result)
+      const uniqueBatch = []
       let added = 0
       batch.forEach((item) => {
         const id = Number(item && (item.project_id || item.id))
         if (!(id > 0) || seenProjectIds.has(id)) return
         seenProjectIds.add(id)
-        items.push(item)
+        uniqueBatch.push(item)
         added += 1
       })
+      const visited = visit(uniqueBatch)
+      if (visited !== undefined) return visited
       if (Array.isArray(result)) break
 
       const currentPage = Number(result && result.curPage)
@@ -2498,17 +2501,31 @@
         page = nextPage
       } else if (
         Number.isInteger(itemsTotal) &&
-        itemsTotal > items.length &&
+        itemsTotal > seenProjectIds.size &&
         added > 0
       ) {
         page = Number.isInteger(currentPage) && currentPage > 0 ? currentPage + 1 : page + 1
-      } else if (Number.isInteger(itemsTotal) && itemsTotal > items.length) {
+      } else if (Number.isInteger(itemsTotal) && itemsTotal > seenProjectIds.size) {
         throw new Error('Project pagination did not advance')
       } else {
         break
       }
     }
+    return undefined
+  }
+
+  async function fetchProjectWorkflowItems(role) {
+    const items = []
+    await fetchProjectWorkflowPages(role, (batch) => {
+      items.push(...batch)
+    })
     return items
+  }
+
+  async function fetchProjectWorkflowItem(role, projectId) {
+    return fetchProjectWorkflowPages(role, (batch) =>
+      batch.find((item) => Number(item && (item.project_id || item.id)) === projectId),
+    )
   }
 
   function projectWorkflowInstanceKey(role) {
@@ -3995,6 +4012,7 @@
 
   async function openCallReviewFromEmail() {
     if (projectWorkflowRole !== 'brand') return false
+    if (String(urlParam('review_project') || '').trim()) return false
     const bookingId = String(urlParam('review_booking') || '').trim()
     if (!bookingId || bookingId.length > 255) return false
     if (callReviewDeepLinkGeneration === _memberScopeGeneration) return false
@@ -4031,6 +4049,29 @@
       )
       return false
     }
+  }
+
+  async function openProjectReviewFromEmail(expectedGeneration = _memberScopeGeneration) {
+    if (expectedGeneration !== _memberScopeGeneration) return false
+    if (projectWorkflowRole !== 'brand') return false
+    if (String(urlParam('review_booking') || '').trim()) return false
+    const projectIdParam = String(urlParam('review_project') || '').trim()
+    if (!/^[1-9]\d{0,9}$/.test(projectIdParam)) return false
+    if (projectReviewDeepLinkGeneration === expectedGeneration) return false
+    projectReviewDeepLinkGeneration = expectedGeneration
+    const projectId = Number(projectIdParam)
+    let project = projectWorkflowItems.get(projectId)
+    if (!project) project = await fetchProjectWorkflowItem('brand', projectId)
+    if (
+      expectedGeneration !== _memberScopeGeneration ||
+      projectWorkflowRole !== 'brand' ||
+      projectRoleForPath() !== 'brand'
+    ) return false
+    if (!project || !prepareProjectReview(project)) {
+      showProjectLifecycleFeedback('', 'This project is not ready for a review.', true)
+      return false
+    }
+    return true
   }
 
   async function openProjectReview(action, card) {
@@ -4191,6 +4232,7 @@
     activeReviewModal = null
     reviewSubmitting = false
     callReviewDeepLinkGeneration = -1
+    projectReviewDeepLinkGeneration = -1
     const reviewModal = projectReviewModal()
     clearProjectReviewContext(reviewModal, true)
     if (projectWorkflowObserver) projectWorkflowObserver.disconnect()
@@ -4305,9 +4347,11 @@
     const expected = role === 'brand' ? 'brand' : 'freelancer'
     if (projectRoleForPath() !== role) return false
     const member = authorizedMember || await gateOrRedirect(expected)
+    const generation = _memberScopeGeneration
     const requiredRole = role === 'brand' ? 'brand-paid' : 'talent'
     if (
       !member ||
+      generation !== _memberScopeGeneration ||
       member.id !== _cacheMemberId ||
       memberPlanRole(member) !== requiredRole
     ) {
@@ -4326,6 +4370,12 @@
     try {
       await refreshProjectWorkflow(role)
       await callReviewOpen
+      if (
+        generation !== _memberScopeGeneration ||
+        projectWorkflowRole !== role ||
+        projectRoleForPath() !== role
+      ) return false
+      if (role === 'brand') await openProjectReviewFromEmail(generation)
       return true
     } catch (error) {
       await callReviewOpen

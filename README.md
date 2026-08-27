@@ -1114,6 +1114,14 @@ is discarded. Closing the dialog clears the painted name and pending project
 context. The submit adapter accepts the live `Feedback` field and the legacy
 `Public-Feedback` field during the authored surface transition.
 
+A completed-project review email may deep-link to
+`/brand-dashboard?review_project=<project id>#projects-section`. The controller
+waits for the authenticated Brand project projection, resolves only that exact
+numeric project ID, and opens the existing review modal only when the row is
+still review-eligible and has no review. Unknown, ineligible, already-reviewed,
+non-numeric, or mixed `review_project` plus `review_booking` links fail closed.
+The link does not carry a Brand, Starter, email, or Memberstack identifier.
+
 The V3 post-call review email contract targets the same authored modal through
 a separate, fail-closed booking contract. Its CTA opens
 `/brand-dashboard?review_booking=<encoded booking id>` with the stable Mandrill
