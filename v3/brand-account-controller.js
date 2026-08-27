@@ -754,6 +754,17 @@
     }, 0)
   }
 
+  function replayStarterProfileClick(form, submitter) {
+    form.setAttribute('data-brand-account-native-replay', 'true')
+    window.setTimeout(function () {
+      try {
+        if (submitter && typeof submitter.click === 'function') submitter.click()
+      } finally {
+        form.setAttribute('data-brand-account-native-replay', 'false')
+      }
+    }, 0)
+  }
+
   function securityModeOwnsRole(mode, role) {
     if (mode === 'brand') return role === 'brand-free' || role === 'brand-paid'
     if (mode === 'identity') {
@@ -791,16 +802,15 @@
       })
     }
 
-    // Native constraint validation prevents the form's submit event from
-    // firing when an unrelated required profile field is incomplete. The
-    // authored submit disables pointer events in that state, so its direct
-    // wrapper receives the click. Keep that validation for profile saves, but
-    // let a valid changed login email use the identity path independently. A
-    // later complete profile save sees an unchanged email and replays the
-    // authored form normally.
+    // The authored profile controller handles button clicks directly, so even
+    // a valid form does not produce the native submit event intercepted below.
+    // Own every real changed-email click first. An invalid profile can still
+    // save its login email independently; a valid profile replays the authored
+    // click after Memberstack accepts the identity change.
     form.addEventListener(
       'click',
       function (event) {
+        if (form.getAttribute('data-brand-account-native-replay') === 'true') return
         var submit =
           form.querySelector('[data-edit-submit]') || form.querySelector('[type="submit"]')
         var clickedSubmit =
@@ -810,7 +820,6 @@
             event.target === submit.parentElement)
         if (!clickedSubmit || busy) return
         if (!profileEmailChanged) return
-        if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
 
         var emailInput = profileEmailInput || form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
         if (
@@ -823,6 +832,8 @@
 
         var email = trim(emailInput.value).toLowerCase()
         if (!EMAIL_PATTERN.test(email)) return
+        var profileWasValid =
+          typeof form.checkValidity !== 'function' || form.checkValidity()
 
         event.preventDefault()
         if (typeof event.stopImmediatePropagation === 'function') {
@@ -855,18 +866,25 @@
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: true,
             })
-            setMessage(form, 'success', '', receipt)
+            if (profileWasValid) replayStarterProfileClick(form, submit)
+            else setMessage(form, 'success', '', receipt)
             return true
           })
           .then(function (owned) {
-            if (!owned && typeof form.reportValidity === 'function') {
+            if (owned) return
+            if (profileWasValid) replayStarterProfileClick(form, submit)
+            else if (typeof form.reportValidity === 'function') {
               form.reportValidity()
             }
           })
           .catch(function (error) {
             if (!ownsSubmission) {
-              if (typeof form.reportValidity === 'function') form.reportValidity()
+              if (profileWasValid) replayStarterProfileClick(form, submit)
+              else if (typeof form.reportValidity === 'function') form.reportValidity()
               return
+            }
+            if (profileWasValid && error && error.passwordEmailAttempted) {
+              replayStarterProfileClick(form, submit)
             }
             var receipt = diagnosticComplete(form, {
               result: 'failed',
