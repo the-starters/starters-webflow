@@ -912,10 +912,19 @@
           action === 'switch-confirm' &&
           canConfirmBooking(role, booking, now)
         const decline =
-          (action === 'switch-decline' || action === 'decline') &&
+          (action === 'switch-decline' ||
+            action === 'switch-decline-reason' ||
+            action === 'decline') &&
           validDashboardModule(global.StartersDashboardCallActions) &&
           typeof global.StartersDashboardCallActions.canDecline === 'function' &&
           global.StartersDashboardCallActions.canDecline(role, booking)
+        const cancel =
+          (action === 'switch-cancel' ||
+            action === 'switch-cancel-reason' ||
+            action === 'cancel') &&
+          validDashboardModule(global.StartersDashboardCallActions) &&
+          typeof global.StartersDashboardCallActions.canCancel === 'function' &&
+          global.StartersDashboardCallActions.canCancel(role, booking, now)
         const media =
           action === 'notetaker-media' &&
           validDashboardModule(global.StartersDashboardCallMedia) &&
@@ -927,6 +936,7 @@
             action === 'switch-base' ||
             accept ||
             decline ||
+            cancel ||
             media,
         )
       })

@@ -2078,12 +2078,20 @@ suffix without generating markup. Only the base content state and one
 applicable pending message can be visible. Confirmed calls can show their
 canonical meeting link; cancelled and archived calls cannot. Every authored
 payment or booking action stays hidden except Close, Back, the Starter's
-eligible pending-call Accept and Decline actions, and owner-scoped recording
-access for eligible completed or archived calls. These migrated actions remain
-inside View Details; card-level decline, media, and other legacy controls stay
-hidden. Cancel and reschedule fail closed at their delegated triggers until
-their canonical lifecycle contracts are safe, so their authored dialogs cannot
-open. Direct transcript access and every payment control also stay hidden.
+eligible pending-call Accept and Decline actions, the participant Cancel chain
+for booked calls, and owner-scoped recording access for eligible completed or
+archived calls. These migrated actions remain inside View Details; card-level
+decline, cancel, media, and other legacy controls stay hidden. Cancel is
+available to the Starter or the Brand on a confirmed or rescheduled call whose
+start is still in the future; it sends `booking/cancel/v3` with a required
+reason and a durable `dashboard-cancel:` idempotency key, mirroring the decline
+contract. The decline chain now also exposes its authored reason step
+(`switch-decline-reason`), so the reason dialog is reachable. Reschedule fails
+closed at its delegated trigger until its canonical lifecycle contract is safe,
+so its authored dialog cannot open. Direct transcript access and every payment
+control also stay hidden. There is no hard 24-hour cutoff on cancel; late
+changes are a product decision recorded on 2026-08-27 (warn in copy, never
+block), because startup schedules move.
 
 The Starter pending card exposes only the Designer-authored Accept lifecycle
 control while the canonical response window remains open. The details dialog

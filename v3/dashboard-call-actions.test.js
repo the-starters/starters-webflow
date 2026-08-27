@@ -203,3 +203,156 @@ test('a mismatched decline response retains the command key', async () => {
     global.crypto = originalCrypto
   }
 })
+
+function confirmedBooking() {
+  return {
+    booking_id: 'booking-test-2',
+    config_id: 'config-test-1',
+    data_environment: 'test',
+    status: 'confirmed',
+    start: Date.now() + 60 * 60 * 1000,
+    starter_data: { memberstack_id: 'mem_sb_starter' },
+    brand_data: { memberstack_id: 'mem_sb_brand' },
+  }
+}
+
+test('cancel eligibility is participant-only, booked, future, scoped, and identified', () => {
+  const booking = confirmedBooking()
+  assert.equal(api.canCancel('starter', booking), true)
+  assert.equal(api.canCancel('brand', booking), true)
+  assert.equal(api.canCancel('guest', booking), false)
+  assert.equal(api.canCancel('starter', { ...booking, status: 'pending' }), false)
+  assert.equal(api.canCancel('starter', { ...booking, status: 'rescheduled' }), true)
+  assert.equal(api.canCancel('starter', { ...booking, status: 'completed' }), false)
+  assert.equal(api.canCancel('starter', { ...booking, start: Date.now() - 1000 }), false)
+  assert.equal(api.canCancel('starter', { ...booking, data_environment: '' }), false)
+  assert.equal(api.canCancel('starter', { ...booking, config_id: '' }), false)
+  assert.equal(api.canCancel('brand', { ...booking, brand_data: {} }), false)
+})
+
+test('cancel payload requires a reason and a bounded durable cancel key', () => {
+  const booking = confirmedBooking()
+  const key = 'dashboard-cancel:00000000-0000-4000-8000-000000000002'
+  assert.deepEqual(api.cancelPayload(booking, 'Conflict came up', key, 'brand'), {
+    booking_id: booking.booking_id,
+    config_id: booking.config_id,
+    idempotency_key: key,
+    cancelled_reason: 'Conflict came up',
+  })
+  assert.equal(api.cancelPayload(booking, '', key, 'brand'), null)
+  assert.equal(api.cancelPayload(booking, 'No', 'invalid', 'brand'), null)
+  assert.equal(
+    api.cancelPayload(booking, 'No', 'dashboard-decline:00000000-0000-4000-8000-000000000002', 'brand'),
+    null,
+  )
+})
+
+test('cancel command uses only the canonical environment-safe endpoint', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const requests = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000002'
+      },
+    }
+    global.xanoAuthFetch = async function (url, options) {
+      requests.push({ url, options })
+      return {
+        ok: true,
+        async json() {
+          return {
+            cancel: {
+              booking_id: 'booking-test-2',
+              status: 'cancelled',
+              revision: 3,
+              cancelled_by: 'starter',
+            },
+            duplicate: false,
+          }
+        },
+      }
+    }
+    const result = await api.cancelBooking(confirmedBooking(), 'Conflict came up', 'starter')
+    assert.equal(result.cancel.status, 'cancelled')
+    assert.equal(requests.length, 1)
+    assert.match(requests[0].url, /\/booking\/cancel\/v3$/)
+    assert.equal(requests[0].options.method, 'POST')
+    const payload = JSON.parse(requests[0].options.body)
+    assert.equal(payload.booking_id, 'booking-test-2')
+    assert.equal(payload.config_id, 'config-test-1')
+    assert.equal(payload.cancelled_reason, 'Conflict came up')
+    assert.match(payload.idempotency_key, /^dashboard-cancel:/)
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('cancel storage scope separates actors and reasons', async () => {
+  const booking = confirmedBooking()
+  const starterKey = await api.cancelStorageKey(booking, 'Reason one', 'starter')
+  const brandKey = await api.cancelStorageKey(booking, 'Reason one', 'brand')
+  const otherReason = await api.cancelStorageKey(booking, 'Reason two', 'starter')
+  assert.notEqual(starterKey, brandKey)
+  assert.notEqual(starterKey, otherReason)
+  assert.equal(starterKey.includes('Reason one'), false)
+  assert.match(starterKey, /^starters:dashboard-cancel:v1:test:/)
+})
+
+test('only an exact cancelled response clears the cancel command', () => {
+  assert.equal(
+    api.cancelSucceeded({
+      cancel: { booking_id: 'booking-test-2', status: 'cancelled' },
+    }, 'booking-test-2'),
+    true,
+  )
+  assert.equal(
+    api.cancelSucceeded({
+      cancel: { booking_id: 'booking-test-2', status: 'confirmed' },
+    }, 'booking-test-2'),
+    false,
+  )
+  assert.equal(api.cancelSucceeded(null, 'booking-test-2'), false)
+})
+
+test('an ambiguous cancel retains the same idempotency key', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const keys = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000002'
+      },
+    }
+    global.xanoAuthFetch = async function (_url, options) {
+      keys.push(JSON.parse(options.body).idempotency_key)
+      throw new Error('network outcome unknown')
+    }
+    const booking = confirmedBooking()
+    await assert.rejects(
+      api.cancelBooking(booking, 'Conflict came up', 'brand'),
+      /network outcome unknown/,
+    )
+    await assert.rejects(
+      api.cancelBooking(booking, 'Conflict came up', 'brand'),
+      /network outcome unknown/,
+    )
+    assert.equal(keys.length, 2)
+    assert.match(keys[0], /^dashboard-cancel:/)
+    assert.equal(keys[1], keys[0])
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
