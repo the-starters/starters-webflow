@@ -108,6 +108,13 @@ A missing or changed Memberstack session fails closed: the cached Free state cle
 duration, price, and prerequisite paint reset, save disables, `data-free-call-settings` becomes
 `error`, and the status reads `Sign in to manage free calls.`
 
+Every failed request uses the scoped native Webflow `.w-form-fail` block. The controller writes the
+exact server message into its existing inner `div`, or an optional
+`[data-call-settings-error-message]`, and exposes it as an alert. When the card has an authored
+`[data-call-settings-output="status"]`, the controller mirrors the same message there. A retry,
+canonical refresh, or other non-error state clears and hides the native block. The controller does
+not create form markup and never changes canonical state to simulate success.
+
 `starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read. It never
 clears the session or resets an in-progress Yes/No selection.
 
@@ -153,7 +160,7 @@ Automated tests cover the controller in a synthetic DOM only: the delayed-insert
 root-first/sibling-later card recovery, the published `consulting-calls-free` hydration,
 Free/Paid card isolation in both directions, the four-field upsert and guarded disable payloads,
 the canonical description and fixed-product readbacks, the in-flight double-Update dedup and
-Update busy-state lifecycle, the
+Update busy-state lifecycle, the scoped native error message and its retry and refresh clearing, the
 off-contract duration or price paint, the expired-session fail-closed writes, the authored
 status-pill resolution and its drifted-copy diagnostic, and the `w--redirected-checked` radio sync
 are executable regressions in `v3/free-call-settings.test.js`. The remaining legs need a live
@@ -165,9 +172,10 @@ order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm the served
    asset is the new build: the served `v3/free-call-settings.js` must contain
-   `data-call-settings-native-spinner` together with `data-button-spinner`. The previous build
-   already shipped `paintSaveBusy`, `BUSY_STYLE_ID`, the late-sibling recovery, and
-   `paintStatusPills`, so those markers cannot tell this release from the one before it.
+   `data-call-settings-error-message` together with `.w-form-fail`. The previous build already
+   shipped `data-call-settings-native-spinner`, `data-button-spinner`, `paintSaveBusy`,
+   `BUSY_STYLE_ID`, the late-sibling recovery, and `paintStatusPills`, so those markers cannot tell
+   this release from the one before it.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Free card reaches
    `data-free-call-settings="ready"` with canonical values, including a reload where Webflow or
    Memberstack inserts the card late. Confirm exactly one status pill renders in each state, and
@@ -190,7 +198,11 @@ order, after the PR merges:
    painting success. This controller never repairs an off-contract service; Xano owns that.
 6. On an active TEST Free service, pick No and click Update, and confirm canonical readback reports
    no active Free service. With a future pending, confirmed, or rescheduled booking on that service,
-   confirm Xano blocks the disable instead, per [Xano authority](#xano-authority).
+   confirm Xano blocks the disable instead, per [Xano authority](#xano-authority). The existing
+   scoped `.w-form-fail` block must show the exact Xano message, the editor must stay open, and
+   canonical state must stay on. A retry must clear the old message while its request is pending,
+   and a successful canonical refresh must leave the block hidden. Do not create a booking for
+   this check; use a pre-existing TEST fixture.
 
 Record the served-asset check and the TEST enable and disable results before the Free card is
 activated for any Starter outside TEST.
