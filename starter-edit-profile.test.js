@@ -1077,6 +1077,55 @@ async function testReplayProofRejectsChangedMemberAtRevalidation() {
   assert.equal(rejected, 1)
 }
 
+async function testInvalidReplayRequiresExactFreshMemberProofAfterCorrection() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }))
+  environment.window.MEMBER.auth.email = 'new@example.com'
+  environment.fields['[name="first-name"]'].value = ''
+  let rejected = 0
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_test', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+  const nextMember = {
+    id: 'mem_other',
+    auth: { email: 'other@example.com' },
+    customFields: {},
+  }
+  environment.switchMember(nextMember)
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(rejected, 1)
+
+  environment.fields['[name="first-name"]'].value = 'Corrected'
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_other', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(rejected, 2)
+
+  nextMember.auth.email = 'new@example.com'
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_other', email: 'new@example.com' },
+  )
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 1)
+  assert.match(environment.requests[0][0], /\/mem_other$/)
+  assert.equal(JSON.parse(environment.requests[0][1].body).Email, 'new@example.com')
+}
+
 Promise.all([
   testSuccess(),
   testLateLoadInitializesImmediately(),
@@ -1113,6 +1162,7 @@ Promise.all([
   testPersonalDetailsValidationBoundary(),
   testReplayProofRejectsChangedMemberAtCapture(),
   testReplayProofRejectsChangedMemberAtRevalidation(),
+  testInvalidReplayRequiresExactFreshMemberProofAfterCorrection(),
 ])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {

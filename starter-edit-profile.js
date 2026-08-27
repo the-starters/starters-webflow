@@ -68,7 +68,13 @@ function replayProofMatches(scope, proof) {
 }
 
 function rejectReplayProof(proof) {
-	if (typeof proof?.onRejected === 'function') proof.onRejected();
+	if (!proof || proof.settled) return;
+	proof.settled = true;
+	if (typeof proof.onRejected === 'function') proof.onRejected();
+}
+
+function acceptReplayProof(proof) {
+	if (proof) proof.settled = true;
 }
 
 function memberScopeChangedError() {
@@ -583,20 +589,23 @@ onDomReady(function () {
 				submitButton.addEventListener('click', async (event) => {
 					event.preventDefault();
 					const replayProof = stepIndex === 1 ? takePersonalDetailsReplay(form) : null;
+					try {
+						const validation = validateOwnedStep(stepIndex, { report: true });
+						if (!validation.valid) {
+							await workflowDiagnosticsReady;
+							recordProfileDiagnostic(null, {
+								result: 'failed',
+								stage: 'validation',
+								error_code: validation.failures[0]?.code || 'VALIDATION_FAILED',
+								request_started: false,
+							});
+							return;
+						}
 
-					const validation = validateOwnedStep(stepIndex, { report: true });
-					if (!validation.valid) {
-						await workflowDiagnosticsReady;
-						recordProfileDiagnostic(null, {
-							result: 'failed',
-							stage: 'validation',
-							error_code: validation.failures[0]?.code || 'VALIDATION_FAILED',
-							request_started: false,
-						});
-						return;
+						await submitStep(stepIndex, submitButton, replayProof);
+					} finally {
+						rejectReplayProof(replayProof);
 					}
-
-					await submitStep(stepIndex, submitButton, replayProof);
 				});
 			});
 		}
@@ -755,6 +764,7 @@ onDomReady(function () {
 			}
 
 			try {
+				acceptReplayProof(replayProof);
 				requestStarted = true;
 				const response = await fetch(`${PATCH_ENDPOINT}${memberScope.member.id}`, {
 					method: 'PATCH',

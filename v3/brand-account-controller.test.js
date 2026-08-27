@@ -2180,6 +2180,60 @@ test('session change during reset completion blocks replay and requires a fresh 
   }
 })
 
+test('authored validation rejection restores interception for a fresh member click', async () => {
+  const replayTasks = []
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'member-a@example.com',
+  })
+  let currentMember = {
+    id: 'mem_member_a',
+    auth: { email: 'member-a@example.com' },
+  }
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    getCurrentMember: async () => ({ data: currentMember }),
+    updateMemberAuth: async (payload) => {
+      currentMember.auth.email = payload.email
+    },
+    setTimeout(fn, ms) {
+      if (ms === 0) {
+        replayTasks.push(fn)
+        return replayTasks.length
+      }
+      return 1
+    },
+  })
+
+  starterProfileForm.inputEmail('shared@example.com')
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.equal(replayTasks.length, 1)
+  currentMember = {
+    id: 'mem_member_b',
+    auth: { email: 'member-b@example.com' },
+  }
+  starterProfileForm.submit.click = () => {
+    environment.starterReplayProofs[0].proof.onRejected()
+  }
+  replayTasks.shift()()
+
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(
+    environment.calls
+      .filter((call) => call.method === 'updateMemberAuth')
+      .map((call) => plain(call.payload)),
+    [{ email: 'shared@example.com' }, { email: 'shared@example.com' }],
+  )
+  assert.equal(environment.starterReplayProofs[1].proof.memberId, 'mem_member_b')
+})
+
 test('invalid email stays native so browser validation remains authoritative', async () => {
   const starterProfileForm = makeForm('starter-profile', {
     email: 'not-an-email',
