@@ -4486,3 +4486,30 @@ test('owner gate: a missing free data_environment fails closed', async () => {
   assert.equal(run.hooks.cardFree.textContent, SLOT_SENTINEL)
   assert.deepEqual(run.controller.calls.map((c) => c.configId), ['cfg_owner_paid'])
 })
+
+test('this file shortens no portfolio text and builds no See more control', () => {
+  // The "See more" utility is gone. The Highlights modal is the read-it-all
+  // surface, and card titles are shortened by the Designer's CSS line clamp,
+  // not here — [data-portfolio-card-title] matches nothing on the live page.
+  const context = makeContext({ page: makePage() })
+  const longText = 'A very long project story. '.repeat(20)
+
+  const description = makeElement('p', { 'portfolio-description': '' })
+  description.textContent = longText
+  const cardTitle = makeElement('h3', { 'data-portfolio-card-title': '' })
+  cardTitle.textContent = longText
+  context.document.body.appendChild(description)
+  context.document.body.appendChild(cardTitle)
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  assert.ok(longText.length > 250, 'the fixture is past the clamp both used to get')
+  assert.equal(description.textContent, longText)
+  assert.equal(cardTitle.textContent, longText)
+  assert.equal(
+    context.document.querySelectorAll('.portfolio-text-toggle').length,
+    0,
+    'no toggle is created for either selector',
+  )
+})
