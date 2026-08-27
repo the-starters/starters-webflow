@@ -563,8 +563,9 @@ the owner path stays on the one authenticated Xano bridge this page already
 uses rather than standing up a second auth stack for two call sites.
 
 Each answer maps to one record shaped exactly like an accepted configuration —
-`{is_paid, price_cents, config_id, duration, active}`, plus `currency` on
-paid — so both painters keep a single record shape to reason about.
+`{is_paid, price_cents, config_id, duration, active, data_environment}`, plus
+`currency` and `payment_environment` on paid — so both painters and the
+admission rules keep a single record shape to reason about.
 `readiness.bookable` is the gate, and `active === true` the filter: a service
 nobody could book earns no rate paint and no availability request, the same
 rule the brand path applies by keying on its **installed** set. More than one
@@ -572,10 +573,12 @@ active service for a type is a reconciliation case, not a choice, so that type
 is left alone with a warning rather than painted from whichever record came
 first.
 
-Every owner record then goes through `isBookableRecordShape`, the **same**
+Every owner record then goes through `isBookableRecordShape`, the same
 admission rules `selectBookableConfigurations` runs over a brand viewer's
 records — host environment, and the free/paid price, currency and duration
-contracts described above. `bookableEnvironments()` is the single reader for
+contracts described above — with one qualification on the paid data
+environment, described in the mapping notes below.
+`bookableEnvironments()` is the single reader for
 both. Readiness says a starter finished setting a service up; it does not say
 the service is shaped like something anybody could book, and a half-configured
 record that reaches only the owner's screen is the worst kind — the owner has
@@ -583,16 +586,29 @@ no second view to notice it against. A free service priced above zero, a
 cross-environment record on staging, or a paid service quoted in the wrong
 currency is refused with a warning and leaves the authored row standing.
 
-Two shape details differ from `get_bookable/v3` and are handled at the mapping
-step. The settings payloads name a service's length as either `duration` or
-`duration_minutes` (the tolerance `free-call-settings.js` already applies), and
-they report environment differently: free carries `data_environment` at the top
+Three shape details differ from `get_bookable/v3` and are handled at the
+mapping step, so the shared predicate itself never has to know the owner path
+exists.
+
+The settings payloads name a service's length as either `duration` or
+`duration_minutes` (the tolerance `free-call-settings.js` already applies).
+
+They report environment differently: free carries `data_environment` at the top
 level, paid carries `stripe_environment` at the top level with
 `payment_environment` on each service. Each environment an endpoint reports is
-checked against the host. `data_environment` is not returned by the paid payload
-at either level, so that field is filled from the host rather than invented —
-the paid record's environment authority is the payment environment, which is
-checked.
+checked against the host. **`data_environment` is not returned by the paid
+payload at either level**, so on a paid record that field is filled from the
+host rather than invented — the paid record's environment authority is the
+payment environment, which is checked. This is the one place the owner gate is
+weaker than the brand gate. The free payload always stamps `data_environment`,
+so a free record missing it fails closed: absence there means the endpoint's
+contract changed upstream, not that the check should be skipped.
+
+Stamps are trimmed and lowercased on the record before the predicate compares
+them, matching how stamps are compared elsewhere in this repo. The predicate
+keeps comparing strictly, because loosening it would change what a **brand**
+viewer is shown. Fallbacks use `== null`, so an explicit Xano `null` and an
+absent key mean the same thing.
 
 **A revealed but not-yet-bookable owner keeps the authored row and the CMS
 rate, deliberately.** The reveal runs off calendar and Stripe connection state,

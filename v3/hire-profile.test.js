@@ -4437,3 +4437,48 @@ test('owner paint: a bridge that throws synchronously costs one call type, not b
   assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
   assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
 })
+
+/* ------------- WAVE-1 owner-path paint: environment stamp handling --------- */
+
+test('owner gate: cased and padded environment stamps are admitted', async () => {
+  // Xano is not contractually lowercase at the edges, and every other stamp
+  // comparison in this repo trims and lowercases before comparing.
+  const run = await runOwnerGate({
+    free: ownerFreeSettings({ data_environment: 'Production' }),
+    paid: ownerPaidSettings({
+      services: [ownerPaidService({ payment_environment: '  LIVE  ' })],
+    }),
+  })
+
+  assert.equal(run.chooserFreePrice.textContent, '$0')
+  assert.equal(run.paidPrice.textContent, '250')
+  assert.deepEqual(
+    run.controller.calls.map((c) => c.configId).sort(),
+    ['cfg_owner_free', 'cfg_owner_paid'],
+  )
+})
+
+test('owner gate: an explicit null payment_environment falls back to the payload stamp', async () => {
+  const run = await runOwnerGate({
+    paid: ownerPaidSettings({
+      stripe_environment: 'live',
+      services: [ownerPaidService({ payment_environment: null })],
+    }),
+  })
+
+  assert.equal(run.paidPrice.textContent, '250')
+  assert.equal(run.hooks.cardPaid.textContent, '09:00AM on 03/06')
+})
+
+test('owner gate: a missing free data_environment fails closed', async () => {
+  // The free settings endpoint always stamps this field, so its absence means
+  // the endpoint's contract changed upstream. Tolerating it would paint a
+  // record whose environment nothing has actually confirmed.
+  const run = await runOwnerGate({
+    free: ownerFreeSettings({ data_environment: undefined }),
+  })
+
+  assert.equal(run.chooserFreePrice.textContent, PRICE_SENTINEL)
+  assert.equal(run.hooks.cardFree.textContent, SLOT_SENTINEL)
+  assert.deepEqual(run.controller.calls.map((c) => c.configId), ['cfg_owner_paid'])
+})

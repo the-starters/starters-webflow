@@ -1027,6 +1027,23 @@
           : service.duration;
   }
 
+  /**
+   * Environment stamps are compared case-insensitively and trimmed everywhere
+   * else in this repo (README:2624; sibling precedent `configStamp` in
+   * `v3/scheduling-availability-section.js:2264`). The shared admission
+   * predicate compares strictly, and the brand path must keep running it
+   * unchanged, so the OWNER's mapped record is normalized here instead —
+   * loosening the predicate would change what a brand viewer is shown.
+   *
+   * A null or absent stamp is passed through untouched. The free settings
+   * endpoint always stamps `data_environment` at the top level, so a missing
+   * one means the endpoint's contract changed upstream, and failing closed on
+   * it is the point.
+   */
+  function normalizeEnvironmentStamp(value) {
+      return value == null ? value : String(value).trim().toLowerCase();
+  }
+
   function ownerRecordFrom(settings, isPaid) {
       const label = isPaid ? 'paid' : 'free';
       if (!settings || !Array.isArray(settings.services)) return null;
@@ -1056,21 +1073,29 @@
       // something the PAID payload returns at either level, and its environment
       // authority is the payment environment that IS returned, so that field is
       // filled from the host rather than invented from a value we do not have.
+      //
+      // A `null` from Xano means the same thing as an absent key here, so both
+      // take the fallback — the same `== null` tolerance `ownerServiceDuration`
+      // applies to the two duration spellings.
       const record = {
           is_paid: isPaid,
           price_cents: service.price_cents,
           config_id: service.config_id,
           duration: ownerServiceDuration(service),
           active: true,
-          data_environment: isPaid && settings.data_environment === undefined
-              ? (environments && environments.data)
-              : settings.data_environment,
+          data_environment: normalizeEnvironmentStamp(
+              isPaid && settings.data_environment == null
+                  ? (environments && environments.data)
+                  : settings.data_environment
+          ),
       };
       if (isPaid) {
           record.currency = service.currency;
-          record.payment_environment = service.payment_environment === undefined
-              ? settings.stripe_environment
-              : service.payment_environment;
+          record.payment_environment = normalizeEnvironmentStamp(
+              service.payment_environment == null
+                  ? settings.stripe_environment
+                  : service.payment_environment
+          );
       }
 
       // The same admission gate every brand viewer's records go through. An
