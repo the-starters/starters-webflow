@@ -46,7 +46,7 @@
                     window.dispatchEvent(new CustomEvent("modal-open", { detail: { modal } }));
                 }
                 function closeModal() {
-                    typeof gsap !== "undefined" ? modal.tl.reverse() : resetModal();
+                    typeof gsap !== "undefined" && modal.tl && modal.tl.progress() ? modal.tl.reverse() : resetModal();
                 }
     
                 if (new URLSearchParams(location.search).get("modal-id") === modalId) openModal(), history.replaceState({}, "", ((u) => (u.searchParams.delete("modal-id"), u))(new URL(location.href)));
