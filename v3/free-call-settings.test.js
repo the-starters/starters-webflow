@@ -1173,11 +1173,11 @@ test('a transient empty auth notification suspends and restores the Free canonic
   )
 })
 
-test('an empty-auth stale read cannot outpace a successful Free update', async () => {
+test('an early failing empty-auth read cannot hide a successful Free update', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
-  const staleReadStarted = deferred()
   let reads = 0
+  let postFinished = false
   const result = load({
     initial: canonical({
       public_description: 'Original Free Call',
@@ -1187,9 +1187,10 @@ test('an empty-auth stale read cannot outpace a successful Free update', async (
     routes: {
       '/starter/free-call-settings/get/v3': ({ state }) => {
         reads += 1
-        const snapshot = state
-        if (reads === 2) staleReadStarted.resolve()
-        return { ok: true, status: 200, json: async () => snapshot }
+        if (reads > 1 && !postFinished) {
+          return { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+        }
+        return { ok: true, status: 200, json: async () => state }
       },
       '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
         postStarted.resolve()
@@ -1200,6 +1201,7 @@ test('an empty-auth stale read cannot outpace a successful Free update', async (
             services: [saved],
             readiness: { free_call_enabled: true, bookable: true },
           }))
+          postFinished = true
           return { ok: true, status: 200, json: async () => ({ service: saved }) }
         })
       },
@@ -1211,7 +1213,7 @@ test('an empty-auth stale read cannot outpace a successful Free update', async (
   await result.dom.save.dispatch('click')
   await postStarted.promise
   const authTransition = result.notifyAuthChange(null)
-  await staleReadStarted.promise
+  await settle()
   assert.equal(result.dom.title.value, '')
 
   finishPost.resolve()
@@ -1220,14 +1222,12 @@ test('an empty-auth stale read cannot outpace a successful Free update', async (
 
   assert.equal(result.dom.title.value, 'Updated Free Call')
   assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
-  assert.equal(reads, 4)
+  assert.equal(reads, 3)
 })
 
 test('logout supersedes pending Free write revalidation', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
-  const staleReadStarted = deferred()
-  let reads = 0
   const result = load({
     initial: canonical({
       public_description: 'Original Free Call',
@@ -1236,8 +1236,6 @@ test('logout supersedes pending Free write revalidation', async () => {
     }),
     routes: {
       '/starter/free-call-settings/get/v3': ({ state }) => {
-        reads += 1
-        if (reads === 2) staleReadStarted.resolve()
         return { ok: true, status: 200, json: async () => state }
       },
       '/starter/free-call-settings/upsert/v3': () => {
@@ -1256,7 +1254,7 @@ test('logout supersedes pending Free write revalidation', async () => {
   await result.dom.save.dispatch('click')
   await postStarted.promise
   const staleTransition = result.notifyAuthChange(null)
-  await staleReadStarted.promise
+  await settle()
   result.expireMember()
   await result.notifyAuthChange(null)
   finishPost.resolve()
@@ -1271,8 +1269,6 @@ test('logout supersedes pending Free write revalidation', async () => {
 test('account switch supersedes pending Free write revalidation', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
-  const staleReadStarted = deferred()
-  let memberAReads = 0
   const result = load({
     initial: canonical({
       services: [service()],
@@ -1290,8 +1286,6 @@ test('account switch supersedes pending Free write revalidation', async () => {
             }),
           }
         }
-        memberAReads += 1
-        if (memberAReads === 2) staleReadStarted.resolve()
         return { ok: true, status: 200, json: async () => state }
       },
       '/starter/free-call-settings/upsert/v3': () => {
@@ -1310,7 +1304,7 @@ test('account switch supersedes pending Free write revalidation', async () => {
   await result.dom.save.dispatch('click')
   await postStarted.promise
   const staleTransition = result.notifyAuthChange(null)
-  await staleReadStarted.promise
+  await settle()
   await result.changeMember({ id: 'member-free-b' })
   finishPost.resolve()
   await staleTransition

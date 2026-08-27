@@ -1978,11 +1978,11 @@ test('a transient empty auth notification suspends and restores the Paid canonic
   )
 })
 
-test('an empty-auth stale read cannot outpace a successful Paid update', async () => {
+test('an early failing empty-auth read cannot hide a successful Paid update', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
-  const staleReadStarted = deferred()
   let reads = 0
+  let postFinished = false
   const result = load({
     initial: canonical({
       services: [service()],
@@ -1991,9 +1991,10 @@ test('an empty-auth stale read cannot outpace a successful Paid update', async (
     routes: {
       '/starter/paid-call-settings/get/v3': ({ state }) => {
         reads += 1
-        const snapshot = state
-        if (reads === 2) staleReadStarted.resolve()
-        return { ok: true, status: 200, json: async () => snapshot }
+        if (reads > 1 && !postFinished) {
+          return { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+        }
+        return { ok: true, status: 200, json: async () => state }
       },
       '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
         postStarted.resolve()
@@ -2008,6 +2009,7 @@ test('an empty-auth stale read cannot outpace a successful Paid update', async (
             services: [saved],
             readiness: { paid_call_enabled: true, bookable: true },
           }))
+          postFinished = true
           return { ok: true, status: 200, json: async () => ({ service: saved }) }
         })
       },
@@ -2020,7 +2022,7 @@ test('an empty-auth stale read cannot outpace a successful Paid update', async (
   await result.dom.save.dispatch('click')
   await postStarted.promise
   const authTransition = result.notifyAuthChange(null)
-  await staleReadStarted.promise
+  await settle()
   assert.equal(result.dom.title.value, '')
   assert.equal(result.dom.price.value, '')
 
@@ -2031,14 +2033,12 @@ test('an empty-auth stale read cannot outpace a successful Paid update', async (
   assert.equal(result.dom.title.value, 'Updated Paid Call')
   assert.equal(result.dom.price.value, 475)
   assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
-  assert.equal(reads, 4)
+  assert.equal(reads, 3)
 })
 
 test('logout supersedes pending Paid write revalidation', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
-  const staleReadStarted = deferred()
-  let reads = 0
   const result = load({
     initial: canonical({
       services: [service()],
@@ -2046,8 +2046,6 @@ test('logout supersedes pending Paid write revalidation', async () => {
     }),
     routes: {
       '/starter/paid-call-settings/get/v3': ({ state }) => {
-        reads += 1
-        if (reads === 2) staleReadStarted.resolve()
         return { ok: true, status: 200, json: async () => state }
       },
       '/starter/paid-call-settings/upsert/v3': () => {
@@ -2067,7 +2065,7 @@ test('logout supersedes pending Paid write revalidation', async () => {
   await result.dom.save.dispatch('click')
   await postStarted.promise
   const staleTransition = result.notifyAuthChange(null)
-  await staleReadStarted.promise
+  await settle()
   result.expireMemberSilently()
   await result.notifyAuthChange(null)
   finishPost.resolve()
@@ -2082,8 +2080,6 @@ test('logout supersedes pending Paid write revalidation', async () => {
 test('account switch supersedes pending Paid write revalidation', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
-  const staleReadStarted = deferred()
-  let memberAReads = 0
   const result = load({
     initial: canonical({
       services: [service()],
@@ -2104,8 +2100,6 @@ test('account switch supersedes pending Paid write revalidation', async () => {
             }),
           }
         }
-        memberAReads += 1
-        if (memberAReads === 2) staleReadStarted.resolve()
         return { ok: true, status: 200, json: async () => state }
       },
       '/starter/paid-call-settings/upsert/v3': () => {
@@ -2125,7 +2119,7 @@ test('account switch supersedes pending Paid write revalidation', async () => {
   await result.dom.save.dispatch('click')
   await postStarted.promise
   const staleTransition = result.notifyAuthChange(null)
-  await staleReadStarted.promise
+  await settle()
   await result.changeMember({ id: 'member-b' })
   finishPost.resolve()
   await staleTransition

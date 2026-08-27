@@ -1041,7 +1041,6 @@
       }
       sessionMemberId = member.id
       const pendingWrite = activeWrite && activeWrite.memberId === member.id ? activeWrite : null
-      let canonical = await readCanonicalSettings()
       if (pendingWrite) {
         await pendingWrite.done
         if (!currentRender(version, member.id)) return null
@@ -1058,8 +1057,8 @@
           return null
         }
         if (liveMember.id !== member.id) return loadSession(liveMember, false)
-        canonical = await readCanonicalSettings()
       }
+      const canonical = await readCanonicalSettings()
       if (!currentRender(version, member.id)) return null
       return render(canonical)
     } catch (error) {
