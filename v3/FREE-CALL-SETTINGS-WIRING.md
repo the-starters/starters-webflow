@@ -104,9 +104,17 @@ adds a small CSS spinner after the existing button content. It restores the auth
 resets the busy attributes when the mutation and canonical readback settle. The same in-flight lock
 prevents a second click from starting a duplicate write.
 
-A missing or changed Memberstack session fails closed: the cached Free state clears, the description,
-duration, price, and prerequisite paint reset, save disables, `data-free-call-settings` becomes
-`error`, and the status reads `Sign in to manage free calls.`
+An empty Memberstack auth notification is not logout proof by itself. The controller first clears the
+cached Free paint, shows `Checking your account…`, and re-reads the live member. If the same member is
+still active, it reloads canonical settings. If an Update just completed its canonical readback, that
+verified result remains the fallback when the extra auth-triggered settings read fails. Prerequisite
+refreshes wait for the write and auth revalidation, then coalesce into one canonical re-read.
+
+A confirmed missing or changed Memberstack session still fails closed: the cached Free state clears,
+the description, duration, price, and prerequisite paint reset, save disables,
+`data-free-call-settings` becomes `error`, and the status reads `Sign in to manage free calls.` A
+newer logout or account switch always supersedes an older same-member revalidation or post-write
+repaint.
 
 Every failed request uses the scoped native Webflow `.w-form-fail` block. The controller writes the
 exact server message into its existing inner `div`, or an optional
@@ -162,7 +170,9 @@ Free/Paid card isolation in both directions, the four-field upsert and guarded d
 the canonical description and fixed-product readbacks, the in-flight double-Update dedup and
 Update busy-state lifecycle, the scoped native error message and its retry and refresh clearing, the
 off-contract duration or price paint, the expired-session fail-closed writes, the authored
-status-pill resolution and its drifted-copy diagnostic, and the `w--redirected-checked` radio sync
+status-pill resolution and its drifted-copy diagnostic, the `w--redirected-checked` radio sync,
+transient empty-auth recovery, post-write canonical fallback, queued prerequisite refresh, and
+logout and account-switch precedence
 are executable regressions in `v3/free-call-settings.test.js`. The remaining legs need a live
 Memberstack session, a live Xano TEST configuration, and an asset that only exists once the tag is
 published, so they are not runnable from CI or from a local test phase; both
@@ -192,6 +202,10 @@ order, after the PR merges:
    Confirm the canonical readback returns the submitted `public_description`, the public Webflow
    profile and Algolia record show the same description, and the card reaches the canonical state
    with `data-free-call-duration-current="30"` and `data-free-call-price-cents="0"`.
+   If Memberstack emits an empty auth notification during that Update, confirm the card temporarily
+   shows `Checking your account…` and then restores the same canonical ON state and description.
+   A real logout must instead leave the card signed out, and an account switch must show only the
+   new member's canonical state.
 5. On a TEST fixture stored at a duration other than `30` or a price other than `0`, confirm the
    card reads `data-free-call-bookable="false"` and shows the real stored price, and that an Update
    whose readback is still off contract leaves the editor open and reports the error instead of
