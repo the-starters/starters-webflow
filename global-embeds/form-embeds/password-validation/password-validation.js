@@ -414,8 +414,6 @@
       normalize(wrappers[w], active, rules);
     }
 
-    var touched = false;
-
     // Returns the verdict rather than stashing it, so no caller can ever
     // adjudicate on a copy that has gone stale.
     function render() {
@@ -428,13 +426,12 @@
         try { pass = !!r.fn(value, r.arg); } catch (e) { pass = false; }
         if (!pass) allPass = false;
 
+        // Every active row states where it stands from the very first render,
+        // including the one at wiring time: an empty field meets no rule, so
+        // the checklist reads as unchecked boxes that fill in as rules pass.
         for (var k = 0; k < r.icons.length; k++) {
           var pair = r.icons[k];
-          if (!touched) {
-            // Neutral initial state: no red crosses before the user types.
-            hide(pair.yes);
-            hide(pair.no);
-          } else if (pass) {
+          if (pass) {
             show(pair.yes);
             hide(pair.no);
           } else {
@@ -449,37 +446,29 @@
     }
 
     input.addEventListener('input', function () {
-      touched = true;
       render();
     });
 
-    // A field someone (or something) filled counts as typed once the user
-    // leaves it, or once the browser fires `change` — some autofill paths fire
-    // one, some the other, and some neither until then. An empty field is left
-    // alone, so simply tabbing past earns no red crosses.
-    //
-    // These are the real escape hatch from a stale-value lockout: a natively
-    // disabled default submit button blocks implicit submission, so the user
-    // cannot reach the submit handler to have it recompute for them.
-    function revalidateIfFilled() {
-      if ((input.value || '') === '') return;
-      touched = true;
+    // Writing input.value fires no event, so a password manager or a script
+    // can leave the checklist showing a value the field no longer holds. These
+    // two are the real escape hatch: a natively disabled default submit button
+    // blocks implicit submission, so the user cannot reach the submit handler
+    // to have it recompute for them.
+    function revalidate() {
       render();
     }
-    input.addEventListener('focusout', revalidateIfFilled);
-    input.addEventListener('change', revalidateIfFilled);
+    input.addEventListener('focusout', revalidate);
+    input.addEventListener('change', revalidate);
 
     form.addEventListener('submit', function (event) {
       // Recompute FIRST, then adjudicate on what came back.
-      touched = true;
       if (!render()) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }
     }, true);
 
-    // Non-empty at init (autofill, browser restore) counts as typed.
-    if ((input.value || '') !== '') touched = true;
+    // First paint: states every active rule, met or not.
     render();
 
     // Only a genuinely wired form is marked. A form that bailed out stays
