@@ -1978,6 +1978,163 @@ test('a transient empty auth notification suspends and restores the Paid canonic
   )
 })
 
+test('an empty-auth stale read cannot outpace a successful Paid update', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const staleReadStarted = deferred()
+  let reads = 0
+  const result = load({
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        const snapshot = state
+        if (reads === 2) staleReadStarted.resolve()
+        return { ok: true, status: 200, json: async () => snapshot }
+      },
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => {
+          const saved = service({
+            title: body.title,
+            price_cents: body.price_cents,
+            duration: body.duration_minutes,
+            revision: 5,
+          })
+          setState(canonical({
+            services: [saved],
+            readiness: { paid_call_enabled: true, bookable: true },
+          }))
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        })
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Paid Call'
+  result.dom.price.value = '475'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const authTransition = result.notifyAuthChange(null)
+  await staleReadStarted.promise
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+
+  finishPost.resolve()
+  await authTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Updated Paid Call')
+  assert.equal(result.dom.price.value, 475)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(reads, 4)
+})
+
+test('logout supersedes pending Paid write revalidation', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const staleReadStarted = deferred()
+  let reads = 0
+  const result = load({
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        if (reads === 2) staleReadStarted.resolve()
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/paid-call-settings/upsert/v3': () => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => ({
+          ok: true,
+          status: 200,
+          json: async () => ({ service: service({ revision: 5 }) }),
+        }))
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Paid Call'
+  result.dom.price.value = '475'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const staleTransition = result.notifyAuthChange(null)
+  await staleReadStarted.promise
+  result.expireMemberSilently()
+  await result.notifyAuthChange(null)
+  finishPost.resolve()
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.status.textContent, 'Sign in to manage paid calls.')
+})
+
+test('account switch supersedes pending Paid write revalidation', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const staleReadStarted = deferred()
+  let memberAReads = 0
+  const result = load({
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ member, state }) => {
+        if (member.id === 'member-b') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => canonical({
+              services: [service({
+                config_id: 'cfg-paid-b',
+                title: 'Member B Call',
+                price_cents: 45000,
+              })],
+            }),
+          }
+        }
+        memberAReads += 1
+        if (memberAReads === 2) staleReadStarted.resolve()
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/paid-call-settings/upsert/v3': () => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => ({
+          ok: true,
+          status: 200,
+          json: async () => ({ service: service({ revision: 5 }) }),
+        }))
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Paid Call'
+  result.dom.price.value = '475'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const staleTransition = result.notifyAuthChange(null)
+  await staleReadStarted.promise
+  await result.changeMember({ id: 'member-b' })
+  finishPost.resolve()
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member B Call')
+  assert.equal(result.dom.price.value, 450)
+})
+
 test('a stale Paid same-member revalidation cannot repaint after logout', async () => {
   const staleMember = deferred()
   const result = load({

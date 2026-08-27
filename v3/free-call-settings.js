@@ -48,6 +48,7 @@
   let statusPillWarned = false
   let rootWaitTimer = null
   let initializationPromise = null
+  let activeWrite = null
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -516,6 +517,19 @@
     return version === refreshVersion && memberId === sessionMemberId
   }
 
+  function beginWrite(memberId) {
+    let resolve
+    const done = new Promise(function (finish) { resolve = finish })
+    const write = { memberId: memberId, done: done, resolve: resolve }
+    activeWrite = write
+    return write
+  }
+
+  function finishWrite(write) {
+    if (activeWrite === write) activeWrite = null
+    write.resolve()
+  }
+
   function serviceDuration(service) {
     if (!service) return NaN
     const raw = service.duration === undefined || service.duration === null
@@ -640,7 +654,7 @@
   }
 
   async function save() {
-    if (busy) return null
+    if (busy || activeWrite) return null
     const pair = radioPair()
     if (!pair.enabled || !pair.disabled) {
       setMessage('Free-call controls are not configured correctly.')
@@ -656,6 +670,7 @@
     }
     const version = ++refreshVersion
     const memberId = sessionMemberId
+    const write = beginWrite(memberId)
     setBusy(true)
     setStatus('saving')
     try {
@@ -693,16 +708,18 @@
       }
       throw error
     } finally {
+      finishWrite(write)
       if (currentRender(version, memberId)) setBusy(false)
     }
   }
 
   async function disable() {
-    if (busy) return null
+    if (busy || activeWrite) return null
     const service = canonicalService(settings)
     if (!service) return settings
     const version = ++refreshVersion
     const memberId = sessionMemberId
+    const write = beginWrite(memberId)
     setBusy(true)
     setStatus('disabling')
     try {
@@ -730,6 +747,7 @@
       }
       throw error
     } finally {
+      finishWrite(write)
       if (currentRender(version, memberId)) setBusy(false)
     }
   }
@@ -763,8 +781,11 @@
       if (notifiedMember.id === sessionMemberId && settings) return settings
       return loadSession(notifiedMember, false)
     }
+    const memberId = sessionMemberId
+    const pendingWrite = activeWrite && activeWrite.memberId === memberId ? activeWrite : null
     const version = ++refreshVersion
     clearRenderedState('Checking your account…')
+    if (pendingWrite) sessionMemberId = memberId
     setStatus('loading')
     let member = null
     try {
@@ -774,6 +795,7 @@
     }
     if (version !== refreshVersion) return null
     if (!member || !member.id) {
+      sessionMemberId = null
       setStatus('error')
       setMessage('Sign in to manage free calls.')
       return null
@@ -796,7 +818,26 @@
         return null
       }
       sessionMemberId = member.id
-      const canonical = await readCanonicalSettings()
+      const pendingWrite = activeWrite && activeWrite.memberId === member.id ? activeWrite : null
+      let canonical = await readCanonicalSettings()
+      if (pendingWrite) {
+        await pendingWrite.done
+        if (!currentRender(version, member.id)) return null
+        let liveMember = null
+        try {
+          liveMember = await currentMember(true)
+        } catch (error) {
+          liveMember = null
+        }
+        if (!currentRender(version, member.id)) return null
+        if (!liveMember || !liveMember.id) {
+          setStatus('error')
+          clearRenderedState('Sign in to manage free calls.')
+          return null
+        }
+        if (liveMember.id !== member.id) return loadSession(liveMember, false)
+        canonical = await readCanonicalSettings()
+      }
       if (!currentRender(version, member.id)) return null
       return render(canonical)
     } catch (error) {

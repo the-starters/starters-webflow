@@ -1173,6 +1173,153 @@ test('a transient empty auth notification suspends and restores the Free canonic
   )
 })
 
+test('an empty-auth stale read cannot outpace a successful Free update', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const staleReadStarted = deferred()
+  let reads = 0
+  const result = load({
+    initial: canonical({
+      public_description: 'Original Free Call',
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        const snapshot = state
+        if (reads === 2) staleReadStarted.resolve()
+        return { ok: true, status: 200, json: async () => snapshot }
+      },
+      '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => {
+          const saved = service({ revision: 5 })
+          setState(canonical({
+            public_description: body.description,
+            services: [saved],
+            readiness: { free_call_enabled: true, bookable: true },
+          }))
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        })
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Free Call'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const authTransition = result.notifyAuthChange(null)
+  await staleReadStarted.promise
+  assert.equal(result.dom.title.value, '')
+
+  finishPost.resolve()
+  await authTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Updated Free Call')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(reads, 4)
+})
+
+test('logout supersedes pending Free write revalidation', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const staleReadStarted = deferred()
+  let reads = 0
+  const result = load({
+    initial: canonical({
+      public_description: 'Original Free Call',
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        if (reads === 2) staleReadStarted.resolve()
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/free-call-settings/upsert/v3': () => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => ({
+          ok: true,
+          status: 200,
+          json: async () => ({ service: service({ revision: 5 }) }),
+        }))
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Free Call'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const staleTransition = result.notifyAuthChange(null)
+  await staleReadStarted.promise
+  result.expireMember()
+  await result.notifyAuthChange(null)
+  finishPost.resolve()
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
+  assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.')
+})
+
+test('account switch supersedes pending Free write revalidation', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const staleReadStarted = deferred()
+  let memberAReads = 0
+  const result = load({
+    initial: canonical({
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ member, state }) => {
+        if (member.id === 'member-free-b') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => canonical({
+              public_description: 'Member B Free Call',
+              services: [service({ config_id: 'cfg-free-b', title: 'Member B Free Call' })],
+            }),
+          }
+        }
+        memberAReads += 1
+        if (memberAReads === 2) staleReadStarted.resolve()
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/free-call-settings/upsert/v3': () => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => ({
+          ok: true,
+          status: 200,
+          json: async () => ({ service: service({ revision: 5 }) }),
+        }))
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Free Call'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const staleTransition = result.notifyAuthChange(null)
+  await staleReadStarted.promise
+  await result.changeMember({ id: 'member-free-b' })
+  finishPost.resolve()
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member B Free Call')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+})
+
 test('a stale Free same-member revalidation cannot repaint after logout', async () => {
   const staleMember = deferred()
   const result = load({
