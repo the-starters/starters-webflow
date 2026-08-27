@@ -832,11 +832,18 @@
           const rateType = normalized(card.getAttribute('data-rate-card'));
           const candidates = [titleValue];
 
-          // Freelance and Retainer are commercial formats, not separate
-          // project-service values. Both map to the authored Freelance work
-          // option when that exact option exists. Every CMS service otherwise
-          // requires an exact native option match and fails closed.
-          if (rateType === 'freelance' || rateType === 'retainer') {
+          // Freelance and Retainer are commercial formats, not CMS services,
+          // so each maps onto the authored option that matches its format.
+          // Retainer has its own native option and prefers it; Freelance work
+          // stays as a last resort for the retainer because that option is
+          // gated by element-visibility="Retainer Enabled" and could be
+          // withdrawn, and an approximate service beats no contract at all.
+          // Every CMS service otherwise requires an exact native option match
+          // and fails closed.
+          if (rateType === 'retainer') {
+              candidates.push('Monthly retainer');
+              candidates.push('Freelance work');
+          } else if (rateType === 'freelance') {
               candidates.push('Freelance work');
           }
 
@@ -868,7 +875,11 @@
 
           card.setAttribute('data-modal-trigger', 'generate-contract');
           card.setAttribute('data-sp-fill', 'button');
-          card.setAttribute('data-sp-fill-category', 'service');
+          // Must byte-match the authored input's data-sp-fill-category tag:
+          // pre-fill-attr-val.js matches exact first, then case-insensitively
+          // with a warning, so 'service' misses the authored 'Services' on
+          // both passes and the field is silently left unfilled.
+          card.setAttribute('data-sp-fill-category', 'Services');
           card.setAttribute('data-sp-fill-value', serviceValue);
           card.style.cursor = 'pointer';
       });
