@@ -2162,10 +2162,7 @@ test('a failed post-write auth read falls back to the verified Paid update', asy
   let reads = 0
   let postFinished = false
   const result = load({
-    initial: canonical({
-      services: [service()],
-      readiness: { paid_call_enabled: true, bookable: true },
-    }),
+    initial: canonical(),
     routes: {
       '/starter/paid-call-settings/get/v3': ({ state }) => {
         reads += 1
@@ -2200,6 +2197,8 @@ test('a failed post-write auth read falls back to the verified Paid update', asy
 
   result.dom.title.value = 'Updated Paid Call'
   result.dom.price.value = '475'
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
   await result.dom.save.dispatch('click')
   await postStarted.promise
   const authTransition = result.notifyAuthChange(null)
@@ -2212,8 +2211,9 @@ test('a failed post-write auth read falls back to the verified Paid update', asy
   await settle()
 
   assert.equal(result.dom.title.value, 'Updated Paid Call')
-  assert.equal(result.dom.price.value, '475')
+  assert.equal(result.dom.price.value, 475)
   assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.enabled.checked, true)
   assert.equal(reads, 3)
 })
 

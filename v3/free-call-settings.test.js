@@ -1344,11 +1344,7 @@ test('a failed post-write auth read falls back to the verified Free update', asy
   let reads = 0
   let postFinished = false
   const result = load({
-    initial: canonical({
-      public_description: 'Original Free Call',
-      services: [service()],
-      readiness: { free_call_enabled: true, bookable: true },
-    }),
+    initial: canonical(),
     routes: {
       '/starter/free-call-settings/get/v3': ({ state }) => {
         reads += 1
@@ -1378,6 +1374,8 @@ test('a failed post-write auth read falls back to the verified Free update', asy
   await settle()
 
   result.dom.title.value = 'Updated Free Call'
+  result.dom.yes.checked = true
+  await result.dom.yes.dispatch('change')
   await result.dom.save.dispatch('click')
   await postStarted.promise
   const authTransition = result.notifyAuthChange(null)
@@ -1390,6 +1388,7 @@ test('a failed post-write auth read falls back to the verified Free update', asy
 
   assert.equal(result.dom.title.value, 'Updated Free Call')
   assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(result.dom.yes.checked, true)
   assert.equal(reads, 3)
 })
 
