@@ -932,3 +932,41 @@ test('respond controls are rendered into the base view for the counterpart', () 
     2,
   )
 })
+
+test('the success panel text nodes render the current counterpart without changing other copy', () => {
+  const firstBooking = {
+    starter_data: { name: 'Sam Starter', memberstack_id: 'mem_sb_starter' },
+    brand_data: { name: 'Bella Brand', memberstack_id: 'mem_sb_brand' },
+  }
+  const directText = {
+    nodeType: 3,
+    nodeValue: 'The call is cancelled. We will notify [Starter].',
+  }
+  const nestedText = { nodeType: 3, nodeValue: '[Brand] will receive an email.' }
+  const untouched = { nodeType: 3, nodeValue: 'No placeholder here.' }
+  const nestedElement = { nodeType: 1, childNodes: [nestedText, untouched] }
+  const panel = { nodeType: 1, childNodes: [directText, nestedElement] }
+  const modal = {
+    querySelectorAll(selector) {
+      assert.equal(selector, '[booking-popup-content="cancelled"]')
+      return [panel]
+    },
+  }
+
+  assert.equal(api.fillCounterpartPlaceholders(modal, 'cancelled', 'brand', firstBooking), 2)
+  assert.equal(directText.nodeValue, 'The call is cancelled. We will notify Sam Starter.')
+  assert.equal(nestedText.nodeValue, 'Sam Starter will receive an email.')
+  assert.equal(untouched.nodeValue, 'No placeholder here.')
+
+  const secondBooking = {
+    starter_data: { name: 'Taylor Starter' },
+    brand_data: { name: 'Blake Brand' },
+  }
+  assert.equal(api.fillCounterpartPlaceholders(modal, 'cancelled', 'starter', secondBooking), 2)
+  assert.equal(directText.nodeValue, 'The call is cancelled. We will notify Blake Brand.')
+  assert.equal(nestedText.nodeValue, 'Blake Brand will receive an email.')
+
+  assert.equal(api.fillCounterpartPlaceholders(modal, 'cancelled', 'brand', {}), 2)
+  assert.equal(directText.nodeValue, 'The call is cancelled. We will notify the other participant.')
+  assert.equal(nestedText.nodeValue, 'the other participant will receive an email.')
+})
