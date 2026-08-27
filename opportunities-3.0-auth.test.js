@@ -4724,6 +4724,21 @@ test('project-review email deep link opens only the eligible authenticated proje
   assert.equal(projectRequests, 1)
   assert.equal(starterName.textContent, 'Rate your project with Brian')
 
+  if (process.env.NO_MISTAKES_EVIDENCE_DIR) {
+    fs.mkdirSync(process.env.NO_MISTAKES_EVIDENCE_DIR, { recursive: true })
+    fs.writeFileSync(
+      path.join(process.env.NO_MISTAKES_EVIDENCE_DIR, 'project-review-eligible.json'),
+      JSON.stringify({
+        route: '/brand-dashboard?review_project=675',
+        authenticated_role: 'brand-paid',
+        exact_project_id: 675,
+        project_requests: projectRequests,
+        modal_open: modal.getAttribute('open') === '',
+        visible_prompt: starterName.textContent,
+      }, null, 2) + '\n',
+    )
+  }
+
   bridge.dispatchWindow('focus')
   await new Promise(setImmediate)
   assert.equal(starterName.textContent, 'Rate your project with Brian')
@@ -4919,6 +4934,81 @@ test('project-review email deep link fails closed for an ineligible project', as
   assert.equal(modal.getAttribute('open'), null)
   assert.equal(starterName.textContent, '[Starter Name]')
   assert.ok(bridge.consoleErrors.length === 0)
+})
+
+test('project-review email deep link fails closed for malformed, mixed, and unauthorized requests', async () => {
+  const cases = [
+    { name: 'malformed project id', member: paidBrandMember, search: '?review_project=not-a-project' },
+    { name: 'mixed review targets', member: paidBrandMember, search: '?review_project=675&review_booking=call-42' },
+    { name: 'wrong member role', member: talentMember, search: '?review_project=675' },
+    { name: 'signed-out visitor', member: null, search: '?review_project=675' },
+  ]
+
+  const evidence = []
+  for (const scenario of cases) {
+    const form = el('form')
+    form.reset = () => {}
+    const starterName = el('p')
+    starterName.textContent = '[Starter Name]'
+    const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+    const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [modal])
+    let projectRequests = 0
+    const bridge = await loadBridge(
+      async (input) => {
+        const url = String(input)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+        if (url.includes('/brand/projects/mine')) {
+          projectRequests += 1
+          return response({
+            items: [{
+              id: 675,
+              lifecycle_state: 'completed',
+              review_eligible: true,
+              has_review: false,
+              starter_name: 'Brian',
+            }],
+          })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      },
+      {
+        member: scenario.member,
+        pathname: '/brand-dashboard',
+        search: scenario.search,
+        querySelector: (selector) =>
+          selectorMatches(root, selector) ? root : root.querySelector(selector),
+        querySelectorAll: (selector) =>
+          [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+        routeGuard: true,
+      },
+    )
+
+    await new Promise(setImmediate)
+    await new Promise(setImmediate)
+    assert.equal(modal.getAttribute('open'), null, scenario.name)
+    assert.equal(starterName.textContent, '[Starter Name]', scenario.name)
+    assert.equal(bridge.consoleErrors.length, 0, scenario.name)
+    assert.equal(
+      projectRequests,
+      scenario.member === paidBrandMember ? 1 : 0,
+      scenario.name,
+    )
+    evidence.push({
+      scenario: scenario.name,
+      route: '/brand-dashboard' + scenario.search,
+      project_requests: projectRequests,
+      modal_open: modal.getAttribute('open') === '',
+      visible_prompt: starterName.textContent,
+    })
+  }
+
+  if (process.env.NO_MISTAKES_EVIDENCE_DIR) {
+    fs.mkdirSync(process.env.NO_MISTAKES_EVIDENCE_DIR, { recursive: true })
+    fs.writeFileSync(
+      path.join(process.env.NO_MISTAKES_EVIDENCE_DIR, 'project-review-fail-closed.json'),
+      JSON.stringify(evidence, null, 2) + '\n',
+    )
+  }
 })
 
 test('pending call-review eligibility cannot replace a newer project review', async () => {
