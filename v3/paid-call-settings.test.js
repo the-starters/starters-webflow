@@ -2039,6 +2039,60 @@ test('a failed post-write auth read falls back to the verified Paid update', asy
   assert.equal(reads, 3)
 })
 
+test('prerequisite events coalesce behind Paid write auth recovery', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  let reads = 0
+  const result = load({
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => {
+          const saved = service({
+            title: body.title,
+            price_cents: body.price_cents,
+            duration: body.duration_minutes,
+            revision: 5,
+          })
+          setState(canonical({
+            services: [saved],
+            readiness: { paid_call_enabled: true, bookable: true },
+          }))
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        })
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Paid Call'
+  result.dom.price.value = '475'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const authTransition = result.notifyAuthChange(null)
+  await settle()
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged')
+  await result.dispatchWindow('starterStripeConnectReady')
+  assert.equal(reads, 1)
+
+  finishPost.resolve()
+  await authTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Updated Paid Call')
+  assert.equal(result.dom.price.value, 475)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(reads, 4)
+})
+
 test('logout supersedes pending Paid write revalidation', async () => {
   const postStarted = deferred()
   const finishPost = deferred()

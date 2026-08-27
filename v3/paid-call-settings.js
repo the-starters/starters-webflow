@@ -56,6 +56,8 @@
   let authoredPrice = null
   let statusPillWarned = false
   let activeWrite = null
+  let authTransitionPending = null
+  let prerequisiteRefreshQueued = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -752,6 +754,25 @@
   function finishWrite(write) {
     if (activeWrite === write) activeWrite = null
     write.resolve()
+    flushQueuedPrerequisiteRefresh()
+  }
+
+  function beginAuthTransition() {
+    const transition = {}
+    authTransitionPending = transition
+    return transition
+  }
+
+  function finishAuthTransition(transition) {
+    if (authTransitionPending !== transition) return
+    authTransitionPending = null
+    flushQueuedPrerequisiteRefresh()
+  }
+
+  function flushQueuedPrerequisiteRefresh() {
+    if (!prerequisiteRefreshQueued || activeWrite || authTransitionPending) return
+    prerequisiteRefreshQueued = false
+    refreshFromPrerequisite().catch(function () {})
   }
 
   function render(value) {
@@ -930,13 +951,17 @@
       }
       throw error
     } finally {
-      finishWrite(write)
       if (currentRender(version, memberId)) setBusy(false)
+      finishWrite(write)
     }
   }
 
   async function refreshFromPrerequisite() {
-    if (!root || !sessionMemberId || busy) return settings
+    if (!root || !sessionMemberId) return settings
+    if (busy || activeWrite || authTransitionPending) {
+      prerequisiteRefreshQueued = true
+      return settings
+    }
     hideNativeError()
     const version = ++refreshVersion
     const memberId = sessionMemberId
@@ -990,8 +1015,8 @@
       }
       throw error
     } finally {
-      finishWrite(write)
       if (currentRender(version, memberId)) setBusy(false)
+      finishWrite(write)
     }
   }
 
@@ -1003,28 +1028,38 @@
     const notifiedMember = authMember(nextMemberValue)
     if (notifiedMember && notifiedMember.id) {
       if (notifiedMember.id === sessionMemberId && settings) return settings
-      return loadSession(notifiedMember, false)
+      const transition = beginAuthTransition()
+      try {
+        return await loadSession(notifiedMember, false)
+      } finally {
+        finishAuthTransition(transition)
+      }
     }
-    const memberId = sessionMemberId
-    const pendingWrite = activeWrite && activeWrite.memberId === memberId ? activeWrite : null
-    const version = ++refreshVersion
-    clearRenderedState('Checking your account…')
-    if (pendingWrite) sessionMemberId = memberId
-    setStatus('loading')
-    let member = null
+    const transition = beginAuthTransition()
     try {
-      member = await currentMember(true)
-    } catch (error) {
-      member = null
+      const memberId = sessionMemberId
+      const pendingWrite = activeWrite && activeWrite.memberId === memberId ? activeWrite : null
+      const version = ++refreshVersion
+      clearRenderedState('Checking your account…')
+      if (pendingWrite) sessionMemberId = memberId
+      setStatus('loading')
+      let member = null
+      try {
+        member = await currentMember(true)
+      } catch (error) {
+        member = null
+      }
+      if (version !== refreshVersion) return null
+      if (!member || !member.id) {
+        sessionMemberId = null
+        setStatus('error')
+        setMessage('Sign in to manage paid calls.')
+        return null
+      }
+      return await loadSession(member, false)
+    } finally {
+      finishAuthTransition(transition)
     }
-    if (version !== refreshVersion) return null
-    if (!member || !member.id) {
-      sessionMemberId = null
-      setStatus('error')
-      setMessage('Sign in to manage paid calls.')
-      return null
-    }
-    return loadSession(member, false)
   }
 
   async function loadSession(memberValue, useSharedMember) {

@@ -1228,6 +1228,54 @@ test('a failed post-write auth read falls back to the verified Free update', asy
   assert.equal(reads, 3)
 })
 
+test('a prerequisite event queues behind Free write auth recovery', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  let reads = 0
+  const result = load({
+    initial: canonical({
+      public_description: 'Original Free Call',
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => {
+          const saved = service({ revision: 5 })
+          setState(canonical({
+            public_description: body.description,
+            services: [saved],
+            readiness: { free_call_enabled: true, bookable: true },
+          }))
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        })
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Free Call'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const authTransition = result.notifyAuthChange(null)
+  await settle()
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  assert.equal(reads, 1)
+
+  finishPost.resolve()
+  await authTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Updated Free Call')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(reads, 4)
+})
+
 test('logout supersedes pending Free write revalidation', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
