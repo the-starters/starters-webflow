@@ -45,6 +45,24 @@ function matchesSimple(el, sel) {
 
 const matches = (el, selector) => selector.split(',').some((part) => matchesSimple(el, part))
 
+/**
+ * Compile a `pattern` attribute the way the HTML spec tells browsers to:
+ * implicitly anchored, with the `v` flag. The flag is the point — it rejects
+ * the unescaped `(){}|` and the doubled punctuators that a hand-written symbol
+ * whitelist tends to contain, so a pattern that a browser would silently ignore
+ * throws here instead. Cached because ValidityState is a getter.
+ * @type {Map<string, RegExp>}
+ */
+const patternCache = new Map()
+const compilePattern = (pattern) => {
+  let compiled = patternCache.get(pattern)
+  if (!compiled) {
+    compiled = new RegExp('^(?:' + pattern + ')$', 'v')
+    patternCache.set(pattern, compiled)
+  }
+  return compiled
+}
+
 class Element {
   constructor(tag, attrs = {}, children = []) {
     this.tagName = String(tag).toUpperCase()
@@ -150,19 +168,24 @@ class Element {
     const type = this.getAttribute('type')
     const typeMismatch =
       type === 'email' && !!this.value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(this.value)
+    const pattern = this.getAttribute('pattern')
+    // An empty value is never a pattern mismatch (that is `required`'s job), and
+    // the expression is anchored and compiled with the `v` flag exactly as the
+    // HTML spec tells browsers to compile it — see section 8.
+    const patternMismatch = !!pattern && !!this.value && !compilePattern(pattern).test(this.value)
     const customError = !!this._custom
     return {
       valueMissing,
       typeMismatch,
       badInput: false,
-      patternMismatch: false,
+      patternMismatch,
       tooShort: false,
       tooLong: false,
       rangeUnderflow: false,
       rangeOverflow: false,
       stepMismatch: false,
       customError,
-      valid: !valueMissing && !typeMismatch && !customError,
+      valid: !valueMissing && !typeMismatch && !patternMismatch && !customError,
     }
   }
   get validationMessage() {
@@ -170,6 +193,7 @@ class Element {
     const v = this.validity
     if (v.valueMissing) return 'Please fill out this field.'
     if (v.typeMismatch) return 'Please enter an email address.'
+    if (v.patternMismatch) return 'Please match the requested format.'
     return ''
   }
 
@@ -1064,4 +1088,174 @@ test('count-max 3 chars: a 4th character keystroke is blocked', () => {
     inputType: 'insertText',
   })
   assert.equal(blocked.defaultPrevented, true)
+})
+
+// ---------------------------------------------------------------------------
+// 8. password complexity (monday 3162492240)
+//
+// The policy lives in Webflow attributes, not in this repo's JavaScript, so the
+// README is its single source of truth and these tests read the canonical
+// `pattern` straight out of it. Drift between the documented recipe and the
+// vectors below is therefore a failing test rather than a silent divergence.
+//
+// The mini DOM compiles `pattern` with the `v` flag, which is what the HTML
+// spec tells browsers to use. That is deliberate: `v` mode makes several
+// characters errors inside a character class unless escaped (`( ) { } | -` …)
+// and forbids doubled punctuators (`&&`, `!!` …), so the textbook symbol
+// whitelist `[!@#$%^&*(),.?":{}|<>]` is a SyntaxError in a real browser and
+// would silently accept every password. Compiling it here is what stops that
+// shipping.
+// ---------------------------------------------------------------------------
+
+const readmeSource = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
+
+/** The canonical policy, lifted out of the README's password-complexity recipe. */
+const PASSWORD_POLICY = (() => {
+  const section = /### Password complexity([\s\S]*?)(?=\n## |\n### |$)/.exec(readmeSource)
+  if (!section) throw new Error('README.md has no "### Password complexity" section')
+  const pattern = /pattern="([^"]+)"/.exec(section[1])
+  const message = /wf-validate-message-pattern="([^"]+)"/.exec(section[1])
+  if (!pattern || !message) {
+    throw new Error('The README password recipe must carry both pattern= and wf-validate-message-pattern=')
+  }
+  return { pattern: pattern[1], message: message[1] }
+})()
+
+function passwordFixture(inputAttrs) {
+  const password = h(
+    'input',
+    Object.assign(
+      {
+        name: 'Password',
+        type: 'password',
+        required: '',
+        maxlength: '256',
+        pattern: PASSWORD_POLICY.pattern,
+        'wf-validate-message-pattern': PASSWORD_POLICY.message,
+      },
+      inputAttrs,
+    ),
+  )
+  // mirrors the live markup: the input sits inside the show/hide toggle wrapper
+  const wrapper = h('div', { 'data-password-input': '' }, [password])
+  const error = h('div', { 'wf-validate-element': 'error' })
+  const submit = h('input', { type: 'submit' })
+  const form = h('form', { 'wf-validate-element': 'form', 'data-ms-form': 'signup' }, [
+    wrapper,
+    error,
+    submit,
+  ])
+  const root = h('body', {}, [form])
+  return { password, error, submit, form, root }
+}
+
+test('password policy: the documented pattern compiles under the v flag', () => {
+  assert.doesNotThrow(
+    () => new RegExp('^(?:' + PASSWORD_POLICY.pattern + ')$', 'v'),
+    'the pattern must be a valid v-mode regular expression, or every browser accepts every password',
+  )
+})
+
+test('password policy: the documented pattern is HTML-attribute safe', () => {
+  assert.equal(/["<>&]/.test(PASSWORD_POLICY.pattern), false)
+})
+
+const WEAK_PASSWORDS = [
+  ['seven characters, every class', 'Aa1!aaa'],
+  ['no uppercase', 'aa1!aaaa'],
+  ['no lowercase', 'AA1!AAAA'],
+  ['no number', 'Aa!aaaaa'],
+  ['no symbol', 'Aa1aaaaa'],
+  ['the classic Passw0rd', 'Passw0rd'],
+  ['all lowercase letters', 'password'],
+]
+
+for (const [label, value] of WEAK_PASSWORDS) {
+  test(`password policy: ${label} is rejected with the policy message`, () => {
+    const f = passwordFixture()
+    const app = mount(f.root)
+
+    f.password.value = value
+    const submit = app.fireDocument('submit', f.form)
+
+    assert.equal(submit.defaultPrevented, true, 'the submit must be blocked')
+    assert.equal(f.error.style.display, '')
+    assert.equal(f.error.textContent, PASSWORD_POLICY.message)
+    assert.equal(f.password.classList.contains(INVALID), true)
+  })
+}
+
+const STRONG_PASSWORDS = [
+  ['the shortest passing password', 'Aa1!aaaa'],
+  ['a passphrase whose symbol is a space', 'Correct horse 9'],
+  ['a non-ASCII symbol', 'Str0ngPass€'],
+  ['a long password', 'Aa1!' + 'a'.repeat(60)],
+]
+
+for (const [label, value] of STRONG_PASSWORDS) {
+  test(`password policy: ${label} is accepted`, () => {
+    const f = passwordFixture()
+    const app = mount(f.root)
+
+    f.password.value = value
+    const submit = app.fireDocument('submit', f.form)
+
+    assert.equal(submit.defaultPrevented, false, 'a strong password must submit')
+    assert.equal(f.error.style.display, 'none')
+    assert.equal(f.password.classList.contains(INVALID), false)
+  })
+}
+
+test('password policy: an empty field still reports required, not the pattern', () => {
+  const f = passwordFixture()
+  const app = mount(f.root)
+
+  app.fireDocument('submit', f.form)
+
+  assert.equal(f.error.textContent, 'Please fill out this field.')
+})
+
+test('password policy: the error clears the moment the password becomes strong', () => {
+  const f = passwordFixture()
+  const app = mount(f.root)
+
+  f.password.value = 'password'
+  app.fireDocument('submit', f.form)
+  assert.equal(f.error.style.display, '')
+
+  f.password.value = 'Aa1!aaaa'
+  app.fire(f.form, 'input', f.password)
+
+  assert.equal(f.error.style.display, 'none')
+  assert.equal(f.password.classList.contains(INVALID), false)
+})
+
+test('password policy: a weak password never reaches an API-direct submit handler', () => {
+  // The opp30 modal pattern, which is also how Memberstack surfaces behave when a
+  // controller owns the click: no submit event is ever fired, so only the click
+  // gate can stop the request.
+  const f = passwordFixture()
+  const app = mount(f.root)
+  let apiCalls = 0
+  f.submit.addEventListener('click', () => {
+    apiCalls += 1
+  })
+
+  f.password.value = 'password'
+  const click = app.fireDocument('click', f.submit)
+
+  assert.equal(click.defaultPrevented, true)
+  assert.equal(click.stopped, true, 'the click must be killed before the page controller sees it')
+  assert.equal(apiCalls, 0)
+})
+
+test('password policy: a browser with no message override falls back to native text', () => {
+  const f = passwordFixture({ 'wf-validate-message-pattern': undefined })
+  f.password.removeAttribute('wf-validate-message-pattern')
+  const app = mount(f.root)
+
+  f.password.value = 'password'
+  app.fireDocument('submit', f.form)
+
+  assert.equal(f.error.textContent, 'Please match the requested format.')
 })

@@ -1346,8 +1346,82 @@ blocks invalid submits before Webflow's handler or page controllers see them.
   absolutely-positioned bubble) and the `is-wf-validate-invalid` class on fields.
 - Full grammar and behavior notes in the header of `utils/wf-validate.js`.
 
+### Password complexity
+
+The signup and password-reset policy, decided 2026-08-27: **8 or more characters
+with at least one uppercase letter, one lowercase letter, one number, and one
+symbol.** It lives entirely in Webflow attributes — there is no JavaScript for it
+— so this recipe is its single source of truth. `wf-validate.test.js` reads the
+`pattern` and the message straight out of this section, and its accept/reject
+vectors fail if either is edited here without the behaviour being reconsidered.
+
+On the password `<input>`:
+
+```html
+pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}"
+wf-validate-message-pattern="Use 8 or more characters with at least one uppercase letter, one lowercase letter, one number, and one symbol."
+title="Use 8 or more characters with at least one uppercase letter, one lowercase letter, one number, and one symbol."
+```
+
+And on its `<form>`, so wf-validate renders the message inline instead of leaving
+the browser to show a bubble:
+
+```html
+wf-validate-element="form"
+```
+
+Three details are load-bearing:
+
+- **The symbol class is `[^A-Za-z0-9]`, not a whitelist.** The HTML spec compiles
+  `pattern` with the `v` flag, where `( ) { } | -` are errors inside a character
+  class unless escaped and doubled punctuators (`&&`, `!!`, …) are reserved. The
+  textbook `[!@#$%^&*(),.?":{}|<>]` is therefore a SyntaxError in a real browser,
+  and a `pattern` that fails to compile is ignored — it would accept every
+  password while looking like it enforced a policy. The negated class has nothing
+  to escape, and it accepts non-ASCII symbols and spaces as well.
+- **No `minlength`.** `pattern` already requires eight characters, for JS-set and
+  autofilled values as much as typed ones, and wf-validate reports a length
+  failure before a pattern failure — so adding it would replace the message that
+  names all four requirements with one that names only the length.
+- **`title` is the no-JS fallback.** wf-validate sets `novalidate` on the forms it
+  binds, so `title` is unused while the script is present; if it ever fails to
+  load, native validation still blocks the submit and shows the rule.
+
+Opting a form in also gates every other field on it (email, terms checkbox) and
+suppresses the native bubbles for them. Give those fields a Designer-styled
+`wf-validate-element="error"` slot; without one, wf-validate injects a plain
+unstyled `div.wf-validate_error-auto` so a blocked submit is never invisible.
+
 Client-side validation is UX only — Xano bridge endpoints must keep validating
-server-side.
+server-side. Memberstack enforces no complexity policy of its own, so this is the
+only gate on the four surfaces below.
+
+| Surface | Lives on | Form | Password input |
+| --- | --- | --- | --- |
+| Direct signup | page `/sign-up` | `wf-form-Brand-Signup` | `#Password` (`name="Password"`) |
+| Quiz signup | page `/quiz` | `wf-form-Brand-Signup---Quiz` | `#Password` (`name="Password"`) |
+| Brand signup modal | component **Signup Modal** (Modals) | `wf-form-Signup-Form` | `#Password` (`name="Password"`) |
+| Starter signup modal | component **Signup Modal** (Modals) | `Signup-Form` ("Sing Up Starters") | `#Password` (`name="Password"`) |
+| Password reset | page `/reset-password` | `wf-form-Reset-Password-Brands` | `#Password` (`name="New-Password"`) |
+
+The two modal forms live in one component with ~20 instances, so they are edited
+once and every instance follows. Only the brand one renders on a published page
+today (`/all-starters`); the Starter one is in the definition and would ship
+ungated the moment an instance uses it, so it gets the attributes too.
+
+`/reset-password` is a `data-form="multistep"` form driven by
+`vendor/videsigns-multi-step.js`, so re-test the step transitions after opting it
+in — the gate fires on the submit event and on submit-button clicks, and a step
+runner that advances on its own click handler is exactly the "opp30" shape the
+click gate exists for.
+
+`/login` and `/starter-login` are deliberately absent: they check an existing
+password rather than choosing one, and a policy there would lock out every member
+who signed up before it. `/forgot-password` collects only an email, and the
+Account Settings "Change Password" control is a link to `/forgot-password`, not a
+form — so `/reset-password` is the only place an existing password can change.
+Verified 2026-08-27 by fetching all 101 published paths and matching every
+`input[type="password"]`; these five are the complete set.
 
 After browser-facing changes, scan for accidental private exposure before publishing or tagging:
 
