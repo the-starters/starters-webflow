@@ -259,6 +259,7 @@ function load(options = {}) {
   let rootAvailable = options.withRoot !== false && options.rootDelayed !== true
   let state = options.initial || canonical()
   let activeMember = { id: options.memberId || 'member-free-a' }
+  let authSessionActive = true
   let currentMemberReader = () => activeMember
   let authChange = null
   const routes = options.routes || {}
@@ -284,6 +285,25 @@ function load(options = {}) {
     onAuthChange(listener) { authChange = listener },
   }
 
+  const schedulingAuthFetch = async (url, init) => {
+    if (!authSessionActive) throw new Error('No Memberstack session')
+    const path = url.replace(API_BASE, '')
+    const body = init.body ? JSON.parse(init.body) : undefined
+    calls.push({ path, method: init.method, body })
+    if (routes[path]) {
+      return routes[path]({
+        body,
+        member: activeMember,
+        state,
+        setState: (next) => { state = next },
+      })
+    }
+    if (path === '/starter/free-call-settings/get/v3') {
+      return { ok: true, status: 200, json: async () => state }
+    }
+    throw new Error('unrouted request ' + path)
+  }
+
   const window = {
     location: { hostname: options.hostname || 'the-starters-3-0.webflow.io' },
     crypto: { randomUUID: () => 'uuid-fixed' },
@@ -300,23 +320,8 @@ function load(options = {}) {
       windowListeners.set(name, listeners)
     },
     dispatchEvent(event) { events.push(event) },
-    xanoAuthFetch: async (url, init) => {
-      const path = url.replace(API_BASE, '')
-      const body = init.body ? JSON.parse(init.body) : undefined
-      calls.push({ path, method: init.method, body })
-      if (routes[path]) {
-        return routes[path]({
-          body,
-          member: activeMember,
-          state,
-          setState: (next) => { state = next },
-        })
-      }
-      if (path === '/starter/free-call-settings/get/v3') {
-        return { ok: true, status: 200, json: async () => state }
-      }
-      throw new Error('unrouted request ' + path)
-    },
+    __tsSchedulingAuthFetch: schedulingAuthFetch,
+    xanoAuthFetch: schedulingAuthFetch,
   }
   if (!options.withoutMemberstackAtLoad) window.$memberstackDom = memberstack
 
@@ -347,10 +352,11 @@ function load(options = {}) {
     warnings,
     window,
     document,
-    expireMember: () => { activeMember = null },
+    expireMember: () => { activeMember = null; authSessionActive = false },
     setCurrentMemberReader: (reader) => { currentMemberReader = reader },
     changeMember: async (member) => {
       activeMember = member
+      authSessionActive = Boolean(member && member.id)
       return authChange ? authChange(member) : null
     },
     notifyAuthChange: async (member) => (authChange ? authChange(member) : null),
@@ -996,6 +1002,33 @@ test('unreadable or renamed radios fail closed without touching another form', a
   assert.equal(result.dom.yes.getAttribute('data-call-settings-input'), null)
 })
 
+test('a transient null DOM member still updates Free through the scheduling auth bridge', async () => {
+  const result = load({
+    initial: canonical({ services: [service()], readiness: { free_call_enabled: true, bookable: true } }),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({ revision: 3 })
+        setState(canonical({
+          public_description: body.description,
+          services: [saved],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+  result.setCurrentMemberReader(() => null)
+  result.window.xanoAuthFetch = async () => { throw new Error('mutable auth bridge must not run') }
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.method === 'POST').length, 1)
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+})
+
 test('an expired member session fails closed before Free upsert', async () => {
   const result = load({
     initial: canonical({ services: [service()], readiness: { free_call_enabled: true, bookable: true } }),
@@ -1153,7 +1186,7 @@ test('a lost session clears the whole canonical paint, not just the radios', asy
   )
 })
 
-test('a transient empty auth notification suspends and restores the Free canonical paint', async () => {
+test('a transient empty auth notification preserves and refreshes the Free canonical paint', async () => {
   const result = load({
     initial: canonical({
       public_description: 'Member A Free Call',
@@ -1167,9 +1200,8 @@ test('a transient empty auth notification suspends and restores the Free canonic
     (call) => call.path === '/starter/free-call-settings/get/v3',
   ).length
   const transition = result.notifyAuthChange(null)
-  assert.equal(result.dom.title.value, '')
-  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
-  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.title.value, 'Member A Free Call')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
 
   await transition
   await settle()
@@ -1227,7 +1259,7 @@ test('a failed post-write auth read falls back to the verified Free update', asy
   await postStarted.promise
   const authTransition = result.notifyAuthChange(null)
   await settle()
-  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.title.value, 'Updated Free Call')
 
   finishPost.resolve()
   await authTransition
@@ -1283,7 +1315,7 @@ test('a prerequisite event queues behind Free write auth recovery', async () => 
 
   assert.equal(result.dom.title.value, 'Updated Free Call')
   assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
-  assert.equal(reads, 4)
+  assert.equal(reads, 3)
 })
 
 test('a queued prerequisite event does not erase a failed Free write error', async () => {
@@ -1470,7 +1502,7 @@ test('a stale Free same-member revalidation cannot repaint after logout', async 
 
   result.setCurrentMemberReader(() => staleMember.promise)
   const staleTransition = result.notifyAuthChange(null)
-  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.title.value, 'Member A Free Call')
 
   result.expireMember()
   result.setCurrentMemberReader(() => null)
