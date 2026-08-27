@@ -1857,7 +1857,9 @@ Current safety boundary:
   canonical dashboards, and valid Hire routes.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
-- Invalidates cached and in-flight authentication when the Memberstack session changes.
+- Reconciles Memberstack auth notifications against the live cookie. A transient empty DOM
+  notification with the same cookie keeps the cached token and in-flight owner requests. A real
+  logout or cookie change invalidates the cached token, auth scope, and in-flight scoped responses.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code. It also retains its own auth-fetch reference for the stage adapter,
   because another page bundle can replace the public compatibility global
@@ -1865,9 +1867,10 @@ Current safety boundary:
 - Dashboard controllers reuse the site-head `window.memberReady` promise for
   their initial identity snapshot and `window.getXanoAuthToken` for the
   Opportunities, Points, Messages, and Stripe reads. This keeps one shared
-  Memberstack bootstrap and one in-flight Xano token trade per member session;
-  live identity checks after auth changes and before writes still call
-  Memberstack directly and fail closed on a changed member.
+  Memberstack bootstrap and one in-flight Xano token trade per member session.
+  The Free and Paid settings controllers use the bridge-owned auth scope and fetch reference for
+  auth-triggered refreshes and writes, so a transient Memberstack DOM null cannot block the current
+  owner. A logout or account switch changes that scope and still fails closed.
 - The Starter **Contract Generation** modal also depends on
   `window.getXanoAuthToken` when a browser session holds a cached
   `opportunities-3.0.js` without `Opp30.API.starterProfile`, so keep
@@ -1893,6 +1896,12 @@ Public helpers:
 - `window.getXanoAuthToken({ forceRefresh: true })` returns the cached,
   member-scoped token or explicitly replaces it. The options argument is
   optional.
+
+The bridge also retains `window.__tsSchedulingAuthFetch` and
+`window.__tsSchedulingAuthGetScope` for the dashboard Free and Paid settings controllers. These
+owner-specific references bind a request and canonical repaint to one auth scope even if another
+page bundle replaces `window.xanoAuthFetch`. They are internal controller contracts, not general
+page integration helpers.
 
 The transparent `window.fetch` wrapper exists only for legacy inline callers. If
 initial token acquisition fails, it logs a warning and makes one unauthenticated

@@ -104,11 +104,12 @@ adds a small CSS spinner after the existing button content. It restores the auth
 resets the busy attributes when the mutation and canonical readback settle. The same in-flight lock
 prevents a second click from starting a duplicate write.
 
-An empty Memberstack auth notification is not logout proof by itself. The controller first clears the
-cached Free paint, shows `Checking your account…`, and re-reads the live member. If the same member is
-still active, it reloads canonical settings. If an Update just completed its canonical readback, that
-verified result remains the fallback when the extra auth-triggered settings read fails. Prerequisite
-refreshes wait for the write and auth revalidation, then coalesce into one canonical re-read.
+An empty Memberstack auth notification is not logout proof by itself. The scheduling auth bridge
+reconciles that notification against the live Memberstack cookie. While the cookie still belongs to
+the current auth scope, the controller keeps the cached Free paint and reloads canonical settings
+through the bridge. If an Update just completed its canonical readback, that verified result remains
+the fallback when the extra auth-triggered settings read fails. Prerequisite refreshes wait for the
+write and auth reconciliation, then coalesce into one canonical re-read.
 
 A confirmed missing or changed Memberstack session still fails closed: the cached Free state clears,
 the description, duration, price, and prerequisite paint reset, save disables,
@@ -132,9 +133,11 @@ clears the session or resets an in-progress Yes/No selection.
 - Enable or normalize: `starter/free-call-settings/upsert/v3`
 - Disable: `starter/free-call-settings/disable/v3`
 
-The controller calls those exact `/v3` paths through `window.xanoAuthFetch`. For this flow,
-`scheduling-auth.js` authenticates only those three paths, and `scheduling-v3-stage.js` maps their
-reviewed unversioned names to them and blocks lookalikes.
+The controller calls those exact `/v3` paths through the owner-specific fetch reference retained by
+`scheduling-auth.js`, with `window.xanoAuthFetch` as a compatibility fallback. This prevents another
+page bundle from replacing the mutable public global for Free settings. The bridge authenticates
+only those three paths, and `scheduling-v3-stage.js` maps their reviewed unversioned names to them
+and blocks lookalikes.
 
 The endpoints derive the exact TEST or production environment from the authenticated Memberstack
 mode and the approved page origin. They reject duplicate active Free services, foreign or stale
@@ -224,10 +227,10 @@ order, after the PR merges:
    Confirm the canonical readback returns the submitted `public_description`, the public Webflow
    profile and Algolia record show the same description, and the card reaches the canonical state
    with `data-free-call-duration-current="30"` and `data-free-call-price-cents="0"`.
-   If Memberstack emits an empty auth notification during that Update, confirm the card temporarily
-   shows `Checking your account…` and then restores the same canonical ON state and description.
-   A real logout must instead leave the card signed out, and an account switch must show only the
-   new member's canonical state.
+   If Memberstack emits an empty auth notification during that Update while its cookie remains the
+   same, confirm the card keeps the current paint and refreshes the same canonical ON state and
+   description. A real logout must instead leave the card signed out, and an account switch must
+   show only the new member's canonical state.
 5. On a TEST fixture stored at a duration other than `30` or a price other than `0`, confirm the
    card reads `data-free-call-bookable="false"` and shows the real stored price, and that an Update
    whose readback is still off contract leaves the editor open and reports the error instead of
