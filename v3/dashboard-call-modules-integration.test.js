@@ -494,3 +494,75 @@ test('an already-present versioned module script tag is reused, not duplicated',
     global.StartersDashboardCallActions = originalActions
   }
 })
+
+test('Details exposes the reschedule propose and respond chains by eligibility', () => {
+  const propose = button('reschedule')
+  const proposeContinue = button('reschedule-calendar')
+  const accept = button('confirm-reschedule')
+  const keep = button('reschedule-decline')
+  const modal = {
+    querySelectorAll() {
+      return [propose, proposeContinue, accept, keep]
+    },
+  }
+  const confirmedBooking = {
+    booking_id: 'booking-4',
+    config_id: 'config-1',
+    grant_id: 'grant-1',
+    duration: 30,
+    is_paid: false,
+    data_environment: 'test',
+    status: 'confirmed',
+    start: Date.now() + 60 * 60 * 1000,
+    starter_data: { memberstack_id: 'mem_sb_starter' },
+    brand_data: { memberstack_id: 'mem_sb_brand' },
+  }
+
+  dashboard.configureDetailActions(modal, 'starter', 'confirmed', confirmedBooking, Date.now())
+  assert.equal(propose.hidden, false)
+  assert.equal(proposeContinue.hidden, false)
+  assert.equal(accept.hidden, true)
+  assert.equal(keep.hidden, true)
+
+  const proposedBooking = { ...confirmedBooking, status: 'rescheduled', rescheduled_by: 'starter' }
+  dashboard.configureDetailActions(modal, 'brand', 'confirmed', proposedBooking, Date.now())
+  assert.equal(propose.hidden, true)
+  assert.equal(accept.hidden, false)
+  assert.equal(keep.hidden, false)
+
+  dashboard.configureDetailActions(modal, 'starter', 'confirmed', proposedBooking, Date.now())
+  assert.equal(accept.hidden, true)
+  assert.equal(keep.hidden, true)
+})
+
+test('Details creates and exposes the module-rendered decline response action', () => {
+  const originalActions = global.StartersDashboardCallActions
+  const accept = button('confirm-reschedule')
+  const generatedDecline = button('reschedule-decline')
+  const buttons = [accept]
+  const modal = {
+    ownerDocument: {},
+    querySelectorAll() {
+      return buttons
+    },
+  }
+  try {
+    global.StartersDashboardCallActions = {
+      wire() {},
+      ensureRescheduleViews(document, target) {
+        assert.equal(document, modal.ownerDocument)
+        assert.equal(target, modal)
+        buttons.push(generatedDecline)
+        return true
+      },
+      canRespondReschedule() {
+        return true
+      },
+    }
+    dashboard.configureDetailActions(modal, 'brand', 'rescheduled', {}, Date.now())
+    assert.equal(accept.hidden, false)
+    assert.equal(generatedDecline.hidden, false)
+  } finally {
+    global.StartersDashboardCallActions = originalActions
+  }
+})
