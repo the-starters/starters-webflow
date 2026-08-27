@@ -2040,6 +2040,87 @@ test('a transient empty auth notification preserves and refreshes the Paid canon
   )
 })
 
+test('Paid Update is blocked while a null-auth canonical read is unresolved', async () => {
+  const refresh = deferred()
+  let reads = 0
+  const active = canonical({
+    services: [service({ price_cents: 100 })],
+    readiness: { paid_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        if (reads === 1) return { ok: true, status: 200, json: async () => active }
+        return refresh.promise
+      },
+    },
+  })
+  await settle()
+
+  const transition = result.notifyAuthChange(null)
+  await settle()
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  await result.dom.save.dispatch('click')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+
+  refresh.resolve({ ok: true, status: 200, json: async () => active })
+  await transition
+  await settle()
+  assert.notEqual(result.dom.save.getAttribute('aria-disabled'), 'true')
+})
+
+test('a final Paid 401 clears stale account settings', async () => {
+  let reads = 0
+  const active = canonical({ services: [service({ price_cents: 100 })], readiness: { paid_call_enabled: true, bookable: true } })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 1
+          ? { ok: true, status: 200, json: async () => active }
+          : { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+      },
+    },
+  })
+  await settle()
+  await result.notifyAuthChange(null)
+  await settle()
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'false')
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
+})
+
+test('Paid rejects an unowned mutable auth fallback and accepts the verified scheduling fallback', async () => {
+  let writes = 0
+  const active = canonical({ services: [service({ price_cents: 100 })], readiness: { paid_call_enabled: true, bookable: true } })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': () => {
+        writes += 1
+        return { ok: true, status: 200, json: async () => ({ service: service({ price_cents: 100 }) }) }
+      },
+    },
+  })
+  await settle()
+  delete result.window.__tsSchedulingAuthFetch
+  result.window.__tsSchedulingAuthBridgeOwner = 'other-bundle'
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(writes, 0)
+
+  result.window.__tsSchedulingAuthBridgeOwner = 'scheduling-auth'
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(writes, 1)
+})
+
 test('an owner-changing null auth notification cannot repaint Paid settings', async () => {
   const result = load({
     initial: canonical({
