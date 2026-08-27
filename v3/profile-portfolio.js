@@ -1,5 +1,6 @@
 /**
  * V3 profile portfolio / case-study renderer — /hire/<slug>
+ * @release v1.59.417
  *
  * Ported (behaviour-for-behaviour) from the on-canvas Code Embed that
  * previously lived inside the "Embed Code" component on the hire template, so
