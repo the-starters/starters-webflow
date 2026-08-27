@@ -246,9 +246,8 @@ function makePage({
     cardAttributes,
     ['service-card_component'],
   )
-  // Production nests the title in a gapless flex row. The rate-card renderer
-  // appends its description into that wrapper as the title's sibling, so the
-  // extra level has to exist here for the spacing contract to be testable.
+  // Production nests the title in its own wrapper. The title renders alone in
+  // there: the rate-card unit line goes in the price chip, not beside it.
   const cardTitleWrapper = makeElement('div', {}, ['service-card_title-wrapper'])
   const cardTitle = makeElement('div', { 'data-service-card-element': 'title' })
   cardTitle.textContent = includeFreeCard ? 'Free Call' : 'Paid Consulting Call'
@@ -257,9 +256,16 @@ function makePage({
   const bookingContent = makeElement('div', {}, ['service-card_content-wrapper'])
   bookingContent.appendChild(makeElement('div', { 'next-available-slot': '' }))
   card.appendChild(bookingContent)
-  card.appendChild(
-    makeElement('div', { 'data-millify': '', 'data-millify-raw': '0', 'data-millify-max': '5000' }),
+  // The green price chip: price-card > price-card-layout > price. The layout is
+  // the centred column flex the renderer appends the unit line into, so the
+  // level has to exist here for that append to have a target.
+  const priceCard = makeElement('div', {}, ['service-card_price-card'])
+  const priceCardLayout = makeElement('div', {}, ['service-card_price-card-layout'])
+  priceCardLayout.appendChild(
+    makeElement('p', { 'data-millify': '', 'data-millify-raw': '0', 'data-millify-max': '5000' }),
   )
+  priceCard.appendChild(priceCardLayout)
+  card.appendChild(priceCard)
   list.appendChild(card)
 
   let nativeFreeTemplate = null
@@ -747,16 +753,44 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
       'the booking "Next Available" row must not survive on a rate card',
     )
 
-    // The unit text and the gap in front of the slash are both script-supplied.
-    // The leading character is U+00A0 on purpose: .service-card_title-wrapper is
-    // a gapless flex row, so a plain space would collapse at the start of the
-    // description's line box and the title would sit flush against the slash.
-    const descriptions = card.querySelectorAll('.service-card_description')
-    assert.equal(descriptions.length, 1, `${title} must render exactly one description`)
+    // The unit line lives in the green price chip, stacked under the amount.
+    // The old title-sibling description is gone, and its class must not come
+    // back: service-card_description carries word-break:break-all and the
+    // body-regular size, neither of which suits a chip.
     assert.equal(
-      descriptions[0].textContent,
-      title === 'Freelance' ? '\u00A0/hour' : '\u00A0/month',
-      `${title} must keep its non-breaking gap before the slash`,
+      card.querySelector('.service-card_description'),
+      null,
+      'the retired title-sibling description must not survive anywhere on the card',
+    )
+
+    const units = card.querySelectorAll('.service-card_price-unit')
+    assert.equal(units.length, 1, `${title} must render exactly one unit line`)
+    assert.equal(
+      units[0].textContent,
+      title === 'Freelance' ? '/hour' : '/month',
+      `${title} must carry its bare unit text`,
+    )
+    assert.ok(
+      units[0].classList.contains('text-size-small') &&
+        units[0].classList.contains('line-height-100'),
+      'the unit line must keep the small-text and tight-leading utilities',
+    )
+
+    // Same layout box as the price, and after it, so it stacks underneath.
+    const priceEl = card.querySelector('[data-millify]')
+    const layout = units[0].parentElement
+    assert.ok(
+      layout.classList.contains('service-card_price-card-layout'),
+      'the unit line must be appended into the price chip layout',
+    )
+    assert.equal(
+      priceEl.parentElement,
+      layout,
+      'the unit line must share the price element\'s layout box',
+    )
+    assert.ok(
+      layout.children.indexOf(units[0]) > layout.children.indexOf(priceEl),
+      'the unit line must come after the price so it renders underneath',
     )
 
     const titleEl = card.querySelector('[data-service-card-element="title"]')
@@ -764,15 +798,10 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
       titleEl.parentElement.classList.contains('service-card_title-wrapper'),
       'the title must stay inside the authored title wrapper',
     )
-    assert.equal(
-      descriptions[0].parentElement,
-      titleEl.parentElement,
-      'the description must be a sibling of the title inside the title wrapper',
-    )
-    assert.equal(
-      titleEl.querySelector('.service-card_description'),
-      null,
-      'the description must not be nested inside the title element',
+    assert.deepEqual(
+      titleEl.parentElement.children,
+      [titleEl],
+      'the title now renders alone in its wrapper',
     )
   }
 

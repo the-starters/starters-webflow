@@ -711,16 +711,11 @@
       const retainerRate = parseFloat(record['retainer-rate']);
       const cards = [];
 
-      // The leading \u00A0 is the gap between the title and the slash: the
-      // title-wrapper is a gapless flex row, so the description <p> sits flush
-      // against the title and a plain leading space would be collapsed at the
-      // start of its line box. Delete the \u00A0 if the wrapper ever gains a
-      // CSS gap, or the spacing doubles.
       if (rate > 0) {
-          cards.push({ title: 'Freelance', description: '\u00A0/hour', price: rate });
+          cards.push({ title: 'Freelance', description: '/hour', price: rate });
       }
       if (record['retainer-enabled'] && retainerRate > 0) {
-          cards.push({ title: 'Retainer', description: '\u00A0/month', price: retainerRate });
+          cards.push({ title: 'Retainer', description: '/month', price: retainerRate });
       }
 
       cards.reverse().forEach(function (card) {
@@ -754,14 +749,7 @@
           if (bookingContent) bookingContent.remove();
 
           const titleEl = el.querySelector('[data-service-card-element="title"]');
-          if (titleEl) {
-              titleEl.textContent = card.title;
-
-              const description = document.createElement('p');
-              description.className = 'service-card_description';
-              description.textContent = card.description;
-              titleEl.parentElement.appendChild(description);
-          }
+          if (titleEl) titleEl.textContent = card.title;
 
           // Hand millify the raw value through its explicit attribute; a stale
           // data-millify-raw on the clone would make it re-parse formatted text.
@@ -776,6 +764,23 @@
               priceEl.removeAttribute('data-millify-max');
               priceEl.setAttribute('data-millify', String(card.price));
               priceEl.textContent = String(card.price);
+          }
+
+          // The unit belongs inside the green price chip, stacked under the
+          // amount, not beside the title. The chip layout is a centred column
+          // flex carrying the system row gap, so the <p> needs no spacing of
+          // its own. service-card_description is deliberately NOT reused: it
+          // carries word-break:break-all and the body-regular size from the
+          // Designer stylesheet. Appended last so the price write above can
+          // never clobber it.
+          const priceLayout = el.querySelector('.service-card_price-card-layout');
+          if (priceLayout) {
+              const unit = document.createElement('p');
+              unit.className = 'service-card_price-unit text-size-small line-height-100';
+              unit.textContent = card.description;
+              priceLayout.appendChild(unit);
+          } else {
+              console.warn('Rate services:', 'Price chip layout not found; unit line skipped');
           }
 
           el.style.display = 'block';

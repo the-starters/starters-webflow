@@ -266,15 +266,16 @@ native `Services` option. Freelance and Retainer rate cards map to the authored
 cards keep the signup-attribution modal, and Talent or unknown roles do not get
 the Brand project trigger.
 
-The rate cards also get their unit text from this file, gap included: the
-descriptions are `\u00A0/hour` and `\u00A0/month`, appended as a
-`<p class="service-card_description">` sibling of the title inside
-`.service-card_title-wrapper`. That leading U+00A0 is load-bearing because the
-wrapper is a gapless flex row, where a plain leading space collapses at the
-start of the description's line box and leaves the unit flush against the
-title. If the Designer ever adds a gap or margin to
-`.service-card_title-wrapper` or to `.service-card_description`, the `\u00A0`
-has to come out of `renderRateCards` or the spacing doubles.
+The rate cards also get their unit text from this file. The descriptions are
+`/hour` and `/month`, rendered as a
+`<p class="service-card_price-unit text-size-small line-height-100">` appended
+inside `.service-card_price-card-layout`, after the price, so the unit stacks
+centred under the amount inside the green chip and inherits its white text.
+The title renders alone in `.service-card_title-wrapper`. The class
+`service-card_description` is deliberately not reused here because it carries
+`word-break: break-all` and the body-regular size. If the Designer ever
+authors a native unit line inside the chip, drop the script append rather than
+letting both render.
 
 Free-call access keeps the V2 product rule: any signed-in Brand, including
 Brand Free, can select a free call without an upgrade. The controller resolves
