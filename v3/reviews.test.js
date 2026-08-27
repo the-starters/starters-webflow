@@ -34,7 +34,10 @@ class Element {
 }
 
 function documentFixture() {
-  const root = new Element({ 'data-reviews-v3': 'profile' })
+  // `data-toc-section` is what the published Hire template carries on the
+  // Reviews wrapper, and it is the key the profile tab is tagged with.
+  const root = new Element({ 'data-reviews-v3': 'profile', 'data-toc-section': 'reviews' })
+  const reviewsTab = new Element({ 'data-hide-when-empty-id': 'reviews' })
   const average = new Element()
   const count = new Element()
   const summaryAverage = new Element()
@@ -53,6 +56,7 @@ function documentFixture() {
   const listeners = {}
   return {
     root,
+    reviewsTab,
     average,
     count,
     summaryAverage,
@@ -78,6 +82,7 @@ function documentFixture() {
       if (selector === '[data-reviews-v3-summary-count], #rating + span') {
         return [summaryCount, legacySummaryCount]
       }
+      if (selector === '[data-hide-when-empty-id="reviews"]') return [reviewsTab]
       return []
     },
   }
@@ -121,6 +126,80 @@ test('configures the public wrapper with a slug before wf-xano boot', () => {
   assert.equal(fixture.list.getAttribute('aria-live'), 'polite')
   assert.equal(fixture.root.childNodes[0].getAttribute('wf-xano-element'), 'template')
   assert.equal(fixture.root.childNodes[0].hidden, true)
+})
+
+test('hides the authored section and drops its placeholder cards at configuration', () => {
+  const fixture = documentFixture()
+  const placeholderOne = new Element()
+  const placeholderTwo = new Element()
+  fixture.list.appendChild(placeholderOne)
+  fixture.list.appendChild(placeholderTwo)
+
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+
+  // The Designer section ships visible and pre-filled with placeholder
+  // "Verified Review" cards. Revealing it only after the approved response
+  // arrives published those placeholders for the length of the request.
+  assert.equal(fixture.root.hidden, true)
+  assert.equal(fixture.root.style.display, 'none')
+  assert.equal(fixture.root.getAttribute('data-starters-section-hidden'), '')
+  assert.equal(fixture.list.childNodes.length, 0)
+  // A visible tab pointing at a hidden section is the other half of the bug.
+  assert.equal(fixture.reviewsTab.hidden, true)
+  assert.equal(fixture.reviewsTab.style.display, 'none')
+})
+
+test('reveals the profile tab with the section, and only with it', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture, pathname: '/hire/elvis-p' })
+  assert.equal(fixture.reviewsTab.hidden, true)
+
+  api.paintProfile(fixture, fixture.root, {
+    raw: { reviews: [{ review_id: 7, rating: 5 }], aggregate: { review_count: 1, average_rating: 5 } },
+  })
+  assert.equal(fixture.reviewsTab.hidden, false)
+  assert.equal(fixture.reviewsTab.style.display, '')
+  assert.equal(fixture.reviewsTab.getAttribute('data-starters-section-hidden'), null)
+
+  api.paintProfile(fixture, fixture.root, {
+    raw: { reviews: [], aggregate: { review_count: 0, average_rating: 0 } },
+  })
+  assert.equal(fixture.reviewsTab.hidden, true)
+  assert.equal(fixture.reviewsTab.style.display, 'none')
+})
+
+test('leaves the tab alone when the section carries no toc key', () => {
+  const fixture = documentFixture()
+  fixture.root.removeAttribute('data-toc-section')
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+  assert.equal(fixture.root.hidden, true)
+  assert.equal(fixture.reviewsTab.hidden, false)
+})
+
+test('leaves a non-profile page untouched at configuration', () => {
+  const fixture = documentFixture()
+  fixture.list.appendChild(new Element())
+
+  load({ document: fixture, pathname: '/brand-dashboard' })
+
+  assert.equal(fixture.root.hidden, false)
+  assert.equal(fixture.root.style.display, '')
+  assert.equal(fixture.list.childNodes.length, 1)
+})
+
+test('keeps the authored section hidden when no approved result ever arrives', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture, pathname: '/hire/elvis-p' })
+  const handlers = {}
+  const instance = { on(name, handler) { handlers[name] = handler } }
+
+  // The wf-xano request errors (the reviews endpoint rejects non-production
+  // origins, so this is the permanent staging state) — `results` never fires.
+  api.wireInstances({ get() { return instance } }, fixture, fixture.root)
+
+  assert.equal(typeof handlers.results, 'function')
+  assert.equal(fixture.root.hidden, true)
+  assert.equal(fixture.root.style.display, 'none')
 })
 
 test('fails closed when the authored profile review attributes are absent', () => {
