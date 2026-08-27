@@ -797,9 +797,17 @@
     var profileEmailBaseline = trim(profileEmailInput && profileEmailInput.value).toLowerCase()
     var profileEmailChanged = false
 
+    function currentProfileEmail() {
+      return trim(profileEmailInput && profileEmailInput.value).toLowerCase()
+    }
+
+    function profileEmailMatches(value) {
+      return currentProfileEmail() === trim(value).toLowerCase()
+    }
+
     function rememberProfileEmail(value) {
       profileEmailBaseline = trim(value).toLowerCase()
-      profileEmailChanged = false
+      profileEmailChanged = currentProfileEmail() !== profileEmailBaseline
     }
 
     if (profileEmailInput && typeof profileEmailInput.addEventListener === 'function') {
@@ -855,12 +863,12 @@
         Promise.resolve()
           .then(async function () {
             var guard = window.StartersV3RouteGuard
-            if (!guard || typeof guard.memberRole !== 'function') return false
+            if (!guard || typeof guard.memberRole !== 'function') return null
             var member = await currentMember(memberstack())
-            if (guard.memberRole(member) !== 'talent') return false
+            if (guard.memberRole(member) !== 'talent') return null
             if (memberEmail(member) === email) {
               rememberProfileEmail(email)
-              return false
+              return { confirmed: true }
             }
 
             ownsSubmission = true
@@ -876,25 +884,30 @@
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: true,
             })
-            if (profileWasValid) replayStarterProfileClick(form, submit)
-            else setMessage(form, 'success', '', receipt)
-            return true
+            return { confirmed: true, changed: true, receipt: receipt }
           })
-          .then(function (owned) {
-            if (owned) return
-            if (profileWasValid) replayStarterProfileClick(form, submit)
-            else if (typeof form.reportValidity === 'function') {
+          .then(function (result) {
+            if (!result || !result.confirmed) return
+            if (profileWasValid && profileEmailMatches(email)) {
+              replayStarterProfileClick(form, submit)
+            } else if (result.changed) {
+              setMessage(form, 'success', '', result.receipt)
+            } else if (typeof form.reportValidity === 'function') {
               form.reportValidity()
             }
           })
           .catch(function (error) {
             if (!ownsSubmission) {
-              if (profileWasValid) replayStarterProfileClick(form, submit)
-              else if (typeof form.reportValidity === 'function') form.reportValidity()
+              if (!profileWasValid && typeof form.reportValidity === 'function') {
+                form.reportValidity()
+              }
               return
             }
-            if (profileWasValid && error && error.passwordEmailAttempted) {
-              replayStarterProfileClick(form, submit)
+            if (error && error.passwordEmailAttempted) {
+              rememberProfileEmail(email)
+              if (profileWasValid && profileEmailMatches(email)) {
+                replayStarterProfileClick(form, submit)
+              }
             }
             var receipt = diagnosticComplete(form, {
               result: 'failed',
@@ -932,12 +945,15 @@
         Promise.resolve()
           .then(async function () {
             var guard = window.StartersV3RouteGuard
-            if (!guard || typeof guard.memberRole !== 'function') return false
+            if (!guard || typeof guard.memberRole !== 'function') return null
             var member = await currentMember(memberstack())
-            if (guard.memberRole(member) !== 'talent') return false
+            if (guard.memberRole(member) !== 'talent') return null
 
-            if (!EMAIL_PATTERN.test(email)) return false
-            if (memberEmail(member) === email) return false
+            if (!EMAIL_PATTERN.test(email)) return null
+            if (memberEmail(member) === email) {
+              rememberProfileEmail(email)
+              return { confirmed: true }
+            }
 
             ownsSubmission = true
             setBusy(form, true)
@@ -952,18 +968,18 @@
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: true,
             })
-            return true
+            return { confirmed: true }
           })
-          .then(function () {
-            replayNativeSubmit(form, submitter)
+          .then(function (result) {
+            if (result && result.confirmed && profileEmailMatches(email)) {
+              replayNativeSubmit(form, submitter)
+            }
           })
           .catch(function (error) {
-            if (!ownsSubmission) {
-              replayNativeSubmit(form, submitter)
-              return
-            }
+            if (!ownsSubmission) return
             if (error && error.passwordEmailAttempted) {
-              replayNativeSubmit(form, submitter)
+              rememberProfileEmail(email)
+              if (profileEmailMatches(email)) replayNativeSubmit(form, submitter)
             }
             var receipt = diagnosticComplete(form, {
               result: 'failed',

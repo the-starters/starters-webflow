@@ -18,8 +18,12 @@ function flush() {
 
 function deferred() {
   let resolve
-  const promise = new Promise((done) => { resolve = done })
-  return { promise, resolve }
+  let reject
+  const promise = new Promise((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
 }
 
 function plain(value) {
@@ -1973,7 +1977,7 @@ test('valid Starter profile click still saves profile fields after a reset email
   assert.equal(starterProfileForm.wrapper.fail.style.display, 'block')
 })
 
-test('valid non-Talent profile click replays once without an identity write', async () => {
+test('valid non-Talent profile click does not replay a changed email', async () => {
   const starterProfileForm = makeForm('starter-profile', {
     email: 'changed@example.com',
   })
@@ -1991,8 +1995,130 @@ test('valid non-Talent profile click replays once without an identity write', as
   await settle(12)
 
   assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  assert.equal(starterProfileForm.nativeClicks, 0)
+})
+
+test('valid profile click does not replay when the route guard is unavailable', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+  })
+
+  starterProfileForm.inputEmail('talent-next@example.com')
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(environment.calls, [])
+  assert.equal(starterProfileForm.nativeClicks, 0)
+})
+
+test('valid profile click does not replay when the initial member read fails', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    getCurrentMember: async () => {
+      throw new Error('member read failed')
+    },
+  })
+
+  starterProfileForm.inputEmail('talent-next@example.com')
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  assert.equal(starterProfileForm.nativeClicks, 0)
+})
+
+test('email drift during the identity write blocks replay and remains changed', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+  })
+  const member = {
+    id: 'mem_sb_talent',
+    auth: { email: 'talent-old@example.com' },
+  }
+  const write = deferred()
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    member,
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    updateMemberAuth: async (payload) => {
+      await write.promise
+      member.auth.email = payload.email
+    },
+  })
+
+  starterProfileForm.inputEmail('email-a@example.com')
+  starterProfileForm.clickSubmit()
+  await flush()
+  starterProfileForm.inputEmail('email-b@example.com')
+  write.resolve()
+  await settle(12)
+
+  assert.equal(starterProfileForm.nativeClicks, 0)
+
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(
+    environment.calls
+      .filter((call) => call.method === 'updateMemberAuth')
+      .map((call) => plain(call.payload)),
+    [{ email: 'email-a@example.com' }, { email: 'email-b@example.com' }],
+  )
   assert.equal(starterProfileForm.nativeClicks, 1)
-  assert.equal(starterProfileForm.getAttribute('data-brand-account-native-replay'), 'false')
+})
+
+test('email drift during reset failure blocks replay and remains changed', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+  })
+  const reset = deferred()
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    sendMemberResetPasswordEmail: async () => reset.promise,
+  })
+
+  starterProfileForm.inputEmail('email-a@example.com')
+  starterProfileForm.clickSubmit()
+  await flush()
+  starterProfileForm.inputEmail('email-b@example.com')
+  reset.reject(new Error('reset failed'))
+  await settle(12)
+
+  assert.equal(starterProfileForm.nativeClicks, 0)
+
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(
+    environment.calls
+      .filter((call) => call.method === 'updateMemberAuth')
+      .map((call) => plain(call.payload)),
+    [{ email: 'email-a@example.com' }, { email: 'email-b@example.com' }],
+  )
+  assert.equal(starterProfileForm.nativeClicks, 1)
 })
 
 test('invalid email stays native so browser validation remains authoritative', async () => {
@@ -2140,7 +2266,7 @@ test('visible Starter Edit Profile replays an unchanged email without an auth mu
   assert.equal(starterProfileForm.nativeSubmits, 1)
 })
 
-test('visible Starter Edit Profile leaves non-Talent and off-route forms native', async () => {
+test('visible Starter Edit Profile blocks changed non-Talent email and leaves off-route forms native', async () => {
   for (const scenario of [
     { pathname: '/starter-edit-profile', role: 'brand-paid', bound: true },
     { pathname: '/starter-dashboard', role: 'talent', bound: false },
@@ -2158,13 +2284,13 @@ test('visible Starter Edit Profile leaves non-Talent and off-route forms native'
     if (scenario.bound) {
       starterProfileForm.submitEvent()
       await settle()
-      assert.equal(starterProfileForm.nativeSubmits, 1)
+      assert.equal(starterProfileForm.nativeSubmits, 0)
       assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
     }
   }
 })
 
-test('visible Starter Edit Profile leaves logged-out and unreadable roles native', async () => {
+test('visible Starter Edit Profile blocks changed email for logged-out and unreadable roles', async () => {
   for (const state of ['logged-out', 'unreadable']) {
     const starterProfileForm = makeForm('starter-profile', {
       email: 'talent-next@example.com',
@@ -2187,7 +2313,7 @@ test('visible Starter Edit Profile leaves logged-out and unreadable roles native
     starterProfileForm.submitEvent()
     await settle()
 
-    assert.equal(starterProfileForm.nativeSubmits, 1)
+    assert.equal(starterProfileForm.nativeSubmits, 0)
     assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
   }
 })
