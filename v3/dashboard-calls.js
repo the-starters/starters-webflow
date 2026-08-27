@@ -914,6 +914,15 @@
 
   function configureDetailActions(modal, role, status, booking, now) {
     if (!modal || typeof modal.querySelectorAll !== 'function') return
+    if (
+      validDashboardModule(global.StartersDashboardCallActions) &&
+      typeof global.StartersDashboardCallActions.ensureRescheduleViews === 'function'
+    ) {
+      global.StartersDashboardCallActions.ensureRescheduleViews(
+        modal.ownerDocument || global.document,
+        modal,
+      )
+    }
     modal
       .querySelectorAll(DETAIL_ACTION_SELECTOR)
       .forEach(function (button) {
@@ -938,6 +947,16 @@
           validDashboardModule(global.StartersDashboardCallActions) &&
           typeof global.StartersDashboardCallActions.canCancel === 'function' &&
           global.StartersDashboardCallActions.canCancel(role, booking, now)
+        const proposeReschedule =
+          (action === 'reschedule' || action === 'reschedule-calendar') &&
+          validDashboardModule(global.StartersDashboardCallActions) &&
+          typeof global.StartersDashboardCallActions.canProposeReschedule === 'function' &&
+          global.StartersDashboardCallActions.canProposeReschedule(role, booking, now)
+        const respondReschedule =
+          (action === 'confirm-reschedule' || action === 'reschedule-decline') &&
+          validDashboardModule(global.StartersDashboardCallActions) &&
+          typeof global.StartersDashboardCallActions.canRespondReschedule === 'function' &&
+          global.StartersDashboardCallActions.canRespondReschedule(role, booking)
         const media =
           action === 'notetaker-media' &&
           validDashboardModule(global.StartersDashboardCallMedia) &&
@@ -950,6 +969,8 @@
             accept ||
             decline ||
             cancel ||
+            proposeReschedule ||
+            respondReschedule ||
             media,
         )
       })
@@ -957,6 +978,15 @@
 
   function populateDetailModal(modal, booking, role, now) {
     if (!modal || !booking) return false
+    const nextBookingId = clean(booking.booking_id || booking.id)
+    const previousBookingId = clean(modal.getAttribute('data-booking-id'))
+    if (
+      previousBookingId !== nextBookingId &&
+      validDashboardModule(global.StartersDashboardCallActions) &&
+      typeof global.StartersDashboardCallActions.resetRescheduleState === 'function'
+    ) {
+      global.StartersDashboardCallActions.resetRescheduleState(modal)
+    }
     const status = bookingStatus(booking, now)
     const isPaid = paidBooking(booking)
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
@@ -968,7 +998,7 @@
         : 'Payment method pending.'
       : ''
 
-    modal.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
+    modal.setAttribute('data-booking-id', nextBookingId)
     modal.setAttribute('data-booking-status', status)
     modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
 
@@ -1037,6 +1067,12 @@
     if (!global.document || typeof global.document.querySelector !== 'function') return
     const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
     if (!modal) return
+    if (
+      validDashboardModule(global.StartersDashboardCallActions) &&
+      typeof global.StartersDashboardCallActions.resetRescheduleState === 'function'
+    ) {
+      global.StartersDashboardCallActions.resetRescheduleState(modal)
+    }
     if (typeof modal.close === 'function') {
       try {
         modal.close()
