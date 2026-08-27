@@ -4729,6 +4729,155 @@ test('project-review email deep link opens only the eligible authenticated proje
   assert.equal(starterName.textContent, 'Rate your project with Brian')
 })
 
+test('project-review email deep link resolves an eligible project beyond the visible page', async () => {
+  const form = el('form')
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = 'Rate your project with [Starter Name]'
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+  const root = el('div', {
+    'wf-xano-instance': 'dash-brand-projects',
+    'wf-xano-source': 'opp30:brand/projects/mine',
+  }, [modal])
+  const visibleState = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 676,
+        lifecycle_state: 'completed',
+        review_eligible: false,
+        has_review: true,
+        starter_name: 'Visible Starter',
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const requestedPages = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        const body = JSON.parse(init.body)
+        requestedPages.push(body.page)
+        if (body.page === 1) {
+          return response({
+            items: visibleState.data.items,
+            itemsTotal: 2,
+            curPage: 1,
+            nextPage: 2,
+          })
+        }
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completed',
+            review_eligible: true,
+            has_review: false,
+            starter_name: 'Brian',
+          }],
+          itemsTotal: 2,
+          curPage: 2,
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_project=675&utm_source=mandrill',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects'
+            ? { getState: () => visibleState, subscribe: () => () => {} }
+            : null
+        },
+      },
+    },
+  )
+
+  assert.ok(await waitFor(() => modal.getAttribute('open') === ''))
+  assert.deepEqual(requestedPages, [1, 2])
+  assert.equal(starterName.textContent, 'Rate your project with Brian')
+  assert.equal(bridge.consoleErrors.length, 0)
+})
+
+test('stale project refresh cannot consume a newer member review deep link', async () => {
+  const form = el('form')
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = 'Rate your project with [Starter Name]'
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+  const root = el('div', {
+    'wf-xano-instance': 'dash-brand-projects',
+    'wf-xano-source': 'opp30:brand/projects/mine',
+  }, [modal])
+  const oldHandlers = new Set()
+  const newHandlers = new Set()
+  const loadingState = { status: 'loading', data: { items: [] }, query: { page: 1, perPage: 12 } }
+  const oldInstance = {
+    getState: () => loadingState,
+    subscribe(handler) {
+      oldHandlers.add(handler)
+      return () => oldHandlers.delete(handler)
+    },
+  }
+  const newInstance = {
+    getState: () => loadingState,
+    subscribe(handler) {
+      newHandlers.add(handler)
+      return () => newHandlers.delete(handler)
+    },
+  }
+  let currentInstance = oldInstance
+  const bridge = await loadBridge(
+    async (input) => {
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_project=675',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: () => currentInstance },
+    },
+  )
+
+  assert.ok(await waitFor(() => oldHandlers.size > 0))
+  currentInstance = newInstance
+  bridge.authChange({ ...paidBrandMember, id: 'm-brand-2' })
+  assert.ok(await waitFor(() => newHandlers.size > 0))
+
+  const oldState = { status: 'success', data: { items: [] }, query: { page: 1, perPage: 12 } }
+  for (const handler of [...oldHandlers]) handler(oldState)
+  await new Promise(setImmediate)
+
+  const newState = {
+    status: 'success',
+    data: { items: [{
+      id: 675,
+      lifecycle_state: 'completed',
+      review_eligible: true,
+      has_review: false,
+      starter_name: 'New Member Starter',
+    }] },
+    query: { page: 1, perPage: 12 },
+  }
+  for (const handler of [...newHandlers]) handler(newState)
+
+  assert.ok(await waitFor(() => modal.getAttribute('open') === ''))
+  assert.equal(starterName.textContent, 'Rate your project with New Member Starter')
+})
+
 test('project-review email deep link fails closed for an ineligible project', async () => {
   const form = el('form')
   form.reset = () => {}
