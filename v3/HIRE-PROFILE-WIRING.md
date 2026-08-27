@@ -261,79 +261,11 @@ keeping the generic Book Call chooser unchanged.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
-native `Services` option. Freelance maps to the authored `Freelance work`
-option; Retainer prefers `Monthly retainer` when the Designer publishes that
-option and falls back to `Freelance work`. A missing or unmatched option fails
-closed. Logged-out cards keep the signup-attribution modal, and Talent or
-unknown roles do not get the Brand project trigger.
+native `Services` option. Freelance and Retainer rate cards map to the authored
+`Freelance work` option. A missing or unmatched option fails closed. Logged-out
+cards keep the signup-attribution modal, and Talent or unknown roles do not get
+the Brand project trigger.
 
-This wiring covers **every** offering surface, not just `#services`. The hero
-rate touts are Designer-authored with `data-modal-trigger="generate-contract"`
-already on them, so they opened the contract modal with no service selected
-while the `#services`-only scope left them without a `data-sp-fill-*` preset.
-Cards inside a `dialog` are excluded, so the booking chooser's rows and the
-contract modal's own contents stay untouched.
-
-The `Services` options are unioned across **every**
-`dialog[data-modal-target="generate-contract"]`. The hire template embeds that
-modal twice — one copy inside `.section_navbar` and one inside `.page-wrapper`
-(verified on `www.thestarters.com/hire/trent`, 2026-08-27) — so reading only the
-first match in DOM order lets an empty duplicate veto the wiring for the whole
-page.
-
-## Offering cap (max three) — hero service tout only
-
-The **hero service tout** — the stacked pricing rows in the right rail — is
-trimmed to three offerings. The trim is display-level and runs **after** the
-runtime rate-card prepend and after canonical discovery reveals the call rows,
-because a Designer or CMS rule cannot see a card this file builds at runtime.
-
-**The `#services` card list is deliberately UNCAPPED** (decided by Jerico,
-2026-08-27). That section also carries CMS project-service cards, and a hard trim
-there would hide real services nobody asked to hide. The surface is selected as
-`.services-list_wrapper` outside both `#services` and any dialog — the same
-contract `renderRateCards` already relies on, rather than a hero class name.
-
-Priority is decided, not derived (Jerico, 2026-08-27). `profile-type` comes from
-the Algolia record and its values are exactly `Consult` and `Full`:
-
-| `profile-type` | Kept first → last |
-| --- | --- |
-| `Full` | Freelance → Retainer → Paid Call → Free Call → For-Hire |
-| `Consult` | Paid Call → Free Call → Retainer → Freelance → For-Hire |
-
-Rules that make the trim safe to re-run:
-
-- It hides with `data-offering-capped` and an injected `!important` rule, never
-  by writing inline `display`. Four other owners already write display on these
-  cards, so an attribute is the only way to apply and lift the trim without
-  guessing whose display to restore.
-- Every run lifts the previous trim first, so a card revealed later by a
-  controller install is never stranded behind a stale cap.
-- A card the booking gate already hid (`data-canonical-call-unavailable`,
-  `data-booking-unavailable`, `hidden`, `data-runtime-call-template`) is not on
-  offer and does not consume one of the three slots. The nested card inside the
-  runtime call template is dropped so one offering cannot spend two slots.
-- **An unclassified card is neither counted nor trimmed.** CMS project services
-  (`Paid Media Audit` and friends on `/hire/jai`) never count toward the three
-  (decided, 2026-08-27): such a card cannot lose a slot to the cap and cannot
-  cost a rate row one.
-- Survivors keep DOM order. The decision covers which cards survive, not the
-  order they paint in.
-
-## The chooser can never open empty
-
-`setBookingButtonAvailable(false)` hides every chooser trigger, but hidden is not
-inert: `modal.js` binds one delegated listener per dialog on `document` and
-matches `[data-modal-trigger]` at click time. Any path that still delivers a
-click — a programmatic click, a stylesheet that has not applied, a Designer
-republish that drops the guard attribute — would open a chooser whose rows are
-all `display:none`, which is the empty dialog reported as SFR-235.
-
-A capture-phase `document` click listener therefore runs before every one of
-those delegated listeners and stops the event outright while no
-`[call-type-item]` has an installed CTA. It is installed before the page-helper
-stand-down, so a page missing `qs`/`qsa` still cannot reach an empty chooser.
 
 ## Rate surfaces are repainted from the canonical source
 
@@ -381,9 +313,10 @@ either controller's install.
 ### Sentinels
 
 The Designer placeholders are `00:00pm on 00/00` for the slot and `$00` for the
-chooser price. They replace the older `11:00pm on 12/10` and `$50`, and some
-12/10-era remnants are still live, so QA should treat **any** of those four
-strings as "unpainted".
+chooser price. They replace the older `11:00pm on 12/10` and `$50`, but that swap only
+partially landed — served markup still carries `11:00PM on 12/10` twice and `$50`
+in `call-type_price-text`, alongside one `00:00`. QA must therefore treat **both
+generations** as "unpainted".
 
 Nothing in the runtime pattern-matches them: a sentinel is by definition whatever
 has not been painted yet, so the writer simply always writes. It also never
@@ -520,24 +453,19 @@ Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code
 fault. Card rendering is verified on production.
 
-## QA venue limits for the offering rules
+## QA venue limits for the call-surface rules
 
-Both display rules above are only observable to a **logged-in Brand**:
-`hire-profile.js` returns before booking discovery when there is no `MEMBER.id`,
-so every `[has-connection]` call card stays `display:none` for an anonymous
-viewer and the bad states (a free card beside a paid one, four visible
-offerings) cannot render at all. An anonymous prod or staging check that comes
-back clean has therefore not exercised the rule — the acceptance gates
-`staging-qa/checks/gate-free-call-hide.mjs` and
-`staging-qa/checks/gate-cap-three.mjs` print **GREEN-VACUOUS** for exactly this
-case, and that is not a pass.
+Both the canonical rate repaint and the next-slot paint are only observable to a
+**logged-in Brand**: `hire-profile.js` returns before booking discovery when
+there is no `MEMBER.id`, so every `[has-connection]` call card stays
+`display:none` for an anonymous viewer and neither writer ever runs. An anonymous
+prod or staging check that comes back clean has therefore not exercised them.
 
 The other half of the squeeze: sandbox members exist only on staging, and the
 staging index holds no production starters, so there is no venue where a member
-session and a rendered rate card meet. Machine verification of the logged-in
+session and a rendered call card meet. Machine verification of the logged-in
 half is impossible from this harness. Final acceptance is a console paste from a
-logged-in browser. There is also no usable `Consult` fixture anywhere, so the
-Consult priority order is covered by unit tests only.
+logged-in browser.
 
 ## Not owned here — `No button group "step-1" in scope`
 
