@@ -28,6 +28,12 @@ const SOURCE = fs.readFileSync(path.join(__dirname, 'modal.js'), 'utf8')
  * observable. `reverse()` runs `onReverseComplete` synchronously — gsap defers
  * it to the end of the animation, but the ordering the script depends on is the
  * same and a synchronous call keeps the assertions deterministic.
+ *
+ * One honest caveat: that shortcut holds for a plain close, but not for a
+ * cross-modal hand-off. Real gsap defers the dismissed modal's teardown until its
+ * exit animation ends, so a live page fires the incoming modal-open before the
+ * outgoing modal-close. The hand-off tests below run without gsap and pin the
+ * no-gsap order only.
  */
 function gsapStub() {
   const contexts = []
@@ -226,6 +232,12 @@ function makeEnv({
   /** A `[data-modal-close]` anchor inside a dialog — the shape a hand-off is authored as. */
   const closeAnchorIn = (dialog, href) => dialog.append(h('a', { 'data-modal-close': '', href }))
 
+  /** Hands one event to every document-level click listener, in binding order. */
+  const fireDocument = (event) => {
+    ;(documentListeners.get('click') || []).forEach((listener) => listener(event))
+    return event
+  }
+
   return {
     document,
     window,
@@ -265,6 +277,16 @@ function makeEnv({
     closeAllControl(tag = 'button') { return inPage(h(tag, { 'data-close-all-modals': '' })) },
     /** A click on something the modal system does not care about. */
     inertElement() { return inPage(h('div')) },
+    /**
+     * Moves an element under a new parent the way the markup would have been
+     * authored. The stub's `append` only re-points `parentElement`, so without the
+     * splice the old parent keeps a stale child a browser could never produce.
+     */
+    reparent(el, parent) {
+      const siblings = el.parentElement?.children
+      if (siblings) siblings.splice(siblings.indexOf(el), 1)
+      return parent.append(el)
+    },
     /** Boot the script the way the browser does. */
     boot() {
       const domReady = documentListeners.get('DOMContentLoaded') || []
@@ -272,11 +294,7 @@ function makeEnv({
       domReady.forEach((listener) => listener(makeEvent('DOMContentLoaded', null)))
     },
     /** A page-level click, as delegated to the document. */
-    clickDocument(target) {
-      const event = makeEvent('click', target)
-      ;(documentListeners.get('click') || []).forEach((listener) => listener(event))
-      return event
-    },
+    clickDocument(target) { return fireDocument(makeEvent('click', target)) },
     /** A click inside a dialog, bubbled to the dialog's own listener. */
     clickInDialog(dialog, target) { return fire(dialog, 'click', target) },
     /**
@@ -293,8 +311,7 @@ function makeEnv({
       for (let node = target.closest('.modal_dialog'); node; node = node.parentElement?.closest('.modal_dialog')) {
         ;(node._listeners.get('click') || []).forEach((listener) => listener(event))
       }
-      ;(documentListeners.get('click') || []).forEach((listener) => listener(event))
-      return event
+      return fireDocument(event)
     },
     /** The native `cancel` the Escape key raises on an open dialog. */
     cancel(dialog) { return fire(dialog, 'cancel', dialog) },
@@ -890,7 +907,7 @@ test('closing a nested modal leaves the modal it sits inside open', () => {
   // listeners on its way up, and only the inner one owns this control.
   const outer = env.dialogsById['modal-a']
   const inner = env.dialogsById['modal-b']
-  outer.append(inner)
+  env.reparent(inner, outer)
 
   env.modalSystem.list['modal-a'].open()
   env.modalSystem.list['modal-b'].open()
@@ -900,4 +917,94 @@ test('closing a nested modal leaves the modal it sits inside open', () => {
   assert.equal(inner.open, false)
   assert.equal(outer.open, true, 'the outer dialog must not close along with it')
   assert.deepEqual(env.types(), ['modal-open', 'modal-open', 'modal-close'])
+})
+
+test('closing one of two dialogs sharing a target reopens neither of them', () => {
+  // A CMS list can render the same modal many times. The reopen guard is keyed on
+  // the target name, not on which copy was clicked, so copy two cannot answer a
+  // click that came from copy one — that would put the wrong content on screen.
+  const env = makeEnv({ ids: ['dup', 'dup'] })
+  env.boot()
+
+  const [first, second] = env.dialogs
+  env.clickDocument(env.triggerFor('dup'))
+  assert.deepEqual(env.dialogs.map((dialog) => dialog.open), [true, true])
+
+  const event = env.clickThrough(env.closeAnchorIn(first, '#dup'))
+
+  assert.equal(first.open, false, 'the copy the control sits in closes')
+  assert.equal(second.open, true, 'the other copy is not on this click path at all')
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(
+    env.types(),
+    ['modal-open', 'modal-open', 'modal-close'],
+    'one close, and no copy reopens behind it',
+  )
+})
+
+test('a close control in an un-adopted inner dialog still closes the modal around it', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  // A companion script injected a dialog after init, so nothing bound a close
+  // listener to it. The modal it landed in has to answer for its controls.
+  const injected = dialog.append(h('dialog', { class: 'modal_dialog', 'data-modal-target': 'late' }))
+  env.clickThrough(env.closeControlIn(injected))
+
+  assert.equal(dialog.open, false)
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'])
+})
+
+test('a dismiss wrapper around the dialog still closes it', () => {
+  const env = makeEnv()
+  env.boot()
+
+  // Some pages wrap the dialog in a click-anywhere-to-dismiss element, so the
+  // nearest close control sits above the dialog rather than inside it.
+  const dialog = env.dialogsById['modal-a']
+  const wrapper = env.document.body.append(h('div', { 'data-modal-close': '' }))
+  env.reparent(dialog, wrapper)
+
+  env.clickDocument(env.triggerFor('modal-a'))
+  env.clickThrough(dialog.append(h('p')))
+
+  assert.equal(dialog.open, false, 'a closer with no dialog of its own belongs to this one')
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'])
+})
+
+test('a section anchor named after an Object property is still just a section anchor', () => {
+  // `#constructor` and `#toString` are inherited keys on any plain object, so a
+  // bare `list[id]` lookup answers yes for hashes no modal was ever registered under.
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  const event = env.clickThrough(env.closeAnchorIn(dialog, '#constructor'))
+
+  assert.equal(dialog.open, false)
+  assert.equal(event.defaultPrevented, false, 'the page may scroll to that section')
+})
+
+test('a suppressed reopen still swallows the jump its anchor would have made', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  // The trigger matched and was refused, so nothing else will suppress the href —
+  // the close listener already let `#faq` through as an ordinary section anchor.
+  const control = dialog.append(
+    h('a', { 'data-modal-close': '', 'data-modal-trigger': 'modal-a', href: '#faq' }),
+  )
+  const event = env.clickThrough(control)
+
+  assert.equal(dialog.open, false)
+  assert.equal(event.defaultPrevented, true, 'closing must not also jump the page')
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'], 'and it must not reopen')
 })

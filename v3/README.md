@@ -1082,7 +1082,6 @@ absolutely-positioned `a.clickable_link` inside
 
 ```js
 const trigger = e.target.closest(`[data-modal-trigger='${modalId}']`)
-// (a close control inside this same dialog returns early here — it closes, not reopens)
 if (trigger.tagName === "A") e.preventDefault()
 ```
 

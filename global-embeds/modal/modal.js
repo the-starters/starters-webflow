@@ -53,20 +53,27 @@
                 modal.addEventListener("cancel", (e) => (e.preventDefault(), closeModal()));
                 modal.addEventListener("click", (e) => {
                     const closer = e.target.closest("[data-modal-close]");
-                    if (!closer || closer.closest(".modal_dialog") !== modal) return;
+                    if (!closer) return;
+                    const owner = closer.closest(".modal_dialog");
+                    // An adopted nested dialog owns its own close controls; anything else (this dialog,
+                    // an un-adopted inner dialog, a dismiss wrapper above us) closes this one.
+                    if (owner !== modal && owner?.dataset.scriptInitialized) return;
                     const href = e.target.closest("a")?.getAttribute("href");
-                    // Only modal-system hrefs are suppressed — a bare "#", an empty href that would
-                    // reload the page, or a hash naming a registered modal. Section anchors still scroll.
-                    if (href === "" || href === "#" || (href?.startsWith("#") && modalSystem.list[href.slice(1)])) e.preventDefault();
+                    // Real links and section anchors still navigate; only hrefs the modal system owns
+                    // are suppressed (an empty href would reload the page).
+                    if (href === "" || href === "#" || (href?.startsWith("#") && Object.hasOwn(modalSystem.list, href.slice(1)))) e.preventDefault();
                     closeModal();
                 });
                 document.addEventListener("click", (e) => {
                     const trigger = e.target.closest(`[data-modal-trigger='${modalId}'], a[href='#${modalId}']`);
                     if (!trigger) return;
-                    // A close control closes the dialog it sits in — the same click must not reopen that
-                    // dialog. Naming a DIFFERENT modal (the booking chooser's hand-off pattern) still opens it.
-                    const closer = e.target.closest("[data-modal-close]");
-                    if (closer && closer.closest(".modal_dialog") === modal) return;
+                    // A close control must not reopen the modal it dismisses — keyed by target name so
+                    // CMS-duplicated dialogs are all covered. Naming a DIFFERENT modal is the authored
+                    // hand-off (the booking chooser) and still opens it.
+                    if (e.target.closest("[data-modal-close]")?.closest(".modal_dialog")?.getAttribute("data-modal-target") === modalId) {
+                        if (trigger.tagName === "A") e.preventDefault();
+                        return;
+                    }
                     if (trigger.tagName === "A") e.preventDefault();
                     openModal();
                 });
