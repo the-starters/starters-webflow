@@ -216,6 +216,139 @@ function confirmedBooking() {
   }
 }
 
+function actionChainHarness(kind) {
+  const names =
+    kind === 'cancel'
+      ? ['base', 'cancel', 'cancel-reason', 'cancelled']
+      : ['base', 'decline', 'decline-reason', 'declined']
+  const contents = names.map(function (name) {
+    return {
+      hidden: name !== 'base',
+      style: { display: name === 'base' ? 'flex' : 'none' },
+      getAttribute(attribute) {
+        return attribute === 'booking-popup-content' ? name : null
+      },
+    }
+  })
+  const reasonField = {
+    value: kind === 'cancel' ? 'Conflict came up' : 'Not available',
+    reportValidity() {},
+    setCustomValidity() {},
+  }
+  const modal = {
+    querySelector(selector) {
+      const expected =
+        kind === 'cancel' ? '[booking-cancel-reason]' : '[booking-decline-reason]'
+      return selector === expected ? reasonField : null
+    },
+    querySelectorAll(selector) {
+      return selector === '[booking-popup-content]' ? contents : []
+    },
+  }
+  function actionButton(action) {
+    return {
+      attributes: {},
+      closest(selector) {
+        return selector.includes('[popup-booking-info]') ? modal : this
+      },
+      getAttribute(attribute) {
+        return attribute === 'booking-action-btn' ? action : null
+      },
+      setAttribute(attribute, value) {
+        this.attributes[attribute] = value
+      },
+    }
+  }
+  let clickHandler
+  const document = {
+    addEventListener(event, handler) {
+      if (event === 'click') clickHandler = handler
+    },
+    querySelector() {
+      return modal
+    },
+  }
+  const booking = kind === 'cancel' ? confirmedBooking() : pendingBooking()
+  api.wire({
+    document,
+    getBooking() {
+      return booking
+    },
+    role: 'starter',
+  })
+  return {
+    async click(action) {
+      const button = actionButton(action)
+      await clickHandler({
+        target: button,
+        preventDefault() {},
+        stopImmediatePropagation() {},
+      })
+    },
+    assertActive(name) {
+      contents.forEach(function (content) {
+        const active = content.getAttribute('booking-popup-content') === name
+        assert.equal(content.hidden, !active)
+        assert.equal(content.style.display, active ? 'flex' : 'none')
+      })
+    },
+    booking,
+  }
+}
+
+;[
+  {
+    kind: 'cancel',
+    actions: ['switch-cancel', 'switch-cancel-reason', 'cancel'],
+    panels: ['cancel', 'cancel-reason', 'cancelled'],
+  },
+  {
+    kind: 'decline',
+    actions: ['switch-decline', 'switch-decline-reason', 'decline'],
+    panels: ['decline', 'decline-reason', 'declined'],
+  },
+].forEach(function (scenario) {
+  test(scenario.kind + ' clicks reveal each authored modal panel', async () => {
+    const originalFetch = global.xanoAuthFetch
+    const originalStorage = global.sessionStorage
+    const originalCrypto = global.crypto
+    try {
+      global.sessionStorage = storage()
+      global.crypto = {
+        subtle: originalCrypto.subtle,
+        randomUUID() {
+          return scenario.kind === 'cancel'
+            ? '00000000-0000-4000-8000-000000000002'
+            : '00000000-0000-4000-8000-000000000001'
+        },
+      }
+      const harness = actionChainHarness(scenario.kind)
+      global.xanoAuthFetch = async function () {
+        return {
+          ok: true,
+          async json() {
+            return {
+              [scenario.kind]: {
+                booking_id: harness.booking.booking_id,
+                status: scenario.kind === 'cancel' ? 'cancelled' : 'declined',
+              },
+            }
+          },
+        }
+      }
+
+      for (let index = 0; index < scenario.actions.length; index += 1) {
+        await harness.click(scenario.actions[index])
+        harness.assertActive(scenario.panels[index])
+      }
+    } finally {
+      global.xanoAuthFetch = originalFetch
+      global.sessionStorage = originalStorage
+      global.crypto = originalCrypto
+    }
+  })
+})
+
 test('cancel eligibility is participant-only, booked, future, scoped, and identified', () => {
   const booking = confirmedBooking()
   assert.equal(api.canCancel('starter', booking), true)

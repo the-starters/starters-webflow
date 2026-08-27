@@ -324,6 +324,7 @@
     let found = false
     modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
       const active = content.getAttribute('booking-popup-content') === target
+      content.hidden = !active
       content.style.display = active ? 'flex' : 'none'
       if (active) found = true
     })
