@@ -432,22 +432,33 @@
     return clean(source && source.name) || 'the other participant'
   }
 
+  const counterpartPlaceholderTemplates = new WeakMap()
+
   function fillCounterpartPlaceholders(modal, panelName, role, booking) {
     if (!modal || typeof modal.querySelectorAll !== 'function') return 0
     const name = counterpartName(role, booking)
     let replaced = 0
     modal
-      .querySelectorAll('[booking-popup-content="' + panelName + '"] *')
-      .forEach(function (element) {
-        if (element.children && element.children.length > 0) return
-        const text = String(element.textContent == null ? '' : element.textContent)
-        if (text.indexOf('[Starter]') === -1 && text.indexOf('[Brand]') === -1) return
-        element.textContent = text
-          .split('[Starter]')
-          .join(name)
-          .split('[Brand]')
-          .join(name)
-        replaced += 1
+      .querySelectorAll('[booking-popup-content="' + panelName + '"]')
+      .forEach(function (panel) {
+        function render(node) {
+          if (!node) return
+          if (node.nodeType === 3) {
+            const current = String(node.nodeValue == null ? '' : node.nodeValue)
+            const template = counterpartPlaceholderTemplates.get(node) || current
+            if (template.indexOf('[Starter]') === -1 && template.indexOf('[Brand]') === -1) return
+            counterpartPlaceholderTemplates.set(node, template)
+            node.nodeValue = template
+              .split('[Starter]')
+              .join(name)
+              .split('[Brand]')
+              .join(name)
+            replaced += 1
+            return
+          }
+          Array.prototype.forEach.call(node.childNodes || [], render)
+        }
+        render(panel)
       })
     return replaced
   }
