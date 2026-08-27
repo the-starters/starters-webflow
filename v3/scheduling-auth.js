@@ -353,7 +353,7 @@
       return originalFetch(request)
     }
 
-    await authReconciliation
+    await awaitLatestAuthReconciliation()
     const generation = sessionGeneration
     let token
     try {

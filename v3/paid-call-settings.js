@@ -1061,16 +1061,24 @@
     return new Promise(function (resolve) { window.setTimeout(resolve, 250) })
   }
 
-  async function reconcileSameMemberScope(transition, notifiedMember) {
+  function showAuthRecovery() {
+    setStatus('error')
+    setMessage('Paid-call settings are reconnecting. Update will resume automatically.')
+    setActionEnabled(action('save'), false)
+    setActionEnabled(action('disable'), false)
+  }
+
+  async function reconcileSameMemberScope(transition, notifiedMember, fallbackCanonical) {
+    showAuthRecovery()
     while (
       authTransitionPending === transition &&
       notifiedMember.id === sessionMemberId &&
       settings
     ) {
+      let scope = null
       try {
-        const scope = await currentAuthScope()
+        scope = await currentAuthScope()
         if (authTransitionPending !== transition) return null
-        if (scope === sessionAuthScope) return settings
         const canonical = await readCanonicalSettings(scope)
         if (
           authTransitionPending !== transition ||
@@ -1083,10 +1091,8 @@
       } catch (error) {
         if (authTransitionPending !== transition) return null
         if (error && error.code !== 'MEMBER_SCOPE_CHANGED' && failClosedSession(error)) return null
-        setStatus('error')
-        setMessage('Paid-call settings are reconnecting. Update will resume automatically.')
-        setActionEnabled(action('save'), false)
-        setActionEnabled(action('disable'), false)
+        if (fallbackCanonical && scope === sessionAuthScope) return render(fallbackCanonical)
+        showAuthRecovery()
         await waitForAuthRetry()
       }
     }
@@ -1111,45 +1117,32 @@
       const memberId = sessionMemberId
       if (!memberId || !settings) return loadSession(undefined, false)
       const pendingWrite = activeWrite && activeWrite.memberId === memberId ? activeWrite : null
-      setActionEnabled(action('save'), false)
-      setActionEnabled(action('disable'), false)
+      showAuthRecovery()
       if (pendingWrite) {
         await pendingWrite.done
         if (authTransitionPending !== transition) return null
         if (pendingWrite.failed) return null
       }
       if (memberId !== sessionMemberId || !settings) return null
-      const version = ++refreshVersion
-      setStatus('loading')
-      try {
-        if (!currentRender(version, memberId)) return null
-        assertAuthScope(await currentAuthScope())
-        const canonical = await readCanonicalSettings()
-        if (!currentRender(version, memberId)) return null
-        assertAuthScope(await currentAuthScope())
-        prerequisiteRefreshQueued = false
-        return render(canonical)
-      } catch (error) {
-        if (!currentRender(version, memberId)) return null
-        if (failClosedSession(error)) return null
-        if (pendingWrite && pendingWrite.canonical) {
-          try {
-            assertAuthScope(await currentAuthScope())
-          } catch (scopeError) {
-            if (!currentRender(version, memberId)) return null
-            if (!failClosedSession(scopeError)) {
-              setStatus('error')
-              setMessage('Paid-call settings could not be refreshed. Your account was not changed.')
-            }
-            return null
-          }
-          if (!currentRender(version, memberId)) return null
-          return render(pendingWrite.canonical)
+      let liveMember = null
+      while (authTransitionPending === transition && memberId === sessionMemberId && settings) {
+        try {
+          liveMember = await currentMember(true)
+          break
+        } catch (error) {
+          if (authTransitionPending !== transition) return null
+          if (failClosedSession(error)) return null
+          showAuthRecovery()
+          await waitForAuthRetry()
         }
-        setStatus('error')
-        setMessage('Paid-call settings could not be refreshed. Your account was not changed.')
-        return null
       }
+      if (!liveMember || authTransitionPending !== transition) return null
+      if (liveMember.id !== memberId) return await loadSession(liveMember, false)
+      return await reconcileSameMemberScope(
+        transition,
+        liveMember,
+        pendingWrite && pendingWrite.canonical,
+      )
     } finally {
       if (authTransitionPending === transition && settings && sessionMemberId) {
         setActionEnabled(action('save'), canSaveSettings(settings))

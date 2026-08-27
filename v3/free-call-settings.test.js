@@ -262,6 +262,7 @@ function load(options = {}) {
   let authSessionActive = true
   let authScope = {}
   let authScopeUnavailable = false
+  let authScopeGate = null
   let currentMemberReader = () => activeMember
   let authChange = null
   const routes = options.routes || {}
@@ -326,6 +327,7 @@ function load(options = {}) {
     __tsSchedulingAuthGetScope: async () => {
       if (!authSessionActive) throw new Error('No Memberstack session')
       if (authScopeUnavailable) throw new Error('Xano token trade failed')
+      if (authScopeGate) await authScopeGate.promise
       return authScope
     },
     xanoAuthFetch: schedulingAuthFetch,
@@ -375,6 +377,15 @@ function load(options = {}) {
       authScope = {}
       authScopeUnavailable = true
       return authChange ? authChange(activeMember) : Promise.resolve(null)
+    },
+    beginPendingAuthScopeRotation: () => {
+      authScope = {}
+      authScopeGate = deferred()
+      return authChange ? authChange(activeMember) : Promise.resolve(null)
+    },
+    resolvePendingAuthScope: () => {
+      if (authScopeGate) authScopeGate.resolve()
+      authScopeGate = null
     },
     recoverAuthScope: () => { authScopeUnavailable = false },
     switchAuthScopeWithNullNotice: async (member) => {
@@ -1282,6 +1293,47 @@ test('same-member cookie rotation reloads Free and keeps Update usable', async (
   assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
 })
 
+test('Free shows reconnecting immediately while same-member scope is pending', async () => {
+  const result = load({
+    initial: canonical({ services: [service()], readiness: { free_call_enabled: true, bookable: true } }),
+  })
+  await settle()
+
+  const transition = result.beginPendingAuthScopeRotation()
+
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.status.textContent, 'Free-call settings are reconnecting. Update will resume automatically.')
+
+  result.resolvePendingAuthScope()
+  await transition
+  await settle()
+
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+})
+
+test('a null same-member rotation reloads Free without clearing canonical paint', async () => {
+  const result = load({
+    initial: canonical({
+      public_description: 'Member A Free Call',
+      services: [service({ title: 'Member A Free Call' })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  const transition = result.switchAuthScopeWithNullNotice({ id: 'member-free-a' })
+  assert.equal(result.dom.title.value, 'Member A Free Call')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  await transition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member A Free Call')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+})
+
 test('Free recovers automatically after a transient same-member token failure', async () => {
   let reads = 0
   const result = load({
@@ -1460,7 +1512,7 @@ test('Free rejects an unowned mutable auth fallback and accepts the verified sch
   assert.equal(writes, 1)
 })
 
-test('an owner-changing null auth notification cannot repaint Free settings', async () => {
+test('an owner-changing null auth notification loads only the live Free owner', async () => {
   const result = load({
     initial: canonical({
       public_description: 'Member A Free Call',
@@ -1484,12 +1536,11 @@ test('an owner-changing null auth notification cannot repaint Free settings', as
   await result.switchAuthScopeWithNullNotice({ id: 'member-free-b' })
   await settle()
 
-  assert.equal(result.dom.title.value, '')
-  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
-  assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.')
+  assert.equal(result.dom.title.value, 'Member B Free Call')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
   assert.equal(result.calls.filter(
     (call) => call.path === '/starter/free-call-settings/get/v3',
-  ).length, 1)
+  ).length, 2)
 })
 
 test('a failed post-write auth read falls back to the verified Free update', async () => {
