@@ -261,10 +261,137 @@ keeping the generic Book Call chooser unchanged.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
-native `Services` option. Freelance and Retainer rate cards map to the authored
-`Freelance work` option. A missing or unmatched option fails closed. Logged-out
-cards keep the signup-attribution modal, and Talent or unknown roles do not get
-the Brand project trigger.
+native `Services` option. Freelance maps to the authored `Freelance work`
+option; Retainer prefers `Monthly retainer` when the Designer publishes that
+option and falls back to `Freelance work`. A missing or unmatched option fails
+closed. Logged-out cards keep the signup-attribution modal, and Talent or
+unknown roles do not get the Brand project trigger.
+
+This wiring covers **every** offering surface, not just `#services`. The hero
+rate touts are Designer-authored with `data-modal-trigger="generate-contract"`
+already on them, so they opened the contract modal with no service selected
+while the `#services`-only scope left them without a `data-sp-fill-*` preset.
+Cards inside a `dialog` are excluded, so the booking chooser's rows and the
+contract modal's own contents stay untouched.
+
+The `Services` options are unioned across **every**
+`dialog[data-modal-target="generate-contract"]`. The hire template embeds that
+modal twice — one copy inside `.section_navbar` and one inside `.page-wrapper`
+(verified on `www.thestarters.com/hire/trent`, 2026-08-27) — so reading only the
+first match in DOM order lets an empty duplicate veto the wiring for the whole
+page.
+
+## Offering cap (max three) — hero service tout only
+
+The **hero service tout** — the stacked pricing rows in the right rail — is
+trimmed to three offerings. The trim is display-level and runs **after** the
+runtime rate-card prepend and after canonical discovery reveals the call rows,
+because a Designer or CMS rule cannot see a card this file builds at runtime.
+
+**The `#services` card list is deliberately UNCAPPED** (decided by Jerico,
+2026-08-27). That section also carries CMS project-service cards, and a hard trim
+there would hide real services nobody asked to hide. The surface is selected as
+`.services-list_wrapper` outside both `#services` and any dialog — the same
+contract `renderRateCards` already relies on, rather than a hero class name.
+
+Priority is decided, not derived (Jerico, 2026-08-27). `profile-type` comes from
+the Algolia record and its values are exactly `Consult` and `Full`:
+
+| `profile-type` | Kept first → last |
+| --- | --- |
+| `Full` | Freelance → Retainer → Paid Call → Free Call → For-Hire |
+| `Consult` | Paid Call → Free Call → Retainer → Freelance → For-Hire |
+
+Rules that make the trim safe to re-run:
+
+- It hides with `data-offering-capped` and an injected `!important` rule, never
+  by writing inline `display`. Four other owners already write display on these
+  cards, so an attribute is the only way to apply and lift the trim without
+  guessing whose display to restore.
+- Every run lifts the previous trim first, so a card revealed later by a
+  controller install is never stranded behind a stale cap.
+- A card the booking gate already hid (`data-canonical-call-unavailable`,
+  `data-booking-unavailable`, `hidden`, `data-runtime-call-template`) is not on
+  offer and does not consume one of the three slots. The nested card inside the
+  runtime call template is dropped so one offering cannot spend two slots.
+- **An unclassified card is neither counted nor trimmed.** CMS project services
+  (`Paid Media Audit` and friends on `/hire/jai`) never count toward the three
+  (decided, 2026-08-27): such a card cannot lose a slot to the cap and cannot
+  cost a rate row one.
+- Survivors keep DOM order. The decision covers which cards survive, not the
+  order they paint in.
+
+## The chooser can never open empty
+
+`setBookingButtonAvailable(false)` hides every chooser trigger, but hidden is not
+inert: `modal.js` binds one delegated listener per dialog on `document` and
+matches `[data-modal-trigger]` at click time. Any path that still delivers a
+click — a programmatic click, a stylesheet that has not applied, a Designer
+republish that drops the guard attribute — would open a chooser whose rows are
+all `display:none`, which is the empty dialog reported as SFR-235.
+
+A capture-phase `document` click listener therefore runs before every one of
+those delegated listeners and stops the event outright while no
+`[call-type-item]` has an installed CTA. It is installed before the page-helper
+stand-down, so a page missing `qs`/`qsa` still cannot reach an empty chooser.
+
+## Rate surfaces are repainted from the canonical source
+
+The rate lives in four stores and the CMS-bound `[data-millify]` surfaces were
+never re-painted after a settings save, so a stale CMS rate outlived the change
+(verified: trent reads `150` in Algolia and `$250` in the markup). Every rate
+display — card, tout, and the chooser's `[call-type-price]` — is repainted from
+the same canonical source the booking popup's CTA already trusts: the accepted
+Nylas configuration's `price_cents`. The CMS value degrades to a cosmetic
+fallback for viewers who never reach canonical discovery, and Xano's projection
+is untouched (a separate post-launch item).
+
+`millify` only re-processes **added** nodes, so setting `data-millify` on an
+element already in the DOM would never repaint on its own. The repaint writes the
+canonical value, drops the stale `data-millify-raw` (which would otherwise make
+millify re-parse its own formatted output), and paints the text through
+`window.__startersMillify` when the page provides it.
+
+## Next Available is painted on load, for both call types
+
+Q6 is **reversed** (Jerico, 2026-08-27): the paid card's "Next Available" row
+stays and must show real data. Previously `free-call-booking.js` was the sole
+slot writer — its `updateNearestSlot` ran only after a Book Call click and only
+on the free row — so every other hook showed a Designer placeholder forever.
+
+This file now paints every `[next-available-slot]` hook on load: the free and
+paid Services cards and both chooser rows (four hooks per profile, verified on
+production 2026-08-27). The text shape is `HH:MMAM on MM/DD`, matching
+`free-call-booking.js`'s own `nextSlotText`, so a hook painted here and one
+painted by the click path cannot disagree. That helper is not exported, but the
+`formatWithTimezone` underneath it is.
+
+Availability is asked **only** through the controller's exported
+`getNearestSlot`. That export owns the minimum booking notice — 24 hours on
+production, 5 minutes on staging — in both the window it queries and the filter
+it applies to the answer, so fetching availability here instead would silently
+drop it.
+
+Only **installed** configurations are asked. A rejected or uninstallable call
+type keeps its structural hide, so painting it would waste the request and break
+the standing contract that an empty or rejected set never requests a nearest
+slot. The paint is fire-and-forget: a slow availability answer must not hold up
+either controller's install.
+
+### Sentinels
+
+The Designer placeholders are `00:00pm on 00/00` for the slot and `$00` for the
+chooser price. They replace the older `11:00pm on 12/10` and `$50`, and some
+12/10-era remnants are still live, so QA should treat **any** of those four
+strings as "unpainted".
+
+Nothing in the runtime pattern-matches them: a sentinel is by definition whatever
+has not been painted yet, so the writer simply always writes. It also never
+leaves one standing — an empty availability answer and a failed request both
+write `No available slots`, because showing an invented time is worse than
+admitting there is nothing to show. Each hook carries
+`data-next-slot-state="painted" | "empty" | "error"` so QA can tell the three
+apart without reading the copy.
 
 The rate cards also get their chip label from this file, and the two cards
 label differently. Freelance prices a unit, so it renders `/hour` under the
@@ -392,3 +519,35 @@ owners from binding the same click.
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code
 fault. Card rendering is verified on production.
+
+## QA venue limits for the offering rules
+
+Both display rules above are only observable to a **logged-in Brand**:
+`hire-profile.js` returns before booking discovery when there is no `MEMBER.id`,
+so every `[has-connection]` call card stays `display:none` for an anonymous
+viewer and the bad states (a free card beside a paid one, four visible
+offerings) cannot render at all. An anonymous prod or staging check that comes
+back clean has therefore not exercised the rule — the acceptance gates
+`staging-qa/checks/gate-free-call-hide.mjs` and
+`staging-qa/checks/gate-cap-three.mjs` print **GREEN-VACUOUS** for exactly this
+case, and that is not a pass.
+
+The other half of the squeeze: sandbox members exist only on staging, and the
+staging index holds no production starters, so there is no venue where a member
+session and a rendered rate card meet. Machine verification of the logged-in
+half is impossible from this harness. Final acceptance is a console paste from a
+logged-in browser. There is also no usable `Consult` fixture anywhere, so the
+Consult priority order is covered by unit tests only.
+
+## Not owned here — `No button group "step-1" in scope`
+
+The `[data-form-flow="generate-contract"] No button group "step-1" in scope`
+warning on every profile load comes from
+`global-embeds/step-flow/step-flow.js:959`, not from this file. The
+generate-contract form's authored markup carries two `data-form-flow-step`
+elements with **empty** ids and a single `data-form-flow-button-group="step-2"`,
+so step-flow's `STEP1_ID` never resolves (verified on
+`www.thestarters.com/hire/trent`, 2026-08-27). The fix is in Webflow — author
+`step-1` on the first step and its button group — and is independent of the
+service-card wiring: the warning also fires on staging where the wiring never
+runs at all.

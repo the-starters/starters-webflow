@@ -1,6 +1,8 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
+ * @release v1.59.401
+ *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
  * GitHub instead of in Webflow. Same intent as v3/profile-portfolio.js.
@@ -58,9 +60,326 @@
           '[data-booking-unavailable]{display:none!important}',
           '[data-booking-trigger-unavailable]{display:none!important}',
           '[data-canonical-call-unavailable]{display:none!important}',
+          // The cap trims by attribute, never by inline display: four other
+          // owners already write display on these cards (the anonymous gate,
+          // canonical discovery, the rate-card render, the Designer). An
+          // !important attribute rule lets the trim be applied and lifted
+          // idempotently without ever having to guess whose display to restore.
+          '[data-offering-capped]{display:none!important}',
       ].join('');
       (document.head || document.documentElement).appendChild(style);
   }
+
+  /* ---- offering cap + canonical rate repaint (WAVE-1 2b / 2e) ----
+     Decided priority (Jerico, 2026-08-27, tickets 05/06). Lower rank is kept
+     first when a surface is trimmed to three. `profile-type` is the Algolia
+     record field and its values are exactly `Consult` and `Full`. */
+  const OFFERING_CAP = 3;
+  const OFFERING_PRIORITY = {
+      Full: { freelance: 1, retainer: 2, paid: 3, free: 4, 'for-hire': 5 },
+      Consult: { paid: 1, free: 2, retainer: 3, freelance: 4, 'for-hire': 5 },
+  };
+  let starterProfileType = 'Full';
+
+  function normalizedText(value) {
+      return String(value || '').trim().toLowerCase();
+  }
+
+  /**
+   * Offering type for one card, first match wins. Mirrors the classification
+   * the acceptance gate uses (staging-qa/checks/_offerings-lib.mjs) so the
+   * runtime and the gate cannot disagree about what a card is.
+   */
+  function classifyOffering(card) {
+      const rateCard = normalizedText(card.getAttribute('data-rate-card'));
+      if (rateCard) return rateCard;
+      const connection = card.getAttribute('data-type') || card.getAttribute('has-connection');
+      if (connection === 'free' || connection === 'paid') return connection;
+
+      const titleEl = card.querySelector('[data-service-card-element="title"]');
+      const label = normalizedText(card.getAttribute('data-signup-trigger-value')) ||
+          normalizedText(titleEl && titleEl.textContent);
+      if (!label) return null;
+      if (label === 'freelance' || label === 'freelance work') return 'freelance';
+      if (label === 'retainer' || label === 'monthly retainer') return 'retainer';
+      if (label === 'free call' || label === 'free consulting call') return 'free';
+      if (label === 'paid call' || label === 'paid consulting call') return 'paid';
+      if (/^(for.hire|available for hire|full.?time)$/.test(label)) return 'for-hire';
+      return null;
+  }
+
+  /**
+   * The hero service tout — "the stacked pricing rows in the right rail", the
+   * exact element both Markers annotate — and nothing else.
+   *
+   * DECIDED SCOPE (Jerico, 2026-08-27): the cap applies to the hero tout ONLY.
+   * The #services card list is deliberately left UNCAPPED: it also carries CMS
+   * project-service cards, and a hard trim there would hide real services
+   * nobody asked to hide.
+   *
+   * Found by the `.services-list_wrapper` contract renderRateCards already
+   * relies on rather than by hero class name, minus the Services section and
+   * minus dialogs (the booking chooser's rows are governed by discovery).
+   */
+  function heroOfferingSurfaces() {
+      return Array.from(document.querySelectorAll('.services-list_wrapper')).filter(function (surface) {
+          return !surface.closest('#services') && !surface.closest('dialog');
+      });
+  }
+
+  /**
+   * Display-level hard trim of the hero service tout to three, applied AFTER
+   * the runtime rate-card prepend and after canonical discovery reveals the
+   * call rows. Idempotent: every run lifts the previous trim first, so a later
+   * reveal cannot leave a card stranded behind a stale cap.
+   */
+  function applyOfferingCap() {
+      const ranks = OFFERING_PRIORITY[starterProfileType === 'Consult' ? 'Consult' : 'Full'];
+
+      heroOfferingSurfaces().forEach(function (surface) {
+          const cards = Array.from(
+              surface.querySelectorAll('[data-service-card="component"], [data-rate-card]')
+          );
+
+          // Lift first: eligibility changes between runs (a controller installs,
+          // a rate card renders), and a cap decided on stale eligibility would
+          // otherwise persist.
+          cards.forEach(function (card) { card.removeAttribute('data-offering-capped'); });
+
+          const eligible = cards.filter(function (card, index) {
+              if (card.hasAttribute('hidden')) return false;
+              if (card.hasAttribute('data-runtime-call-template')) return false;
+              // A card hidden by the booking gate is not on offer, so it must
+              // not consume one of the three slots.
+              if (card.hasAttribute('data-canonical-call-unavailable')) return false;
+              if (card.hasAttribute('data-booking-unavailable')) return false;
+              // The runtime call template wraps a second card component; counting
+              // both would spend two slots on one offering.
+              return !cards.some(function (other, otherIndex) {
+                  return otherIndex !== index && other.contains(card);
+              });
+          });
+
+          // DECIDED (Jerico, 2026-08-27): CMS service cards never count. The cap
+          // ranks only the five decided offering types, so an unclassified card
+          // is neither counted nor trimmed — it cannot lose a slot to the cap,
+          // and it cannot cost a rate row one either. This holds even though the
+          // trim is now hero-only, because the hero tout is CMS-authored too.
+          const ranked = eligible
+              .map(function (card, index) {
+                  const type = classifyOffering(card);
+                  return { card: card, order: index, rank: type ? ranks[type] : null };
+              })
+              .filter(function (entry) { return entry.rank != null; });
+
+          if (ranked.length <= OFFERING_CAP) return;
+
+          ranked
+              .slice()
+              .sort(function (a, b) { return a.rank - b.rank || a.order - b.order; })
+              .forEach(function (entry, position) {
+                  if (position < OFFERING_CAP) return;
+                  entry.card.setAttribute('data-offering-capped', '');
+                  entry.card.setAttribute('aria-hidden', 'true');
+              });
+      });
+  }
+
+  /** The chooser rows that a controller has actually installed. */
+  function availableChooserRows() {
+      return Array.from(document.querySelectorAll('[call-type-item]')).filter(function (item) {
+          if (item.hasAttribute('data-booking-unavailable')) return false;
+          if (item.getAttribute('aria-hidden') === 'true') return false;
+          return !!item.querySelector('[booking-popup-open][data-type][data-config]');
+      });
+  }
+
+  /**
+   * WAVE-1 2d. `setBookingButtonAvailable(false)` hides every chooser trigger,
+   * but hidden is not inert: modal.js binds ONE delegated listener per dialog on
+   * `document` and matches `[data-modal-trigger]` at click time, so any path
+   * that still delivers a click (a programmatic click, a stylesheet that has not
+   * applied yet, a Designer republish that drops the guard) opens a chooser whose
+   * rows are all display:none — the empty dialog of SFR-235. This capture-phase
+   * listener runs before every one of those delegated listeners and stops the
+   * event outright while no call type is installed.
+   */
+  let chooserGuardBound = false;
+  function installEmptyChooserGuard() {
+      if (chooserGuardBound) return;
+      if (!document.addEventListener) return;
+      chooserGuardBound = true;
+      document.addEventListener('click', function (event) {
+          const target = event && event.target;
+          if (!target || typeof target.closest !== 'function') return;
+          if (!target.closest('[data-modal-trigger="popup-booking-main"]')) return;
+          if (availableChooserRows().length) return;
+          if (typeof event.preventDefault === 'function') event.preventDefault();
+          if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+          else if (typeof event.stopPropagation === 'function') event.stopPropagation();
+          console.warn('[hire-profile] booking chooser has no installed call type; click ignored');
+      }, true);
+  }
+
+  /** Formats through the page's shared millify, falling back to the raw number. */
+  function formatRateText(value) {
+      try {
+          const millify = window.__startersMillify;
+          if (typeof millify === 'function') {
+              const result = millify(String(value), {});
+              if (result && result.ok && typeof result.text === 'string') return result.text;
+          }
+      } catch (_error) {
+          /* a formatter that throws must never cost the repaint */
+      }
+      return String(value);
+  }
+
+  function paintRateElement(el, value) {
+      const text = formatRateText(value);
+      if (el.hasAttribute('call-type-price')) {
+          el.textContent = '$' + text;
+          return;
+      }
+      // millify only re-processes ADDED nodes, so setting the attribute on an
+      // element already in the DOM would never repaint on its own. Write the
+      // canonical value, drop the stale raw (it would make millify re-parse our
+      // own formatted text), and paint the text here.
+      el.removeAttribute('data-millify-raw');
+      el.setAttribute('data-millify', String(value));
+      el.textContent = text;
+  }
+
+  /**
+   * WAVE-1 2e. The rate lives in four stores and the CMS-bound `[data-millify]`
+   * surfaces are never re-painted after a settings save, so a stale CMS rate
+   * outlives the change (VERIFIED: trent reads 150 in Algolia and $250 in the
+   * markup). Repaint every rate display from the SAME canonical source the
+   * booking popup already trusts — the accepted Nylas configuration's
+   * `price_cents` — and let the CMS value degrade to a cosmetic fallback for
+   * viewers who never reach canonical discovery. Xano's projection is not
+   * touched; that is a separate post-launch item.
+   */
+  /**
+   * Every surface that belongs to one call type: the hero and Services call
+   * cards, plus the chooser row, which is identified by the type of the CTA it
+   * contains rather than by an attribute of its own.
+   */
+  function callSurfacesFor(type) {
+      const surfaces = Array.from(document.querySelectorAll(
+          '[has-connection="' + type + '"], [data-type="' + type + '"]'
+      ));
+      document.querySelectorAll('[call-type-item]').forEach(function (item) {
+          if (item.querySelector('[booking-popup-open][data-type="' + type + '"]')) {
+              surfaces.push(item);
+          }
+      });
+      return surfaces.filter(function (surface) {
+          return !surface.hasAttribute('data-runtime-call-template');
+      });
+  }
+
+  function repaintCanonicalRateSurfaces(configs) {
+      const records = Array.isArray(configs) ? configs : [];
+      ['free', 'paid'].forEach(function (type) {
+          const record = records.find(function (candidate) {
+              return candidate && candidate.is_paid === (type === 'paid');
+          });
+          if (!record) return;
+          const cents = Number(record.price_cents);
+          if (!Number.isFinite(cents) || cents < 0) return;
+          const value = cents / 100;
+
+          callSurfacesFor(type).forEach(function (surface) {
+              surface.querySelectorAll('[data-millify], [call-type-price]').forEach(function (el) {
+                  paintRateElement(el, value);
+              });
+          });
+      });
+  }
+
+  /* ---- next-available-slot paint-on-load ----
+     Q6 REVERSED (Jerico, 2026-08-27): the paid card's "Next Available" row
+     STAYS and must show real data, and the free card must paint on load too.
+     Until now `free-call-booking.js` was the sole writer (its `updateNearestSlot`)
+     and it only ran after a Book Call click, on the free row — so every other
+     slot hook showed a Designer placeholder forever.
+
+     The Designer sentinels this must overwrite are `00:00pm on 00/00` for the
+     slot and `$00` for the chooser price (they replace the older
+     `11:00pm on 12/10` / `$50`). Nothing here pattern-matches those strings: a
+     sentinel is by definition whatever has not been painted yet, so the writer
+     simply always writes, and NEVER leaves a hook showing one — an empty
+     availability answer and a failed request both write the no-slots copy
+     rather than letting a fake time stand. */
+  const NO_SLOTS_TEXT = 'No available slots';
+
+  /**
+   * `HH:MMAM on MM/DD` — the same shape free-call-booking.js's own
+   * `nextSlotText` produces, so a hook painted here and one painted by the
+   * click path cannot disagree. That helper is not exported, but the formatter
+   * underneath it is.
+   */
+  function nextSlotText(seconds) {
+      const format = (freeCallBooking && freeCallBooking.formatWithTimezone) ||
+          window.formatWithTimezone;
+      if (typeof format !== 'function') return null;
+      const list = (format(seconds * 1000, { month: '2-digit' }) || {}).list;
+      if (!list || !list.hour || !list.month) return null;
+      return list.hour + ':' + list.minute + list.dayPeriod +
+          ' on ' + list.month + '/' + list.day;
+  }
+
+  function paintSlotSurfaces(type, text, state) {
+      callSurfacesFor(type).forEach(function (surface) {
+          surface.querySelectorAll('[next-available-slot]').forEach(function (el) {
+              el.textContent = text;
+              el.setAttribute('data-next-slot-state', state);
+          });
+      });
+  }
+
+  /**
+   * One availability request per accepted configuration, asked through the
+   * booking controller's exported `getNearestSlot`. That export owns the
+   * minimum booking notice (24h on production, 5 minutes on staging) in both
+   * the query window it builds and the filter it applies to the answer —
+   * fetching availability here instead would silently drop it.
+   */
+  function paintNextAvailableSlots(configs, grantId) {
+      const records = Array.isArray(configs) ? configs : [];
+      if (!grantId) return;
+      if (!freeCallBooking || typeof freeCallBooking.getNearestSlot !== 'function') {
+          console.warn('[hire-profile] booking controller cannot supply availability; next-slot rows left as authored');
+          return;
+      }
+
+      ['free', 'paid'].forEach(function (type) {
+          const record = records.find(function (candidate) {
+              return candidate && candidate.is_paid === (type === 'paid');
+          });
+          if (!record || !record.config_id) return;
+
+          Promise.resolve()
+              .then(function () {
+                  return freeCallBooking.getNearestSlot(grantId, record.config_id);
+              })
+              .then(function (slot) {
+                  const text = Number.isFinite(Number(slot)) && Number(slot) > 0
+                      ? nextSlotText(Number(slot))
+                      : null;
+                  if (text) paintSlotSurfaces(type, text, 'painted');
+                  else paintSlotSurfaces(type, NO_SLOTS_TEXT, 'empty');
+              })
+              .catch(function (error) {
+                  // Never leave a placeholder time standing: showing an invented
+                  // slot is worse than admitting there is nothing to show.
+                  console.warn('[hire-profile] ' + type + ' availability lookup failed:', error);
+                  paintSlotSurfaces(type, NO_SLOTS_TEXT, 'error');
+              });
+      });
+  }
+
 
   function primeBookingModalOptions(configs) {
       const records = Array.isArray(configs) ? configs : [];
@@ -300,6 +619,10 @@
   // Webflow authors the structural Book Call triggers and dialog. Canonical
   // environment-scoped discovery is the only code path that may enable them.
   setBookingButtonAvailable(false);
+  // Installed before the page-helper stand-down below: a page that is missing
+  // qs/qsa still has authored chooser triggers, and an empty chooser must not
+  // be reachable just because this file stood down.
+  installEmptyChooserGuard();
   wireCallServiceCardsToDirectEntry();
   observeCallServiceCards();
 
@@ -725,6 +1048,11 @@
           list.prepend(buildRateCard(template, card));
       });
 
+      // The trim is display-level and has to see the finished set, so it runs
+      // strictly after the prepend rather than from any Designer/CMS rule that
+      // cannot see a runtime-built card at all.
+      applyOfferingCap();
+
       function buildRateCard(sourceTemplate, card) {
           const el = sourceTemplate.cloneNode(true);
 
@@ -814,12 +1142,23 @@
   }
 
   function wireProjectServiceCards() {
-      const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
-      const options = serviceField && serviceField.options
-          ? Array.from(serviceField.options).filter(function (option) {
-              return String(option.value || '').trim();
-          })
-          : [];
+      // The hire template embeds the generate-contract modal TWICE (verified on
+      // www.thestarters.com/hire/trent, 2026-08-27: one copy inside
+      // .section_navbar and one inside .page-wrapper). `qs` returns whichever
+      // comes first in the DOM, so reading options from that one copy lets an
+      // empty navbar duplicate veto the wiring for the entire page. Union the
+      // options across every copy instead.
+      const options = [];
+      const seenOptionValues = new Set();
+      qsa('dialog[data-modal-target="generate-contract"] [name="Services"]').forEach(function (field) {
+          if (!field || !field.options) return;
+          Array.from(field.options).forEach(function (option) {
+              const value = String(option.value || '').trim();
+              if (!value || seenOptionValues.has(value)) return;
+              seenOptionValues.add(value);
+              options.push(option);
+          });
+      });
       if (!options.length) return;
 
       function normalized(value) {
@@ -829,13 +1168,16 @@
       function optionValueForCard(card) {
           const title = qs('[data-service-card-element="title"]', card);
           const titleValue = title ? String(title.textContent || '').trim() : '';
-          const rateType = normalized(card.getAttribute('data-rate-card'));
+          const rateType = normalized(card.getAttribute('data-rate-card')) ||
+              normalized(card.getAttribute('data-signup-trigger-value'));
           const candidates = [titleValue];
 
           // Freelance and Retainer are commercial formats, not separate
-          // project-service values. Both map to the authored Freelance work
-          // option when that exact option exists. Every CMS service otherwise
-          // requires an exact native option match and fails closed.
+          // project-service values. Retainer prefers the authored
+          // "Monthly retainer" option when the Designer publishes one, and both
+          // fall back to "Freelance work". Every CMS service otherwise requires
+          // an exact native option match and fails closed.
+          if (rateType === 'retainer') candidates.push('Monthly retainer');
           if (rateType === 'freelance' || rateType === 'retainer') {
               candidates.push('Freelance work');
           }
@@ -851,8 +1193,17 @@
           return '';
       }
 
-      qsa('#services [data-service-card="component"], #services [data-rate-card]').forEach(function (card) {
+      // WAVE-1 2a. This used to be scoped to #services, which left the HERO
+      // rate touts out: the Designer authors data-modal-trigger on them, so
+      // they open the contract modal, but they never received the
+      // data-sp-fill-* preset and the modal opened with no service selected.
+      // Cover every offering surface the page renders and exclude dialogs, so
+      // the chooser's own rows and the contract modal's contents stay untouched.
+      qsa('[data-service-card="component"], [data-rate-card]').forEach(function (card) {
+          if (card.closest('dialog')) return;
+          if (!card.closest('#services') && !card.closest('.services-list_wrapper')) return;
           if (card.hasAttribute('hidden') || card.getAttribute('aria-hidden') === 'true') return;
+          if (card.hasAttribute('data-runtime-call-template')) return;
 
           const type = normalized(card.getAttribute('data-type'));
           const signupValue = normalized(card.getAttribute('data-signup-trigger-value'));
@@ -874,9 +1225,26 @@
       });
   }
 
+  /**
+   * The two display rules decided in WAVE-1 are driven by the public record,
+   * which lands on its own async path — independently of, and often later
+   * than, canonical booking discovery. Capture the signals as soon as the
+   * record resolves and re-apply, so neither rule depends on which of the two
+   * paths finishes first.
+   */
+  function captureRecordSignals(record) {
+      if (!record) return;
+      const profileType = String(record['profile-type'] || '').trim();
+      if (profileType === 'Consult' || profileType === 'Full') starterProfileType = profileType;
+      applyOfferingCap();
+  }
+
   function getPublicStarterRecord() {
       if (!publicStarterRecordPromise) {
-          publicStarterRecordPromise = loadPublicStarterRecord();
+          publicStarterRecordPromise = loadPublicStarterRecord().then(function (record) {
+              captureRecordSignals(record);
+              return record;
+          });
       }
       return publicStarterRecordPromise;
   }
@@ -950,6 +1318,11 @@
           // GET CONFIGS
           const configs = selectBookableConfigurations(await freeCallBooking.getConfigs(grant_id));
           primeBookingModalOptions(configs);
+          // The accepted canonical set is the same source the booking popup's
+          // CTA trusts, so every rate display on the page can be brought onto
+          // it here — before any controller install, because a stale price is a
+          // display fault rather than a booking one.
+          repaintCanonicalRateSurfaces(configs);
           if (
               Array.isArray(configs) &&
               configs.length &&
@@ -1029,12 +1402,22 @@
               }
 
               reconcileInstalledBookingModalOptions(installedConfigs);
+              // Only INSTALLED configurations get an availability request. A
+              // rejected or uninstallable call type keeps its structural hide,
+              // so painting it would both waste the request and break the
+              // standing contract that an empty or rejected set never asks for
+              // a nearest slot. Fire and forget: a slow answer must not hold up
+              // the rest of discovery.
+              paintNextAvailableSlots(installedConfigs, grant_id);
               const callSurfacesChanged = syncCanonicalCallSurfaces(installedConfigs);
               // The hero call rows can be inserted after the controller's
               // initial DOM scan. Re-run the idempotent binding after canonical
               // discovery so late-rendered hero and Services cards get the same
               // direct Free/Paid entry contract.
               wireCallServiceCardsToDirectEntry();
+              // Discovery has just changed which call rows are on offer, so the
+              // cap has to be recomputed against the final eligible set.
+              applyOfferingCap();
               if (callSurfacesChanged) refreshEmptySectionNav();
               if (!bookingSurfaceAvailable) return;
               setBookingButtonAvailable(true);

@@ -162,6 +162,17 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
     }
     return null
   }
+  // Real semantics, including `el.contains(el) === true`. The offering cap uses
+  // this to drop the nested card the runtime call template wraps, so a fixture
+  // without it silently sends the renderer down its catch branch instead.
+  el.contains = (other) => {
+    let node = other
+    while (node) {
+      if (node === el) return true
+      node = node.parentElement
+    }
+    return false
+  }
   const walk = (node, out = []) => {
     for (const c of node.children) {
       out.push(c)
@@ -1696,7 +1707,8 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
     guard.textContent,
     '[data-booking-unavailable]{display:none!important}' +
       '[data-booking-trigger-unavailable]{display:none!important}' +
-      '[data-canonical-call-unavailable]{display:none!important}',
+      '[data-canonical-call-unavailable]{display:none!important}' +
+      '[data-offering-capped]{display:none!important}',
   )
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
@@ -2832,4 +2844,938 @@ test('a page without the hide-empty hook still renders its cards', async () => {
     ['freelance', 'retainer'],
     'a missing cosmetic hook must never stop the cards rendering',
   )
+})
+
+/* ------------------------------------------------- WAVE-1 step 2 (2a-2e) --- */
+
+/**
+ * A hero rate-card surface, matching production markup:
+ *   .profile-hero_card > .profile-hero_card-inner > .services-list_wrapper
+ *     > tout card                  (Freelance, Designer-authored)
+ *     > .display-contents          (call wrapper)
+ *         > tout card [data-type=free]
+ *         > tout card [data-type=paid]
+ *     > tout card                  (Retainer, Designer-authored)
+ * Verified against www.thestarters.com/hire/trent on 2026-08-27: both authored
+ * rate touts already carry data-modal-trigger="generate-contract", and neither
+ * carries the data-sp-fill-* preset that #services cards get.
+ */
+function makeHeroSurface(page, { includeCalls = true } = {}) {
+  const heroCard = makeElement('div', {}, ['profile-hero_card', 'is-right'])
+  const heroInner = makeElement('div', {}, ['profile-hero_card-inner'])
+  const wrapper = makeElement('div', {}, ['services-list_wrapper'])
+
+  const tout = (title, attrs) => {
+    const el = makeElement('div', {
+      'data-service-card': 'component',
+      'data-service-card-state': 'Default',
+      'data-service-card-type': 'tout',
+      'data-signup-trigger-element': 'service',
+      'data-signup-trigger-value': title,
+      ...attrs,
+    }, ['service-tout_component'])
+    const titleWrapper = makeElement('div', {}, ['service-card_title-wrapper'])
+    const titleEl = makeElement('div', { 'data-service-card-element': 'title' })
+    titleEl.textContent = title
+    titleWrapper.appendChild(titleEl)
+    el.appendChild(titleWrapper)
+    const priceCard = makeElement('div', {}, ['service-card_price-card'])
+    const layout = makeElement('div', {}, ['service-card_price-card-layout'])
+    const para = makeElement('p', {}, ['text-size-large'])
+    const amount = makeElement('span', { 'data-millify': '' })
+    amount.textContent = '0'
+    para.appendChild(amount)
+    layout.appendChild(para)
+    priceCard.appendChild(layout)
+    el.appendChild(priceCard)
+    el.millify = amount
+    return el
+  }
+
+  const freelance = tout('Freelance', { 'data-modal-trigger': 'generate-contract' })
+  const retainer = tout('Retainer', { 'data-modal-trigger': 'generate-contract' })
+  wrapper.appendChild(freelance)
+
+  let heroFree = null
+  let heroPaid = null
+  if (includeCalls) {
+    const callWrap = makeElement('div', {}, ['display-contents'])
+    heroFree = tout('Free Call', { 'data-type': 'free', 'has-connection': 'free' })
+    heroPaid = tout('Paid Consulting Call', { 'data-type': 'paid', 'has-connection': 'paid' })
+    callWrap.appendChild(heroFree)
+    callWrap.appendChild(heroPaid)
+    wrapper.appendChild(callWrap)
+  }
+  wrapper.appendChild(retainer)
+
+  heroInner.appendChild(wrapper)
+  heroCard.appendChild(heroInner)
+  page.root.appendChild(heroCard)
+  return { heroCard, wrapper, freelance, retainer, heroFree, heroPaid }
+}
+
+/** The generate-contract dialog, with the native Services select. */
+function addContractDialog(page, options = ['', 'Freelance work', 'Monthly retainer']) {
+  const dialog = makeElement('dialog', { 'data-modal-target': 'generate-contract' })
+  const select = makeElement('select', { name: 'Services' })
+  select.options = options.map((v) => ({ value: v, textContent: v }))
+  dialog.appendChild(select)
+  page.root.appendChild(dialog)
+  return { dialog, select }
+}
+
+const BRAND_MEMBER = {
+  id: 'brand_member',
+  auth: { email: 'brand@example.com' },
+  customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+  planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+}
+
+const FREE_CONFIG = {
+  config_id: 'cfg_free',
+  active: true,
+  is_paid: false,
+  data_environment: 'production',
+  price_cents: 0,
+  duration: 30,
+}
+const PAID_CONFIG = {
+  config_id: 'cfg_paid',
+  active: true,
+  is_paid: true,
+  data_environment: 'production',
+  payment_environment: 'live',
+  currency: 'USD',
+  price_cents: 25000,
+  duration: 60,
+}
+
+/* -- 2a ------------------------------------------------------------------- */
+
+test('2a: hero rate touts get the Start-a-Project service preset, not just #services', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page)
+  addContractDialog(page)
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+    member: BRAND_MEMBER,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  for (const [card, label] of [[hero.freelance, 'hero Freelance'], [hero.retainer, 'hero Retainer']]) {
+    assert.equal(card.getAttribute('data-modal-trigger'), 'generate-contract', label)
+    assert.equal(card.getAttribute('data-sp-fill'), 'button', `${label} data-sp-fill`)
+    assert.equal(card.getAttribute('data-sp-fill-category'), 'service', `${label} category`)
+    assert.ok(card.getAttribute('data-sp-fill-value'), `${label} must carry a service preset`)
+  }
+})
+
+test('2a: a hero Retainer tout presets the authored Monthly retainer option when it exists', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page)
+  addContractDialog(page, ['', 'Freelance work', 'Monthly retainer'])
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+    member: BRAND_MEMBER,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hero.freelance.getAttribute('data-sp-fill-value'), 'Freelance work')
+  assert.equal(hero.retainer.getAttribute('data-sp-fill-value'), 'Monthly retainer')
+})
+
+test('2a: a Retainer card falls back to Freelance work when no retainer option is authored', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page)
+  addContractDialog(page, ['', 'Freelance work'])
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+    member: BRAND_MEMBER,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hero.retainer.getAttribute('data-sp-fill-value'), 'Freelance work')
+})
+
+test('2a: hero call touts are never converted into contract triggers', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page)
+  addContractDialog(page)
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+    member: BRAND_MEMBER,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  for (const card of [hero.heroFree, hero.heroPaid]) {
+    assert.equal(card.getAttribute('data-modal-trigger'), null)
+    assert.equal(card.getAttribute('data-sp-fill'), null)
+  }
+})
+
+test('2a: a duplicate generate-contract dialog with no options cannot strand the wiring', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page)
+  // Production embeds the modal twice (navbar copy + page copy). The first one
+  // in DOM order must not be able to veto the wiring for the whole page.
+  addContractDialog(page, [''])
+  addContractDialog(page, ['', 'Freelance work', 'Monthly retainer'])
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+    member: BRAND_MEMBER,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hero.freelance.getAttribute('data-sp-fill-value'), 'Freelance work')
+})
+
+test('2a: Talent and anonymous viewers never receive the Brand contract preset', async () => {
+  for (const member of [
+    {},
+    { id: 't', auth: { email: 't@x.com' }, customFields: {}, planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' }] },
+  ]) {
+    const page = makePage()
+    const hero = makeHeroSurface(page)
+    addContractDialog(page)
+    const context = makeContext({
+      page,
+      record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+      member,
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    assert.equal(hero.freelance.getAttribute('data-sp-fill'), null)
+  }
+})
+
+/* -- 2b ------------------------------------------------------------------- */
+
+test('2b: a Full hero surface with four offerings trims to three, keeping Freelance > Retainer > Paid', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page)
+  addContractDialog(page)
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+    getConfigs: async () => [FREE_CONFIG, PAID_CONFIG],
+    paidController: { installPaidBookingController: () => true },
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [FREE_CONFIG, PAID_CONFIG],
+      installFreeBookingController: () => true,
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const capped = (el) => el.hasAttribute('data-offering-capped')
+  assert.equal(capped(hero.freelance), false, 'Freelance is rank 1 for Full')
+  assert.equal(capped(hero.retainer), false, 'Retainer is rank 2 for Full')
+  assert.equal(capped(hero.heroPaid), false, 'Paid is rank 3 for Full')
+  assert.equal(capped(hero.heroFree), true, 'Free is rank 4 for Full and must be trimmed')
+})
+
+test('2b: a Consult hero surface keeps Paid > Free > Retainer and trims Freelance', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page)
+  addContractDialog(page)
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Consult' },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [FREE_CONFIG, PAID_CONFIG],
+      installFreeBookingController: () => true,
+    },
+    paidController: { installPaidBookingController: () => true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const capped = (el) => el.hasAttribute('data-offering-capped')
+  assert.equal(capped(hero.heroPaid), false, 'Paid is rank 1 for Consult')
+  assert.equal(capped(hero.heroFree), false, 'Free is rank 2 for Consult')
+  assert.equal(capped(hero.retainer), false, 'Retainer is rank 3 for Consult')
+  assert.equal(capped(hero.freelance), true, 'Freelance is rank 4 for Consult and must be trimmed')
+})
+
+test('2b: three or fewer hero offerings are never trimmed', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page, { includeCalls: false })
+  addContractDialog(page)
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+    member: BRAND_MEMBER,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hero.freelance.hasAttribute('data-offering-capped'), false)
+  assert.equal(hero.retainer.hasAttribute('data-offering-capped'), false)
+})
+
+test('2b: a card the booking gate already hid does not consume a cap slot', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page)
+  addContractDialog(page)
+
+  // Anonymous: canonical discovery never runs, so both call touts stay closed
+  // with data-canonical-call-unavailable. Freelance and Retainer are the only
+  // eligible offerings and neither may be trimmed.
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Consult' },
+    member: {},
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hero.freelance.hasAttribute('data-offering-capped'), false)
+  assert.equal(hero.retainer.hasAttribute('data-offering-capped'), false)
+})
+
+test('2b: the injected guard hides capped offerings with !important', () => {
+  const page = makePage()
+  const context = makeContext({ page })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  const guard = context.document.getElementById('hire-booking-modal-availability-guard')
+  assert.ok(guard, 'the availability guard style must exist')
+  assert.match(guard.textContent, /\[data-offering-capped\]\{display:none!important\}/)
+})
+
+
+
+
+/* -- 2d ------------------------------------------------------------------- */
+
+test('2d: a chooser trigger click is swallowed while no call type is installed', () => {
+  const page = makePage()
+  const context = makeContext({ page })
+  const captured = []
+  context.document.addEventListener = (type, fn, capture) => {
+    if (type === 'click' && capture === true) captured.push(fn)
+  }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  assert.ok(captured.length, 'a capture-phase chooser guard must be installed')
+
+  let prevented = false
+  let stopped = false
+  const event = {
+    target: page.bookingButton,
+    preventDefault: () => { prevented = true },
+    stopImmediatePropagation: () => { stopped = true },
+    stopPropagation: () => {},
+  }
+  captured.forEach((fn) => fn(event))
+
+  assert.equal(prevented, true, 'the empty chooser must never open')
+  assert.equal(stopped, true, 'the modal engine listener must not see the click')
+})
+
+test('2d: the chooser guard steps aside once a call type is installed', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const captured = []
+  const realAdd = null
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [FREE_CONFIG],
+      installFreeBookingController: () => true,
+    },
+  })
+  const baseAdd = context.document.addEventListener
+  context.document.addEventListener = (type, fn, capture) => {
+    if (type === 'click' && capture === true) captured.push(fn)
+    else baseAdd(type, fn, capture)
+  }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  let prevented = false
+  const event = {
+    target: page.bookingButton,
+    preventDefault: () => { prevented = true },
+    stopImmediatePropagation: () => {},
+    stopPropagation: () => {},
+  }
+  captured.forEach((fn) => fn(event))
+  assert.equal(prevented, false, 'an installed Free option must still open the chooser')
+})
+
+test('2d: a call service card click fails closed rather than opening an empty chooser', async () => {
+  const page = makePage({ includeHeroCallCards: true })
+  const opened = []
+  page.bookingButton.click = () => opened.push('chooser')
+
+  const context = makeContext({ page, member: BRAND_MEMBER })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const handlers = page.heroFreeCard.listeners.click || []
+  assert.ok(handlers.length, 'the hero Free card must own a direct-entry handler')
+  handlers.forEach((fn) => fn({ preventDefault() {}, stopImmediatePropagation() {} }))
+  assert.deepEqual(opened, [], 'no chooser may open while no controller is installed')
+})
+
+/* -- 2e ------------------------------------------------------------------- */
+
+test('2e: paid rate surfaces are repainted from the canonical Nylas price, not the CMS value', async () => {
+  const page = makePage({ includeFreeCard: false })
+  addContractDialog(page)
+
+  // The CMS-bound markup says 250; the canonical config says 25000 cents.
+  const paidCardPrice = page.servicesList.querySelector('[data-millify]')
+  paidCardPrice.textContent = '250'
+  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  const paidSurfacePrice = makeElement('span', { 'data-millify': '' })
+  paidSurfacePrice.textContent = '250'
+  paidSurface.appendChild(paidSurfacePrice)
+  page.root.appendChild(paidSurface)
+
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult', 'paid-call-rate': '150' },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [PAID_CONFIG],
+    },
+    paidController: { installPaidBookingController: () => true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paidSurfacePrice.getAttribute('data-millify'), '250', 'canonical 25000 cents = $250')
+  assert.equal(paidSurfacePrice.textContent, '250')
+  assert.equal(page.paidModalPrice.textContent, '$250', 'the chooser price placeholder is repainted too')
+})
+
+test('2e: the free chooser price is repainted to zero from the canonical config', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  page.freeModalOption.appendChild((() => {
+    const el = makeElement('span', { 'call-type-price': '' })
+    el.textContent = '$50'
+    page.freeModalPrice = el
+    return el
+  })())
+
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [FREE_CONFIG],
+      installFreeBookingController: () => true,
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.freeModalPrice.textContent, '$0')
+})
+
+test('2e: with no canonical configuration the CMS value is left alone as a cosmetic fallback', async () => {
+  const page = makePage({ includeFreeCard: false })
+  addContractDialog(page)
+  const paidCardPrice = page.servicesList.querySelector('[data-millify]')
+  paidCardPrice.textContent = '250'
+
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paidCardPrice.textContent, '250', 'no canonical source means no repaint')
+  assert.equal(page.paidModalPrice.textContent, '$50')
+})
+
+test('2e: a repaint uses the shared millify formatter when the page provides one', async () => {
+  const page = makePage({ includeFreeCard: false })
+  addContractDialog(page)
+  const paidSurface = makeElement('div', { 'has-connection': 'paid' })
+  const paidSurfacePrice = makeElement('span', { 'data-millify': '', 'data-millify-raw': '250' })
+  paidSurfacePrice.textContent = '250'
+  paidSurface.appendChild(paidSurfacePrice)
+  page.root.appendChild(paidSurface)
+
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [{ ...PAID_CONFIG, price_cents: 550000 }],
+    },
+    paidController: { installPaidBookingController: () => true },
+  })
+  context.__startersMillify = (input) => ({ ok: true, text: String(Number(input) / 1000) + 'K', raw: Number(input) })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paidSurfacePrice.textContent, '5.5K', 'the page formatter owns the display text')
+  assert.equal(paidSurfacePrice.getAttribute('data-millify'), '5500')
+  assert.equal(
+    paidSurfacePrice.getAttribute('data-millify-raw'),
+    null,
+    'a stale raw value would make millify re-parse the formatted text',
+  )
+})
+
+/* -- release marker -------------------------------------------------------- */
+
+test('the file declares the release it ships in', () => {
+  assert.match(source, /@release v\d+\.\d+\.\d+/)
+})
+
+test('2b: an unclassified CMS service card is neither counted nor trimmed', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page)
+  addContractDialog(page)
+
+  // SCOPE FREEZE: whether a CMS service card counts toward the three is
+  // undecided, so it must not lose a slot and must not cost a rate row one.
+  const cmsCard = makeElement('div', {
+    'data-service-card': 'component',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'Paid Media Audit',
+  })
+  const cmsTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  cmsTitle.textContent = 'Paid Media Audit'
+  cmsCard.appendChild(cmsTitle)
+  hero.wrapper.appendChild(cmsCard)
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [FREE_CONFIG, PAID_CONFIG],
+      installFreeBookingController: () => true,
+    },
+    paidController: { installPaidBookingController: () => true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(cmsCard.hasAttribute('data-offering-capped'), false, 'a CMS card is never trimmed')
+  // The four ranked offerings still resolve among themselves: Free is rank 4
+  // for Full and is the one that goes, exactly as if the CMS card were absent.
+  assert.equal(hero.heroFree.hasAttribute('data-offering-capped'), true)
+  assert.equal(hero.heroPaid.hasAttribute('data-offering-capped'), false)
+})
+
+
+test('2b: the Services list is never capped, only the hero service tout', async () => {
+  const page = makePage()
+  const hero = makeHeroSurface(page)
+  addContractDialog(page)
+
+  // #services holds the two runtime rate-card clones plus the native Free and
+  // Paid call cards — four ranked offerings on a Full profile, i.e. over the
+  // cap. DECIDED SCOPE (Jerico, 2026-08-27): the trim applies to the hero tout
+  // ONLY, so all four must survive here while the hero's fourth row goes.
+  const paidCard = makeElement('div', {
+    'data-service-card': 'component',
+    'data-service-card-state': 'Default',
+    'data-type': 'paid',
+    'has-connection': 'paid',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'Paid Consulting Call',
+  })
+  const paidTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  paidTitle.textContent = 'Paid Consulting Call'
+  paidCard.appendChild(paidTitle)
+  page.servicesList.appendChild(paidCard)
+
+  const context = makeContext({
+    page,
+    record: { rate: 100, 'retainer-rate': '5000', 'retainer-enabled': true, 'profile-type': 'Full' },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [FREE_CONFIG, PAID_CONFIG],
+      installFreeBookingController: () => true,
+    },
+    paidController: { installPaidBookingController: () => true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freelance = page.servicesList.children.find((c) => c.getAttribute('data-rate-card') === 'freelance')
+  const retainer = page.servicesList.children.find((c) => c.getAttribute('data-rate-card') === 'retainer')
+  const freeCard = page.servicesList.children.find((c) => c.getAttribute('data-type') === 'free')
+
+  for (const [card, label] of [
+    [freelance, 'Freelance'],
+    [retainer, 'Retainer'],
+    [paidCard, 'Paid'],
+    [freeCard, 'Free'],
+  ]) {
+    assert.equal(
+      card.hasAttribute('data-offering-capped'),
+      false,
+      `#services ${label} must survive: the Services list is uncapped`,
+    )
+  }
+
+  // The same four offerings in the hero DO get trimmed, which is what proves
+  // the surface filter is doing the work rather than the cap silently no-oping.
+  assert.equal(hero.heroFree.hasAttribute('data-offering-capped'), true, 'hero Free is rank 4 and goes')
+  assert.equal(hero.freelance.hasAttribute('data-offering-capped'), false)
+  assert.equal(hero.retainer.hasAttribute('data-offering-capped'), false)
+  assert.equal(hero.heroPaid.hasAttribute('data-offering-capped'), false)
+})
+
+/* ------------------------------- WAVE-1 next-slot paint-on-load (2f) ------- */
+
+/**
+ * The Designer sentinels Jerico is publishing. Nothing may leave one of these
+ * on screen: the row now stays and must show real data (Q6 reversed).
+ */
+const SLOT_SENTINEL = '00:00pm on 00/00'
+const PRICE_SENTINEL = '$00'
+
+/** Adds the [next-available-slot] hooks production authors on the call cards. */
+function addSlotHooks(page) {
+  const hooks = {}
+  const attach = (host, key) => {
+    const el = makeElement('div', { 'next-available-slot': '' })
+    el.textContent = SLOT_SENTINEL
+    host.appendChild(el)
+    hooks[key] = el
+    return el
+  }
+  // Chooser rows (the two the recon found inside popup-booking-main).
+  attach(page.freeModalOption, 'chooserFree')
+  attach(page.paidModalOption, 'chooserPaid')
+  // Service cards.
+  const freeCard = makeElement('div', { 'data-service-card': 'component', 'data-type': 'free', 'has-connection': 'free' })
+  const paidCard = makeElement('div', { 'data-service-card': 'component', 'data-type': 'paid', 'has-connection': 'paid' })
+  page.servicesList.appendChild(freeCard)
+  page.servicesList.appendChild(paidCard)
+  attach(freeCard, 'cardFree')
+  attach(paidCard, 'cardPaid')
+  page.paidModalPrice.textContent = PRICE_SENTINEL
+  return hooks
+}
+
+/** A booking controller whose availability answers are scripted per config. */
+function slotController(slotsByConfig, calls) {
+  return {
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+    getConfigs: async () => [FREE_CONFIG, PAID_CONFIG],
+    installFreeBookingController: () => true,
+    getNearestSlot: async (grantId, configId, nowMs) => {
+      calls.push({ grantId, configId, nowMs })
+      const answer = slotsByConfig[configId]
+      if (answer instanceof Error) throw answer
+      return answer
+    },
+    // The real module's formatter, so the assertions pin the real output shape.
+    formatWithTimezone: (timestamp, formatOptions) => {
+      const date = new Date(timestamp)
+      const formatter = new Intl.DateTimeFormat('en-US', Object.assign({
+        weekday: 'short', month: 'short', day: '2-digit', hour: '2-digit',
+        minute: '2-digit', hour12: true, timeZoneName: 'short', timeZone: 'UTC',
+      }, formatOptions || {}))
+      const values = {}
+      formatter.formatToParts(date).forEach((part) => {
+        if (part.type !== 'literal') values[part.type] = part.value
+      })
+      values.dayPeriod = String(values.dayPeriod || '').toUpperCase()
+      return { default: '', list: values }
+    },
+  }
+}
+
+// 2026-03-05T15:30:00Z
+const SLOT_FREE = Math.floor(Date.UTC(2026, 2, 5, 15, 30) / 1000)
+// 2026-03-06T09:00:00Z
+const SLOT_PAID = Math.floor(Date.UTC(2026, 2, 6, 9, 0) / 1000)
+
+function slotContext(page, controller, extra = {}) {
+  return makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+    freeController: controller,
+    paidController: { installPaidBookingController: () => true },
+    ...extra,
+  })
+}
+
+test('2f: both call cards paint their next slot on load, not only after Book Call', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const calls = []
+  const context = slotContext(page, slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, calls))
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05', 'free card painted on load')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06', 'paid card painted on load')
+})
+
+test('2f: the chooser rows are painted from their own call type', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const calls = []
+  const context = slotContext(page, slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, calls))
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.chooserPaid.textContent, '09:00AM on 03/06')
+})
+
+test('2f: the new Designer sentinels are always overwritten', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const calls = []
+  const context = slotContext(page, slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, calls))
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  for (const [key, hook] of Object.entries(hooks)) {
+    assert.notEqual(hook.textContent, SLOT_SENTINEL, `${key} must not keep the slot sentinel`)
+  }
+  assert.notEqual(page.paidModalPrice.textContent, PRICE_SENTINEL, 'the $00 price sentinel must go')
+  assert.equal(page.paidModalPrice.textContent, '$250')
+})
+
+test('2f: the writer goes through the shared getNearestSlot so the notice window applies', async () => {
+  const page = makePage()
+  addSlotHooks(page)
+  addContractDialog(page)
+  const calls = []
+  const context = slotContext(page, slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, calls))
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // The 24h production minimum lives inside free-call-booking's availabilityPath
+  // and its slot filter. Reimplementing the fetch here would silently drop it,
+  // so the contract is that this file only ever asks through that export.
+  assert.deepEqual(
+    calls.map((c) => c.configId).sort(),
+    ['cfg_free', 'cfg_paid'],
+    'one availability request per accepted configuration',
+  )
+  calls.forEach((c) => assert.equal(c.grantId, 'grant_1'))
+  assert.equal(context.requestedUrls.length, 0, 'this file must not fetch availability itself')
+})
+
+test('2f: no available slot writes the no-slots copy instead of leaving a sentinel', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const calls = []
+  const context = slotContext(page, slotController({ cfg_free: null, cfg_paid: SLOT_PAID }, calls))
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hooks.cardFree.textContent, 'No available slots')
+  assert.equal(hooks.chooserFree.textContent, 'No available slots')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06', 'paid is unaffected by the free result')
+})
+
+test('2f: an availability failure never leaves a sentinel on screen', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const calls = []
+  const context = slotContext(
+    page,
+    slotController({ cfg_free: new Error('availability 500'), cfg_paid: SLOT_PAID }, calls),
+  )
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hooks.cardFree.textContent, 'No available slots')
+  assert.equal(hooks.cardFree.getAttribute('data-next-slot-state'), 'error')
+  assert.equal(hooks.cardPaid.getAttribute('data-next-slot-state'), 'painted')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06', 'one failure must not cost the other type')
+})
+
+test('2f: a profile with no canonical configuration paints nothing', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const calls = []
+  const controller = slotController({}, calls)
+  // A grant exists but discovery accepts nothing, which is the case the
+  // standing contract covers: no configuration means no availability request.
+  controller.getConfigs = async () => []
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: BRAND_MEMBER,
+    freeController: controller,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(calls.length, 0, 'no configuration means no availability request')
+  assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL, 'nothing to paint means nothing is touched')
+})
+
+test('2f: a controller without getNearestSlot degrades without throwing', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const controller = slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, [])
+  delete controller.getNearestSlot
+  const context = slotContext(page, controller)
+  vm.createContext(context)
+
+  assert.doesNotThrow(() => vm.runInContext(source, context))
+  await settle()
+  assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL)
+})
+
+test('2f: an uninstallable call type gets no availability request and keeps its hide', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const calls = []
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: BRAND_MEMBER,
+    freeController: slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, calls),
+    // Paid is accepted by canonical discovery but its controller cannot install.
+    paidController: { installPaidBookingController: () => false },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(calls.map((c) => c.configId), ['cfg_free'], 'only the installed type is asked')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
+  assert.equal(
+    hooks.cardPaid.textContent,
+    SLOT_SENTINEL,
+    'an uninstallable Paid card stays structurally hidden, so its row is never painted',
+  )
+})
+
+test('2f: 12/10-era sentinel remnants are overwritten as readily as the new ones', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  // Some profiles still carry the older placeholders. The writer must not care
+  // which era a hook is from -- it always writes -- so mix both in one page.
+  hooks.cardFree.textContent = '11:00PM on 12/10'
+  hooks.chooserFree.textContent = '11:00pm on 12/10'
+  page.paidModalPrice.textContent = '$50'
+  const calls = []
+  const context = slotContext(page, slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, calls))
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06')
+  assert.equal(page.paidModalPrice.textContent, '$250')
+})
+
+test('the free chooser row survives: hide-free-when-paid is not in this bundle', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  // Jerico dropped the rule entirely (2026-08-27). A paid-toggled profile with
+  // both call types installed must keep BOTH chooser rows.
+  const context = makeContext({
+    page,
+    record: {
+      rate: 0, 'retainer-enabled': false, 'profile-type': 'Full',
+      'paid-consulting-calls-t-f': true,
+    },
+    member: BRAND_MEMBER,
+    freeController: {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
+      getConfigs: async () => [FREE_CONFIG, PAID_CONFIG],
+      installFreeBookingController: () => true,
+    },
+    paidController: { installPaidBookingController: () => true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.freeModalOption.hasAttribute('data-booking-unavailable'), false)
+  assert.equal(page.paidModalOption.hasAttribute('data-booking-unavailable'), false)
+  assert.equal(page.freeModalOption.style.display, 'block')
 })
