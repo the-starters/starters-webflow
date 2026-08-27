@@ -1722,3 +1722,93 @@ test('r3-1: a row authored without the token still warns after a rescan', () => 
   assert.equal(drift.length, 1, 'hard-coded copy is still called out')
   assert.match(drift[0], /12/)
 })
+
+// ===========================================================================
+// Round 3 — a wrapper injected into an ALREADY-WIRED form
+//
+// A step flow reveals its checklist inside the <form> that is already gating.
+// Skipping the whole form on rescan left that wrapper showing a literal
+// {count} with its off rows still visible and its icons frozen.
+// ===========================================================================
+
+test('r3-2: rescan adopts a wrapper injected into a wired form', () => {
+  const f = makeForm({ characters: 'true', 'character-count': '6' })
+  const app = mount(h('body', {}, [f.form]))
+  assert.equal(f.rows.characters.textContent, 'At least 6 characters')
+
+  const late = buildWrapper({ characters: 'true', 'character-count': '6' })
+  f.form.append(late.wrapper)
+  assert.equal(late.rows.characters.textContent, 'At least {count} characters', 'not yet rendered')
+
+  app.window.startersPasswordValidation.rescan()
+
+  assert.equal(
+    late.rows.characters.textContent,
+    'At least 6 characters',
+    'the enforced count reaches the late wrapper',
+  )
+  assert.equal(late.rows.numbers.style.display, 'none', 'an off rule is hidden')
+  assert.equal(late.rows.special.style.display, 'none')
+  assert.equal(iconState(late.rows.characters), 'neutral', 'and starts neutral, like the first')
+
+  assert.equal(f.input.listenerCount('input'), 1, 'no listener was bound twice')
+  assert.equal(f.input.listenerCount('focusout'), 1)
+  assert.equal(f.input.listenerCount('change'), 1)
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus the one gate')
+})
+
+test('r3-2: an adopted wrapper flips in step with the original', () => {
+  const f = makeForm({ characters: 'true', 'character-count': '6' })
+  const app = mount(h('body', {}, [f.form]))
+
+  const late = buildWrapper({ characters: 'true', 'character-count': '6' })
+  f.form.append(late.wrapper)
+  app.window.startersPasswordValidation.rescan()
+
+  f.input.value = 'abc'
+  dispatch(f.input, 'input')
+  assert.equal(iconState(f.rows.characters), 'fail')
+  assert.equal(iconState(late.rows.characters), 'fail', 'the adopted instance follows')
+  assert.equal(isGated(f.button), true)
+
+  f.input.value = 'abcdef'
+  dispatch(f.input, 'input')
+  assert.equal(iconState(late.rows.characters), 'pass')
+  assert.equal(isOpen(f.button), true)
+})
+
+test('r3-2: adopting a wrapper never changes the enforced config', () => {
+  const f = makeForm({ characters: 'true', 'character-count': '6' })
+  const app = mount(h('body', {}, [f.form]), onStaging())
+
+  // a mismatched late instance: it renders, it warns, it does not take over
+  const late = buildWrapper({ characters: 'true', 'character-count': '12', numbers: 'true' })
+  f.form.append(late.wrapper)
+  app.window.startersPasswordValidation.rescan()
+
+  assert.equal(app.warnings.length, 1, 'the existing mismatch warn covers it')
+  assert.match(app.warnings[0], /differs from the one driving the form/)
+  assert.equal(late.rows.characters.textContent, 'At least 6 characters', 'enforced, not its own')
+  assert.equal(late.rows.numbers.style.display, 'none', 'its extra rule is not adopted')
+
+  f.input.value = 'abcdef'
+  dispatch(f.input, 'input')
+  assert.equal(isOpen(f.button), true, 'six characters still passes; 12 was never enforced')
+})
+
+test('r3-2: a repeated rescan adopts each wrapper exactly once', () => {
+  const f = makeForm({ characters: 'true', 'character-count': '6' })
+  const app = mount(h('body', {}, [f.form]), onStaging())
+
+  const late = buildWrapper({ characters: 'true', 'character-count': '6' })
+  f.form.append(late.wrapper)
+  app.window.startersPasswordValidation.rescan()
+  app.window.startersPasswordValidation.rescan()
+  app.window.startersPasswordValidation.rescan()
+
+  assert.deepEqual(app.warnings, [], 'a matching wrapper is silent however often we look')
+
+  f.input.value = 'abcdef'
+  dispatch(f.input, 'input')
+  assert.equal(iconState(late.rows.characters), 'pass', 'and its icons are registered once')
+})

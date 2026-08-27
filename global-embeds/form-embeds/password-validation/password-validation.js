@@ -122,32 +122,35 @@
     return text;
   }
 
-  function substituteCount(node, count) {
-    if (!node || !node.childNodes) return;
+  // Visits every text node under `node`. A visitor returning true stops the
+  // walk and is reported back, so "rewrite them all" and "does any of them"
+  // stay one traversal with one definition of which nodes count.
+  function walkText(node, visit) {
+    if (!node || !node.childNodes) return false;
     for (var i = 0; i < node.childNodes.length; i++) {
       var child = node.childNodes[i];
       if (child.nodeType === 3) {
-        var template = countTemplate(child);
-        if (template !== null) child.nodeValue = template.split(COUNT_TOKEN).join(count);
-      } else if (child.nodeType === 1) {
-        substituteCount(child, count);
+        if (visit(child) === true) return true;
+      } else if (child.nodeType === 1 && walkText(child, visit)) {
+        return true;
       }
     }
+    return false;
+  }
+
+  function substituteCount(node, count) {
+    walkText(node, function (textNode) {
+      var template = countTemplate(textNode);
+      if (template !== null) textNode.nodeValue = template.split(COUNT_TOKEN).join(count);
+    });
   }
 
   // Asks the authored copy, not the rendered copy: a row that already had its
   // token substituted by an earlier pass is still a row that uses the token.
   function usesCountToken(node) {
-    if (!node || !node.childNodes) return false;
-    for (var i = 0; i < node.childNodes.length; i++) {
-      var child = node.childNodes[i];
-      if (child.nodeType === 3) {
-        if (countTemplate(child) !== null) return true;
-      } else if (child.nodeType === 1 && usesCountToken(child)) {
-        return true;
-      }
-    }
-    return false;
+    return walkText(node, function (textNode) {
+      return countTemplate(textNode) !== null;
+    });
   }
 
   // Webflow renders a boolean component property as the string "true"/"false".
@@ -482,7 +485,24 @@
     // Only a genuinely wired form is marked. A form that bailed out stays
     // unmarked so a later rescan can pick it up once the missing piece (an
     // input, a CMS-bound attribute) has arrived.
-    form[WIRED_FLAG] = true;
+    //
+    // The mark carries the enforced config and a way in for wrappers that
+    // arrive later (a step flow revealing its checklist inside the form that
+    // is already gating). Such a wrapper is adopted into the existing
+    // instance — copy, rows and icons — rather than re-wiring the form, so
+    // the config and the listeners stay exactly where the first pass put them.
+    form[WIRED_FLAG] = {
+      wrappers: wrappers,
+      adopt: function (extra) {
+        if (wrappers.indexOf(extra) !== -1) return;
+        wrappers.push(extra);
+        warnIfConfigDiffers(extra, active, count);
+        warnOnCountDrift([extra], active, count);
+        substituteCount(extra, count);
+        normalize(extra, active, rules);
+        render();
+      }
+    };
   }
 
   // Rows authored without a wrapper around them: the checklist is on the page
@@ -543,7 +563,11 @@
         );
         continue;
       }
-      if (form[WIRED_FLAG]) continue;
+      var wired = form[WIRED_FLAG];
+      if (wired) {
+        wired.adopt(wrapper);
+        continue;
+      }
 
       var instance = null;
       for (var j = 0; j < instances.length; j++) {
@@ -561,9 +585,10 @@
     }
   }
 
-  // Forms injected after load (modals, CMS tabs, step flows) are invisible to
-  // the one-shot init, so the page can ask for another pass. Already-wired
-  // forms are skipped, making repeated calls harmless.
+  // Markup injected after load (modals, CMS tabs, step flows) is invisible to
+  // the one-shot init, so the page can ask for another pass. An already-wired
+  // form is never re-wired, only extended with wrappers it has not seen, so
+  // repeated calls stay harmless.
   window.startersPasswordValidation = { rescan: init };
 
   if (document.readyState !== 'loading') init();
