@@ -142,6 +142,28 @@ configurations, and mismatched grants. Disable blocks while a future pending, co
 rescheduled booking exists. Mutations write Nylas first, then canonical Xano state, and use durable
 idempotency receipts.
 
+### Environment in the canonical GET payload
+
+`GET starter/free-call-settings/get/v3` (`#5673`) answers with `data_environment` at the top level,
+alongside `public_description`, `readiness`, and `services[]`. That stamp is always present: it is
+derived from the authenticated member's mode and is lowercase `test` or `production` by
+construction, so there is no answer shape in which it is missing or cased some other way. Each
+entry in `services[]` carries `config_id`, `grant_id`, `title`, `duration`, `active`, `revision`,
+`sync_status`, `updated_at`, and `price_cents` — `grant_id` is per service here, which the paid
+payload has no counterpart for. The paid payload also reports environment differently; its own
+contract is owned by [Environment in the canonical GET
+payload](PAID-CALL-SETTINGS-WIRING.md#environment-in-the-canonical-get-payload), and the two are
+not interchangeable on this point.
+
+Because the top-level stamp is guaranteed, a consumer may treat its absence as this contract having
+changed upstream rather than as an optional field it should tolerate. The `/hire/<slug>` owner path
+does exactly that: a free record mapped without `data_environment` fails the shared admission gate
+and leaves the authored row standing instead of skipping the environment check — see [Where the
+owner's canonical values come
+from](HIRE-PROFILE-WIRING.md#where-the-owners-canonical-values-come-from). If this endpoint ever
+stops stamping `data_environment`, that path goes quiet with only a console warning, so it is the
+first consumer to revisit.
+
 ## Loader order
 
 Load the controller after `scheduling-auth.js`. `scheduling-v3-stage-component.html` already

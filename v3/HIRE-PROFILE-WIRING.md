@@ -602,17 +602,19 @@ exists.
 The settings payloads name a service's length as either `duration` or
 `duration_minutes` (the tolerance `free-call-settings.js` already applies).
 
-They report environment differently. Free carries `data_environment` at the top
-level. The paid payload's environment contract is owned by [Environment in the
+They report environment differently, and each payload's contract is owned by
+its own endpoint document: free always stamps `data_environment` at the top
+level ([Environment in the canonical GET
+payload](FREE-CALL-SETTINGS-WIRING.md#environment-in-the-canonical-get-payload)),
+while paid **reports no `data_environment` at all** ([Environment in the
 canonical GET
-payload](PAID-CALL-SETTINGS-WIRING.md#environment-in-the-canonical-get-payload);
-what matters to this mapping is that **it reports no `data_environment` at
-all**. Each environment an endpoint reports is checked against the host, so on
-a paid record that field is filled from the host rather than invented, and the
+payload](PAID-CALL-SETTINGS-WIRING.md#environment-in-the-canonical-get-payload)).
+Each environment an endpoint does report is checked against the host, so on a
+paid record that field is filled from the host rather than invented, and the
 paid record's environment authority is the `payment_environment` that endpoint
 does report, which is checked. This is the one place the owner gate is weaker
-than the brand gate. The free payload always stamps `data_environment`,
-so a free record missing it fails closed: absence there means the endpoint's
+than the brand gate. A free record missing `data_environment` fails closed
+here instead, on the strength of that guarantee: absence means the free
 contract changed upstream, not that the check should be skipped.
 
 Stamps are trimmed and lowercased on the record before the predicate compares
