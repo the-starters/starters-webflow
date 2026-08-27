@@ -1,6 +1,8 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
+ * @release v1.59.402
+ *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
  * bookings, clones the authored templates, and owns loading/empty/list state.
