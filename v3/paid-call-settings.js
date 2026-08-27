@@ -231,21 +231,14 @@
     return member
   }
 
-  async function assertMemberScope() {
-    const member = await currentMember(true)
-    if (!sessionMemberId || member.id !== sessionMemberId) {
-      throw Object.assign(new Error('Member session changed during paid-call request'), {
-        code: 'MEMBER_SCOPE_CHANGED',
-      })
-    }
-  }
-
   async function xanoRequest(path, method, payload) {
-    if (typeof window.xanoAuthFetch !== 'function') {
+    const authFetch = typeof window.__tsSchedulingAuthFetch === 'function'
+      ? window.__tsSchedulingAuthFetch
+      : window.xanoAuthFetch
+    if (typeof authFetch !== 'function') {
       throw new Error('xanoAuthFetch is unavailable')
     }
-    await assertMemberScope()
-    const response = await window.xanoAuthFetch(API_BASE + path, {
+    const response = await authFetch(API_BASE + path, {
       method: method,
       headers: {
         Accept: 'application/json',
@@ -735,7 +728,12 @@
 
   function failClosedSession(error) {
     const code = error && error.code
-    if (code !== 'MEMBER_SESSION_MISSING' && code !== 'MEMBER_SCOPE_CHANGED') return false
+    const message = String((error && error.message) || '')
+    if (
+      code !== 'MEMBER_SESSION_MISSING' &&
+      code !== 'MEMBER_SCOPE_CHANGED' &&
+      message !== 'No Memberstack session'
+    ) return false
     refreshVersion += 1
     setStatus('error')
     clearRenderedState('Sign in to manage paid calls.')
@@ -1048,25 +1046,24 @@
     const transition = beginAuthTransition()
     try {
       const memberId = sessionMemberId
+      if (!memberId || !settings) return loadSession(undefined, false)
       const pendingWrite = activeWrite && activeWrite.memberId === memberId ? activeWrite : null
       const version = ++refreshVersion
-      clearRenderedState('Checking your account…')
-      if (pendingWrite) sessionMemberId = memberId
       setStatus('loading')
-      let member = null
       try {
-        member = await currentMember(true)
+        if (pendingWrite) await pendingWrite.done
+        if (!currentRender(version, memberId)) return null
+        const canonical = await readCanonicalSettings()
+        if (!currentRender(version, memberId)) return null
+        return render(canonical)
       } catch (error) {
-        member = null
-      }
-      if (version !== refreshVersion) return null
-      if (!member || !member.id) {
-        sessionMemberId = null
-        setStatus('error')
-        setMessage('Sign in to manage paid calls.')
+        if (!currentRender(version, memberId)) return null
+        if (!failClosedSession(error)) {
+          setStatus('error')
+          setMessage('Paid-call settings could not be refreshed. Your account was not changed.')
+        }
         return null
       }
-      return await loadSession(member, false)
     } finally {
       finishAuthTransition(transition)
     }
