@@ -3148,6 +3148,24 @@ function addSlotHooks(page) {
   return hooks
 }
 
+/**
+ * The real module's formatter, pinned to UTC so the assertions pin the real
+ * output shape without depending on the machine's timezone.
+ */
+function utcFormatWithTimezone(timestamp, formatOptions) {
+  const date = new Date(timestamp)
+  const formatter = new Intl.DateTimeFormat('en-US', Object.assign({
+    weekday: 'short', month: 'short', day: '2-digit', hour: '2-digit',
+    minute: '2-digit', hour12: true, timeZoneName: 'short', timeZone: 'UTC',
+  }, formatOptions || {}))
+  const values = {}
+  formatter.formatToParts(date).forEach((part) => {
+    if (part.type !== 'literal') values[part.type] = part.value
+  })
+  values.dayPeriod = String(values.dayPeriod || '').toUpperCase()
+  return { default: '', list: values }
+}
+
 /** A booking controller whose availability answers are scripted per config. */
 function slotController(slotsByConfig, calls) {
   return {
@@ -3160,20 +3178,7 @@ function slotController(slotsByConfig, calls) {
       if (answer instanceof Error) throw answer
       return answer
     },
-    // The real module's formatter, so the assertions pin the real output shape.
-    formatWithTimezone: (timestamp, formatOptions) => {
-      const date = new Date(timestamp)
-      const formatter = new Intl.DateTimeFormat('en-US', Object.assign({
-        weekday: 'short', month: 'short', day: '2-digit', hour: '2-digit',
-        minute: '2-digit', hour12: true, timeZoneName: 'short', timeZone: 'UTC',
-      }, formatOptions || {}))
-      const values = {}
-      formatter.formatToParts(date).forEach((part) => {
-        if (part.type !== 'literal') values[part.type] = part.value
-      })
-      values.dayPeriod = String(values.dayPeriod || '').toUpperCase()
-      return { default: '', list: values }
-    },
+    formatWithTimezone: utcFormatWithTimezone,
   }
 }
 
@@ -3703,4 +3708,565 @@ test('slot paint: a real slot that cannot be formatted is an error, not an empty
     'error',
     'calling this empty would send a reader to the wrong system entirely',
   )
+})
+
+/* ----------------------------------- WAVE-1 owner-path paint --------------- */
+
+/**
+ * The starter reading their OWN /hire page.
+ *
+ * `makeContext` publishes `starter_memberstack_id: 'mem_canary'`, so an owner
+ * is exactly the member carrying that id and a non-owner talent is the same
+ * member with any other one. That is the whole gate: the id this file feeds to
+ * `getStarterByMemberId` is a Memberstack id, so the two sides of the
+ * comparison live in one id space.
+ */
+const OWNER_MEMBER = {
+  id: 'mem_canary',
+  auth: { email: 'owner@example.com' },
+  customFields: { 'free-user': 'Owner', 'last-name': 'Member' },
+  planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' }],
+}
+
+/** The same talent, on somebody else's profile. */
+const OTHER_TALENT_MEMBER = Object.assign({}, OWNER_MEMBER, { id: 'mem_a_different_starter' })
+
+const OWNER_FREE_SETTINGS_PATH = '/starter/free-call-settings/get/v3'
+const OWNER_PAID_SETTINGS_PATH = '/starter/paid-call-settings/get/v3'
+
+/** The shapes the two settings endpoints actually return. */
+function ownerFreeSettings(overrides = {}) {
+  return Object.assign({
+    data_environment: 'production',
+    public_description: 'A free intro call',
+    readiness: {
+      calendar_connected: true,
+      availability_configured: true,
+      free_call_enabled: true,
+      bookable: true,
+    },
+    services: [{
+      config_id: 'cfg_owner_free',
+      grant_id: 'grant_owner',
+      title: 'Free Call',
+      duration: 30,
+      active: true,
+      revision: 3,
+      sync_status: 'synced',
+      updated_at: 1770000000000,
+      price_cents: 0,
+    }],
+  }, overrides)
+}
+
+function ownerPaidSettings(overrides = {}) {
+  return Object.assign({
+    stripe_environment: 'live',
+    readiness: {
+      calendar_connected: true,
+      availability_configured: true,
+      paid_call_enabled: true,
+      bookable: true,
+    },
+    services: [{
+      config_id: 'cfg_owner_paid',
+      title: 'Paid Consulting Call',
+      price_cents: 25000,
+      currency: 'USD',
+      duration: 60,
+      active: true,
+      revision: 5,
+      sync_status: 'synced',
+      updated_at: 1770000000000,
+      payment_environment: 'live',
+    }],
+  }, overrides)
+}
+
+/**
+ * A booking controller with the owner path's whole surface: the starter
+ * lookup, the shared authenticated bridge the settings reads go through, and
+ * scripted availability. Every settings request is recorded, so "a non-owner
+ * asks for nothing" is a countable assertion rather than an inference.
+ */
+function ownerController({
+  free = ownerFreeSettings(),
+  paid = ownerPaidSettings(),
+  slots = {},
+  requests = [],
+  calls = [],
+  grantId = 'grant_owner',
+} = {}) {
+  return {
+    requests,
+    calls,
+    getStarterByMemberId: async () => ({
+      nylas_grant_id: grantId,
+      nylas_grant_email: 'owner@example.com',
+    }),
+    // The booking controller's own export. Reusing it is what keeps the owner
+    // path on one auth stack instead of two.
+    authenticatedRequest: async (path, method) => {
+      requests.push({ path, method })
+      const answer = path === OWNER_FREE_SETTINGS_PATH
+        ? free
+        : path === OWNER_PAID_SETTINGS_PATH
+          ? paid
+          : new Error('unexpected path ' + path)
+      if (answer instanceof Error) throw answer
+      return answer
+    },
+    getNearestSlot: async (grant, configId, nowMs) => {
+      calls.push({ grantId: grant, configId, nowMs })
+      const answer = slots[configId]
+      if (answer instanceof Error) throw answer
+      return answer === undefined ? null : answer
+    },
+    formatWithTimezone: utcFormatWithTimezone,
+  }
+}
+
+function ownerContext(page, controller, extra = {}) {
+  return makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: OWNER_MEMBER,
+    freeController: controller,
+    ...extra,
+  })
+}
+
+/** A `[call-type-price]` on the free chooser row, as production authors it. */
+function addFreeChooserPrice(page) {
+  const el = makeElement('span', { 'call-type-price': '' })
+  el.textContent = PRICE_SENTINEL
+  page.freeModalOption.appendChild(el)
+  return el
+}
+
+/** A paid card carrying the CMS-bound price hook. */
+function addPaidPriceSurface(page, cmsText = '999') {
+  const surface = makeElement('div', { 'data-service-card': 'component', 'has-connection': 'paid' })
+  const price = makeElement('span', { 'data-millify': '', 'data-millify-raw': cmsText })
+  price.textContent = cmsText
+  surface.appendChild(price)
+  page.root.appendChild(surface)
+  return price
+}
+
+/**
+ * Everything about a node a viewer could notice, for the non-owner
+ * byte-identical check. Attributes are sorted so key order cannot make two
+ * equivalent trees compare unequal.
+ */
+function snapshotDom(node) {
+  const attributes = Object.keys(node.attributes).sort()
+    .map((name) => name + '=' + node.attributes[name])
+    .join('|')
+  return [
+    node.tag,
+    attributes,
+    node.classes.join(' '),
+    node.style.display === undefined ? '' : node.style.display,
+    node.children.length ? '' : node.textContent,
+  ].join('~') + '{' + node.children.map(snapshotDom).join(',') + '}'
+}
+
+test('owner paint: the owner sees canonical rates, not the CMS value', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const chooserFreePrice = addFreeChooserPrice(page)
+  const paidPrice = addPaidPriceSurface(page)
+
+  const context = ownerContext(page, ownerController())
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paidPrice.textContent, '250', 'the CMS said 999; canonical 25000 cents = $250')
+  assert.equal(paidPrice.getAttribute('data-millify'), '250')
+  assert.equal(
+    paidPrice.getAttribute('data-millify-raw'),
+    null,
+    'a stale raw value would make millify re-parse the formatted text',
+  )
+  assert.equal(chooserFreePrice.textContent, '$0', 'the free chooser row is the one intentional $0')
+})
+
+test('owner paint: the owner rate goes through the real shared millify', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const paidPrice = addPaidPriceSurface(page)
+
+  const context = ownerContext(page, ownerController({
+    paid: ownerPaidSettings({
+      services: [Object.assign(ownerPaidSettings().services[0], { price_cents: 550000 })],
+    }),
+  }))
+  context.__startersMillify = realMillify()
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paidPrice.textContent, '5.5K', 'the page formatter owns the display text')
+  assert.equal(paidPrice.getAttribute('data-millify'), '5500')
+})
+
+test('owner paint: both slot rows are painted from the owner configurations', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const controller = ownerController({
+    slots: { cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID },
+  })
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.cardFree.getAttribute('data-next-slot-state'), 'painted')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06')
+  assert.equal(hooks.cardPaid.getAttribute('data-next-slot-state'), 'painted')
+  assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.chooserPaid.textContent, '09:00AM on 03/06')
+  // The 24h production minimum lives inside the controller's own availability
+  // path and slot filter, so the owner path asks through the same export.
+  assert.deepEqual(
+    controller.calls.map((c) => c.configId).sort(),
+    ['cfg_owner_free', 'cfg_owner_paid'],
+  )
+  controller.calls.forEach((c) => assert.equal(c.grantId, 'grant_owner'))
+  assert.equal(context.requestedUrls.length, 0, 'the owner path must not fetch anything itself')
+})
+
+test('owner paint: the settings endpoints are the only owner source, asked once each', async () => {
+  const page = makePage()
+  addSlotHooks(page)
+  addContractDialog(page)
+  const controller = ownerController({
+    slots: { cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID },
+  })
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(
+    controller.requests.map((r) => r.path).sort(),
+    [OWNER_FREE_SETTINGS_PATH, OWNER_PAID_SETTINGS_PATH],
+  )
+  controller.requests.forEach((r) => assert.equal(r.method, 'GET'))
+  // get_bookable/v3 hard-rejects a non-brand ("Brand membership is required"),
+  // so reaching for it on this path would fail every owner by construction.
+  assert.ok(
+    !controller.requests.some((r) => String(r.path).includes('nylas_configurations')),
+    'the owner path must not touch the brand-gated configuration endpoint',
+  )
+})
+
+test('owner paint: an unbookable readiness asks for no availability and leaves the row alone', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const paidPrice = addPaidPriceSurface(page)
+  const controller = ownerController({
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: true,
+        availability_configured: false,
+        free_call_enabled: true,
+        bookable: false,
+      },
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: true,
+        availability_configured: false,
+        paid_call_enabled: true,
+        bookable: false,
+      },
+    }),
+    slots: { cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID },
+  })
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(controller.calls.length, 0, 'an unbookable service is never asked for availability')
+  assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL, 'the authored row is left exactly as found')
+  assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
+  assert.equal(hooks.cardFree.getAttribute('data-next-slot-state'), null)
+  assert.equal(paidPrice.textContent, '999', 'an unbookable service earns no rate paint either')
+})
+
+test('owner paint: a rejected settings lookup leaves the rows alone and the reveal still ran', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const paidPrice = addPaidPriceSurface(page)
+  const controller = ownerController({
+    free: Object.assign(new Error('free-call-settings failed (403)'), { status: 403 }),
+    paid: Object.assign(new Error('paid-call-settings failed (500)'), { status: 500 }),
+    slots: { cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID },
+  })
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+
+  assert.doesNotThrow(() => vm.runInContext(source, context))
+  await settle()
+
+  assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL, 'never "No available slots" for the owner')
+  assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
+  assert.equal(paidPrice.textContent, '999')
+  assert.equal(controller.calls.length, 0)
+  // The reveal is the thing the owner actually came for, and it completed.
+  assert.equal(page.servicesList.children[0].style.display, 'block')
+  assert.equal(context.emptyNavRefreshCalls.length >= 1, true)
+  assert.ok(
+    context.warnings.some((l) => l.includes('owner free-call settings lookup failed')),
+    'each failing endpoint says so once: ' + JSON.stringify(context.warnings),
+  )
+})
+
+test('owner paint: one failing endpoint does not cost the other its paint', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const paidPrice = addPaidPriceSurface(page)
+  const controller = ownerController({
+    paid: new Error('paid-call-settings failed (500)'),
+    slots: { cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID },
+  })
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05', 'free still paints')
+  assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL, 'paid is left exactly as found')
+  assert.equal(paidPrice.textContent, '999')
+  assert.deepEqual(controller.calls.map((c) => c.configId), ['cfg_owner_free'])
+})
+
+test('owner paint: an empty calendar never writes the no-slots copy over the owner row', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const controller = ownerController({
+    slots: { cfg_owner_free: null, cfg_owner_paid: new Error('availability 500') },
+  })
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // The owner is the one viewer who can tell an empty calendar from a broken
+  // lookup, and "No available slots" on their own profile sends them to fix
+  // availability settings that may be perfectly correct.
+  assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL)
+  assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
+  assert.equal(hooks.chooserFree.textContent, SLOT_SENTINEL)
+})
+
+test('owner paint: a controller with no availability export leaves every owner row alone', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const controller = ownerController()
+  delete controller.getNearestSlot
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+
+  assert.doesNotThrow(() => vm.runInContext(source, context))
+  await settle()
+
+  assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL)
+  assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
+})
+
+test('owner paint: a controller with no authenticated bridge stands down quietly', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const paidPrice = addPaidPriceSurface(page)
+  const controller = ownerController()
+  delete controller.authenticatedRequest
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+
+  assert.doesNotThrow(() => vm.runInContext(source, context))
+  await settle()
+
+  assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL)
+  assert.equal(paidPrice.textContent, '999')
+  assert.equal(page.servicesList.children[0].style.display, 'block', 'the reveal is untouched')
+})
+
+test('owner paint: more than one active service is a support case, not a guess', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const paidPrice = addPaidPriceSurface(page)
+  const base = ownerPaidSettings().services[0]
+  const controller = ownerController({
+    paid: ownerPaidSettings({
+      services: [
+        base,
+        Object.assign({}, base, { config_id: 'cfg_owner_paid_2', price_cents: 99900 }),
+      ],
+    }),
+  })
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paidPrice.textContent, '999', 'painting one at random would put an unagreed number on screen')
+  assert.ok(
+    context.warnings.some((l) => l.includes('multiple active paid-call services')),
+    'expected a reconciliation warning, got: ' + JSON.stringify(context.warnings),
+  )
+})
+
+test('owner paint: an inactive service is never painted', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const paidPrice = addPaidPriceSurface(page)
+  const controller = ownerController({
+    paid: ownerPaidSettings({
+      services: [Object.assign(ownerPaidSettings().services[0], { active: false })],
+    }),
+    slots: { cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID },
+  })
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(paidPrice.textContent, '999')
+  assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
+  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05', 'free is unaffected')
+})
+
+test('owner paint: a settings grant that disagrees with the starter record is reported, not used', async () => {
+  const page = makePage()
+  addSlotHooks(page)
+  addContractDialog(page)
+  const controller = ownerController({
+    free: ownerFreeSettings({
+      services: [Object.assign(ownerFreeSettings().services[0], { grant_id: 'grant_stale' })],
+    }),
+    slots: { cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID },
+  })
+
+  const context = ownerContext(page, controller)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  controller.calls.forEach((c) => assert.equal(c.grantId, 'grant_owner', 'the starter record wins'))
+  assert.ok(
+    context.warnings.some((l) => l.includes('grant does not match the starter record')),
+    'expected a mismatch warning, got: ' + JSON.stringify(context.warnings),
+  )
+})
+
+test('owner paint: a talent on someone else profile asks for nothing and paints nothing', async () => {
+  const page = makePage()
+  const hooks = addSlotHooks(page)
+  addContractDialog(page)
+  const chooserFreePrice = addFreeChooserPrice(page)
+  const paidPrice = addPaidPriceSurface(page)
+  const controller = ownerController({
+    slots: { cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID },
+  })
+
+  const context = ownerContext(page, controller, { member: OTHER_TALENT_MEMBER })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(controller.requests.length, 0, 'no settings request for a viewer who is not the owner')
+  assert.equal(controller.calls.length, 0, 'no availability request either')
+  assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL)
+  assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
+  assert.equal(chooserFreePrice.textContent, PRICE_SENTINEL)
+  assert.equal(paidPrice.textContent, '999')
+})
+
+test('owner paint: a non-owner talent gets byte-identical reveal behaviour', async () => {
+  // Run the same page twice for a talent who is NOT the owner: once against a
+  // controller that CAN do the owner path, and once against the pre-change
+  // capability set (no authenticated bridge, no availability export). If the
+  // owner gate holds, the two DOMs are indistinguishable.
+  const run = (controller) => {
+    const page = makePage()
+    addSlotHooks(page)
+    addContractDialog(page)
+    addFreeChooserPrice(page)
+    addPaidPriceSurface(page)
+    const context = ownerContext(page, controller, { member: OTHER_TALENT_MEMBER })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    return { page, context }
+  }
+
+  const capable = run(ownerController({
+    slots: { cfg_owner_free: SLOT_FREE, cfg_owner_paid: SLOT_PAID },
+  }))
+  const legacy = run((() => {
+    const controller = ownerController()
+    delete controller.authenticatedRequest
+    delete controller.getNearestSlot
+    return controller
+  })())
+  await settle()
+
+  assert.equal(
+    snapshotDom(capable.page.root),
+    snapshotDom(legacy.page.root),
+    'the owner paint must be invisible to every viewer who is not the owner',
+  )
+  assert.deepEqual(capable.context.warnings, legacy.context.warnings)
+})
+
+test('owner paint: a signed-in Brand still uses canonical discovery, not the settings endpoints', async () => {
+  const page = makePage()
+  addSlotHooks(page)
+  addContractDialog(page)
+  const requests = []
+  const calls = []
+  const controller = slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, calls)
+  controller.authenticatedRequest = async (path, method) => {
+    requests.push({ path, method })
+    return null
+  }
+
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    // A brand whose Memberstack id happens to equal the profile owner's is not
+    // a real account state, but it proves the gate is the id AND the role.
+    member: Object.assign({}, BRAND_MEMBER, { id: 'mem_canary' }),
+    freeController: controller,
+    paidController: { installPaidBookingController: () => true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(requests.length, 0, 'a brand never reaches the owner settings path')
+  assert.deepEqual(calls.map((c) => c.configId).sort(), ['cfg_free', 'cfg_paid'])
 })
