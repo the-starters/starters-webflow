@@ -43,6 +43,17 @@
   const PAGE_SIZE = 6
   const PROJECT_PAGE_SIZE = 12
   const PROJECT_INSTANCE_KEYS = ['dash-projects', 'dash-brand-projects']
+  /**
+   * Authored duplicate tiles are matched by their heading text, live tiles by
+   * `[bookings-section]`, so the two vocabularies need mapping explicitly. The keys
+   * are the only headings this script has ever hidden.
+   */
+  const DUPLICATE_SECTION_NAMES = { calls: 'calls', 'call requests': 'requests' }
+  /**
+   * Webflow's zero-width, absolutely positioned anchor divs that carry the
+   * `#…-section` ids the sticky dashboard sub-nav links to.
+   */
+  const SECTION_ANCHOR_SELECTOR = '.dash-main_anchor[id]'
   const STATUS_VARIANT_CLASSES = [
     'w-variant-34961dab-8ebb-e322-49a7-741a1936647a',
     'w-variant-89402c65-e26d-c236-91e7-76e9135a2d42',
@@ -1055,12 +1066,71 @@
     }, true)
   }
 
+  /**
+   * Moves the sticky sub-nav anchors out of an authored duplicate tile before the
+   * duplicate is hidden.
+   *
+   * The Designer put the dashboard's `#calls-section` anchor inside the *authored*
+   * Calls tile rather than inside the V3 `[bookings-section]` tile that replaces it.
+   * Hiding the duplicate with `display: none` therefore takes that id out of layout —
+   * it stops generating a box, `getClientRects()` returns nothing, and the browser
+   * has nowhere to send a fragment jump. The CALLS tab and every `#calls-section`
+   * deep link (the post-call review email CTA carries one) then land on whichever
+   * tile happens to sit at the current scroll position, which reads as "the tab does
+   * nothing and the Messages panel shows instead".
+   *
+   * The anchors are zero-width absolutely positioned divs whose negative offset is
+   * authored, so re-parenting one into the live tile keeps the landing position it
+   * was designed with.
+   *
+   * An id another element already owns is left where it is: two elements sharing an
+   * id would make `getElementById` pick whichever comes first in the document and
+   * reintroduce the same class of bug.
+   * @param {HTMLElement|null} source Tile about to be hidden.
+   * @param {HTMLElement|null} target Live `[bookings-section]` tile that replaces it.
+   * @returns {number} How many anchors moved.
+   */
+  function adoptSectionAnchors(source, target) {
+    if (!source || !target || source === target) return 0
+    if (typeof source.querySelectorAll !== 'function') return 0
+    if (typeof target.insertBefore !== 'function') return 0
+    let moved = 0
+    Array.prototype.slice
+      .call(source.querySelectorAll(SECTION_ANCHOR_SELECTOR))
+      .forEach(function (anchor) {
+        const id = clean(anchor && anchor.getAttribute && anchor.getAttribute('id'))
+        if (!id) return
+        if (document.getElementById(id) !== anchor) return
+        target.insertBefore(anchor, target.firstChild || null)
+        moved += 1
+      })
+    return moved
+  }
+
+  /** First live tile per `[bookings-section]` name, keyed lower-case. */
+  function liveSectionTiles() {
+    const tiles = {}
+    Array.prototype.slice
+      .call(document.querySelectorAll('.dash-main_tile-item[bookings-section]'))
+      .forEach(function (tile) {
+        const name = clean(tile.getAttribute('bookings-section')).toLowerCase()
+        if (name && !tiles[name]) tiles[name] = tile
+      })
+    return tiles
+  }
+
   function hideAuthoredDuplicates() {
+    const live = liveSectionTiles()
     document.querySelectorAll('.dash-main_tile-item').forEach(function (tile) {
       if (tile.hasAttribute('bookings-section')) return
       const heading = tile.querySelector('h1,h2,h3,h4,h5,h6')
       const label = clean(heading && heading.textContent).toLowerCase()
-      if (label === 'calls' || label === 'call requests') show(tile, false)
+      const name = DUPLICATE_SECTION_NAMES[label]
+      if (!name) return
+      // No live counterpart means nothing to hand the anchors to; the duplicate is
+      // still hidden, exactly as before, so the documented contract is unchanged.
+      adoptSectionAnchors(tile, live[name])
+      show(tile, false)
     })
   }
 
@@ -1658,6 +1728,8 @@
     memberMatchesProfile,
     normalizeBooking,
     profileValues,
+    adoptSectionAnchors,
+    hideAuthoredDuplicates,
     configureProjectWrappers,
     findProjectLoadMore,
     ensureProjectLoadMore,
