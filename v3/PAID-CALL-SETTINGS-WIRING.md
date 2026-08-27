@@ -189,6 +189,22 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - The Xano projection function remains the only writer to `freelancers_v3.Paid_Call_Enabled` and `Paid_Call_Rate` for this flow.
 - `scheduling-auth.js` authenticates only the three exact `/v3` endpoint paths. `scheduling-v3-stage.js` maps their reviewed unversioned names to those paths and blocks lookalikes.
 
+### Environment in the canonical GET payload
+
+`GET starter/paid-call-settings/get/v3` (`#2924`) answers with `stripe_environment` at the top
+level, validated to `test` or `live`, alongside `readiness` and `services[]`, and stamps
+`payment_environment` on each service. It does **not** return `data_environment` at either level.
+The payment environment is therefore the only environment authority this payload carries, and it is
+the one any consumer must check. The free endpoint's top-level `data_environment` has no counterpart
+here, so the two settings payloads are not interchangeable on this point.
+
+A consumer that needs a whole bookable-configuration shape has to fill `data_environment` from the
+host rather than from this answer. The `/hire/<slug>` owner path does exactly that, and it is the
+place that records why the owner's environment gate ends up one step weaker than a brand viewer's —
+see [Where the owner's canonical values come
+from](HIRE-PROFILE-WIRING.md#where-the-owners-canonical-values-come-from). If this endpoint ever
+starts returning `data_environment`, that carve-out is the thing to revisit before anything else.
+
 ## Release gate
 
 Do not activate this form until the paid-call reconciliation dry run has zero unexplained differences. Repair writes, provider calls, payment canaries, reminders, and email canaries require separate approval.

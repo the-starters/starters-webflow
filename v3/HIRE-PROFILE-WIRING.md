@@ -77,6 +77,7 @@ remain deferred (`paid-call-brand-payment.js`,
 | Notable Experience | everyone, incl. logged out | native Webflow CMS / Work Histories |
 | Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state · anonymous: closed · brand: accepted canonical configuration plus successful controller install | this file / authenticated Xano, Nylas, and Stripe |
+| Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
 | Freelance / Retainer rate cards | everyone | this file / Algolia record, cloned from the section's Default card |
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
@@ -104,9 +105,11 @@ missing and stands down if the namespace still cannot load.
 - Page embeds: `starter_memberstack_id`, `stripe_charges`, and the CMS-bound
   `[data-starter-xano-id]` carrier inside `.data-native-binding`
 - GitHub module: `window.StartersFreeCallBooking`. It owns
-  `getStarterByMemberId`, `getConfigs`, `getNearestSlot`, the Free chooser,
-  the authored calendar, guest controls, and authenticated canonical booking
-  command. `hire-profile.js` does not use the old bare booking globals.
+  `getStarterByMemberId`, `getConfigs`, `getNearestSlot`,
+  `authenticatedRequest` (the shared bridge the owner-path settings reads go
+  through), the Free chooser, the authored calendar, guest controls, and
+  authenticated canonical booking command. `hire-profile.js` does not use the
+  old bare booking globals.
 - jQuery `$` — used by the dropdown and anchor-scroll blocks only; each is
   individually guarded, so a missing jQuery costs those two behaviours and
   nothing else. The anchor utilities also ignore a bare `#` or an invalid hash
@@ -367,7 +370,9 @@ production, 5 minutes on staging — in both the window it queries and the filte
 it applies to the answer, so fetching availability here instead would silently
 drop it.
 
-**Both** painters key on the **installed** set, not the accepted one. A rejected
+**Both** painters key on the **installed** set, not the accepted one, on the
+canonical brand path. (The owner path has no installed set; it paints the
+records described under "The owner paints from their own settings".) A rejected
 or uninstallable call type keeps its structural hide, so painting it would waste
 the request, break the standing contract that an empty or rejected set never
 requests a nearest slot, and leave a canonical price sitting on a card nobody can
@@ -397,6 +402,12 @@ controller with no `getNearestSlot` writes the no-slots copy with
 belt-and-braces for a direct caller — discovery never reaches it, because no
 grant means no accepted config and every call surface is already closed.)
 
+The one carve-out is the owner call site, which passes `leaveRowOnDegrade` and
+keeps the authored row on the **fault** paths only (see "The owner never reads
+'No available slots'" below). An empty availability answer still writes the
+no-slots copy for every viewer, owner included, so a placeholder time never
+survives an answer the page can trust.
+
 A successful availability answer that cannot be **formatted** is `error`, never
 `empty`. That case is version skew — an older controller exporting
 `getNearestSlot` but no formatter — and labelling it "No available slots" would
@@ -410,13 +421,14 @@ partially landed — served markup still carries `11:00PM on 12/10` twice and `$
 in `call-type_price-text`, alongside one `00:00`. QA must therefore treat **both
 generations** as "unpainted".
 
-Nothing in the runtime pattern-matches them: a sentinel is by definition whatever
-has not been painted yet, so the writer simply always writes. It also never
-leaves one standing — an empty availability answer and a failed request both
-write `No available slots`, because showing an invented time is worse than
-admitting there is nothing to show. Each hook carries
-`data-next-slot-state="painted" | "empty" | "error"` so QA can tell the three
-apart without reading the copy.
+Nothing in the runtime pattern-matches them: a sentinel is by definition
+whatever has not been painted yet, so the writer simply always writes. It also
+never leaves one standing — an empty availability answer and a failed request
+both write `No available slots`, because showing an invented time is worse
+than admitting there is nothing to show. (The owner call site keeps the
+authored row on the failure half of that pair only; the empty answer is
+written for them too.) Each hook carries `data-next-slot-state="painted" |
+"empty" | "error"` so QA can tell the three apart without reading the copy.
 
 The rate cards also get their chip label from this file, and the two cards
 label differently. Freelance prices a unit, so it renders `/hour` under the
@@ -524,6 +536,134 @@ installed, its complete five-row native Designer-authored tree sits outside
 guest hook fails closed. The Paid controller owns the complete tree's
 Paid/Free/close/success visibility and reset lifecycle.
 
+## The owner paints from their own settings
+
+The non-brand branch of the booking block reveals the owner's call cards from
+live connection state and then **returns** — before `startersBooking_handler`,
+which is the only caller of the two painters. A starter opening their own
+`/hire/<slug>` therefore kept the stale CMS rate and the authored
+`00:00pm on 00/00` sentinel forever, on the same markup where every brand
+viewer saw canonical values.
+
+The gate is ownership, not role: the paint runs only when
+`MEMBER.id === FREELANCER_ID`. `FREELANCER_ID` is what this file feeds to
+`getStarterByMemberId`, whose Xano input is a Memberstack id, so both sides of
+that comparison live in one id space. A talent viewing **someone else's**
+profile is not an owner and gets the unchanged non-brand behaviour, byte for
+byte. The reveal itself is untouched for every viewer — the paint is layered on
+top of it and changes only what the revealed surfaces say.
+
+### Where the owner's canonical values come from
+
+The owner cannot read the brand path's source. `getConfigs` goes through
+`nylas_configurations/get_bookable/v3`, whose precondition hard-rejects a
+non-brand with `Brand membership is required`. The two settings endpoints the
+scheduling dashboard already uses are the owner's equivalent — `user_v3` auth,
+the starter derived from the member's own bearer token, and no brand gate at
+all:
+
+| Endpoint | Supplies |
+| --- | --- |
+| `GET starter/free-call-settings/get/v3` | `readiness`, the free `services[]`, and the availability `grant_id` |
+| `GET starter/paid-call-settings/get/v3` | `readiness` and the paid `services[]` with `price_cents` and `currency` |
+
+Both go through `authenticatedRequest`, the booking controller's own export, so
+the owner path stays on the one authenticated Xano bridge this page already
+uses rather than standing up a second auth stack for two call sites.
+
+Each answer maps to one record shaped exactly like an accepted configuration —
+`{is_paid, price_cents, config_id, duration, active, data_environment}`, plus
+`currency` and `payment_environment` on paid — so both painters and the
+admission rules keep a single record shape to reason about.
+`readiness.bookable` is the gate, and `active === true` the filter: a service
+nobody could book earns no rate paint and no availability request, the same
+rule the brand path applies by keying on its **installed** set. More than one
+active service for a type is a reconciliation case, not a choice, so that type
+is left alone with a warning rather than painted from whichever record came
+first.
+
+Every owner record then goes through `isBookableRecordShape`, the same
+admission rules `selectBookableConfigurations` runs over a brand viewer's
+records — host environment, and the free/paid price, currency and duration
+contracts described above — with one qualification on the paid data
+environment, described in the mapping notes below. `bookableEnvironments()` is
+the single reader for both. Readiness says a starter finished setting a
+service up; it does not say the service is shaped like something anybody could
+book, and a half-configured record that reaches only the owner's screen is the
+worst kind — the owner has no second view to notice it against. A free service
+priced above zero, a cross-environment record on staging, or a paid service
+quoted in the wrong currency is refused with a warning and leaves the authored
+row standing.
+
+Three shape details differ from `get_bookable/v3` and are handled at the
+mapping step, so the shared predicate itself never has to know the owner path
+exists.
+
+The settings payloads name a service's length as either `duration` or
+`duration_minutes` (the tolerance `free-call-settings.js` already applies).
+
+They report environment differently, and each payload's contract is owned by
+its own endpoint document: free always stamps `data_environment` at the top
+level ([Environment in the canonical GET
+payload](FREE-CALL-SETTINGS-WIRING.md#environment-in-the-canonical-get-payload)),
+while paid **reports no `data_environment` at all** ([Environment in the
+canonical GET
+payload](PAID-CALL-SETTINGS-WIRING.md#environment-in-the-canonical-get-payload)).
+Each environment an endpoint does report is checked against the host, so on a
+paid record that field is filled from the host rather than invented, and the
+paid record's environment authority is the `payment_environment` that endpoint
+does report, which is checked. This is the one place the owner gate is weaker
+than the brand gate. A free record missing `data_environment` fails closed
+here instead, on the strength of that guarantee: absence means the free
+contract changed upstream, not that the check should be skipped.
+
+Stamps are trimmed and lowercased on the record before the predicate compares
+them, matching how stamps are compared elsewhere in this repo. The predicate
+keeps comparing strictly, because loosening it would change what a **brand**
+viewer is shown. Fallbacks use `== null`, so an explicit Xano `null` and an
+absent key mean the same thing.
+
+**A revealed but not-yet-bookable owner keeps the authored row and the CMS
+rate, deliberately.** The reveal runs off calendar and Stripe connection state,
+so an owner mid-setup — calendar connected, availability not configured yet, or
+the call type still toggled off — sees their cards while `readiness.bookable`
+is still `false`. Their settings values are not stable enough to display at
+that point, so nothing is painted over the authored markup. The card is not
+hidden and the reveal is not changed; this is a gap in what the paint covers,
+not a new state.
+
+Availability is asked against the `nylas_grant_id` on the starter record the
+branch already fetched. The free settings payload carries its own `grant_id`;
+a disagreement between the two is warned about but does not change which grant
+is used.
+
+### The owner never reads "No available slots" for a lookup fault
+
+`paintNextAvailableSlots` takes an options argument, and the owner call site
+passes `leaveRowOnDegrade`. Every **fault** path — a failed settings lookup, an
+unbookable readiness, a missing availability export, a missing grant, a slot
+that cannot be formatted — leaves the authored row exactly as it found it,
+warns, and paints nothing.
+
+An **empty answer** is not a fault and is not covered by the option. When
+`getNearestSlot` resolves with nothing, the calendar really is booked out for
+the window, and that is information the owner is entitled to: the no-slots copy
+and `data-next-slot-state="empty"` are written for them exactly as for a brand
+viewer. So the "never leave a sentinel standing" invariant holds for the brand
+on every path and for the owner on the empty-answer path; only a genuine
+lookup fault leaves the owner's authored row alone.
+
+That carve-out is deliberate. For a brand viewer, a standing placeholder time
+is the worst outcome, so every degrade writes the no-slots copy. The owner is
+the one viewer for whom `No available slots` over a *broken lookup* is an
+accusation — it sends them to fix availability settings that may be perfectly
+correct. The brand call site omits the option and behaves exactly as it always
+has.
+
+Failure is quiet and total. Each settings endpoint catches its own rejection,
+so one 4xx costs that call type its paint and nothing else, and an outer catch
+means no throw on this path can reach the reveal that already ran.
+
 ## Inline Global Code cutover boundary
 
 The released Webflow component still contains legacy JavaScript across its
@@ -548,8 +688,9 @@ fault. Card rendering is verified on production.
 ## QA venue limits for the call-surface rules
 
 Both the canonical rate repaint and the next-slot paint are only observable to a
-**logged-in Brand**: `hire-profile.js` returns before booking discovery when
-there is no `MEMBER.id`, so every `[has-connection]` call card stays
+**logged-in** viewer — a Brand on the canonical path, or the profile's own
+starter on the owner path: `hire-profile.js` returns before booking discovery
+when there is no `MEMBER.id`, so every `[has-connection]` call card stays
 `display:none` for an anonymous viewer and neither writer ever runs. An anonymous
 prod or staging check that comes back clean has therefore not exercised them.
 
@@ -558,6 +699,12 @@ staging index holds no production starters, so there is no venue where a member
 session and a rendered call card meet. Machine verification of the logged-in
 half is impossible from this harness. Final acceptance is a console paste from a
 logged-in browser.
+
+The owner path is the tighter case of the same limit: it needs a session that is
+the starter whose profile is rendered, so it cannot be exercised by any brand
+sandbox member either, on either host. Its unit coverage in
+[`hire-profile.test.js`](hire-profile.test.js) is the whole automated venue;
+acceptance is a console paste from the starter's own logged-in browser.
 
 ## Not owned here — `No button group "step-1" in scope`
 

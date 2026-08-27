@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.406
+ * @release v1.59.411
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -334,9 +334,19 @@
       });
   }
 
-  /** Clears the sentinels when there is no way to look availability up at all. */
-  function standDownSlotSurfaces(configs, reason) {
-      console.warn('[hire-profile] ' + reason + '; next-slot rows fall back to the no-slots copy');
+  /**
+   * Clears the sentinels when there is no way to look availability up at all.
+   *
+   * `leaveRow` is the owner-path contract (see paintOwnerCallSurfaces): the
+   * starter reading their own profile is the one viewer for whom
+   * "No available slots" is an accusation rather than information — it points
+   * them at their own availability settings for what is really a lookup fault.
+   * They keep the authored row instead.
+   */
+  function standDownSlotSurfaces(configs, reason, leaveRow) {
+      console.warn('[hire-profile] ' + reason + '; next-slot rows ' +
+          (leaveRow ? 'keep their authored text' : 'fall back to the no-slots copy'));
+      if (leaveRow) return;
       ['free', 'paid'].forEach(function (type) {
           if (!recordForType(configs, type)) return;
           rememberSlot(type, noSlotsText(), 'error');
@@ -356,15 +366,42 @@
       paintedCallState.slots[type] = { text: text, state: state };
   }
 
-  function paintNextAvailableSlots(configs, grantId) {
-      // Both degrade paths clear the sentinel rather than returning early: the
-      // whole point of this writer is that a placeholder time never survives.
+  /**
+   * `options.leaveRowOnDegrade` opts a call site out of the no-slots fallback
+   * on the FAULT paths only — a failed lookup, a missing grant, a missing
+   * availability export, a slot that cannot be formatted. A successful answer
+   * that is genuinely empty is real information about the calendar, so it
+   * writes the no-slots copy for every viewer. Omitted — as the brand call
+   * site omits it — every path behaves as it always has.
+   */
+  function paintNextAvailableSlots(configs, grantId, options) {
+      const leaveRowOnDegrade = !!(options && options.leaveRowOnDegrade);
+
+      function writeNoSlots(type, state) {
+          rememberSlot(type, noSlotsText(), state);
+          paintSlotSurfaces(type, noSlotsText(), state);
+      }
+
+      // One place decides what a fault looks like for this call site, so the
+      // paths below cannot drift apart from each other.
+      function degradeSlot(type, state) {
+          if (leaveRowOnDegrade) return;
+          writeNoSlots(type, state);
+      }
+
+      // The fault paths clear the sentinel rather than returning early, unless
+      // the call site opted out: the whole point of this writer is that a
+      // placeholder time never survives an answer we can trust.
       if (!grantId) {
-          standDownSlotSurfaces(configs, 'no Nylas grant is available');
+          standDownSlotSurfaces(configs, 'no Nylas grant is available', leaveRowOnDegrade);
           return;
       }
       if (!freeCallBooking || typeof freeCallBooking.getNearestSlot !== 'function') {
-          standDownSlotSurfaces(configs, 'the booking controller cannot supply availability');
+          standDownSlotSurfaces(
+              configs,
+              'the booking controller cannot supply availability',
+              leaveRowOnDegrade
+          );
           return;
       }
 
@@ -379,8 +416,11 @@
               .then(function (slot) {
                   const seconds = Number(slot);
                   if (!Number.isFinite(seconds) || seconds <= 0) {
-                      rememberSlot(type, noSlotsText(), 'empty');
-                      paintSlotSurfaces(type, noSlotsText(), 'empty');
+                      // A successful answer with nothing in it is not a fault:
+                      // a fully booked calendar is the honest answer, and it is
+                      // written for the owner too. Only the fault paths honour
+                      // `leaveRowOnDegrade`.
+                      writeNoSlots(type, 'empty');
                       return;
                   }
                   const text = nextSlotText(seconds);
@@ -393,15 +433,15 @@
                   // empty calendar. Saying "No available slots" here would send
                   // whoever reads it to look at the wrong system entirely.
                   console.warn('[hire-profile] ' + type + ' slot could not be formatted; no time formatter is reachable');
-                  rememberSlot(type, noSlotsText(), 'error');
-                  paintSlotSurfaces(type, noSlotsText(), 'error');
+                  degradeSlot(type, 'error');
               })
               .catch(function (error) {
-                  // Never leave a placeholder time standing: showing an invented
-                  // slot is worse than admitting there is nothing to show.
+                  // A rejected lookup is a fault, so the owner call site keeps
+                  // its authored row; for every other viewer a placeholder time
+                  // never survives, because showing an invented slot is worse
+                  // than admitting there is nothing to show.
                   console.warn('[hire-profile] ' + type + ' availability lookup failed:', error);
-                  rememberSlot(type, noSlotsText(), 'error');
-                  paintSlotSurfaces(type, noSlotsText(), 'error');
+                  degradeSlot(type, 'error');
               });
       });
   }
@@ -414,11 +454,14 @@
 
           item.querySelectorAll('[booking-popup-open][data-type]').forEach(function (cta) {
               const type = cta.getAttribute('data-type');
-              const record = records.find(function (candidate) {
-                  if (type === 'paid') return candidate.is_paid === true;
-                  if (type === 'free') return candidate.is_paid === false;
-                  return false;
-              });
+              // Classified through the shared predicate so this lookup and the
+              // painters can never disagree about what a record is. The
+              // membership test stays: `recordForType` reads anything that is
+              // not paid as free, and a CTA carrying some third data-type must
+              // still match nothing.
+              const record = (type === 'free' || type === 'paid')
+                  ? recordForType(records, type)
+                  : null;
 
               if (record) {
                   cta.setAttribute('data-config', record.config_id);
@@ -490,9 +533,12 @@
   function syncCanonicalCallSurfaces(configs) {
       const records = Array.isArray(configs) ? configs : [];
       let changed = false;
+      // Same shared predicate as the painters and the chooser lookup, so one
+      // record set cannot be read as free by one of them and as nothing by
+      // another.
       const availability = {
-          free: records.some(function (record) { return record && record.is_paid === false; }),
-          paid: records.some(function (record) { return record && record.is_paid === true; }),
+          free: !!recordForType(records, 'free'),
+          paid: !!recordForType(records, 'paid'),
       };
 
       ['free', 'paid'].forEach(function (type) {
@@ -845,31 +891,60 @@
       return role === 'brand-free' || role === 'brand-paid' || role === 'legacy-brand';
   }
 
-  function selectBookableConfigurations(records) {
-      if (!Array.isArray(records)) return [];
-
+  /**
+   * The environments this host may book in, or null when the host is neither
+   * the Webflow test host nor production.
+   *
+   * One reader for the brand admission filter AND the owner's, so the two can
+   * never drift onto different environment rules.
+   */
+  function bookableEnvironments() {
       const isTestHost = location.hostname === 'the-starters-3-0.webflow.io';
       const isProductionHost = location.hostname === 'thestarters.com' ||
           location.hostname === 'www.thestarters.com';
-      if (!isTestHost && !isProductionHost) return [];
+      if (!isTestHost && !isProductionHost) return null;
+      return {
+          data: isTestHost ? 'test' : 'production',
+          payment: isTestHost ? 'test' : 'live',
+      };
+  }
 
-      const expectedDataEnvironment = isTestHost ? 'test' : 'production';
-      const expectedPaymentEnvironment = isTestHost ? 'test' : 'live';
+  /**
+   * The shape every record must satisfy before ANY surface may show it, for
+   * any viewer. `environments` comes from `bookableEnvironments()`.
+   *
+   * The owner path runs the same predicate over its own settings records:
+   * showing a starter a rate no brand viewer would ever see — a "free" call
+   * priced above zero, a cross-environment record on staging, a paid service
+   * quoted in the wrong currency — is a worse fault than leaving the CMS value
+   * standing, because the owner has no way to tell it is not what visitors get.
+   */
+  function isBookableRecordShape(record, environments) {
+      if (!record || !record.config_id || record.active !== true) return false;
+      if (!environments) return false;
+      if (record.data_environment !== environments.data) return false;
+      if (record.is_paid === true) {
+          const priceCents = Number(record.price_cents);
+          const duration = Number(record.duration);
+          return record.payment_environment === environments.payment &&
+              String(record.currency || '').toUpperCase() === 'USD' &&
+              Number.isInteger(priceCents) &&
+              priceCents >= 100 &&
+              duration === 60;
+      }
+      return record.is_paid === false &&
+          (record.price_cents == null || Number(record.price_cents) === 0) &&
+          (record.duration == null || Number(record.duration) === 30);
+  }
+
+  function selectBookableConfigurations(records) {
+      if (!Array.isArray(records)) return [];
+
+      const environments = bookableEnvironments();
+      if (!environments) return [];
+
       const active = records.filter(function (record) {
-          if (!record || !record.config_id || record.active !== true) return false;
-          if (record.data_environment !== expectedDataEnvironment) return false;
-          if (record.is_paid === true) {
-              const priceCents = Number(record.price_cents);
-              const duration = Number(record.duration);
-              return record.payment_environment === expectedPaymentEnvironment &&
-                  String(record.currency || '').toUpperCase() === 'USD' &&
-                  Number.isInteger(priceCents) &&
-                  priceCents >= 100 &&
-                  duration === 60;
-          }
-          return record.is_paid === false &&
-              (record.price_cents == null || Number(record.price_cents) === 0) &&
-              (record.duration == null || Number(record.duration) === 30);
+          return isBookableRecordShape(record, environments);
       });
       const configIds = new Set();
       const hasDuplicateConfigId = active.some(function (record) {
@@ -888,6 +963,234 @@
       // Keep Free first so the shared modal's nearest-slot preview remains
       // deterministic while each option still receives its own config ID.
       return free.concat(paid);
+  }
+
+  /* ---- owner-path paint ----
+     The non-brand branch in the booking IIFE reveals the owner's own call cards
+     from live connection state and RETURNS before `startersBooking_handler` —
+     the only caller of the two painters. A starter looking at their own /hire
+     page therefore kept the stale CMS rate and the authored `00:00pm on 00/00`
+     sentinel forever, while every brand viewer saw canonical values on the same
+     markup.
+
+     The owner cannot read the brand path's source. `getConfigs` goes through
+     the Nylas configuration endpoint, whose precondition hard-rejects a
+     non-brand ("Brand membership is required"). The two settings endpoints the
+     scheduling dashboard already uses are the owner's equivalent: `user_v3`
+     auth, the starter derived from the member's own bearer token, and no brand
+     gate at all. They are the canonical owner source. */
+
+  const OWNER_FREE_SETTINGS_PATH = '/starter/free-call-settings/get/v3';
+  const OWNER_PAID_SETTINGS_PATH = '/starter/paid-call-settings/get/v3';
+
+  /**
+   * The viewer IS the starter whose profile this is.
+   *
+   * `FREELANCER_ID` is what this file feeds to `getStarterByMemberId`, whose
+   * Xano input is a Memberstack id, so both sides of this comparison live in
+   * the same id space. A talent viewing SOMEONE ELSE's profile is not an owner
+   * and keeps the unchanged non-brand behaviour.
+   */
+  function isProfileOwner(member) {
+      const id = member && member.id;
+      return !!id && String(id) === String(FREELANCER_ID);
+  }
+
+  /**
+   * Same bridge, same API group, same error shape as every other authenticated
+   * call this page makes: `authenticatedRequest` is the booking controller's
+   * own export and it already carries the member bearer token. Reaching for
+   * `window.xanoAuthFetch` here would stand up a second auth stack for one
+   * call site.
+   */
+  function ownerSettings(path) {
+      if (!freeCallBooking || typeof freeCallBooking.authenticatedRequest !== 'function') {
+          return Promise.reject(new Error('the booking controller cannot make authenticated requests'));
+      }
+      try {
+          return Promise.resolve(freeCallBooking.authenticatedRequest(path, 'GET'));
+      } catch (error) {
+          // A bridge that throws SYNCHRONOUSLY — an unavailable
+          // `xanoAuthFetch` is raised that way — would otherwise escape this
+          // call's own rejection handler and cost BOTH call types their paint
+          // instead of one.
+          return Promise.reject(error);
+      }
+  }
+
+  /**
+   * The settings payloads name a service's length as either `duration` or
+   * `duration_minutes`. Same tolerance `free-call-settings.js` applies
+   * (`serviceDuration`, :562). The raw value is kept rather than coerced, so
+   * an absent duration stays absent and the admission rule's own `== null`
+   * tolerance still decides it.
+   */
+  function ownerServiceDuration(service) {
+      return service.duration === undefined || service.duration === null
+          ? service.duration_minutes
+          : service.duration;
+  }
+
+  /**
+   * Environment stamps are compared case-insensitively and trimmed everywhere
+   * else in this repo (`v3/README.md:2640`; sibling precedent `configStamp` in
+   * `v3/scheduling-availability-section.js:2264`). The shared admission
+   * predicate compares strictly, and the brand path must keep running it
+   * unchanged, so the OWNER's mapped record is normalized here instead —
+   * loosening the predicate would change what a brand viewer is shown.
+   *
+   * A null or absent stamp is passed through untouched. The free settings
+   * endpoint always stamps `data_environment` at the top level, so a missing
+   * one means the endpoint's contract changed upstream, and failing closed on
+   * it is the point.
+   */
+  function normalizeEnvironmentStamp(value) {
+      return value == null ? value : String(value).trim().toLowerCase();
+  }
+
+  /**
+   * One canonical owner record per call type, shaped exactly like the accepted
+   * configurations the brand path hands the painters, so both painters keep a
+   * single record shape to reason about.
+   *
+   * `readiness.bookable` is the gate. A service that is not bookable is not
+   * something any viewer could book either, so it earns no rate paint and no
+   * availability request — the same rule the brand path applies by keying on
+   * its INSTALLED set rather than its accepted one.
+   */
+  function ownerRecordFrom(settings, isPaid) {
+      const label = isPaid ? 'paid' : 'free';
+      if (!settings || !Array.isArray(settings.services)) return null;
+      if (!settings.readiness || settings.readiness.bookable !== true) return null;
+
+      const active = settings.services.filter(function (service) {
+          return service && service.active === true && service.config_id;
+      });
+      if (!active.length) return null;
+      // The settings dashboard treats more than one active service as a support
+      // case rather than a choice, and so does canonical discovery. Painting
+      // one of them at random would put a number on the page that no endpoint
+      // agrees with.
+      if (active.length > 1) {
+          console.warn('[hire-profile] multiple active ' + label +
+              '-call services require reconciliation; the owner ' + label + ' row was left alone');
+          return null;
+      }
+
+      const environments = bookableEnvironments();
+      const service = active[0];
+      // The two settings endpoints report environment differently from
+      // `get_bookable/v3`: the free payload carries `data_environment` at the
+      // top level, and the paid payload carries `stripe_environment` at the top
+      // level with `payment_environment` on each service. Each reported
+      // environment is checked against the host. `data_environment` is not
+      // something the PAID payload returns at either level, and its environment
+      // authority is the payment environment that IS returned, so that field is
+      // filled from the host rather than invented from a value we do not have.
+      //
+      // A `null` from Xano means the same thing as an absent key here, so both
+      // take the fallback — the same `== null` tolerance `ownerServiceDuration`
+      // applies to the two duration spellings.
+      const record = {
+          is_paid: isPaid,
+          price_cents: service.price_cents,
+          config_id: service.config_id,
+          duration: ownerServiceDuration(service),
+          active: true,
+          data_environment: normalizeEnvironmentStamp(
+              isPaid && settings.data_environment == null
+                  ? (environments && environments.data)
+                  : settings.data_environment
+          ),
+      };
+      if (isPaid) {
+          record.currency = service.currency;
+          record.payment_environment = normalizeEnvironmentStamp(
+              service.payment_environment == null
+                  ? settings.stripe_environment
+                  : service.payment_environment
+          );
+      }
+
+      // The same admission gate every brand viewer's records go through. An
+      // owner must never be shown a value that would be rejected before it
+      // could reach anybody else's screen.
+      if (!isBookableRecordShape(record, environments)) {
+          console.warn('[hire-profile] the owner ' + label +
+              '-call service did not pass the bookable admission rules; its row was left alone');
+          return null;
+      }
+      return record;
+  }
+
+  /**
+   * The grant to ask availability against.
+   *
+   * The starter record fetched in the owner branch is the authority — it is
+   * the same record the brand path books against. The free settings payload
+   * carries its own `grant_id`, so a disagreement between the two is worth
+   * saying out loud even though it does not change which one is used.
+   */
+  function ownerGrantId(freeSettings, starterGrantId) {
+      const services = freeSettings && Array.isArray(freeSettings.services)
+          ? freeSettings.services
+          : [];
+      const declared = services.map(function (service) {
+          return service && service.grant_id;
+      }).filter(Boolean)[0] || null;
+
+      if (declared && starterGrantId && declared !== starterGrantId) {
+          console.warn('[hire-profile] the free-call settings grant does not match the starter record; ' +
+              'availability was asked against the starter record');
+      }
+      return starterGrantId || declared || null;
+  }
+
+  /**
+   * Paints the owner's own rate and next-slot surfaces from their settings.
+   *
+   * Quiet and total on failure: the reveal has already run by the time this is
+   * called, and painting is a display improvement layered on top of it. Nothing
+   * here may cost the owner the cards they came to look at.
+   */
+  async function paintOwnerCallSurfaces(starterGrantId) {
+      if (!isProfileOwner(MEMBER)) return;
+
+      try {
+          const settings = await Promise.all([
+              ownerSettings(OWNER_FREE_SETTINGS_PATH).catch(function (error) {
+                  console.warn('[hire-profile] the owner free-call settings lookup failed:', error);
+                  return null;
+              }),
+              ownerSettings(OWNER_PAID_SETTINGS_PATH).catch(function (error) {
+                  console.warn('[hire-profile] the owner paid-call settings lookup failed:', error);
+                  return null;
+              }),
+          ]);
+
+          const records = [
+              ownerRecordFrom(settings[0], false),
+              ownerRecordFrom(settings[1], true),
+          ].filter(Boolean);
+          if (!records.length) return;
+
+          // Late hero and Services cards reach the owner too, so the re-run
+          // point gets the owner's canonical set exactly as it gets the brand's.
+          paintedCallState = { configs: records, slots: {} };
+          repaintCanonicalRateSurfaces(records);
+          // OWNER CONTRACT: a failed lookup, an unbookable readiness, a missing
+          // grant or a missing formatter leaves the authored row standing —
+          // writing "No available slots" over their own profile for what is
+          // really a lookup fault sends them to fix availability settings that
+          // are already correct. A successful but empty answer is not a fault:
+          // a fully booked calendar is written here exactly as it is for a
+          // brand viewer, so no placeholder time survives it.
+          paintNextAvailableSlots(records, ownerGrantId(settings[0], starterGrantId), {
+              leaveRowOnDegrade: true,
+          });
+      } catch (error) {
+          console.warn('[hire-profile] the owner call-surface paint stood down:', error);
+      }
   }
 
   // Park the beside-services calendar experiment. The live Hire experience
@@ -977,6 +1280,13 @@
                   qsa('[has-connection="paid"]').forEach((item) => item.style.display = "block");
               }
 
+              // Everything above decides only what the owner can SEE. Nothing
+              // in this branch repainted the rate or the next-slot row, so the
+              // owner's own profile kept the CMS rate and the sentinel that
+              // every brand viewer sees replaced. Fire and forget, like the
+              // brand path's slot paint: a slow settings answer must not hold
+              // up the reveal, and a failure leaves the reveal untouched.
+              paintOwnerCallSurfaces(grant_id);
               refreshEmptySectionNav();
               return;
           }
