@@ -33,9 +33,10 @@
  * existing submit owners. The configured identity-scoped mode resolves the
  * current member through the canonical route-guard role contract, claims Brand
  * and Talent Account Security, and guards the visible Talent edit-profile form.
- * A valid changed login email can save independently when other required
- * profile fields are incomplete; a valid full-profile submit changes the login
- * email first and then replays its Designer-authored Xano submission:
+ * A valid changed login email can save independently when Personal Details is
+ * invalid. When Personal Details is valid, the controller changes the login
+ * email first and then authorizes one replay of its Designer-authored Xano save;
+ * required fields in later sections do not block that replay:
  *   window.StartersBrandAccountConfig = { guardSecurityForm: 'identity' }
  * The legacy `brand` mode remains supported for a rollback-safe rollout.
  */
@@ -847,9 +848,9 @@
 
     // The authored profile controller handles button clicks directly, so even
     // a valid form does not produce the native submit event intercepted below.
-    // Own every real changed-email click first. An invalid profile can still
-    // save its login email independently; a valid profile replays the authored
-    // click after Memberstack accepts the identity change.
+    // Own every real changed-email click first. Invalid Personal Details can
+    // still save the login email independently; valid Personal Details replays
+    // the authored click after Memberstack accepts the identity change.
     form.addEventListener(
       'click',
       function (event) {
