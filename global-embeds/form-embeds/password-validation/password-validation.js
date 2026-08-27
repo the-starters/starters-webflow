@@ -24,6 +24,10 @@
 // On each checklist row inside the wrapper:
 //   starters-password-validation-rule="characters|special|capitalization|numbers"
 //   starters-password-validation-icon="valid" / "invalid"
+// Author the invalid icon visible and the valid icon hidden. A wired form has
+// both overwritten from the first paint, so the authoring only shows through
+// on a fail-open instance — where it is what makes the checklist read as a
+// plain unchecked list rather than a row of green ticks.
 
 (function () {
   if (window.__startersPasswordValidationInit) return;
@@ -38,6 +42,9 @@
 
   // Rule predicates. Adding a rule is one entry here plus one Webflow
   // attribute — the key IS the attribute suffix and the row's rule value.
+  // Every predicate must return false for the empty string: the checklist
+  // renders pass/fail from the first paint, so a rule that passes vacuously
+  // on '' would show pre-checked on a blank form.
   var RULES = {
     'characters': function (value, count) {
       return value.length >= count;
@@ -445,20 +452,16 @@
       return allPass;
     }
 
-    input.addEventListener('input', function () {
-      render();
-    });
+    input.addEventListener('input', render);
 
-    // Writing input.value fires no event, so a password manager or a script
-    // can leave the checklist showing a value the field no longer holds. These
-    // two are the real escape hatch: a natively disabled default submit button
-    // blocks implicit submission, so the user cannot reach the submit handler
-    // to have it recompute for them.
-    function revalidate() {
-      render();
-    }
-    input.addEventListener('focusout', revalidate);
-    input.addEventListener('change', revalidate);
+    // Autofill and password-manager paths are inconsistent: some fire `input`,
+    // some only `change`, some nothing until the field is left. Binding all
+    // three covers every variant that emits anything, and the blur re-checks
+    // the field afterwards. A purely programmatic write to input.value fires
+    // no event at all — nothing can catch that at write time, which is why the
+    // submit handler recomputes rather than trusting the last render.
+    input.addEventListener('change', render);
+    input.addEventListener('focusout', render);
 
     form.addEventListener('submit', function (event) {
       // Recompute FIRST, then adjudicate on what came back.

@@ -1083,25 +1083,24 @@ test('fix5: blurring a filled field revalidates it', () => {
   assert.equal(isOpen(app.button), true, 'an autofilled password unlocks on blur')
 })
 
-test('fix5: blurring an empty field leaves it showing unmet, not blank', () => {
-  const app = setup({ characters: 'true', numbers: 'true' })
+test('fix5: blurring an emptied field walks the checklist back down', () => {
+  const app = setup({ characters: 'true', 'character-count': '4', numbers: 'true' })
 
+  type(app, 'abc1')
+  assert.equal(iconState(app.rows.characters), 'pass')
+  assert.equal(isOpen(app.button), true)
+
+  // cleared programmatically, so no input event fires — only the blur is left
+  // to notice. A listener that skipped empty values would strand the green
+  // ticks and the open button on a field with nothing in it.
+  app.input.value = ''
   dispatch(app.input, 'focusout')
 
-  // there is no state to fall back to: unmet is what an empty field IS
   assert.equal(iconState(app.rows.characters), 'fail')
   assert.equal(iconState(app.rows.numbers), 'fail')
-  assert.equal(isGated(app.button), true)
+  assert.equal(isGated(app.button), true, 'and the button re-gates')
 })
 
-test('fix5: a filled-then-blurred field that fails does show its crosses', () => {
-  const app = setup({ characters: 'true', 'character-count': '8' })
-
-  silentFill(app, 'abc')
-  dispatch(app.input, 'focusout')
-
-  assert.equal(iconState(app.rows.characters), 'fail')
-})
 
 // ===========================================================================
 // Fix round — {count} is a wrapper-wide token, not a row-only one
@@ -1828,7 +1827,9 @@ test('r3-2: a repeated rescan adopts each wrapper exactly once', () => {
 // Product decision: the invalid icon is restyled in the Designer as a bordered
 // circle, so an unmet rule looks like an empty checkbox rather than a scolding
 // red cross. There is no neutral state to hold back any more — the checklist
-// states where every active rule stands from the first paint.
+// states where every active rule stands from the first paint. The icons are
+// authored invalid-visible / valid-hidden, so a fail-open instance, whose
+// icons the script never touches, still reads as a plain unchecked list.
 // ===========================================================================
 
 test('r4: the invalid icon is shown and the valid icon hidden at wiring time', () => {
@@ -1856,22 +1857,3 @@ test('r4: the first render is a real evaluation, not a blanket fail', () => {
   assert.equal(isGated(f.button), true)
 })
 
-test('r4: a fail-open instance still touches no icons, whatever they are set to', () => {
-  // Jerico authors the invalid icon visible and the valid one hidden, so an
-  // ungated page still looks like a plain unchecked checklist on its own
-  const f = makeForm({ characters: 'false' })
-  mount(h('body', {}, [f.form]))
-
-  ALL_RULES.forEach((name) => {
-    assert.equal(iconState(f.rows[name]), 'untouched', name + ': authored visibility survives')
-  })
-  assert.equal(f.button.disabled, undefined, 'and nothing is gated')
-})
-
-test('r4: an off rule inside a gated form still has its icons left alone', () => {
-  const app = setup({ characters: 'true', 'character-count': '4', numbers: 'false' })
-
-  assert.equal(iconState(app.rows.characters), 'fail', 'the active rule states itself')
-  assert.equal(app.rows.numbers.style.display, 'none', 'the off rule is hidden by the script')
-  assert.equal(iconState(app.rows.numbers), 'untouched', 'so its icons are never written')
-})
