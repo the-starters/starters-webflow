@@ -261,12 +261,15 @@ keeping the generic Book Call chooser unchanged.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
-native `Services` option. The stamped `data-sp-fill-category` is `Services`,
-spelled exactly as the authored input tags itself: `pre-fill-attr-val.js`
-resolves the target field by exact match first and case-insensitive match
-second, so a near miss like `service` matches on neither pass and the field is
-left unfilled with only a console warning. The two rate cards map to different
-options. Freelance takes `Freelance work`. Retainer prefers its own
+native `Services` option. The consumer here is [`project-form.js`](project-form.js),
+not the `freelancer-cms/pre-fill-attr-val.js` embed, which is not loaded on
+`/hire/<slug>`. The stamped `data-sp-fill-category` is therefore `service`,
+singular: `project-form.js` routes a category normalizing to `service` straight
+to the form's native `Services` field, and that native priority is what stops a
+stale tagged helper from taking the preset. `Services` would normalize to
+`services`, miss the route, and fall through to the tagged-helper lookup. The
+two rate cards map to different options. Freelance takes `Freelance work`.
+Retainer prefers its own
 `Monthly retainer` option and falls back to `Freelance work` when that option
 is absent, since `Monthly retainer` is gated in the Designer by
 `element-visibility="Retainer Enabled"` and an approximate service beats no

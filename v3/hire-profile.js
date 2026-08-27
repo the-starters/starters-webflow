@@ -875,11 +875,13 @@
 
           card.setAttribute('data-modal-trigger', 'generate-contract');
           card.setAttribute('data-sp-fill', 'button');
-          // Must byte-match the authored input's data-sp-fill-category tag:
-          // pre-fill-attr-val.js matches exact first, then case-insensitively
-          // with a warning, so 'service' misses the authored 'Services' on
-          // both passes and the field is silently left unfilled.
-          card.setAttribute('data-sp-fill-category', 'Services');
+          // Byte-exact 'service' (singular): the consumer on /hire/<slug> is
+          // v3/project-form.js, whose resolver sends normalizedName(category)
+          // === 'service' to the form's native Services field. Anything else,
+          // 'Services' included, normalizes past that route and falls through
+          // to the tagged-helper lookup the native priority exists to prevent.
+          // pre-fill-attr-val.js is NOT loaded on hire pages.
+          card.setAttribute('data-sp-fill-category', 'service');
           card.setAttribute('data-sp-fill-value', serviceValue);
           card.style.cursor = 'pointer';
       });

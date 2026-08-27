@@ -2782,11 +2782,19 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
   ]) {
     assert.equal(card.getAttribute('data-modal-trigger'), 'generate-contract', service)
     assert.equal(card.getAttribute('data-sp-fill'), 'button')
-    // Byte-exact: pre-fill-attr-val.js resolves the target field by comparing
-    // this against the authored input's own data-sp-fill-category. The old
-    // 'service' matched neither exactly nor case-insensitively against the
-    // authored 'Services', so the field was never filled.
-    assert.equal(card.getAttribute('data-sp-fill-category'), 'Services', service)
+    // Byte-exact 'service': v3/project-form.js (the engine actually loaded on
+    // /hire/<slug>) routes normalizedName(category) === 'service' to the form's
+    // native Services field. 'Services' normalizes to 'services', misses that
+    // route, and falls through to the tagged-helper lookup the native priority
+    // exists to prevent.
+    assert.equal(card.getAttribute('data-sp-fill-category'), 'service', service)
+    for (const wrong of ['Services', 'services']) {
+      assert.notEqual(
+        card.getAttribute('data-sp-fill-category'),
+        wrong,
+        `${wrong} would normalize past the native Services route in project-form.js`,
+      )
+    }
     assert.equal(card.getAttribute('data-sp-fill-value'), service)
   }
 
@@ -2859,7 +2867,7 @@ test('a retainer falls back to Freelance work when the native retainer option is
   )
   assert.ok(retainerCard, 'the retainer card must still render')
   assert.equal(retainerCard.getAttribute('data-modal-trigger'), 'generate-contract')
-  assert.equal(retainerCard.getAttribute('data-sp-fill-category'), 'Services')
+  assert.equal(retainerCard.getAttribute('data-sp-fill-category'), 'service')
   assert.equal(
     retainerCard.getAttribute('data-sp-fill-value'),
     'Freelance work',
