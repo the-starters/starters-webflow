@@ -2162,8 +2162,11 @@ uses a fixed `respond` scope. An ambiguous or malformed result keeps the key for
 safe replay. Only an exact nested result for the same booking clears the
 matching key: decline must be `declined`, cancel must be `cancelled`, a proposal
 must be `rescheduled`, and either response must be `confirmed`. The success
-panel remains visible until the participant closes the modal; closing it then
-refreshes the canonical list.
+panel replaces `[Starter]` and `[Brand]` in its leaf text nodes with the
+counterpart's canonical booking name, or `the other participant` when that name
+is blank. Other authored content stays unchanged. The panel remains visible
+until the participant closes the modal; closing it then refreshes the canonical
+list.
 
 `dashboard-call-media.js` owns read-only notetaker recording access. The action
 is eligible only for an owner-scoped canonical completed or archived booking
