@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-25
+Last updated: 2026-08-27
 Status: Call projections and Free Call behavior are GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
@@ -265,6 +265,25 @@ native `Services` option. Freelance and Retainer rate cards map to the authored
 `Freelance work` option. A missing or unmatched option fails closed. Logged-out
 cards keep the signup-attribution modal, and Talent or unknown roles do not get
 the Brand project trigger.
+
+The rate cards also get their chip label from this file, and the two cards
+label differently. Freelance prices a unit, so it renders `/hour` under the
+amount. Retainer quotes a starting price, so it renders `from` above the
+amount, as a from-price rather than a unit. Both use the same element, a
+`<p class="service-card_price-unit text-size-small line-height-100">` placed
+inside the price chip layout so it stacks centred with the amount and
+inherits the white chip text. Only the side differs, and the side carries the
+meaning: `from` below the price would misread as a unit.
+
+That label is anchored on the `[data-millify]` price hook, not on the chip
+Designer class. The paragraph is the nearest `<p>` above the hook and the
+layout is that paragraph parent, so a class rename cannot silently ship a
+chip with no label. A card with no price paragraph warns and renders without
+a label rather than failing. The title renders alone in
+`.service-card_title-wrapper`. The class `service-card_description` is
+deliberately not reused here because it carries `word-break: break-all` and
+the body-regular size. If the Designer ever authors a native label inside the
+chip, drop the script insert rather than letting both render.
 
 Free-call access keeps the V2 product rule: any signed-in Brand, including
 Brand Free, can select a free call without an upgrade. The controller resolves

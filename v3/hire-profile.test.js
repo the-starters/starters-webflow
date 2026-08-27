@@ -83,6 +83,17 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
     },
     add: (c) => el.classes.push(c),
   }
+  // Reflected like the real property: assigning it replaces the whole class
+  // list. renderRateCards builds its chip label <p> this way, so without the
+  // reflection the classes never reach classList and `.service-card_price-unit`
+  // would silently match nothing.
+  Object.defineProperty(el, 'className', {
+    get: () => el.classes.join(' '),
+    set: (v) => {
+      el.classes = String(v).split(/\s+/).filter(Boolean)
+    },
+    configurable: true,
+  })
   el.getAttribute = (n) =>
     Object.prototype.hasOwnProperty.call(el.attributes, n) ? el.attributes[n] : null
   el.setAttribute = (n, v) => {
@@ -117,6 +128,20 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
   el.prepend = (child) => {
     child.parentElement = el
     el.children.unshift(child)
+    return child
+  }
+  // Real semantics: a null reference appends, but a reference that is not a
+  // child throws rather than silently appending. That throw is load-bearing --
+  // it is what stops a mislocated "from" label from landing at the end of the
+  // chip and still reading as a pass.
+  el.insertBefore = (child, reference) => {
+    if (reference == null) return el.appendChild(child)
+    const at = el.children.indexOf(reference)
+    if (at < 0) {
+      throw new Error('insertBefore: the reference node is not a child of this element')
+    }
+    child.parentElement = el
+    el.children.splice(at, 0, child)
     return child
   }
   el.remove = () => {
@@ -160,6 +185,20 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
   return el
 }
 
+/**
+ * Index of a DIRECT child, refusing anything else.
+ *
+ * Ordering checks that lean on indexOf silently go vacuous the moment the node
+ * is nested one level deeper: indexOf returns -1, and "after the price" becomes
+ * trivially true against it. Throwing keeps a fixture that drifts away from
+ * production markup loud instead of quietly green.
+ */
+function childIndexOf(parent, node, label) {
+  const at = parent.children.indexOf(node)
+  if (at < 0) throw new Error(`childIndexOf: ${label} is not a direct child of the given parent`)
+  return at
+}
+
 /** A hire page with the elements the renderer looks for. */
 function makePage({
   index = 'Freelancers3.0-production',
@@ -168,6 +207,7 @@ function makePage({
   includeCallDataType = true,
   includeBookingButton = true,
   includeHeroCallCards = false,
+  includePriceParagraph = true,
 } = {}) {
   const root = makeElement('body')
 
@@ -235,15 +275,43 @@ function makePage({
     cardAttributes,
     ['service-card_component'],
   )
+  // Production nests the title in its own wrapper. The title renders alone in
+  // there: the rate-card unit line goes in the price chip, not beside it.
+  const cardTitleWrapper = makeElement('div', {}, ['service-card_title-wrapper'])
   const cardTitle = makeElement('div', { 'data-service-card-element': 'title' })
   cardTitle.textContent = includeFreeCard ? 'Free Call' : 'Paid Consulting Call'
-  card.appendChild(cardTitle)
+  cardTitleWrapper.appendChild(cardTitle)
+  card.appendChild(cardTitleWrapper)
   const bookingContent = makeElement('div', {}, ['service-card_content-wrapper'])
   bookingContent.appendChild(makeElement('div', { 'next-available-slot': '' }))
   card.appendChild(bookingContent)
-  card.appendChild(
-    makeElement('div', { 'data-millify': '', 'data-millify-raw': '0', 'data-millify-max': '5000' }),
-  )
+  // The green price chip, nested exactly as production authors it:
+  //   .service-card_price-card
+  //     > .service-card_price-card-layout   (centred column flex)
+  //       > p.text-size-large
+  //         > span "$"
+  //         > span[data-millify]
+  // The millify hook is a GRANDCHILD of the layout, not a direct child, so the
+  // renderer's walk from the hook up to the layout's own child is genuinely
+  // exercised and the ordering assertions cannot compare against a -1 index.
+  const priceCard = makeElement('div', {}, ['service-card_price-card'])
+  const priceCardLayout = makeElement('div', {}, ['service-card_price-card-layout'])
+  if (includePriceParagraph) {
+    const pricePara = makeElement('p', {}, ['text-size-large'])
+    const currency = makeElement('span')
+    currency.textContent = '$'
+    const amount = makeElement('span', {
+      'data-millify': '',
+      'data-millify-raw': '0',
+      'data-millify-max': '5000',
+    })
+    amount.textContent = '0'
+    pricePara.appendChild(currency)
+    pricePara.appendChild(amount)
+    priceCardLayout.appendChild(pricePara)
+  }
+  priceCard.appendChild(priceCardLayout)
+  card.appendChild(priceCard)
   list.appendChild(card)
 
   let nativeFreeTemplate = null
@@ -730,6 +798,78 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
       null,
       'the booking "Next Available" row must not survive on a rate card',
     )
+
+    // The label lives in the green price chip. The old title-sibling
+    // description is gone, and its class must not come back:
+    // service-card_description carries word-break:break-all and the
+    // body-regular size, neither of which suits a chip.
+    assert.equal(
+      card.querySelector('.service-card_description'),
+      null,
+      'the retired title-sibling description must not survive anywhere on the card',
+    )
+
+    const units = card.querySelectorAll('.service-card_price-unit')
+    assert.equal(units.length, 1, `${title} must render exactly one chip label`)
+    assert.ok(
+      units[0].classList.contains('text-size-small') &&
+        units[0].classList.contains('line-height-100'),
+      'the chip label must keep the small-text and tight-leading utilities',
+    )
+
+    // The millify hook is a span inside the price <p>, so ordering has to be
+    // measured against that paragraph, the layout's actual child. Comparing
+    // against the hook itself would compare against -1 and pass vacuously.
+    const priceEl = card.querySelector('[data-millify]')
+    const pricePara = priceEl.closest('p')
+    assert.ok(pricePara, 'the millify hook must sit inside a price paragraph')
+    assert.notEqual(
+      priceEl,
+      pricePara,
+      'the fixture must nest the millify hook inside the paragraph, as production does',
+    )
+
+    const layout = units[0].parentElement
+    assert.ok(
+      layout.classList.contains('service-card_price-card-layout'),
+      'the chip label must be placed inside the price chip layout',
+    )
+    assert.equal(
+      pricePara.parentElement,
+      layout,
+      'the chip label must share the price paragraph\'s layout box',
+    )
+
+    // Freelance prices a unit, so "/hour" reads under the amount. Retainer
+    // quotes a starting price, so "from" reads above it. Same element, and
+    // the side is the whole point: "from" under the price would misread as
+    // a unit, and "/hour" above it would misread as a qualifier.
+    const unitAt = childIndexOf(layout, units[0], 'the chip label')
+    const priceAt = childIndexOf(layout, pricePara, 'the price paragraph')
+    if (title === 'Freelance') {
+      assert.equal(units[0].textContent, '/hour', 'Freelance must carry its bare unit text')
+      assert.ok(
+        unitAt > priceAt,
+        'the Freelance unit must come after the price so it renders underneath',
+      )
+    } else {
+      assert.equal(units[0].textContent, 'from', 'Retainer must read as a from-price')
+      assert.ok(
+        unitAt < priceAt,
+        'the Retainer "from" must come before the price so it renders on top',
+      )
+    }
+
+    const titleEl = card.querySelector('[data-service-card-element="title"]')
+    assert.ok(
+      titleEl.parentElement.classList.contains('service-card_title-wrapper'),
+      'the title must stay inside the authored title wrapper',
+    )
+    assert.deepEqual(
+      titleEl.parentElement.children,
+      [titleEl],
+      'the title now renders alone in its wrapper',
+    )
   }
 
   const price = cloned[0].querySelector('[data-millify]')
@@ -741,12 +881,61 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
     'the authored ceiling is sized for the paid-call rate and must not be inherited by rate cards',
   )
 
+  // The hook is the inner amount span, so the rate must land there and leave
+  // the authored currency span alone. Writing to the paragraph instead would
+  // render the price but silently swallow the "$".
+  assert.equal(price.tag, 'span', 'the millify hook is the amount span, not the paragraph')
+  assert.equal(price.textContent, '5000', 'the rate must be written onto the millify span')
+  assert.equal(
+    price.closest('p').children[0].textContent,
+    '$',
+    'the authored currency span must survive the price write',
+  )
+
   // The strip must happen on the clone, never the source: the authored call
   // card's paid-call price is exactly what the ceiling guards.
   const template = page.servicesList.children.find(
     (child) => child.getAttribute('data-rate-card') === null,
   )
   assert.equal(template.querySelector('[data-millify]').getAttribute('data-millify-max'), '5000')
+})
+
+test('a price chip with no millify paragraph warns and still renders the cards', async () => {
+  // The chip label is anchored on [data-millify]. If Webflow ever ships a card
+  // whose price paragraph is missing or unhooked, that must cost the label
+  // only: the cards themselves still carry the rate, the title, and the
+  // signup attribution, so a cosmetic gap must never take the section down.
+  const page = makePage({ includePriceParagraph: false })
+  const context = makeContext({
+    page,
+    record: { rate: 135, 'retainer-rate': '5500', 'retainer-enabled': true },
+  })
+  vm.createContext(context)
+
+  assert.doesNotThrow(() => vm.runInContext(source, context))
+  await settle()
+
+  const cloned = page.servicesList.children.filter((c) => c.getAttribute('data-rate-card'))
+  assert.deepEqual(
+    cloned.map((c) => c.getAttribute('data-rate-card')),
+    ['freelance', 'retainer'],
+    'both rate cards must still render without their price paragraph',
+  )
+  for (const card of cloned) {
+    assert.equal(
+      card.querySelectorAll('.service-card_price-unit').length,
+      0,
+      'no chip label can be placed when there is no price paragraph to anchor it',
+    )
+    assert.equal(card.style.display, 'block', 'the card must still be revealed')
+    assert.equal(card.getAttribute('data-signup-trigger-element'), 'service')
+  }
+  assert.ok(
+    context.warnings.some(
+      (line) => line.includes('Rate services:') && line.includes('Price paragraph not found'),
+    ),
+    'expected a soft-fail warning, got: ' + JSON.stringify(context.warnings),
+  )
 })
 
 test('a retainer that is disabled or zero produces no retainer card', async () => {
