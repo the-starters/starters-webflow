@@ -1688,7 +1688,7 @@ test('visible Starter Edit Profile changes Memberstack email before replaying th
   assert.equal(submission.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth'],
   )
   assert.deepEqual(plain(environment.calls[2].payload), {
     email: 'talent-next@example.com',
@@ -1718,7 +1718,7 @@ test('visible Starter Edit Profile changes email independently when unrelated re
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.validityReports, 0)
@@ -1749,7 +1749,7 @@ test('independent Starter email accepts a click from nested submit content', asy
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
@@ -1785,7 +1785,7 @@ test('independent Starter email accepts the disabled authored submit wrapper cli
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
@@ -1855,14 +1855,15 @@ test('independent Starter email change preserves its validated click-time snapsh
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'getCurrentMember'],
   )
   assert.deepEqual(plain(environment.calls[2].payload), {
     email: 'validated@example.com',
   })
-  assert.deepEqual(plain(environment.calls[3].payload), {
-    email: 'validated@example.com',
-  })
+  assert.equal(
+    environment.calls.some((call) => call.method === 'sendMemberResetPasswordEmail'),
+    false,
+  )
 })
 
 test('valid Starter profile click changes Memberstack email before replaying the authored click', async () => {
@@ -1886,7 +1887,7 @@ test('valid Starter profile click changes Memberstack email before replaying the
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'getCurrentMember'],
   )
   assert.deepEqual(plain(environment.calls[2].payload), {
     email: 'talent-next@example.com',
@@ -1919,7 +1920,7 @@ test('valid Personal Details replay ignores invalid required fields in later ste
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeClicks, 1)
   assert.equal(starterProfileForm.nativeSubmits, 0)
@@ -1954,12 +1955,11 @@ test('valid Starter profile click does not save profile fields when the email ch
   assert.equal(starterProfileForm.wrapper.fail.style.display, 'block')
 })
 
-test('valid Starter profile click still saves profile fields after a reset email failure', async () => {
+test('valid Starter profile click updates email without requesting a password reset', async () => {
   const starterProfileForm = makeForm('starter-profile', {
     email: 'talent-old@example.com',
   })
-  const failure = new Error('password email service unavailable')
-  failure.status = 503
+  let resetCalls = 0
   const environment = loadController({
     buildForm: null,
     starterProfileForm,
@@ -1968,7 +1968,8 @@ test('valid Starter profile click still saves profile fields after a reset email
     config: { guardSecurityForm: 'identity' },
     routeGuard: { memberRole: () => 'talent' },
     sendMemberResetPasswordEmail: async () => {
-      throw failure
+      resetCalls += 1
+      throw new Error('Starter Edit Profile must not request a password reset')
     },
   })
 
@@ -1978,10 +1979,11 @@ test('valid Starter profile click still saves profile fields after a reset email
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'getCurrentMember'],
   )
+  assert.equal(resetCalls, 0)
   assert.equal(starterProfileForm.nativeClicks, 1)
-  assert.equal(starterProfileForm.wrapper.fail.style.display, 'block')
+  assert.equal(starterProfileForm.wrapper.fail.style.display, 'none')
   assert.deepEqual(plain(environment.starterReplayProofs[0].proof), {
     memberId: 'mem_sb_brand',
     email: 'talent-next@example.com',
@@ -2096,88 +2098,52 @@ test('email drift during the identity write blocks replay and remains changed', 
   assert.equal(starterProfileForm.nativeClicks, 1)
 })
 
-test('email drift during reset failure blocks replay and remains changed', async () => {
+test('session change during identity confirmation blocks replay and requires a fresh click', async () => {
   const starterProfileForm = makeForm('starter-profile', {
     email: 'talent-old@example.com',
   })
-  const reset = deferred()
+  const confirmation = deferred()
+  let reads = 0
+  let currentMember = {
+    id: 'mem_member_a',
+    auth: { email: 'talent-old@example.com' },
+  }
   const environment = loadController({
     buildForm: null,
     starterProfileForm,
-    currentEmail: 'talent-old@example.com',
     pathname: '/starter-edit-profile',
     config: { guardSecurityForm: 'identity' },
     routeGuard: { memberRole: () => 'talent' },
-    sendMemberResetPasswordEmail: async () => reset.promise,
+    getCurrentMember: async () => {
+      reads += 1
+      if (reads === 3) await confirmation.promise
+      return { data: currentMember }
+    },
+    updateMemberAuth: async (payload) => {
+      currentMember.auth.email = payload.email
+    },
   })
 
-  starterProfileForm.inputEmail('email-a@example.com')
+  starterProfileForm.inputEmail('member-a-next@example.com')
   starterProfileForm.clickSubmit()
   await flush()
-  starterProfileForm.inputEmail('email-b@example.com')
-  reset.reject(new Error('reset failed'))
+  currentMember = {
+    id: 'mem_member_b',
+    auth: { email: 'member-b@example.com' },
+  }
+  confirmation.resolve()
   await settle(12)
 
   assert.equal(starterProfileForm.nativeClicks, 0)
+  assert.equal(environment.starterReplayProofs.length, 0)
 
   starterProfileForm.clickSubmit()
   await settle(12)
 
   assert.deepEqual(
-    environment.calls
-      .filter((call) => call.method === 'updateMemberAuth')
-      .map((call) => plain(call.payload)),
-    [{ email: 'email-a@example.com' }, { email: 'email-b@example.com' }],
+    plain(environment.calls.filter((call) => call.method === 'updateMemberAuth').at(-1).payload),
+    { email: 'member-a-next@example.com' },
   )
-  assert.equal(starterProfileForm.nativeClicks, 1)
-})
-
-test('session change during reset completion blocks replay and requires a fresh click', async () => {
-  for (const resetOutcome of ['success', 'failure']) {
-    const starterProfileForm = makeForm('starter-profile', {
-      email: 'talent-old@example.com',
-    })
-    const reset = deferred()
-    let currentMember = {
-      id: 'mem_member_a',
-      auth: { email: 'talent-old@example.com' },
-    }
-    const environment = loadController({
-      buildForm: null,
-      starterProfileForm,
-      pathname: '/starter-edit-profile',
-      config: { guardSecurityForm: 'identity' },
-      routeGuard: { memberRole: () => 'talent' },
-      getCurrentMember: async () => ({ data: currentMember }),
-      updateMemberAuth: async (payload) => {
-        currentMember.auth.email = payload.email
-      },
-      sendMemberResetPasswordEmail: async () => reset.promise,
-    })
-
-    starterProfileForm.inputEmail('member-a-next@example.com')
-    starterProfileForm.clickSubmit()
-    await flush()
-    currentMember = {
-      id: 'mem_member_b',
-      auth: { email: 'member-b@example.com' },
-    }
-    if (resetOutcome === 'success') reset.resolve({ ok: true })
-    else reset.reject(new Error('reset failed'))
-    await settle(12)
-
-    assert.equal(starterProfileForm.nativeClicks, 0, resetOutcome)
-    assert.equal(environment.starterReplayProofs.length, 0, resetOutcome)
-
-    starterProfileForm.clickSubmit()
-    await settle(12)
-
-    assert.deepEqual(
-      plain(environment.calls.filter((call) => call.method === 'updateMemberAuth').at(-1).payload),
-      { email: 'member-a-next@example.com' },
-      resetOutcome,
-    )
-  }
 })
 
 test('authored validation rejection restores interception for a fresh member click', async () => {
@@ -2326,12 +2292,11 @@ test('programmatic Starter profile prefill does not activate email security inte
   assert.equal(starterProfileForm.validityReports, 0)
 })
 
-test('visible Starter Edit Profile replays after reset password email failure', async () => {
+test('visible Starter Edit Profile updates email without requesting a password reset', async () => {
   const starterProfileForm = makeForm('starter-profile', {
     email: 'talent-next@example.com',
   })
-  const sendError = new Error('password email service unavailable')
-  sendError.status = 503
+  let resetCalls = 0
   const environment = loadController({
     buildForm: null,
     starterProfileForm,
@@ -2340,7 +2305,8 @@ test('visible Starter Edit Profile replays after reset password email failure', 
     config: { guardSecurityForm: 'identity' },
     routeGuard: { memberRole: () => 'talent' },
     sendMemberResetPasswordEmail: async () => {
-      throw sendError
+      resetCalls += 1
+      throw new Error('Starter Edit Profile must not request a password reset')
     },
   })
 
@@ -2349,16 +2315,12 @@ test('visible Starter Edit Profile replays after reset password email failure', 
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth'],
   )
+  assert.equal(resetCalls, 0)
   assert.equal(starterProfileForm.nativeSubmits, 1)
-  assert.equal(
-    starterProfileForm.wrapper.failText.textContent,
-    'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.',
-  )
-  assert.deepEqual(plain(environment.tracked), [
-    { name: 'bridge_error', payload: { path: 'starter/account/email', status: 503 } },
-  ])
+  assert.equal(starterProfileForm.wrapper.fail.style.display, 'none')
+  assert.deepEqual(environment.tracked, [])
 })
 
 test('visible Starter Edit Profile replays an unchanged email without an auth mutation', async () => {
@@ -2431,7 +2393,7 @@ test('visible Starter Edit Profile blocks changed email for logged-out and unrea
   }
 })
 
-test('visible Starter Edit Profile sends at most one reset email for one real change', async () => {
+test('visible Starter Edit Profile never sends a reset email for a real email change', async () => {
   const starterProfileForm = makeForm('starter-profile', {
     email: 'talent-next@example.com',
   })
@@ -2451,7 +2413,7 @@ test('visible Starter Edit Profile sends at most one reset email for one real ch
 
   assert.equal(
     environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
-    1,
+    0,
   )
   assert.equal(
     environment.calls.filter((call) => call.method === 'updateMemberAuth').length,

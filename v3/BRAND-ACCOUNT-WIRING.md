@@ -103,16 +103,18 @@ email in Memberstack and then authorizes one replay of the existing authored
 button click. Required fields in other sections do not block that replay. When
 Personal Details is invalid, clicking submit can still save a natively valid,
 changed login email through Memberstack without submitting the invalid profile
-to Xano. The guard only owns this click after a trusted user input event changes
-the login email. The Xano profile prefill emits untrusted input events; those
-events update the email baseline but do not activate identity ownership. An
-unchanged email leaves every section click with the existing Xano profile
-handler. Keep `data-edit-submit` on the Designer-authored submit control and keep
-that control directly inside its existing wrapper. The invalid-profile state
-can disable pointer events on the control, so the controller recognizes the
-click that lands on that direct wrapper; it does not treat higher ancestors as
-submit targets. Invalid email input remains under the browser's native
-validation. Do not add a second form, remove the existing Xano handler, or move
+to Xano. This profile path updates only the Memberstack login email. It keeps
+the existing password and never requests a reset-password email. The guard only
+owns this click after a trusted user input event changes the login email. The
+Xano profile prefill emits untrusted input events; those events update the email
+baseline but do not activate identity ownership. An unchanged email leaves every
+section click with the existing Xano profile handler. Keep `data-edit-submit` on
+the Designer-authored submit control and keep that control directly inside its
+existing wrapper. The invalid-profile state can disable pointer events on the
+control, so the controller recognizes the click that lands on that direct
+wrapper; it does not treat higher ancestors as submit targets. Invalid email
+input remains under the browser's native validation. Do not add a second form,
+remove the existing Xano handler, or move
 the login-email input outside this form.
 
 ## Install order
@@ -274,8 +276,8 @@ sitewide:
   running the Xano profile save. When Personal Details is valid, the email is
   written first and the existing Designer-authored button click is replayed so
   its authenticated Xano save continues unchanged. Required fields in later
-  sections do not block this section-scoped replay. An unchanged email preserves
-  the authored profile handler without an auth mutation or reset email.
+  sections do not block this section-scoped replay. The profile path never sends
+  a reset email; an unchanged email also avoids the auth mutation.
 - `guardSecurityForm: 'brand'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
   `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. This is the
@@ -375,8 +377,9 @@ projection.
   second `updateMemberAuth`. That marker is per form and lives only for the page:
   after a reload the login email is already the target, nothing is attempted, and
   Forgot Password is the recovery path.
-- Account Security and the guarded Talent edit-profile form attempt that email
-  only after a changed login email has been saved successfully.
+- Account Security attempts its reset email only after a changed login email has
+  been saved successfully. The guarded Talent edit-profile form never requests
+  a reset email and keeps the member's existing password.
 - A failed or unconfirmed changed login-email write blocks the guarded Talent
   profile replay. Before replay, the controller re-reads Memberstack and requires
   the same stable member ID and normalized login email that initiated the save.
@@ -384,9 +387,12 @@ projection.
   pass native constraint validation and the normalized email to differ from the
   current Memberstack login email. It does not bypass or submit unrelated
   invalid profile fields.
-- No separate verification email is sent. For a changed login email, successful
-  redemption of the one reset/set-password link is the email-ownership proof.
-- Reset-email delivery is an external, non-idempotent browser side effect. The
+- The guarded Talent edit-profile form confirms ownership by reading back the
+  same stable member ID and exact normalized login email before profile replay.
+  It does not send a verification or password email. Build Account and Account
+  Security retain their reset/set-password email contract.
+- Reset-email delivery in Build Account and Account Security is an external,
+  non-idempotent browser side effect. The
   controller records the normalized target in an in-memory per-form marker
   before calling Memberstack and will not attempt that target again during the
   same page lifecycle, including after a timeout or lost response. It never

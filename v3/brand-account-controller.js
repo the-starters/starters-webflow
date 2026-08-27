@@ -18,8 +18,9 @@
  * Build Account does not send a password email when the member keeps the login
  * email they already authenticated with. If that email changes, Build Account
  * and Account Security attempt one reset email after the auth update succeeds.
- * Password email calls are never automatically retried; Memberstack's Forgot
- * Password flow is the recovery path when delivery cannot be confirmed.
+ * Starter Edit Profile updates only the login email and keeps the existing
+ * password. Password email calls are never automatically retried; Memberstack's
+ * Forgot Password flow is the recovery path when delivery cannot be confirmed.
  *
  * COMPLETION CONTRACT, SECOND HALF (2026-08-06). The durable answer is the
  * member field plus its Xano mirror, but the Memberstack webhook needs a moment
@@ -654,7 +655,7 @@
     return { memberId: member.id }
   }
 
-  async function submitSecurity(form, memberSnapshot, emailSnapshot) {
+  async function submitEmailUpdate(form, memberSnapshot, emailSnapshot, sendPasswordEmail) {
     var email = trim(emailSnapshot).toLowerCase()
     if (!EMAIL_PATTERN.test(email)) {
       var validationError = new Error('Enter a valid email address.')
@@ -665,8 +666,18 @@
     diagnosticRequestStarted(form)
     var member = memberSnapshot || await currentMember(client)
     var result = await updateEmailIfChanged(client, member, email)
-    if (result.changed) await sendResetPasswordEmailOnce(form, client, result.email)
+    if (result.changed && sendPasswordEmail) {
+      await sendResetPasswordEmailOnce(form, client, result.email)
+    }
     return result
+  }
+
+  function submitSecurity(form, memberSnapshot, emailSnapshot) {
+    return submitEmailUpdate(form, memberSnapshot, emailSnapshot, true)
+  }
+
+  function submitStarterProfileEmail(form, memberSnapshot, emailSnapshot) {
+    return submitEmailUpdate(form, memberSnapshot, emailSnapshot, false)
   }
 
   function bindForm(form, operation, submitter, redirectOnSuccess) {
@@ -903,7 +914,7 @@
             setMessage(form, 'idle', '')
             await workflowDiagnosticsReady
             diagnosticStart(form, 'starter/account/email')
-            await submitSecurity(form, member, email)
+            await submitStarterProfileEmail(form, member, email)
             rememberProfileEmail(email)
             var receipt = diagnosticComplete(form, {
               result: 'success',
@@ -947,20 +958,6 @@
                 form.reportValidity()
               }
               return
-            }
-            if (error && error.passwordEmailAttempted) {
-              rememberProfileEmail(email)
-              var confirmed = await starterProfileAuthorityConfirmed(submissionMemberId, email)
-              if (!confirmed) profileEmailChanged = true
-              if (confirmed && profileWasValid && profileEmailMatches(email)) {
-                replayStarterProfileClick(form, submit, {
-                  memberId: submissionMemberId,
-                  email: email,
-                  onRejected: function () {
-                    profileEmailChanged = true
-                  },
-                })
-              }
             }
             var receipt = diagnosticComplete(form, {
               result: 'failed',
@@ -1013,7 +1010,7 @@
             setMessage(form, 'idle', '')
             await workflowDiagnosticsReady
             diagnosticStart(form, 'starter/account/email')
-            await submitSecurity(form, member, email)
+            await submitStarterProfileEmail(form, member, email)
             rememberProfileEmail(email)
             diagnosticComplete(form, {
               result: 'success',
@@ -1030,10 +1027,6 @@
           })
           .catch(function (error) {
             if (!ownsSubmission) return
-            if (error && error.passwordEmailAttempted) {
-              rememberProfileEmail(email)
-              if (profileEmailMatches(email)) replayNativeSubmit(form, submitter)
-            }
             var receipt = diagnosticComplete(form, {
               result: 'failed',
               stage: error && error.code === 'validation' ? 'validation' : 'response',
