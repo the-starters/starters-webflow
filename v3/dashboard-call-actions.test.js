@@ -590,3 +590,164 @@ test('an ambiguous cancel retains the same idempotency key', async () => {
     global.crypto = originalCrypto
   }
 })
+
+function rescheduleBooking(overrides) {
+  return Object.assign(
+    {
+      booking_id: 'booking-test-3',
+      config_id: 'config-test-1',
+      grant_id: 'grant-test-1',
+      duration: 30,
+      data_environment: 'test',
+      status: 'confirmed',
+      start: Date.now() + 60 * 60 * 1000,
+      starter_data: { memberstack_id: 'mem_sb_starter' },
+      brand_data: { memberstack_id: 'mem_sb_brand' },
+    },
+    overrides || {},
+  )
+}
+
+test('reschedule proposal eligibility requires a booked future call with calendar identity', () => {
+  const booking = rescheduleBooking()
+  assert.equal(api.canProposeReschedule('starter', booking), true)
+  assert.equal(api.canProposeReschedule('brand', booking), true)
+  assert.equal(api.canProposeReschedule('guest', booking), false)
+  assert.equal(api.canProposeReschedule('starter', { ...booking, status: 'rescheduled' }), false)
+  assert.equal(api.canProposeReschedule('starter', { ...booking, start: Date.now() - 1000 }), false)
+  assert.equal(api.canProposeReschedule('starter', { ...booking, grant_id: '' }), false)
+  assert.equal(api.canProposeReschedule('starter', { ...booking, duration: 0 }), false)
+})
+
+test('only the counterpart can respond to a pending proposal', () => {
+  const booking = rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'starter' })
+  assert.equal(api.canRespondReschedule('brand', booking), true)
+  assert.equal(api.canRespondReschedule('starter', booking), false)
+  assert.equal(api.canRespondReschedule('brand', { ...booking, status: 'confirmed' }), false)
+  assert.equal(api.canRespondReschedule('brand', { ...booking, rescheduled_by: '' }), false)
+})
+
+test('a reschedule proposal posts slot, reason, and a durable propose key', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const requests = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000003'
+      },
+    }
+    global.xanoAuthFetch = async function (url, options) {
+      requests.push({ url, options })
+      return {
+        ok: true,
+        async json() {
+          return {
+            reschedule: {
+              booking_id: 'booking-test-3',
+              status: 'rescheduled',
+              revision: 3,
+            },
+            duplicate: false,
+          }
+        },
+      }
+    }
+    const start = Date.now() + 2 * 60 * 60 * 1000
+    const result = await api.proposeReschedule(
+      rescheduleBooking(),
+      'starter',
+      'Need a later time',
+      { start, end: start + 30 * 60 * 1000 },
+    )
+    assert.equal(result.reschedule.status, 'rescheduled')
+    assert.equal(requests.length, 1)
+    assert.match(requests[0].url, /\/booking\/reschedule\/propose\/v3$/)
+    const payload = JSON.parse(requests[0].options.body)
+    assert.equal(payload.rescheduled_reason, 'Need a later time')
+    assert.equal(payload.new_start, start)
+    assert.equal(payload.new_end, start + 30 * 60 * 1000)
+    assert.match(payload.idempotency_key, /^dashboard-reschedule-propose:/)
+    assert.equal(await api.proposeReschedule(rescheduleBooking(), 'starter', 'x', { start: 5, end: 5 }), null)
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('reschedule responses post the correct endpoint and succeed only on confirmed', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const requests = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000004'
+      },
+    }
+    global.xanoAuthFetch = async function (url, options) {
+      requests.push({ url, options })
+      const key = url.includes('/confirm/') ? 'reschedule_confirm' : 'reschedule_decline'
+      const body = {}
+      body[key] = { booking_id: 'booking-test-3', status: 'confirmed', revision: 4 }
+      body.duplicate = false
+      return { ok: true, async json() { return body } }
+    }
+    const booking = rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'starter' })
+    const confirmed = await api.respondReschedule('reschedule-confirm', booking, 'brand')
+    assert.equal(confirmed.reschedule_confirm.status, 'confirmed')
+    assert.match(requests[0].url, /\/booking\/reschedule\/confirm\/v3$/)
+    assert.match(JSON.parse(requests[0].options.body).idempotency_key, /^dashboard-reschedule-confirm:/)
+    const declined = await api.respondReschedule('reschedule-decline', booking, 'brand')
+    assert.equal(declined.reschedule_decline.status, 'confirmed')
+    assert.match(requests[1].url, /\/booking\/reschedule\/decline\/v3$/)
+    assert.equal(await api.respondReschedule('reschedule-confirm', booking, 'starter'), null)
+    assert.equal(await api.respondReschedule('cancel', booking, 'brand'), null)
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('an ambiguous reschedule response retains the same idempotency key', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const keys = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000005'
+      },
+    }
+    global.xanoAuthFetch = async function (_url, options) {
+      keys.push(JSON.parse(options.body).idempotency_key)
+      throw new Error('network outcome unknown')
+    }
+    const booking = rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'brand' })
+    await assert.rejects(
+      api.respondReschedule('reschedule-confirm', booking, 'starter'),
+      /network outcome unknown/,
+    )
+    await assert.rejects(
+      api.respondReschedule('reschedule-confirm', booking, 'starter'),
+      /network outcome unknown/,
+    )
+    assert.equal(keys.length, 2)
+    assert.equal(keys[1], keys[0])
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})

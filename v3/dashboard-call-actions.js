@@ -42,7 +42,41 @@
       successContent: 'cancelled',
       failureMessage: 'Canonical booking cancel failed',
     },
+    'reschedule-propose': {
+      path: '/booking/reschedule/propose/v3',
+      storagePrefix: 'starters:dashboard-reschedule-propose:v1:',
+      attemptPrefix: 'dashboard-reschedule-propose',
+      reasonField: 'rescheduled_reason',
+      reasonAttribute: 'booking-reschedule-reason',
+      responseKey: 'reschedule',
+      successStatus: 'rescheduled',
+      successContent: 'reschedule-proposed',
+      failureMessage: 'Canonical reschedule proposal failed',
+    },
+    'reschedule-confirm': {
+      path: '/booking/reschedule/confirm/v3',
+      storagePrefix: 'starters:dashboard-reschedule-confirm:v1:',
+      attemptPrefix: 'dashboard-reschedule-confirm',
+      reasonField: null,
+      responseKey: 'reschedule_confirm',
+      successStatus: 'confirmed',
+      successContent: 'reschedule-accepted',
+      failureMessage: 'Canonical reschedule confirmation failed',
+    },
+    'reschedule-decline': {
+      path: '/booking/reschedule/decline/v3',
+      storagePrefix: 'starters:dashboard-reschedule-decline:v1:',
+      attemptPrefix: 'dashboard-reschedule-decline',
+      reasonField: null,
+      responseKey: 'reschedule_decline',
+      successStatus: 'confirmed',
+      successContent: 'reschedule-declined',
+      failureMessage: 'Canonical reschedule response failed',
+    },
   }
+
+  const CALENDAR_MODULE_PATH =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/paid-call-brand-payment.js'
 
   function clean(value) {
     return String(value == null ? '' : value).trim()
@@ -95,9 +129,42 @@
     )
   }
 
+  function canProposeReschedule(role, booking, now) {
+    const start = Number(booking && booking.start)
+    const duration = Number(booking && booking.duration)
+    const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
+    return (
+      (role === 'starter' || role === 'brand') &&
+      bookingStatus(booking) === 'confirmed' &&
+      actorMemberId(role, booking) !== '' &&
+      clean(booking && booking.grant_id) !== '' &&
+      Number.isFinite(duration) &&
+      duration > 0 &&
+      Number.isFinite(start) &&
+      start > reference &&
+      bookingIdentified(booking)
+    )
+  }
+
+  function canRespondReschedule(role, booking) {
+    const proposer = clean(booking && booking.rescheduled_by).toLowerCase()
+    return (
+      (role === 'starter' || role === 'brand') &&
+      bookingStatus(booking) === 'rescheduled' &&
+      ['starter', 'brand'].includes(proposer) &&
+      proposer !== role &&
+      actorMemberId(role, booking) !== '' &&
+      bookingIdentified(booking)
+    )
+  }
+
   function canAct(kind, role, booking, now) {
     if (kind === 'decline') return canDecline(role, booking)
     if (kind === 'cancel') return canCancel(role, booking, now)
+    if (kind === 'reschedule-propose') return canProposeReschedule(role, booking, now)
+    if (kind === 'reschedule-confirm' || kind === 'reschedule-decline') {
+      return canRespondReschedule(role, booking)
+    }
     return false
   }
 
@@ -239,7 +306,7 @@
     return clearActionAttemptKey('cancel', booking, reason, role, value)
   }
 
-  function actionPayload(kind, role, booking, reason, idempotencyKey, now) {
+  function actionPayload(kind, role, booking, reason, idempotencyKey, now, extra) {
     const config = KINDS[kind]
     if (!config || !canAct(kind, role, booking, now)) return null
     const payload = {
@@ -247,11 +314,16 @@
       config_id: clean(booking && booking.config_id),
       idempotency_key: clean(idempotencyKey),
     }
-    payload[config.reasonField] = clean(reason)
-    if (
-      !payload[config.reasonField] ||
-      !validKindAttemptKey(kind, payload.idempotency_key)
-    ) return null
+    if (config.reasonField) {
+      payload[config.reasonField] = clean(reason)
+      if (!payload[config.reasonField]) return null
+    }
+    if (extra && typeof extra === 'object') {
+      Object.keys(extra).forEach(function (key) {
+        payload[key] = extra[key]
+      })
+    }
+    if (!validKindAttemptKey(kind, payload.idempotency_key)) return null
     return payload
   }
 
@@ -283,15 +355,16 @@
     return actionSucceeded('cancel', body, bookingId)
   }
 
-  async function submitAction(kind, role, booking, reason, now) {
+  async function submitAction(kind, role, booking, reason, now, extra, scope) {
     const config = KINDS[kind]
     if (
       !config ||
       !canAct(kind, role, booking, now) ||
       typeof global.xanoAuthFetch !== 'function'
     ) return null
-    const attemptKey = await actionAttemptKey(kind, booking, reason, role)
-    const payload = actionPayload(kind, role, booking, reason, attemptKey, now)
+    const attemptScope = clean(scope) || clean(reason)
+    const attemptKey = await actionAttemptKey(kind, booking, attemptScope, role)
+    const payload = actionPayload(kind, role, booking, reason, attemptKey, now, extra)
     if (!payload) return null
     const response = await global.xanoAuthFetch(
       XANO_SCHEDULING_BASE + config.path,
@@ -307,8 +380,32 @@
     if (!response.ok || !actionSucceeded(kind, body, payload.booking_id)) {
       throw new Error(config.failureMessage)
     }
-    await clearActionAttemptKey(kind, booking, reason, role, attemptKey)
+    await clearActionAttemptKey(kind, booking, attemptScope, role, attemptKey)
     return body
+  }
+
+  function proposeReschedule(booking, role, reason, slot, now) {
+    const start = Number(slot && slot.start)
+    const end = Number(slot && slot.end)
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      return Promise.resolve(null)
+    }
+    return submitAction(
+      'reschedule-propose',
+      role,
+      booking,
+      reason,
+      now,
+      { new_start: start, new_end: end },
+      clean(reason) + '|' + String(start),
+    )
+  }
+
+  function respondReschedule(kind, booking, role) {
+    if (kind !== 'reschedule-confirm' && kind !== 'reschedule-decline') {
+      return Promise.resolve(null)
+    }
+    return submitAction(kind, role, booking, '', undefined, null, 'respond')
   }
 
   function declineBooking(booking, reason) {
@@ -363,6 +460,10 @@
     if (action === 'switch-cancel') return { kind: 'cancel', step: 'open' }
     if (action === 'switch-cancel-reason') return { kind: 'cancel', step: 'reason' }
     if (action === 'cancel') return { kind: 'cancel', step: 'submit' }
+    if (action === 'reschedule') return { kind: 'reschedule-propose', step: 'open' }
+    if (action === 'reschedule-calendar') return { kind: 'reschedule-propose', step: 'calendar' }
+    if (action === 'confirm-reschedule') return { kind: 'reschedule-confirm', step: 'respond' }
+    if (action === 'reschedule-decline') return { kind: 'reschedule-decline', step: 'respond' }
     return null
   }
 
@@ -373,6 +474,10 @@
     'switch-cancel',
     'switch-cancel-reason',
     'cancel',
+    'reschedule',
+    'reschedule-calendar',
+    'confirm-reschedule',
+    'reschedule-decline',
   ]
     .map(function (action) {
       return (
@@ -436,6 +541,215 @@
     return true
   }
 
+  function loaderCacheSuffix(document) {
+    const loader =
+      document &&
+      typeof document.querySelector === 'function' &&
+      document.querySelector('script[src*="/v3/dashboard-calls.js"]')
+    const src = clean(loader && loader.getAttribute('src'))
+    const query = src.indexOf('?')
+    if (query === -1) return ''
+    const suffix = src.slice(query + 1)
+    return suffix ? '?' + suffix : ''
+  }
+
+  async function loadCalendarModule(document) {
+    function ready() {
+      const candidate = global.StartersPaidCallBrandPayment
+      return candidate && typeof candidate.mountPaidCalendar === 'function'
+        ? candidate
+        : null
+    }
+    if (ready()) return ready()
+    if (!document || typeof document.createElement !== 'function') return null
+    await new Promise(function (resolve) {
+      let script = document.querySelector(
+        'script[data-starters-reschedule-calendar], script[src*="/v3/paid-call-brand-payment.js"]',
+      )
+      if (!script) {
+        script = document.createElement('script')
+        script.src = CALENDAR_MODULE_PATH + loaderCacheSuffix(document)
+        script.defer = true
+        script.setAttribute('data-starters-reschedule-calendar', '')
+        ;(document.head || document.documentElement).appendChild(script)
+      }
+      script.addEventListener('load', resolve, { once: true })
+      script.addEventListener('error', resolve, { once: true })
+      global.setTimeout(resolve, 8000)
+    })
+    return ready()
+  }
+
+  function styledActionButton(document, modal, action, label) {
+    const template =
+      modal &&
+      typeof modal.querySelector === 'function' &&
+      (modal.querySelector('[booking-action-btn="cancel"]') ||
+        modal.querySelector('[booking-action-btn="decline"]'))
+    let button
+    if (template && typeof template.cloneNode === 'function') {
+      button = template.cloneNode(true)
+    } else {
+      button = document.createElement('button')
+      button.type = 'button'
+      button.style.padding = '12px 16px'
+      button.style.border = '1px solid #1f211d'
+      button.style.borderRadius = '6px'
+      button.style.background = '#1f211d'
+      button.style.color = '#ffffff'
+      button.style.cursor = 'pointer'
+    }
+    button.setAttribute('booking-action-btn', action)
+    button.removeAttribute('booking-card-action-btn')
+    button.hidden = false
+    button.style.display = ''
+    button.textContent = label
+    return button
+  }
+
+  function reschedulePanel(document, name, marker) {
+    const panel = document.createElement('div')
+    panel.setAttribute('booking-popup-content', name)
+    if (marker) panel.setAttribute('data-starters-reschedule-views', '')
+    panel.hidden = true
+    panel.style.display = 'none'
+    panel.style.flexDirection = 'column'
+    panel.style.gap = '12px'
+    panel.style.width = '100%'
+    return panel
+  }
+
+  function panelText(document, tag, text, muted) {
+    const node = document.createElement(tag)
+    node.textContent = text
+    if (muted) {
+      node.style.color = '#6f746d'
+      node.style.fontSize = '13px'
+      node.style.margin = '0'
+    }
+    return node
+  }
+
+  function ensureRescheduleViews(document, modal) {
+    if (
+      !document ||
+      !modal ||
+      typeof modal.querySelector !== 'function' ||
+      typeof document.createElement !== 'function'
+    ) return false
+    if (modal.querySelector('[data-starters-reschedule-views]')) return true
+    const sibling =
+      modal.querySelector('[booking-popup-content="cancel-reason"]') ||
+      modal.querySelector('[booking-popup-content="base"]')
+    const host = sibling && sibling.parentNode
+    if (!host || typeof host.appendChild !== 'function') return false
+
+    const reasonPanel = reschedulePanel(document, 'reschedule', true)
+    reasonPanel.appendChild(panelText(document, 'h3', 'Propose a new time'))
+    reasonPanel.appendChild(
+      panelText(
+        document,
+        'p',
+        'Your call keeps its current time until the other participant confirms the new one. Changes close to the start time can be disruptive, so add a short note about why.',
+        true,
+      ),
+    )
+    const reason = document.createElement('textarea')
+    reason.setAttribute('booking-reschedule-reason', '')
+    reason.rows = 3
+    reason.placeholder = 'Why do you need a new time?'
+    reason.style.width = '100%'
+    reason.style.padding = '10px'
+    reason.style.border = '1px solid #d7d9d2'
+    reason.style.borderRadius = '6px'
+    reasonPanel.appendChild(reason)
+    reasonPanel.appendChild(
+      styledActionButton(document, modal, 'reschedule-calendar', 'Continue'),
+    )
+    host.appendChild(reasonPanel)
+
+    const calendarPanel = reschedulePanel(document, 'reschedule-calendar')
+    calendarPanel.appendChild(panelText(document, 'h3', 'Pick a new time'))
+    const calendarHost = document.createElement('div')
+    calendarHost.setAttribute('booking-reschedule-calendar', '')
+    calendarHost.style.width = '100%'
+    calendarPanel.appendChild(calendarHost)
+    host.appendChild(calendarPanel)
+
+    const proposedPanel = reschedulePanel(document, 'reschedule-proposed')
+    proposedPanel.appendChild(panelText(document, 'h3', 'Reschedule request sent'))
+    proposedPanel.appendChild(
+      panelText(
+        document,
+        'p',
+        'We will notify you when the other participant responds. The call keeps its current time until then.',
+        true,
+      ),
+    )
+    host.appendChild(proposedPanel)
+
+    const acceptedPanel = reschedulePanel(document, 'reschedule-accepted')
+    acceptedPanel.appendChild(panelText(document, 'h3', 'New time confirmed'))
+    acceptedPanel.appendChild(
+      panelText(document, 'p', 'The call has been moved to the proposed time.', true),
+    )
+    host.appendChild(acceptedPanel)
+
+    const declinedPanel = reschedulePanel(document, 'reschedule-declined')
+    declinedPanel.appendChild(panelText(document, 'h3', 'Proposal declined'))
+    declinedPanel.appendChild(
+      panelText(document, 'p', 'The call keeps its original time.', true),
+    )
+    host.appendChild(declinedPanel)
+
+    const respondAnchor = modal.querySelector('[booking-action-btn="confirm-reschedule"]')
+    if (
+      respondAnchor &&
+      respondAnchor.parentNode &&
+      !modal.querySelector('[booking-action-btn="reschedule-decline"]')
+    ) {
+      const declineButton = styledActionButton(
+        document,
+        modal,
+        'reschedule-decline',
+        'Keep current time',
+      )
+      respondAnchor.parentNode.insertBefore(declineButton, respondAnchor.nextSibling)
+    }
+    return true
+  }
+
+  async function mountRescheduleCalendar(document, modal, booking, role, reason, restart) {
+    const container = modal && modal.querySelector('[booking-reschedule-calendar]')
+    if (!container) return false
+    container.textContent = 'Loading available times...'
+    const calendarModule = await loadCalendarModule(document)
+    if (!calendarModule) {
+      container.textContent = 'The calendar could not load. Please try again.'
+      return false
+    }
+    container.textContent = ''
+    await calendarModule.mountPaidCalendar({
+      container,
+      config: {
+        config_id: clean(booking && booking.config_id),
+        grant_id: clean(booking && booking.grant_id),
+        duration: Number(booking && booking.duration),
+      },
+      confirmText: 'Propose new time',
+      onConfirm: async function (slot) {
+        const result = await proposeReschedule(booking, role, reason, {
+          start: Number(slot && slot.start),
+          end: Number(slot && slot.end),
+        })
+        if (!result) throw new Error(KINDS['reschedule-propose'].failureMessage)
+        switchPopupContent(modal, KINDS['reschedule-propose'].successContent)
+        restartAfterModalClose(document, modal, restart)
+      },
+    })
+    return true
+  }
+
   function wire(options) {
     const settings = options || {}
     const document = settings.document || global.document
@@ -469,6 +783,11 @@
                 '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
               )))
         if (step.step === 'open') {
+          if (step.kind === 'reschedule-propose') {
+            ensureRescheduleViews(document, modal)
+            switchPopupContent(modal, 'reschedule')
+            return
+          }
           switchPopupContent(modal, config.firstContent)
           return
         }
@@ -476,7 +795,48 @@
           switchPopupContent(modal, config.reasonContent)
           return
         }
+        if (step.step === 'calendar') {
+          const proposalReason = reasonValue(modal, 'reschedule-propose')
+          if (!validateReason(proposalReason.field, proposalReason.value)) return
+          switchPopupContent(modal, 'reschedule-calendar')
+          mountRescheduleCalendar(
+            document,
+            modal,
+            booking,
+            settings.role,
+            proposalReason.value,
+            settings.restart,
+          ).catch(function (error) {
+            console.error(
+              '[dashboard-call-actions] reschedule calendar failed:',
+              error && error.message,
+            )
+          })
+          return
+        }
         if (button.__startersActionBusy) return
+        if (step.step === 'respond') {
+          button.__startersActionBusy = true
+          button.setAttribute('aria-busy', 'true')
+          button.setAttribute('aria-disabled', 'true')
+          try {
+            const result = await respondReschedule(step.kind, booking, settings.role)
+            if (!result) throw new Error(config.failureMessage)
+            ensureRescheduleViews(document, modal)
+            switchPopupContent(modal, config.successContent)
+            restartAfterModalClose(document, modal, settings.restart)
+          } catch (error) {
+            console.error(
+              '[dashboard-call-actions] ' + step.kind + ' failed closed:',
+              error && error.message,
+            )
+          } finally {
+            button.__startersActionBusy = false
+            button.setAttribute('aria-busy', 'false')
+            button.setAttribute('aria-disabled', 'false')
+          }
+          return
+        }
         const reason = reasonValue(modal, step.kind)
         if (!validateReason(reason.field, reason.value)) return
         button.__startersActionBusy = true
@@ -512,6 +872,11 @@
   const api = {
     canCancel,
     canDecline,
+    canProposeReschedule,
+    canRespondReschedule,
+    ensureRescheduleViews,
+    proposeReschedule,
+    respondReschedule,
     cancelAttemptKey,
     cancelBooking,
     cancelPayload,

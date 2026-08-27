@@ -2089,11 +2089,20 @@ available to the Starter or the Brand on a confirmed or rescheduled call whose
 start is still in the future; it sends `booking/cancel/v3` with a required
 reason and a durable `dashboard-cancel:` idempotency key, mirroring the decline
 contract. The decline chain now also exposes its authored reason step
-(`switch-decline-reason`), so the reason dialog is reachable. Reschedule fails
-closed at its delegated trigger until its canonical lifecycle contract is safe,
-so its authored dialog cannot open. Direct transcript access and every payment
-control also stay hidden. There is no hard 24-hour cutoff on cancel; late-change
-copy can warn the participant but must never block the action.
+(`switch-decline-reason`), so the reason dialog is reachable. Reschedule now
+follows a propose-then-confirm contract on the published environment-bound
+endpoints: the authored `reschedule` trigger opens a module-rendered reason
+step and then the shared availability calendar (loaded on demand from
+`paid-call-brand-payment.js`, reusing the same slot picker as /hire); the
+proposal posts `booking/reschedule/propose/v3` with a required reason, the
+selected slot, and a durable `dashboard-reschedule-propose:` key. Only the
+counterpart sees the authored `confirm-reschedule` action plus a module-added
+"Keep current time" action; they post `booking/reschedule/confirm/v3` or
+`booking/reschedule/decline/v3` with their own durable keys. The call keeps its
+current provider time until the counterpart confirms. Direct transcript access
+and every payment control also stay hidden. There is no hard 24-hour cutoff on
+cancel or reschedule; late-change copy can warn the participant but must never
+block the action.
 
 The Starter pending card exposes only the Designer-authored Accept lifecycle
 control while the canonical response window remains open. The details dialog

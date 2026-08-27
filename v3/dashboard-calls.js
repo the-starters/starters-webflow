@@ -938,6 +938,16 @@
           validDashboardModule(global.StartersDashboardCallActions) &&
           typeof global.StartersDashboardCallActions.canCancel === 'function' &&
           global.StartersDashboardCallActions.canCancel(role, booking, now)
+        const proposeReschedule =
+          (action === 'reschedule' || action === 'reschedule-calendar') &&
+          validDashboardModule(global.StartersDashboardCallActions) &&
+          typeof global.StartersDashboardCallActions.canProposeReschedule === 'function' &&
+          global.StartersDashboardCallActions.canProposeReschedule(role, booking, now)
+        const respondReschedule =
+          (action === 'confirm-reschedule' || action === 'reschedule-decline') &&
+          validDashboardModule(global.StartersDashboardCallActions) &&
+          typeof global.StartersDashboardCallActions.canRespondReschedule === 'function' &&
+          global.StartersDashboardCallActions.canRespondReschedule(role, booking)
         const media =
           action === 'notetaker-media' &&
           validDashboardModule(global.StartersDashboardCallMedia) &&
@@ -950,6 +960,8 @@
             accept ||
             decline ||
             cancel ||
+            proposeReschedule ||
+            respondReschedule ||
             media,
         )
       })
