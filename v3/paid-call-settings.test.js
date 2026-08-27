@@ -34,6 +34,9 @@ class El {
   matches(selector) {
     return selector.split(',').some((part) => {
       const candidate = part.trim()
+      if (candidate.startsWith('.')) {
+        return String(this.getAttribute('class') || '').split(/\s+/).includes(candidate.slice(1))
+      }
       const attr = candidate.match(/^\[([^=\]]+)(?:="([^"]+)")?\]$/)
       if (attr) {
         return this.getAttribute(attr[1]) !== null && (!attr[2] || this.getAttribute(attr[1]) === attr[2])
@@ -135,6 +138,11 @@ function buildDom(withRoot = true, cardMode = false, shared = false, priceTile =
     saveSpinner.style.display = 'none'
     save.append(saveIcon, saveSpinner)
     const statusOutput = new El('p', { 'data-call-settings-output': 'status' })
+    const nativeError = new El('div', { class: 'w-form-fail', 'aria-hidden': 'true' })
+    const nativeErrorMessage = new El('div')
+    nativeErrorMessage.textContent = 'Oops! Something went wrong while submitting the form.'
+    nativeError.append(nativeErrorMessage)
+    nativeError.style.display = 'none'
     const priceOutput = priceTile.canonical === false
       ? null
       : new El('p', { 'data-call-settings-output': 'price' })
@@ -180,7 +188,7 @@ function buildDom(withRoot = true, cardMode = false, shared = false, priceTile =
     disabledLabel.append(disabledVisual, disabled)
     enabledLabel.append(enabledVisual, enabled)
     form.append(disabledLabel, enabledLabel, title, price, buttonRow)
-    root.append(form)
+    root.append(form, nativeError)
     editInner.append(root)
     formWrapper.append(editInner)
     const freeWrapper = new El('div', { 'data-availability-element': 'call-form-wrapper' })
@@ -219,6 +227,8 @@ function buildDom(withRoot = true, cardMode = false, shared = false, priceTile =
       save,
       status: null,
       statusOutput,
+      nativeError,
+      nativeErrorMessage,
       priceOutput,
       authoredPriceCard,
       authoredPriceCaption,
@@ -262,6 +272,9 @@ function load(options = {}) {
     options.authoredPills === true,
     options.pillLabels || {},
   )
+  if (dom.statusOutput && options.withoutStatusOutput === true) {
+    delete dom.statusOutput.attributes['data-call-settings-output']
+  }
   const delayedSiblings = options.rootFirst === true && dom.card
     ? dom.card.children.filter((item) => item !== dom.formWrapper)
     : []
@@ -1199,6 +1212,60 @@ test('an expired session fails a Paid update closed before any POST', async () =
   assert.equal(result.dom.price.value, '')
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
   assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
+})
+
+test('a guarded Paid update uses the scoped native Webflow error block and clears it after retry', async () => {
+  let attempts = 0
+  const active = canonical({
+    services: [service({ price_cents: 100 })],
+    readiness: { paid_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    cardMode: true,
+    withoutStatusOutput: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ setState }) => {
+        attempts += 1
+        if (attempts === 1) {
+          return {
+            ok: false,
+            status: 400,
+            json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+          }
+        }
+        setState(active)
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ service: service({ price_cents: 100 }) }),
+        }
+      },
+    },
+  })
+  await settle()
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.equal(
+    result.dom.nativeErrorMessage.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'false')
+  assert.equal(result.dom.nativeError.getAttribute('role'), 'alert')
+  assert.equal(result.dom.formWrapper.style.display, 'flex')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+  assert.equal(result.dom.nativeErrorMessage.textContent, '')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')
 })
 
 test('an expired session fails a Paid disable closed before any POST', async () => {

@@ -183,6 +183,7 @@
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
     if (root) root.setAttribute('data-free-call-state', value)
+    if (value !== 'error') hideNativeError()
   }
 
   function emit(name, detail) {
@@ -320,7 +321,44 @@
 
   function setMessage(message) {
     const target = qs('[data-call-settings-output="status"]', uiScope || root)
-    if (target) target.textContent = message || ''
+    if (target) {
+      target.textContent = message || ''
+      return
+    }
+    const nativeError = findNativeError()
+    if (!nativeError) return
+    const text = document.documentElement.getAttribute(STATUS_ATTRIBUTE) === 'error'
+      ? String(message || '')
+      : ''
+    const content = nativeErrorContent(nativeError)
+    content.textContent = text
+    nativeError.style.display = text ? 'block' : 'none'
+    nativeError.setAttribute('aria-hidden', text ? 'false' : 'true')
+    if (text) nativeError.setAttribute('role', 'alert')
+  }
+
+  function findNativeError() {
+    const scope = uiScope || root
+    return (
+      (scope && qs('.w-form-fail', scope)) ||
+      (root && scope !== root ? qs('.w-form-fail', root) : null)
+    )
+  }
+
+  function nativeErrorContent(nativeError) {
+    return (
+      qs('[data-call-settings-error-message]', nativeError) ||
+      qs('div', nativeError) ||
+      nativeError
+    )
+  }
+
+  function hideNativeError() {
+    const nativeError = findNativeError()
+    if (!nativeError) return
+    nativeErrorContent(nativeError).textContent = ''
+    nativeError.style.display = 'none'
+    nativeError.setAttribute('aria-hidden', 'true')
   }
 
   function pillLabel(item) {
@@ -471,9 +509,9 @@
     const code = error && error.code
     if (code !== 'MEMBER_SESSION_MISSING' && code !== 'MEMBER_SCOPE_CHANGED') return false
     refreshVersion += 1
+    setStatus('error')
     clearRenderedState('Sign in to manage free calls.')
     setBusy(false)
-    setStatus('error')
     return true
   }
 
