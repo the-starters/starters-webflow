@@ -645,7 +645,10 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
-    if (modal.querySelector('[data-starters-reschedule-views]')) return true
+    if (modal.querySelector('[data-starters-reschedule-views]')) {
+      ensureRespondButtons(document, modal)
+      return true
+    }
     const sibling =
       modal.querySelector('[booking-popup-content="cancel-reason"]') ||
       modal.querySelector('[booking-popup-content="base"]')
@@ -710,20 +713,52 @@
     )
     host.appendChild(declinedPanel)
 
-    const respondAnchor = modal.querySelector('[booking-action-btn="confirm-reschedule"]')
+    ensureRespondButtons(document, modal)
+    return true
+  }
+
+  function ensureRespondButtons(document, modal) {
     if (
-      respondAnchor &&
-      respondAnchor.parentNode &&
-      !modal.querySelector('[booking-action-btn="reschedule-decline"]')
-    ) {
-      const declineButton = styledActionButton(
-        document,
-        modal,
-        'reschedule-decline',
-        'Keep current time',
+      !document ||
+      !modal ||
+      typeof modal.querySelector !== 'function' ||
+      typeof document.createElement !== 'function'
+    ) return false
+    if (modal.querySelector('[data-starters-reschedule-respond]')) return true
+    // The authored confirm-reschedule button lives inside a legacy hidden
+    // panel, so the counterpart needs base-view respond controls instead. The
+    // authored base reschedule trigger anchors their placement and styling.
+    const anchor = (function () {
+      const candidates = modal.querySelectorAll(
+        '[booking-action-btn="reschedule"], [booking-action-btn="switch-cancel"]',
       )
-      respondAnchor.parentNode.insertBefore(declineButton, respondAnchor.nextSibling)
-    }
+      for (let index = 0; index < candidates.length; index += 1) {
+        const base = candidates[index].closest
+          ? candidates[index].closest('[booking-popup-content]')
+          : null
+        if (base && base.getAttribute('booking-popup-content') === 'base') {
+          return candidates[index]
+        }
+      }
+      return null
+    })()
+    if (!anchor || !anchor.parentNode) return false
+    const accept = styledActionButton(
+      document,
+      modal,
+      'confirm-reschedule',
+      'Accept new time',
+    )
+    accept.setAttribute('data-starters-reschedule-respond', '')
+    const decline = styledActionButton(
+      document,
+      modal,
+      'reschedule-decline',
+      'Keep current time',
+    )
+    decline.setAttribute('data-starters-reschedule-respond', '')
+    anchor.parentNode.insertBefore(accept, anchor.nextSibling)
+    anchor.parentNode.insertBefore(decline, accept.nextSibling)
     return true
   }
 
