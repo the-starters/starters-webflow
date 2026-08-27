@@ -2821,6 +2821,10 @@ Whichever profile tab points at the section is hidden and revealed with it. The
 adapter reads the section's own `data-toc-section` key and toggles every
 `[data-hide-when-empty-id="<key>"]` element, which is the tab contract owned by
 [`utils/section-custom-toc/hide-empty-sections.js`](../utils/section-custom-toc/hide-empty-sections.js).
+The adapter carries the repo's release marker: an `@release vX.Y.Z` header
+comment and a matching `release` property on `window.StartersReviewsV3`, kept
+in sync by a unit test, so the served jsDelivr bytes are version-verifiable.
+
 Elements this adapter hides are stamped with the module-owned
 `data-reviews-v3-hidden` marker. It deliberately does not reuse that engine's
 `data-starters-section-hidden`, whose value stores the inline display the
