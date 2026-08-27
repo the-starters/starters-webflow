@@ -1316,6 +1316,71 @@ test('Free recovers automatically after a transient same-member token failure', 
   assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
 })
 
+test('Free preserves canonical paint and retries a transient rotated-scope GET', async () => {
+  let reads = 0
+  const active = canonical({
+    public_description: 'Original Free Call',
+    services: [service({ title: 'Original Free Call' })],
+    readiness: { free_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    initial: active,
+    routes: {
+      '/starter/free-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 2
+          ? { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+          : { ok: true, status: 200, json: async () => active }
+      },
+    },
+  })
+  await settle()
+
+  const transition = result.rotateAuthScope()
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Original Free Call')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+
+  result.flushTimers()
+  await transition
+  await settle()
+
+  assert.equal(reads, 3)
+  assert.equal(result.dom.title.value, 'Original Free Call')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+})
+
+test('logout supersedes a retrying Free rotated-scope GET', async () => {
+  let reads = 0
+  const active = canonical({ services: [service()], readiness: { free_call_enabled: true, bookable: true } })
+  const result = load({
+    initial: active,
+    routes: {
+      '/starter/free-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 1
+          ? { ok: true, status: 200, json: async () => active }
+          : { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+      },
+    },
+  })
+  await settle()
+
+  const staleTransition = result.rotateAuthScope()
+  await settle()
+  result.expireMember()
+  await result.notifyAuthChange(null)
+  result.flushTimers()
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
+  assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.')
+})
+
 test('Free Update is blocked while a null-auth canonical read is unresolved', async () => {
   const refresh = deferred()
   let reads = 0

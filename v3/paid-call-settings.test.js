@@ -2134,6 +2134,78 @@ test('Paid recovers automatically after a transient same-member token failure', 
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
 })
 
+test('Paid preserves canonical paint and retries a transient rotated-scope GET', async () => {
+  let reads = 0
+  const active = canonical({
+    services: [service({ title: 'Original Paid Call', price_cents: 100 })],
+    readiness: { paid_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 2
+          ? { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+          : { ok: true, status: 200, json: async () => active }
+      },
+    },
+  })
+  await settle()
+
+  const transition = result.rotateAuthScope()
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Original Paid Call')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+
+  result.flushTimers()
+  await transition
+  await settle()
+
+  assert.equal(reads, 3)
+  assert.equal(result.dom.title.value, 'Original Paid Call')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+})
+
+test('account switch supersedes a retrying Paid rotated-scope GET', async () => {
+  let memberAReads = 0
+  const result = load({
+    initial: canonical({ services: [service({ title: 'Member A Call', price_cents: 100 })] }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ member }) => {
+        if (member.id === 'member-b') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => canonical({
+              services: [service({ config_id: 'cfg-b', title: 'Member B Call', price_cents: 45000 })],
+            }),
+          }
+        }
+        memberAReads += 1
+        return memberAReads === 1
+          ? { ok: true, status: 200, json: async () => canonical({ services: [service({ title: 'Member A Call', price_cents: 100 })] }) }
+          : { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+      },
+    },
+  })
+  await settle()
+
+  const staleTransition = result.rotateAuthScope()
+  await settle()
+  await result.changeMember({ id: 'member-b' })
+  result.flushTimers()
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member B Call')
+  assert.equal(result.dom.price.value, 450)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+})
+
 test('Paid Update is blocked while a null-auth canonical read is unresolved', async () => {
   const refresh = deferred()
   let reads = 0

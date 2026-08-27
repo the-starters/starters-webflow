@@ -211,7 +211,7 @@
     return member
   }
 
-  async function xanoRequest(path, method, payload) {
+  async function xanoRequest(path, method, payload, expectedScope) {
     const authFetch = typeof window.__tsSchedulingAuthFetch === 'function'
       ? window.__tsSchedulingAuthFetch
       : window.__tsSchedulingAuthBridgeOwner === 'scheduling-auth' &&
@@ -221,7 +221,8 @@
     if (typeof authFetch !== 'function') {
       throw new Error('xanoAuthFetch is unavailable')
     }
-    assertAuthScope(await currentAuthScope())
+    const requestScope = expectedScope || sessionAuthScope
+    assertAuthScope(await currentAuthScope(), requestScope)
     const response = await authFetch(API_BASE + path, {
       method: method,
       headers: {
@@ -229,9 +230,9 @@
         'Content-Type': 'application/json',
       },
       body: payload === undefined ? undefined : JSON.stringify(payload),
-    }, sessionAuthScope)
+    }, requestScope)
     const data = await response.json().catch(function () { return null })
-    assertAuthScope(await currentAuthScope())
+    assertAuthScope(await currentAuthScope(), requestScope)
     if (!response.ok) {
       const serverMessage = data && (data.message || data.error)
       throw Object.assign(new Error(serverMessage || path + ' failed (' + response.status + ')'), {
@@ -249,8 +250,9 @@
     return window.__tsSchedulingAuthGetScope()
   }
 
-  function assertAuthScope(scope) {
-    if (!sessionAuthScope || scope !== sessionAuthScope) {
+  function assertAuthScope(scope, expectedScope) {
+    const requestScope = expectedScope || sessionAuthScope
+    if (!requestScope || scope !== requestScope) {
       throw Object.assign(new Error('Member session changed during free-call request'), {
         code: 'MEMBER_SCOPE_CHANGED',
       })
@@ -661,8 +663,8 @@
     return value
   }
 
-  async function readCanonicalSettings() {
-    const value = await xanoRequest('/starter/free-call-settings/get/v3', 'GET')
+  async function readCanonicalSettings(expectedScope) {
+    const value = await xanoRequest('/starter/free-call-settings/get/v3', 'GET', undefined, expectedScope)
     if (!value || !Array.isArray(value.services) || !value.readiness) {
       throw new Error('Free-call settings reader returned an invalid response')
     }
@@ -847,10 +849,18 @@
         const scope = await currentAuthScope()
         if (authTransitionPending !== transition) return null
         if (scope === sessionAuthScope) return settings
-        return loadSession(notifiedMember, false)
+        const canonical = await readCanonicalSettings(scope)
+        if (
+          authTransitionPending !== transition ||
+          notifiedMember.id !== sessionMemberId ||
+          !settings
+        ) return null
+        sessionAuthScope = scope
+        prerequisiteRefreshQueued = false
+        return render(canonical)
       } catch (error) {
         if (authTransitionPending !== transition) return null
-        if (failClosedSession(error)) return null
+        if (error && error.code !== 'MEMBER_SCOPE_CHANGED' && failClosedSession(error)) return null
         setStatus('error')
         setMessage('Free-call settings are reconnecting. Update will resume automatically.')
         setActionEnabled(action('save'), false)

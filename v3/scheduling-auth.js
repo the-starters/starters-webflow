@@ -140,6 +140,8 @@
   let sessionScope = {}
   let authReconciliation = Promise.resolve()
   let wiredMemberstack = null
+  let observedMemberstackToken = null
+  let hasObservedMemberstackToken = false
 
   function schedulingUrl(input) {
     let rawUrl
@@ -185,6 +187,25 @@
     tokenRequest = null
   }
 
+  function observeMemberstackToken(memberstackToken) {
+    if (!hasObservedMemberstackToken) {
+      hasObservedMemberstackToken = true
+      observedMemberstackToken = memberstackToken
+      return
+    }
+    if (observedMemberstackToken === memberstackToken) return
+    observedMemberstackToken = memberstackToken
+    resetSession()
+  }
+
+  async function awaitLatestAuthReconciliation() {
+    let pending
+    do {
+      pending = authReconciliation
+      await pending
+    } while (pending !== authReconciliation)
+  }
+
   function reconcileAuthChange() {
     const memberstack = window.$memberstackDom
     authReconciliation = authReconciliation.catch(function () {}).then(async function () {
@@ -194,11 +215,7 @@
       } catch (error) {
         memberstackToken = null
       }
-      const scopedToken = xanoAuthTokenMemberstackToken ||
-        (tokenRequest && tokenRequest.memberstackToken)
-      if (!memberstackToken || (scopedToken && scopedToken !== memberstackToken)) {
-        resetSession()
-      }
+      observeMemberstackToken(memberstackToken)
     })
     return authReconciliation
   }
@@ -215,7 +232,7 @@
   }
 
   async function getXanoAuthToken(options) {
-    await authReconciliation
+    await awaitLatestAuthReconciliation()
     const forceRefresh = Boolean(options && options.forceRefresh)
     const memberstack = window.$memberstackDom
     if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
@@ -223,18 +240,10 @@
     }
     wireAuthChanges()
 
-    let generation = sessionGeneration
     const memberstackToken = await memberstack.getMemberCookie()
-    assertSessionGeneration(generation)
+    observeMemberstackToken(memberstackToken)
     if (!memberstackToken) throw new Error('No Memberstack session')
-
-    if (
-      xanoAuthTokenMemberstackToken &&
-      xanoAuthTokenMemberstackToken !== memberstackToken
-    ) {
-      resetSession()
-      generation = sessionGeneration
-    }
+    const generation = sessionGeneration
     if (forceRefresh) {
       tokenRevision += 1
       xanoAuthToken = null
@@ -289,7 +298,7 @@
   }
 
   async function getAuthScope() {
-    await authReconciliation
+    await awaitLatestAuthReconciliation()
     await getXanoAuthToken()
     return sessionScope
   }
@@ -301,22 +310,26 @@
   }
 
   async function fetchWithToken(request, token, generation, expectedScope) {
+    await awaitLatestAuthReconciliation()
+    assertSessionGeneration(generation)
     assertExpectedScope(expectedScope)
     let response = await originalFetch(withAuthorization(request, token))
-    await authReconciliation
+    await awaitLatestAuthReconciliation()
     assertSessionGeneration(generation)
     if (response.status !== 401) return response
 
     try {
       token = await getXanoAuthToken({ forceRefresh: true })
     } catch (error) {
+      await awaitLatestAuthReconciliation()
       assertSessionGeneration(generation)
       return response
     }
+    await awaitLatestAuthReconciliation()
     assertSessionGeneration(generation)
     assertExpectedScope(expectedScope)
     response = await originalFetch(withAuthorization(request, token))
-    await authReconciliation
+    await awaitLatestAuthReconciliation()
     assertSessionGeneration(generation)
     return response
   }
@@ -327,7 +340,7 @@
       return originalFetch(request)
     }
 
-    await authReconciliation
+    await awaitLatestAuthReconciliation()
     const generation = sessionGeneration
     const token = await getXanoAuthToken()
     assertSessionGeneration(generation)
