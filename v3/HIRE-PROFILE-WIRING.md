@@ -292,8 +292,57 @@ is untouched (a separate post-launch item).
 `millify` only re-processes **added** nodes, so setting `data-millify` on an
 element already in the DOM would never repaint on its own. The repaint writes the
 canonical value, drops the stale `data-millify-raw` (which would otherwise make
-millify re-parse its own formatted output), and paints the text through
-`window.__startersMillify` when the page provides it.
+millify re-parse its own formatted output), strips the authored
+`data-millify-max` (that ceiling was sized for the CMS value, and left in place a
+later re-process `fails('max')` and reverts to the raw number), and paints the
+text through `window.__startersMillify`.
+
+### Calling millify correctly
+
+`millifyCore` reads `units.length` **unconditionally**, so calling it with `{}`
+throws a `TypeError` for every value there is. Shipped that way, the throw was
+swallowed by the caller's `try`/`catch` and the raw number painted — `$1500`
+where the page should read `$1.5K`. The repaint therefore passes a complete
+options object (`precision`, `space`, `lowercase`, `units`, `max`) and honors any
+authored `data-millify-*` overrides on the element.
+
+The option literal is duplicated from `global-embeds/millify.js`'s `readOptions`
+rather than imported, because that file carries no `@release` header and is a
+paste-in mirror of a live Webflow embed, not a CDN-served module — there is
+nothing to import from. **Keep the two in step by hand.**
+
+A refusal is not a failure. `data-millify-max` exists to make bad data visible,
+so when millify refuses a value the repaint leaves the authored text untouched
+and warns, rather than painting an approximation.
+
+### Amounts, and who writes which hook
+
+Cents are rendered with byte-parity to `canonicalPaidPrice` in
+`paid-call-brand-payment.js`: an exact dollar amount renders as an integer,
+anything else keeps both decimals.
+
+| Hook | Free config | Paid config |
+| --- | --- | --- |
+| `[data-millify]` (card / tout) | never written | written |
+| `[call-type-price]` (chooser row) | written as `$0` | never written |
+
+Both blanks are deliberate. **Paid `[call-type-price]` belongs to the Paid
+controller**, which writes `canonicalPaidPrice` into it at install
+(`paid-call-brand-payment.js:1359`) *after* this file runs — a write here would
+be dead code and a second format of the same number. **Free `[data-millify]` is
+never written** because a free config's amount is always zero, and painting `0`
+over an authored card rate is a visible regression; the chooser row is the one
+intentional `$0`.
+
+That `$0` matters: `selectBookableConfigurations` deliberately admits a Free
+record whose `price_cents` is `null` or absent, and `Number(undefined)` is `NaN`,
+which used to bail out and leave the `$00` sentinel standing on a **visible**
+free chooser row.
+
+Only ONE price hook per surface is written, anchored with `querySelector` the way
+`renderRateCards` anchors it. A blanket `querySelectorAll('[data-millify]')`
+sweep would overwrite every millified number in the surface — a call duration of
+`60` would become the price.
 
 ## Next Available is painted on load, for both call types
 
@@ -304,10 +353,13 @@ on the free row — so every other hook showed a Designer placeholder forever.
 
 This file now paints every `[next-available-slot]` hook on load: the free and
 paid Services cards and both chooser rows (four hooks per profile, verified on
-production 2026-08-27). The text shape is `HH:MMAM on MM/DD`, matching
-`free-call-booking.js`'s own `nextSlotText`, so a hook painted here and one
-painted by the click path cannot disagree. That helper is not exported, but the
-`formatWithTimezone` underneath it is.
+production 2026-08-27). `free-call-booking.js` now **exports** its `nextSlotText`
+and its `NO_SLOTS_TEXT`, and this file uses them, so the load path and the click
+path are the same code and the copy cannot drift. A local reimplementation
+remains only as a fallback for a controller that predates those exports.
+
+The click path also stamps `data-next-slot-state` now, so a hook is
+self-describing whichever writer got there last.
 
 Availability is asked **only** through the controller's exported
 `getNearestSlot`. That export owns the minimum booking notice — 24 hours on
@@ -315,11 +367,40 @@ production, 5 minutes on staging — in both the window it queries and the filte
 it applies to the answer, so fetching availability here instead would silently
 drop it.
 
-Only **installed** configurations are asked. A rejected or uninstallable call
-type keeps its structural hide, so painting it would waste the request and break
-the standing contract that an empty or rejected set never requests a nearest
-slot. The paint is fire-and-forget: a slow availability answer must not hold up
-either controller's install.
+**Both** painters key on the **installed** set, not the accepted one. A rejected
+or uninstallable call type keeps its structural hide, so painting it would waste
+the request, break the standing contract that an empty or rejected set never
+requests a nearest slot, and leave a canonical price sitting on a card nobody can
+book — one hide-regression away from being visible. The slot paint is
+fire-and-forget: a slow availability answer must not hold up either controller's
+install.
+
+### Both painters re-run for late cards
+
+Webflow can insert or clone hero call components after the initial deferred scan
+— which is why `wireCallServiceCardsToDirectEntry` is idempotent and why
+`observeCallServiceCards` watches for added nodes. A card that arrives after
+discovery would otherwise keep both defects this writer exists to remove: the
+stale CMS price and the slot sentinel. Both painters are therefore re-run from
+the existing re-run point and from the observer callback.
+
+Re-running is safe by construction: every write is equality-guarded and only one
+hook per surface is targeted, so repainting an already-correct node is a
+byte-identical no-op. The slot re-run replays the remembered answer rather than
+issuing a second availability request.
+
+### Never leaving a sentinel, on any path
+
+Both degrade paths clear the hook instead of returning early: a booking
+controller with no `getNearestSlot` writes the no-slots copy with
+`data-next-slot-state="error"`, and so does a missing grant. (The grant guard is
+belt-and-braces for a direct caller — discovery never reaches it, because no
+grant means no accepted config and every call surface is already closed.)
+
+A successful availability answer that cannot be **formatted** is `error`, never
+`empty`. That case is version skew — an older controller exporting
+`getNearestSlot` but no formatter — and labelling it "No available slots" would
+send whoever reads it to look at the wrong system entirely.
 
 ### Sentinels
 
