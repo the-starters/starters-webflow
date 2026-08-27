@@ -2096,9 +2096,9 @@ module-rendered reason step and then the shared availability calendar. It loads
 `paid-call-brand-payment.js` on demand and reuses the same slot picker as
 `/hire`. The proposal posts `booking/reschedule/propose/v3` with a required
 reason, the selected slot, and a durable `dashboard-reschedule-propose:` key.
-Only the counterpart sees the authored `confirm-reschedule` action plus a
-module-added "Keep current time" action; they post
-`booking/reschedule/confirm/v3` or
+Only the counterpart sees the module-rendered "Accept new time" and "Keep
+current time" actions in the base view beside the authored reschedule trigger;
+the actions post `booking/reschedule/confirm/v3` or
 `booking/reschedule/decline/v3` with their own durable keys. The call keeps its
 current provider time until the counterpart confirms. Direct transcript access
 and every payment control also stay hidden. There is no hard 24-hour cutoff on
@@ -2133,10 +2133,13 @@ pending proposal. Every command requires a booking ID, configuration ID,
 participant identity, and exact `test` or `production` data environment.
 
 The native Webflow modal owns `[booking-decline-reason]`,
-`[booking-cancel-reason]`, and the base action markup. The module renders the
-missing reschedule reason, shared-calendar, and result views, plus the "Keep
-current time" response. Decline, cancel, and reschedule proposal each require a
-non-empty reason. Decline posts `booking_id`, `config_id`, `reason`, and
+`[booking-cancel-reason]`, and the base reschedule trigger. The module renders
+the missing reschedule reason, shared-calendar, and result views, plus the base
+"Accept new time" and "Keep current time" responses beside that trigger.
+It creates that response pair once per modal, marks both controls with
+`data-starters-reschedule-respond`, and ensures they are still present whenever
+the details modal is populated. Decline, cancel, and reschedule proposal each
+require a non-empty reason. Decline posts `booking_id`, `config_id`, `reason`, and
 `idempotency_key` to `booking/decline/v3`; cancel uses `cancelled_reason` at
 `booking/cancel/v3`. A proposal posts `rescheduled_reason`, `new_start`, and
 `new_end` with those shared identifiers to `booking/reschedule/propose/v3`.
