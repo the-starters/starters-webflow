@@ -1109,15 +1109,18 @@
     return moved
   }
 
-  /** First live tile per `[bookings-section]` name, keyed lower-case. */
+  /** First live tile per `[bookings-section]` name, keyed lower-case. The
+   * attribute alone is the contract (matching boot()); the class is only the
+   * preferred match, so a Designer rename of the tile class cannot silently
+   * disable anchor adoption. */
   function liveSectionTiles() {
     const tiles = {}
-    Array.prototype.slice
-      .call(document.querySelectorAll('.dash-main_tile-item[bookings-section]'))
-      .forEach(function (tile) {
-        const name = clean(tile.getAttribute('bookings-section')).toLowerCase()
-        if (name && !tiles[name]) tiles[name] = tile
-      })
+    const classed = document.querySelectorAll('.dash-main_tile-item[bookings-section]')
+    const source = classed.length ? classed : document.querySelectorAll('[bookings-section]')
+    Array.prototype.slice.call(source).forEach(function (tile) {
+      const name = clean(tile.getAttribute('bookings-section')).toLowerCase()
+      if (name && !tiles[name]) tiles[name] = tile
+    })
     return tiles
   }
 
