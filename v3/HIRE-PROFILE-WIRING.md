@@ -370,7 +370,9 @@ production, 5 minutes on staging — in both the window it queries and the filte
 it applies to the answer, so fetching availability here instead would silently
 drop it.
 
-**Both** painters key on the **installed** set, not the accepted one. A rejected
+**Both** painters key on the **installed** set, not the accepted one, on the
+canonical brand path. (The owner path has no installed set; it paints the
+records described under "The owner paints from their own settings".) A rejected
 or uninstallable call type keeps its structural hide, so painting it would waste
 the request, break the standing contract that an empty or rejected set never
 requests a nearest slot, and leave a canonical price sitting on a card nobody can
@@ -419,15 +421,14 @@ partially landed — served markup still carries `11:00PM on 12/10` twice and `$
 in `call-type_price-text`, alongside one `00:00`. QA must therefore treat **both
 generations** as "unpainted".
 
-Nothing in the runtime pattern-matches them: a sentinel is by definition whatever
-has not been painted yet, so the writer simply always writes. It also never
-leaves one standing — an empty availability answer and a failed request both
-write `No available slots`, because showing an invented time is worse than
-admitting there is nothing to show. (The owner call site keeps the authored row
-on the failure half of that pair only; the empty answer is written for them
-too.) Each hook carries
-`data-next-slot-state="painted" | "empty" | "error"` so QA can tell the three
-apart without reading the copy.
+Nothing in the runtime pattern-matches them: a sentinel is by definition
+whatever has not been painted yet, so the writer simply always writes. It also
+never leaves one standing — an empty availability answer and a failed request
+both write `No available slots`, because showing an invented time is worse
+than admitting there is nothing to show. (The owner call site keeps the
+authored row on the failure half of that pair only; the empty answer is
+written for them too.) Each hook carries `data-next-slot-state="painted" |
+"empty" | "error"` so QA can tell the three apart without reading the copy.
 
 The rate cards also get their chip label from this file, and the two cards
 label differently. Freelance prices a unit, so it renders `/hour` under the
@@ -585,14 +586,14 @@ Every owner record then goes through `isBookableRecordShape`, the same
 admission rules `selectBookableConfigurations` runs over a brand viewer's
 records — host environment, and the free/paid price, currency and duration
 contracts described above — with one qualification on the paid data
-environment, described in the mapping notes below.
-`bookableEnvironments()` is the single reader for
-both. Readiness says a starter finished setting a service up; it does not say
-the service is shaped like something anybody could book, and a half-configured
-record that reaches only the owner's screen is the worst kind — the owner has
-no second view to notice it against. A free service priced above zero, a
-cross-environment record on staging, or a paid service quoted in the wrong
-currency is refused with a warning and leaves the authored row standing.
+environment, described in the mapping notes below. `bookableEnvironments()` is
+the single reader for both. Readiness says a starter finished setting a
+service up; it does not say the service is shaped like something anybody could
+book, and a half-configured record that reaches only the owner's screen is the
+worst kind — the owner has no second view to notice it against. A free service
+priced above zero, a cross-environment record on staging, or a paid service
+quoted in the wrong currency is refused with a warning and leaves the authored
+row standing.
 
 Three shape details differ from `get_bookable/v3` and are handled at the
 mapping step, so the shared predicate itself never has to know the owner path
@@ -683,8 +684,9 @@ fault. Card rendering is verified on production.
 ## QA venue limits for the call-surface rules
 
 Both the canonical rate repaint and the next-slot paint are only observable to a
-**logged-in Brand**: `hire-profile.js` returns before booking discovery when
-there is no `MEMBER.id`, so every `[has-connection]` call card stays
+**logged-in** viewer — a Brand on the canonical path, or the profile's own
+starter on the owner path: `hire-profile.js` returns before booking discovery
+when there is no `MEMBER.id`, so every `[has-connection]` call card stays
 `display:none` for an anonymous viewer and neither writer ever runs. An anonymous
 prod or staging check that comes back clean has therefore not exercised them.
 
@@ -693,6 +695,12 @@ staging index holds no production starters, so there is no venue where a member
 session and a rendered call card meet. Machine verification of the logged-in
 half is impossible from this harness. Final acceptance is a console paste from a
 logged-in browser.
+
+The owner path is the tighter case of the same limit: it needs a session that is
+the starter whose profile is rendered, so it cannot be exercised by any brand
+sandbox member either, on either host. Its unit coverage in
+[`hire-profile.test.js`](hire-profile.test.js) is the whole automated venue;
+acceptance is a console paste from the starter's own logged-in browser.
 
 ## Not owned here — `No button group "step-1" in scope`
 

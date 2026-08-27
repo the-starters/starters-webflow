@@ -1019,19 +1019,9 @@
   }
 
   /**
-   * One canonical owner record per call type, shaped exactly like the accepted
-   * configurations the brand path hands the painters, so both painters keep a
-   * single record shape to reason about.
-   *
-   * `readiness.bookable` is the gate. A service that is not bookable is not
-   * something any viewer could book either, so it earns no rate paint and no
-   * availability request — the same rule the brand path applies by keying on
-   * its INSTALLED set rather than its accepted one.
-   */
-  /**
    * The settings payloads name a service's length as either `duration` or
    * `duration_minutes`. Same tolerance `free-call-settings.js` applies
-   * (`serviceDuration`, :558). The raw value is kept rather than coerced, so
+   * (`serviceDuration`, :562). The raw value is kept rather than coerced, so
    * an absent duration stays absent and the admission rule's own `== null`
    * tolerance still decides it.
    */
@@ -1043,7 +1033,7 @@
 
   /**
    * Environment stamps are compared case-insensitively and trimmed everywhere
-   * else in this repo (README:2624; sibling precedent `configStamp` in
+   * else in this repo (`v3/README.md:2640`; sibling precedent `configStamp` in
    * `v3/scheduling-availability-section.js:2264`). The shared admission
    * predicate compares strictly, and the brand path must keep running it
    * unchanged, so the OWNER's mapped record is normalized here instead —
@@ -1058,6 +1048,16 @@
       return value == null ? value : String(value).trim().toLowerCase();
   }
 
+  /**
+   * One canonical owner record per call type, shaped exactly like the accepted
+   * configurations the brand path hands the painters, so both painters keep a
+   * single record shape to reason about.
+   *
+   * `readiness.bookable` is the gate. A service that is not bookable is not
+   * something any viewer could book either, so it earns no rate paint and no
+   * availability request — the same rule the brand path applies by keying on
+   * its INSTALLED set rather than its accepted one.
+   */
   function ownerRecordFrom(settings, isPaid) {
       const label = isPaid ? 'paid' : 'free';
       if (!settings || !Array.isArray(settings.services)) return null;
