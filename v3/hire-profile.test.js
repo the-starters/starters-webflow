@@ -4055,7 +4055,7 @@ test('owner paint: one failing endpoint does not cost the other its paint', asyn
   assert.deepEqual(controller.calls.map((c) => c.configId), ['cfg_owner_free'])
 })
 
-test('owner paint: an empty calendar never writes the no-slots copy over the owner row', async () => {
+test('owner paint: an empty calendar writes the no-slots copy, a failed lookup does not', async () => {
   const page = makePage()
   const hooks = addSlotHooks(page)
   addContractDialog(page)
@@ -4068,12 +4068,16 @@ test('owner paint: an empty calendar never writes the no-slots copy over the own
   vm.runInContext(source, context)
   await settle()
 
-  // The owner is the one viewer who can tell an empty calendar from a broken
-  // lookup, and "No available slots" on their own profile sends them to fix
-  // availability settings that may be perfectly correct.
-  assert.equal(hooks.cardFree.textContent, SLOT_SENTINEL)
+  // A successful answer that is genuinely empty is real information about the
+  // owner's own calendar, so it is written for them exactly as for a brand.
+  assert.equal(hooks.cardFree.textContent, 'No available slots')
+  assert.equal(hooks.cardFree.getAttribute('data-next-slot-state'), 'empty')
+  assert.equal(hooks.chooserFree.textContent, 'No available slots')
+  assert.equal(hooks.chooserFree.getAttribute('data-next-slot-state'), 'empty')
+  // A failed lookup is a fault, and "No available slots" for a fault sends the
+  // owner to fix availability settings that may be perfectly correct.
   assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
-  assert.equal(hooks.chooserFree.textContent, SLOT_SENTINEL)
+  assert.equal(hooks.cardPaid.getAttribute('data-next-slot-state'), null)
 })
 
 test('owner paint: a controller with no availability export leaves every owner row alone', async () => {

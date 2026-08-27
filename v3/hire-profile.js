@@ -368,22 +368,30 @@
 
   /**
    * `options.leaveRowOnDegrade` opts a call site out of the no-slots fallback
-   * and leaves the authored row exactly as it found it. Omitted — as the brand
-   * call site omits it — every degrade path behaves as it always has.
+   * on the FAULT paths only — a failed lookup, a missing grant, a missing
+   * availability export, a slot that cannot be formatted. A successful answer
+   * that is genuinely empty is real information about the calendar, so it
+   * writes the no-slots copy for every viewer. Omitted — as the brand call
+   * site omits it — every path behaves as it always has.
    */
   function paintNextAvailableSlots(configs, grantId, options) {
       const leaveRowOnDegrade = !!(options && options.leaveRowOnDegrade);
 
-      // One place decides what a degrade looks like for this call site, so the
-      // four paths below cannot drift apart from each other.
-      function degradeSlot(type, state) {
-          if (leaveRowOnDegrade) return;
+      function writeNoSlots(type, state) {
           rememberSlot(type, noSlotsText(), state);
           paintSlotSurfaces(type, noSlotsText(), state);
       }
 
-      // Both degrade paths clear the sentinel rather than returning early: the
-      // whole point of this writer is that a placeholder time never survives.
+      // One place decides what a fault looks like for this call site, so the
+      // paths below cannot drift apart from each other.
+      function degradeSlot(type, state) {
+          if (leaveRowOnDegrade) return;
+          writeNoSlots(type, state);
+      }
+
+      // The fault paths clear the sentinel rather than returning early, unless
+      // the call site opted out: the whole point of this writer is that a
+      // placeholder time never survives an answer we can trust.
       if (!grantId) {
           standDownSlotSurfaces(configs, 'no Nylas grant is available', leaveRowOnDegrade);
           return;
@@ -408,7 +416,11 @@
               .then(function (slot) {
                   const seconds = Number(slot);
                   if (!Number.isFinite(seconds) || seconds <= 0) {
-                      degradeSlot(type, 'empty');
+                      // A successful answer with nothing in it is not a fault:
+                      // a fully booked calendar is the honest answer, and it is
+                      // written for the owner too. Only the fault paths honour
+                      // `leaveRowOnDegrade`.
+                      writeNoSlots(type, 'empty');
                       return;
                   }
                   const text = nextSlotText(seconds);
@@ -1164,11 +1176,13 @@
           // point gets the owner's canonical set exactly as it gets the brand's.
           paintedCallState = { configs: records, slots: {} };
           repaintCanonicalRateSurfaces(records);
-          // OWNER CONTRACT: a failed lookup, an unbookable readiness or a
-          // missing formatter leaves the authored row standing. The owner is
-          // the one viewer who can tell an empty calendar from a broken
-          // lookup, and writing "No available slots" over their own profile
-          // sends them to fix availability settings that are already correct.
+          // OWNER CONTRACT: a failed lookup, an unbookable readiness, a missing
+          // grant or a missing formatter leaves the authored row standing —
+          // writing "No available slots" over their own profile for what is
+          // really a lookup fault sends them to fix availability settings that
+          // are already correct. A successful but empty answer is not a fault:
+          // a fully booked calendar is written here exactly as it is for a
+          // brand viewer, so no placeholder time survives it.
           paintNextAvailableSlots(records, ownerGrantId(settings[0], starterGrantId), {
               leaveRowOnDegrade: true,
           });

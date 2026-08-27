@@ -400,6 +400,12 @@ controller with no `getNearestSlot` writes the no-slots copy with
 belt-and-braces for a direct caller — discovery never reaches it, because no
 grant means no accepted config and every call surface is already closed.)
 
+The one carve-out is the owner call site, which passes `leaveRowOnDegrade` and
+keeps the authored row on the **fault** paths only (see "The owner never reads
+'No available slots'" below). An empty availability answer still writes the
+no-slots copy for every viewer, owner included, so a placeholder time never
+survives an answer the page can trust.
+
 A successful availability answer that cannot be **formatted** is `error`, never
 `empty`. That case is version skew — an older controller exporting
 `getNearestSlot` but no formatter — and labelling it "No available slots" would
@@ -417,7 +423,9 @@ Nothing in the runtime pattern-matches them: a sentinel is by definition whateve
 has not been painted yet, so the writer simply always writes. It also never
 leaves one standing — an empty availability answer and a failed request both
 write `No available slots`, because showing an invented time is worse than
-admitting there is nothing to show. Each hook carries
+admitting there is nothing to show. (The owner call site keeps the authored row
+on the failure half of that pair only; the empty answer is written for them
+too.) Each hook carries
 `data-next-slot-state="painted" | "empty" | "error"` so QA can tell the three
 apart without reading the copy.
 
@@ -624,20 +632,28 @@ branch already fetched. The free settings payload carries its own `grant_id`;
 a disagreement between the two is warned about but does not change which grant
 is used.
 
-### The owner never reads "No available slots"
+### The owner never reads "No available slots" for a lookup fault
 
 `paintNextAvailableSlots` takes an options argument, and the owner call site
-passes `leaveRowOnDegrade`. Every degrade path — a failed settings lookup, an
-unbookable readiness, a missing availability export, an empty answer, a slot
+passes `leaveRowOnDegrade`. Every **fault** path — a failed settings lookup, an
+unbookable readiness, a missing availability export, a missing grant, a slot
 that cannot be formatted — leaves the authored row exactly as it found it,
-warns, and paints nothing. Only a real, formattable slot is written.
+warns, and paints nothing.
 
-This inverts the brand contract deliberately. For a brand viewer, a standing
-placeholder time is the worst outcome, so every degrade writes the no-slots
-copy. The owner is the one viewer who can tell an empty calendar from a broken
-lookup, and `No available slots` on their own profile sends them to fix
-availability settings that may be perfectly correct. The brand call site omits
-the option and behaves exactly as it always has.
+An **empty answer** is not a fault and is not covered by the option. When
+`getNearestSlot` resolves with nothing, the calendar really is booked out for
+the window, and that is information the owner is entitled to: the no-slots copy
+and `data-next-slot-state="empty"` are written for them exactly as for a brand
+viewer. So the "never leave a sentinel standing" invariant holds for the brand
+on every path and for the owner on the empty-answer path; only a genuine
+lookup fault leaves the owner's authored row alone.
+
+That carve-out is deliberate. For a brand viewer, a standing placeholder time
+is the worst outcome, so every degrade writes the no-slots copy. The owner is
+the one viewer for whom `No available slots` over a *broken lookup* is an
+accusation — it sends them to fix availability settings that may be perfectly
+correct. The brand call site omits the option and behaves exactly as it always
+has.
 
 Failure is quiet and total. Each settings endpoint catches its own rejection,
 so one 4xx costs that call type its paint and nothing else, and an outer catch
