@@ -2226,6 +2226,14 @@ Runtime contract:
   or `error`.
 - Designer-authored duplicate dashboard tiles whose heading is exactly `Calls`
   or `Call Requests` are hidden when they do not carry `[bookings-section]`.
+- Before a duplicate is hidden, any `.dash-main_anchor[id]` it holds is moved to
+  the live `[bookings-section]` tile that replaces it (`Calls` → `calls`,
+  `Call Requests` → `requests`). The Brand dashboard authors `#calls-section`
+  inside the duplicate, and `display: none` takes that id out of layout, so
+  without the move the CALLS tab and every `#calls-section` deep link — the
+  post-call review email CTA carries one — have nowhere to jump and leave the
+  visitor on the Messages tile. An id another element already owns is left where
+  it is. A duplicate with no live counterpart is still hidden, unchanged.
 
 Run its focused test with:
 

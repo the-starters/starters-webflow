@@ -2587,3 +2587,123 @@ test('both project dashboards leave remote filtering to the default wf-xano cont
   })
   assert.deepEqual(results, keys)
 })
+
+// SFR-232 — the Designer put `#calls-section` inside the *authored* Calls tile, not
+// inside the V3 `[bookings-section="calls"]` tile that replaces it. Hiding the
+// duplicate used to take that id out of layout, so the CALLS tab and every
+// `#calls-section` deep link had nowhere to jump to.
+test('hidden authored duplicates hand their sub-nav anchors to the live V3 tile', () => {
+  const originalDocument = global.document
+  const anchor = element({ id: 'calls-section', class: 'dash-main_anchor' })
+  const liveChildren = [element()]
+  const originalFirstChild = liveChildren[0]
+  const liveTile = element({
+    'bookings-section': 'calls',
+    class: 'dash-main_tile-item',
+  })
+  liveTile.firstChild = originalFirstChild
+  const inserted = []
+  liveTile.insertBefore = (node, reference) => {
+    inserted.push({ node, reference })
+    liveChildren.unshift(node)
+    liveTile.firstChild = liveChildren[0]
+    return node
+  }
+
+  const heading = element()
+  heading.textContent = ' Calls '
+  const duplicate = element({ class: 'dash-main_tile-item' })
+  duplicate.querySelector = (selector) =>
+    selector === 'h1,h2,h3,h4,h5,h6' ? heading : null
+  duplicate.querySelectorAll = (selector) =>
+    selector === '.dash-main_anchor[id]' ? [anchor] : []
+
+  try {
+    global.document = {
+      getElementById: (id) => (id === 'calls-section' ? anchor : null),
+      querySelectorAll(selector) {
+        if (selector === '.dash-main_tile-item[bookings-section]') return [liveTile]
+        if (selector === '.dash-main_tile-item') return [liveTile, duplicate]
+        return []
+      },
+    }
+
+    api.hideAuthoredDuplicates()
+
+    assert.deepEqual(inserted, [{ node: anchor, reference: originalFirstChild }])
+    assert.equal(liveChildren[0], anchor)
+    assert.equal(duplicate.hidden, true)
+    assert.equal(duplicate.style.display, 'none')
+    assert.equal(liveTile.hidden, false)
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('a duplicate with no live counterpart is still hidden and keeps its anchors', () => {
+  const originalDocument = global.document
+  const anchor = element({ id: 'requests-section', class: 'dash-main_anchor' })
+  const heading = element()
+  heading.textContent = 'Call Requests'
+  const duplicate = element({ class: 'dash-main_tile-item' })
+  duplicate.querySelector = (selector) =>
+    selector === 'h1,h2,h3,h4,h5,h6' ? heading : null
+  duplicate.querySelectorAll = (selector) =>
+    selector === '.dash-main_anchor[id]' ? [anchor] : []
+  const unrelated = element({ class: 'dash-main_tile-item' })
+  const unrelatedHeading = element()
+  unrelatedHeading.textContent = 'Projects'
+  unrelated.querySelector = (selector) =>
+    selector === 'h1,h2,h3,h4,h5,h6' ? unrelatedHeading : null
+
+  try {
+    global.document = {
+      getElementById: () => anchor,
+      querySelectorAll(selector) {
+        if (selector === '.dash-main_tile-item[bookings-section]') return []
+        if (selector === '.dash-main_tile-item') return [duplicate, unrelated]
+        return []
+      },
+    }
+
+    api.hideAuthoredDuplicates()
+
+    assert.equal(duplicate.hidden, true)
+    assert.equal(unrelated.hidden, false)
+    assert.equal(unrelated.style.display, undefined)
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('an anchor id another element already owns is never re-parented', () => {
+  const originalDocument = global.document
+  const stray = element({ id: 'calls-section', class: 'dash-main_anchor' })
+  const winner = element({ id: 'calls-section' })
+  const source = element()
+  source.querySelectorAll = (selector) =>
+    selector === '.dash-main_anchor[id]' ? [stray] : []
+  const target = element()
+  let inserts = 0
+  target.insertBefore = () => {
+    inserts += 1
+  }
+
+  try {
+    global.document = { getElementById: () => winner }
+    assert.equal(api.adoptSectionAnchors(source, target), 0)
+    assert.equal(inserts, 0)
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('anchor adoption ignores missing, identical, and inert tiles', () => {
+  const source = element()
+  source.querySelectorAll = () => []
+  assert.equal(api.adoptSectionAnchors(null, element()), 0)
+  assert.equal(api.adoptSectionAnchors(source, null), 0)
+  assert.equal(api.adoptSectionAnchors(source, source), 0)
+  assert.equal(api.adoptSectionAnchors({}, element()), 0)
+  assert.equal(api.adoptSectionAnchors(source, {}), 0)
+})
