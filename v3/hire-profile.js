@@ -105,8 +105,9 @@
 
       const max = el.getAttribute('data-millify-max');
       if (max !== null && String(max).trim() !== '') {
-          // Authors write the number the CMS shows them, commas and all.
-          const value = Number(String(max).replace(/[^0-9.eE+-]/g, ''));
+          // Same sanitizer as millify's readOptions (whitespace + commas only),
+          // so both readers agree on which authored values are honored.
+          const value = Number(String(max).replace(/[\s,]/g, ''));
           if (Number.isFinite(value) && value >= 0) options.max = value;
       }
 
