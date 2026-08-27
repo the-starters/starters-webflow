@@ -194,7 +194,6 @@ function makeEnv({
     URL,
     URLSearchParams,
     CustomEvent: CustomEventStub,
-    Object,
     console: { info() {}, warn() {}, error() {} },
   }
   if (gsapInstance) context.gsap = gsapInstance
@@ -219,21 +218,29 @@ function makeEnv({
   window.addEventListener('modal-close', record)
 
   const dialogsById = {}
-  dialogs.forEach((dialog) => { dialogsById[dialog.id || dialog.getAttribute('data-modal-target')] = dialog })
+  dialogs.forEach((dialog) => { dialogsById[dialog.getAttribute('data-modal-target')] = dialog })
 
   /** Appends an element to the page so `closest()` has a real chain to walk. */
   const inPage = (el) => body.append(el)
 
   return {
-    context,
     document,
     window,
     history,
-    body,
     dialogs,
     dialogsById,
     windowEvents,
     gsap: gsapInstance,
+    /**
+     * A dialog authored into the page after boot — a CMS list rendering late, or
+     * a modal a companion script injects. Only `init()` can adopt it.
+     */
+    addDialog(id) {
+      const dialog = dialogStub(id)
+      dialogs.push(dialog)
+      dialogsById[id] = dialog
+      return dialog
+    },
     /** A `[data-modal-trigger='<id>']` button somewhere in the page. */
     triggerFor(id) { return inPage(h('button', { 'data-modal-trigger': id })) },
     /** An `<a href="#<id>">` opening the same modal. */
@@ -313,7 +320,7 @@ test('ignores a click that is not on any trigger', () => {
   env.clickDocument(env.inertElement())
 
   assert.deepEqual(env.dialogs.map((dialog) => dialog.open), [false, false])
-  assert.equal(env.document.body.style.overflow, undefined)
+  assert.notEqual(env.document.body.style.overflow, 'hidden', 'the page was never scroll-locked')
 })
 
 test('a close control inside the dialog closes it and restores page scroll', () => {
@@ -339,6 +346,24 @@ test('a click elsewhere inside the dialog leaves it open', () => {
   env.clickInDialog(dialog, dialog.append(h('p')))
 
   assert.equal(dialog.open, true)
+})
+
+test('closes from the scrim, but not from a backdrop that only looks like one', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  const scrim = dialog.append(h('div', { class: 'modal_backdrop', 'data-modal-close': '' }))
+  const decoration = dialog.append(h('div', { class: 'modal_backdrop' }))
+
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  env.clickInDialog(dialog, decoration)
+  assert.equal(dialog.open, true, 'the class alone does not dismiss: the attribute does')
+
+  env.clickInDialog(dialog, scrim)
+  assert.equal(dialog.open, false, 'clicking the scrim closes the modal')
+  assert.equal(env.document.body.style.overflow, '')
 })
 
 test('Escape closes the modal through the script, not the native cancel', () => {
@@ -520,7 +545,20 @@ test('the last dialog authored with a target owns that registry entry', () => {
   env.modalSystem.list.dup.open()
 
   assert.equal(live.open, true)
-  assert.equal(legacy.open, false, 'the superseded dialog is never the one shown')
+  assert.equal(legacy.open, false, 'a registry-driven open reaches only the winning dialog')
+})
+
+test('a shared-target trigger click opens every dialog carrying that target', () => {
+  // Characterization: each dialog binds its own document listener, so a raw
+  // trigger click opens all of them. Registry consumers are unaffected — per the
+  // README they resolve the dialog through list[id].el, which is the last one.
+  const env = makeEnv({ ids: ['dup', 'dup'] })
+  env.boot()
+
+  env.clickDocument(env.triggerFor('dup'))
+
+  assert.deepEqual(env.dialogs.map((dialog) => dialog.open), [true, true])
+  assert.deepEqual(env.types(), ['modal-open', 'modal-open'])
 })
 
 test('open() on an unknown id is a no-op', () => {
@@ -546,6 +584,31 @@ test('re-running init does not double-bind an already adopted modal', () => {
   env.clickInDialog(dialog, env.closeControlIn(dialog))
   assert.equal(dialog.open, false)
   assert.deepEqual(env.types(), ['modal-open', 'modal-close'], 'and one close fully closes it')
+})
+
+test('init() adopts a modal added after boot and leaves the earlier ones as they were', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const late = env.addDialog('modal-late')
+  env.clickDocument(env.triggerFor('modal-late'))
+  assert.equal(late.open, false, 'a dialog the page added later is inert until init runs')
+  assert.equal(env.modalSystem.list['modal-late'], undefined)
+
+  env.modalSystem.init()
+  env.clickDocument(env.triggerFor('modal-late'))
+
+  assert.equal(late.open, true, 'that is what init() is for')
+  assert.equal(env.modalSystem.list['modal-late'].el, late)
+  assert.deepEqual(env.types(), ['modal-open'])
+
+  env.clickDocument(env.triggerFor('modal-a'))
+  assert.equal(env.dialogsById['modal-a'].open, true)
+  assert.deepEqual(
+    env.types(),
+    ['modal-open', 'modal-open'],
+    'and the modals adopted at boot did not pick up a second listener',
+  )
 })
 
 test('plays the entrance timeline when the page has gsap', () => {

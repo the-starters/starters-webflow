@@ -284,6 +284,12 @@ Attribute-driven components published for reuse across pages. Most carry a
 - `global-embeds/rte-table.css` — **CDN-served** table skin for `[data-rte-table]`: one attribute on `<table>` (or a wrapper) styles every row and cell to match the privacy-policy Finsweet table. `<thead>` / `<th>` get the header bar; a tbody-only table is all data rows. Last column centers by default (Collected); override with `--rte-table-last-align: left`. Load in **Head** from jsDelivr, not a paste embed
 - `global-embeds/logo-wall/logo-wall.css` — **CDN-served** companion structural CSS (overflow mask + flex tracks); load in **Head** from the same jsDelivr ref as the script. It also owns first paint: until the deferred script arms, the wrapper and any raw Webflow CMS chain still inside it (`.w-dyn-list`/`.w-dyn-items`, plus the `display: contents` helper levels the wrapper's gap has to be relayed through) are painted as one clipped, centered row, so the wall never flashes as a tall vertical stack. `data-logo-wall-inited="true"` — written only once the Tracks are built, so a wrapper the script bails on keeps the pre-init row — flips it to the armed Track column. A single-band wall (`data-logo-wall-tracks="1"`, what the homepage uses) is pixel-identical either side of that flip; a multi-band wall grows by its extra rows, so reserve the armed height with a wrapper min-height in Designer. Required: if it does not load, the script leaves the wall static — the original logos only, no clones and no animation.
 
+Run the focused `lumos.modal` dialog-system regressions with:
+
+```sh
+node --test global-embeds/modal/modal.test.js
+```
+
 ### Form embeds (`global-embeds/form-embeds/`)
 
 - `global-embeds/form-embeds/form-validation/form-validation.js` — the form-embeds validation component ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-validation)). Distinct from `utils/wf-validate.js`, which owns the `wf-validate-*` dialect used by the Opportunities forms
