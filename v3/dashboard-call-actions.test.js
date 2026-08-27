@@ -932,3 +932,32 @@ test('respond controls are rendered into the base view for the counterpart', () 
     2,
   )
 })
+
+test('the success panel placeholder is filled with the counterpart name', () => {
+  const booking = {
+    starter_data: { name: 'Sam Starter', memberstack_id: 'mem_sb_starter' },
+    brand_data: { name: 'Bella Brand', memberstack_id: 'mem_sb_brand' },
+  }
+  assert.equal(api.counterpartName('starter', booking), 'Bella Brand')
+  assert.equal(api.counterpartName('brand', booking), 'Sam Starter')
+  assert.equal(api.counterpartName('brand', { brand_data: {} }), 'the other participant')
+
+  const node = {
+    children: [],
+    textContent: 'The call is officially cancelled. We will notify [Starter] about the cancellation.',
+  }
+  const untouched = { children: [], textContent: 'No placeholder here.' }
+  const modal = {
+    querySelectorAll(selector) {
+      assert.equal(selector, '[booking-popup-content="cancelled"] *')
+      return [node, untouched]
+    },
+  }
+  const replaced = api.fillCounterpartPlaceholders(modal, 'cancelled', 'brand', booking)
+  assert.equal(replaced, 1)
+  assert.equal(
+    node.textContent,
+    'The call is officially cancelled. We will notify Sam Starter about the cancellation.',
+  )
+  assert.equal(untouched.textContent, 'No placeholder here.')
+})
