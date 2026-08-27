@@ -1057,6 +1057,7 @@
     if (saveButton) {
       saveButton.addEventListener('click', function (event) {
         event.preventDefault()
+        hideNativeError()
         // The authored Update control is wired either as a plain element this
         // controller intercepts or as the native form's own submit control. The
         // native shape is gated by browser constraint validation, so gate the

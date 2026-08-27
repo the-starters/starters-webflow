@@ -1269,6 +1269,45 @@ test('a guarded Paid update mirrors the error to both outputs and clears the nat
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')
 })
 
+test('an invalid Paid retry clears the request error without a second write', async () => {
+  const active = canonical({
+    services: [service({ price_cents: 100 })],
+    readiness: { paid_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': () => ({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+      }),
+    },
+  })
+  await settle()
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.dom.nativeError.style.display, 'block')
+
+  const terms = new El('input', { name: 'call-terms', required: '' })
+  result.dom.form.append(terms)
+  const reports = withNativeConstraintValidation(result.dom.form)
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.deepEqual(reports, [['call-terms']])
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    1,
+  )
+  assert.equal(result.dom.nativeErrorMessage.textContent, '')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')
+})
+
 test('a Paid prerequisite refresh clears an update error while pending and replaces it only on failure', async () => {
   const successfulRefresh = deferred()
   const failedRefresh = deferred()

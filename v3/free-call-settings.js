@@ -828,6 +828,7 @@
     if (saveButton) {
       saveButton.addEventListener('click', function (event) {
         event.preventDefault()
+        hideNativeError()
         if (form && typeof form.reportValidity === 'function' && !form.reportValidity()) return
         submitIntent().catch(function () {})
       })

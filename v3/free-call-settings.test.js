@@ -755,6 +755,47 @@ test('a guarded Free update mirrors the error to both outputs and clears the nat
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')
 })
 
+test('an invalid Free retry clears the request error without a second write', async () => {
+  let validityChecks = 0
+  const active = canonical({
+    public_description: 'Growth review',
+    services: [service()],
+    readiness: { free_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    initial: active,
+    routes: {
+      '/starter/free-call-settings/upsert/v3': () => ({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+      }),
+    },
+  })
+  await settle()
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.dom.nativeError.style.display, 'block')
+
+  result.dom.form.reportValidity = () => {
+    validityChecks += 1
+    return false
+  }
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(validityChecks, 1)
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/free-call-settings/upsert/v3').length,
+    1,
+  )
+  assert.equal(result.dom.nativeErrorMessage.textContent, '')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')
+})
+
 test('a Free prerequisite refresh clears an update error while pending and replaces it only on failure', async () => {
   const successfulRefresh = deferred()
   const failedRefresh = deferred()
