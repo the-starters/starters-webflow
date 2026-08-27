@@ -4,6 +4,12 @@
         const modalSystem = ((window.lumos ??= {}).modal ??= {
             list: {}, open(id) { this.list[id]?.open?.(); }, closeAll() { Object.values(this.list).forEach((m) => { if (m.el?.open) m.close?.(); }); },
         });
+        function getDismissedDialog(target) {
+            if (!target.closest("[data-modal-close]")) return;
+            for (let element = target; element; element = element.parentElement) {
+                if (element.matches(".modal_dialog") && element.dataset.scriptInitialized) return element;
+            }
+        }
         function createModals() {
             document.querySelectorAll(".modal_dialog").forEach(function (modal) {
                 if (modal.dataset.scriptInitialized) return;
@@ -52,29 +58,23 @@
                 if (new URLSearchParams(location.search).get("modal-id") === modalId) openModal(), history.replaceState({}, "", ((u) => (u.searchParams.delete("modal-id"), u))(new URL(location.href)));
                 modal.addEventListener("cancel", (e) => (e.preventDefault(), closeModal()));
                 modal.addEventListener("click", (e) => {
-                    const closer = e.target.closest("[data-modal-close]");
-                    if (!closer) return;
-                    const owner = closer.closest(".modal_dialog");
                     // An adopted nested dialog owns its own close controls; anything else (this dialog,
                     // an un-adopted inner dialog, a dismiss wrapper above us) closes this one.
-                    if (owner !== modal && owner?.dataset.scriptInitialized) return;
+                    if (getDismissedDialog(e.target) !== modal) return;
                     const href = e.target.closest("a")?.getAttribute("href");
                     // Real links and section anchors still navigate; only hrefs the modal system owns
                     // are suppressed (an empty href would reload the page).
-                    if (href === "" || href === "#" || (href?.startsWith("#") && Object.hasOwn(modalSystem.list, href.slice(1)))) e.preventDefault();
+                    if (href === "" || href === "#" || (href?.startsWith("#") && Object.prototype.hasOwnProperty.call(modalSystem.list, href.slice(1)))) e.preventDefault();
                     closeModal();
                 });
                 document.addEventListener("click", (e) => {
                     const trigger = e.target.closest(`[data-modal-trigger='${modalId}'], a[href='#${modalId}']`);
                     if (!trigger) return;
+                    if (trigger.tagName === "A") e.preventDefault();
                     // A close control must not reopen the modal it dismisses — keyed by target name so
                     // CMS-duplicated dialogs are all covered. Naming a DIFFERENT modal is the authored
                     // hand-off (the booking chooser) and still opens it.
-                    if (e.target.closest("[data-modal-close]")?.closest(".modal_dialog")?.getAttribute("data-modal-target") === modalId) {
-                        if (trigger.tagName === "A") e.preventDefault();
-                        return;
-                    }
-                    if (trigger.tagName === "A") e.preventDefault();
+                    if (getDismissedDialog(e.target)?.getAttribute("data-modal-target") === modalId) return;
                     openModal();
                 });
                 modalSystem.list[modalId] = { open: openModal, close: closeModal, el: modal };

@@ -958,6 +958,23 @@ test('a close control in an un-adopted inner dialog still closes the modal aroun
   assert.deepEqual(env.types(), ['modal-open', 'modal-close'])
 })
 
+test('an un-adopted inner close trigger cannot reopen the outer modal', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  const injected = dialog.append(h('dialog', { class: 'modal_dialog', 'data-modal-target': 'late' }))
+  const control = injected.append(
+    h('button', { 'data-modal-close': '', 'data-modal-trigger': 'modal-a' }),
+  )
+  env.clickThrough(control)
+
+  assert.equal(dialog.open, false)
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'])
+})
+
 test('a dismiss wrapper around the dialog still closes it', () => {
   const env = makeEnv()
   env.boot()
@@ -972,6 +989,22 @@ test('a dismiss wrapper around the dialog still closes it', () => {
   env.clickThrough(dialog.append(h('p')))
 
   assert.equal(dialog.open, false, 'a closer with no dialog of its own belongs to this one')
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'])
+})
+
+test('a dismiss wrapper cannot reopen its dialog through a self-href', () => {
+  const env = makeEnv()
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  const wrapper = env.document.body.append(h('div', { 'data-modal-close': '' }))
+  env.reparent(dialog, wrapper)
+
+  env.clickDocument(env.triggerFor('modal-a'))
+  const event = env.clickThrough(dialog.append(h('a', { href: '#modal-a' })))
+
+  assert.equal(dialog.open, false)
+  assert.equal(event.defaultPrevented, true)
   assert.deepEqual(env.types(), ['modal-open', 'modal-close'])
 })
 
