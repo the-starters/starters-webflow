@@ -235,7 +235,10 @@
   async function xanoRequest(path, method, payload) {
     const authFetch = typeof window.__tsSchedulingAuthFetch === 'function'
       ? window.__tsSchedulingAuthFetch
-      : window.xanoAuthFetch
+      : window.__tsSchedulingAuthBridgeOwner === 'scheduling-auth' &&
+          typeof window.xanoAuthFetch === 'function'
+        ? window.xanoAuthFetch
+        : null
     if (typeof authFetch !== 'function') {
       throw new Error('xanoAuthFetch is unavailable')
     }
@@ -749,6 +752,7 @@
     if (
       code !== 'MEMBER_SESSION_MISSING' &&
       code !== 'MEMBER_SCOPE_CHANGED' &&
+      Number(error && error.status) !== 401 &&
       message !== 'No Memberstack session'
     ) return false
     refreshVersion += 1
@@ -923,7 +927,7 @@
   }
 
   async function save() {
-    if (busy || activeWrite) return null
+    if (busy || activeWrite || authTransitionPending) return null
     const enabledInput = field('enabled')
     if (!canonicalService(settings) && enabledInput && !enabledInput.checked) {
       setMessage('Turn on paid calls before you save these settings.')
@@ -1005,7 +1009,7 @@
   }
 
   async function disable() {
-    if (busy || activeWrite) return null
+    if (busy || activeWrite || authTransitionPending) return null
     const service = canonicalService(settings)
     if (!service) return settings
     const version = ++refreshVersion
@@ -1066,6 +1070,8 @@
       if (!memberId || !settings) return loadSession(undefined, false)
       const pendingWrite = activeWrite && activeWrite.memberId === memberId ? activeWrite : null
       const version = ++refreshVersion
+      setActionEnabled(action('save'), false)
+      setActionEnabled(action('disable'), false)
       setStatus('loading')
       try {
         if (pendingWrite) await pendingWrite.done
@@ -1084,6 +1090,10 @@
         return null
       }
     } finally {
+      if (authTransitionPending === transition && settings && sessionMemberId) {
+        setActionEnabled(action('save'), canSaveSettings(settings))
+        setActionEnabled(action('disable'), Boolean(canonicalService(settings)))
+      }
       finishAuthTransition(transition)
     }
   }
