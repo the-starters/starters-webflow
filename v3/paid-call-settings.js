@@ -55,6 +55,9 @@
   let initializationPromise = null
   let authoredPrice = null
   let statusPillWarned = false
+  let activeWrite = null
+  let authTransitionPending = null
+  let prerequisiteRefreshQueued = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -740,6 +743,38 @@
     return version === refreshVersion && memberId === sessionMemberId
   }
 
+  function beginWrite(memberId) {
+    let resolve
+    const done = new Promise(function (finish) { resolve = finish })
+    const write = { memberId: memberId, done: done, resolve: resolve }
+    activeWrite = write
+    return write
+  }
+
+  function finishWrite(write) {
+    if (activeWrite === write) activeWrite = null
+    write.resolve()
+    flushQueuedPrerequisiteRefresh()
+  }
+
+  function beginAuthTransition() {
+    const transition = {}
+    authTransitionPending = transition
+    return transition
+  }
+
+  function finishAuthTransition(transition) {
+    if (authTransitionPending !== transition) return
+    authTransitionPending = null
+    flushQueuedPrerequisiteRefresh()
+  }
+
+  function flushQueuedPrerequisiteRefresh() {
+    if (!prerequisiteRefreshQueued || activeWrite || authTransitionPending) return
+    prerequisiteRefreshQueued = false
+    refreshFromPrerequisite().catch(function () {})
+  }
+
   function render(value) {
     settings = value
     const service = canonicalService(value)
@@ -865,7 +900,7 @@
   }
 
   async function save() {
-    if (busy) return null
+    if (busy || activeWrite) return null
     const enabledInput = field('enabled')
     if (!canonicalService(settings) && enabledInput && !enabledInput.checked) {
       setMessage('Turn on paid calls before you save these settings.')
@@ -877,6 +912,7 @@
     }
     const version = ++refreshVersion
     const memberId = sessionMemberId
+    const write = beginWrite(memberId)
     setBusy(true)
     setStatus('saving')
     try {
@@ -900,6 +936,7 @@
       ) {
         throw new Error('Paid-call settings did not match canonical readback')
       }
+      write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
       emit('starterPaidCallWriteSuccess', { action: 'upsert', configId: saved.config_id })
@@ -915,11 +952,16 @@
       throw error
     } finally {
       if (currentRender(version, memberId)) setBusy(false)
+      finishWrite(write)
     }
   }
 
   async function refreshFromPrerequisite() {
-    if (!root || !sessionMemberId || busy) return settings
+    if (!root || !sessionMemberId) return settings
+    if (busy || activeWrite || authTransitionPending) {
+      prerequisiteRefreshQueued = true
+      return settings
+    }
     hideNativeError()
     const version = ++refreshVersion
     const memberId = sessionMemberId
@@ -939,11 +981,12 @@
   }
 
   async function disable() {
-    if (busy) return null
+    if (busy || activeWrite) return null
     const service = canonicalService(settings)
     if (!service) return settings
     const version = ++refreshVersion
     const memberId = sessionMemberId
+    const write = beginWrite(memberId)
     setBusy(true)
     setStatus('disabling')
     try {
@@ -956,6 +999,7 @@
       if (canonicalService(canonical)) {
         throw new Error('Paid-call service remained active after canonical readback')
       }
+      write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
       setMessage('Paid calls are off.')
@@ -972,11 +1016,50 @@
       throw error
     } finally {
       if (currentRender(version, memberId)) setBusy(false)
+      finishWrite(write)
     }
   }
 
   function authMember(value) {
     return value && Object.prototype.hasOwnProperty.call(value, 'data') ? value.data : value
+  }
+
+  async function handleAuthChange(nextMemberValue) {
+    const notifiedMember = authMember(nextMemberValue)
+    if (notifiedMember && notifiedMember.id) {
+      if (notifiedMember.id === sessionMemberId && settings) return settings
+      const transition = beginAuthTransition()
+      try {
+        return await loadSession(notifiedMember, false)
+      } finally {
+        finishAuthTransition(transition)
+      }
+    }
+    const transition = beginAuthTransition()
+    try {
+      const memberId = sessionMemberId
+      const pendingWrite = activeWrite && activeWrite.memberId === memberId ? activeWrite : null
+      const version = ++refreshVersion
+      clearRenderedState('Checking your account…')
+      if (pendingWrite) sessionMemberId = memberId
+      setStatus('loading')
+      let member = null
+      try {
+        member = await currentMember(true)
+      } catch (error) {
+        member = null
+      }
+      if (version !== refreshVersion) return null
+      if (!member || !member.id) {
+        sessionMemberId = null
+        setStatus('error')
+        setMessage('Sign in to manage paid calls.')
+        return null
+      }
+      return await loadSession(member, false)
+    } finally {
+      finishAuthTransition(transition)
+    }
   }
 
   async function loadSession(memberValue, useSharedMember) {
@@ -994,7 +1077,44 @@
         return null
       }
       sessionMemberId = member.id
-      const canonical = await readCanonicalSettings()
+      const pendingWrite = activeWrite && activeWrite.memberId === member.id ? activeWrite : null
+      if (pendingWrite) {
+        await pendingWrite.done
+        if (!currentRender(version, member.id)) return null
+        let liveMember = null
+        try {
+          liveMember = await currentMember(true)
+        } catch (error) {
+          liveMember = null
+        }
+        if (!currentRender(version, member.id)) return null
+        if (!liveMember || !liveMember.id) {
+          setStatus('error')
+          clearRenderedState('Sign in to manage paid calls.')
+          return null
+        }
+        if (liveMember.id !== member.id) return loadSession(liveMember, false)
+      }
+      let canonical
+      try {
+        canonical = await readCanonicalSettings()
+      } catch (error) {
+        if (!pendingWrite || !pendingWrite.canonical) throw error
+        let fallbackMember = null
+        try {
+          fallbackMember = await currentMember(true)
+        } catch (memberError) {
+          fallbackMember = null
+        }
+        if (!currentRender(version, member.id)) return null
+        if (!fallbackMember || !fallbackMember.id) {
+          setStatus('error')
+          clearRenderedState('Sign in to manage paid calls.')
+          return null
+        }
+        if (fallbackMember.id !== member.id) return loadSession(fallbackMember, false)
+        return render(pendingWrite.canonical)
+      }
       if (!currentRender(version, member.id)) return null
       return render(canonical)
     } catch (error) {
@@ -1024,9 +1144,7 @@
     resolvers.forEach(function (resolve) {
       resolve(memberstack)
     })
-    memberstack.onAuthChange(function (nextMember) {
-      return loadSession(authMember(nextMember), false)
-    })
+    memberstack.onAuthChange(handleAuthChange)
   }
 
   function waitForMemberstack() {

@@ -308,6 +308,7 @@ function load(options = {}) {
   let rootAvailable = options.withRoot !== false && options.rootDelayed !== true
   let state = options.initial || canonical()
   let activeMember = { id: options.memberId || 'member-a' }
+  let currentMemberReader = () => activeMember
   let authChange = null
   const routes = options.routes || {}
 
@@ -335,7 +336,7 @@ function load(options = {}) {
   }
 
   const memberstack = {
-    getCurrentMember: async () => ({ data: activeMember }),
+    getCurrentMember: async () => ({ data: await currentMemberReader() }),
     onAuthChange(listener) { authChange = listener },
   }
   const window = {
@@ -413,6 +414,8 @@ function load(options = {}) {
       if (authChange) return authChange(nextMember)
       return null
     },
+    setCurrentMemberReader: (reader) => { currentMemberReader = reader },
+    notifyAuthChange: async (nextMember) => (authChange ? authChange(nextMember) : null),
     expireMemberSilently: () => { activeMember = null },
     installMemberstack: () => { window.$memberstackDom = memberstack },
     flushTimers: () => {
@@ -1943,6 +1946,346 @@ test('auth changes clear prior settings and load the next member canonically', a
   assert.equal(result.dom.title.value, '')
   assert.equal(result.dom.price.value, '')
   assert.equal(result.dom.save.disabled, true)
+})
+
+test('a transient empty auth notification suspends and restores the Paid canonical paint', async () => {
+  const result = load({
+    initial: canonical({
+      services: [service({ title: 'Paid Consultation Call', price_cents: 100, revision: 8 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  const readsBefore = result.calls.filter(
+    (call) => call.path === '/starter/paid-call-settings/get/v3',
+  ).length
+  const transition = result.notifyAuthChange(null)
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.save.disabled, true)
+
+  await transition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Paid Consultation Call')
+  assert.equal(result.dom.price.value, 1)
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length,
+    readsBefore + 1,
+  )
+})
+
+test('a failed post-write auth read falls back to the verified Paid update', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  let reads = 0
+  let postFinished = false
+  const result = load({
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        if (reads > 1 && !postFinished) {
+          return { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+        }
+        if (reads === 3) {
+          return { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+        }
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => {
+          const saved = service({
+            title: body.title,
+            price_cents: body.price_cents,
+            duration: body.duration_minutes,
+            revision: 5,
+          })
+          setState(canonical({
+            services: [saved],
+            readiness: { paid_call_enabled: true, bookable: true },
+          }))
+          postFinished = true
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        })
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Paid Call'
+  result.dom.price.value = '475'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const authTransition = result.notifyAuthChange(null)
+  await settle()
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+
+  finishPost.resolve()
+  await authTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Updated Paid Call')
+  assert.equal(result.dom.price.value, 475)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(reads, 3)
+})
+
+test('prerequisite events coalesce behind Paid write auth recovery', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  let reads = 0
+  const result = load({
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => {
+          const saved = service({
+            title: body.title,
+            price_cents: body.price_cents,
+            duration: body.duration_minutes,
+            revision: 5,
+          })
+          setState(canonical({
+            services: [saved],
+            readiness: { paid_call_enabled: true, bookable: true },
+          }))
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        })
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Paid Call'
+  result.dom.price.value = '475'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const authTransition = result.notifyAuthChange(null)
+  await settle()
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged')
+  await result.dispatchWindow('starterStripeConnectReady')
+  assert.equal(reads, 1)
+
+  finishPost.resolve()
+  await authTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Updated Paid Call')
+  assert.equal(result.dom.price.value, 475)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(reads, 4)
+})
+
+test('logout supersedes pending Paid write revalidation', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const transitionStarted = deferred()
+  const failTransition = deferred()
+  let reads = 0
+  const result = load({
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        if (reads === 3) {
+          transitionStarted.resolve()
+          return failTransition.promise
+        }
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => {
+          const saved = service({
+            title: body.title,
+            price_cents: body.price_cents,
+            duration: body.duration_minutes,
+            revision: 5,
+          })
+          setState(canonical({
+            services: [saved],
+            readiness: { paid_call_enabled: true, bookable: true },
+          }))
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        })
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Paid Call'
+  result.dom.price.value = '475'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const staleTransition = result.notifyAuthChange(null)
+  await settle()
+  finishPost.resolve()
+  await transitionStarted.promise
+  result.expireMemberSilently()
+  await result.notifyAuthChange(null)
+  failTransition.resolve({
+    ok: false,
+    status: 503,
+    json: async () => ({ message: 'temporarily unavailable' }),
+  })
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.status.textContent, 'Sign in to manage paid calls.')
+})
+
+test('account switch supersedes pending Paid write revalidation', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const transitionStarted = deferred()
+  const failTransition = deferred()
+  let memberAReads = 0
+  const result = load({
+    initial: canonical({
+      services: [service()],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ member, state }) => {
+        if (member.id === 'member-b') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => canonical({
+              services: [service({
+                config_id: 'cfg-paid-b',
+                title: 'Member B Call',
+                price_cents: 45000,
+              })],
+            }),
+          }
+        }
+        memberAReads += 1
+        if (memberAReads === 3) {
+          transitionStarted.resolve()
+          return failTransition.promise
+        }
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        postStarted.resolve()
+        return finishPost.promise.then(() => {
+          const saved = service({
+            title: body.title,
+            price_cents: body.price_cents,
+            duration: body.duration_minutes,
+            revision: 5,
+          })
+          setState(canonical({
+            services: [saved],
+            readiness: { paid_call_enabled: true, bookable: true },
+          }))
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        })
+      },
+    },
+  })
+  await settle()
+
+  result.dom.title.value = 'Updated Paid Call'
+  result.dom.price.value = '475'
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const staleTransition = result.notifyAuthChange(null)
+  await settle()
+  finishPost.resolve()
+  await transitionStarted.promise
+  await result.changeMember({ id: 'member-b' })
+  failTransition.resolve({
+    ok: false,
+    status: 503,
+    json: async () => ({ message: 'temporarily unavailable' }),
+  })
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member B Call')
+  assert.equal(result.dom.price.value, 450)
+})
+
+test('a stale Paid same-member revalidation cannot repaint after logout', async () => {
+  const staleMember = deferred()
+  const result = load({
+    initial: canonical({
+      services: [service({ title: 'Paid Consultation Call', price_cents: 100 })],
+    }),
+  })
+  await settle()
+
+  result.setCurrentMemberReader(() => staleMember.promise)
+  const staleTransition = result.notifyAuthChange(null)
+  assert.equal(result.dom.title.value, '')
+
+  result.expireMemberSilently()
+  result.setCurrentMemberReader(() => null)
+  await result.notifyAuthChange(null)
+  staleMember.resolve({ id: 'member-a' })
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.save.disabled, true)
+  assert.equal(result.dom.status.textContent, 'Sign in to manage paid calls.')
+})
+
+test('a newer Paid account switch supersedes pending empty-auth revalidation', async () => {
+  const staleMember = deferred()
+  const result = load({
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ member }) => ({
+        ok: true,
+        status: 200,
+        json: async () => canonical({
+          services: [service({
+            config_id: member.id === 'member-b' ? 'cfg-paid-b' : 'cfg-paid-a',
+            title: member.id === 'member-b' ? 'Member B Call' : 'Member A Call',
+            price_cents: member.id === 'member-b' ? 45000 : 12500,
+          })],
+        }),
+      }),
+    },
+  })
+  await settle()
+
+  result.setCurrentMemberReader(() => staleMember.promise)
+  const staleTransition = result.notifyAuthChange(null)
+  result.setCurrentMemberReader(() => ({ id: 'member-b' }))
+  await result.changeMember({ id: 'member-b' })
+  staleMember.resolve({ id: 'member-a' })
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member B Call')
+  assert.equal(result.dom.price.value, 450)
+  assert.equal(result.dom.enabled.checked, true)
 })
 
 test('late Memberstack arrival still wires auth changes', async () => {
