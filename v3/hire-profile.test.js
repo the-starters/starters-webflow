@@ -83,6 +83,17 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
     },
     add: (c) => el.classes.push(c),
   }
+  // Reflected like the real property: assigning it replaces the whole class
+  // list. renderRateCards builds its description <p> this way, so without the
+  // reflection the class never reaches classList and `.service-card_description`
+  // would silently match nothing.
+  Object.defineProperty(el, 'className', {
+    get: () => el.classes.join(' '),
+    set: (v) => {
+      el.classes = String(v).split(/\s+/).filter(Boolean)
+    },
+    configurable: true,
+  })
   el.getAttribute = (n) =>
     Object.prototype.hasOwnProperty.call(el.attributes, n) ? el.attributes[n] : null
   el.setAttribute = (n, v) => {
@@ -235,9 +246,14 @@ function makePage({
     cardAttributes,
     ['service-card_component'],
   )
+  // Production nests the title in a gapless flex row. The rate-card renderer
+  // appends its description into that wrapper as the title's sibling, so the
+  // extra level has to exist here for the spacing contract to be testable.
+  const cardTitleWrapper = makeElement('div', {}, ['service-card_title-wrapper'])
   const cardTitle = makeElement('div', { 'data-service-card-element': 'title' })
   cardTitle.textContent = includeFreeCard ? 'Free Call' : 'Paid Consulting Call'
-  card.appendChild(cardTitle)
+  cardTitleWrapper.appendChild(cardTitle)
+  card.appendChild(cardTitleWrapper)
   const bookingContent = makeElement('div', {}, ['service-card_content-wrapper'])
   bookingContent.appendChild(makeElement('div', { 'next-available-slot': '' }))
   card.appendChild(bookingContent)
@@ -729,6 +745,34 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
       card.querySelector('.service-card_content-wrapper'),
       null,
       'the booking "Next Available" row must not survive on a rate card',
+    )
+
+    // The unit text and the gap in front of the slash are both script-supplied.
+    // The leading character is U+00A0 on purpose: .service-card_title-wrapper is
+    // a gapless flex row, so a plain space would collapse at the start of the
+    // description's line box and the title would sit flush against the slash.
+    const descriptions = card.querySelectorAll('.service-card_description')
+    assert.equal(descriptions.length, 1, `${title} must render exactly one description`)
+    assert.equal(
+      descriptions[0].textContent,
+      title === 'Freelance' ? '\u00A0/ hour' : '\u00A0/ month',
+      `${title} must keep its non-breaking gap before the slash`,
+    )
+
+    const titleEl = card.querySelector('[data-service-card-element="title"]')
+    assert.ok(
+      titleEl.parentElement.classList.contains('service-card_title-wrapper'),
+      'the title must stay inside the authored title wrapper',
+    )
+    assert.equal(
+      descriptions[0].parentElement,
+      titleEl.parentElement,
+      'the description must be a sibling of the title inside the title wrapper',
+    )
+    assert.equal(
+      titleEl.querySelector('.service-card_description'),
+      null,
+      'the description must not be nested inside the title element',
     )
   }
 

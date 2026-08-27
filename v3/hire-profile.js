@@ -714,7 +714,8 @@
       // The leading \u00A0 is the gap between the title and the slash: the
       // title-wrapper is a gapless flex row, so the description <p> sits flush
       // against the title and a plain leading space would be collapsed at the
-      // start of its line box.
+      // start of its line box. Delete the \u00A0 if the wrapper ever gains a
+      // CSS gap, or the spacing doubles.
       if (rate > 0) {
           cards.push({ title: 'Freelance', description: '\u00A0/ hour', price: rate });
       }
