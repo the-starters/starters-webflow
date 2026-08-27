@@ -279,11 +279,15 @@ That label is anchored on the `[data-millify]` price hook, not on the chip
 Designer class. The paragraph is the nearest `<p>` above the hook and the
 layout is that paragraph parent, so a class rename cannot silently ship a
 chip with no label. A card with no price paragraph warns and renders without
-a label rather than failing. The title renders alone in
-`.service-card_title-wrapper`. The class `service-card_description` is
-deliberately not reused here because it carries `word-break: break-all` and
-the body-regular size. If the Designer ever authors a native label inside the
-chip, drop the script insert rather than letting both render.
+a label rather than failing. Cloned rate cards also strip every other child of
+the chip layout, so Designer-authored chip text such as `/hr` or `/session`
+never leaks into a script-built card and double-labels it; the template keeps
+its own authored labels, because only the clones are rewritten. The title
+renders alone in `.service-card_title-wrapper`. The class
+`service-card_description` is deliberately not reused here because it carries
+`word-break: break-all` and the body-regular size. If the Designer ever authors
+a native label inside the chip, drop the script insert rather than letting both
+render.
 
 Free-call access keeps the V2 product rule: any signed-in Brand, including
 Brand Free, can select a free call without an upgrade. The controller resolves

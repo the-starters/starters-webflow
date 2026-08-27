@@ -208,6 +208,7 @@ function makePage({
   includeBookingButton = true,
   includeHeroCallCards = false,
   includePriceParagraph = true,
+  includeAuthoredChipLabels = true,
 } = {}) {
   const root = makeElement('body')
 
@@ -288,14 +289,33 @@ function makePage({
   // The green price chip, nested exactly as production authors it:
   //   .service-card_price-card
   //     > .service-card_price-card-layout   (centred column flex)
+  //       > p.text-size-small.line-height-100  "per"      (authored top label)
   //       > p.text-size-large
   //         > span "$"
   //         > span[data-millify]
+  //       > p.text-size-small.line-height-100  "/hr"      (authored bottom label)
   // The millify hook is a GRANDCHILD of the layout, not a direct child, so the
   // renderer's walk from the hook up to the layout's own child is genuinely
   // exercised and the ordering assertions cannot compare against a -1 index.
+  //
+  // The authored labels are what the Designer's Service Card started shipping:
+  // cloneNode carries them onto every rate card, so a clone that does not strip
+  // them renders "$135 /hr /hour". They deliberately share the chip label's
+  // utility classes and differ only by service-card_price-unit, which is what
+  // makes "exactly one .service-card_price-unit" a real check rather than one
+  // that a leftover authored label would also satisfy.
   const priceCard = makeElement('div', {}, ['service-card_price-card'])
   const priceCardLayout = makeElement('div', {}, ['service-card_price-card-layout'])
+  // The authored labels are published independently of the price paragraph, so
+  // they are modelled that way: a chip whose price hook is missing still has
+  // the Designer's labels in it, which is what the soft-fail path must leave
+  // alone rather than empty.
+  if (includeAuthoredChipLabels) {
+    const authoredTop = makeElement('p', {}, ['text-size-small', 'line-height-100'])
+    authoredTop.textContent = 'per'
+    priceCardLayout.appendChild(authoredTop)
+  }
+
   if (includePriceParagraph) {
     const pricePara = makeElement('p', {}, ['text-size-large'])
     const currency = makeElement('span')
@@ -309,6 +329,12 @@ function makePage({
     pricePara.appendChild(currency)
     pricePara.appendChild(amount)
     priceCardLayout.appendChild(pricePara)
+  }
+
+  if (includeAuthoredChipLabels) {
+    const authoredBottom = makeElement('p', {}, ['text-size-small', 'line-height-100'])
+    authoredBottom.textContent = '/hr'
+    priceCardLayout.appendChild(authoredBottom)
   }
   priceCard.appendChild(priceCardLayout)
   card.appendChild(priceCard)
@@ -844,6 +870,22 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
     // quotes a starting price, so "from" reads above it. Same element, and
     // the side is the whole point: "from" under the price would misread as
     // a unit, and "/hour" above it would misread as a qualifier.
+    // The Designer's authored chip labels ride along on cloneNode. If they
+    // survive, the chip reads "$135 /hr /hour" on production.
+    assert.equal(
+      card.querySelectorAll('.service-card_price-card-layout')[0].children.length,
+      2,
+      'the cloned chip must hold only the price paragraph and the script label',
+    )
+    for (const node of card.descendants()) {
+      assert.notEqual(
+        node.textContent,
+        '/hr',
+        'the authored chip label must not survive cloning',
+      )
+      assert.notEqual(node.textContent, 'per', 'the authored top label must not survive cloning')
+    }
+
     const unitAt = childIndexOf(layout, units[0], 'the chip label')
     const priceAt = childIndexOf(layout, pricePara, 'the price paragraph')
     if (title === 'Freelance') {
@@ -852,11 +894,21 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
         unitAt > priceAt,
         'the Freelance unit must come after the price so it renders underneath',
       )
+      assert.deepEqual(
+        layout.children,
+        [pricePara, units[0]],
+        'the Freelance chip layout must be exactly [price, unit]',
+      )
     } else {
       assert.equal(units[0].textContent, 'from', 'Retainer must read as a from-price')
       assert.ok(
         unitAt < priceAt,
         'the Retainer "from" must come before the price so it renders on top',
+      )
+      assert.deepEqual(
+        layout.children,
+        [units[0], pricePara],
+        'the Retainer chip layout must be exactly [unit, price]',
       )
     }
 
@@ -898,6 +950,25 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
     (child) => child.getAttribute('data-rate-card') === null,
   )
   assert.equal(template.querySelector('[data-millify]').getAttribute('data-millify-max'), '5000')
+
+  // The authored labels are stripped from CLONES only. The template is the
+  // real call card the section still renders, so its own '/hr' must survive:
+  // stripping in place would blank the authored chip for every visitor.
+  const templateLayout = template.querySelector('.service-card_price-card-layout')
+  assert.equal(
+    templateLayout.children.length,
+    3,
+    'the template chip keeps its authored top and bottom labels',
+  )
+  assert.ok(
+    templateLayout.children.some((child) => child.textContent === '/hr'),
+    'the authored /hr must still be on the untouched template after renderRateCards',
+  )
+  assert.equal(
+    template.querySelectorAll('.service-card_price-unit').length,
+    0,
+    'the template must never receive a script-built chip label',
+  )
 })
 
 test('a price chip with no millify paragraph warns and still renders the cards', async () => {
@@ -929,6 +1000,17 @@ test('a price chip with no millify paragraph warns and still renders the cards',
     )
     assert.equal(card.style.display, 'block', 'the card must still be revealed')
     assert.equal(card.getAttribute('data-signup-trigger-element'), 'service')
+    // The strip is anchored on the same price paragraph as the insert, so
+    // when there is nothing to anchor there is nothing to strip either: the
+    // authored chip must be left exactly as the Designer published it rather
+    // than emptied by a half-applied fix.
+    assert.deepEqual(
+      card
+        .querySelector('.service-card_price-card-layout')
+        .children.map((child) => child.textContent),
+      ['per', '/hr'],
+      'an unanchored chip keeps its authored labels untouched',
+    )
   }
   assert.ok(
     context.warnings.some(

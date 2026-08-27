@@ -785,6 +785,16 @@
           const pricePara = priceEl ? priceEl.closest('p') : null;
           const priceLayout = pricePara ? pricePara.parentElement : null;
           if (priceLayout) {
+              // The Designer's Service Card now publishes its own label inside
+              // the chip ('/hr'), which cloneNode brings along; without this the
+              // clone renders the authored label AND the one inserted below
+              // ('$135 /hr /hour'). Everything in the chip except the price
+              // paragraph is authored decoration this file is replacing, so
+              // drop it all rather than pattern-matching known label text.
+              Array.prototype.slice.call(priceLayout.children).forEach(function (child) {
+                  if (child !== pricePara) child.remove();
+              });
+
               const unit = document.createElement('p');
               unit.className = 'service-card_price-unit text-size-small line-height-100';
               unit.textContent = card.unit;
