@@ -711,11 +711,14 @@
       const retainerRate = parseFloat(record['retainer-rate']);
       const cards = [];
 
+      // Freelance prices a unit, so its label reads under the amount ($135
+      // "/hour"). Retainer quotes a starting price, so its label reads above
+      // the amount ("from" $5.5K) — same element, opposite side.
       if (rate > 0) {
-          cards.push({ title: 'Freelance', description: '/hour', price: rate });
+          cards.push({ title: 'Freelance', unit: '/hour', unitPosition: 'below', price: rate });
       }
       if (record['retainer-enabled'] && retainerRate > 0) {
-          cards.push({ title: 'Retainer', description: '/month', price: retainerRate });
+          cards.push({ title: 'Retainer', unit: 'from', unitPosition: 'above', price: retainerRate });
       }
 
       cards.reverse().forEach(function (card) {
@@ -766,21 +769,33 @@
               priceEl.textContent = String(card.price);
           }
 
-          // The unit belongs inside the green price chip, stacked under the
+          // The label belongs inside the green price chip, stacked with the
           // amount, not beside the title. The chip layout is a centred column
           // flex carrying the system row gap, so the <p> needs no spacing of
           // its own. service-card_description is deliberately NOT reused: it
           // carries word-break:break-all and the body-regular size from the
-          // Designer stylesheet. Appended last so the price write above can
+          // Designer stylesheet. Placed last so the price write above can
           // never clobber it.
-          const priceLayout = el.querySelector('.service-card_price-card-layout');
+          //
+          // Anchored on [data-millify] rather than on the chip's Designer
+          // class: data-millify is the contract this file already depends on,
+          // while a class rename in Webflow would silently ship a chip with no
+          // label at all. The hook sits on a span inside the price <p>, so the
+          // paragraph is its nearest <p> and the layout is that <p>'s parent.
+          const pricePara = priceEl ? priceEl.closest('p') : null;
+          const priceLayout = pricePara ? pricePara.parentElement : null;
           if (priceLayout) {
               const unit = document.createElement('p');
               unit.className = 'service-card_price-unit text-size-small line-height-100';
-              unit.textContent = card.description;
-              priceLayout.appendChild(unit);
+              unit.textContent = card.unit;
+
+              if (card.unitPosition === 'above') {
+                  priceLayout.insertBefore(unit, pricePara);
+              } else {
+                  priceLayout.appendChild(unit);
+              }
           } else {
-              console.warn('Rate services:', 'Price chip layout not found; unit line skipped');
+              console.warn('Rate services:', 'Price paragraph not found; chip label skipped');
           }
 
           el.style.display = 'block';
