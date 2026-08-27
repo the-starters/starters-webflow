@@ -849,3 +849,86 @@ test('resetting reschedule state clears booking-scoped input and calendar', () =
   assert.equal(calendar.textContent, '')
   assert.equal(modal.__startersRescheduleCalendarToken, null)
 })
+
+test('respond controls are rendered into the base view for the counterpart', () => {
+  function fakeElement(tag) {
+    return {
+      tagName: tag,
+      children: [],
+      attributes: {},
+      style: {},
+      hidden: false,
+      parentNode: null,
+      nextSibling: null,
+      textContent: '',
+      setAttribute(name, value) {
+        this.attributes[name] = String(value)
+      },
+      removeAttribute(name) {
+        delete this.attributes[name]
+      },
+      getAttribute(name) {
+        return name in this.attributes ? this.attributes[name] : null
+      },
+      appendChild(child) {
+        child.parentNode = this
+        this.children.push(child)
+        return child
+      },
+      insertBefore(child, _ref) {
+        child.parentNode = this
+        this.children.push(child)
+        return child
+      },
+      cloneNode() {
+        const clone = fakeElement(this.tagName)
+        clone.attributes = { ...this.attributes }
+        return clone
+      },
+      closest() {
+        return basePanel
+      },
+    }
+  }
+  const doc = { createElement: fakeElement }
+  const basePanel = fakeElement('div')
+  basePanel.setAttribute('booking-popup-content', 'base')
+  const group = fakeElement('div')
+  basePanel.appendChild(group)
+  const rescheduleTrigger = fakeElement('div')
+  rescheduleTrigger.setAttribute('booking-action-btn', 'reschedule')
+  group.appendChild(rescheduleTrigger)
+  const created = []
+  const modal = {
+    querySelector(selector) {
+      if (selector === '[data-starters-reschedule-views]') return {}
+      if (selector === '[data-starters-reschedule-respond]') {
+        return created.length ? created[0] : null
+      }
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector.includes('booking-action-btn="reschedule"')) {
+        return [rescheduleTrigger]
+      }
+      return []
+    },
+  }
+  assert.equal(api.ensureRescheduleViews(doc, modal), true)
+  const inserted = group.children.filter(
+    (child) => child.attributes && child.attributes['data-starters-reschedule-respond'] === '',
+  )
+  created.push(...inserted)
+  assert.equal(inserted.length, 2)
+  assert.deepEqual(
+    inserted.map((child) => child.attributes['booking-action-btn']).sort(),
+    ['confirm-reschedule', 'reschedule-decline'],
+  )
+  assert.equal(api.ensureRescheduleViews(doc, modal), true)
+  assert.equal(
+    group.children.filter(
+      (child) => child.attributes && child.attributes['data-starters-reschedule-respond'] === '',
+    ).length,
+    2,
+  )
+})
