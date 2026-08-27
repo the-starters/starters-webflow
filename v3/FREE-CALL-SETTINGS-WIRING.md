@@ -107,15 +107,16 @@ prevents a second click from starting a duplicate write.
 An empty Memberstack auth notification is not logout proof by itself. The scheduling auth bridge
 reconciles that notification against the live Memberstack cookie. While the cookie still belongs to
 the current auth scope, the controller keeps the cached Free paint and reloads canonical settings
-through the bridge. If an Update just completed its canonical readback, that verified result remains
-the fallback when the extra auth-triggered settings read fails. Prerequisite refreshes wait for the
-write and auth reconciliation, then coalesce into one canonical re-read.
+through the bridge. Update stays disabled, and the mutation guard blocks writes, until that auth
+reconciliation and canonical read finish. If an Update just completed its canonical readback, that
+verified result remains the fallback when the extra auth-triggered settings read fails. Prerequisite
+refreshes wait for the write and auth reconciliation, then coalesce into one canonical re-read.
 
-A confirmed missing or changed Memberstack session still fails closed: the cached Free state clears,
-the description, duration, price, and prerequisite paint reset, save disables,
-`data-free-call-settings` becomes `error`, and the status reads `Sign in to manage free calls.` A
-newer logout or account switch always supersedes an older same-member revalidation or post-write
-repaint.
+A confirmed missing or changed Memberstack session, or the final `401` after the bridge's one token
+refresh, still fails closed: the cached Free state clears, the description, duration, price, and
+prerequisite paint reset, save disables, `data-free-call-settings` becomes `error`, and the status
+reads `Sign in to manage free calls.` A newer logout or account switch always supersedes an older
+same-member revalidation or post-write repaint.
 
 Every failed request uses the scoped native Webflow `.w-form-fail` block. The controller writes the
 exact server message into its existing inner `div`, or an optional
@@ -134,10 +135,11 @@ clears the session or resets an in-progress Yes/No selection.
 - Disable: `starter/free-call-settings/disable/v3`
 
 The controller calls those exact `/v3` paths through the owner-specific fetch reference retained by
-`scheduling-auth.js`, with `window.xanoAuthFetch` as a compatibility fallback. This prevents another
-page bundle from replacing the mutable public global for Free settings. The bridge authenticates
-only those three paths, and `scheduling-v3-stage.js` maps their reviewed unversioned names to them
-and blocks lookalikes.
+`scheduling-auth.js`. It accepts `window.xanoAuthFetch` as a compatibility fallback only while
+`window.__tsSchedulingAuthBridgeOwner` still identifies `scheduling-auth` as its owner. This prevents
+another page bundle from replacing the mutable public global for Free settings. The bridge
+authenticates only those three paths, and `scheduling-v3-stage.js` maps their reviewed unversioned
+names to them and blocks lookalikes.
 
 The endpoints derive the exact TEST or production environment from the authenticated Memberstack
 mode and the approved page origin. They reject duplicate active Free services, foreign or stale
@@ -196,8 +198,9 @@ the canonical description and fixed-product readbacks, the in-flight double-Upda
 Update busy-state lifecycle, the scoped native error message and its retry and refresh clearing, the
 off-contract duration or price paint, the expired-session fail-closed writes, the authored
 status-pill resolution and its drifted-copy diagnostic, the `w--redirected-checked` radio sync,
-transient empty-auth recovery, post-write canonical fallback, queued prerequisite refresh, and
-logout and account-switch precedence
+transient empty-auth recovery, the auth-transition mutation lock, final-`401` clearing, the owned
+fetch fallback, post-write canonical fallback, queued prerequisite refresh, and logout and
+account-switch precedence
 are executable regressions in `v3/free-call-settings.test.js`. The remaining legs need a live
 Memberstack session, a live Xano TEST configuration, and an asset that only exists once the tag is
 published, so they are not runnable from CI or from a local test phase; both
