@@ -385,6 +385,57 @@
     })
     .join(', ')
 
+  const CLOSE_SELECTOR =
+    '[booking-action-btn="switch-close"], [booking-card-action-btn="switch-close"], [data-modal-close], [booking-popup-close], [popup-booking-close]'
+
+  function restartAfterModalClose(document, modal, restart) {
+    if (
+      !document ||
+      typeof document.addEventListener !== 'function' ||
+      !modal ||
+      typeof restart !== 'function'
+    ) return false
+    let pending = true
+    const detach = function () {
+      if (typeof document.removeEventListener === 'function') {
+        document.removeEventListener('click', onClick, true)
+      }
+      if (typeof modal.removeEventListener === 'function') {
+        modal.removeEventListener('close', onClose)
+      }
+    }
+    const run = function () {
+      if (!pending) return
+      pending = false
+      detach()
+      Promise.resolve()
+        .then(restart)
+        .catch(function (error) {
+          console.error(
+            '[dashboard-call-actions] refresh after close failed:',
+            error && error.message,
+          )
+        })
+    }
+    const onClose = function () {
+      run()
+    }
+    const onClick = function (event) {
+      const target = event && event.target
+      const close = target && target.closest && target.closest(CLOSE_SELECTOR)
+      if (!close || !close.closest) return
+      const owner = close.closest(
+        '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
+      )
+      if (owner === modal) run()
+    }
+    document.addEventListener('click', onClick, true)
+    if (typeof modal.addEventListener === 'function') {
+      modal.addEventListener('close', onClose)
+    }
+    return true
+  }
+
   function wire(options) {
     const settings = options || {}
     const document = settings.document || global.document
@@ -432,10 +483,16 @@
         button.setAttribute('aria-busy', 'true')
         button.setAttribute('aria-disabled', 'true')
         try {
-          await submitAction(step.kind, settings.role, booking, reason.value)
+          const result = await submitAction(
+            step.kind,
+            settings.role,
+            booking,
+            reason.value,
+          )
+          if (!result) throw new Error(config.failureMessage)
           if (reason.field) reason.field.value = ''
           switchPopupContent(modal, config.successContent)
-          if (typeof settings.restart === 'function') await settings.restart()
+          restartAfterModalClose(document, modal, settings.restart)
         } catch (error) {
           console.error(
             '[dashboard-call-actions] ' + step.kind + ' failed closed:',

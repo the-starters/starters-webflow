@@ -216,7 +216,7 @@ function confirmedBooking() {
   }
 }
 
-function actionChainHarness(kind) {
+function actionChainHarness(kind, restart) {
   const names =
     kind === 'cancel'
       ? ['base', 'cancel', 'cancel-reason', 'cancelled']
@@ -236,6 +236,13 @@ function actionChainHarness(kind) {
     setCustomValidity() {},
   }
   const modal = {
+    listeners: {},
+    addEventListener(event, handler) {
+      this.listeners[event] = handler
+    },
+    removeEventListener(event, handler) {
+      if (this.listeners[event] === handler) delete this.listeners[event]
+    },
     querySelector(selector) {
       const expected =
         kind === 'cancel' ? '[booking-cancel-reason]' : '[booking-decline-reason]'
@@ -259,10 +266,15 @@ function actionChainHarness(kind) {
       },
     }
   }
-  let clickHandler
+  const clickHandlers = []
   const document = {
     addEventListener(event, handler) {
-      if (event === 'click') clickHandler = handler
+      if (event === 'click') clickHandlers.push(handler)
+    },
+    removeEventListener(event, handler) {
+      if (event !== 'click') return
+      const index = clickHandlers.indexOf(handler)
+      if (index !== -1) clickHandlers.splice(index, 1)
     },
     querySelector() {
       return modal
@@ -275,15 +287,17 @@ function actionChainHarness(kind) {
       return booking
     },
     role: 'starter',
+    restart,
   })
   return {
     async click(action) {
       const button = actionButton(action)
-      await clickHandler({
+      const event = {
         target: button,
         preventDefault() {},
         stopImmediatePropagation() {},
-      })
+      }
+      for (const handler of clickHandlers.slice()) await handler(event)
     },
     assertActive(name) {
       contents.forEach(function (content) {
@@ -292,7 +306,20 @@ function actionChainHarness(kind) {
         assert.equal(content.style.display, active ? 'flex' : 'none')
       })
     },
+    assertAllHidden() {
+      contents.forEach(function (content) {
+        assert.equal(content.hidden, true)
+        assert.equal(content.style.display, 'none')
+      })
+    },
     booking,
+    hideAll() {
+      contents.forEach(function (content) {
+        content.hidden = true
+        content.style.display = 'none'
+      })
+    },
+    reasonField,
   }
 }
 
@@ -322,7 +349,13 @@ function actionChainHarness(kind) {
             : '00000000-0000-4000-8000-000000000001'
         },
       }
-      const harness = actionChainHarness(scenario.kind)
+      let restartCount = 0
+      let harness
+      const restart = async function () {
+        restartCount += 1
+        harness.hideAll()
+      }
+      harness = actionChainHarness(scenario.kind, restart)
       global.xanoAuthFetch = async function () {
         return {
           ok: true,
@@ -341,12 +374,45 @@ function actionChainHarness(kind) {
         await harness.click(scenario.actions[index])
         harness.assertActive(scenario.panels[index])
       }
+      assert.equal(restartCount, 0)
+      await harness.click('switch-close')
+      await Promise.resolve()
+      assert.equal(restartCount, 1)
+      harness.assertAllHidden()
     } finally {
       global.xanoAuthFetch = originalFetch
       global.sessionStorage = originalStorage
       global.crypto = originalCrypto
     }
   })
+})
+
+test('a null command result keeps the reason panel and skips refresh', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalError = console.error
+  let restartCount = 0
+  const errors = []
+  try {
+    delete global.xanoAuthFetch
+    console.error = function () {
+      errors.push(Array.from(arguments))
+    }
+    const harness = actionChainHarness('cancel', function () {
+      restartCount += 1
+      harness.hideAll()
+    })
+    await harness.click('switch-cancel')
+    await harness.click('switch-cancel-reason')
+    await harness.click('cancel')
+
+    harness.assertActive('cancel-reason')
+    assert.equal(harness.reasonField.value, 'Conflict came up')
+    assert.equal(restartCount, 0)
+    assert.equal(errors.length, 1)
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    console.error = originalError
+  }
 })
 
 test('cancel eligibility is participant-only, booked, future, scoped, and identified', () => {
