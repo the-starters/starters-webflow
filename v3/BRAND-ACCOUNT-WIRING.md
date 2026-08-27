@@ -150,8 +150,8 @@ keep the photo and redirect scripts after that sitewide controller:
 ```
 
 The endpoint #1513 backend replay prerequisite below has passed. Keep the
-frontend install unpublished until the remaining Build/Edit inbox and token-
-redemption canaries pass.
+frontend install unpublished until the remaining Build inbox and token-
+redemption canaries plus the Edit no-password-email replay canary pass.
 
 ## Support diagnostic receipts
 
@@ -243,18 +243,20 @@ three recorded Test Mode canaries all returned HTTP 200 with
 `operationally_healthy=true`.
 
 This satisfies the prerequisite backend replay gate. It does not constitute the
-still-pending frontend Build/Edit inbox and token-redemption canaries, which
-remain required before publishing the frontend install.
+still-pending frontend Build inbox and token-redemption canaries or the Edit
+no-password-email replay canary, which remain required before publishing the
+frontend install.
 
 ## Configuration switch
 
 Memberstack's browser SDK owns reset-password emails for explicit recovery and
-changed login-email security. Build Account sends none when the member keeps the
-email they already authenticated with. Memberstack's Admin API does not expose a
-server-side reset-email action, so this controller deliberately does not depend
-on or claim a durable email outbox. Do not add an automatic retry around
-`sendMemberResetPasswordEmail`; a lost response is ambiguous and retrying could
-send a second message.
+the changed login-email security used by Build Account and Account Security.
+Starter Edit Profile does not request one. Build Account also sends none when
+the member keeps the email they already authenticated with. Memberstack's Admin
+API does not expose a server-side reset-email action, so this controller
+deliberately does not depend on or claim a durable email outbox. Do not add an
+automatic retry around `sendMemberResetPasswordEmail`; a lost response is
+ambiguous and retrying could send a second message.
 
 Use identity-scoped ownership in production when the controller is installed
 sitewide:
@@ -398,14 +400,14 @@ projection.
   same page lifecycle, including after a timeout or lost response. It never
   automatically retries the email call across a reload or new session and does
   not claim mathematically exactly-once delivery.
-- If the reset-email result is failed or ambiguous, the durable account changes
-  remain saved and the UI directs the member to the standard Forgot Password
-  flow for an explicit recovery attempt. On `/starter-edit-profile`, the native
-  Xano profile submission is still replayed after that email-side-effect failure
-  when Personal Details remains valid and the same Memberstack identity and
-  normalized email are confirmed. The recovery error copy remains visible.
-- Successful password-token redemption is the ownership proof. The controller
-  does not claim Memberstack `verified=true` without separately observed state.
+- If a Build Account or Account Security reset-email result is failed or
+  ambiguous, the durable account changes remain saved and the UI directs the
+  member to the standard Forgot Password flow for an explicit recovery attempt.
+- For Build Account and Account Security, successful password-token redemption
+  is the ownership proof. The controller does not claim Memberstack
+  `verified=true` without separately observed state. Starter Edit Profile uses
+  the same-member and exact-email readback described above and does not require
+  password-token redemption.
 - `completed-brand-profile` is the final durable Build Account write. Any
   earlier account-write failure leaves the member on onboarding for a safe
   idempotent replay; an email failure occurs only after completion is durable.
@@ -456,8 +458,8 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
 ## Reversible production Starter canary
 
 Run this only after separate approval of the exact existing Starter member ID,
-old email, canary email, expected reset message, downstream marketing behavior,
-and execution owner. Do not create a new member as a substitute.
+old email, canary email, downstream marketing behavior, and execution owner. Do
+not create a new member as a substitute.
 
 1. Freeze a canary manifest containing the stable Memberstack member ID, current
    role, old and canary emails, the expected single `user_v3` and
@@ -470,9 +472,8 @@ and execution owner. Do not create a new member as a substitute.
    `guardSecurityForm: 'identity'`. As Talent, submit the visible native form on
    `/starter-edit-profile` once with only the email changed while an unrelated
    required profile field is incomplete. Require the Memberstack login email to
-   change, exactly one reset/set-password message, and no Xano full-profile
-   submission from that click. Brand may continue using the native Account
-   Security modal.
+   change, zero reset/set-password messages, and no Xano full-profile submission
+   from that click. Brand may continue using the native Account Security modal.
 4. Read Memberstack, `user_v3`, and `freelancers_v3` by Memberstack member ID.
    Require the canary email, unchanged stable row IDs and role, and a common
    processed event watermark. Replay the captured webhook once and require a
@@ -490,7 +491,7 @@ and execution owner. Do not create a new member as a substitute.
    Mailchimp, and Webflow before ending the canary.
 8. Roll back through the same native `/starter-edit-profile` form by submitting
    the old email once. Repeat steps 4 through 7 in reverse, requiring the same
-   stable IDs, one rollback reset message, advanced watermarks, restored email,
+   stable IDs, zero rollback reset messages, advanced watermarks, restored email,
    and no duplicate or consent/status drift.
 
 If interception itself must be rolled back, change only
