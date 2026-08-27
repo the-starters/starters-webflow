@@ -582,3 +582,42 @@ test('a request queued behind cookie reconciliation uses the new generation', as
     assert.equal(tradeCount, 2)
   }
 })
+
+test('an expected owner scope blocks stale POST dispatch after cookie rotation', async () => {
+  let memberstackToken = 'memberstack-a'
+  const dispatchedBodies = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: `xano-${memberstackToken}` })
+    }
+    dispatchedBodies.push(await request.text())
+    return response({})
+  }
+  const memberstack = {
+    getMemberCookie: async () => memberstackToken,
+    onAuthChange(listener) {
+      this.listener = listener
+    },
+  }
+  const { authChange, window } = loadBridge(nativeFetch, { memberstack })
+  const expectedScope = await window.__tsSchedulingAuthGetScope()
+
+  memberstackToken = 'memberstack-b'
+  const reconciliation = authChange({ id: 'member-a' })
+  const staleWrite = window.__tsSchedulingAuthFetch(SCHEDULING_URL, {
+    method: 'POST',
+    body: JSON.stringify({ duration: 60 }),
+  }, expectedScope)
+
+  await assert.rejects(staleWrite, (error) => error.code === 'MEMBER_SCOPE_CHANGED')
+  await reconciliation
+  assert.deepEqual(dispatchedBodies, [])
+
+  const currentScope = await window.__tsSchedulingAuthGetScope()
+  const currentWrite = await window.__tsSchedulingAuthFetch(SCHEDULING_URL, {
+    method: 'POST',
+    body: JSON.stringify({ duration: 60 }),
+  }, currentScope)
+  assert.equal(currentWrite.status, 200)
+  assert.deepEqual(dispatchedBodies, [JSON.stringify({ duration: 60 })])
+})

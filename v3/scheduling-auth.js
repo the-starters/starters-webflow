@@ -172,6 +172,10 @@
     if (generation !== sessionGeneration) throw memberSessionChangedError()
   }
 
+  function assertExpectedScope(expectedScope) {
+    if (expectedScope && expectedScope !== sessionScope) throw memberSessionChangedError()
+  }
+
   function resetSession() {
     sessionGeneration += 1
     tokenRevision += 1
@@ -296,7 +300,8 @@
     return new Request(request.clone(), { headers: headers })
   }
 
-  async function fetchWithToken(request, token, generation) {
+  async function fetchWithToken(request, token, generation, expectedScope) {
+    assertExpectedScope(expectedScope)
     let response = await originalFetch(withAuthorization(request, token))
     await authReconciliation
     assertSessionGeneration(generation)
@@ -309,13 +314,14 @@
       return response
     }
     assertSessionGeneration(generation)
+    assertExpectedScope(expectedScope)
     response = await originalFetch(withAuthorization(request, token))
     await authReconciliation
     assertSessionGeneration(generation)
     return response
   }
 
-  async function xanoAuthFetch(input, init) {
+  async function xanoAuthFetch(input, init, expectedScope) {
     const request = new Request(input, init)
     if (!schedulingUrl(request) || request.headers.has('Authorization')) {
       return originalFetch(request)
@@ -325,7 +331,7 @@
     const generation = sessionGeneration
     const token = await getXanoAuthToken()
     assertSessionGeneration(generation)
-    return fetchWithToken(request, token, generation)
+    return fetchWithToken(request, token, generation, expectedScope)
   }
 
   async function authenticatedFetch(input, init) {

@@ -317,6 +317,7 @@ function load(options = {}) {
   let activeMember = { id: options.memberId || 'member-a' }
   let authSessionActive = true
   let authScope = {}
+  let authScopeUnavailable = false
   let currentMemberReader = () => activeMember
   let authChange = null
   const routes = options.routes || {}
@@ -387,6 +388,7 @@ function load(options = {}) {
     __tsSchedulingAuthFetch: schedulingAuthFetch,
     __tsSchedulingAuthGetScope: async () => {
       if (!authSessionActive) throw new Error('No Memberstack session')
+      if (authScopeUnavailable) throw new Error('Xano token trade failed')
       return authScope
     },
     xanoAuthFetch: schedulingAuthFetch,
@@ -436,6 +438,12 @@ function load(options = {}) {
       authScope = {}
       return authChange ? authChange(activeMember) : null
     },
+    beginFailedAuthScopeRotation: () => {
+      authScope = {}
+      authScopeUnavailable = true
+      return authChange ? authChange(activeMember) : Promise.resolve(null)
+    },
+    recoverAuthScope: () => { authScopeUnavailable = false },
     switchAuthScopeWithNullNotice: async (nextMember) => {
       activeMember = nextMember
       authSessionActive = Boolean(nextMember && nextMember.id)
@@ -2088,6 +2096,41 @@ test('same-member cookie rotation reloads Paid and keeps Update usable', async (
 
   assert.equal(writes, 1)
   assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+})
+
+test('Paid recovers automatically after a transient same-member token failure', async () => {
+  let reads = 0
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ price_cents: 100 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => state }
+      },
+    },
+  })
+  await settle()
+
+  const transition = result.beginFailedAuthScopeRotation()
+  await settle()
+
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid-call settings are reconnecting. Update will resume automatically.')
+
+  result.recoverAuthScope()
+  result.flushTimers()
+  await transition
+  await settle()
+
+  assert.equal(reads, 2)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
 })
 

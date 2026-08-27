@@ -261,6 +261,7 @@ function load(options = {}) {
   let activeMember = { id: options.memberId || 'member-free-a' }
   let authSessionActive = true
   let authScope = {}
+  let authScopeUnavailable = false
   let currentMemberReader = () => activeMember
   let authChange = null
   const routes = options.routes || {}
@@ -324,6 +325,7 @@ function load(options = {}) {
     __tsSchedulingAuthFetch: schedulingAuthFetch,
     __tsSchedulingAuthGetScope: async () => {
       if (!authSessionActive) throw new Error('No Memberstack session')
+      if (authScopeUnavailable) throw new Error('Xano token trade failed')
       return authScope
     },
     xanoAuthFetch: schedulingAuthFetch,
@@ -369,6 +371,12 @@ function load(options = {}) {
       authScope = {}
       return authChange ? authChange(activeMember) : null
     },
+    beginFailedAuthScopeRotation: () => {
+      authScope = {}
+      authScopeUnavailable = true
+      return authChange ? authChange(activeMember) : Promise.resolve(null)
+    },
+    recoverAuthScope: () => { authScopeUnavailable = false },
     switchAuthScopeWithNullNotice: async (member) => {
       activeMember = member
       authSessionActive = Boolean(member && member.id)
@@ -1271,6 +1279,40 @@ test('same-member cookie rotation reloads Free and keeps Update usable', async (
 
   assert.equal(writes, 1)
   assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+})
+
+test('Free recovers automatically after a transient same-member token failure', async () => {
+  let reads = 0
+  const result = load({
+    initial: canonical({
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => state }
+      },
+    },
+  })
+  await settle()
+
+  const transition = result.beginFailedAuthScopeRotation()
+  await settle()
+
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.status.textContent, 'Free-call settings are reconnecting. Update will resume automatically.')
+
+  result.recoverAuthScope()
+  result.flushTimers()
+  await transition
+  await settle()
+
+  assert.equal(reads, 2)
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
   assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
 })
 

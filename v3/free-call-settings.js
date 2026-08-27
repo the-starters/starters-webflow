@@ -229,7 +229,7 @@
         'Content-Type': 'application/json',
       },
       body: payload === undefined ? undefined : JSON.stringify(payload),
-    })
+    }, sessionAuthScope)
     const data = await response.json().catch(function () { return null })
     assertAuthScope(await currentAuthScope())
     if (!response.ok) {
@@ -833,25 +833,40 @@
     return value && Object.prototype.hasOwnProperty.call(value, 'data') ? value.data : value
   }
 
+  function waitForAuthRetry() {
+    return new Promise(function (resolve) { window.setTimeout(resolve, 250) })
+  }
+
+  async function reconcileSameMemberScope(transition, notifiedMember) {
+    while (
+      authTransitionPending === transition &&
+      notifiedMember.id === sessionMemberId &&
+      settings
+    ) {
+      try {
+        const scope = await currentAuthScope()
+        if (authTransitionPending !== transition) return null
+        if (scope === sessionAuthScope) return settings
+        return loadSession(notifiedMember, false)
+      } catch (error) {
+        if (authTransitionPending !== transition) return null
+        if (failClosedSession(error)) return null
+        setStatus('error')
+        setMessage('Free-call settings are reconnecting. Update will resume automatically.')
+        setActionEnabled(action('save'), false)
+        await waitForAuthRetry()
+      }
+    }
+    return null
+  }
+
   async function handleAuthChange(nextMemberValue) {
     const notifiedMember = authMember(nextMemberValue)
     if (notifiedMember && notifiedMember.id) {
       const transition = beginAuthTransition()
       try {
         if (notifiedMember.id === sessionMemberId && settings) {
-          let scope
-          try {
-            scope = await currentAuthScope()
-          } catch (error) {
-            if (authTransitionPending === transition) failClosedSession(error)
-            return null
-          }
-          if (
-            authTransitionPending !== transition ||
-            notifiedMember.id !== sessionMemberId ||
-            !settings
-          ) return null
-          if (scope === sessionAuthScope) return settings
+          return await reconcileSameMemberScope(transition, notifiedMember)
         }
         return await loadSession(notifiedMember, false)
       } finally {
