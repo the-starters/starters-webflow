@@ -920,6 +920,7 @@
 
   async function refreshFromPrerequisite() {
     if (!root || !sessionMemberId || busy) return settings
+    hideNativeError()
     const version = ++refreshVersion
     const memberId = sessionMemberId
     try {
