@@ -431,6 +431,8 @@
       : ''
     const content = nativeErrorContent(nativeError)
     content.textContent = text
+    if (text) ensureBusyStyles()
+    nativeError.setAttribute('data-call-settings-error-visible', text ? 'true' : 'false')
     nativeError.style.display = text ? 'block' : 'none'
     nativeError.setAttribute('aria-hidden', text ? 'false' : 'true')
     if (text) nativeError.setAttribute('role', 'alert')
@@ -456,6 +458,7 @@
     const nativeError = findNativeError()
     if (!nativeError) return
     nativeErrorContent(nativeError).textContent = ''
+    nativeError.setAttribute('data-call-settings-error-visible', 'false')
     nativeError.style.display = 'none'
     nativeError.setAttribute('aria-hidden', 'true')
   }
@@ -670,7 +673,8 @@
       '[data-call-settings-busy="true"] [data-call-settings-icon="success"],' +
       '[data-call-settings-busy="true"] [data-opp-element="loading-hide"],' +
       '[data-call-settings-busy="true"] [loading-hide]{' +
-      'display:none!important}'
+      'display:none!important}' +
+      '[data-call-settings-error-visible="true"]{display:block!important}'
     document.head.appendChild(style)
   }
 

@@ -1257,6 +1257,7 @@ test('a guarded Paid update mirrors the error to both outputs and clears the nat
     'Resolve in-flight bookings before updating this service',
   )
   assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'false')
   assert.equal(result.dom.nativeError.getAttribute('role'), 'alert')
   assert.equal(result.dom.formWrapper.style.display, 'flex')
@@ -1269,6 +1270,7 @@ test('a guarded Paid update mirrors the error to both outputs and clears the nat
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
   assert.equal(result.dom.nativeErrorMessage.textContent, '')
   assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'false')
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')
 })
 
@@ -1294,6 +1296,7 @@ test('an invalid Paid retry clears the request error without a second write', as
   await settle()
 
   assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
 
   const terms = new El('input', { name: 'call-terms', required: '' })
   result.dom.form.append(terms)
@@ -2134,6 +2137,7 @@ test('queued prerequisite events do not erase a failed Paid write error', async 
   assert.equal(reads, 1)
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
   assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
   assert.equal(
     result.dom.nativeErrorMessage.textContent,
     'Resolve in-flight bookings before updating this service',
