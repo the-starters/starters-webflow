@@ -299,6 +299,7 @@ node --test global-embeds/modal/modal.test.js
 - `global-embeds/form-embeds/timepicker/timepicker.js` — time-input picker ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/timepicker))
 - `global-embeds/form-embeds/checkbox-toggle/checkbox-toggle.js` — checkbox-driven visibility toggling ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/checkbox-toggle))
 - `global-embeds/form-embeds/password-toggle/password-toggle.js` — show/hide password control ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-toggle))
+- `global-embeds/form-embeds/password-validation/password-validation.js` — password-requirements checklist with submit gating; each instance picks its rule set through `starters-password-validation-*` wrapper attributes, misconfigured instances fail open, diagnostics staging-gated ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation))
 - `global-embeds/form-embeds/form-input-filter/form-input-filter.js` — input filtering and normalization ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-input-filter))
 - `global-embeds/form-embeds/input-preview.js` — echoes an input's value into a preview element ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/input-preview))
 
