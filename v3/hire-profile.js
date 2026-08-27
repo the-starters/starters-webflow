@@ -717,10 +717,10 @@
       // start of its line box. Delete the \u00A0 if the wrapper ever gains a
       // CSS gap, or the spacing doubles.
       if (rate > 0) {
-          cards.push({ title: 'Freelance', description: '\u00A0/ hour', price: rate });
+          cards.push({ title: 'Freelance', description: '\u00A0/hour', price: rate });
       }
       if (record['retainer-enabled'] && retainerRate > 0) {
-          cards.push({ title: 'Retainer', description: '\u00A0/ month', price: retainerRate });
+          cards.push({ title: 'Retainer', description: '\u00A0/month', price: retainerRate });
       }
 
       cards.reverse().forEach(function (card) {

@@ -267,12 +267,12 @@ cards keep the signup-attribution modal, and Talent or unknown roles do not get
 the Brand project trigger.
 
 The rate cards also get their unit text from this file, gap included: the
-descriptions are `\u00A0/ hour` and `\u00A0/ month`, appended as a
+descriptions are `\u00A0/hour` and `\u00A0/month`, appended as a
 `<p class="service-card_description">` sibling of the title inside
 `.service-card_title-wrapper`. That leading U+00A0 is load-bearing because the
 wrapper is a gapless flex row, where a plain leading space collapses at the
 start of the description's line box and leaves the unit flush against the
-price. If the Designer ever adds a gap or margin to
+title. If the Designer ever adds a gap or margin to
 `.service-card_title-wrapper` or to `.service-card_description`, the `\u00A0`
 has to come out of `renderRateCards` or the spacing doubles.
 

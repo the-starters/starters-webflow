@@ -755,7 +755,7 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
     assert.equal(descriptions.length, 1, `${title} must render exactly one description`)
     assert.equal(
       descriptions[0].textContent,
-      title === 'Freelance' ? '\u00A0/ hour' : '\u00A0/ month',
+      title === 'Freelance' ? '\u00A0/hour' : '\u00A0/month',
       `${title} must keep its non-breaking gap before the slash`,
     )
 
