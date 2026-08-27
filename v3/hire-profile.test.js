@@ -3336,6 +3336,7 @@ test('2f: 12/10-era sentinel remnants are overwritten as readily as the new ones
   // which era a hook is from -- it always writes -- so mix both in one page.
   hooks.cardFree.textContent = '11:00PM on 12/10'
   hooks.chooserFree.textContent = '11:00pm on 12/10'
+  hooks.chooserPaid.textContent = '00:00'
   page.paidModalPrice.textContent = '$50'
   const calls = []
   const context = slotContext(page, slotController({ cfg_free: SLOT_FREE, cfg_paid: SLOT_PAID }, calls))
@@ -3346,6 +3347,7 @@ test('2f: 12/10-era sentinel remnants are overwritten as readily as the new ones
   assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
   assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
   assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06')
+  assert.equal(hooks.chooserPaid.textContent, '09:00AM on 03/06', 'a bare 00:00 remnant goes too')
   assert.equal(page.paidModalPrice.textContent, '$250')
 })
 
