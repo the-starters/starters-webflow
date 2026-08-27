@@ -602,14 +602,16 @@ exists.
 The settings payloads name a service's length as either `duration` or
 `duration_minutes` (the tolerance `free-call-settings.js` already applies).
 
-They report environment differently: free carries `data_environment` at the top
-level, paid carries `stripe_environment` at the top level with
-`payment_environment` on each service. Each environment an endpoint reports is
-checked against the host. **`data_environment` is not returned by the paid
-payload at either level**, so on a paid record that field is filled from the
-host rather than invented — the paid record's environment authority is the
-payment environment, which is checked. This is the one place the owner gate is
-weaker than the brand gate. The free payload always stamps `data_environment`,
+They report environment differently. Free carries `data_environment` at the top
+level. The paid payload's environment contract is owned by [Environment in the
+canonical GET
+payload](PAID-CALL-SETTINGS-WIRING.md#environment-in-the-canonical-get-payload);
+what matters to this mapping is that **it reports no `data_environment` at
+all**. Each environment an endpoint reports is checked against the host, so on
+a paid record that field is filled from the host rather than invented, and the
+paid record's environment authority is the `payment_environment` that endpoint
+does report, which is checked. This is the one place the owner gate is weaker
+than the brand gate. The free payload always stamps `data_environment`,
 so a free record missing it fails closed: absence there means the endpoint's
 contract changed upstream, not that the check should be skipped.
 
