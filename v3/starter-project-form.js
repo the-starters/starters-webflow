@@ -3,8 +3,10 @@
  *
  * Webflow owns the detached shared modal and all form markup. This controller
  * projects the selected Brand into the authored counterparty rail, binds the
- * native Brand select to Xano-authorized options, reuses the shared commercial
- * serializer from v3/project-form.js, and creates the canonical project.
+ * native Brand select to Xano-authorized options, removes the authored generic
+ * Service 1/2/3 slots, appends the authenticated Starter's canonical Xano
+ * service names, reuses the shared commercial serializer from
+ * v3/project-form.js, and creates the canonical project.
  */
 ;(function (global) {
   'use strict'
@@ -17,7 +19,9 @@
   var LEGACY_MODAL_SELECTOR = 'dialog[data-modal-target="start-project"]'
   var TRIGGER_SELECTOR = '[data-modal-trigger="start-project"]'
   var TRIGGER_LINK_SELECTOR = TRIGGER_SELECTOR + ' a.clickable_link'
+  var STARTER_PROFILE_URL = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/starter/profile/me'
   var BRAND_SELECT_SELECTOR = '[data-project-field="brand_id"], #Brand'
+  var SERVICE_SELECT_SELECTOR = '[data-project-field="service"], select[name="Services"], select[name="services"]'
   var BRAND_ID_SELECTOR = '#brand-contract'
   var MANAGER_NAME_SELECTOR = '#hiring-manager-name, #Hiring-Manager-Name'
   var COMPANY_NAME_SELECTOR = '#brand-company-name, #Company-Name'
@@ -97,6 +101,16 @@
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null
   }
 
+  function memberstackId(value) {
+    var id = clean(value)
+    return /^mem_(?:sb_)?[A-Za-z0-9]+$/.test(id) ? id : ''
+  }
+
+  function messageUrl(option) {
+    var id = memberstackId(option && option.memberstack_member_id)
+    return id ? '/messages?with=' + encodeURIComponent(id) : '#'
+  }
+
   function createdProject(result) {
     var project = result && result.project
     var lifecycleState = clean(project && project.lifecycle_state).toLowerCase()
@@ -127,7 +141,9 @@
       optionsLoaded: false,
       profile: null,
       profileLoaded: false,
+      services: [],
       selected: null,
+      partyCopyTargets: null,
       key: '',
       keyPayload: '',
       lockedControls: null,
@@ -154,13 +170,22 @@
       if (!id || seen[id]) return items
       var company = clean(raw && (raw.company_name || raw.counterparty_label || raw.label))
       var manager = clean(raw && (raw.hiring_manager_name || raw.full_name || raw.manager_name))
-      if (!company || !manager) return items
+      var counterpartyMemberstackId = memberstackId(raw && (
+        raw.counterparty_memberstack_id || raw.memberstack_member_id || raw.memberstack_id
+      ))
+      if (!company) return items
       var label = company
-      if (company.toLowerCase() !== manager.toLowerCase()) {
+      if (manager && company.toLowerCase() !== manager.toLowerCase()) {
         label = company + ' — ' + manager
       }
       seen[id] = true
-      items.push({ id: id, label: label, company_name: company, manager_name: manager })
+      items.push({
+        id: id,
+        label: label,
+        company_name: company,
+        manager_name: manager,
+        memberstack_member_id: counterpartyMemberstackId,
+      })
       return items
     }, []).sort(function (left, right) {
       return left.label.localeCompare(right.label)
@@ -187,6 +212,96 @@
       profile_photo: clean(response && response.profile_photo),
       freelancer_information: plainText(response && response.freelancer_information),
     }
+  }
+
+  function responseServices(response) {
+    if (!response || typeof response !== 'object') return []
+    return normalizeServices(
+      Object.prototype.hasOwnProperty.call(response, 'services') ? response.services : response.Services
+    )
+  }
+
+  function serviceSlot(key) {
+    var match = /^service[\s_-]*([123])$/i.exec(clean(key))
+    return match ? Number(match[1]) : 0
+  }
+
+  function normalizeServices(source) {
+    var values = []
+    if (Array.isArray(source)) {
+      values = source
+    } else if (source && typeof source === 'object') {
+      // Xano's object shape only ever carries the three authored slots. Any
+      // sibling metadata key must never become a selectable service value.
+      Object.keys(source)
+        .filter(function (key) { return serviceSlot(key) > 0 })
+        .sort(function (first, second) { return serviceSlot(first) - serviceSlot(second) })
+        .forEach(function (key) { values.push(source[key]) })
+    }
+    var seen = {}
+    return values.reduce(function (services, item) {
+      var name = clean(item && typeof item === 'object'
+        ? (item.name || item.label || item.raw)
+        : item)
+      var key = name.toLowerCase()
+      if (!name || serviceSlot(name) > 0 || seen[key]) return services
+      seen[key] = true
+      services.push(name)
+      return services
+    }, [])
+  }
+
+  function genericServiceSlot(entry) {
+    return serviceSlot(entry.label) > 0 || serviceSlot(entry.value) > 0
+  }
+
+  function authoredServiceOptions(select) {
+    if (!select.__starterProjectServiceOptions) {
+      select.__starterProjectServiceOptions = Array.prototype.map.call(select.options, function (option) {
+        return {
+          value: clean(option && option.value),
+          label: clean(option && option.textContent),
+        }
+      })
+    }
+    return select.__starterProjectServiceOptions
+  }
+
+  // Service 1/2/3 are Webflow authoring placeholders, never valid project
+  // services. Remove them even when the canonical profile has no services or
+  // the profile request fails. Valid authored options remain available.
+  function renderServices(form, services) {
+    var select = field(form, SERVICE_SELECT_SELECTOR)
+    if (!select || !select.options || !select.ownerDocument || !select.ownerDocument.createElement) return false
+    var authored = authoredServiceOptions(select)
+    var names = normalizeServices(services)
+    var target = authored.filter(function (entry) { return !genericServiceSlot(entry) })
+    var seen = {}
+    target.forEach(function (entry) { seen[entry.value.toLowerCase()] = true })
+    names.forEach(function (name) {
+      var key = name.toLowerCase()
+      if (seen[key]) return
+      seen[key] = true
+      target.push({ value: name, label: name })
+    })
+    var selected = clean(select.value)
+    for (var index = select.options.length - 1; index >= target.length; index -= 1) {
+      select.remove(index)
+    }
+    target.forEach(function (entry, position) {
+      var option = select.options[position]
+      if (!option) {
+        option = select.ownerDocument.createElement('option')
+        select.appendChild(option)
+      }
+      option.value = entry.value
+      option.textContent = entry.label
+    })
+    var selectedExists = Array.prototype.some.call(select.options, function (option) {
+      return clean(option && option.value) === selected
+    })
+    select.value = selectedExists ? selected : ''
+    return true
   }
 
   function formContext(form) {
@@ -255,6 +370,34 @@
     return replaced
   }
 
+  function renderPartyCopy(form, option) {
+    var current = formState(form)
+    var root = formContext(form)
+    if (!root || !root.querySelectorAll) return false
+    if (!current.partyCopyTargets) {
+      current.partyCopyTargets = Array.prototype.reduce.call(
+        root.querySelectorAll('p, label, span, a, button'),
+        function (targets, element) {
+          var value = clean(element.textContent)
+          if (value === 'Party') targets.push({ element: element, action: false })
+          if (value === 'Message Party') targets.push({ element: element, action: true })
+          return targets
+        },
+        []
+      )
+    }
+    var manager = clean(option && option.manager_name)
+    var name = manager ? manager.split(/\s+/)[0] : clean(option && option.company_name)
+    if (!name) name = 'Party'
+    current.partyCopyTargets.forEach(function (target) {
+      target.element.textContent = target.action ? 'Message ' + name : name
+      if (target.action && clean(target.element.tagName).toLowerCase() === 'a' && target.element.setAttribute) {
+        target.element.setAttribute('href', messageUrl(option))
+      }
+    })
+    return Boolean(current.partyCopyTargets.length)
+  }
+
   function applyStarterCopy(form) {
     var root = formContext(form)
     if (!root) return false
@@ -303,7 +446,9 @@
     current.profileRequest = null
     current.profile = null
     current.profileLoaded = false
+    current.services = []
     renderProfile(form, normalizeProfile(null))
+    renderServices(form, [])
   }
 
   function loadProfile(form, globalObject, forceRefresh) {
@@ -314,21 +459,23 @@
     if (!forceRefresh) invalidateProfile(form)
     var generation = current.generation
     var profileGeneration = current.profileGeneration
-    var request = projectApi(globalObject, 'starterProfile')
+    var request = starterProfileRequest(globalObject)
     if (!request) return Promise.resolve(null)
     var profileRequest = Promise.resolve()
       .then(function () { return request() })
       .then(function (response) {
         if (generation !== current.generation || profileGeneration !== current.profileGeneration) return null
         current.profile = normalizeProfile(response)
+        current.services = responseServices(response)
         current.profileLoaded = true
-        renderProfile(form, current.profile)
+        renderServices(form, current.services)
         return current.profile
       })
       .catch(function () {
         if (generation !== current.generation || profileGeneration !== current.profileGeneration) return null
         current.profile = null
         current.profileLoaded = false
+        current.services = []
         return null
       })
       .finally(function () {
@@ -403,6 +550,7 @@
       brandSelect.setAttribute('data-project-field', 'brand_id')
     }
     applyStarterCopy(form)
+    renderPartyCopy(form, formState(form).selected)
     var root = formContext(form)
     var successLinks = root && root.querySelectorAll ? root.querySelectorAll(SUCCESS_LINK_SELECTOR) : []
     Array.prototype.forEach.call(successLinks, function (link) {
@@ -423,6 +571,7 @@
     // sample or previous selection value already present in the authored form.
     writeField(field(form, EMAIL_SELECTOR), '')
     renderCounterparty(form, option)
+    renderPartyCopy(form, option)
     return true
   }
 
@@ -434,6 +583,7 @@
     writeField(field(form, COMPANY_NAME_SELECTOR), '')
     writeField(field(form, EMAIL_SELECTOR), '')
     renderCounterparty(form, null)
+    renderPartyCopy(form, null)
   }
 
   function clearRenderedOptions(form) {
@@ -476,6 +626,46 @@
   function projectApi(globalObject, method) {
     var api = globalObject && globalObject.Opp30 && globalObject.Opp30.API
     return api && typeof api[method] === 'function' ? api[method] : null
+  }
+
+  // Opp30.API.starterProfile stays the primary path. The fallback exists only
+  // for browser sessions holding a cached opportunities-3.0.js without that
+  // method, and it must set Authorization itself: window.xanoAuthFetch only
+  // credentials the reviewed api:tCpV3oqd scheduling paths and would send this
+  // api:opp30 route unauthenticated. See STARTER-PROJECT-FORM-WIRING.md.
+  function starterProfileRequest(globalObject) {
+    var request = projectApi(globalObject, 'starterProfile')
+    if (request) return request
+    if (
+      !globalObject ||
+      typeof globalObject.getXanoAuthToken !== 'function' ||
+      typeof globalObject.fetch !== 'function'
+    ) return null
+    return function () {
+      return Promise.resolve(globalObject.getXanoAuthToken()).then(function (token) {
+        if (!clean(token)) throw new Error('Starter profile authentication is unavailable')
+        return globalObject.fetch(STARTER_PROFILE_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + token,
+          },
+          body: '{}',
+        })
+      }).then(function (response) {
+        return Promise.resolve()
+          .then(function () {
+            return response && typeof response.json === 'function' ? response.json() : null
+          })
+          .catch(function () { return null })
+          .then(function (data) {
+            if (!response || !response.ok) {
+              throw new Error(data && data.message ? data.message : 'Starter profile request failed')
+            }
+            return data
+          })
+      })
+    }
   }
 
   function syncCommercialForm(form, documentObject, globalObject) {
@@ -895,6 +1085,7 @@
         var form = documentObject.querySelector(FORM_SELECTOR)
         if (form) {
           prepareOpen(form, documentObject, globalObject)
+          loadProfile(form, globalObject, true)
           loadOptions(form, globalObject, true)
         }
         return
@@ -933,10 +1124,15 @@
 
   var api = {
     positiveId: positiveId,
+    memberstackId: memberstackId,
+    messageUrl: messageUrl,
     debugEnabled: debugEnabled,
     normalizeOptions: normalizeOptions,
     normalizeProfile: normalizeProfile,
+    normalizeServices: normalizeServices,
+    responseServices: responseServices,
     renderProfile: renderProfile,
+    renderServices: renderServices,
     renderCounterparty: renderCounterparty,
     applyStarterCopy: applyStarterCopy,
     loadProfile: loadProfile,

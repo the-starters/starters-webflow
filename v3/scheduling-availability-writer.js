@@ -35,11 +35,14 @@
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
   const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
-  const isStagingHost = window.location.hostname === STAGING_HOST
+  const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
+  const isStagingHost = activeHostname === STAGING_HOST
   const isApprovedProductionPath =
-    PRODUCTION_HOSTS.has(window.location.hostname) && activePath === PRODUCTION_PATH
+    PRODUCTION_HOSTS.has(activeHostname) && activePath === PRODUCTION_PATH
   if (!isStagingHost && !isApprovedProductionPath) return
   // The staging-host gate above has no path restriction, so on
   // the-starters-3-0.webflow.io this writer would otherwise self-activate on
@@ -66,6 +69,12 @@
   let timezonePersisted = false
   let connectionError = false
   const oauthCallback = captureOAuthCallback()
+
+  function minimumBookingNoticeMinutes() {
+    return isStagingHost
+      ? STAGING_MIN_BOOKING_NOTICE_MINUTES
+      : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+  }
 
   function captureOAuthCallback() {
     const params = new URLSearchParams(window.location.search)
@@ -314,55 +323,84 @@
       redirectUri: redirectUri,
       paidCallIntent: paidCallIntent || null,
     }
-    try {
-      window.sessionStorage.setItem(
-        OAUTH_INTENT_PREFIX + memberId,
-        JSON.stringify(intent),
-      )
-      return intent
-    } catch (error) {
-      return null
-    }
+    return writeOAuthIntent(memberId, intent) ? intent : null
   }
 
-  function readOAuthIntent(memberId) {
+  function oauthIntentStorages(storageNames) {
+    const storages = []
+    ;(storageNames || ['sessionStorage', 'localStorage']).forEach(function (storageName) {
+      try {
+        const storage = window[storageName]
+        if (storage && !storages.includes(storage)) storages.push(storage)
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
+    return storages
+  }
+
+  function writeOAuthIntent(memberId, intent) {
+    const key = OAUTH_INTENT_PREFIX + memberId
+    const value = JSON.stringify(intent)
+    let stored = false
+    oauthIntentStorages().forEach(function (storage) {
+      try {
+        storage.setItem(key, value)
+        stored = true
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
+    return stored
+  }
+
+  function readOAuthIntent(memberId, includeDurableFallback) {
     const redirectUri = oauthRedirectUri()
     const key = OAUTH_INTENT_PREFIX + memberId
-    try {
-      const raw = window.sessionStorage.getItem(key)
-      const intent = raw ? JSON.parse(raw) : null
-      if (
-        intent &&
+    const storageNames = includeDurableFallback
+      ? ['sessionStorage', 'localStorage']
+      : ['sessionStorage']
+    for (const storage of oauthIntentStorages(storageNames)) {
+      try {
+        const raw = storage.getItem(key)
+        const intent = raw ? JSON.parse(raw) : null
+        if (
+          intent &&
           Number.isFinite(intent.createdAt) &&
           Date.now() - intent.createdAt >= 0 &&
           Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
           intent.redirectUri === redirectUri
-      ) {
-        return intent
+        ) {
+          return intent
+        }
+        storage.removeItem(key)
+      } catch (error) {
+        try {
+          storage.removeItem(key)
+        } catch (storageError) {
+          /* storage unavailable */
+        }
       }
-      window.sessionStorage.removeItem(key)
-      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
-    } catch (error) {
-      try {
-        window.sessionStorage.removeItem(key)
-      } catch (storageError) {
-        /* storage unavailable */
-      }
-      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
     }
+    return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
   }
 
   function clearOAuthIntent(memberId) {
-    try {
-      window.sessionStorage.removeItem(OAUTH_INTENT_PREFIX + memberId)
-    } catch (error) {
-      /* storage unavailable */
-    }
+    const key = OAUTH_INTENT_PREFIX + memberId
+    oauthIntentStorages().forEach(function (storage) {
+      try {
+        storage.removeItem(key)
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
   }
 
   function persistOAuthIntent(memberId, intent) {
     if (!Number.isFinite(intent.createdAt)) intent.createdAt = Date.now()
-    window.sessionStorage.setItem(OAUTH_INTENT_PREFIX + memberId, JSON.stringify(intent))
+    if (!writeOAuthIntent(memberId, intent)) {
+      throw new Error('OAuth transition could not be retained')
+    }
     return intent
   }
 
@@ -486,6 +524,11 @@
   function closeConfigPopup() {
     const close = qs('[availability-popup-close]')
     if (close) close.click()
+  }
+
+  function providerRequestSucceeded(result) {
+    const status = Number(result && result.response && result.response.status)
+    return Number.isFinite(status) && status >= 200 && status < 300
   }
 
   function showManagerActions() {
@@ -780,7 +823,7 @@
     if (
       intent.title.length < 3 ||
       !Number.isInteger(intent.price_cents) ||
-      intent.price_cents < 500 ||
+      intent.price_cents < 100 ||
       [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1
     ) {
       throw new Error('Canonical paid-call service cannot be preserved')
@@ -927,7 +970,7 @@
         cancellation_url: redirectURL + '?cancel=:booking_ref',
         hide_rescheduling_options: true,
         hide_cancellation_options: true,
-        min_booking_notice: 1440,
+        min_booking_notice: minimumBookingNoticeMinutes(),
         additional_fields: {
           call_full_title: { type: 'metadata', label: 'Call Full Title', default: fullTitle, required: false },
           call_tiny_title: { type: 'metadata', label: 'Call Tiny Title', default: tinyTitle, required: false },
@@ -950,7 +993,7 @@
         '/scheduler/configurations/create/v3',
         payload,
       )
-      if (res && res.response && res.response.status === 200) return true
+      if (providerRequestSucceeded(res)) return true
       publishCalendarConnectionError()
       switchStep('config-request-error')
       console.warn('[scheduling-writer] configuration request rejected')
@@ -982,7 +1025,7 @@
         },
       },
     })
-    if (res && res.response && res.response.status === 200) return true
+    if (providerRequestSucceeded(res)) return true
     publishCalendarConnectionError()
     switchStep('config-request-error')
     return null
@@ -1426,7 +1469,7 @@
     try {
       // OAuth returns to this same dashboard. Xano derives `state` from the
       // authenticated member id; the callback must round-trip that exact
-      // value and a recent same-session intent before any grant write.
+      // value and a recent member-scoped intent before any grant write.
       const memberId = await writeMemberId()
       await ensureTimezone()
       const redirectUri = oauthRedirectUri()
@@ -1447,7 +1490,7 @@
       }
       // A delayed window.open occurs after awaited requests and is blocked by
       // normal browser popup protection. Same-tab navigation is reliable and
-      // preserves the sessionStorage intent needed by the callback verifier.
+      // preserves the member-scoped intent needed by the callback verifier.
       window.location.assign(url)
     } catch (error) {
       publishCalendarConnectionError()
@@ -1686,7 +1729,7 @@
             throw invalidOAuthCallback('OAuth state does not match the logged-in member')
           }
           trustedState = true
-          oauthIntent = readOAuthIntent(memberId)
+          oauthIntent = readOAuthIntent(memberId, true)
           if (oauthCallback.hasError) {
             throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
           }
@@ -1920,6 +1963,7 @@
     switchStep: switchStep,
     daysAlias: daysAlias,
     getAvailArray: getAvailArray,
+    minimumBookingNoticeMinutes: minimumBookingNoticeMinutes,
     publishCalendarConnectionState: publishCalendarConnectionState,
   }
 

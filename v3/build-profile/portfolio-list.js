@@ -5,6 +5,9 @@
  */
   // Loads and renders the current member's portfolio cards from Xano.
   document.addEventListener('DOMContentLoaded', async function () {
+    const pathname = String(window.location && window.location.pathname || '').replace(/\/+$/, '') || '/';
+    if (!['/build-profile/consult', '/build-profile/full-profile'].includes(pathname)) return;
+
     waitForMember(async () => {
       if (!MEMBER.id) return;
       
@@ -110,4 +113,3 @@
       await renderPortfolios();
     });
   });
-

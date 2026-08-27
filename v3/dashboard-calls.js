@@ -1,6 +1,8 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
+ * @release v1.59.402
+ *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
  * bookings, clones the authored templates, and owns loading/empty/list state.
@@ -14,12 +16,62 @@
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
   const BOOKINGS_PATH = '/booking_record/get/v3'
   const CONFIRM_PATH = '/booking/confirm/v3'
+  const DASHBOARD_CALL_MODULES = [
+    {
+      globalName: 'StartersDashboardCallActions',
+      path: 'dashboard-call-actions.js',
+      marker: 'data-starters-dashboard-call-actions',
+    },
+    {
+      globalName: 'StartersDashboardCallMedia',
+      path: 'dashboard-call-media.js',
+      marker: 'data-starters-dashboard-call-media',
+    },
+    {
+      globalName: 'StartersDashboardCallPayment',
+      path: 'dashboard-call-payment.js',
+      marker: 'data-starters-dashboard-call-payment',
+    },
+  ]
+  const DASHBOARD_MODULE_BASE =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/'
+  const CONFIRM_ATTEMPT_STORAGE_PREFIX = 'starters:dashboard-confirm:v1:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
+  const REQUEST_EXPIRATION_TICK_MS = 10000
+  const REQUEST_EXPIRATION_POLL_MS = 30000
+  const REQUEST_EXPIRATION_MAX_POLLS = 3
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
   const PAGE_SIZE = 6
   const PROJECT_PAGE_SIZE = 12
   const PROJECT_INSTANCE_KEYS = ['dash-projects', 'dash-brand-projects']
+  /**
+   * Authored duplicate tiles are matched by their heading text, live tiles by
+   * `[bookings-section]`, so the two vocabularies need mapping explicitly. The keys
+   * are the only headings this script has ever hidden.
+   */
+  const DUPLICATE_SECTION_NAMES = { calls: 'calls', 'call requests': 'requests' }
+  /**
+   * Webflow's zero-width, absolutely positioned anchor divs that carry the
+   * `#…-section` ids the sticky dashboard sub-nav links to.
+   */
+  const SECTION_ANCHOR_SELECTOR = '.dash-main_anchor[id]'
+  const STATUS_VARIANT_CLASSES = [
+    'w-variant-34961dab-8ebb-e322-49a7-741a1936647a',
+    'w-variant-89402c65-e26d-c236-91e7-76e9135a2d42',
+    'w-variant-f48ad750-f9e7-4b94-4998-3df752bfb037',
+  ]
+  const DETAIL_ACTION_SELECTOR = [
+    '[booking-action-btn]',
+    '[booking-card-action-btn]',
+    '[payment-action-btn]',
+    '[booking-pm-action]',
+    '[data-btn-payment]',
+    '[popup-stripe-card-open]',
+    '[pm-use-this]',
+  ].join(', ')
+  const DETAIL_MODAL_SELECTOR =
+    '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
   const DASHBOARD_ROLES = {
     '/starter-dashboard': 'starter',
     '/starter-dashboard---availability-stage': 'starter',
@@ -37,6 +89,183 @@
 
   function clean(value) {
     return String(value == null ? '' : value).trim()
+  }
+
+  function validDashboardModule(value) {
+    return value && typeof value.wire === 'function'
+  }
+
+  function moduleCacheSuffix() {
+    const document = global.document
+    const loader =
+      document &&
+      typeof document.querySelector === 'function' &&
+      document.querySelector('script[src*="/v3/dashboard-calls.js"]')
+    const src = clean(loader && loader.getAttribute('src'))
+    const query = src.indexOf('?')
+    if (query === -1) return ''
+    const suffix = src.slice(query + 1)
+    return suffix ? '?' + suffix : ''
+  }
+
+  function loadDashboardModule(spec, onAvailable) {
+    let delivered = false
+    function deliver(value) {
+      if (!validDashboardModule(value) || delivered) return null
+      delivered = true
+      if (typeof onAvailable === 'function') onAvailable(value)
+      return value
+    }
+    if (validDashboardModule(global[spec.globalName])) {
+      return Promise.resolve(deliver(global[spec.globalName]))
+    }
+    if (!global.document || typeof global.document.createElement !== 'function') {
+      return Promise.resolve(null)
+    }
+    return new Promise(function (resolve) {
+      let script = global.document.querySelector(
+        'script[' + spec.marker + '], script[src*="/v3/' + spec.path + '"]',
+      )
+      let settled = false
+      function finish() {
+        const dashboardModule = deliver(global[spec.globalName])
+        if (settled) return
+        settled = true
+        resolve(dashboardModule)
+      }
+      if (!script) {
+        script = global.document.createElement('script')
+        script.src = DASHBOARD_MODULE_BASE + spec.path + moduleCacheSuffix()
+        script.defer = true
+        script.setAttribute(spec.marker, '')
+        ;(global.document.head || global.document.documentElement).appendChild(script)
+      }
+      script.addEventListener('load', finish, { once: true })
+      script.addEventListener('error', finish, { once: true })
+      global.setTimeout(finish, 5000)
+    })
+  }
+
+  async function loadDashboardCallModules() {
+    const modules = await Promise.all(
+      DASHBOARD_CALL_MODULES.map(loadDashboardModule),
+    )
+    return {
+      actions: modules[0],
+      media: modules[1],
+      payment: modules[2],
+    }
+  }
+
+  async function wireDashboardCallModules(moduleOptions) {
+    const options = moduleOptions || {}
+    const dashboardModules = {
+      actions: null,
+      media: null,
+      payment: null,
+    }
+    const moduleKeys = ['actions', 'media', 'payment']
+    try {
+      await Promise.all(
+        DASHBOARD_CALL_MODULES.map(function (spec, index) {
+          return loadDashboardModule(spec, function (dashboardModule) {
+            try {
+              dashboardModule.wire(options)
+              dashboardModules[moduleKeys[index]] = dashboardModule
+              if (typeof options.onAvailable === 'function') {
+                options.onAvailable(dashboardModule, moduleKeys[index])
+              }
+            } catch (error) {
+              console.error(
+                '[dashboard-calls] optional module unavailable:',
+                error && error.message,
+              )
+            }
+          })
+        }),
+      )
+      return dashboardModules
+    } catch (error) {
+      console.error(
+        '[dashboard-calls] optional modules unavailable:',
+        error && error.message,
+      )
+      return null
+    }
+  }
+
+  async function stableScopeHash(value) {
+    const input = clean(value)
+    if (!input) return ''
+    const crypto = global.crypto
+    const TextEncoder = global.TextEncoder
+    if (!crypto || !crypto.subtle || typeof crypto.subtle.digest !== 'function' || typeof TextEncoder !== 'function') return ''
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
+      return Array.from(new Uint8Array(digest), function (byte) {
+        return byte.toString(16).padStart(2, '0')
+      }).join('')
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  async function confirmAttemptStorageKey(booking) {
+    const bookingId = clean(booking && booking.booking_id)
+    const actorId = clean(booking && booking.starter_data && booking.starter_data.memberstack_id)
+    const environment = clean(booking && booking.data_environment).toLowerCase()
+    const actorScope = await stableScopeHash(actorId)
+    if (!bookingId || !actorScope || !['test', 'production'].includes(environment)) return ''
+    return CONFIRM_ATTEMPT_STORAGE_PREFIX + environment + ':' + actorScope + ':' + bookingId
+  }
+
+  function validConfirmAttemptKey(value) {
+    return /^dashboard-confirm:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean(value))
+  }
+
+  async function storedConfirmAttemptKey(booking) {
+    const storageKey = await confirmAttemptStorageKey(booking)
+    const storage = global.sessionStorage
+    if (!storageKey || !storage || typeof storage.getItem !== 'function') return ''
+    try {
+      const value = clean(storage.getItem(storageKey))
+      if (validConfirmAttemptKey(value)) return value
+      if (value && typeof storage.removeItem === 'function') storage.removeItem(storageKey)
+    } catch (_error) {
+      return ''
+    }
+    return ''
+  }
+
+  async function createConfirmAttemptKey(booking) {
+    const randomUUID = global.crypto && global.crypto.randomUUID
+    if (typeof randomUUID !== 'function') return ''
+    const value = 'dashboard-confirm:' + randomUUID.call(global.crypto)
+    if (!validConfirmAttemptKey(value)) return ''
+    const storageKey = await confirmAttemptStorageKey(booking)
+    const storage = global.sessionStorage
+    if (!storageKey || !storage || typeof storage.getItem !== 'function' || typeof storage.setItem !== 'function') return ''
+    try {
+      storage.setItem(storageKey, value)
+      if (clean(storage.getItem(storageKey)) !== value) return ''
+    } catch (_error) {
+      return ''
+    }
+    return value
+  }
+
+  async function clearConfirmAttemptKey(booking, value) {
+    const storageKey = await confirmAttemptStorageKey(booking)
+    const storage = global.sessionStorage
+    if (!storageKey || !storage || typeof storage.getItem !== 'function' || typeof storage.removeItem !== 'function') return
+    try {
+      if (clean(storage.getItem(storageKey)) === clean(value)) storage.removeItem(storageKey)
+    } catch (_error) {}
+  }
+
+  function confirmSucceeded(body) {
+    const confirmation = body && body.confirmation ? body.confirmation : body
+    return clean(confirmation && confirmation.status).toLowerCase() === 'confirmed'
   }
 
   function normalizeTimestamp(value) {
@@ -96,6 +325,19 @@
       if (role !== 'starter') return section === 'calls'
       if (section === 'requests') return status === 'pending'
       return section === 'calls' && status !== 'pending'
+    })
+  }
+
+  function sameBookingRows(current, next) {
+    if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
+      return false
+    }
+    return current.every(function (booking, index) {
+      try {
+        return JSON.stringify(booking) === JSON.stringify(next[index])
+      } catch (_error) {
+        return false
+      }
     })
   }
 
@@ -189,14 +431,212 @@
     }).format(amount)
   }
 
-  function statusLabel(status) {
+  function formatDuration(value) {
+    const duration = Number(value)
+    return Number.isFinite(duration) && duration > 0 ? duration + 'min' : ''
+  }
+
+  function statusLabel(status, role) {
     return {
-      pending: 'Requested',
-      confirmed: 'Confirmed',
+      pending: role === 'starter' ? 'Pending' : 'Requested',
+      confirmed: 'Upcoming',
       completed: 'Completed',
       cancelled: 'Cancelled',
       archived: 'Archived',
     }[status]
+  }
+
+  function statusVariantClass(status) {
+    if (status === 'completed') return STATUS_VARIANT_CLASSES[1]
+    if (status === 'cancelled' || status === 'archived') {
+      return STATUS_VARIANT_CLASSES[2]
+    }
+    return STATUS_VARIANT_CLASSES[0]
+  }
+
+  function setClass(element, name, active) {
+    if (!element || !element.classList) return
+    if (typeof element.classList.toggle === 'function') {
+      element.classList.toggle(name, Boolean(active))
+    } else if (active && typeof element.classList.add === 'function') {
+      element.classList.add(name)
+    } else if (!active && typeof element.classList.remove === 'function') {
+      element.classList.remove(name)
+    }
+  }
+
+  function paintStatusPill(card, status, role) {
+    const pill = card && card.querySelector('[booking-element="status"]')
+    if (!pill) return
+    STATUS_VARIANT_CLASSES.forEach(function (className) {
+      setClass(pill, className, className === statusVariantClass(status))
+    })
+    text(pill, '[label-text]', statusLabel(status, role))
+    if (!pill.querySelector('[label-text]')) pill.textContent = statusLabel(status, role)
+    show(pill, true)
+    let group = pill.closest && pill.closest('[booking-element-wrap="status"]')
+    if (!group && pill.closest) {
+      const authoredGroup = pill.closest('[booking-element-wrap]')
+      if (
+        authoredGroup &&
+        clean(authoredGroup.getAttribute('booking-element-wrap')) === '' &&
+        authoredGroup.querySelector('[booking-element="status"]') === pill
+      ) {
+        group = authoredGroup
+      }
+    }
+    if (group) {
+      show(group, true)
+      group.style.setProperty('display', 'flex', 'important')
+    }
+  }
+
+  function paidBooking(booking) {
+    const value = booking && (
+      booking.is_paid != null ? booking.is_paid : booking.paid_meeting
+    )
+    return value === true || value === 1 || clean(value).toLowerCase() === 'true'
+  }
+
+  function responseWindowOpen(booking, now) {
+    if (bookingStatus(booking, now) !== 'pending') return false
+    const time = Number(now || Date.now())
+    const expires = normalizeTimestamp(booking && booking.confirmation_expires_at)
+    if (Number.isFinite(expires) && expires > 0 && expires <= time) return false
+    const start = normalizeTimestamp(booking && booking.start)
+    return !(Number.isFinite(start) && start > 0 && start <= time)
+  }
+
+  function responseDeadline(booking) {
+    const expires = normalizeTimestamp(booking && booking.confirmation_expires_at)
+    if (Number.isFinite(expires) && expires > 0) return expires
+    const start = normalizeTimestamp(booking && booking.start)
+    return Number.isFinite(start) && start > 0 ? start : Number.NaN
+  }
+
+  function formatResponseTime(deadline, now) {
+    const remaining = Number(deadline) - Number(now == null ? Date.now() : now)
+    if (!Number.isFinite(remaining) || remaining <= 0) return 'Expired'
+    const totalMinutes = Math.ceil(remaining / 60000)
+    const days = Math.floor(totalMinutes / 1440)
+    const hours = Math.floor((totalMinutes % 1440) / 60)
+    const minutes = totalMinutes % 60
+    const parts = []
+    if (days) parts.push(days + 'd')
+    if (hours) parts.push(hours + 'h')
+    if (minutes) parts.push(minutes + 'm')
+    return parts.length ? parts.join(' ') : '0m'
+  }
+
+  function requestExpirationOwned(booking, role, now) {
+    if (role !== 'starter' || bookingStatus(booking, now) !== 'pending') return false
+    return Number.isFinite(responseDeadline(booking))
+  }
+
+  function requestExpirationKey(booking) {
+    return clean(booking && (booking.booking_id || booking.id)) +
+      '@' + responseDeadline(booking)
+  }
+
+  function paintRequestExpiration(card, booking, role, now) {
+    const wrap = card && card.querySelector('[booking-item-expiration="wrap"]')
+    const output = card && card.querySelector('[booking-item-expiration="time"]')
+    const deadline = responseDeadline(booking)
+    const visible = requestExpirationOwned(booking, role, now)
+    show(wrap, visible)
+    if (!visible) return false
+    const currentTime = Number(now == null ? Date.now() : now)
+    const expired = deadline <= currentTime
+    if (output) output.textContent = formatResponseTime(deadline, currentTime)
+    // The authored countdown has no expiring-state combo class. `text-color-red`
+    // is the site-wide error colour already applied to error copy on this card,
+    // so the urgent countdown reuses it instead of an unstyled marker class.
+    setClass(output, 'text-color-red', deadline - currentTime < 48 * 60 * 60 * 1000)
+    configureActionButtons(card, role, 'pending', booking, currentTime)
+    return expired
+  }
+
+  function refreshRequestExpirations(refs, role, now) {
+    const expired = []
+    ;(Array.isArray(refs) ? refs : []).forEach(function (section) {
+      if (!section || !section.list || typeof section.list.querySelectorAll !== 'function') return
+      const bookings = new Map()
+      ;(Array.isArray(section.rows) ? section.rows : []).forEach(function (booking) {
+        bookings.set(clean(booking && (booking.booking_id || booking.id)), booking)
+      })
+      section.list.querySelectorAll('[data-booking-id]').forEach(function (card) {
+        const booking = bookings.get(clean(card.getAttribute('data-booking-id')))
+        if (booking && paintRequestExpiration(card, booking, role, now)) {
+          expired.push(requestExpirationKey(booking))
+        }
+      })
+    })
+    return expired
+  }
+
+  function refreshDetailExpiration(refs, role, now) {
+    if (!global.document || typeof global.document.querySelector !== 'function') return false
+    const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
+    if (!modal || typeof modal.getAttribute !== 'function') return false
+    if (!clean(modal.getAttribute('data-booking-id'))) return false
+    const booking = bookingFromCard(Array.isArray(refs) ? refs : [], modal)
+    if (!booking) return false
+    const status = bookingStatus(booking, now)
+    const base = modal.querySelector('[booking-popup-content="base"]') || modal
+    const pendingMessages = Array.prototype.slice.call(
+      base.querySelectorAll ? base.querySelectorAll('[pending-info-text]') : [],
+    )
+    pendingMessages.forEach(function (message, index) {
+      show(message, index === 0 && status === 'pending' && responseWindowOpen(booking, now))
+    })
+    configureDetailActions(modal, role, status, booking, now)
+    return true
+  }
+
+  function startRequestExpirationTicker(refs, role, restart, options) {
+    const settings = options || {}
+    // The old inline helper remains defined, but its legacy list generator is
+    // no longer invoked on the current dashboard. This controller is the one
+    // active owner and uses one bounded timer for every rendered request.
+    if (role !== 'starter') return null
+    const setTimer = settings.setInterval || global.setInterval
+    const clearTimer = settings.clearInterval || global.clearInterval
+    const now = settings.now || Date.now
+    if (typeof setTimer !== 'function' || typeof clearTimer !== 'function') return null
+    let refreshBusy = false
+    let nextPollAt = 0
+    const polls = new Map()
+    const tick = function () {
+      const currentTime = Number(now())
+      const expiredKeys = refreshRequestExpirations(refs, role, currentTime)
+      refreshDetailExpiration(refs, role, currentTime)
+      const pollable = expiredKeys.filter(function (key) {
+        return (polls.get(key) || 0) < REQUEST_EXPIRATION_MAX_POLLS
+      })
+      if (!pollable.length || refreshBusy || currentTime < nextPollAt) return
+      refreshBusy = true
+      nextPollAt = currentTime + REQUEST_EXPIRATION_POLL_MS
+      pollable.forEach(function (key) {
+        polls.set(key, (polls.get(key) || 0) + 1)
+      })
+      Promise.resolve()
+        .then(restart)
+        .catch(function (error) {
+          console.error('[dashboard-calls] expiration refresh failed:', error && error.message)
+        })
+        .finally(function () {
+          refreshBusy = false
+        })
+    }
+    tick()
+    const timer = setTimer(tick, REQUEST_EXPIRATION_TICK_MS)
+    return function stop() {
+      clearTimer(timer)
+    }
+  }
+
+  function canConfirmBooking(role, booking, now) {
+    return role === 'starter' && responseWindowOpen(booking, now)
   }
 
   function decodeBookingRef(compactString) {
@@ -247,26 +687,33 @@
     }
   }
 
-  function configureActionButtons(card, role, status) {
+  function configureActionButtons(card, role, status, booking, now) {
     card.querySelectorAll('[booking-card-action-btn], [booking-action-btn]').forEach(function (button) {
       const action = clean(
         button.getAttribute('booking-action-btn') ||
         button.getAttribute('booking-card-action-btn'),
       )
-      // Accept is the first V3-native mutation. Every other legacy control
-      // stays hidden until it has a current endpoint contract and tests.
-      show(button, role === 'starter' && status === 'pending' && action === 'switch-confirm')
+      const details = action === 'details'
+      const accept =
+        action === 'switch-confirm' &&
+        canConfirmBooking(role, booking || { status: status }, now)
+      // Details is read-only. Accept is the first V3-native mutation. Every
+      // other legacy control stays hidden until it has a populated current
+      // endpoint contract and tests. In particular, never open empty
+      // Reschedule UI.
+      show(button, details || accept)
     })
   }
 
   function bindCard(card, booking, role) {
-    const status = bookingStatus(booking)
+    const now = Date.now()
+    const status = bookingStatus(booking, now)
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
     const own = role === 'starter' ? booking.starter_data : booking.brand_data
     card.removeAttribute('bookings-item-template')
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
-    text(card, '[booking-element="status"] [label-text]', statusLabel(status))
+    paintStatusPill(card, status, role)
     text(card, '[booking-element="brand-name"]', other && other.name)
     text(card, '[booking-element="starter-name"]', other && other.name)
     text(card, '[booking-element="title"]', booking.call_context || 'Call')
@@ -275,15 +722,15 @@
       '[booking-element="start-date"]',
       formatDate(booking.start, (own && own.timezone) || (other && other.timezone)),
     )
-    text(card, '[booking-element="duration"]', clean(booking.duration) + 'min')
+    text(card, '[booking-element="duration"]', formatDuration(booking.duration))
     text(
       card,
       '[booking-element="price"]',
-      formatPrice(booking.price, booking.paid_meeting),
+      formatPrice(booking.price, paidBooking(booking)),
     )
 
     const paymentWrap = card.querySelector('[payment-status-wrap]')
-    const paymentText = booking.paid_meeting
+    const paymentText = paidBooking(booking)
       ? booking.pm_confirmed
         ? 'Payment method confirmed.'
         : 'Payment method pending.'
@@ -295,7 +742,10 @@
     text(brandStatus, '[label-text]', status === 'pending' ? 'Awaiting confirmation' : '')
     show(brandStatus, status === 'pending' && role === 'brand')
 
-    configureActionButtons(card, role, status)
+    if (!requestExpirationOwned(booking, role, now)) {
+      configureActionButtons(card, role, status, booking, now)
+    }
+    paintRequestExpiration(card, booking, role, now)
 
     return card
   }
@@ -344,6 +794,30 @@
     })
   }
 
+  function filterControls(refs) {
+    return Array.prototype.slice.call(
+      refs.section.querySelectorAll('[booking-filter]'),
+    )
+  }
+
+  function paintActiveFilter(refs) {
+    filterControls(refs).forEach(function (control) {
+      const value = clean(control.getAttribute('booking-filter')).toLowerCase()
+      const active = value === refs.filter
+      const field = control.matches && control.matches('input')
+        ? control
+        : control.querySelector && control.querySelector('input')
+      const visual = control.querySelector && control.querySelector(
+        '[data-tab-filters-check], .tab-item_button',
+      )
+      if (field && 'checked' in field) field.checked = active
+      setClass(control, 'is-active', active)
+      setClass(visual, 'is-active', active)
+      setClass(visual, 'w--redirected-checked', active)
+      control.setAttribute('aria-pressed', active ? 'true' : 'false')
+    })
+  }
+
   function renderSection(refs, role, reset) {
     if (reset) {
       refs.rendered = 0
@@ -360,18 +834,20 @@
     show(refs.empty, rows.length === 0)
     show(refs.loadMore, target < rows.length)
     show(refs.filters, refs.rows.length > 0)
+    paintActiveFilter(refs)
     if (refs.count) refs.count.textContent = String(refs.rows.length)
     refs.section.setAttribute('data-bookings-state', rows.length ? 'ready' : 'empty')
   }
 
   function wireSection(refs, role) {
-    refs.section.querySelectorAll('[booking-filter]').forEach(function (control) {
+    filterControls(refs).forEach(function (control) {
       control.addEventListener('click', function (event) {
         event.preventDefault()
         refs.filter = clean(control.getAttribute('booking-filter')).toLowerCase()
         renderSection(refs, role, true)
       })
     })
+    paintActiveFilter(refs)
     if (refs.loadMore) {
       refs.loadMore.addEventListener('click', function (event) {
         event.preventDefault()
@@ -380,12 +856,345 @@
     }
   }
 
+  function bookingField(modal, name) {
+    return modal && modal.querySelector('[booking-element="' + name + '"]')
+  }
+
+  function setBookingField(modal, name, value, visible) {
+    const field = bookingField(modal, name)
+    if (!field) return
+    const shouldShow = visible !== false && clean(value) !== ''
+    if (shouldShow) field.textContent = clean(value)
+    show(field, shouldShow)
+    const group = field.closest && field.closest('[booking-element-wrap]')
+    if (group) show(group, shouldShow)
+  }
+
+  function setBookingPrice(modal, value, visible) {
+    const field = bookingField(modal, 'price')
+    if (!field) return
+    const shouldShow = visible !== false && clean(value) !== ''
+    if (shouldShow) field.textContent = clean(value)
+    show(field, shouldShow)
+    const group = field.closest && field.closest('[booking-element-wrap]')
+    if (group) show(group, shouldShow)
+
+    // Webflow currently authors the legacy `/hr` unit without its own custom
+    // attribute. Anchor the repair to the canonical price hook and only touch
+    // an adjacent exact legacy unit. This preserves the Designer-owned markup
+    // while making the canonical per-call price unambiguous.
+    const parent = field.parentElement
+    const siblings = parent && parent.children
+      ? Array.prototype.slice.call(parent.children)
+      : []
+    const priceUnit = siblings.find(function (candidate) {
+      const unit = clean(candidate.textContent).toLowerCase()
+      return candidate !== field && (unit === '/hr' || unit === '/call')
+    })
+    if (priceUnit) {
+      priceUnit.textContent = '/Call'
+      show(priceUnit, shouldShow)
+    } else if (shouldShow) {
+      field.textContent = clean(value) + ' / Call'
+    }
+  }
+
+  function hideDuplicateDetailCopy(modal) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return
+    modal.querySelectorAll('[booking-element-wrap]').forEach(function (group) {
+      if (group.querySelector && group.querySelector('[booking-element]')) return
+      const copy = clean(group.textContent).toLowerCase()
+      if (
+        copy.includes('card ending in') ||
+        copy.includes('charged for this call') ||
+        copy.includes('refunded since it')
+      ) show(group, false)
+    })
+  }
+
+  function configureDetailActions(modal, role, status, booking, now) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return
+    if (
+      validDashboardModule(global.StartersDashboardCallActions) &&
+      typeof global.StartersDashboardCallActions.ensureRescheduleViews === 'function'
+    ) {
+      global.StartersDashboardCallActions.ensureRescheduleViews(
+        modal.ownerDocument || global.document,
+        modal,
+      )
+    }
+    modal
+      .querySelectorAll(DETAIL_ACTION_SELECTOR)
+      .forEach(function (button) {
+        const action = clean(
+          button.getAttribute('booking-action-btn') ||
+          button.getAttribute('booking-card-action-btn'),
+        )
+        const accept =
+          action === 'switch-confirm' &&
+          canConfirmBooking(role, booking, now)
+        const decline =
+          (action === 'switch-decline' ||
+            action === 'switch-decline-reason' ||
+            action === 'decline') &&
+          validDashboardModule(global.StartersDashboardCallActions) &&
+          typeof global.StartersDashboardCallActions.canDecline === 'function' &&
+          global.StartersDashboardCallActions.canDecline(role, booking)
+        const cancel =
+          (action === 'switch-cancel' ||
+            action === 'switch-cancel-reason' ||
+            action === 'cancel') &&
+          validDashboardModule(global.StartersDashboardCallActions) &&
+          typeof global.StartersDashboardCallActions.canCancel === 'function' &&
+          global.StartersDashboardCallActions.canCancel(role, booking, now)
+        const proposeReschedule =
+          (action === 'reschedule' || action === 'reschedule-calendar') &&
+          validDashboardModule(global.StartersDashboardCallActions) &&
+          typeof global.StartersDashboardCallActions.canProposeReschedule === 'function' &&
+          global.StartersDashboardCallActions.canProposeReschedule(role, booking, now)
+        const respondReschedule =
+          (action === 'confirm-reschedule' || action === 'reschedule-decline') &&
+          validDashboardModule(global.StartersDashboardCallActions) &&
+          typeof global.StartersDashboardCallActions.canRespondReschedule === 'function' &&
+          global.StartersDashboardCallActions.canRespondReschedule(role, booking)
+        const media =
+          action === 'notetaker-media' &&
+          validDashboardModule(global.StartersDashboardCallMedia) &&
+          typeof global.StartersDashboardCallMedia.canReadMedia === 'function' &&
+          global.StartersDashboardCallMedia.canReadMedia(booking, status)
+        show(
+          button,
+          action === 'switch-close' ||
+            action === 'switch-base' ||
+            accept ||
+            decline ||
+            cancel ||
+            proposeReschedule ||
+            respondReschedule ||
+            media,
+        )
+      })
+  }
+
+  function populateDetailModal(modal, booking, role, now) {
+    if (!modal || !booking) return false
+    const nextBookingId = clean(booking.booking_id || booking.id)
+    const previousBookingId = clean(modal.getAttribute('data-booking-id'))
+    if (
+      previousBookingId !== nextBookingId &&
+      validDashboardModule(global.StartersDashboardCallActions) &&
+      typeof global.StartersDashboardCallActions.resetRescheduleState === 'function'
+    ) {
+      global.StartersDashboardCallActions.resetRescheduleState(modal)
+    }
+    const status = bookingStatus(booking, now)
+    const isPaid = paidBooking(booking)
+    const other = role === 'starter' ? booking.brand_data : booking.starter_data
+    const own = role === 'starter' ? booking.starter_data : booking.brand_data
+    const timezone = (own && own.timezone) || (other && other.timezone)
+    const paymentText = isPaid && status !== 'cancelled' && status !== 'archived'
+      ? booking.pm_confirmed
+        ? 'Payment method confirmed.'
+        : 'Payment method pending.'
+      : ''
+
+    modal.setAttribute('data-booking-id', nextBookingId)
+    modal.setAttribute('data-booking-status', status)
+    modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
+
+    modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
+      show(content, content.getAttribute('booking-popup-content') === 'base')
+    })
+    setBookingField(modal, 'paid-meeting', isPaid ? 'Paid Call' : 'Free Call', true)
+    setBookingField(modal, 'status', statusLabel(status, role), true)
+    setBookingField(modal, 'brand-name', booking.brand_data && booking.brand_data.name, true)
+    setBookingField(modal, 'starter-name', booking.starter_data && booking.starter_data.name, true)
+    setBookingField(modal, 'title', booking.call_context || 'Call', true)
+    setBookingField(modal, 'context', booking.call_context, true)
+    setBookingField(modal, 'start-date', formatDate(booking.start, timezone), true)
+    setBookingField(modal, 'duration', formatDuration(booking.duration), true)
+    setBookingPrice(modal, formatPrice(booking.price, isPaid), isPaid)
+    setBookingField(modal, 'payment-status-text', paymentText, isPaid)
+    setBookingField(modal, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
+    setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
+
+    const meetingLink = bookingField(modal, 'meeting-link')
+    const showMeeting = status === 'confirmed' && clean(booking.meeting_link) !== ''
+    if (meetingLink) {
+      if ('href' in meetingLink) meetingLink.href = showMeeting ? clean(booking.meeting_link) : ''
+      meetingLink.textContent = showMeeting ? clean(booking.meeting_link) : ''
+      show(meetingLink, showMeeting)
+      const group = meetingLink.closest && meetingLink.closest('[booking-element-wrap]')
+      if (group) show(group, showMeeting)
+    }
+
+    const base = modal.querySelector('[booking-popup-content="base"]') || modal
+    const pendingMessages = Array.prototype.slice.call(
+      base.querySelectorAll ? base.querySelectorAll('[pending-info-text]') : [],
+    )
+    pendingMessages.forEach(function (message, index) {
+      show(message, index === 0 && status === 'pending' && responseWindowOpen(booking, now))
+    })
+    modal.querySelectorAll('[reschedule-blocked-info]').forEach(function (info) {
+      show(info, false)
+    })
+    hideDuplicateDetailCopy(modal)
+    configureDetailActions(modal, role, status, booking, now)
+    return true
+  }
+
+  function bookingFromCard(refs, card) {
+    const bookingId = clean(card && card.getAttribute('data-booking-id'))
+    let booking = null
+    refs.some(function (section) {
+      booking = section.rows.find(function (row) {
+        return clean(row.booking_id || row.id) === bookingId
+      }) || null
+      return Boolean(booking)
+    })
+    return booking
+  }
+
+  function bookingForActionTarget(refs, target) {
+    const carrier =
+      target &&
+      target.closest &&
+      target.closest('[data-booking-id]')
+    return bookingFromCard(refs, carrier)
+  }
+
+  function resetDetailModal() {
+    if (!global.document || typeof global.document.querySelector !== 'function') return
+    const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
+    if (!modal) return
+    if (
+      validDashboardModule(global.StartersDashboardCallActions) &&
+      typeof global.StartersDashboardCallActions.resetRescheduleState === 'function'
+    ) {
+      global.StartersDashboardCallActions.resetRescheduleState(modal)
+    }
+    if (typeof modal.close === 'function') {
+      try {
+        modal.close()
+      } catch (_error) {}
+    }
+    modal.removeAttribute('open')
+    modal.removeAttribute('data-booking-id')
+    modal.removeAttribute('data-booking-status')
+    modal.removeAttribute('data-booking-payment')
+    modal.querySelectorAll('[booking-element]').forEach(function (field) {
+      field.textContent = ''
+      if ('href' in field) field.href = ''
+      show(field, false)
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      if (group) show(group, false)
+    })
+    modal
+      .querySelectorAll(
+        '[booking-popup-content], [pending-info-text], ' + DETAIL_ACTION_SELECTOR,
+      )
+      .forEach(function (element) {
+        show(element, false)
+      })
+  }
+
+  function wireBookingDetails(refs, role) {
+    if (!global.document || !global.document.addEventListener) return
+    global.document.addEventListener('click', function (event) {
+      const target = event && event.target
+      const reschedule = target && target.closest
+        ? target.closest('[booking-action-btn="reschedule"], [booking-card-action-btn="reschedule"]')
+        : null
+      if (reschedule) {
+        if (event.preventDefault) event.preventDefault()
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation()
+        else if (event.stopPropagation) event.stopPropagation()
+        return
+      }
+
+      const details = target && target.closest
+        ? target.closest('[data-modal-trigger="popup-booking-info"], [booking-action-btn="details"], [booking-card-action-btn="details"], [data-booking-details]')
+        : null
+      if (!details) return
+      const card = details.closest && details.closest('[data-booking-id]')
+      const booking = bookingFromCard(refs, card)
+      const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
+      if (!booking || !modal || !populateDetailModal(modal, booking, role)) {
+        if (event.preventDefault) event.preventDefault()
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation()
+        else if (event.stopPropagation) event.stopPropagation()
+      }
+    }, true)
+  }
+
+  /**
+   * Moves the sticky sub-nav anchors out of an authored duplicate tile before the
+   * duplicate is hidden.
+   *
+   * The Designer put the dashboard's `#calls-section` anchor inside the *authored*
+   * Calls tile rather than inside the V3 `[bookings-section]` tile that replaces it.
+   * Hiding the duplicate with `display: none` therefore takes that id out of layout —
+   * it stops generating a box, `getClientRects()` returns nothing, and the browser
+   * has nowhere to send a fragment jump. The CALLS tab and every `#calls-section`
+   * deep link (the post-call review email CTA carries one) then land on whichever
+   * tile happens to sit at the current scroll position, which reads as "the tab does
+   * nothing and the Messages panel shows instead".
+   *
+   * The anchors are zero-width absolutely positioned divs whose negative offset is
+   * authored, so re-parenting one into the live tile keeps the landing position it
+   * was designed with.
+   *
+   * An id another element already owns is left where it is: two elements sharing an
+   * id would make `getElementById` pick whichever comes first in the document and
+   * reintroduce the same class of bug.
+   * @param {HTMLElement|null} source Tile about to be hidden.
+   * @param {HTMLElement|null} target Live `[bookings-section]` tile that replaces it.
+   * @returns {number} How many anchors moved.
+   */
+  function adoptSectionAnchors(source, target) {
+    if (!source || !target || source === target) return 0
+    if (typeof source.querySelectorAll !== 'function') return 0
+    if (typeof target.insertBefore !== 'function') return 0
+    let moved = 0
+    Array.prototype.slice
+      .call(source.querySelectorAll(SECTION_ANCHOR_SELECTOR))
+      .forEach(function (anchor) {
+        const id = clean(anchor && anchor.getAttribute && anchor.getAttribute('id'))
+        if (!id) return
+        if (document.getElementById(id) !== anchor) return
+        target.insertBefore(anchor, target.firstChild || null)
+        moved += 1
+      })
+    return moved
+  }
+
+  /** First live tile per `[bookings-section]` name, keyed lower-case. The
+   * attribute alone is the contract (matching boot()); the class is only the
+   * preferred match, so a Designer rename of the tile class cannot silently
+   * disable anchor adoption. */
+  function liveSectionTiles() {
+    const tiles = {}
+    const classed = document.querySelectorAll('.dash-main_tile-item[bookings-section]')
+    const source = classed.length ? classed : document.querySelectorAll('[bookings-section]')
+    Array.prototype.slice.call(source).forEach(function (tile) {
+      const name = clean(tile.getAttribute('bookings-section')).toLowerCase()
+      if (name && !tiles[name]) tiles[name] = tile
+    })
+    return tiles
+  }
+
   function hideAuthoredDuplicates() {
+    const live = liveSectionTiles()
     document.querySelectorAll('.dash-main_tile-item').forEach(function (tile) {
       if (tile.hasAttribute('bookings-section')) return
       const heading = tile.querySelector('h1,h2,h3,h4,h5,h6')
       const label = clean(heading && heading.textContent).toLowerCase()
-      if (label === 'calls' || label === 'call requests') show(tile, false)
+      const name = DUPLICATE_SECTION_NAMES[label]
+      if (!name) return
+      // No live counterpart means nothing to hand the anchors to; the duplicate is
+      // still hidden, exactly as before, so the documented contract is unchanged.
+      adoptSectionAnchors(tile, live[name])
+      show(tile, false)
     })
   }
 
@@ -743,27 +1552,29 @@
         }) || null
         return Boolean(booking)
       })
-      if (!booking || bookingStatus(booking) !== 'pending') return
-
-      if (!button.__startersBookingActionKey) {
-        const randomUUID = global.crypto && global.crypto.randomUUID
-        if (typeof randomUUID !== 'function') return
-        button.__startersBookingActionKey = 'dashboard-confirm:' + randomUUID.call(global.crypto)
-      }
-      const payload = confirmPayload(booking, button.__startersBookingActionKey)
-      if (!payload || typeof global.xanoAuthFetch !== 'function') return
+      if (!booking || !canConfirmBooking(role, booking)) return
 
       button.__startersBookingActionBusy = true
       button.setAttribute('aria-busy', 'true')
       button.setAttribute('aria-disabled', 'true')
       try {
+        if (!button.__startersBookingActionKey) {
+          button.__startersBookingActionKey = await storedConfirmAttemptKey(booking) || await createConfirmAttemptKey(booking)
+        }
+        const payload = confirmPayload(booking, button.__startersBookingActionKey)
+        if (
+          !payload ||
+          typeof global.xanoAuthFetch !== 'function' ||
+          !canConfirmBooking(role, booking)
+        ) return
         const response = await global.xanoAuthFetch(XANO_SCHEDULING_BASE + CONFIRM_PATH, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
         const body = await response.json().catch(function () { return null })
-        if (!response.ok || !body) throw new Error('Canonical booking confirmation failed')
+        if (!response.ok || !confirmSucceeded(body)) throw new Error('Canonical booking confirmation failed')
+        await clearConfirmAttemptKey(booking, button.__startersBookingActionKey)
         button.__startersBookingActionKey = ''
         await restart()
       } catch (error) {
@@ -778,6 +1589,7 @@
 
   function resetIdentityState(refs, role) {
     clearBrandHero(role)
+    resetDetailModal()
     refs.forEach(function (section) {
       section.rows = []
       section.rendered = 0
@@ -817,7 +1629,9 @@
     generation,
     currentGeneration,
     useSharedMember,
+    options,
   ) {
+    const preserveExisting = Boolean(options && options.preserveExisting)
     try {
       let current =
         useSharedMember && global.memberReady && typeof global.memberReady.then === 'function'
@@ -836,16 +1650,30 @@
       })
       if (generation !== currentGeneration()) return
       refs.forEach(function (section) {
-        section.rows = sectionBookings(rows, role, section.name)
+        const nextRows = sectionBookings(rows, role, section.name)
+        if (preserveExisting && sameBookingRows(section.rows, nextRows)) return
+        const previousRendered = preserveExisting ? section.rendered : 0
+        section.rows = nextRows
         renderSection(section, role, true)
+        while (section.rendered < previousRendered) {
+          const rendered = section.rendered
+          renderSection(section, role, false)
+          if (section.rendered === rendered) break
+        }
       })
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
+      return true
     } catch (error) {
       if (generation !== currentGeneration()) return
+      if (preserveExisting) {
+        console.error('[dashboard-calls] background refresh failed:', error && error.message)
+        return false
+      }
       clearBrandHero(role)
       refs.forEach(renderFailure)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
       console.error('[dashboard-calls] failed closed:', error && error.message)
+      return false
     }
   }
 
@@ -865,6 +1693,7 @@
     refs.forEach(function (section) {
       wireSection(section, role)
     })
+    wireBookingDetails(refs, role)
     hideAuthoredDuplicates()
     resetIdentityState(refs, role)
 
@@ -896,7 +1725,33 @@
         useSharedMember,
       )
     }
+    const refreshExpiredRequests = function () {
+      const generation = sessionGeneration
+      return refreshSession(
+        memberstack,
+        refs,
+        role,
+        generation,
+        currentGeneration,
+        false,
+        { preserveExisting: true },
+      )
+    }
+    const moduleOptions = {
+      document: global.document,
+      role,
+      restart,
+      getBooking: function (target) {
+        return bookingForActionTarget(refs, target)
+      },
+      getBookingStatus: bookingStatus,
+      onAvailable: function () {
+        refreshDetailExpiration(refs, role)
+      },
+    }
+    wireDashboardCallModules(moduleOptions)
     wireBookingActions(refs, role, restart)
+    startRequestExpirationTicker(refs, role, refreshExpiredRequests)
     if (typeof memberstack.onAuthChange === 'function') {
       memberstack.onAuthChange(function () {
         restart()
@@ -907,13 +1762,38 @@
 
   const api = {
     bookingStatus,
+    paidBooking,
+    responseWindowOpen,
+    responseDeadline,
+    formatResponseTime,
+    paintRequestExpiration,
+    refreshRequestExpirations,
+    refreshDetailExpiration,
+    startRequestExpirationTicker,
+    refreshSession,
+    canConfirmBooking,
+    statusLabel,
+    statusVariantClass,
+    paintStatusPill,
+    paintActiveFilter,
+    populateDetailModal,
+    wireBookingDetails,
+    resetDetailModal,
     configureActionButtons,
+    configureDetailActions,
+    confirmAttemptStorageKey,
+    storedConfirmAttemptKey,
+    createConfirmAttemptKey,
+    clearConfirmAttemptKey,
+    confirmSucceeded,
     confirmPayload,
     decodeBookingRef,
     memberOwnsBooking,
     memberMatchesProfile,
     normalizeBooking,
     profileValues,
+    adoptSectionAnchors,
+    hideAuthoredDuplicates,
     configureProjectWrappers,
     findProjectLoadMore,
     ensureProjectLoadMore,
@@ -922,8 +1802,16 @@
     wireProjectLoadMore,
     roleForPath,
     sectionBookings,
+    sameBookingRows,
     uniqueBookings,
+    bookingForActionTarget,
+    loadDashboardCallModules,
+    loadDashboardModule,
+    moduleCacheSuffix,
+    validDashboardModule,
+    wireDashboardCallModules,
     wireBookingActions,
+    boot,
   }
   if (!isCommonJs) configureProjectWrappers()
   if (isCommonJs) module.exports = api

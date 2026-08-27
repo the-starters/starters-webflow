@@ -333,6 +333,7 @@
     'brand/opportunities/reopen': 'opportunity_reopened',
     'starter/applications/submit': 'application_submitted',
     'starter/applications/update': 'application_updated',
+    'invoices/cancel/v3': 'invoice_cancelled',
   }
 
   const DIAGNOSTIC_CALLS = {
@@ -350,6 +351,7 @@
     'brand/call-reviews/eligibility/v3': { workflow: 'call_review', resource_type: 'booking' },
     'brand/call-reviews/submit/v3': { workflow: 'call_review', resource_type: 'review' },
     'invoices/create/v3': { workflow: 'generate_invoice', resource_type: 'invoice' },
+    'invoices/cancel/v3': { workflow: 'cancel_invoice', resource_type: 'invoice' },
   }
   const responseDiagnostics = new WeakMap()
 
@@ -589,6 +591,7 @@
     callReviewSubmit: (payload) =>
       call('brand/call-reviews/submit/v3', { body: payload, base: XANO_V3_BASE }),
     invoiceCreate: (payload) => call('invoices/create/v3', { body: payload }),
+    invoiceCancel: (payload) => call('invoices/cancel/v3', { body: payload }),
     // starter / talent
     starterProfile: () => call('starter/profile/me', { body: {} }),
     starterMatchContext: () => call('starter/profile/match-context', { body: {} }),
@@ -997,11 +1000,37 @@
   function setOpportunityCategoryValues(scope, values) {
     const input = $('[name="Category-option"]', scope)
     if (!input) return
+    const next = Array.isArray(values) ? values : []
     input.dispatchEvent(
       new CustomEvent(CATEGORY_SET_EVENT, {
-        detail: { values: Array.isArray(values) ? values : [] },
+        detail: { values: next },
       }),
     )
+    if (next.length) return
+    // Widget store() writes the same JSON when bound; this is Authored Defaults
+    // when the set-event has no listener yet.
+    input.setAttribute('data-opp30-selected-values', '[]')
+    input.value = ''
+    input.setCustomValidity(CATEGORY_REQUIRED_MESSAGE)
+  }
+
+  // After a successful create, restore Authored Defaults so the next Create Form
+  // in this page life is a first visit. Category chips live outside native
+  // reset. Do not call this on Edit, Cancel, or a failed submit.
+  function restoreCreateFormAuthoredDefaults(form) {
+    if (!form || form.getAttribute('data-opp-form') !== 'create') return
+    if (typeof form.reset === 'function') form.reset()
+    setOpportunityCategoryValues(form, [])
+    $$('[data-opp-role-value]', form).forEach((chip) => {
+      chip.removeAttribute('aria-selected')
+    })
+    ;['Project-Type', 'Duration'].forEach((name) => {
+      let selected
+      $$('[name="' + name + '"]', form).forEach((control) => {
+        if (control.checked) selected = control
+      })
+      if (selected) selected.dispatchEvent(new Event('change', { bubbles: true }))
+    })
   }
 
   function validateOpportunityPayload(payload) {
@@ -1784,6 +1813,8 @@
   // wf-xano-rendered project card is whatever ancestor carries the row id.
   const INVOICE_CARD_SELECTOR = '[data-wf-xano-id]'
   const INVOICE_PAYMENT_LINK_PLACEHOLDER = '#invoice-payment-link'
+  const INVOICE_SUCCESS_CLOSE_SELECTOR =
+    '[data-wf-invoice="close-success"], .w-form-done a[href="/starter-dashboard"]'
   const INVOICE_MIN_AMOUNT = 0.01
   const INVOICE_MAX_AMOUNT = 1000000
   const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
@@ -1792,10 +1823,11 @@
   let activeInvoiceProject = null
   let invoiceWorkflowBinding = null
 
-  function invoiceProjectContext(card) {
+  function invoiceProjectContext(card, authoritativeProject = null) {
     if (!card) return null
     const projectId = parseInt(card.getAttribute('data-wf-xano-id') || '', 10)
     if (!(projectId > 0)) return null
+    const project = authoritativeProject || projectWorkflowItems.get(projectId) || {}
     // Prefer a bound brand/company field — on the authored V3 project card that
     // field is wf-xano-bind="company_name". The "Title | Brand" heading split is
     // only a fallback, and a title containing a pipe makes the last segment the
@@ -1805,12 +1837,20 @@
     return {
       card,
       projectId,
-      title: cardFieldText(card, 'title'),
+      title:
+        String(project.title || project.service || '').trim() ||
+        cardFieldText(card, 'title'),
       brand:
+        String(project.company_name || '').trim() ||
         cardFieldText(card, 'brand') ||
         cardFieldText(card, 'company') ||
         cardFieldText(card, 'company_name') ||
         headingBrand,
+      party:
+        String(project.hiring_manager_name || '').trim() ||
+        cardFieldText(card, 'hiring_manager_name') ||
+        cardFieldText(card, 'party') ||
+        cardFieldText(card, 'contact_name'),
     }
   }
 
@@ -1828,6 +1868,47 @@
     $$('[data-wf-invoice-bind="' + field + '"]', modal).forEach((el) => {
       el.textContent = value == null ? '' : String(value)
     })
+  }
+
+  function invoiceCounterpartyLabel(context) {
+    const company = String((context && context.brand) || '').trim()
+    const party = String((context && context.party) || '').trim()
+    if (!party || party.toLowerCase() === company.toLowerCase()) return company || party
+    if (!company) return party
+    return company + ' · ' + party
+  }
+
+  // Keep the current two-line native Webflow banner useful without generating
+  // markup. If Designer later adds a distinct party bind, each value paints its
+  // own row; until then the existing company row shows both counterparties.
+  function paintInvoiceProjectContext(modal, context) {
+    const hasPartyBind = $$('[data-wf-invoice-bind="party"]', modal).length > 0
+    invoiceBind(modal, 'brand', hasPartyBind ? context.brand : invoiceCounterpartyLabel(context))
+    invoiceBind(modal, 'party', context.party)
+    invoiceBind(modal, 'project', context.title)
+  }
+
+  // The current Webflow component predates the data hooks on its opening
+  // banner. Stamp the same semantic hooks used by the success screen, so both
+  // states receive one authoritative project/company paint.
+  function prepareInvoiceModalBindings(modal) {
+    if (!modal) return
+    const banner = $$('.generate-invoice_banner p', modal)
+    if (banner[0] && !banner[0].hasAttribute('data-wf-invoice-bind')) {
+      banner[0].setAttribute('data-wf-invoice-bind', 'project')
+    }
+    if (banner[1] && !banner[1].hasAttribute('data-wf-invoice-bind')) {
+      banner[1].setAttribute('data-wf-invoice-bind', 'brand')
+    }
+    const close = $(INVOICE_SUCCESS_CLOSE_SELECTOR, modal)
+    if (close) close.setAttribute('data-wf-invoice', 'close-success')
+  }
+
+  function closeInvoiceModal(modal) {
+    const list = window.lumos && window.lumos.modal ? window.lumos.modal.list : null
+    const entry = list ? list[INVOICE_MODAL_ID] : null
+    if (entry && typeof entry.close === 'function') entry.close()
+    else if (modal && typeof modal.close === 'function' && modal.open) modal.close()
   }
 
   // Single resolution for the authored error hook, so show and clear can never
@@ -1900,8 +1981,8 @@
   // without opening anything — the caller decides when the dialog appears.
   function prepareInvoiceModal(modal, context) {
     activeInvoiceProject = context
-    invoiceBind(modal, 'brand', context.brand)
-    invoiceBind(modal, 'project', context.title)
+    prepareInvoiceModalBindings(modal)
+    paintInvoiceProjectContext(modal, context)
     const form = $('form', modal)
     const done = $('.w-form-done', modal)
     if (form) {
@@ -1969,8 +2050,7 @@
       const message = done.querySelector ? $('[data-workflow-diagnostic-message]', done) : null
       if (message && receipt) decorateWorkflowMessage(message, message.textContent, receipt)
     }
-    invoiceBind(modal, 'brand', context.brand)
-    invoiceBind(modal, 'project', context.title)
+    paintInvoiceProjectContext(modal, context)
     invoiceBind(modal, 'amount', formatInvoiceAmount(amount))
     invoiceBind(modal, 'status', (result && result.status) || 'unpaid')
     const link = invoicePaymentLinkEl(modal)
@@ -2128,12 +2208,24 @@
     const binding = { generation, submitting: false, submitControl: null }
     window.__opp30InvoicesWired = true
 
-    binding.click = (event) => {
+    binding.click = async (event) => {
       if (!invoiceWorkflowBindingCurrent(binding)) {
         unwireInvoiceWorkflow()
         return
       }
       const target = event.target
+      const successClose = target && target.closest
+        ? target.closest(INVOICE_SUCCESS_CLOSE_SELECTOR)
+        : null
+      if (successClose) {
+        const modal = successClose.closest(INVOICE_MODAL_SELECTOR)
+        if (modal) {
+          event.preventDefault()
+          event.stopPropagation()
+          closeInvoiceModal(modal)
+          return
+        }
+      }
       if (requestInvoiceSubmit(target)) {
         event.preventDefault()
         event.stopPropagation()
@@ -2144,16 +2236,38 @@
       // Only swallow the click once we know this workflow can handle it —
       // otherwise modal.js's own trigger delegation must stay reachable.
       const modal = $(INVOICE_MODAL_SELECTOR)
-      const context = invoiceProjectContext(action.closest(INVOICE_CARD_SELECTOR))
-      if (!modal || !context) {
+      const card = action.closest(INVOICE_CARD_SELECTOR)
+      const cardContext = invoiceProjectContext(card)
+      if (!modal || !cardContext) {
         console.error('[opp30:invoice] cannot prepare the Generate Invoice modal', {
           modal: !!modal,
-          project: context ? context.projectId : null,
+          project: cardContext ? cardContext.projectId : null,
         })
         return
       }
       event.preventDefault()
       event.stopPropagation()
+      let context = cardContext
+      if (projectRoleForPath() === 'starter') {
+        let project = projectWorkflowItems.get(cardContext.projectId)
+        if (!project) {
+          try {
+            await refreshProjectWorkflow('starter')
+          } catch (error) {
+            console.error('[opp30:invoice] cannot load canonical project context', error)
+            return
+          }
+          if (!invoiceWorkflowBindingCurrent(binding)) return
+          project = projectWorkflowItems.get(cardContext.projectId)
+        }
+        context = project ? invoiceProjectContext(card, project) : null
+        if (!context) {
+          console.error('[opp30:invoice] canonical project context is unavailable', {
+            project: cardContext.projectId,
+          })
+          return
+        }
+      }
       prepareInvoiceModal(modal, context)
       showInvoiceModal(modal)
     }
@@ -2211,14 +2325,10 @@
         // A stale project must never be billed by a later submit from a modal
         // that was reopened without a card.
         activeInvoiceProject = null
-        // Feed refresh is cosmetic; never report a created invoice as failed.
-        try {
-          if (window.WfXano && typeof window.WfXano.refresh === 'function') {
-            window.WfXano.refresh(context.card.closest('[wf-xano-source]') || undefined)
-          }
-        } catch (refreshError) {
-          /* non-fatal: the next page load repaints the card */
-        }
+        // Repaint the canonical project card in place. This remains cosmetic:
+        // the successful invoice response is never turned into a form error if
+        // the follow-up list read fails.
+        refreshProjectWorkflowBestEffort('starter', 'invoice').catch(() => {})
       } catch (err) {
         if (!invoiceWorkflowBindingCurrent(binding)) return
         const receipt = diagnosticForError(err)
@@ -2255,8 +2365,13 @@
     '[wf-xano-link="project-end"], [wf-xano-link="project-decline"], [data-project-action="end"]'
   const PROJECT_REVIEW_SELECTOR =
     '[wf-xano-link="review_starter"], [data-project-action="review"]'
+  const PROJECT_INVOICE_CANCEL_SELECTOR = '[data-project-invoice-action="cancel"]'
+  const PROJECT_INVOICE_TARGET_SELECTOR =
+    '[wf-xano-element="nest-target"][wf-xano-field="invoices"]'
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
+  const PROJECT_REQUEST_PARTIES = ['brand', 'starter']
+  const PROJECT_LIFECYCLE_UNAVAILABLE_LABEL = 'Status Unavailable'
   // Sent documents use recipient view/sign sessions. Completed documents use
   // a separate protected-PDF route and never mint a signing session.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
@@ -2294,11 +2409,16 @@
   let projectWorkflowRole = ''
   let projectWorkflowItems = new Map()
   let projectWorkflowRefresh = null
+  let projectWorkflowRefreshGeneration = -1
+  let projectWorkflowQueuedReload = null
+  let projectWorkflowReloadGeneration = -1
+  let projectWorkflowReloadDemand = 0
   let projectWorkflowObserver = null
   let projectWorkflowBinding = null
   let projectWorkflowProjectionUnsubscribe = null
   let projectWorkflowProjectionInstance = null
   let projectWorkflowActionLocks = new Map()
+  let projectInvoiceCancellationLocks = new Set()
   let projectWorkflowFeedbackElement = null
   let projectWorkflowFeedbackTimer = null
   const projectContractObjectUrls = new Map()
@@ -2308,6 +2428,7 @@
   let activeReviewModal = null
   let projectReviewOpenGeneration = 0
   let callReviewDeepLinkGeneration = -1
+  let projectReviewDeepLinkGeneration = -1
   let reviewSubmitting = false
 
   function normalizedDashboardPath() {
@@ -2349,8 +2470,7 @@
         : []
   }
 
-  async function fetchProjectWorkflowItems(role) {
-    const items = []
+  async function fetchProjectWorkflowPages(role, visit) {
     const seenProjectIds = new Set()
     const seenPages = new Set()
     let page = 1
@@ -2361,14 +2481,17 @@
           ? await API.brandProjectList(page)
           : await API.starterProjectList(page)
       const batch = projectItems(result)
+      const uniqueBatch = []
       let added = 0
       batch.forEach((item) => {
         const id = Number(item && (item.project_id || item.id))
         if (!(id > 0) || seenProjectIds.has(id)) return
         seenProjectIds.add(id)
-        items.push(item)
+        uniqueBatch.push(item)
         added += 1
       })
+      const visited = visit(uniqueBatch)
+      if (visited !== undefined) return visited
       if (Array.isArray(result)) break
 
       const currentPage = Number(result && result.curPage)
@@ -2378,17 +2501,31 @@
         page = nextPage
       } else if (
         Number.isInteger(itemsTotal) &&
-        itemsTotal > items.length &&
+        itemsTotal > seenProjectIds.size &&
         added > 0
       ) {
         page = Number.isInteger(currentPage) && currentPage > 0 ? currentPage + 1 : page + 1
-      } else if (Number.isInteger(itemsTotal) && itemsTotal > items.length) {
+      } else if (Number.isInteger(itemsTotal) && itemsTotal > seenProjectIds.size) {
         throw new Error('Project pagination did not advance')
       } else {
         break
       }
     }
+    return undefined
+  }
+
+  async function fetchProjectWorkflowItems(role) {
+    const items = []
+    await fetchProjectWorkflowPages(role, (batch) => {
+      items.push(...batch)
+    })
     return items
+  }
+
+  async function fetchProjectWorkflowItem(role, projectId) {
+    return fetchProjectWorkflowPages(role, (batch) =>
+      batch.find((item) => Number(item && (item.project_id || item.id)) === projectId),
+    )
   }
 
   function projectWorkflowInstanceKey(role) {
@@ -2658,6 +2795,22 @@
     if (!wrap) return
     wrap.style.display = visible ? '' : 'none'
     wrap.setAttribute('aria-hidden', visible ? 'false' : 'true')
+  }
+
+  function setProjectActionWaiting(action, waiting) {
+    const wrap = projectActionWrap(action)
+    if (!action || !wrap) return
+    if (waiting) {
+      action.setAttribute('aria-disabled', 'true')
+      action.setAttribute('data-project-action-waiting', 'true')
+      wrap.setAttribute('data-project-action-waiting', 'true')
+      if ('disabled' in action) action.disabled = true
+    } else {
+      action.removeAttribute('aria-disabled')
+      action.removeAttribute('data-project-action-waiting')
+      wrap.removeAttribute('data-project-action-waiting')
+      if ('disabled' in action) action.disabled = false
+    }
   }
 
   function projectActionLabel(action) {
@@ -3033,10 +3186,177 @@
     if (label && target.textContent.trim() !== label) target.textContent = label
   }
 
+  function decorateProjectInvoiceRows(card, project) {
+    if (!card) return
+    $$(PROJECT_INVOICE_TARGET_SELECTOR, card).forEach((target) => {
+      const rows = Array.from(target.children || []).filter((row) =>
+        row.hasAttribute && row.hasAttribute('data-wf-xano-nest-clone'),
+      )
+      rows.forEach((row, index) => {
+        const invoice = project && Array.isArray(project.invoices) ? project.invoices[index] : null
+        const invoiceId = Number(invoice && invoice.id)
+        const status = String(invoice && invoice.status || '').trim().toLowerCase()
+        if (invoiceId > 0) row.setAttribute('data-project-invoice-id', String(invoiceId))
+        else row.removeAttribute('data-project-invoice-id')
+        if (status) row.setAttribute('data-project-invoice-status', status)
+        else row.removeAttribute('data-project-invoice-status')
+
+        // The shared Webflow component historically labels canonical void rows
+        // as "Incomplete". Keep Xano's `void` value canonical while painting the
+        // approved user-facing label from the projection.
+        if (status === 'void') {
+          $$('[wf-xano-if]', row).forEach((badge) => {
+            const condition = String(badge.getAttribute('wf-xano-if') || '')
+            if (!/status\s*===\s*['"]void['"]/.test(condition)) return
+            const label = $('.label_text', badge)
+            const text = String(invoice.status_display || 'Cancelled')
+            if (label && label.textContent.trim() !== text) label.textContent = text
+          })
+        }
+
+        const payableLink = String(
+          invoice && (invoice.payment_link || invoice.invoice_link) || '',
+        ).trim()
+        const hasPayableLink = /^https:\/\/[^\s]+$/i.test(payableLink)
+        $$('[wf-xano-link="payment_link"]', row).forEach((link) => {
+          if (hasPayableLink) {
+            link.setAttribute('href', payableLink)
+            link.setAttribute('target', '_blank')
+            link.setAttribute('rel', 'noopener noreferrer')
+          } else {
+            link.removeAttribute('href')
+          }
+          setProjectActionVisible(link, hasPayableLink)
+        })
+      })
+    })
+  }
+
+  function decorateProjectInvoiceLinks(card) {
+    if (!card) return
+    $$('[wf-xano-link="payment_link"]', card).forEach((link) => {
+      link.setAttribute('target', '_blank')
+      link.setAttribute('rel', 'noopener noreferrer')
+    })
+  }
+
+  function decorateProjectInvoiceActions(card, project) {
+    if (!card) return
+    $$(PROJECT_INVOICE_TARGET_SELECTOR, card).forEach((target) => {
+      const rows = Array.from(target.children || []).filter((row) =>
+        row.hasAttribute && row.hasAttribute('data-wf-xano-nest-clone'),
+      )
+      rows.forEach((row, index) => {
+        const invoice = project && Array.isArray(project.invoices) ? project.invoices[index] : null
+        $$(PROJECT_INVOICE_CANCEL_SELECTOR, row).forEach((action) => {
+          const invoiceId = Number(invoice && invoice.id)
+          const decoratedInvoiceId = action.getAttribute('data-project-invoice-id')
+          const nextInvoiceId = invoiceId > 0 ? String(invoiceId) : null
+          if (decoratedInvoiceId !== nextInvoiceId) delete action.dataset.invoiceCancelKey
+          if (invoiceId > 0) action.setAttribute('data-project-invoice-id', String(invoiceId))
+          else action.removeAttribute('data-project-invoice-id')
+          const eligible = Boolean(
+            projectWorkflowRole === 'starter' &&
+            invoice &&
+            invoice.cancel_eligible === true &&
+            String(invoice.status || '').toLowerCase() === 'unpaid' &&
+            invoiceId > 0,
+          )
+          setProjectActionVisible(action, eligible)
+          setProjectActionWaiting(action, eligible && projectInvoiceCancellationLocks.has(invoiceId))
+        })
+      })
+    })
+  }
+
+  function projectInvoiceCancelKey(action, invoiceId) {
+    if (action.dataset.invoiceCancelKey) return action.dataset.invoiceCancelKey
+    const uuid =
+      window.crypto && typeof window.crypto.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
+    action.dataset.invoiceCancelKey = 'invoice-cancel-ui:' + invoiceId + ':' + uuid
+    return action.dataset.invoiceCancelKey
+  }
+
+  async function resolveProjectInvoiceActionId(action, card) {
+    try {
+      const project = await currentProjectContext(card)
+      decorateProjectInvoiceActions(card, project)
+      const row = action && action.closest && action.closest('[data-wf-xano-nest-clone]')
+      const target = row && row.parentNode
+      if (!target || !target.matches(PROJECT_INVOICE_TARGET_SELECTOR)) return 0
+      const rows = Array.from(target.children || []).filter((candidate) =>
+        candidate.hasAttribute && candidate.hasAttribute('data-wf-xano-nest-clone'),
+      )
+      const invoice = project && Array.isArray(project.invoices)
+        ? project.invoices[rows.indexOf(row)]
+        : null
+      const invoiceId = Number(invoice && invoice.id)
+      const eligible = Boolean(
+        projectWorkflowRole === 'starter' &&
+        invoice &&
+        invoice.cancel_eligible === true &&
+        String(invoice.status || '').toLowerCase() === 'unpaid' &&
+        Number.isInteger(invoiceId) &&
+        invoiceId > 0,
+      )
+      return eligible ? invoiceId : 0
+    } catch (error) {
+      showProjectActionFeedback(
+        action,
+        projectActionErrorMessage(error, 'Invoice could not be loaded. Please try again.'),
+        true,
+        diagnosticForError(error),
+      )
+      return 0
+    }
+  }
+
+  async function cancelProjectInvoice(action, card) {
+    if (projectWorkflowRole !== 'starter') return false
+    const invoiceId = await resolveProjectInvoiceActionId(action, card)
+    if (!invoiceId || projectInvoiceCancellationLocks.has(invoiceId)) {
+      return false
+    }
+    const confirmation = window.prompt(
+      'Type CANCEL to cancel this invoice. The payment link will stop working.',
+    )
+    if (confirmation !== 'CANCEL') return false
+
+    projectInvoiceCancellationLocks.add(invoiceId)
+    setProjectActionWaiting(action, true)
+    try {
+      await API.invoiceCancel({
+        invoice_id: invoiceId,
+        expected_status: 'unpaid',
+        idempotency_key: projectInvoiceCancelKey(action, invoiceId),
+        dry_run: false,
+      })
+      showProjectWorkflowFeedback('Invoice cancelled.')
+      await refreshProjectWorkflowBestEffort('starter', 'invoice cancellation')
+      return true
+    } catch (error) {
+      showProjectActionFeedback(
+        action,
+        projectActionErrorMessage(error, 'Invoice could not be cancelled.'),
+        true,
+        diagnosticForError(error),
+      )
+      return false
+    } finally {
+      projectInvoiceCancellationLocks.delete(invoiceId)
+      setProjectActionWaiting(action, false)
+      decorateProjectInvoiceActions(card, projectContextFromCard(card))
+    }
+  }
+
   function decorateProjectCard(card) {
     const project = projectContextFromCard(card)
     paintProjectTimeline(card, project)
     paintProjectContractPanel(card, project)
+    decorateProjectInvoiceRows(card, project)
+    decorateProjectInvoiceActions(card, project)
     if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'contract') {
       currentProjectContractActions(projectIdFromCard(card)).forEach((contract) => {
         setOpportunityActionPending(projectActionWrap(contract), true)
@@ -3058,15 +3378,9 @@
     })
 
     if (end) {
-      const label =
-        state === 'pending'
-          ? 'Cancel Project'
-          : state === 'completion_requested'
-            ? 'Confirm Completion'
-            : state === 'termination_requested'
-              ? 'Confirm End'
-              : 'End Project'
-      setProjectActionLabel(end, label)
+      const endState = projectLifecycleActionState(project, projectWorkflowRole)
+      setProjectActionLabel(end, endState.label)
+      setProjectActionWaiting(end, endState.blocked)
       if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'lifecycle') {
         setOpportunityActionPending(projectActionWrap(end), true)
       }
@@ -3089,6 +3403,9 @@
     if (!projectWorkflowRole || role !== projectWorkflowRole) {
       $$(PROJECT_CARD_SELECTOR).forEach((card) => {
         setProjectPanelNodeVisible($(PROJECT_CONTRACT_PANEL_SELECTOR, card), false)
+        $$(PROJECT_INVOICE_CANCEL_SELECTOR, card).forEach((action) => {
+          setProjectActionVisible(action, false)
+        })
         $$(PROJECT_CONTRACT_SELECTOR, card).forEach((contract) => {
           if (!contract.hasAttribute('data-project-contract-action')) {
             contract.setAttribute('data-project-action', 'contract')
@@ -3119,15 +3436,16 @@
     projectWorkflowObserver.observe(root, { childList: true, subtree: true })
   }
 
-  async function refreshProjectWorkflow(role = projectWorkflowRole, reload = false) {
-    if (!role || projectRoleForPath() !== role) return null
-    if (projectWorkflowRefresh) return projectWorkflowRefresh
+  async function startProjectWorkflowRefresh(role, reload, generation) {
     const request = (async () => {
+      if (generation !== _memberScopeGeneration) return null
       const instance = await waitForProjectWorkflowInstance(role)
+      if (generation !== _memberScopeGeneration) return null
       let items
       if (instance) {
         bindProjectWorkflowProjection(role, instance)
         if (reload) await reloadProjectWorkflowInstance(instance)
+        if (generation !== _memberScopeGeneration) return null
         const state = await waitForProjectWorkflowState(role, instance)
         items = projectWorkflowStateItems(state)
       } else if (currentProjectWorkflowRoot(role)) {
@@ -3138,18 +3456,67 @@
         // projects endpoint has exactly one list owner and one request.
         items = await fetchProjectWorkflowItems(role)
       }
-      if (projectWorkflowRole !== role || projectRoleForPath() !== role) return null
+      if (
+        generation !== _memberScopeGeneration ||
+        projectWorkflowRole !== role ||
+        projectRoleForPath() !== role
+      ) return null
       projectWorkflowItems = projectWorkflowItemsMap(items)
       decorateProjectCards()
       observeProjectCards()
       return items
     })()
     projectWorkflowRefresh = request
+    projectWorkflowRefreshGeneration = generation
     try {
       return await request
     } finally {
-      if (projectWorkflowRefresh === request) projectWorkflowRefresh = null
+      if (projectWorkflowRefresh === request) {
+        projectWorkflowRefresh = null
+        projectWorkflowRefreshGeneration = -1
+      }
     }
+  }
+
+  function refreshProjectWorkflow(role = projectWorkflowRole, reload = false) {
+    if (!role || projectRoleForPath() !== role) return Promise.resolve(null)
+    const generation = _memberScopeGeneration
+    if (!reload) {
+      return projectWorkflowRefresh && projectWorkflowRefreshGeneration === generation
+        ? projectWorkflowRefresh
+        : startProjectWorkflowRefresh(role, false, generation)
+    }
+
+    if (projectWorkflowReloadGeneration !== generation) {
+      projectWorkflowQueuedReload = null
+      projectWorkflowReloadDemand = 0
+      projectWorkflowReloadGeneration = generation
+    }
+    projectWorkflowReloadDemand += 1
+    if (projectWorkflowQueuedReload) return projectWorkflowQueuedReload
+
+    const drain = (async () => {
+      let processedDemand = 0
+      let result = null
+      while (processedDemand < projectWorkflowReloadDemand) {
+        const demand = projectWorkflowReloadDemand
+        const activeRefresh = projectWorkflowRefresh
+        if (activeRefresh && projectWorkflowRefreshGeneration === generation) {
+          try {
+            await activeRefresh
+          } catch {}
+        }
+        if (generation !== _memberScopeGeneration || projectRoleForPath() !== role) return null
+        result = await startProjectWorkflowRefresh(role, true, generation)
+        processedDemand = demand
+      }
+      return result
+    })()
+    const queuedReload = drain.finally(() => {
+      if (projectWorkflowQueuedReload === queuedReload) projectWorkflowQueuedReload = null
+    })
+    projectWorkflowQueuedReload = queuedReload
+    return queuedReload
   }
 
   function invalidateProjectWorkflowProjection(role) {
@@ -3159,24 +3526,31 @@
   }
 
   async function currentProjectContext(card, refresh = false) {
+    const generation = _memberScopeGeneration
     const cachedProject = projectContextFromCard(card)
     let project = refresh ? null : cachedProject
     if (project && (project.lifecycle_state || project.status)) return project
     try {
       await refreshProjectWorkflow(projectWorkflowRole, refresh)
     } catch (error) {
-      if (refresh) invalidateProjectWorkflowProjection(projectWorkflowRole)
+      if (refresh && generation === _memberScopeGeneration) {
+        invalidateProjectWorkflowProjection(projectWorkflowRole)
+      }
       throw error
     }
+    if (generation !== _memberScopeGeneration) return null
     project = projectContextFromCard(card)
     return project && (project.lifecycle_state || project.status) ? project : null
   }
 
   async function refreshProjectWorkflowBestEffort(role, operation) {
+    const generation = _memberScopeGeneration
     try {
       await refreshProjectWorkflow(role, true)
+      if (generation !== _memberScopeGeneration) return false
       return true
     } catch (error) {
+      if (generation !== _memberScopeGeneration) return false
       invalidateProjectWorkflowProjection(role)
       console.error('[opp30:project-action] ' + operation + ' projection refresh failed', error)
       return false
@@ -3241,9 +3615,60 @@
     return action.dataset.projectActionKey
   }
 
-  function projectActionIntent(project, confirmAction = window.confirm, promptAction = window.prompt) {
+  function projectPartyRequested(project, role, actionName) {
+    if (!project || (role !== 'brand' && role !== 'starter')) return false
+    const field = role + '_' + actionName + '_requested_at'
+    return project[field] != null && String(project[field]).trim() !== ''
+  }
+
+  function projectLifecycleRequestAction(state) {
+    if (state === 'completion_requested') return 'completion'
+    if (state === 'termination_requested') return 'termination'
+    return ''
+  }
+
+  function projectLifecycleActionState(project, role) {
+    const state = lifecycleState(project)
+    const actionName = projectLifecycleRequestAction(state)
+    if (!actionName) {
+      return {
+        waitingOn: '',
+        blocked: false,
+        label: state === 'pending' ? 'Cancel Project' : 'End Project',
+      }
+    }
+    // A present-but-empty timestamp means that party has not requested; an
+    // absent key means the projection dropped the field, so the requester
+    // cannot be identified and the control must fail closed rather than offer
+    // the requester a second request.
+    const requesterUnknown =
+      (role !== 'brand' && role !== 'starter') ||
+      PROJECT_REQUEST_PARTIES.some(
+        (party) => project[party + '_' + actionName + '_requested_at'] === undefined,
+      )
+    if (requesterUnknown) {
+      return { waitingOn: '', blocked: true, label: PROJECT_LIFECYCLE_UNAVAILABLE_LABEL }
+    }
+    if (projectPartyRequested(project, role, actionName)) {
+      const waitingOn = role === 'brand' ? 'Starter' : 'Brand'
+      return { waitingOn, blocked: true, label: 'Waiting for ' + waitingOn }
+    }
+    return {
+      waitingOn: '',
+      blocked: false,
+      label: actionName === 'completion' ? 'Confirm Completion' : 'Confirm End',
+    }
+  }
+
+  function projectActionIntent(
+    project,
+    confirmAction = window.confirm,
+    promptAction = window.prompt,
+    role = projectWorkflowRole,
+  ) {
     const state = lifecycleState(project)
     if (!state || PROJECT_TERMINAL_STATES.has(state)) return null
+    if (projectLifecycleActionState(project, role).blocked) return null
     if (state === 'pending') {
       return confirmAction('Cancel this project before it starts?')
         ? { action: 'cancel', reason: 'canceled_before_activation' }
@@ -3425,6 +3850,7 @@
       projectWorkflowActionLocks.delete(projectId)
       setProjectLifecyclePending(projectId, false, action)
       setOpportunityActionPending(projectActionWrap(action), false)
+      decorateProjectCard(card)
     }
   }
 
@@ -3586,6 +4012,7 @@
 
   async function openCallReviewFromEmail() {
     if (projectWorkflowRole !== 'brand') return false
+    if (String(urlParam('review_project') || '').trim()) return false
     const bookingId = String(urlParam('review_booking') || '').trim()
     if (!bookingId || bookingId.length > 255) return false
     if (callReviewDeepLinkGeneration === _memberScopeGeneration) return false
@@ -3622,6 +4049,29 @@
       )
       return false
     }
+  }
+
+  async function openProjectReviewFromEmail(expectedGeneration = _memberScopeGeneration) {
+    if (expectedGeneration !== _memberScopeGeneration) return false
+    if (projectWorkflowRole !== 'brand') return false
+    if (String(urlParam('review_booking') || '').trim()) return false
+    const projectIdParam = String(urlParam('review_project') || '').trim()
+    if (!/^[1-9]\d{0,9}$/.test(projectIdParam)) return false
+    if (projectReviewDeepLinkGeneration === expectedGeneration) return false
+    projectReviewDeepLinkGeneration = expectedGeneration
+    const projectId = Number(projectIdParam)
+    let project = projectWorkflowItems.get(projectId)
+    if (!project) project = await fetchProjectWorkflowItem('brand', projectId)
+    if (
+      expectedGeneration !== _memberScopeGeneration ||
+      projectWorkflowRole !== 'brand' ||
+      projectRoleForPath() !== 'brand'
+    ) return false
+    if (!project || !prepareProjectReview(project)) {
+      showProjectLifecycleFeedback('', 'This project is not ready for a review.', true)
+      return false
+    }
+    return true
   }
 
   async function openProjectReview(action, card) {
@@ -3760,10 +4210,15 @@
     projectWorkflowRole = ''
     projectWorkflowItems = new Map()
     projectWorkflowRefresh = null
+    projectWorkflowRefreshGeneration = -1
+    projectWorkflowQueuedReload = null
+    projectWorkflowReloadGeneration = -1
+    projectWorkflowReloadDemand = 0
     if (projectWorkflowProjectionUnsubscribe) projectWorkflowProjectionUnsubscribe()
     projectWorkflowProjectionUnsubscribe = null
     projectWorkflowProjectionInstance = null
     projectWorkflowActionLocks = new Map()
+    projectInvoiceCancellationLocks = new Set()
     revokeProjectContractObjectUrls()
     window.clearTimeout(projectWorkflowFeedbackTimer)
     projectWorkflowFeedbackTimer = null
@@ -3777,6 +4232,7 @@
     activeReviewModal = null
     reviewSubmitting = false
     callReviewDeepLinkGeneration = -1
+    projectReviewDeepLinkGeneration = -1
     const reviewModal = projectReviewModal()
     clearProjectReviewContext(reviewModal, true)
     if (projectWorkflowObserver) projectWorkflowObserver.disconnect()
@@ -3816,7 +4272,8 @@
       const target = event.target
       const action = target && target.closest
         ? target.closest(
-            PROJECT_CONTRACT_SELECTOR + ', ' + PROJECT_END_SELECTOR + ', ' + PROJECT_REVIEW_SELECTOR,
+            PROJECT_CONTRACT_SELECTOR + ', ' + PROJECT_END_SELECTOR + ', ' + PROJECT_REVIEW_SELECTOR +
+              ', ' + PROJECT_INVOICE_CANCEL_SELECTOR,
           )
         : null
       if (!action) return
@@ -3824,7 +4281,9 @@
       if (!card) return
       event.preventDefault()
       event.stopPropagation()
-      if (action.matches(PROJECT_CONTRACT_SELECTOR)) await openProjectContract(action, card)
+      if (action.getAttribute('data-project-action-waiting') === 'true') return
+      if (action.matches(PROJECT_INVOICE_CANCEL_SELECTOR)) await cancelProjectInvoice(action, card)
+      else if (action.matches(PROJECT_CONTRACT_SELECTOR)) await openProjectContract(action, card)
       else if (action.matches(PROJECT_END_SELECTOR)) await mutateProjectLifecycle(action, card)
       else if (binding.role === 'brand') await openProjectReview(action, card)
     }
@@ -3888,9 +4347,11 @@
     const expected = role === 'brand' ? 'brand' : 'freelancer'
     if (projectRoleForPath() !== role) return false
     const member = authorizedMember || await gateOrRedirect(expected)
+    const generation = _memberScopeGeneration
     const requiredRole = role === 'brand' ? 'brand-paid' : 'talent'
     if (
       !member ||
+      generation !== _memberScopeGeneration ||
       member.id !== _cacheMemberId ||
       memberPlanRole(member) !== requiredRole
     ) {
@@ -3909,6 +4370,12 @@
     try {
       await refreshProjectWorkflow(role)
       await callReviewOpen
+      if (
+        generation !== _memberScopeGeneration ||
+        projectWorkflowRole !== role ||
+        projectRoleForPath() !== role
+      ) return false
+      if (role === 'brand') await openProjectReviewFromEmail(generation)
       return true
     } catch (error) {
       await callReviewOpen
@@ -5122,6 +5589,7 @@
             wrap && (wrap.querySelector('.create-opportunities_success') || wrap.querySelector('.w-form-done'))
           if (done) {
             paintOpportunityReviewSuccess(done, payload.title)
+            restoreCreateFormAuthoredDefaults(form)
             form.style.display = 'none'
             done.style.display = 'block'
             const receipt = diagnosticForResponse(result)
@@ -6092,10 +6560,15 @@
     openInvoiceModal,
     prepareInvoiceModal,
     paintInvoiceSuccess,
+    decorateProjectInvoiceLinks,
+    decorateProjectInvoiceRows,
+    decorateProjectInvoiceActions,
+    cancelProjectInvoice,
     requestInvoiceSubmit,
     invoiceSubmitControl,
     setInvoiceSubmitDisabled,
     projectActionIntent,
+    projectLifecycleActionState,
     projectContractIsViewable,
     projectContractIsDownloadable,
     projectContractPanelState,

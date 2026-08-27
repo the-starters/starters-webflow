@@ -1,0 +1,19 @@
+<!-- Invited Starter review form embed. Paste this one tag into the /review-starter
+     page head, above the site PostHog initialization. Nothing else goes in Webflow:
+     all logic lives in the repo.
+
+     Head slot only, and synchronous on purpose — no defer, no async. Both the
+     flash protection and the token stripping depend on it: a synchronous head tag
+     executes before the body parses, so the controller injects its own pre-hide
+     style (id starter-review-preflight) before any state block can paint, and it
+     clears the capability token from the URL before first paint. A deferred,
+     async, or body-placed tag loses both.
+
+     That injected rule hides every state block except loading, and self-disarms
+     the moment the controller's first setState stamps
+     data-starter-review-current-state on the root. If the CDN never answers,
+     the page falls back to its authored form: all blocks stacked and visible,
+     where the unavailable and error copy is at least readable.
+
+     Production pastes should pin an immutable tag (@vX.Y.Z) instead of @latest. -->
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>

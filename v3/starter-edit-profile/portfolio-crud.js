@@ -3,6 +3,70 @@
  * Original live inline body SHA-256: 8def2d83a95789431895634566199088cae153f1d517210abcb917977dd02e5d
  * Captured read-only from /starter-edit-profile on 2026-08-12.
  */
+function getStarterEditPortfolioSuccessCopy(updatedHighlightCount) {
+  if (!Number.isInteger(updatedHighlightCount) || updatedHighlightCount < 1) return null;
+  return {
+    heading: 'Highlight submitted',
+    message: 'Your changes were saved and are now live.',
+  };
+}
+
+function createStarterEditPortfolioSuccessController(options) {
+  const modal = options.modal;
+  const heading = options.heading;
+  const message = options.message;
+  const trigger = options.trigger;
+  const closeEventTarget = options.closeEventTarget;
+  const defaultHeading = heading ? heading.textContent : '';
+  const defaultMessage = message ? message.textContent : '';
+
+  function restore() {
+    if (heading) heading.textContent = defaultHeading;
+    if (message) message.textContent = defaultMessage;
+  }
+
+  function showForSubmit(updatedHighlightCount) {
+    const copy = getStarterEditPortfolioSuccessCopy(updatedHighlightCount);
+    if (copy) {
+      if (heading) heading.textContent = copy.heading;
+      if (message) message.textContent = copy.message;
+    } else {
+      restore();
+    }
+    if (trigger) trigger.dispatchEvent(new Event('click', { bubbles: true }));
+  }
+
+  function handleSharedModalClose(event) {
+    if (event.detail && event.detail.modal === modal) restore();
+  }
+
+  if (modal) modal.addEventListener('close', restore);
+  if (closeEventTarget) closeEventTarget.addEventListener('modal-close', handleSharedModalClose);
+
+  return { showForSubmit };
+}
+
+function createStarterEditPortfolioModalLifecycle(options) {
+  options.eventTarget.addEventListener('pageshow', function () {
+    if (options.isModalOpen() && !options.hasActivePortfolio()) options.closeModal();
+  });
+}
+
+async function commitStarterEditPortfolioDrafts(options) {
+  for (const draft of options.createDrafts) {
+    await options.commitCreateDraft(draft);
+  }
+
+  for (const draft of options.updateDrafts) {
+    await options.commitUpdateDraft(draft);
+  }
+
+  await options.commitDeleteDrafts();
+  options.clearAllDraftQueues();
+  await options.renderPortfolios();
+  options.successController.showForSubmit(options.updateDrafts.length);
+}
+
   // Manages portfolio CRUD, media uploads, previews, and edit/remove modals.
   document.addEventListener('DOMContentLoaded', async function () {
     waitForMember(async () => {
@@ -10,6 +74,17 @@
 
       const XANO_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io';
       ((XANO_GET_URL = `${XANO_BASE}/api:PmBJV0AG/Get_my_portfolios`), (XANO_CREATE_URL = `${XANO_BASE}/api:PmBJV0AG/Create_portfolio`), (XANO_UPDATE_URL = `${XANO_BASE}/api:PmBJV0AG/Update_portfolio`), (XANO_DELETE_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio`), (XANO_UPLOAD_URL = `${XANO_BASE}/api:PmBJV0AG/upload-image`), (XANO_ADD_IMAGE_URL = `${XANO_BASE}/api:PmBJV0AG/Add_portfolio_image`), (XANO_GET_IMAGES_URL = `${XANO_BASE}/api:PmBJV0AG/Get_portfolio_images`), (XANO_UPLOAD_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/upload-video`), (XANO_ADD_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/Add_portfolio_video`), (XANO_GET_VIDEOS_URL = `${XANO_BASE}/api:PmBJV0AG/Get_portfolio_videos`), (XANO_DELETE_IMAGE_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio_image`), (XANO_DELETE_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio_video`), (PLACEHOLDER_IMAGE = 'https://cdn.prod.website-files.com/plugins/Basic/assets/placeholder.60f9b1840c.svg'), (MAX_IMAGE_SIZE = 4 * 1024 * 1024), (MAX_VIDEO_SIZE = 50 * 1024 * 1024), (MAX_PORTFOLIOS = 9), (grid = qs('[data-highlights]')), (template = grid ? qs('.portfolio_card', grid) : null), (editModal = qs('[data-modal-target="portfolio-edit"]')), (editModalTrigger = qs('[data-modal-trigger="portfolio-edit"]')), (editModalClose = qs('[data-modal-close]', editModal)), (removeModal = qs('[data-modal-target="portfolio-remove"]')), (removeModalTrigger = qs('[data-modal-trigger="portfolio-remove"]')), (removeModalClose = qs('[data-modal-close]', removeModal)), (notifyModal = qs('[data-modal-target="portfolio-notification"]')), (notifyModalTrigger = qs('[data-modal-trigger="portfolio-notification"]')), (notifyModalClose = qs('[data-modal-close]', notifyModal)), (notificationText = notifyModal ? qs('[notification-text]', notifyModal) : null), (openSuccess = qs("[data-modal-trigger='edit-form-success']")), (createSubmit = qs('#add-highlight')), (editForm = qs('#wf-form-Portfolio-update')), (editSubmit = qs('[free-edit-submit]')), (portfolioSubmit = qs('[data-edit-submit="portfolio"]')), (titleInp = qs('#portfolio-title')), (descInp = qs('#portfolio-description')), (editTitleInp = qs('#portfolio-title-edit')), (editDescInp = qs('#portfolio-description-edit')), (imagesInp = qs('#portfolio-images')), (previewWrap = qs('#portfolio-images-preview')), (coverIndexInput = qs('#portfolio-cover-index')), (editImagesInp = qs('#portfolio-images-edit')), (editPreviewWrap = qs('#portfolio-images-edit-preview')), (videosInp = qs('#portfolio-videos')), (videosPreviewWrap = qs('#portfolio-videos-preview')), (editVideosInp = qs('#portfolio-videos-edit')), (editVideosPreviewWrap = qs('#portfolio-videos-edit-preview')), (firstPortfolioInp = qs('#first-portfolio')), (profileDrop = qs('#profile-dropdown')), (highlightDropdownLabel = qs('[highlight-dropdown-label]')), (skipBlock = qs('[skip-highlights]')));
+
+      const successModal = qs('[data-modal-target="edit-form-success"]');
+      const successHeading = successModal ? qs('.heading-style-h1', successModal) : null;
+      const successMessage = successModal ? qs('.text-size-xlarge', successModal) : null;
+      const successController = createStarterEditPortfolioSuccessController({
+        modal: successModal,
+        heading: successHeading,
+        message: successMessage,
+        trigger: openSuccess,
+        closeEventTarget: window,
+      });
 
       if (!grid || !template) return;
       let selectedFiles = [],
@@ -23,7 +98,8 @@
         pendingCreateDrafts = [],
         pendingUpdateDrafts = new Map(),
         pendingDeleteDraftIds = new Set(),
-        autoOpenedCreateDropdown = false;
+        autoOpenedCreateDropdown = false,
+        editFormResetTimer = null;
 
       function getAssetUrl(value) {
         if (!value) return '';
@@ -405,9 +481,16 @@
         );
       }
 
+      function cancelEditFormReset() {
+        if (editFormResetTimer === null) return;
+        clearTimeout(editFormResetTimer);
+        editFormResetTimer = null;
+      }
+
       function openModal() {
         if (!editModal) return;
 
+        cancelEditFormReset();
         editModalTrigger.dispatchEvent(new Event('click', { bubbles: true }));
       }
 
@@ -417,7 +500,10 @@
         editModalClose.dispatchEvent(new Event('click', { bubbles: true }));
 
         resetEditDraftState();
-        setTimeout(() => {
+        cancelEditFormReset();
+        editFormResetTimer = setTimeout(() => {
+          editFormResetTimer = null;
+          if (editModal.open || activePortfolio) return;
           if (editForm) editForm.reset();
         }, 300);
       }
@@ -451,6 +537,17 @@
 
         notifyModalClose.dispatchEvent(new Event('click', { bubbles: true }));
       }
+
+      createStarterEditPortfolioModalLifecycle({
+        eventTarget: window,
+        hasActivePortfolio: function () {
+          return Boolean(activePortfolio);
+        },
+        isModalOpen: function () {
+          return Boolean(editModal && editModal.open);
+        },
+        closeModal: closeModal,
+      });
 
       function updateCreateSubmitState() {
         if (!createSubmit) return;
@@ -651,6 +748,7 @@
       }
 
       async function fillEditForm(portfolio) {
+        cancelEditFormReset();
         activePortfolio = portfolio;
 
         if (portfolio && portfolio.pending_type === 'create') {
@@ -1026,7 +1124,7 @@
         const finalSubmitButton = portfolioSubmit || editSubmit || createSubmit;
 
         if (!pendingCreateDrafts.length && !pendingUpdateDrafts.size && !pendingDeleteDraftIds.size) {
-          if (openSuccess) openSuccess.dispatchEvent(new Event('click', { bubbles: true }));
+          successController.showForSubmit(0);
           return;
         }
 
@@ -1036,20 +1134,16 @@
           const createDrafts = pendingCreateDrafts.slice();
           const updateDrafts = Array.from(pendingUpdateDrafts.values());
 
-          for (const draft of createDrafts) {
-            await commitCreateDraft(draft);
-          }
-
-          for (const draft of updateDrafts) {
-            await commitUpdateDraft(draft);
-          }
-
-          await commitDeleteDrafts();
-
-          clearAllDraftQueues();
-          await renderPortfolios();
-
-          if (openSuccess) openSuccess.dispatchEvent(new Event('click', { bubbles: true }));
+          await commitStarterEditPortfolioDrafts({
+            createDrafts: createDrafts,
+            updateDrafts: updateDrafts,
+            commitCreateDraft: commitCreateDraft,
+            commitUpdateDraft: commitUpdateDraft,
+            commitDeleteDrafts: commitDeleteDrafts,
+            clearAllDraftQueues: clearAllDraftQueues,
+            renderPortfolios: renderPortfolios,
+            successController: successController,
+          });
         } catch (error) {
           console.error(error);
           openNotifyModal(getErrorMessage(error, 'Portfolio save failed'));
@@ -1161,7 +1255,6 @@
         if (event.key !== 'Escape') return;
         closeNotifyModal();
         closeRemoveModal();
-        closeModal();
       });
 
       if (imagesInp) {
@@ -1317,7 +1410,7 @@
       if (editSubmit) editSubmit.addEventListener('click', handlePortfolioUpdate);
       if (portfolioSubmit) portfolioSubmit.addEventListener('click', handlePortfolioSubmitAll);
 
-      closeModal();
+      if (editModal && editModal.open) closeModal();
       closeNotifyModal();
       try {
         await renderPortfolios();

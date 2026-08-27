@@ -2,6 +2,12 @@
  * GitHub-owned copy of the Build Profile Webflow controller block.
  * Original live inline body SHA-256: decbf5b49d1006f8a857602a33e2d89a6270fa8b9355d6311d16188f6a4bfe83
  * Captured read-only from /build-profile/consult on 2026-08-12.
+ * This file has since diverged from that captured body; the note below is the contract.
+ *
+ * A counter group whose wrapper holds a `[data-editor-id]` element belongs to the
+ * rich-text editor that renders it, not to this generic counter. See bio-editor.js.
+ *
+ * @release v1.59.312
  */
 	function counterFields(wrapper = null) {
 		const inputs = qsa(
@@ -12,6 +18,14 @@
 		inputs.forEach((input) => {
 			const wrapper = input.closest('.form_input-wr');
 			if (!wrapper) return;
+
+			// A rich-text editor in this group owns its own counter: the textarea is a
+			// mirror, so counting it here would fight the editor script over the span.
+			// Claimed on the way out so a later re-scan skips it without re-checking.
+			if (qs('[data-editor-id]', wrapper)) {
+				input.classList.add('initialized');
+				return;
+			}
 
 			const countSpan = qs('.count-input', wrapper);
 			if (!countSpan) return;

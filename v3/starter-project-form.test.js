@@ -118,6 +118,9 @@ class Element {
       return null
     }
     if (selector === '#Brand') return this.fields && this.fields.select
+    if (selector === '[data-project-field="service"]') return this.fields && this.fields.serviceSelect
+    if (selector === 'select[name="Services"]') return this.fields && this.fields.serviceSelect
+    if (selector === 'select[name="services"]') return this.fields && this.fields.serviceSelect
     if (selector === '#brand-contract') return this.fields && this.fields.brandId
     if (selector === '#hiring-manager-name') return this.fields && this.fields.manager
     if (selector === '#Hiring-Manager-Name') return this.fields && this.fields.manager
@@ -150,6 +153,7 @@ class Element {
     if (selector === '[data-project-success-title], .generate-contract_success-text') return this.successTitles || []
     if (selector === '[data-project-bind], [element]') return this.profileTargets || []
     if (selector === 'p, label, span') return this.copyTargets || []
+    if (selector === 'p, label, span, a, button') return this.copyTargets || []
     if (selector === '.generate-contract_success a.clickable_link, .w-form-done a.clickable_link') return this.successLinks || []
     if (selector === '#brand-name-contract, #brand-name, #freeName, #FreeEmail, #pushMemID') return this.cmsOnly || []
     return []
@@ -167,8 +171,19 @@ function formFixture() {
   const placeholder = new Element({ value: '', textContent: 'Choose a Brand', tagName: 'option' })
   select.ownerDocument = { createElement: (tagName) => new Element({ tagName }) }
   select.appendChild(placeholder)
+  const serviceSelect = new Element({ name: 'Services', tagName: 'select' })
+  serviceSelect.ownerDocument = { createElement: (tagName) => new Element({ tagName }) }
+  ;[
+    ['', 'Select one...'],
+    ['Freelance work', 'Freelance work'],
+    ['Monthly retainer', 'Monthly retainer'],
+    ['Service 1', 'Service 1'],
+    ['Service 2', 'Service 2'],
+    ['Service 3', 'Service 3'],
+  ].forEach(([value, textContent]) => serviceSelect.appendChild(new Element({ value, textContent, tagName: 'option' })))
   form.fields = {
     select,
+    serviceSelect,
     brandId: new Element({ id: 'brand-contract' }),
     manager: new Element({ id: 'hiring-manager-name', value: 'Sample manager' }),
     company: new Element({ id: 'brand-company-name', value: 'Sample company' }),
@@ -200,6 +215,8 @@ function formFixture() {
     new Element({ tagName: 'p', textContent: "The share of the total you'll pay the freelancer before work begins (0–100%)." }),
     new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
     new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
+    new Element({ tagName: 'span', textContent: 'Party' }),
+    new Element({ tagName: 'a', href: '#', textContent: 'Message Party' }),
   ]
   form.controls = Object.values(form.fields)
   return { context, form, wrapper }
@@ -427,7 +444,7 @@ test('diagnostic error entries expose status only and omit free-form server deta
   ])
 })
 
-test('normalizes and renders the authenticated Starter profile into scoped bindings', async () => {
+test('renders the authenticated Starter services and leaves the Brand rail identity intact', async () => {
   const loaded = load({ noDocument: true, profile: {
     first_name: 'Starter',
     last_name: 'Person',
@@ -435,6 +452,10 @@ test('normalizes and renders the authenticated Starter profile into scoped bindi
     professional_headline: 'Retention lead',
     profile_photo: 'https://example.com/photo.jpg',
     freelancer_information: '<p>Builds &amp; improves retention.</p>',
+    services: [
+      { name: 'Lifecycle Email Program', description: 'Build retention.', price: 2500 },
+      { name: 'Retention Audit', description: 'Find gaps.', price: 800 },
+    ],
   } })
   const photo = new Element({ tagName: 'img', 'data-project-bind': 'starter.profile_photo' })
   const name = new Element({ 'data-project-bind': 'starter.full_name' })
@@ -443,16 +464,297 @@ test('normalizes and renders the authenticated Starter profile into scoped bindi
   const summary = new Element({ element: 'freelancer_infromation' })
   loaded.context.profileTargets = [photo, name, role, headline, summary]
 
-  const profile = await loaded.api.loadProfile(loaded.form, loaded.window)
+  const request = loaded.api.loadProfile(loaded.form, loaded.window)
+  loaded.api.renderCounterparty(loaded.form, { id: 7, manager_name: 'Dana Reyes', company_name: 'Northwind Coffee' })
+  const profile = await request
 
   assert.equal(loaded.calls.profile.length, 1)
   assert.equal(profile.full_name, 'Starter Person')
-  assert.equal(photo.getAttribute('src'), 'https://example.com/photo.jpg')
-  assert.equal(photo.getAttribute('alt'), 'Starter Person profile photo')
-  assert.equal(name.textContent, 'Starter Person')
-  assert.equal(role.textContent, 'Lifecycle Marketing')
-  assert.equal(headline.textContent, 'Retention lead')
-  assert.equal(summary.textContent, 'Builds & improves retention.')
+  assert.equal(name.textContent, 'Dana Reyes')
+  assert.equal(headline.textContent, 'Northwind Coffee')
+  assert.equal(photo.getAttribute('src'), null)
+  assert.equal(photo.getAttribute('alt'), '')
+  assert.equal(role.textContent, '')
+  assert.equal(summary.textContent, '')
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => [option.value, option.textContent]),
+    [
+      ['', 'Select one...'],
+      ['Freelance work', 'Freelance work'],
+      ['Monthly retainer', 'Monthly retainer'],
+      ['Lifecycle Email Program', 'Lifecycle Email Program'],
+      ['Retention Audit', 'Retention Audit'],
+    ],
+  )
+})
+
+test('the canonical service list never reaches the profile bind projection', async () => {
+  const loaded = load({
+    noDocument: true,
+    profile: { full_name: 'Starter Person', services: ['Lifecycle Email Program', 'Retention Audit'] },
+  })
+  const services = new Element({ 'data-project-bind': 'starter.services', textContent: 'Authored services copy' })
+  loaded.context.profileTargets = [services]
+
+  await loaded.api.loadProfile(loaded.form, loaded.window)
+
+  assert.equal(services.textContent, 'Authored services copy')
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.value),
+    ['', 'Freelance work', 'Monthly retainer', 'Lifecycle Email Program', 'Retention Audit'],
+  )
+})
+
+test('normalizes canonical services and removes generic slots from every source', () => {
+  const loaded = load({ noDocument: true })
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(loaded.api.normalizeServices({
+      'service-3': { name: 'paid media audit' },
+      'service-2': { raw: 'Creative Strategy Sprint' },
+      'service-1': { name: 'Paid Media Audit' },
+      count: 2,
+      updated_at: '2026-08-24',
+      service_slots: ['Not a service'],
+      services: ['Also not a service'],
+    }))),
+    ['Paid Media Audit', 'Creative Strategy Sprint'],
+  )
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(loaded.api.normalizeServices([
+      'Service 1',
+      { name: 'service-2' },
+      { label: 'SERVICE_3' },
+      'Paid Media Audit',
+    ]))),
+    ['Paid Media Audit'],
+  )
+
+  loaded.form.fields.serviceSelect.value = 'Service 2'
+  assert.equal(loaded.api.renderServices(loaded.form, [
+    'Service 1',
+    'Paid Media Audit',
+    { label: 'Service 3' },
+  ]), true)
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => [option.value, option.textContent]),
+    [
+      ['', 'Select one...'],
+      ['Freelance work', 'Freelance work'],
+      ['Monthly retainer', 'Monthly retainer'],
+      ['Paid Media Audit', 'Paid Media Audit'],
+    ],
+  )
+  assert.equal(loaded.form.fields.serviceSelect.value, '')
+})
+
+test('authored generic service slots stay removed for an empty list and a failed profile request', async () => {
+  let rejectProfile
+  const loaded = load({
+    noDocument: true,
+    starterProfile: () => new Promise((resolve, reject) => { rejectProfile = reject }),
+  })
+  const validAuthored = ['Select one...', 'Freelance work', 'Monthly retainer']
+  const labels = () => loaded.form.fields.serviceSelect.options.map((option) => option.textContent)
+
+  assert.equal(loaded.api.renderServices(loaded.form, []), true)
+  assert.deepEqual(labels(), validAuthored)
+
+  const request = loaded.api.loadProfile(loaded.form, loaded.window, true)
+  assert.deepEqual(labels(), validAuthored)
+
+  await Promise.resolve()
+  rejectProfile(new Error('services unavailable'))
+  assert.equal(await request, null)
+  assert.deepEqual(labels(), validAuthored)
+})
+
+test('a profile response without services keeps only valid authored service options', async () => {
+  const loaded = load({ noDocument: true, profile: { full_name: 'Starter Person' } })
+
+  assert.equal((await loaded.api.loadProfile(loaded.form, loaded.window)).full_name, 'Starter Person')
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
+    ['Select one...', 'Freelance work', 'Monthly retainer'],
+  )
+})
+
+test('a member scope change drops the previous Starter services without restoring generic slots', async () => {
+  const loaded = load({ profile: { services: ['CRM Strategy'] } })
+
+  await loaded.api.loadProfile(loaded.form, loaded.window, true)
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
+    ['Select one...', 'Freelance work', 'Monthly retainer', 'CRM Strategy'],
+  )
+
+  loaded.window.listeners['opp30:member-scope-reset']({ detail: { memberId: 'member-b' } })
+
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
+    ['Select one...', 'Freelance work', 'Monthly retainer'],
+  )
+})
+
+test('opening the modal loads the authenticated Starter services', async () => {
+  const loaded = load({
+    profile: { services: [{ name: 'CRM Strategy' }, { name: 'Lifecycle Build' }] },
+  })
+
+  loaded.document.listeners.click({
+    target: { closest: (selector) => selector === '[data-modal-trigger="start-project"]' ? {} : null },
+  })
+  await loaded.api.loadProfile(loaded.form, loaded.window)
+
+  assert.equal(loaded.calls.profile.length, 1)
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
+    ['Select one...', 'Freelance work', 'Monthly retainer', 'CRM Strategy', 'Lifecycle Build'],
+  )
+})
+
+test('the Opp30 starterProfile method stays the primary path and never reaches the auth bridge', async () => {
+  const loaded = load({ noDocument: true, profile: { services: [{ name: 'CRM Strategy' }] } })
+  const requests = []
+  let tokenCalls = 0
+  loaded.window.getXanoAuthToken = async () => {
+    tokenCalls += 1
+    return 'xano-token'
+  }
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: true, status: 200, json: async () => ({ services: ['Should never load'] }) }
+  }
+
+  await loaded.api.loadProfile(loaded.form, loaded.window, true)
+
+  assert.equal(loaded.calls.profile.length, 1)
+  assert.equal(tokenCalls, 0)
+  assert.deepEqual(requests, [])
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
+    ['Select one...', 'Freelance work', 'Monthly retainer', 'CRM Strategy'],
+  )
+})
+
+test('loads Starter services through the shared Xano auth bridge when the cached API lacks starterProfile', async () => {
+  const loaded = load({ noDocument: true })
+  const requests = []
+  let tokenCalls = 0
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => {
+    tokenCalls += 1
+    return 'xano-token'
+  }
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ services: [{ name: 'CRM Strategy' }] }),
+    }
+  }
+
+  await loaded.api.loadProfile(loaded.form, loaded.window, true)
+
+  assert.equal(tokenCalls, 1)
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/starter/profile/me')
+  assert.equal(requests[0].options.method, 'POST')
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer xano-token')
+  assert.equal(requests[0].options.body, '{}')
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => [option.value, option.textContent]),
+    [
+      ['', 'Select one...'],
+      ['Freelance work', 'Freelance work'],
+      ['Monthly retainer', 'Monthly retainer'],
+      ['CRM Strategy', 'CRM Strategy'],
+    ],
+  )
+})
+
+test('a blank shared token issues no fallback request and keeps only valid authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => '   '
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: true, status: 200, json: async () => ({ services: ['Should never load'] }) }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.deepEqual(requests, [])
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.value),
+    ['', 'Freelance work', 'Monthly retainer'],
+  )
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
+test('a missing shared auth bridge issues no fallback request and keeps only valid authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: true, status: 200, json: async () => ({ services: ['Should never load'] }) }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.deepEqual(requests, [])
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
+test('a non-ok fallback response with a non-JSON body keeps only valid authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => 'xano-token'
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return {
+      ok: false,
+      status: 502,
+      json: async () => { throw new Error('Unexpected token < in JSON at position 0') },
+    }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.equal(requests.length, 1)
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(
+    loaded.form.fields.serviceSelect.options.map((option) => option.value),
+    ['', 'Freelance work', 'Monthly retainer'],
+  )
+  assert.deepEqual(loaded.calls.submit, [])
+})
+
+test('a 401 fallback response with a JSON error body keeps only valid authored service slots', async () => {
+  const loaded = load({ noDocument: true })
+  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
+  const requests = []
+  delete loaded.window.Opp30.API.starterProfile
+  loaded.window.getXanoAuthToken = async () => 'xano-token'
+  loaded.window.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+  }
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window, true), null)
+
+  assert.equal(requests.length, 1)
+  assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
+  assert.deepEqual(loaded.calls.submit, [])
 })
 
 test('profile loading clears authored identity and stays clear on failure', async () => {
@@ -586,16 +888,17 @@ test('promotes the detached shared Contract Generation form into Starter context
 test('normalizes, deduplicates, and sorts eligible Brands by stable Xano ID', () => {
   const { api } = load({ noDocument: true })
   const options = api.normalizeOptions({ counterparties: [
-    { counterparty_id: 9, company_name: 'Zulu', hiring_manager_name: 'Zoe' },
-    { counterparty_id: 4, company_name: 'Alpha', hiring_manager_name: 'Amy', email: 'not-returned@example.com' },
+    { counterparty_id: 9, company_name: 'Zulu', hiring_manager_name: 'Zoe', memberstack_member_id: 'mem_zulu' },
+    { counterparty_id: 4, company_name: 'Alpha', hiring_manager_name: 'Amy', email: 'not-returned@example.com', memberstack_member_id: 'mem_alpha' },
     { counterparty_id: 9, company_name: 'Duplicate' },
     { counterparty_id: 0, company_name: 'Invalid' },
     { counterparty_id: 6, company_name: 'Missing manager' },
     { counterparty_id: 7, hiring_manager_name: 'Missing company' },
   ] })
   assert.deepEqual(JSON.parse(JSON.stringify(options)), [
-    { id: 4, label: 'Alpha — Amy', company_name: 'Alpha', manager_name: 'Amy' },
-    { id: 9, label: 'Zulu — Zoe', company_name: 'Zulu', manager_name: 'Zoe' },
+    { id: 4, label: 'Alpha — Amy', company_name: 'Alpha', manager_name: 'Amy', memberstack_member_id: 'mem_alpha' },
+    { id: 6, label: 'Missing manager', company_name: 'Missing manager', manager_name: '', memberstack_member_id: '' },
+    { id: 9, label: 'Zulu — Zoe', company_name: 'Zulu', manager_name: 'Zoe', memberstack_member_id: 'mem_zulu' },
   ])
   assert.equal(Object.prototype.hasOwnProperty.call(options[0], 'email'), false)
 })
@@ -657,6 +960,76 @@ test('selecting a Brand stores its ID and clears stale sample email', () => {
   assert.equal(context.profileTargets[5].hidden, true)
 })
 
+test('selected Brand personalizes Party copy and clearing restores neutral copy', () => {
+  const { api, context, form } = load({ noDocument: true })
+
+  api.prepareStarterContext(form)
+  api.selectBrand(form, { id: 12, company_name: 'Acme', manager_name: 'Dana Reyes', memberstack_member_id: 'mem_dana' })
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Dana',
+    'Message Dana',
+  ])
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_dana')
+
+  api.selectBrand(form, { id: 13, company_name: 'Northwind Coffee', manager_name: '   ', memberstack_member_id: 'mem_northwind' })
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Northwind Coffee',
+    'Message Northwind Coffee',
+  ])
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_northwind')
+
+  api.clearSelectedBrand(form)
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Party',
+    'Message Party',
+  ])
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '#')
+})
+
+test('message destination accepts destination-compatible Memberstack IDs only', () => {
+  const { api, context, form } = load({ noDocument: true })
+
+  api.prepareStarterContext(form)
+  for (const memberstack_member_id of ['mem_bad-id', 'mem_sb_extra_underscore', 'mem_', '']) {
+    api.selectBrand(form, {
+      id: 12,
+      company_name: 'Acme',
+      manager_name: 'Dana Reyes',
+      memberstack_member_id,
+    })
+
+    assert.equal(context.copyTargets.at(-1).textContent, 'Message Dana')
+    assert.equal(context.copyTargets.at(-1).getAttribute('href'), '#')
+  }
+
+  api.selectBrand(form, {
+    id: 12,
+    company_name: 'Acme',
+    manager_name: 'Dana Reyes',
+    memberstack_member_id: 'mem_sb_Dana123',
+  })
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_sb_Dana123')
+})
+
+test('an eligible Brand without a manager name uses its company for Party copy', async () => {
+  const { api, calls, context, form, window } = load({
+    counterparties: [{ counterparty_id: 13, company_name: 'Northwind Coffee', hiring_manager_name: '   ', memberstack_member_id: 'mem_northwind' }],
+  })
+
+  const options = await api.loadOptions(form, window)
+
+  assert.equal(calls.options.length, 1)
+  assert.equal(options.length, 1)
+  assert.equal(form.fields.select.value, '13')
+  assert.equal(form.fields.brandId.value, '13')
+  assert.equal(form.fields.select.options[1].textContent, 'Northwind Coffee')
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Northwind Coffee',
+    'Message Northwind Coffee',
+  ])
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_northwind')
+})
+
 test('prepares Starter-specific copy and dashboard destination without changing native markup', () => {
   const { api, context, form } = load({ noDocument: true })
 
@@ -670,6 +1043,8 @@ test('prepares Starter-specific copy and dashboard destination without changing 
     'The share of the total project cost the Brand will pay before work begins (0–100%).',
     'The contract will continue until you or the Brand ends the project',
     'The contract will continue until you or the Brand ends the project',
+    'Party',
+    'Message Party',
   ])
   assert.equal(context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
 })

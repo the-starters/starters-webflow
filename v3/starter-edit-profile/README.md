@@ -2,6 +2,11 @@
 
 The native `/starter-edit-profile` form, fields, and success/error elements stay authored in Webflow. This directory owns the published-form contract and the page-specific portfolio and company controllers. It reuses the reviewed profile-photo and work-date assets from `v3/build-profile/`.
 
+The remaining inline Starter Edit Profile bodies now also have GitHub-owned extraction candidates.
+The authoritative ownership, provenance, atomic page-Head-Code cutover, loader-order, and verification
+contract lives in [`../profile-form/README.md`](../profile-form/README.md). This repository change
+does not install or publish those candidates.
+
 ## In-place loader replacements
 
 Replace only an exact live inline body whose index and SHA-256 match the captured `page.scripts` records in `live-body-provenance.json`. The separate `candidateAssets` records identify the instrumented GitHub files. Keep each replacement in its existing Code Embed position.
@@ -14,6 +19,34 @@ Replace only an exact live inline body whose index and SHA-256 match the capture
 | 89 | `v3/starter-edit-profile/company-autocomplete.js` | Edit-profile company and logo autocomplete |
 | 90 | `v3/starter-edit-profile/company-experience-crud.js` | Edit-profile company-experience CRUD |
 | 91 | `v3/build-profile/work-dates.js` | Work-date validation and current-role state |
+
+Work Highlight updates are approved and live immediately. After an update
+succeeds, the portfolio controller replaces the shared generic message with
+`Your changes were saved and are now live.`, then restores the shared modal copy
+when it closes. Keep the pending and rejected status-badge rendering until the
+legacy rows with those statuses have been backfilled.
+
+### Work Highlight modal lifecycle
+
+While the edit modal is visible, it retains the selected Work Highlight and its
+existing image and video previews. A document-level `Escape` closes only the
+remove and notification modals; it must not close or reset the editor because an
+image picker can send the same key event. A `pageshow` closes the edit modal only
+when the browser restored it without an active Work Highlight. Opening or filling
+an editor cancels any delayed reset from an earlier close.
+
+The Edit portfolio controllers are the only Work Highlights owners on
+`/starter-edit-profile`. The Build portfolio controllers fail closed outside the
+two exact Build routes, even if an obsolete nested Webflow component still loads
+their files. This prevents duplicate immediate Build writes from bypassing the
+Edit controller and racing its write. Structural Webflow cleanup must still
+remove the obsolete nested Build component; the code gate is the runtime safety
+boundary until that component repair is published.
+
+`company-experience-crud.js` deliberately diverges from the live body it was captured
+from: it carries the work-experience date fix, whose contract is shared with Build
+Profile and owned by
+[Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
 
 Loader pattern:
 
@@ -31,10 +64,15 @@ section owns that shared loader contract.
 ## Validation and submit ownership
 
 After the approved whole-block cutover, `starter-edit-profile.js` is the only
-validation owner for its main section-submit buttons. It owns steps 1, 2, 5, 6,
-and 7 through an explicit published-markup contract. The Companies controller
-owns step 3 and the Portfolio controller owns step 4. No second controller may
-disable, intercept, or validate the same submit path.
+profile-validation owner for its main section-submit buttons. It owns steps 1,
+2, 5, 6, and 7 through an explicit published-markup contract. The Companies
+controller owns step 3 and the Portfolio controller owns step 4. The configured
+`v3/brand-account-controller.js` identity guard may capture a real changed-email
+click on Personal Details, but it calls this controller's step 1 validator and
+can only authorize one replay after Memberstack confirms the same member ID and
+normalized login email. It does not add a second profile validator or Xano
+writer. No other controller may disable, intercept, or validate the same submit
+path.
 
 The main form must not opt into sitewide `utils/wf-validate.js`. Its capture-phase
 submit gate can run before the page controller. The live inline validator must be
@@ -62,12 +100,18 @@ those systems.
 
 ## Release verification
 
+Implementation, automated, and live evidence for the in-flight reliability
+workflow is tracked in [PROGRESS-CHECKLIST.md](PROGRESS-CHECKLIST.md).
+
 1. Recapture the official element tree and authenticated published structural
    inventory, compare both with `published-form-contract.json`, and stop on
    unexplained drift.
 2. Run the published-form contract, controller behavior, ownership, syntax, and
    browser-secret tests.
-3. Release through no-mistakes, semver, and jsDelivr purge.
+3. For the shared profile-photo asset, follow the server-idempotency and cutover
+   gate in the [authoritative upload contract](../build-profile/README.md#profile-photo-upload-contract).
+   Release the other approved assets through no-mistakes, semver, and jsDelivr
+   purge.
 4. Save exact complete-location backups and compare the validation block with the
    whole-block sentinel inventory.
 5. Remove only the exact inline validation owner after the CDN candidate is served;
@@ -75,8 +119,10 @@ those systems.
 6. Publish staging only with approval. Test empty visible fields, empty mirrors,
    hydrated unchanged saves, full/consult branches, location transitions, reviewer
    tuples, and computed pointer behavior.
-7. Replace the six provenance-locked controller bodies only when that extraction is
-   separately in scope, one exact loader at a time and without reordering.
+7. For the shared-foundation extraction, use only the atomic route page-Head-Code cutover in
+   [`../profile-form/README.md`](../profile-form/README.md). Do not install one extracted loader at
+   each former inline node. The six earlier provenance-locked controller replacements keep their
+   existing positions and remain a separate scope.
 8. Verify current network responses, console-only diagnostics, and no unexpected
    Xano writes. Obtain separate approval before production publish and repeat QA.
 9. Scan every authorized published domain for Airtable, Make, and PAT exposure patterns.

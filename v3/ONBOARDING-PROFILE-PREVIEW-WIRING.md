@@ -1193,8 +1193,8 @@ rule in the structure embed does.
 
 - If no instance reads the endpoint it warns instead:
   `[starters onboarding-preview] no wf-xano instance reading starters_onboarding/get_freelancers* (and none keyed "onboarding-self-preview") — …`.
-  All of this is gated to staging hosts (`*.webflow.io`, `localhost`, `127.0.0.1`,
-  `*.trycloudflare.com`) or `window.STARTERS_DEBUG = true`, and silent in
+  All of this is gated to
+  [staging hosts](../README.md#staging-only-console-diagnostics), and silent in
   production. The warning matters because the failure is otherwise invisible: with
   no transform the binds resolve against the envelope, the template's
   `wf-xano-if` guard hides the card, and the page shows the empty state to a member

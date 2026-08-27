@@ -18,8 +18,12 @@ function flush() {
 
 function deferred() {
   let resolve
-  const promise = new Promise((done) => { resolve = done })
-  return { promise, resolve }
+  let reject
+  const promise = new Promise((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
 }
 
 function plain(value) {
@@ -96,6 +100,7 @@ function makeForm(kind = 'build', values = {}) {
   ])
   const listeners = new Map()
   let nativeSubmits = 0
+  let nativeClicks = 0
   let nativeSubmitReady = true
   let validityReports = 0
   const form = {
@@ -139,6 +144,9 @@ function makeForm(kind = 'build', values = {}) {
     },
     get nativeSubmits() {
       return nativeSubmits
+    },
+    get nativeClicks() {
+      return nativeClicks
     },
     get validityReports() {
       return validityReports
@@ -190,6 +198,9 @@ function makeForm(kind = 'build', values = {}) {
       return { event, capture: record.capture }
     },
   }
+  submit.click = () => {
+    nativeClicks += 1
+  }
   return form
 }
 
@@ -202,6 +213,7 @@ function loadController(options = {}) {
   const calls = []
   const tracked = []
   const redirects = []
+  const starterReplayProofs = []
   let longTimer = 0
   const mutationObservers = []
 
@@ -277,9 +289,25 @@ function loadController(options = {}) {
     $memberstackDom: options.memberstackMissing ? undefined : memberstack,
     StartersBrandAccountConfig: options.config || {},
     StartersV3RouteGuard: options.routeGuard,
+    StartersStarterEditProfile: Object.assign({
+      validatePersonalDetails() {
+        return {
+          valid:
+            !starterProfileForm ||
+            typeof starterProfileForm.checkValidity !== 'function' ||
+            starterProfileForm.checkValidity(),
+        }
+      },
+      authorizePersonalDetailsReplay(form, proof) {
+        starterReplayProofs.push({ form, proof })
+        return true
+      },
+      clearPersonalDetailsReplay() {},
+    }, options.starterEditProfile || {}),
     StartersTrack: {
       track(name, payload) {
         tracked.push({ name, payload })
+        if (options.trackThrows) throw new Error('analytics transport unavailable')
       },
     },
     setTimeout(fn, ms) {
@@ -335,7 +363,8 @@ function loadController(options = {}) {
   const appendedScripts = []
   if (options.captureNativeDiagnosticsLoader) {
     document.currentScript = {
-      src: 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/v3/brand-account-controller.js',
+      src: options.controllerScriptSrc
+        || 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/v3/brand-account-controller.js',
     }
     document.createElement = () => makeElement()
     document.head = { appendChild(script) { appendedScripts.push(script) } }
@@ -386,6 +415,7 @@ function loadController(options = {}) {
     storage,
     storageWrites,
     tracked,
+    starterReplayProofs,
     window,
   }
 }
@@ -576,13 +606,18 @@ test('Build Account refuses an email write after the signed-in member changes', 
 
 test('Build Account success records a privacy-safe console receipt without page diagnostics', async () => {
   const buildForm = makeForm('build', { email: 'private@example.com' })
-  const environment = loadController({ buildForm, diagnostics: true })
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'private@example.com',
+    diagnostics: true,
+  })
 
   buildForm.submitEvent()
   await settle()
 
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v2')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -590,6 +625,45 @@ test('Build Account success records a privacy-safe console receipt without page 
   assert.equal(buildForm.wrapper.done.textContent, 'Your authored success message.')
   assert.equal(buildForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.ok(environment.tracked.some((event) => event.name === 'workflow_form_submit_succeeded'))
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: false,
+        security_email_attempted: false,
+      },
+    }],
+  )
+})
+
+test('Build Account changed-email success keeps the receipt free of identity fields', async () => {
+  const buildForm = makeForm('build', { email: 'private@example.com' })
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'old@example.com',
+    diagnostics: true,
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'updateMemberAuth').length,
+    1,
+  )
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    1,
+  )
+  const receipt = buildForm.__startersAccountDiagnostic
+  assert.equal(receipt.workflow, 'brand_account_build')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v2')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.request_started, true)
+  assert.equal(Object.hasOwn(receipt, 'email'), false)
+  assert.equal(Object.hasOwn(receipt, 'firstName'), false)
 })
 
 test('Build Account validation receipt truthfully records that no request started', async () => {
@@ -719,8 +793,8 @@ test('a successful completion write stamps the sessionStorage marker', async () 
   // The exported contract, so a reader pinning this key is pinning the writer's.
   assert.equal(environment.api.brandProfileMarkerKey, MARKER_KEY)
   assert.equal(environment.api.brandProfileMarkerValue, '1')
-  // Written after completion is durable and before the non-retried email, so a
-  // member whose password email fails still counts as done in this tab.
+  // Written after completion is durable and before the changed-email security
+  // message, so a delivery failure still counts as done in this tab.
   const methods = environment.calls.map((call) => call.method)
   assert.equal(methods[methods.length - 1], 'sendMemberResetPasswordEmail')
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
@@ -788,7 +862,7 @@ test('a rejected completion write leaves the marker unset', async () => {
   )
 })
 
-test('Build Account sends a reset password email without an unchanged auth mutation', async () => {
+test('Build Account does not send a password email when login email is unchanged', async () => {
   const buildForm = makeForm('build', { email: 'ADA@EXAMPLE.COM' })
   const environment = loadController({ buildForm, currentEmail: 'ada@example.com' })
 
@@ -797,9 +871,9 @@ test('Build Account sends a reset password email without an unchanged auth mutat
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMember', 'updateMember', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'updateMember', 'updateMember'],
   )
-  assert.deepEqual(plain(environment.calls[3].payload), { email: 'ada@example.com' })
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
 test('invalid input performs no Memberstack mutation and exposes the authored error state', async () => {
@@ -831,9 +905,19 @@ test('email collision leaves completion unset and reports a stable user-facing e
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMember', 'getCurrentMember', 'updateMemberAuth'],
+    [
+      'getCurrentMember',
+      'updateMember',
+      'getCurrentMember',
+      'updateMemberAuth',
+      'getCurrentMember',
+    ],
   )
   assert.equal(buildForm.wrapper.failText.textContent, 'That email is already in use. Choose another email address.')
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
   assert.equal(environment.redirects.length, 0)
   assert.deepEqual(plain(environment.tracked), [
     { name: 'bridge_error', payload: { path: 'brand/account/build', status: 409 } },
@@ -902,7 +986,7 @@ test('duplicate submit while the first request is pending is ignored', async () 
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
-test('Build Account sends one reset password email after changing auth', async () => {
+test('Build Account sends one security email only after changing login email', async () => {
   const buildForm = makeForm('build', { email: 'verified-next@example.com' })
   const environment = loadController({
     buildForm,
@@ -923,21 +1007,52 @@ test('Build Account sends one reset password email after changing auth', async (
       'sendMemberResetPasswordEmail',
     ],
   )
-  assert.deepEqual(plain(environment.calls[5].payload), {
-    email: 'verified-next@example.com',
-  })
+  assert.deepEqual(plain(environment.calls[3].payload), { email: 'verified-next@example.com' })
+  assert.deepEqual(plain(environment.calls[5].payload), { email: 'verified-next@example.com' })
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: true,
+        security_email_attempted: true,
+      },
+    }],
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
-test('reset password email failure keeps durable completion and provides recovery copy', async () => {
+test('a throwing tracker cannot cost an unchanged-email submit its redirect', async () => {
+  const buildForm = makeForm('build', { email: 'ada@example.com' })
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'ada@example.com',
+    trackThrows: true,
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.equal(buildForm.wrapper.done.style.display, 'block')
+  assert.equal(buildForm.wrapper.fail.style.display, 'none')
+  assert.equal(
+    environment.tracked.filter((event) => event.name === 'brand_account_email_decision').length,
+    1,
+  )
+})
+
+test('a throwing tracker cannot cost a changed-email submit its ownership email or redirect', async () => {
   const buildForm = makeForm('build', { email: 'next@example.com' })
-  const sendError = new Error('password email service unavailable')
-  sendError.status = 503
   const environment = loadController({
     buildForm,
     currentEmail: 'old@example.com',
-    sendMemberResetPasswordEmail: async () => {
-      throw sendError
-    },
+    trackThrows: true,
   })
 
   buildForm.submitEvent()
@@ -954,6 +1069,100 @@ test('reset password email failure keeps durable completion and provides recover
       'sendMemberResetPasswordEmail',
     ],
   )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.equal(buildForm.wrapper.done.style.display, 'block')
+  assert.equal(buildForm.wrapper.fail.style.display, 'none')
+})
+
+test('Build Account with an unreadable login email writes no auth email and sends none', async () => {
+  const buildForm = makeForm('build', { email: 'next@example.com' })
+  const environment = loadController({
+    buildForm,
+    member: { id: 'mem_sb_brand' },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    [
+      'getCurrentMember',
+      'updateMember',
+      'updateMember',
+    ],
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    1,
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: false,
+        security_email_attempted: false,
+      },
+    }],
+  )
+})
+
+test('unavailable reset-email API does not affect onboarding with an unchanged email', async () => {
+  const buildForm = makeForm('build', { email: 'ada@example.com' })
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'ada@example.com',
+    sendMemberResetPasswordEmail: async () => {
+      throw new Error('must not be called')
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    [
+      'getCurrentMember',
+      'updateMember',
+      'updateMember',
+    ],
+  )
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    1,
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.equal(buildForm.wrapper.done.style.display, 'block')
+  assert.equal(buildForm.wrapper.fail.style.display, 'none')
+})
+
+test('changed-email reset failure keeps durable completion and provides recovery copy', async () => {
+  const buildForm = makeForm('build', { email: 'next@example.com' })
+  const sendError = new Error('password email service unavailable')
+  sendError.status = 503
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'old@example.com',
+    sendMemberResetPasswordEmail: async () => {
+      throw sendError
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
   assert.equal(
     environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
     1,
@@ -970,14 +1179,24 @@ test('reset password email failure keeps durable completion and provides recover
     buildForm.wrapper.failText.textContent,
     'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.',
   )
-  assert.equal(buildForm.getAttribute('aria-busy'), 'false')
-  assert.equal(buildForm.submit.disabled, false)
+  assert.deepEqual(
+    plain(environment.tracked.filter((event) => event.name === 'brand_account_email_decision')),
+    [{
+      name: 'brand_account_email_decision',
+      payload: {
+        controller_version: 'brand-account-controller-v2',
+        email_change_required: true,
+        security_email_attempted: true,
+      },
+    }],
+  )
 })
 
-test('non-Error password email rejection still produces stable recovery copy', async () => {
+test('non-Error changed-email rejection still produces stable recovery copy', async () => {
   const buildForm = makeForm('build', { email: 'next@example.com' })
   const environment = loadController({
     buildForm,
+    currentEmail: 'old@example.com',
     sendMemberResetPasswordEmail: async () => Promise.reject('response lost'),
   })
 
@@ -985,13 +1204,252 @@ test('non-Error password email rejection still produces stable recovery copy', a
   await settle()
 
   assert.equal(
-    buildForm.wrapper.failText.textContent,
-    'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.',
-  )
-  assert.equal(
     environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
     1,
   )
+  assert.equal(
+    buildForm.wrapper.failText.textContent,
+    'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.',
+  )
+  assert.deepEqual(environment.redirects, [])
+})
+
+test('a landed auth write answered with 409 completes on the same submit', async () => {
+  // The reported ambiguity: Memberstack claimed the address, the retry came back
+  // 409 for an address this member now owns, so the change is only observable on
+  // a fresh read of the member.
+  let authAttempts = 0
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'moved@example.com' })
+  const environment = loadController({
+    buildForm,
+    member,
+    updateMemberAuth: async (payload) => {
+      authAttempts += 1
+      member.auth.email = payload.email
+      const conflict = new Error('That email is already in use.')
+      conflict.status = 409
+      throw conflict
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  const emails = environment.calls.filter(
+    (call) => call.method === 'sendMemberResetPasswordEmail',
+  )
+  assert.equal(authAttempts, 1)
+  assert.equal(emails.length, 1)
+  assert.deepEqual(plain(emails[0].payload), { email: 'moved@example.com' })
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    1,
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.equal(buildForm.wrapper.fail.style.display, 'none')
+})
+
+test('a 409 from an address this member does not own keeps the conflict', async () => {
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'taken@example.com' })
+  const environment = loadController({
+    buildForm,
+    member,
+    updateMemberAuth: async () => {
+      const conflict = new Error('raw provider conflict')
+      conflict.status = 409
+      throw conflict
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    0,
+  )
+  assert.equal(
+    buildForm.wrapper.failText.textContent,
+    'That email is already in use. Choose another email address.',
+  )
+  assert.deepEqual(environment.redirects, [])
+})
+
+test('a 409 after the signed-in member changed reports the account-scope change', async () => {
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'moved@example.com' })
+  let reads = 0
+  const environment = loadController({
+    buildForm,
+    member,
+    getCurrentMember: async () => {
+      reads += 1
+      // The re-read that settles the ambiguity lands in a different session.
+      if (reads > 2) return { data: { id: 'mem_sb_other', auth: { email: 'moved@example.com' } } }
+      return { data: member }
+    },
+    updateMemberAuth: async (payload) => {
+      member.auth.email = payload.email
+      const conflict = new Error('That email is already in use.')
+      conflict.status = 409
+      throw conflict
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    0,
+  )
+  assert.equal(
+    buildForm.wrapper.failText.textContent,
+    'Your signed-in account changed. Refresh and try again.',
+  )
+  assert.deepEqual(environment.redirects, [])
+})
+
+test('a failed reconciliation read keeps the conflict without retrying the read', async () => {
+  // The probe exists to settle one ambiguity, so it gets one bounded look: a
+  // member facing a genuine conflict must not wait out the retry ladder first.
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'taken@example.com' })
+  let reads = 0
+  const environment = loadController({
+    buildForm,
+    member,
+    getCurrentMember: async () => {
+      reads += 1
+      if (reads > 2) {
+        const unreadable = new Error('member lookup unavailable')
+        unreadable.status = 503
+        throw unreadable
+      }
+      return { data: member }
+    },
+    updateMemberAuth: async () => {
+      const conflict = new Error('raw provider conflict')
+      conflict.status = 409
+      throw conflict
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(reads, 3)
+  assert.equal(
+    buildForm.wrapper.failText.textContent,
+    'That email is already in use. Choose another email address.',
+  )
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    0,
+  )
+  assert.deepEqual(environment.redirects, [])
+})
+
+test('a landed auth write that keeps timing out sends one email on resubmit', async () => {
+  let authAttempts = 0
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'moved@example.com' })
+  const environment = loadController({
+    buildForm,
+    member,
+    updateMemberAuth: async (payload) => {
+      authAttempts += 1
+      member.auth.email = payload.email
+      const lost = new Error('Account update timed out. Please try again.')
+      lost.status = 408
+      throw lost
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(authAttempts, 2)
+  assert.deepEqual(environment.redirects, [])
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    0,
+  )
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    0,
+  )
+
+  buildForm.submitEvent()
+  await settle()
+
+  const emails = environment.calls.filter(
+    (call) => call.method === 'sendMemberResetPasswordEmail',
+  )
+  assert.equal(authAttempts, 2)
+  assert.equal(emails.length, 1)
+  assert.deepEqual(plain(emails[0].payload), { email: 'moved@example.com' })
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    1,
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+})
+
+test('a reconciled ambiguous auth write sends no second security email', async () => {
+  let deliveries = 0
+  const member = { id: 'mem_sb_brand', auth: { email: 'old@example.com' } }
+  const buildForm = makeForm('build', { email: 'moved@example.com' })
+  const environment = loadController({
+    buildForm,
+    member,
+    updateMemberAuth: async (payload) => {
+      member.auth.email = payload.email
+      const conflict = new Error('That email is already in use.')
+      conflict.status = 409
+      throw conflict
+    },
+    sendMemberResetPasswordEmail: async () => {
+      deliveries += 1
+      throw new Error('response lost after delivery')
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+  buildForm.submitEvent()
+  await settle()
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(deliveries, 1)
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
 test('Account Security interception remains off until explicitly configured', () => {
@@ -1260,7 +1718,7 @@ test('visible Starter Edit Profile changes email independently when unrelated re
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.validityReports, 0)
@@ -1291,7 +1749,7 @@ test('independent Starter email accepts a click from nested submit content', asy
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
@@ -1327,7 +1785,7 @@ test('independent Starter email accepts the disabled authored submit wrapper cli
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
@@ -1397,7 +1855,7 @@ test('independent Starter email change preserves its validated click-time snapsh
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
   )
   assert.deepEqual(plain(environment.calls[2].payload), {
     email: 'validated@example.com',
@@ -1407,9 +1865,9 @@ test('independent Starter email change preserves its validated click-time snapsh
   })
 })
 
-test('valid Starter profile click stays native so the submit path can save all fields', async () => {
+test('valid Starter profile click changes Memberstack email before replaying the authored click', async () => {
   const starterProfileForm = makeForm('starter-profile', {
-    email: 'talent-next@example.com',
+    email: 'talent-old@example.com',
   })
   const environment = loadController({
     buildForm: null,
@@ -1420,12 +1878,360 @@ test('valid Starter profile click stays native so the submit path can save all f
     routeGuard: { memberRole: () => 'talent' },
   })
 
+  starterProfileForm.inputEmail('talent-next@example.com')
   const click = starterProfileForm.clickSubmit()
-  await settle()
+  await settle(12)
 
-  assert.equal(click.event.prevented, false)
-  assert.equal(click.event.stopped, false)
+  assert.equal(click.event.prevented, true)
+  assert.equal(click.event.stopped, true)
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
+  )
+  assert.deepEqual(plain(environment.calls[2].payload), {
+    email: 'talent-next@example.com',
+  })
+  assert.equal(starterProfileForm.nativeClicks, 1)
+  assert.equal(starterProfileForm.nativeSubmits, 0)
+  assert.equal(starterProfileForm.getAttribute('data-brand-account-native-replay'), 'false')
+})
+
+test('valid Personal Details replay ignores invalid required fields in later steps', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+    valid: false,
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    starterEditProfile: {
+      validatePersonalDetails: () => ({ valid: true, failures: [] }),
+    },
+  })
+
+  starterProfileForm.inputEmail('talent-next@example.com')
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
+  )
+  assert.equal(starterProfileForm.nativeClicks, 1)
+  assert.equal(starterProfileForm.nativeSubmits, 0)
+  assert.equal(starterProfileForm.validityReports, 0)
+})
+
+test('valid Starter profile click does not save profile fields when the email change fails', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+  })
+  const failure = new Error('email update failed')
+  failure.status = 409
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    updateMemberAuth: async () => {
+      throw failure
+    },
+  })
+
+  starterProfileForm.inputEmail('talent-next@example.com')
+  const click = starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.equal(click.event.prevented, true)
+  assert.equal(click.event.stopped, true)
+  assert.equal(starterProfileForm.nativeClicks, 0)
+  assert.equal(starterProfileForm.wrapper.fail.style.display, 'block')
+})
+
+test('valid Starter profile click still saves profile fields after a reset email failure', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+  })
+  const failure = new Error('password email service unavailable')
+  failure.status = 503
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    sendMemberResetPasswordEmail: async () => {
+      throw failure
+    },
+  })
+
+  starterProfileForm.inputEmail('talent-next@example.com')
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail', 'getCurrentMember'],
+  )
+  assert.equal(starterProfileForm.nativeClicks, 1)
+  assert.equal(starterProfileForm.wrapper.fail.style.display, 'block')
+  assert.deepEqual(plain(environment.starterReplayProofs[0].proof), {
+    memberId: 'mem_sb_brand',
+    email: 'talent-next@example.com',
+  })
+})
+
+test('valid non-Talent profile click does not replay a changed email', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'changed@example.com',
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'brand-paid' },
+  })
+
+  starterProfileForm.inputEmail('next@example.com')
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  assert.equal(starterProfileForm.nativeClicks, 0)
+})
+
+test('valid profile click does not replay when the route guard is unavailable', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+  })
+
+  starterProfileForm.inputEmail('talent-next@example.com')
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
   assert.deepEqual(environment.calls, [])
+  assert.equal(starterProfileForm.nativeClicks, 0)
+})
+
+test('valid profile click does not replay when the initial member read fails', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    getCurrentMember: async () => {
+      throw new Error('member read failed')
+    },
+  })
+
+  starterProfileForm.inputEmail('talent-next@example.com')
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  assert.equal(starterProfileForm.nativeClicks, 0)
+})
+
+test('email drift during the identity write blocks replay and remains changed', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+  })
+  const member = {
+    id: 'mem_sb_talent',
+    auth: { email: 'talent-old@example.com' },
+  }
+  const write = deferred()
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    member,
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    updateMemberAuth: async (payload) => {
+      await write.promise
+      member.auth.email = payload.email
+    },
+  })
+
+  starterProfileForm.inputEmail('email-a@example.com')
+  starterProfileForm.clickSubmit()
+  await flush()
+  starterProfileForm.inputEmail('email-b@example.com')
+  write.resolve()
+  await settle(12)
+
+  assert.equal(starterProfileForm.nativeClicks, 0)
+
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(
+    environment.calls
+      .filter((call) => call.method === 'updateMemberAuth')
+      .map((call) => plain(call.payload)),
+    [{ email: 'email-a@example.com' }, { email: 'email-b@example.com' }],
+  )
+  assert.equal(starterProfileForm.nativeClicks, 1)
+})
+
+test('email drift during reset failure blocks replay and remains changed', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+  })
+  const reset = deferred()
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    sendMemberResetPasswordEmail: async () => reset.promise,
+  })
+
+  starterProfileForm.inputEmail('email-a@example.com')
+  starterProfileForm.clickSubmit()
+  await flush()
+  starterProfileForm.inputEmail('email-b@example.com')
+  reset.reject(new Error('reset failed'))
+  await settle(12)
+
+  assert.equal(starterProfileForm.nativeClicks, 0)
+
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(
+    environment.calls
+      .filter((call) => call.method === 'updateMemberAuth')
+      .map((call) => plain(call.payload)),
+    [{ email: 'email-a@example.com' }, { email: 'email-b@example.com' }],
+  )
+  assert.equal(starterProfileForm.nativeClicks, 1)
+})
+
+test('session change during reset completion blocks replay and requires a fresh click', async () => {
+  for (const resetOutcome of ['success', 'failure']) {
+    const starterProfileForm = makeForm('starter-profile', {
+      email: 'talent-old@example.com',
+    })
+    const reset = deferred()
+    let currentMember = {
+      id: 'mem_member_a',
+      auth: { email: 'talent-old@example.com' },
+    }
+    const environment = loadController({
+      buildForm: null,
+      starterProfileForm,
+      pathname: '/starter-edit-profile',
+      config: { guardSecurityForm: 'identity' },
+      routeGuard: { memberRole: () => 'talent' },
+      getCurrentMember: async () => ({ data: currentMember }),
+      updateMemberAuth: async (payload) => {
+        currentMember.auth.email = payload.email
+      },
+      sendMemberResetPasswordEmail: async () => reset.promise,
+    })
+
+    starterProfileForm.inputEmail('member-a-next@example.com')
+    starterProfileForm.clickSubmit()
+    await flush()
+    currentMember = {
+      id: 'mem_member_b',
+      auth: { email: 'member-b@example.com' },
+    }
+    if (resetOutcome === 'success') reset.resolve({ ok: true })
+    else reset.reject(new Error('reset failed'))
+    await settle(12)
+
+    assert.equal(starterProfileForm.nativeClicks, 0, resetOutcome)
+    assert.equal(environment.starterReplayProofs.length, 0, resetOutcome)
+
+    starterProfileForm.clickSubmit()
+    await settle(12)
+
+    assert.deepEqual(
+      plain(environment.calls.filter((call) => call.method === 'updateMemberAuth').at(-1).payload),
+      { email: 'member-a-next@example.com' },
+      resetOutcome,
+    )
+  }
+})
+
+test('authored validation rejection restores interception for a fresh member click', async () => {
+  const replayTasks = []
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'member-a@example.com',
+  })
+  let currentMember = {
+    id: 'mem_member_a',
+    auth: { email: 'member-a@example.com' },
+  }
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    getCurrentMember: async () => ({ data: currentMember }),
+    updateMemberAuth: async (payload) => {
+      currentMember.auth.email = payload.email
+    },
+    setTimeout(fn, ms) {
+      if (ms === 0) {
+        replayTasks.push(fn)
+        return replayTasks.length
+      }
+      return 1
+    },
+  })
+
+  starterProfileForm.inputEmail('shared@example.com')
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.equal(replayTasks.length, 1)
+  currentMember = {
+    id: 'mem_member_b',
+    auth: { email: 'member-b@example.com' },
+  }
+  starterProfileForm.submit.click = () => {
+    environment.starterReplayProofs[0].proof.onRejected()
+  }
+  replayTasks.shift()()
+
+  starterProfileForm.clickSubmit()
+  await settle(12)
+
+  assert.deepEqual(
+    environment.calls
+      .filter((call) => call.method === 'updateMemberAuth')
+      .map((call) => plain(call.payload)),
+    [{ email: 'shared@example.com' }, { email: 'shared@example.com' }],
+  )
+  assert.equal(environment.starterReplayProofs[1].proof.memberId, 'mem_member_b')
 })
 
 test('invalid email stays native so browser validation remains authoritative', async () => {
@@ -1573,7 +2379,7 @@ test('visible Starter Edit Profile replays an unchanged email without an auth mu
   assert.equal(starterProfileForm.nativeSubmits, 1)
 })
 
-test('visible Starter Edit Profile leaves non-Talent and off-route forms native', async () => {
+test('visible Starter Edit Profile blocks changed non-Talent email and leaves off-route forms native', async () => {
   for (const scenario of [
     { pathname: '/starter-edit-profile', role: 'brand-paid', bound: true },
     { pathname: '/starter-dashboard', role: 'talent', bound: false },
@@ -1591,13 +2397,13 @@ test('visible Starter Edit Profile leaves non-Talent and off-route forms native'
     if (scenario.bound) {
       starterProfileForm.submitEvent()
       await settle()
-      assert.equal(starterProfileForm.nativeSubmits, 1)
+      assert.equal(starterProfileForm.nativeSubmits, 0)
       assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
     }
   }
 })
 
-test('visible Starter Edit Profile leaves logged-out and unreadable roles native', async () => {
+test('visible Starter Edit Profile blocks changed email for logged-out and unreadable roles', async () => {
   for (const state of ['logged-out', 'unreadable']) {
     const starterProfileForm = makeForm('starter-profile', {
       email: 'talent-next@example.com',
@@ -1620,7 +2426,7 @@ test('visible Starter Edit Profile leaves logged-out and unreadable roles native
     starterProfileForm.submitEvent()
     await settle()
 
-    assert.equal(starterProfileForm.nativeSubmits, 1)
+    assert.equal(starterProfileForm.nativeSubmits, 0)
     assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
   }
 })
@@ -1830,7 +2636,7 @@ test('non-Brand native replay waits until the intercepted browser submit task cl
   assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
 })
 
-test('Build Account sends no email until its completion write succeeds', async () => {
+test('Build Account sends no changed-email message until completion succeeds', async () => {
   let completionAttempts = 0
   const environment = loadController({
     currentEmail: 'old@example.com',
@@ -1856,7 +2662,7 @@ test('Build Account sends no email until its completion write succeeds', async (
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
-test('Build Account does not retry an ambiguously acknowledged email on the same page', async () => {
+test('Build Account does not retry an ambiguously acknowledged changed-email message', async () => {
   let messages = 0
   const environment = loadController({
     sendMemberResetPasswordEmail: async () => {
@@ -1908,6 +2714,22 @@ test('Account Security suppresses an A-B-A replay after ambiguous email sends', 
 test('controller does not bind on an unapproved host', () => {
   const environment = loadController({ hostname: 'lookalike.example' })
   assert.equal(environment.buildForm.listeners.has('submit'), false)
+})
+
+test('sibling diagnostics loaders resolve through a release cache-key controller src', () => {
+  const environment = loadController({
+    buildForm: null,
+    captureNativeDiagnosticsLoader: true,
+    controllerScriptSrc:
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=1.59.339',
+  })
+  assert.deepEqual(
+    environment.appendedScripts.map((script) => script.src),
+    [
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/utils/workflow-diagnostics.js',
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/native-form-diagnostics.js',
+    ],
+  )
 })
 
 test('native form diagnostics inherit the controller CDN ref and use one loader sentinel', () => {

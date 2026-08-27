@@ -17,6 +17,7 @@ const SAFE_ATTRIBUTES = new Set([
   'data-form',
   'data-index',
   'data-input-capture',
+  'data-max-chars',
   'data-max-words',
   'data-non-required',
   'edit-form-input',

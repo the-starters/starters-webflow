@@ -473,6 +473,7 @@ function loadWriter(options = {}) {
     localStorage: {
       getItem: (key) => (storage.has(key) ? storage.get(key) : null),
       setItem: (key, value) => storage.set(key, String(value)),
+      removeItem: (key) => storage.delete(key),
     },
     sessionStorage: {
       getItem: (key) => (sessionStorage.has(key) ? sessionStorage.get(key) : null),
@@ -810,6 +811,28 @@ test('form submit writes the authenticated member id and reaches the success ste
   assert.ok(result.events.some((e) => e.type === 'starterSchedulingWriteSuccess'))
 })
 
+test('form submit accepts provider 2xx statuses for configuration updates', async () => {
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: {
+      '/scheduler/configurations/update/v3': () => ({
+        status: 200,
+        body: { response: { status: 204 } },
+      }),
+    },
+  })
+  await settle()
+
+  result.dom.fields.days[1].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  assert.equal(result.dom.steps.success.style.display, 'block')
+  assert.notEqual(result.dom.steps['config-request-error'].style.display, 'block')
+})
+
 test('form submit recreates a free configuration when every canonical config is inactive', async () => {
   const result = loadWriter({
     storage: TZ_CACHED,
@@ -820,6 +843,10 @@ test('form submit recreates a free configuration when every canonical config is 
           { config_id: 'cfg-free-old', grant_id: 'grant-1', duration: 30, is_paid: false, active: false },
           { config_id: 'cfg-paid-old', grant_id: 'grant-1', duration: 60, is_paid: true, active: false },
         ],
+      }),
+      '/scheduler/configurations/create/v3': () => ({
+        status: 200,
+        body: { response: { status: 201 } },
       }),
     },
   })
@@ -835,6 +862,7 @@ test('form submit recreates a free configuration when every canonical config is 
     result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length,
     1,
   )
+  assert.notEqual(result.dom.steps['config-request-error'].style.display, 'block')
 })
 
 test('shows and hides the step loader around a submit', async () => {
@@ -1091,7 +1119,7 @@ test('platform transition reuses its virtual account after partial calendar crea
   let paidService = {
     config_id: 'cfg-paid-old',
     title: 'Paid Strategy Call',
-    price_cents: 42500,
+    price_cents: 100,
     duration: 45,
     active: true,
   }
@@ -1210,7 +1238,7 @@ test('platform transition reuses its virtual account after partial calendar crea
   assert.deepEqual(paidService, {
     config_id: 'cfg-paid-restored',
     title: 'Paid Strategy Call',
-    price_cents: 42500,
+    price_cents: 100,
     duration: 45,
     active: true,
   })
@@ -1543,7 +1571,30 @@ test('a stored paid rate cannot create a paid configuration', async () => {
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
   assert.equal(creates.length, 1)
   assert.equal(creates[0].body.in_config_name, 'Free Consultation Call - 30min')
+  assert.equal(creates[0].body.in_scheduler.min_booking_notice, 5)
   assert.equal(result.dom.steps.success.style.display, 'block')
+})
+
+test('production scheduler configuration creation keeps the 24-hour booking notice', async () => {
+  const availability = defaultAvailability()
+  availability.manager = null
+  const result = loadWriter({
+    availability,
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    storage: TZ_CACHED,
+  })
+  await settle()
+
+  assert.equal(result.window.StarterSchedulingAvailabilityWriter.minimumBookingNoticeMinutes(), 1440)
+  result.dom.managers.platform.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+
+  const creates = result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3')
+  assert.equal(creates.length, 1)
+  assert.equal(creates[0].body.in_scheduler.min_booking_notice, 1440)
 })
 
 test('config update rejection lands on config-request-error', async () => {
@@ -1872,6 +1923,60 @@ test('production hosted OAuth callback verifies and persists the returned grant'
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
   assert.equal(creates.length, 1)
   assert.equal(creates[0].body.in_config_name, 'Free Consultation Call - 30min')
+})
+
+test('production hosted OAuth callback accepts a recent durable intent fallback', async () => {
+  const intentKey = 'starter-scheduling-oauth-intent:member-a'
+  const availability = defaultAvailability()
+  availability.manager = null
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    availability,
+    search: '?success=true&grant_id=hosted-grant-9&state=member-a',
+    storage: {
+      ...TZ_CACHED,
+      [intentKey]: JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: null,
+      }),
+    },
+    routes: {
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 1)
+  assert.equal(result.storage.has(intentKey), false)
+  assert.equal(result.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+})
+
+test('another tab does not consume the durable OAuth intent without a callback', async () => {
+  const intentKey = 'starter-scheduling-oauth-intent:member-a'
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    storage: {
+      ...TZ_CACHED,
+      [intentKey]: JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.storage.has(intentKey), true)
 })
 
 test('OAuth callback is stripped before bootstrap failure and survives a login reload', async () => {

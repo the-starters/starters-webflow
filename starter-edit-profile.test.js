@@ -54,10 +54,13 @@ function createEnvironment(fetchImpl, {
   setTimeoutImpl = () => 1,
   documentReadyState = 'loading',
   notifyCurrentMemberOnAuthSubscribe = false,
+  initialAuthNotification = undefined,
+  memberReadSequence = null,
   profileType = 'full',
   fieldOverrides = {},
   missingSelectors = [],
   requiredCaptureFields = [],
+  additionalFormValues = [],
 } = {}) {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
@@ -189,6 +192,7 @@ function createEnvironment(fetchImpl, {
       ['reviewer-2', stepFields['[name="reviewer-2"]'].value],
       ['reviewer-3', stepFields['[name="reviewer-3"]'].value],
     ] : []),
+    ...additionalFormValues,
   ]
 
   const successModal = new Target()
@@ -243,6 +247,7 @@ function createEnvironment(fetchImpl, {
     auth: { email: 'old@example.com' },
     customFields: { 'free-user': '', 'last-name': '', phone: globalFields.phone.value },
   }
+  let memberReadIndex = 0
   const window = {
     activeProfile: { type: profileType, type_id: profileType === 'consult' ? 2 : 1 },
     MEMBER: currentMember,
@@ -253,11 +258,18 @@ function createEnvironment(fetchImpl, {
     location: { replace() {}, hostname: 'the-starters-3-0.webflow.io' },
     intlTelInput: Object.assign(() => ({}), { getInstance: () => null }),
     $memberstackDom: {
-      async getCurrentMember() { return { data: currentMember } },
+      async getCurrentMember() {
+        if (Array.isArray(memberReadSequence) && memberReadIndex < memberReadSequence.length) {
+          return { data: memberReadSequence[memberReadIndex++] }
+        }
+        return { data: currentMember }
+      },
       onAuthChange(listener) {
         authChangeListeners.push(listener)
-        if (notifyCurrentMemberOnAuthSubscribe) {
-          const subscribedMember = currentMember
+        if (notifyCurrentMemberOnAuthSubscribe || initialAuthNotification !== undefined) {
+          const subscribedMember = notifyCurrentMemberOnAuthSubscribe
+            ? currentMember
+            : initialAuthNotification
           Promise.resolve().then(() => listener({ data: subscribedMember }))
         }
       },
@@ -325,6 +337,7 @@ function createEnvironment(fetchImpl, {
 
   return {
     button,
+    form,
     modalEvents,
     modalApiCalls,
     memberAuthUpdates,
@@ -407,6 +420,85 @@ async function testInitialSameMemberAuthNotificationDoesNotRejectSave() {
   assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
 }
 
+async function testInitialEmptyAuthNotificationDoesNotRejectCurrentMemberSave() {
+  let requests = 0
+  const environment = createEnvironment(async () => {
+    requests += 1
+    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+  }, { initialAuthNotification: null })
+
+  await submit(environment)
+
+  assert.equal(requests, 1)
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+}
+
+async function testInitialAuthNotificationForDifferentMemberInvalidatesSave() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    initialAuthNotification: { id: 'mem_other', auth: { email: 'other@example.com' }, customFields: {} },
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+}
+
+async function testMemberSwitchBetweenBracketingReadsFailsBeforeRequestStage() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    workflowDiagnostics: true,
+    memberReadSequence: [
+      { id: 'mem_test', auth: { email: 'old@example.com' }, customFields: {} },
+      { id: 'mem_other', auth: { email: 'other@example.com' }, customFields: {} },
+    ],
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.deepEqual(
+    environment.tracked.map((event) => event.name),
+    ['workflow_form_submit_failed'],
+  )
+  const receipt = environment.window.__startersWorkflowDiagnosticLast
+  assert.equal(receipt.stage, 'auth')
+  assert.equal(receipt.error_code, 'MEMBER_SCOPE_CHANGED')
+  assert.equal(receipt.request_started, false)
+}
+
+async function testSecondSaveStillFailsClosedWhenMemberSwitchesMidRequest() {
+  const firstResponse = deferred()
+  const secondResponse = deferred()
+  const responses = [firstResponse.promise, secondResponse.promise]
+  const environment = createEnvironment(() => responses.shift())
+  environment.window.MEMBER.customFields.phone = ''
+
+  const firstSubmission = submit(environment)
+  firstResponse.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  await firstSubmission
+
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+  assert.equal(environment.memberUpdates.length, 1)
+
+  const secondSubmission = submit(environment)
+  await new Promise(setImmediate)
+  environment.switchMember({
+    id: 'mem_other',
+    auth: { email: 'other@example.com' },
+    customFields: {},
+  })
+  secondResponse.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  await secondSubmission
+
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 1 })
+  assert.equal(environment.memberUpdates.length, 1)
+}
+
 async function testEarlyLoadInitializesCountersAfterParsing() {
   const environment = createEnvironment(async () => ({
     ok: true,
@@ -446,6 +538,86 @@ async function testEveryOwnedSectionOpensSuccessModal() {
     assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
     assert.deepEqual(environment.modalApiCalls, ['edit-form-success'])
   }
+}
+
+async function submittedStepPayload(environment) {
+  await submit(environment)
+  assert.equal(environment.requests.length, 1)
+  const [, options] = environment.requests[0]
+  return JSON.parse(options.body)
+}
+
+function saved(overrides) {
+  return createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }), overrides)
+}
+
+async function testOptionalRatesPreserveCanonicalZeroSentinel() {
+  const disabledPayload = await submittedStepPayload(saved({
+    stepIndex: 6,
+    additionalFormValues: [
+      ['paid-consulting-calls', 'no'],
+      ['offer-monthly-retainers', 'no'],
+      ['paid-call-rate', ''],
+      ['rate-retainer', '   '],
+    ],
+  }))
+  assert.equal(disabledPayload.Paid_Call_Enabled, false)
+  assert.equal(disabledPayload.Retainer_Enabled, false)
+  assert.equal(disabledPayload.Paid_Call_Rate, 0)
+  assert.equal(disabledPayload.Retainer_Rate, 0)
+
+  const configuredPayload = await submittedStepPayload(saved({
+    stepIndex: 6,
+    additionalFormValues: [
+      ['paid-consulting-calls', 'yes'],
+      ['offer-monthly-retainers', 'yes'],
+      ['paid-call-rate', '250.00'],
+      ['rate-retainer', '500'],
+    ],
+  }))
+  assert.equal(configuredPayload.Paid_Call_Rate, '250.00')
+  assert.equal(configuredPayload.Retainer_Rate, '500')
+}
+
+async function testEnabledOptionalRatesNeverSilentlyPersistZero() {
+  const enabledBlankPayload = await submittedStepPayload(saved({
+    stepIndex: 6,
+    additionalFormValues: [
+      ['paid-consulting-calls', 'yes'],
+      ['offer-monthly-retainers', 'yes'],
+      ['paid-call-rate', ''],
+      ['rate-retainer', '   '],
+    ],
+  }))
+  assert.equal(enabledBlankPayload.Paid_Call_Enabled, true)
+  assert.equal(enabledBlankPayload.Retainer_Enabled, true)
+  assert.equal(enabledBlankPayload.Paid_Call_Rate, '')
+  assert.equal(enabledBlankPayload.Retainer_Rate, '   ')
+}
+
+async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
+  const consultPayload = await submittedStepPayload(saved({
+    stepIndex: 6,
+    profileType: 'consult',
+    fieldOverrides: { '[name="rate"]': { value: '', required: false, valid: true } },
+  }))
+  assert.equal(consultPayload.Hourly_Rate, 0)
+
+  const fullPayload = await submittedStepPayload(saved({ stepIndex: 6 }))
+  assert.equal(fullPayload.Hourly_Rate, '125')
+
+  const requiredBlank = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    stepIndex: 6,
+    fieldOverrides: { '[name="rate"]': { value: '' } },
+  })
+  await submit(requiredBlank)
+  assert.equal(requiredBlank.requests.length, 0)
 }
 
 async function testReviewerStepUsesCanonicalBuildProfileShape() {
@@ -833,13 +1005,141 @@ async function testDynamicRequiredCaptureBlocksBeforeLoading() {
   assert.equal(environment.button.style.pointerEvents ?? '', '')
 }
 
+async function testPersonalDetailsValidationBoundary() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }))
+
+  assert.equal(
+    environment.window.StartersStarterEditProfile.validatePersonalDetails().valid,
+    true,
+  )
+
+  environment.fields['[name="first-name"]'].value = ''
+
+  assert.equal(
+    environment.window.StartersStarterEditProfile.validatePersonalDetails().valid,
+    false,
+  )
+}
+
+async function testReplayProofRejectsChangedMemberAtCapture() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  })
+  environment.window.MEMBER.auth.email = 'new@example.com'
+  let rejected = 0
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_test', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+  environment.switchMember({
+    id: 'mem_other',
+    auth: { email: 'new@example.com' },
+    customFields: {},
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.equal(rejected, 1)
+}
+
+async function testReplayProofRejectsChangedMemberAtRevalidation() {
+  const diagnostics = deferred()
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    workflowDiagnosticsReady: diagnostics.promise,
+  })
+  environment.window.MEMBER.auth.email = 'new@example.com'
+  let rejected = 0
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_test', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+
+  const submission = submit(environment)
+  await new Promise(setImmediate)
+  environment.switchMember({
+    id: 'mem_other',
+    auth: { email: 'new@example.com' },
+    customFields: {},
+  })
+  diagnostics.resolve(null)
+  await submission
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.equal(rejected, 1)
+}
+
+async function testInvalidReplayRequiresExactFreshMemberProofAfterCorrection() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }))
+  environment.window.MEMBER.auth.email = 'new@example.com'
+  environment.fields['[name="first-name"]'].value = ''
+  let rejected = 0
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_test', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+  const nextMember = {
+    id: 'mem_other',
+    auth: { email: 'other@example.com' },
+    customFields: {},
+  }
+  environment.switchMember(nextMember)
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(rejected, 1)
+
+  environment.fields['[name="first-name"]'].value = 'Corrected'
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_other', email: 'new@example.com', onRejected: () => { rejected += 1 } },
+  )
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(rejected, 2)
+
+  nextMember.auth.email = 'new@example.com'
+  environment.window.StartersStarterEditProfile.authorizePersonalDetailsReplay(
+    environment.form,
+    { memberId: 'mem_other', email: 'new@example.com' },
+  )
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 1)
+  assert.match(environment.requests[0][0], /\/mem_other$/)
+  assert.equal(JSON.parse(environment.requests[0][1].body).Email, 'new@example.com')
+}
+
 Promise.all([
   testSuccess(),
   testLateLoadInitializesImmediately(),
   testInitialSameMemberAuthNotificationDoesNotRejectSave(),
+  testInitialEmptyAuthNotificationDoesNotRejectCurrentMemberSave(),
+  testInitialAuthNotificationForDifferentMemberInvalidatesSave(),
+  testMemberSwitchBetweenBracketingReadsFailsBeforeRequestStage(),
+  testSecondSaveStillFailsClosedWhenMemberSwitchesMidRequest(),
   testEarlyLoadInitializesCountersAfterParsing(),
   testNon2xx(),
   testEveryOwnedSectionOpensSuccessModal(),
+  testOptionalRatesPreserveCanonicalZeroSentinel(),
+  testEnabledOptionalRatesNeverSilentlyPersistZero(),
+  testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
   testRejectedFetch(),
@@ -859,6 +1159,10 @@ Promise.all([
   testConditionalLocationRequirementTransitions(),
   testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
   testDynamicRequiredCaptureBlocksBeforeLoading(),
+  testPersonalDetailsValidationBoundary(),
+  testReplayProofRejectsChangedMemberAtCapture(),
+  testReplayProofRejectsChangedMemberAtRevalidation(),
+  testInvalidReplayRequiresExactFreshMemberProofAfterCorrection(),
 ])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {

@@ -13,14 +13,13 @@
  * fields, updates ordinary Memberstack fields first, updates login email only
  * when it changed, and sets the completion marker as its last durable member
  * write. Durable assignments are replay-safe; a failed retry repeats
- * assignments rather than creating another account or Brand row. The password
- * email is deliberately not retried.
+ * assignments rather than creating another account or Brand row.
  *
- * Build Account makes the completion marker its last durable member write,
- * then attempts one Memberstack reset/set-password email. Account Security
- * attempts that email only after a changed login email succeeds. Password
- * email calls are never automatically retried; Memberstack's Forgot Password
- * flow is the recovery path when delivery cannot be confirmed.
+ * Build Account does not send a password email when the member keeps the login
+ * email they already authenticated with. If that email changes, Build Account
+ * and Account Security attempt one reset email after the auth update succeeds.
+ * Password email calls are never automatically retried; Memberstack's Forgot
+ * Password flow is the recovery path when delivery cannot be confirmed.
  *
  * COMPLETION CONTRACT, SECOND HALF (2026-08-06). The durable answer is the
  * member field plus its Xano mirror, but the Memberstack webhook needs a moment
@@ -34,9 +33,10 @@
  * existing submit owners. The configured identity-scoped mode resolves the
  * current member through the canonical route-guard role contract, claims Brand
  * and Talent Account Security, and guards the visible Talent edit-profile form.
- * A valid changed login email can save independently when other required
- * profile fields are incomplete; a valid full-profile submit changes the login
- * email first and then replays its Designer-authored Xano submission:
+ * A valid changed login email can save independently when Personal Details is
+ * invalid. When Personal Details is valid, the controller changes the login
+ * email first and then authorizes one replay of its Designer-authored Xano save;
+ * required fields in later sections do not block that replay:
  *   window.StartersBrandAccountConfig = { guardSecurityForm: 'identity' }
  * The legacy `brand` mode remains supported for a rollback-safe rollout.
  */
@@ -71,12 +71,13 @@
   // by which time the Memberstack webhook has stamped brands_v3 for real.
   var BRAND_PROFILE_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
   var BRAND_PROFILE_MARKER_VALUE = '1'
-  var CONTROLLER_VERSION = 'brand-account-controller-v1'
+  var CONTROLLER_VERSION = 'brand-account-controller-v2'
   var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
   var NATIVE_FORM_DIAGNOSTICS_SCRIPT = 'native-form-diagnostics.js'
   var passwordEmailAttempts = new WeakMap()
   var workflowDiagnosticsControllerScript = document.currentScript
   var brandSignupPlanObserver = null
+  var pendingBuildPasswordEmails = new WeakMap()
 
   function boundedWorkflowDiagnostics(promise) {
     return new Promise(function (resolve) {
@@ -293,6 +294,11 @@
     return Number.isFinite(value) ? value : 0
   }
 
+  function emailConflict(error) {
+    var status = statusOf(error)
+    return status === 409 || status === 422
+  }
+
   function retryable(error) {
     var status = statusOf(error)
     return (
@@ -359,15 +365,33 @@
     return client
   }
 
-  async function currentMember(client) {
+  function memberReader(client) {
     if (typeof client.getCurrentMember !== 'function') {
       throw new Error('Memberstack member lookup is unavailable.')
     }
-    var member = unwrapMember(await runWithRetry(function () {
+    return function () {
       return client.getCurrentMember()
-    }))
+    }
+  }
+
+  function identifiedMember(result) {
+    var member = unwrapMember(result)
     if (!member || !member.id) throw new Error('Please log in again to update your account.')
     return member
+  }
+
+  async function currentMember(client) {
+    return identifiedMember(await runWithRetry(memberReader(client)))
+  }
+
+  /**
+   * One bounded read with no retry, for the reconciliation probe. A retry cannot
+   * make a stale answer fresher, and a member waiting on a genuine conflict
+   * should not wait out the retry ladder before the copy that tells them to pick
+   * another address.
+   */
+  async function readMemberOnce(client) {
+    return identifiedMember(await withTimeout(memberReader(client)))
   }
 
   function memberScopeChangedError() {
@@ -399,6 +423,27 @@
     })
   }
 
+  /**
+   * Records the intended login email before the auth write is attempted, because
+   * that write can land while its own response is lost. An intent is only ever
+   * recorded for a real change, so a later submit that finds the target already
+   * installed as the login email is proof the write landed: returning the intent
+   * keeps its one ownership-proof message instead of reading as an unchanged
+   * onboarding submit. The marker lives for the page, so a reload leaves Forgot
+   * Password as the recovery path.
+   */
+  function recordBuildEmailIntent(form, member, email) {
+    var current = memberEmail(member)
+    if (current !== email) {
+      var intent = { target: email }
+      pendingBuildPasswordEmails.set(form, intent)
+      return intent
+    }
+    var pending = pendingBuildPasswordEmails.get(form)
+    if (pending && pending.target === email) return pending
+    return null
+  }
+
   async function updateEmailIfChanged(client, member, email) {
     var changed = memberEmail(member) !== email
     if (changed) {
@@ -413,6 +458,41 @@
     }
 
     return { changed: changed, email: email }
+  }
+
+  /**
+   * Build-only reconciliation for the write Memberstack reports as a conflict.
+   * The first attempt can claim the address server-side and lose its response,
+   * so the retry comes back 409/422 for an address this member now owns. One
+   * unretried re-read settles it: the change counts as applied only when the same
+   * stable member's login email already equals the requested target. A read that
+   * lands in a different session is the account-scope change this controller
+   * already has copy for; anything else keeps the original conflict and the copy
+   * that sends the member to a different address. Account Security and Talent
+   * keep the plain `updateEmailIfChanged` semantics.
+   */
+  async function applyBuildEmailChange(client, member, email) {
+    try {
+      return await updateEmailIfChanged(client, member, email)
+    } catch (error) {
+      if (!emailConflict(error)) throw error
+      var settled = null
+      try {
+        settled = await readMemberOnce(client)
+      } catch (unreadable) {
+        throw error
+      }
+      if (settled.id !== member.id) throw memberScopeChangedError()
+      if (memberEmail(settled) !== email) throw error
+      return { changed: true, email: email }
+    }
+  }
+
+  async function applyBuildLoginEmail(form, client, member, email) {
+    if (!memberEmail(member)) return null
+    var emailIntent = recordBuildEmailIntent(form, member, email)
+    await applyBuildEmailChange(client, member, email)
+    return emailIntent
   }
 
   async function sendResetPasswordEmailOnce(form, client, email) {
@@ -506,12 +586,26 @@
     })
   }
 
+  // Funnel event (platform-ops/architecture/posthog-funnel-events-plan.md):
+  // brand_account_email_decision. Build identifier plus two booleans only —
+  // adding the submitted or authenticated email, the member ID, or any form
+  // value here would leak identity into the funnel stream.
+  function trackBuildEmailDecision(emailChangeRequired, securityEmailAttempted) {
+    if (!window.StartersTrack || typeof window.StartersTrack.track !== 'function') return
+    try {
+      window.StartersTrack.track('brand_account_email_decision', {
+        controller_version: CONTROLLER_VERSION,
+        email_change_required: Boolean(emailChangeRequired),
+        security_email_attempted: Boolean(securityEmailAttempted),
+      })
+    } catch (error) {}
+  }
+
   function friendlyError(error) {
     if (error && error.passwordEmailAttempted) {
       return 'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.'
     }
-    var status = statusOf(error)
-    if (status === 409 || status === 422) {
+    if (emailConflict(error)) {
       return 'That email is already in use. Choose another email address.'
     }
     return trim(error && error.message) || 'Your account could not be updated. Please try again.'
@@ -530,18 +624,32 @@
     diagnosticRequestStarted(form)
     var member = await currentMember(client)
 
-    // Completion is the last durable member write. The password email follows
-    // it as a single, non-retried side effect, so a lost acknowledgement cannot
-    // cause an automatic replay to emit a duplicate message.
+    // Completion is the last durable member write. A normal onboarding submit
+    // keeps the authenticated login email and sends no password email. A real
+    // email change keeps the existing ownership-proof email after completion.
     await updateOrdinaryFields(client, values)
-    await updateEmailIfChanged(client, member, values.email)
+    // The auth change can succeed before a later completion write fails, and it
+    // can land while its own response is lost. Keep the changed target on this
+    // form so the safe retry still sends its one ownership-proof message after
+    // completion succeeds.
+    var emailIntent = await applyBuildLoginEmail(form, client, member, values.email)
     await markBuildComplete(client)
-    // Only reached once completion is durable, and deliberately before the
-    // non-retried password email: the marker is what stops the routers from
-    // bouncing this member back onto the form during the webhook's catch-up
-    // window, so nothing that can fail afterwards is allowed to precede it.
+    // Only reached once completion is durable. The marker stops the routers
+    // from bouncing this member back onto the form during the webhook's
+    // catch-up window.
     markBrandProfileCompletedLocally()
-    await sendResetPasswordEmailOnce(form, client, values.email)
+    if (emailIntent) {
+      pendingBuildPasswordEmails.delete(form)
+      try {
+        var emailResult = await sendResetPasswordEmailOnce(form, client, emailIntent.target)
+        trackBuildEmailDecision(true, Boolean(emailResult && emailResult.attempted))
+      } catch (error) {
+        trackBuildEmailDecision(true, Boolean(error && error.passwordEmailAttempted))
+        throw error
+      }
+    } else {
+      trackBuildEmailDecision(false, false)
+    }
 
     return { memberId: member.id }
   }
@@ -647,6 +755,51 @@
     }, 0)
   }
 
+  function replayStarterProfileClick(form, submitter, proof) {
+    var controller = window.StartersStarterEditProfile
+    if (
+      !submitter ||
+      typeof submitter.click !== 'function' ||
+      !controller ||
+      typeof controller.authorizePersonalDetailsReplay !== 'function' ||
+      !controller.authorizePersonalDetailsReplay(form, proof)
+    ) {
+      return false
+    }
+    form.setAttribute('data-brand-account-native-replay', 'true')
+    window.setTimeout(function () {
+      try {
+        submitter.click()
+      } finally {
+        if (typeof controller.clearPersonalDetailsReplay === 'function') {
+          controller.clearPersonalDetailsReplay(form)
+        }
+        form.setAttribute('data-brand-account-native-replay', 'false')
+      }
+    }, 0)
+    return true
+  }
+
+  function starterPersonalDetailsValid() {
+    var controller = window.StartersStarterEditProfile
+    if (!controller || typeof controller.validatePersonalDetails !== 'function') return false
+    try {
+      var result = controller.validatePersonalDetails()
+      return !!(result && result.valid)
+    } catch (_) {
+      return false
+    }
+  }
+
+  async function starterProfileAuthorityConfirmed(memberId, email) {
+    try {
+      var member = await currentMember(memberstack())
+      return member.id === memberId && memberEmail(member) === email
+    } catch (_) {
+      return false
+    }
+  }
+
   function securityModeOwnsRole(mode, role) {
     if (mode === 'brand') return role === 'brand-free' || role === 'brand-paid'
     if (mode === 'identity') {
@@ -664,13 +817,22 @@
     form.setAttribute('data-starter-identity-bound', 'true')
     var busy = false
     var ownsSubmission = false
+    var submissionMemberId = ''
     var profileEmailInput = form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
     var profileEmailBaseline = trim(profileEmailInput && profileEmailInput.value).toLowerCase()
     var profileEmailChanged = false
 
+    function currentProfileEmail() {
+      return trim(profileEmailInput && profileEmailInput.value).toLowerCase()
+    }
+
+    function profileEmailMatches(value) {
+      return currentProfileEmail() === trim(value).toLowerCase()
+    }
+
     function rememberProfileEmail(value) {
       profileEmailBaseline = trim(value).toLowerCase()
-      profileEmailChanged = false
+      profileEmailChanged = currentProfileEmail() !== profileEmailBaseline
     }
 
     if (profileEmailInput && typeof profileEmailInput.addEventListener === 'function') {
@@ -684,16 +846,15 @@
       })
     }
 
-    // Native constraint validation prevents the form's submit event from
-    // firing when an unrelated required profile field is incomplete. The
-    // authored submit disables pointer events in that state, so its direct
-    // wrapper receives the click. Keep that validation for profile saves, but
-    // let a valid changed login email use the identity path independently. A
-    // later complete profile save sees an unchanged email and replays the
-    // authored form normally.
+    // The authored profile controller handles button clicks directly, so even
+    // a valid form does not produce the native submit event intercepted below.
+    // Own every real changed-email click first. Invalid Personal Details can
+    // still save the login email independently; valid Personal Details replays
+    // the authored click after Memberstack accepts the identity change.
     form.addEventListener(
       'click',
       function (event) {
+        if (form.getAttribute('data-brand-account-native-replay') === 'true') return
         var submit =
           form.querySelector('[data-edit-submit]') || form.querySelector('[type="submit"]')
         var clickedSubmit =
@@ -703,7 +864,6 @@
             event.target === submit.parentElement)
         if (!clickedSubmit || busy) return
         if (!profileEmailChanged) return
-        if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
 
         var emailInput = profileEmailInput || form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
         if (
@@ -716,6 +876,7 @@
 
         var email = trim(emailInput.value).toLowerCase()
         if (!EMAIL_PATTERN.test(email)) return
+        var profileWasValid = starterPersonalDetailsValid()
 
         event.preventDefault()
         if (typeof event.stopImmediatePropagation === 'function') {
@@ -723,16 +884,18 @@
         }
         busy = true
         ownsSubmission = false
+        submissionMemberId = ''
 
         Promise.resolve()
           .then(async function () {
             var guard = window.StartersV3RouteGuard
-            if (!guard || typeof guard.memberRole !== 'function') return false
+            if (!guard || typeof guard.memberRole !== 'function') return null
             var member = await currentMember(memberstack())
-            if (guard.memberRole(member) !== 'talent') return false
+            if (guard.memberRole(member) !== 'talent') return null
+            submissionMemberId = member.id
             if (memberEmail(member) === email) {
               rememberProfileEmail(email)
-              return false
+              return { confirmed: true, memberId: submissionMemberId }
             }
 
             ownsSubmission = true
@@ -748,18 +911,56 @@
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: true,
             })
-            setMessage(form, 'success', '', receipt)
-            return true
+            var confirmed = await starterProfileAuthorityConfirmed(submissionMemberId, email)
+            if (!confirmed) profileEmailChanged = true
+            return {
+              confirmed: confirmed,
+              changed: true,
+              memberId: submissionMemberId,
+              receipt: receipt,
+            }
           })
-          .then(function (owned) {
-            if (!owned && typeof form.reportValidity === 'function') {
+          .then(function (result) {
+            if (!result) return
+            if (!result.confirmed) {
+              if (result.changed) setMessage(form, 'success', '', result.receipt)
+              return
+            }
+            if (profileWasValid && profileEmailMatches(email)) {
+              var replayed = replayStarterProfileClick(form, submit, {
+                memberId: result.memberId,
+                email: email,
+                onRejected: function () {
+                  profileEmailChanged = true
+                },
+              })
+              if (!replayed && result.changed) setMessage(form, 'success', '', result.receipt)
+            } else if (result.changed) {
+              setMessage(form, 'success', '', result.receipt)
+            } else if (typeof form.reportValidity === 'function') {
               form.reportValidity()
             }
           })
-          .catch(function (error) {
+          .catch(async function (error) {
             if (!ownsSubmission) {
-              if (typeof form.reportValidity === 'function') form.reportValidity()
+              if (!profileWasValid && typeof form.reportValidity === 'function') {
+                form.reportValidity()
+              }
               return
+            }
+            if (error && error.passwordEmailAttempted) {
+              rememberProfileEmail(email)
+              var confirmed = await starterProfileAuthorityConfirmed(submissionMemberId, email)
+              if (!confirmed) profileEmailChanged = true
+              if (confirmed && profileWasValid && profileEmailMatches(email)) {
+                replayStarterProfileClick(form, submit, {
+                  memberId: submissionMemberId,
+                  email: email,
+                  onRejected: function () {
+                    profileEmailChanged = true
+                  },
+                })
+              }
             }
             var receipt = diagnosticComplete(form, {
               result: 'failed',
@@ -797,12 +998,15 @@
         Promise.resolve()
           .then(async function () {
             var guard = window.StartersV3RouteGuard
-            if (!guard || typeof guard.memberRole !== 'function') return false
+            if (!guard || typeof guard.memberRole !== 'function') return null
             var member = await currentMember(memberstack())
-            if (guard.memberRole(member) !== 'talent') return false
+            if (guard.memberRole(member) !== 'talent') return null
 
-            if (!EMAIL_PATTERN.test(email)) return false
-            if (memberEmail(member) === email) return false
+            if (!EMAIL_PATTERN.test(email)) return null
+            if (memberEmail(member) === email) {
+              rememberProfileEmail(email)
+              return { confirmed: true }
+            }
 
             ownsSubmission = true
             setBusy(form, true)
@@ -817,18 +1021,18 @@
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: true,
             })
-            return true
+            return { confirmed: true }
           })
-          .then(function () {
-            replayNativeSubmit(form, submitter)
+          .then(function (result) {
+            if (result && result.confirmed && profileEmailMatches(email)) {
+              replayNativeSubmit(form, submitter)
+            }
           })
           .catch(function (error) {
-            if (!ownsSubmission) {
-              replayNativeSubmit(form, submitter)
-              return
-            }
+            if (!ownsSubmission) return
             if (error && error.passwordEmailAttempted) {
-              replayNativeSubmit(form, submitter)
+              rememberProfileEmail(email)
+              if (profileEmailMatches(email)) replayNativeSubmit(form, submitter)
             }
             var receipt = diagnosticComplete(form, {
               result: 'failed',

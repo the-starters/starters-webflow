@@ -1,0 +1,360 @@
+{
+  "schema": "profile_form_inline_extraction_cutover_candidate_v4",
+  "capturedAt": "2026-08-20T08:46:36.631Z",
+  "orderRecapturedAt": "2026-08-20T09:20:50Z",
+  "orderEvidence": "authenticated staging HTML plus read-only Webflow component/page content",
+  "siteId": "69c573f20f82bd0f3384032c",
+  "publishAuthorized": false,
+  "installAuthorized": false,
+  "nativeFormOwnership": "webflow",
+  "cutoverModel": "install_all_page_heads_then_component_once_then_route_removals",
+  "executionOrder": [
+    "install_and_read_back_all_route_page_heads",
+    "remove_shared_component_bodies_once",
+    "remove_route_specific_bodies"
+  ],
+  "sources": {
+    "sharedFoundation": {
+      "routes": [
+        "/starter-edit-profile",
+        "/build-profile/consult",
+        "/build-profile/full-profile"
+      ],
+      "publishedScriptIndexes": {
+        "/starter-edit-profile": 91,
+        "/build-profile/consult": 64,
+        "/build-profile/full-profile": 66
+      },
+      "publishedBodyCharacters": 24218,
+      "publishedBodySha256": "7a1eec8ed6a1f41cf958771732cc703941240d97b5aff6311b4440b72f08d5f7",
+      "publishedEmbedSha256": "32d1e6687ec692197e18e6b8b9507b05b051b5311c86777cbe64eb2b997f1c92",
+      "asset": "v3/profile-form/shared-foundation.js"
+    },
+    "incrementalDropdowns": {
+      "routes": [
+        "/starter-edit-profile",
+        "/build-profile/consult",
+        "/build-profile/full-profile"
+      ],
+      "publishedScriptIndexes": {
+        "/starter-edit-profile": 93,
+        "/build-profile/consult": 72,
+        "/build-profile/full-profile": 74
+      },
+      "publishedBodyCharacters": 13961,
+      "publishedBodySha256": "0f495d228696ab32ea19a07a3bf407ba2ad8d729d22505bbb0a927ddba76ca04",
+      "publishedEmbedSha256": "5a9dc4899b2a24dc6bba5407db0a6c21b630dcc618f121f3c682f0cbb830302b",
+      "asset": "v3/profile-form/incremental-dropdowns.js"
+    },
+    "editLocationsReady": {
+      "route": "/starter-edit-profile",
+      "publishedScriptIndex": 94,
+      "publishedBodyCharacters": 31,
+      "publishedBodySha256": "b24611c0a8c87f8d88a215dbb6a5af2ef4256a630fd9f6e3686c8300a480b4ad",
+      "publishedEmbedSha256": "495e7109aee3940071750fbd8d99d35501e829f40f3362b7fd8ea8c09f568f98",
+      "asset": "v3/starter-edit-profile/locations.js"
+    },
+    "editLocations": {
+      "route": "/starter-edit-profile",
+      "publishedScriptIndex": 100,
+      "publishedBodyCharacters": 9595,
+      "publishedBodySha256": "962a3f27cf061c696c2243037218238fff228e3a540b85451c3302a4c0eb55a6",
+      "publishedEmbedSha256": "f6280b0a1f0fbe9f7d717eb2924c6556d70e30b43edc25547afc99bed1a953aa",
+      "asset": "v3/starter-edit-profile/locations.js"
+    },
+    "editCanonicalProfileLoader": {
+      "route": "/starter-edit-profile",
+      "publishedScriptIndex": 101,
+      "publishedBodyCharacters": 18665,
+      "publishedBodySha256": "ca73e3b0341aed7564b0914e5f2b42f66475f5a25041a46cfbbd41d2bbb14b92",
+      "publishedEmbedSha256": "7b8317d33369f8f5a5be69c248ae8fcaae0e49192a1e02a3f79bb1bd98d46322",
+      "asset": "v3/starter-edit-profile/canonical-profile-loader.js"
+    },
+    "buildDraftState": {
+      "routes": [
+        "/build-profile/consult",
+        "/build-profile/full-profile"
+      ],
+      "publishedScriptIndexes": {
+        "/build-profile/consult": 71,
+        "/build-profile/full-profile": 73
+      },
+      "publishedBodyCharacters": 11002,
+      "publishedBodySha256": "ec9ed60d8c762744410c33acece59809a6231b912c14efc991ab5433cad2b4ff",
+      "publishedEmbedSha256": "073be43ebecc9e3a21c9f57275e2867c156a83cb187ace73fc1890071a0fb428",
+      "asset": "v3/build-profile/draft-state.js"
+    },
+    "buildSubmitWriter": {
+      "routes": [
+        "/build-profile/consult",
+        "/build-profile/full-profile"
+      ],
+      "publishedScriptIndexes": {
+        "/build-profile/consult": 73,
+        "/build-profile/full-profile": 75
+      },
+      "publishedBodyCharacters": 9169,
+      "publishedBodySha256": "927f43daca2cd7d66ccaea97317994ad486a7edd43b401df1e2442d36a7b7d9f",
+      "publishedEmbedSha256": "9fc5e32ff783adf0e10f8bd407e67e9613587da268345a95a156e2f853f2f803",
+      "asset": "v3/build-profile/submit-writer.js"
+    },
+    "buildConsultLocations": {
+      "route": "/build-profile/consult",
+      "publishedScriptIndex": 83,
+      "publishedBodyCharacters": 10834,
+      "publishedBodySha256": "e39042ad31e8228dfad4a665a873e9f39dfbaa045765bf2559725f800735433a",
+      "publishedEmbedSha256": "5f469d5322dc08c161db8be2bed17ca9054f3874e084ce7343265598d21daa65",
+      "asset": "v3/build-profile/locations-consult.js"
+    },
+    "buildFullProfileLocations": {
+      "route": "/build-profile/full-profile",
+      "publishedScriptIndex": 85,
+      "publishedBodyCharacters": 10529,
+      "publishedBodySha256": "f882132f56623afe3d5af876cad72ad560917b89d0a1b31235aabecf572bdd7f",
+      "publishedEmbedSha256": "24d60c2e43f944e3764d489872d0bad10b00c2375592fa17a426eb017b6d4225",
+      "asset": "v3/build-profile/locations-full-profile.js"
+    }
+  },
+  "candidateAssets": {
+    "v3/profile-form/shared-foundation.js": {
+      "candidateCharacters": 24209,
+      "candidateSha256": "fdbcc99b43b1f304f1062082f1e90730186200b8c467660349f6a3738d9913a8",
+      "transformation": {
+        "kind": "whitespace_only",
+        "restoreTrailingWhitespace": { "3": "  ", "81": " ", "239": "      " },
+        "terminalNewlinesRemoved": 0
+      }
+    },
+    "v3/profile-form/incremental-dropdowns.js": {
+      "candidateCharacters": 14185,
+      "candidateSha256": "29561e2bd4767535c3c8dada1af28523e0ddcdac2779bebcb2ddefcc9f2ab199",
+      "transformation": {
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "incrementalDropdowns",
+        "restoreTrailingWhitespace": {},
+        "terminalNewlinesRemoved": 0
+      }
+    },
+    "v3/starter-edit-profile/locations.js": {
+      "candidateCharacters": 9847,
+      "candidateSha256": "69794b67fd9359f16427ad36fae3e2dd5dca4dc8729b0eaab66ca6b4be5bd8de",
+      "transformation": {
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "editProfileLocations",
+        "restoreTrailingWhitespace": { "4": "  " },
+        "terminalNewlinesRemoved": 0
+      }
+    },
+    "v3/starter-edit-profile/canonical-profile-loader.js": {
+      "candidateCharacters": 19061,
+      "candidateSha256": "02b85dcb2ba10f3cbb115e96fb48dce70c078f6956e90ab2edd181977156e592",
+      "transformation": {
+        "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
+        "guardKey": "canonicalProfileLoader",
+        "restoreTrailingWhitespace": {},
+        "terminalNewlinesRemoved": 0,
+        "liveCaptureAsset": "v3/profile-form/edit-canonical-profile-loader-published.capture.txt"
+      }
+    },
+    "v3/build-profile/draft-state.js": {
+      "candidateCharacters": 11151,
+      "candidateSha256": "f5311c42114ae706587bf0abe9738b80dbb798319b049781766a490df4936f7a",
+      "transformation": {
+        "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
+        "guardKey": "buildProfileDraftState",
+        "restoreTrailingWhitespace": {},
+        "terminalNewlinesRemoved": 1,
+        "liveCaptureAsset": "v3/profile-form/build-draft-state-published.capture.txt"
+      }
+    },
+    "v3/build-profile/submit-writer.js": {
+      "candidateCharacters": 10731,
+      "candidateSha256": "d4f6db34d387402b099a5ff16e9e6945ef817ead9f2944803896b85146840240",
+      "transformation": {
+        "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
+        "guardKey": "buildProfileSubmitWriter",
+        "restoreTrailingWhitespace": { "214": "          " },
+        "terminalNewlinesRemoved": 0,
+        "liveCaptureAsset": "v3/profile-form/build-submit-writer-published.capture.txt"
+      }
+    },
+    "v3/build-profile/locations-consult.js": {
+      "candidateCharacters": 11065,
+      "candidateSha256": "3c2e09a3a55806e1f4a82af2c3e850c6f53120fc70c1506cbf6315d5f311f160",
+      "transformation": {
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "buildProfileConsultLocations",
+        "restoreTrailingWhitespace": { "14": "\t\t" },
+        "terminalNewlinesRemoved": 1
+      }
+    },
+    "v3/build-profile/locations-full-profile.js": {
+      "candidateCharacters": 10756,
+      "candidateSha256": "baae2157ab304366ae707759d85edbe1fae999b8eef74fa6b140868df4637026",
+      "transformation": {
+        "kind": "whitespace_plus_idempotency_guard",
+        "guardKey": "buildProfileFullLocations",
+        "restoreTrailingWhitespace": {},
+        "terminalNewlinesRemoved": 1
+      }
+    }
+  },
+  "componentWideRemovals": {
+    "scope": "shared-component",
+    "componentId": "b732e7f5-4c02-3273-f3df-90d6f623fa64",
+    "action": "empty_each_exact_body_once_after_all_route_heads_are_saved_and_read_back",
+    "remove": [
+      { "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa65", "sourceKey": "sharedFoundation", "beforeEmbedSha256": "32d1e6687ec692197e18e6b8b9507b05b051b5311c86777cbe64eb2b997f1c92" },
+      { "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6a", "sourceKey": "buildDraftState", "beforeEmbedSha256": "073be43ebecc9e3a21c9f57275e2867c156a83cb187ace73fc1890071a0fb428" },
+      { "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6b", "sourceKey": "incrementalDropdowns", "beforeEmbedSha256": "5a9dc4899b2a24dc6bba5407db0a6c21b630dcc618f121f3c682f0cbb830302b" },
+      { "nodeId": "b732e7f5-4c02-3273-f3df-90d6f623fa6c", "sourceKey": "buildSubmitWriter", "beforeEmbedSha256": "9fc5e32ff783adf0e10f8bd407e67e9613587da268345a95a156e2f853f2f803" }
+    ]
+  },
+  "routeCutovers": [
+    {
+      "route": "/starter-edit-profile",
+      "pageId": "6a44b2477e93b2d11b905de0",
+      "install": {
+        "scope": "page-head-freeform-code",
+        "action": "append_complete_route_loader_group_to_exact_saved_head"
+      },
+      "runtimePlacementEvidence": {
+        "pageComponentInstanceId": "2c015b48-4ba6-2ec3-4876-c06707317e1c",
+        "nestedComponentInstanceId": "2c015b48-4ba6-2ec3-4876-c06707317e1e",
+        "originalGroupedAnchorIndex": 91
+      },
+      "remove": [
+        { "scope": "edit-component", "componentId": "2c015b48-4ba6-2ec3-4876-c06707317e1d", "nodeId": "2c015b48-4ba6-2ec3-4876-c06707317e1f", "sourceKey": "editLocationsReady", "beforeEmbedSha256": "495e7109aee3940071750fbd8d99d35501e829f40f3362b7fd8ea8c09f568f98" },
+        { "scope": "edit-component", "componentId": "2c015b48-4ba6-2ec3-4876-c06707317e1d", "nodeId": "a55ba4c4-e5a5-7d3d-77a9-79cc31eb5698", "sourceKey": "editLocations", "beforeEmbedSha256": "f6280b0a1f0fbe9f7d717eb2924c6556d70e30b43edc25547afc99bed1a953aa" },
+        { "scope": "edit-component", "componentId": "2c015b48-4ba6-2ec3-4876-c06707317e1d", "nodeId": "a6aa8d34-73aa-dc11-b5fb-78c2512bca23", "sourceKey": "editCanonicalProfileLoader", "beforeEmbedSha256": "7b8317d33369f8f5a5be69c248ae8fcaae0e49192a1e02a3f79bb1bd98d46322" }
+      ],
+      "preserveNodeIds": [
+        "9da55ef0-14dd-2e40-09e6-706ca145917c",
+        "296b0a22-ec52-f828-a8e8-3aa1d5cab4d1",
+        "01b5cb2c-669c-b680-fa4b-1104dbbf64d2",
+        "0f8130fb-5d7d-1bed-02de-c9d74fef7e68",
+        "24c4c306-f7e9-93e4-78ed-5cb76b31bc29"
+      ],
+      "preserveLoaders": [
+        { "publishedScriptIndex": 92, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/profile-photo.js" },
+        { "publishedScriptIndex": 95, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-edit-profile/portfolio-crud.js" },
+        { "publishedScriptIndex": 96, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-edit-profile/portfolio-list.js" },
+        { "publishedScriptIndex": 97, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-edit-profile/company-autocomplete.js" },
+        { "publishedScriptIndex": 98, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-edit-profile/company-experience-crud.js" },
+        { "publishedScriptIndex": 99, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/work-dates.js" },
+        { "publishedScriptIndex": 102, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.56.8/profile-image-auth-shim.js" },
+        { "publishedScriptIndex": 111, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/starter-edit-profile.js" }
+      ]
+    },
+    {
+      "route": "/build-profile/consult",
+      "pageId": "6a3e73ae5f60c547e5e9d041",
+      "install": {
+        "scope": "page-head-freeform-code",
+        "action": "append_complete_route_loader_group_to_exact_saved_head"
+      },
+      "runtimePlacementEvidence": {
+        "pageComponentInstanceId": "b732e7f5-4c02-3273-f3df-90d6f623fa63",
+        "originalGroupedAnchorIndex": 64
+      },
+      "remove": [
+        { "scope": "page-footer-freeform-code", "pageId": "6a3e73ae5f60c547e5e9d041", "nodeId": null, "completeLocation": "footer/script[83]", "sourceKey": "buildConsultLocations", "beforeEmbedSha256": "5f469d5322dc08c161db8be2bed17ca9054f3874e084ce7343265598d21daa65" }
+      ],
+      "preserveNodeIds": [
+        "9da55ef0-14dd-2e40-09e6-706ca145917c",
+        "b732e7f5-4c02-3273-f3df-90d6f623fa66",
+        "b732e7f5-4c02-3273-f3df-90d6f623fa67",
+        "b732e7f5-4c02-3273-f3df-90d6f623fa68",
+        "b732e7f5-4c02-3273-f3df-90d6f623fa69"
+      ],
+      "preserveLoaders": [
+        { "publishedScriptIndex": 65, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/profile-photo.js" },
+        { "publishedScriptIndex": 66, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/portfolio-crud.js" },
+        { "publishedScriptIndex": 67, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/portfolio-list.js" },
+        { "publishedScriptIndex": 68, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/company-autocomplete.js" },
+        { "publishedScriptIndex": 69, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/work-dates.js" },
+        { "publishedScriptIndex": 70, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/company-experience-crud.js" },
+        { "publishedScriptIndex": 74, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/utils/multi-step-failover.js" },
+        { "publishedScriptIndex": 75, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/profile-image-auth-shim.js" },
+        { "publishedScriptIndex": 84, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/field-counters.js" },
+        { "publishedScriptIndex": 86, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/bio-editor.js" },
+        { "publishedScriptIndex": 87, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/grouped-selects.js" },
+        { "publishedScriptIndex": 89, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/submit-diagnostics.js" }
+      ]
+    },
+    {
+      "route": "/build-profile/full-profile",
+      "pageId": "6a01b0ef0dd420942a5f964a",
+      "install": {
+        "scope": "page-head-freeform-code",
+        "action": "append_complete_route_loader_group_to_exact_saved_head"
+      },
+      "runtimePlacementEvidence": {
+        "pageComponentInstanceId": "d7eff4d8-d2d0-9f00-759f-c7c52fff4a2f",
+        "originalGroupedAnchorIndex": 66
+      },
+      "remove": [
+        { "scope": "page-footer-freeform-code", "pageId": "6a01b0ef0dd420942a5f964a", "nodeId": null, "completeLocation": "footer/script[85]", "sourceKey": "buildFullProfileLocations", "beforeEmbedSha256": "24d60c2e43f944e3764d489872d0bad10b00c2375592fa17a426eb017b6d4225" }
+      ],
+      "preserveNodeIds": [
+        "9da55ef0-14dd-2e40-09e6-706ca145917c",
+        "b732e7f5-4c02-3273-f3df-90d6f623fa66",
+        "b732e7f5-4c02-3273-f3df-90d6f623fa67",
+        "b732e7f5-4c02-3273-f3df-90d6f623fa68",
+        "b732e7f5-4c02-3273-f3df-90d6f623fa69"
+      ],
+      "preserveLoaders": [
+        { "publishedScriptIndex": 30, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.56.14/profile-image-auth-shim.js", "servedBytes": 16265, "servedSha256": "6960394833ab75ab16daa45f9e0bbafc22c6e41a921f607e3acdd20b041f4aa6", "runtimeRole": "controlling_first_load_before_grouped_anchor" },
+        { "publishedScriptIndex": 67, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/profile-photo.js" },
+        { "publishedScriptIndex": 68, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/portfolio-crud.js" },
+        { "publishedScriptIndex": 69, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/portfolio-list.js" },
+        { "publishedScriptIndex": 70, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/company-autocomplete.js" },
+        { "publishedScriptIndex": 71, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/work-dates.js" },
+        { "publishedScriptIndex": 72, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/company-experience-crud.js" },
+        { "publishedScriptIndex": 76, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/utils/multi-step-failover.js" },
+        { "publishedScriptIndex": 77, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/profile-image-auth-shim.js", "runtimeRole": "guarded_no_op_after_index_30" },
+        { "publishedScriptIndex": 86, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/field-counters.js" },
+        { "publishedScriptIndex": 88, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/bio-editor.js" },
+        { "publishedScriptIndex": 89, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/grouped-selects.js" },
+        { "publishedScriptIndex": 91, "url": "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/submit-diagnostics.js" }
+      ]
+    }
+  ],
+  "runtimeAssets": {
+    "/starter-edit-profile": {
+      "beforeGroupedAnchorPreserveIndexes": [],
+      "groupedAnchorIndex": 91,
+      "groupedAssets": [
+        "v3/profile-form/shared-foundation.js",
+        "v3/profile-form/incremental-dropdowns.js",
+        "v3/starter-edit-profile/locations.js",
+        "v3/starter-edit-profile/canonical-profile-loader.js"
+      ],
+      "afterGroupedAnchorPreserveIndexes": [92, 95, 96, 97, 98, 99, 102, 111]
+    },
+    "/build-profile/consult": {
+      "beforeGroupedAnchorPreserveIndexes": [],
+      "groupedAnchorIndex": 64,
+      "groupedAssets": [
+        "v3/profile-form/shared-foundation.js",
+        "v3/build-profile/draft-state.js",
+        "v3/profile-form/incremental-dropdowns.js",
+        "v3/build-profile/submit-writer.js",
+        "v3/build-profile/locations-consult.js"
+      ],
+      "afterGroupedAnchorPreserveIndexes": [65, 66, 67, 68, 69, 70, 74, 75, 84, 86, 87, 89]
+    },
+    "/build-profile/full-profile": {
+      "beforeGroupedAnchorPreserveIndexes": [30],
+      "groupedAnchorIndex": 66,
+      "groupedAssets": [
+        "v3/profile-form/shared-foundation.js",
+        "v3/build-profile/draft-state.js",
+        "v3/profile-form/incremental-dropdowns.js",
+        "v3/build-profile/submit-writer.js",
+        "v3/build-profile/locations-full-profile.js"
+      ],
+      "afterGroupedAnchorPreserveIndexes": [67, 68, 69, 70, 71, 72, 76, 77, 86, 88, 89, 91]
+    }
+  }
+}

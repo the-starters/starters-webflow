@@ -195,8 +195,8 @@ nothing to author.
 - `brandProfileState(memberstack)` performs the marker-first authenticated status
   read and returns the same three-state answer.
 
-Diagnostics narrate every decision on staging only — `*.webflow.io`, `localhost`,
-`127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`. Production
+Diagnostics narrate every decision on
+[staging only](../README.md#staging-only-console-diagnostics). Production
 is completely silent, on the role redirects and on every fail-open path alike.
 
 ## Release gate

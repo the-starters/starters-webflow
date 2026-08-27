@@ -15,6 +15,7 @@ function deferred() {
 }
 
 function element(attributes = {}) {
+  const classes = new Set()
   return {
     attributes: { ...attributes },
     hidden: false,
@@ -33,7 +34,24 @@ function element(attributes = {}) {
       return Object.prototype.hasOwnProperty.call(this.attributes, name)
     },
     classList: {
-      toggle() {},
+      add(...names) {
+        names.forEach((name) => classes.add(name))
+      },
+      contains(name) {
+        return classes.has(name)
+      },
+      remove(...names) {
+        names.forEach((name) => classes.delete(name))
+      },
+      toggle(name, force) {
+        const active = force == null ? !classes.has(name) : Boolean(force)
+        if (active) classes.add(name)
+        else classes.delete(name)
+        return active
+      },
+    },
+    matches() {
+      return false
     },
     querySelector() {
       return null
@@ -51,8 +69,24 @@ function element(attributes = {}) {
   }
 }
 
-async function until(predicate) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+function memoryStorage() {
+  const values = new Map()
+  return {
+    getItem(key) {
+      return values.has(key) ? values.get(key) : null
+    },
+    removeItem(key) {
+      values.delete(key)
+    },
+    setItem(key, value) {
+      values.set(key, String(value))
+    },
+  }
+}
+
+async function until(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
     if (predicate()) return
     await new Promise(setImmediate)
   }
@@ -115,6 +149,173 @@ test('builds the current confirm payload only when booking_ref identities match'
   }, 'dashboard-confirm:one'), null)
 })
 
+test('accepts the canonical nested confirmation response and fails closed otherwise', () => {
+  assert.equal(api.confirmSucceeded({ confirmation: { status: 'confirmed' }, duplicate: false }), true)
+  assert.equal(api.confirmSucceeded({ confirmation: { status: 'confirmed' }, duplicate: true }), true)
+  assert.equal(api.confirmSucceeded({ status: 'confirmed' }), true)
+  assert.equal(api.confirmSucceeded({ confirmation: { status: 'pending' } }), false)
+  assert.equal(api.confirmSucceeded({ confirmation: null }), false)
+  assert.equal(api.confirmSucceeded(null), false)
+})
+
+test('confirmation attempt storage scopes omit identity data and isolate account and environment', async () => {
+  const base = {
+    booking_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    data_environment: 'production',
+    starter_data: { memberstack_id: 'mem_starter-one', email: 'private@example.com' },
+  }
+  const first = await api.confirmAttemptStorageKey(base)
+  const otherAccount = await api.confirmAttemptStorageKey({
+    ...base,
+    starter_data: { memberstack_id: 'mem_starter-two', email: 'other@example.com' },
+  })
+  const otherEnvironment = await api.confirmAttemptStorageKey({ ...base, data_environment: 'test' })
+
+  assert.match(first, /^starters:dashboard-confirm:v1:production:[0-9a-f]{64}:aaaaaaaa-/)
+  assert.equal(first.includes('mem_starter-one'), false)
+  assert.equal(first.includes('private@example.com'), false)
+  assert.notEqual(first, otherAccount)
+  assert.notEqual(first, otherEnvironment)
+  assert.equal(await api.confirmAttemptStorageKey({ ...base, data_environment: '' }), '')
+})
+
+test('confirmation attempt creation fails closed without durable storage readback', async () => {
+  const booking = {
+    booking_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    data_environment: 'production',
+    starter_data: { memberstack_id: 'mem_starter-one' },
+  }
+  const originalCrypto = global.crypto
+  const originalStorage = global.sessionStorage
+
+  try {
+    global.crypto = {
+      subtle: originalCrypto && originalCrypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000001',
+    }
+    global.sessionStorage = {
+      getItem() { return null },
+      setItem() {},
+    }
+    assert.equal(await api.createConfirmAttemptKey(booking), '')
+
+    global.sessionStorage = {
+      getItem() { return null },
+      setItem() { throw new Error('storage unavailable') },
+    }
+    assert.equal(await api.createConfirmAttemptKey(booking), '')
+
+    global.sessionStorage = undefined
+    assert.equal(await api.createConfirmAttemptKey(booking), '')
+  } finally {
+    global.crypto = originalCrypto
+    global.sessionStorage = originalStorage
+  }
+})
+
+test('ambiguous confirmation survives a page rebuild and clears only after success', async () => {
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const bookingRef = Buffer.concat([
+    uuidBytes(configId),
+    uuidBytes(bookingId),
+    Buffer.from('bounded-salt'),
+  ]).toString('base64url')
+  const booking = {
+    booking_id: bookingId,
+    config_id: configId,
+    booking_ref: bookingRef,
+    data_environment: 'production',
+    starter_data: { memberstack_id: 'mem_starter-one' },
+    status: 'pending',
+  }
+  const storage = memoryStorage()
+  const bodies = []
+  let responseOk = false
+  let restartCount = 0
+  const originalDocument = global.document
+  const originalCrypto = global.crypto
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalConsoleError = console.error
+
+  async function clickFreshButton() {
+    const listeners = []
+    const card = {
+      getAttribute(name) {
+        return name === 'data-booking-id' ? bookingId : null
+      },
+    }
+    const button = {
+      attributes: {},
+      closest(selector) {
+        return selector === '[data-booking-id]' ? card : this
+      },
+      setAttribute(name, value) {
+        this.attributes[name] = value
+      },
+    }
+    global.document = {
+      addEventListener(_type, listener) {
+        listeners.push(listener)
+      },
+    }
+    api.wireBookingActions([{ rows: [booking] }], 'starter', async () => {
+      restartCount += 1
+    })
+    await listeners[0]({
+      target: button,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    })
+  }
+
+  try {
+    global.crypto = {
+      subtle: originalCrypto && originalCrypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000001',
+    }
+    global.sessionStorage = storage
+    global.xanoAuthFetch = async (_url, options) => {
+      bodies.push(JSON.parse(options.body))
+      return { ok: responseOk, json: async () => responseOk ? { status: 'confirmed' } : { code: 'ambiguous' } }
+    }
+    console.error = () => {}
+
+    await clickFreshButton()
+    assert.equal(bodies.length, 1)
+    assert.equal(await api.storedConfirmAttemptKey(booking), bodies[0].idempotency_key)
+
+    responseOk = true
+    global.xanoAuthFetch = async (_url, options) => {
+      bodies.push(JSON.parse(options.body))
+      return { ok: true, json: async () => ({ confirmation: { status: 'pending' } }) }
+    }
+    await clickFreshButton()
+    assert.equal(bodies.length, 2)
+    assert.equal(bodies[1].idempotency_key, bodies[0].idempotency_key)
+    assert.equal(await api.storedConfirmAttemptKey(booking), bodies[0].idempotency_key)
+    assert.equal(restartCount, 0)
+
+    global.xanoAuthFetch = async (_url, options) => {
+      bodies.push(JSON.parse(options.body))
+      return { ok: true, json: async () => ({ confirmation: { status: 'confirmed' }, duplicate: false }) }
+    }
+    await clickFreshButton()
+    assert.equal(bodies.length, 3)
+    assert.equal(bodies[2].idempotency_key, bodies[0].idempotency_key)
+    assert.equal(await api.storedConfirmAttemptKey(booking), '')
+    assert.equal(restartCount, 1)
+  } finally {
+    global.document = originalDocument
+    global.crypto = originalCrypto
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    console.error = originalConsoleError
+  }
+})
+
 test('Starter Accept sends one canonical request and blocks a double click', async () => {
   const configId = '11111111-2222-3333-4444-555555555555'
   const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -128,6 +329,8 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
     booking_id: bookingId,
     config_id: configId,
     booking_ref: bookingRef,
+    data_environment: 'production',
+    starter_data: { memberstack_id: 'mem_starter-one' },
     status: 'pending',
   }
   const listeners = []
@@ -137,6 +340,7 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
   const originalDocument = global.document
   const originalCrypto = global.crypto
   const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
   const card = {
     getAttribute(name) {
       return name === 'data-booking-id' ? bookingId : null
@@ -163,7 +367,11 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
         listeners.push({ type, listener, capture })
       },
     }
-    global.crypto = { randomUUID: () => 'one-action' }
+    global.crypto = {
+      subtle: originalCrypto && originalCrypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000002',
+    }
+    global.sessionStorage = memoryStorage()
     global.xanoAuthFetch = async (url, options) => {
       requests.push({ url, options })
       await new Promise((resolve) => { releaseRequest = resolve })
@@ -199,6 +407,68 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
     global.document = originalDocument
     global.crypto = originalCrypto
     global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+  }
+})
+
+test('Starter Accept rechecks the response window immediately before mutation', async () => {
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const bookingRef = Buffer.concat([
+    uuidBytes(configId),
+    uuidBytes(bookingId),
+    Buffer.from('bounded-salt'),
+  ]).toString('base64url')
+  const booking = {
+    booking_id: bookingId,
+    config_id: configId,
+    status: 'pending',
+    confirmation_expires_at: Date.now() + 60_000,
+  }
+  Object.defineProperty(booking, 'booking_ref', {
+    get() {
+      booking.confirmation_expires_at = 1
+      return bookingRef
+    },
+  })
+  const listeners = []
+  const requests = []
+  const originalDocument = global.document
+  const originalFetch = global.xanoAuthFetch
+  const card = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? bookingId : null
+    },
+  }
+  const button = {
+    __startersBookingActionKey: 'dashboard-confirm:expired-action',
+    closest(selector) {
+      return selector === '[data-booking-id]' ? card : this
+    },
+    setAttribute() {},
+  }
+
+  try {
+    global.document = {
+      addEventListener(_type, listener) {
+        listeners.push(listener)
+      },
+    }
+    global.xanoAuthFetch = async (...args) => {
+      requests.push(args)
+    }
+    api.wireBookingActions([{ rows: [booking] }], 'starter', async () => {})
+    await listeners[0]({
+      target: button,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    })
+
+    assert.equal(requests.length, 0)
+  } finally {
+    global.document = originalDocument
+    global.xanoAuthFetch = originalFetch
   }
 })
 
@@ -223,6 +493,1018 @@ test('only the V3-native Starter Accept action is visible on pending cards', () 
   for (const button of [decline, reschedule, message, join]) {
     assert.equal(button.hidden, true)
     assert.equal(button.style.display, 'none')
+  }
+})
+
+test('read-only details stay available while expired requests cannot be accepted', () => {
+  const details = element({ 'booking-card-action-btn': 'details' })
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const reschedule = element({ 'booking-action-btn': 'reschedule' })
+  const card = {
+    querySelectorAll() {
+      return [details, accept, reschedule]
+    },
+  }
+  const now = 2_000_000_000_000
+
+  api.configureActionButtons(card, 'starter', 'pending', {
+    status: 'pending',
+    start: 3_000_000_000_000,
+    confirmation_expires_at: 1_000_000_000_000,
+  }, now)
+
+  assert.equal(details.hidden, false)
+  assert.equal(accept.hidden, true)
+  assert.equal(reschedule.hidden, true)
+})
+
+test('request expiration uses the canonical confirmation deadline before the call start', () => {
+  assert.equal(api.responseDeadline({
+    confirmation_expires_at: 2_000_000_000,
+    start: 3_000_000_000_000,
+  }), 2_000_000_000_000)
+  assert.equal(api.responseDeadline({ start: 3_000_000_000 }), 3_000_000_000_000)
+  assert.equal(api.formatResponseTime(2_000_000_000_000 + 60_000, 2_000_000_000_000), '1m')
+  assert.equal(api.formatResponseTime(2_000_000_000_000 + 61 * 60_000, 2_000_000_000_000), '1h 1m')
+  assert.equal(api.formatResponseTime(2_000_000_000_000 + 25 * 60 * 60_000 + 60_000, 2_000_000_000_000), '1d 1h 1m')
+  assert.equal(api.formatResponseTime(2_000_000_000_000, 2_000_000_000_000), 'Expired')
+})
+
+test('pending Starter request cards show the countdown and hide Accept at expiration', () => {
+  const wrap = element()
+  const output = element()
+  const details = element({ 'booking-card-action-btn': 'details' })
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const card = {
+    querySelector(selector) {
+      if (selector === '[booking-item-expiration="wrap"]') return wrap
+      if (selector === '[booking-item-expiration="time"]') return output
+      return null
+    },
+    querySelectorAll() {
+      return [details, accept]
+    },
+  }
+  const now = 2_000_000_000_000
+  const booking = {
+    status: 'pending',
+    start: now + 60 * 60 * 1000,
+    confirmation_expires_at: now + 30 * 60 * 1000,
+  }
+
+  assert.equal(api.paintRequestExpiration(card, booking, 'starter', now), false)
+  assert.equal(wrap.hidden, false)
+  assert.equal(output.textContent, '30m')
+  assert.equal(output.classList.contains('text-color-red'), true)
+  assert.equal(wrap.classList.contains('is-expiring'), false)
+  assert.equal(accept.hidden, false)
+
+  assert.equal(api.paintRequestExpiration(card, booking, 'starter', now + 30 * 60 * 1000), true)
+  assert.equal(output.textContent, 'Expired')
+  assert.equal(output.classList.contains('text-color-red'), true)
+  assert.equal(wrap.classList.contains('is-expiring'), false)
+  assert.equal(accept.hidden, true)
+  assert.equal(details.hidden, false)
+
+  assert.equal(api.paintRequestExpiration(card, booking, 'brand', now), false)
+  assert.equal(wrap.hidden, true)
+})
+
+test('GitHub expiration owner polls one expired request at a bounded interval', async () => {
+  const nowValue = { value: 2_000_000_000_000 }
+  const wrap = element()
+  const output = element()
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const card = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-expired' : null
+    },
+    querySelector(selector) {
+      if (selector === '[booking-item-expiration="wrap"]') return wrap
+      if (selector === '[booking-item-expiration="time"]') return output
+      return null
+    },
+    querySelectorAll() {
+      return [accept]
+    },
+  }
+  const cards = [card]
+  const refs = [{
+    rows: [{
+      booking_id: 'booking-expired',
+      status: 'pending',
+      start: nowValue.value + 60_000,
+      confirmation_expires_at: nowValue.value - 1,
+    }],
+    list: {
+      querySelectorAll() {
+        return cards
+      },
+    },
+  }]
+  let tick
+  let cleared = false
+  let restarts = 0
+  const stop = api.startRequestExpirationTicker(refs, 'starter', async () => {
+    restarts += 1
+  }, {
+    now: () => nowValue.value,
+    setInterval(callback, delay) {
+      assert.equal(delay, 10_000)
+      tick = callback
+      return 42
+    },
+    clearInterval(timer) {
+      assert.equal(timer, 42)
+      cleared = true
+    },
+  })
+
+  await new Promise(setImmediate)
+  assert.equal(restarts, 1)
+  assert.equal(output.textContent, 'Expired')
+  assert.equal(accept.hidden, true)
+
+  tick()
+  await new Promise(setImmediate)
+  assert.equal(restarts, 1)
+
+  // The same expired request stops earning canonical reads once its bounded
+  // budget is spent, even while it stays rendered and past its deadline.
+  for (let elapsed = 0; elapsed < 10; elapsed += 1) {
+    nowValue.value += 30_000
+    tick()
+    await new Promise(setImmediate)
+  }
+  assert.equal(restarts, 3)
+
+  // A different request crossing its own deadline is still polled.
+  refs[0].rows.push({
+    booking_id: 'booking-expired-later',
+    status: 'pending',
+    start: nowValue.value + 60_000,
+    confirmation_expires_at: nowValue.value - 1,
+  })
+  cards.push({
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-expired-later' : null
+    },
+    querySelector: () => element(),
+    querySelectorAll: () => [],
+  })
+  nowValue.value += 30_000
+  tick()
+  await new Promise(setImmediate)
+  assert.equal(restarts, 4)
+
+  nowValue.value += 30_000
+  tick()
+  await new Promise(setImmediate)
+  assert.equal(restarts, 5)
+
+  stop()
+  assert.equal(cleared, true)
+})
+
+test('the expiration owner arms exactly one timer, and none for Brands', () => {
+  const expiredRow = (id) => ({
+    booking_id: id,
+    status: 'pending',
+    start: 2_000_000_000_000 + 60_000,
+    confirmation_expires_at: 1,
+  })
+  const expiredCard = (id) => ({
+    getAttribute: (name) => (name === 'data-booking-id' ? id : null),
+    querySelector: () => element(),
+    querySelectorAll: () => [],
+  })
+  const refs = [
+    {
+      rows: [expiredRow('a'), expiredRow('b')],
+      list: { querySelectorAll: () => [expiredCard('a'), expiredCard('b')] },
+    },
+    {
+      rows: [expiredRow('c')],
+      list: { querySelectorAll: () => [expiredCard('c')] },
+    },
+  ]
+
+  let starterTimers = 0
+  const stop = api.startRequestExpirationTicker(refs, 'starter', () => {}, {
+    now: () => 2_000_000_000_000,
+    setInterval() {
+      starterTimers += 1
+      return 1
+    },
+    clearInterval() {},
+  })
+  assert.equal(typeof stop, 'function')
+  assert.equal(starterTimers, 1)
+
+  let brandTimers = 0
+  assert.equal(api.startRequestExpirationTicker(refs, 'brand', () => {}, {
+    now: () => 2_000_000_000_000,
+    setInterval() {
+      brandTimers += 1
+      return 1
+    },
+    clearInterval() {},
+  }), null)
+  assert.equal(brandTimers, 0)
+})
+
+test('an open detail modal hides Accept once the request passes its deadline', () => {
+  const originalDocument = global.document
+  const now = 2_000_000_000_000
+  const booking = {
+    booking_id: 'booking-open',
+    status: 'pending',
+    start: now + 2 * 60 * 60 * 1000,
+    confirmation_expires_at: now + 60 * 60 * 1000,
+  }
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const close = element({ 'booking-action-btn': 'switch-close' })
+  const pendingInfo = element({ 'pending-info-text': '' })
+  const modal = {
+    attributes: { 'data-booking-id': 'booking-open' },
+    getAttribute(name) {
+      return this.attributes[name] || null
+    },
+    querySelector() {
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector === '[pending-info-text]') return [pendingInfo]
+      return [accept, close]
+    },
+  }
+  const refs = [{ rows: [booking], list: { querySelectorAll: () => [] } }]
+  try {
+    global.document = { querySelector: () => modal }
+
+    assert.equal(api.refreshDetailExpiration(refs, 'starter', now), true)
+    assert.equal(accept.hidden, false)
+    assert.equal(close.hidden, false)
+    assert.equal(pendingInfo.hidden, false)
+
+    assert.equal(
+      api.refreshDetailExpiration(refs, 'starter', now + 60 * 60 * 1000),
+      true,
+    )
+    assert.equal(accept.hidden, true)
+    assert.equal(close.hidden, false)
+    assert.equal(pendingInfo.hidden, true)
+
+    modal.attributes = {}
+    assert.equal(api.refreshDetailExpiration(refs, 'starter', now), false)
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('expiration polling recovers from thrown and rejected refreshes and keeps retries bounded', async () => {
+  const nowValue = { value: 2_000_000_000_000 }
+  const card = {
+    getAttribute() {
+      return 'booking-expired'
+    },
+    querySelector() {
+      return element()
+    },
+    querySelectorAll() {
+      return []
+    },
+  }
+  const refs = [{
+    rows: [{
+      booking_id: 'booking-expired',
+      status: 'pending',
+      start: nowValue.value + 60_000,
+      confirmation_expires_at: nowValue.value - 1,
+    }],
+    list: { querySelectorAll: () => [card] },
+  }]
+  let tick
+  let restarts = 0
+  const originalError = console.error
+  console.error = () => {}
+  try {
+    api.startRequestExpirationTicker(refs, 'starter', () => {
+      restarts += 1
+      if (restarts === 1) throw new Error('synchronous refresh failure')
+      if (restarts === 2) return Promise.reject(new Error('rejected refresh failure'))
+      return Promise.resolve()
+    }, {
+      now: () => nowValue.value,
+      setInterval(callback) {
+        tick = callback
+        return 1
+      },
+      clearInterval() {},
+    })
+    await new Promise(setImmediate)
+    assert.equal(restarts, 1)
+
+    nowValue.value += 30_000
+    tick()
+    await new Promise(setImmediate)
+    assert.equal(restarts, 2)
+
+    nowValue.value += 30_000
+    tick()
+    await new Promise(setImmediate)
+    assert.equal(restarts, 3)
+
+    // The retry budget is spent: a transient failure never becomes an
+    // open-ended poll against the canonical endpoint.
+    nowValue.value += 30_000
+    tick()
+    await new Promise(setImmediate)
+    assert.equal(restarts, 3)
+  } finally {
+    console.error = originalError
+  }
+})
+
+test('expiration polling does not overlap an in-flight canonical refresh', async () => {
+  const nowValue = { value: 2_000_000_000_000 }
+  const card = {
+    getAttribute: () => 'booking-expired',
+    querySelector: () => element(),
+    querySelectorAll: () => [],
+  }
+  const refs = [{
+    rows: [{
+      booking_id: 'booking-expired',
+      status: 'pending',
+      start: nowValue.value + 60_000,
+      confirmation_expires_at: nowValue.value - 1,
+    }],
+    list: { querySelectorAll: () => [card] },
+  }]
+  const pending = deferred()
+  let tick
+  let restarts = 0
+  api.startRequestExpirationTicker(refs, 'starter', () => {
+    restarts += 1
+    return pending.promise
+  }, {
+    now: () => nowValue.value,
+    setInterval(callback) {
+      tick = callback
+      return 1
+    },
+    clearInterval() {},
+  })
+  await new Promise(setImmediate)
+  // Far enough past the throttle that only the in-flight guard can hold the
+  // second read back.
+  nowValue.value += 30_000
+  tick()
+  assert.equal(restarts, 1)
+
+  pending.resolve()
+  await new Promise(setImmediate)
+  nowValue.value += 30_000
+  tick()
+  await new Promise(setImmediate)
+  assert.equal(restarts, 2)
+})
+
+test('background expiration refresh preserves the rendered request after a transient failure', async () => {
+  const originalDocument = global.document
+  const originalLocation = global.location
+  const originalFetch = global.xanoAuthFetch
+  const originalError = console.error
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const list = element()
+  list.innerHTML = 'rendered request'
+  const refs = {
+    name: 'requests',
+    filter: 'all',
+    rows: [api.normalizeBooking({
+      booking_id: 'booking-expired',
+      status: 'pending',
+      starter_data: { memberstack_id: 'starter-1' },
+      confirmation_expires_at: 1,
+    })],
+    rendered: 1,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  let requestCount = 0
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    global.location = { pathname: '/starter-dashboard' }
+    console.error = () => {}
+    global.xanoAuthFetch = async () => {
+      requestCount += 1
+      if (requestCount === 1) {
+        return { ok: false, json: async () => null }
+      }
+      if (requestCount === 2) {
+        return {
+          ok: true,
+          json: async () => [{
+            booking_id: 'booking-expired',
+            status: 'pending',
+            starter_data: { memberstack_id: 'starter-1' },
+            confirmation_expires_at: 1,
+          }],
+        }
+      }
+      return {
+        ok: true,
+        json: async () => [{
+          booking_id: 'booking-expired',
+          status: 'cancelled',
+          starter_data: { memberstack_id: 'starter-1' },
+        }],
+      }
+    }
+    const memberstack = {
+      getCurrentMember: async () => ({ id: 'starter-1' }),
+    }
+    const currentGeneration = () => 1
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      currentGeneration,
+      false,
+      { preserveExisting: true },
+    ), false)
+    assert.equal(refs.rows.length, 1)
+    assert.equal(list.innerHTML, 'rendered request')
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      currentGeneration,
+      false,
+      { preserveExisting: true },
+    ), true)
+    assert.equal(refs.rows.length, 1)
+    assert.equal(list.innerHTML, 'rendered request')
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      currentGeneration,
+      false,
+      { preserveExisting: true },
+    ), true)
+    assert.equal(refs.rows.length, 0)
+    assert.equal(list.innerHTML, '')
+    assert.equal(refs.section.getAttribute('data-bookings-state'), 'empty')
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  } finally {
+    global.document = originalDocument
+    global.location = originalLocation
+    global.xanoAuthFetch = originalFetch
+    console.error = originalError
+  }
+})
+
+test('a background expiration refresh keeps every Load More page rendered', async () => {
+  const originalDocument = global.document
+  const originalLocation = global.location
+  const originalFetch = global.xanoAuthFetch
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const appended = []
+  const list = element()
+  list.appendChild = (child) => {
+    appended.push(child)
+  }
+  const canonicalRows = (context) => Array.from({ length: 14 }, (_unused, index) => ({
+    booking_id: 'booking-' + index,
+    status: 'confirmed',
+    start: 3_000_000_000_000,
+    call_context: index === 0 ? context : 'Call ' + index,
+    starter_data: { memberstack_id: 'starter-1' },
+  }))
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: canonicalRows('before').map(api.normalizeBooking),
+    // The reader clicked Load More twice: 14 rows, 12 of them on screen.
+    rendered: 12,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    global.location = { pathname: '/starter-dashboard' }
+    global.xanoAuthFetch = async () => ({
+      ok: true,
+      json: async () => canonicalRows('after'),
+    })
+
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'starter-1' }) },
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), true)
+
+    assert.equal(refs.rows.length, 14)
+    assert.equal(refs.rows[0].call_context, 'after')
+    assert.equal(refs.rendered, 12)
+    assert.equal(appended.length, 12)
+    assert.equal(refs.loadMore.hidden, false)
+  } finally {
+    global.document = originalDocument
+    global.location = originalLocation
+    global.xanoAuthFetch = originalFetch
+  }
+})
+
+test('a background refresh that shrinks the list stops at the available rows', async () => {
+  const originalDocument = global.document
+  const originalLocation = global.location
+  const originalFetch = global.xanoAuthFetch
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const appended = []
+  const list = element()
+  list.appendChild = (child) => {
+    appended.push(child)
+  }
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: Array.from({ length: 14 }, (_unused, index) => api.normalizeBooking({
+      booking_id: 'booking-' + index,
+      status: 'confirmed',
+      start: 3_000_000_000_000,
+      starter_data: { memberstack_id: 'starter-1' },
+    })),
+    rendered: 12,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    global.location = { pathname: '/starter-dashboard' }
+    global.xanoAuthFetch = async () => ({
+      ok: true,
+      json: async () => [{
+        booking_id: 'booking-0',
+        status: 'confirmed',
+        start: 3_000_000_000_000,
+        starter_data: { memberstack_id: 'starter-1' },
+      }],
+    })
+
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'starter-1' }) },
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), true)
+
+    assert.equal(refs.rows.length, 1)
+    assert.equal(refs.rendered, 1)
+    assert.equal(appended.length, 1)
+    assert.equal(refs.loadMore.hidden, true)
+  } finally {
+    global.document = originalDocument
+    global.location = originalLocation
+    global.xanoAuthFetch = originalFetch
+  }
+})
+
+test('important CSS-hidden status wrappers become visible with the role-aware lifecycle variant', () => {
+  const label = element()
+  const group = element({ 'booking-element-wrap': 'status' })
+  let inlineDisplay = ''
+  let inlineDisplayPriority = ''
+  group.style = {
+    get display() {
+      return inlineDisplay
+    },
+    set display(value) {
+      inlineDisplay = value
+      inlineDisplayPriority = ''
+    },
+    getPropertyPriority(name) {
+      return name === 'display' ? inlineDisplayPriority : ''
+    },
+    setProperty(name, value, priority) {
+      if (name !== 'display') return
+      inlineDisplay = value
+      inlineDisplayPriority = priority || ''
+    },
+  }
+  const computedDisplay = (target) => {
+    if (target.hidden || target.style.display === 'none') return 'none'
+    if (
+      target.authoredImportantDisplay &&
+      target.style.getPropertyPriority('display') !== 'important'
+    ) {
+      return target.authoredImportantDisplay
+    }
+    return target.style.display || target.authoredDisplay || 'block'
+  }
+  group.authoredImportantDisplay = 'none'
+  const pill = element({ 'booking-element': 'status' })
+  pill.querySelector = (selector) => selector === '[label-text]' ? label : null
+  pill.closest = (selector) => (
+    selector === '[booking-element-wrap="status"]' ? group : null
+  )
+  const card = {
+    querySelector(selector) {
+      return selector === '[booking-element="status"]' ? pill : null
+    },
+  }
+
+  assert.equal(computedDisplay(group), 'none')
+  api.paintStatusPill(card, 'pending', 'starter')
+  assert.equal(computedDisplay(group), 'flex')
+  assert.equal(group.style.getPropertyPriority('display'), 'important')
+  assert.equal(label.textContent, 'Pending')
+  assert.equal(pill.hidden, false)
+  assert.equal(
+    pill.classList.contains('w-variant-34961dab-8ebb-e322-49a7-741a1936647a'),
+    true,
+  )
+
+  api.paintStatusPill(card, 'completed', 'brand')
+  assert.equal(label.textContent, 'Completed')
+  assert.equal(
+    pill.classList.contains('w-variant-34961dab-8ebb-e322-49a7-741a1936647a'),
+    false,
+  )
+  assert.equal(
+    pill.classList.contains('w-variant-89402c65-e26d-c236-91e7-76e9135a2d42'),
+    true,
+  )
+})
+
+test('production empty-value status wrapper becomes visible when it owns the status pill', () => {
+  const label = element()
+  const group = element({ 'booking-element-wrap': '' })
+  let inlineDisplay = ''
+  let inlineDisplayPriority = ''
+  group.style = {
+    get display() {
+      return inlineDisplay
+    },
+    set display(value) {
+      inlineDisplay = value
+      inlineDisplayPriority = ''
+    },
+    getPropertyPriority(name) {
+      return name === 'display' ? inlineDisplayPriority : ''
+    },
+    setProperty(name, value, priority) {
+      if (name !== 'display') return
+      inlineDisplay = value
+      inlineDisplayPriority = priority || ''
+    },
+  }
+  group.style.display = 'none'
+  const pill = element({ 'booking-element': 'status' })
+  group.querySelector = (selector) => (
+    selector === '[booking-element="status"]' ? pill : null
+  )
+  pill.querySelector = (selector) => selector === '[label-text]' ? label : null
+  pill.closest = (selector) => (
+    selector === '[booking-element-wrap]'
+      ? group
+      : null
+  )
+  const card = {
+    querySelector(selector) {
+      return selector === '[booking-element="status"]' ? pill : null
+    },
+  }
+
+  api.paintStatusPill(card, 'cancelled', 'starter')
+
+  assert.equal(group.hidden, false)
+  assert.equal(group.style.display, 'flex')
+  assert.equal(group.style.getPropertyPriority('display'), 'important')
+  assert.equal(label.textContent, 'Cancelled')
+  assert.equal(pill.hidden, false)
+})
+
+test('status pill painting does not force a non-status authored wrapper visible', () => {
+  const label = element()
+  const genericGroup = element({ 'booking-element-wrap': '' })
+  genericGroup.style.display = 'none'
+  const pill = element({ 'booking-element': 'status' })
+  pill.querySelector = (selector) => selector === '[label-text]' ? label : null
+  pill.closest = (selector) => (
+    selector === '[booking-element-wrap]'
+      ? genericGroup
+      : null
+  )
+  const card = {
+    querySelector(selector) {
+      return selector === '[booking-element="status"]' ? pill : null
+    },
+  }
+
+  api.paintStatusPill(card, 'pending', 'starter')
+
+  assert.equal(genericGroup.hidden, false)
+  assert.equal(genericGroup.style.display, 'none')
+  assert.equal(label.textContent, 'Pending')
+})
+
+function detailModalHarness() {
+  const fields = {}
+  const groups = []
+  ;[
+    'paid-meeting',
+    'status',
+    'brand-name',
+    'starter-name',
+    'title',
+    'context',
+    'start-date',
+    'duration',
+    'price',
+    'payment-status-text',
+    'reschedule-reason',
+    'cancel-reason',
+    'meeting-link',
+  ].forEach((name) => {
+    const field = element({ 'booking-element': name })
+    const group = element({ 'booking-element-wrap': '' })
+    group.querySelector = (selector) => selector === '[booking-element]' ? field : null
+    field.closest = (selector) => selector === '[booking-element-wrap]' ? group : null
+    if (name === 'meeting-link') field.href = 'stale'
+    fields[name] = field
+    groups.push(group)
+  })
+  const priceUnit = element()
+  priceUnit.textContent = '/hr'
+  const priceParent = element()
+  priceParent.children = [fields.price, priceUnit]
+  fields.price.parentElement = priceParent
+  const duplicatePayment = element({ 'booking-element-wrap': '' })
+  duplicatePayment.textContent = 'Your card ending in 1234 will be charged for this call.'
+  duplicatePayment.querySelector = () => null
+  groups.push(duplicatePayment)
+
+  const base = element({ 'booking-popup-content': 'base' })
+  const confirmation = element({ 'booking-popup-content': 'confirmed' })
+  const pendingOne = element({ 'pending-info-text': '' })
+  const pendingDuplicate = element({ 'pending-info-text': '' })
+  base.querySelectorAll = (selector) =>
+    selector === '[pending-info-text]' ? [pendingOne, pendingDuplicate] : []
+  const blocked = element({ 'reschedule-blocked-info': '' })
+  const close = element({ 'booking-action-btn': 'switch-close' })
+  const back = element({ 'booking-action-btn': 'switch-base' })
+  const cancel = element({ 'booking-action-btn': 'cancel' })
+  const reschedule = element({ 'booking-action-btn': 'reschedule' })
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const confirmPayment = element({ 'payment-action-btn': 'confirm' })
+  const changePayment = element({ 'payment-action-btn': 'change-card' })
+  const createIntent = element({ 'payment-action-btn': 'create-intent' })
+  const addPayment = element({ 'payment-action-btn': 'add-card' })
+  const legacyPayment = element({ 'booking-pm-action': 'confirm' })
+  const actions = [
+    close,
+    back,
+    cancel,
+    reschedule,
+    accept,
+    confirmPayment,
+    changePayment,
+    createIntent,
+    addPayment,
+    legacyPayment,
+  ]
+  const modal = element({ 'popup-booking-info': '' })
+  modal.querySelector = (selector) => {
+    const match = selector.match(/^\[booking-element="(.+)"\]$/)
+    if (match) return fields[match[1]] || null
+    if (selector === '[booking-popup-content="base"]') return base
+    return null
+  }
+  modal.querySelectorAll = (selector) => ({
+    '[booking-popup-content]': [base, confirmation],
+    '[booking-element-wrap]': groups,
+    '[booking-action-btn], [booking-card-action-btn], [payment-action-btn], [booking-pm-action], [data-btn-payment], [popup-stripe-card-open], [pm-use-this]': actions,
+    '[reschedule-blocked-info]': [blocked],
+  })[selector] || []
+
+  return {
+    actions,
+    base,
+    blocked,
+    confirmation,
+    duplicatePayment,
+    fields,
+    modal,
+    pendingDuplicate,
+    pendingOne,
+    priceUnit,
+  }
+}
+
+test('Free Call details hide paid copy, duplicate copy, and unsupported actions', () => {
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'free-one',
+    status: 'pending',
+    start: 10_000,
+    confirmation_expires_at: 9_000,
+    paid_meeting: false,
+    price: 0,
+    duration: 30,
+    call_context: 'Discuss launch',
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+
+  assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 2_000), true)
+  assert.equal(view.fields['paid-meeting'].textContent, 'Free Call')
+  assert.equal(view.fields.status.textContent, 'Pending')
+  assert.equal(view.fields.price.hidden, true)
+  assert.equal(view.fields['payment-status-text'].hidden, true)
+  assert.equal(view.duplicatePayment.hidden, true)
+  assert.equal(view.base.hidden, false)
+  assert.equal(view.confirmation.hidden, true)
+  assert.equal(view.pendingOne.hidden, false)
+  assert.equal(view.pendingDuplicate.hidden, true)
+  assert.equal(view.actions[0].hidden, false)
+  assert.equal(view.actions[1].hidden, false)
+  assert.equal(view.actions[2].hidden, true)
+  assert.equal(view.actions[3].hidden, true)
+  assert.equal(view.actions[4].hidden, false)
+
+  booking.confirmation_expires_at = 1
+  api.populateDetailModal(view.modal, booking, 'starter', 2_000)
+  assert.equal(view.pendingOne.hidden, true)
+  assert.equal(view.actions[4].hidden, true)
+})
+
+test('confirmed Paid Call details show per-call price and hide every unsupported payment control', () => {
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'paid-one',
+    status: 'confirmed',
+    start: Date.now() + 60_000,
+    paid_meeting: true,
+    price: 25,
+    duration: 30,
+    pm_confirmed: true,
+    meeting_link: 'https://meet.example/current',
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+
+  api.populateDetailModal(view.modal, booking, 'brand')
+  assert.equal(view.fields['paid-meeting'].textContent, 'Paid Call')
+  assert.equal(view.fields.status.textContent, 'Upcoming')
+  assert.equal(view.fields.price.textContent, '$25.00')
+  assert.equal(view.priceUnit.textContent, '/Call')
+  assert.equal(view.fields.price.hidden, false)
+  assert.equal(view.fields['payment-status-text'].textContent, 'Payment method confirmed.')
+  assert.equal(view.fields['payment-status-text'].hidden, false)
+  assert.equal(view.fields['meeting-link'].href, 'https://meet.example/current')
+  assert.equal(view.pendingOne.hidden, true)
+  assert.equal(view.pendingDuplicate.hidden, true)
+  assert.equal(view.actions[4].hidden, true)
+  for (const action of view.actions.slice(5)) {
+    assert.equal(action.hidden, true)
+    assert.equal(action.style.display, 'none')
+  }
+
+  api.populateDetailModal(view.modal, booking, 'brand')
+  assert.equal(view.fields.price.textContent, '$25.00')
+  assert.equal(view.priceUnit.textContent, '/Call')
+
+  booking.status = 'cancelled'
+  api.populateDetailModal(view.modal, booking, 'brand')
+  assert.equal(view.fields.status.textContent, 'Cancelled')
+  assert.equal(view.fields['payment-status-text'].hidden, true)
+  assert.equal(view.fields['meeting-link'].hidden, true)
+})
+
+test('delegated View Details binds the selected canonical booking before Webflow opens', () => {
+  let clickListener
+  const originalDocument = global.document
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'selected-paid',
+    status: 'confirmed',
+    start: Date.now() + 60_000,
+    is_paid: true,
+    paid_meeting: false,
+    price: 45,
+    duration: 45,
+    brand_data: { name: 'Selected Brand', timezone: 'UTC' },
+    starter_data: { name: 'Selected Starter', timezone: 'UTC' },
+  }
+  const card = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'selected-paid' : null
+    },
+  }
+  const details = {
+    closest(selector) {
+      return selector === '[data-booking-id]' ? card : null
+    },
+  }
+  try {
+    global.document = {
+      addEventListener(name, listener, capture) {
+        assert.equal(name, 'click')
+        assert.equal(capture, true)
+        clickListener = listener
+      },
+      querySelector(selector) {
+        assert.equal(
+          selector,
+          '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
+        )
+        return view.modal
+      },
+    }
+    api.wireBookingDetails([{ rows: [booking] }], 'brand')
+    clickListener({
+      target: {
+        closest(selector) {
+          if (selector.includes('reschedule')) return null
+          if (selector.includes('popup-booking-info')) return details
+          return null
+        },
+      },
+    })
+
+    assert.equal(view.modal.attributes['data-booking-id'], 'selected-paid')
+    assert.equal(view.fields['paid-meeting'].textContent, 'Paid Call')
+    assert.equal(view.fields.price.textContent, '$45.00')
+    assert.equal(view.priceUnit.textContent, '/Call')
+    assert.equal(view.fields['starter-name'].textContent, 'Selected Starter')
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('delegated Reschedule is stopped before an empty modal can open', () => {
+  let clickListener
+  const originalDocument = global.document
+  try {
+    global.document = {
+      addEventListener(name, listener, capture) {
+        assert.equal(name, 'click')
+        assert.equal(capture, true)
+        clickListener = listener
+      },
+    }
+    api.wireBookingDetails([], 'brand')
+    let prevented = 0
+    let stopped = 0
+    clickListener({
+      target: {
+        closest(selector) {
+          return selector.includes('reschedule') ? {} : null
+        },
+      },
+      preventDefault() { prevented += 1 },
+      stopImmediatePropagation() { stopped += 1 },
+    })
+    assert.equal(prevented, 1)
+    assert.equal(stopped, 1)
+  } finally {
+    global.document = originalDocument
   }
 })
 
@@ -322,6 +1604,24 @@ test('auth changes clear identity state and stale requests cannot render', async
   const empty = element()
   const count = element()
   const filters = element()
+  const modalField = element({ 'booking-element': 'starter-name' })
+  const modalGroup = element({ 'booking-element-wrap': '' })
+  modalField.closest = (selector) => selector === '[booking-element-wrap]' ? modalGroup : null
+  const modalAction = element({ 'booking-action-btn': 'switch-close' })
+  const modalPaymentAction = element({ 'payment-action-btn': 'confirm' })
+  const modal = element({
+    'popup-booking-info': '',
+    open: '',
+    'data-booking-id': 'member-a-call',
+    'data-booking-status': 'confirmed',
+    'data-booking-payment': 'paid',
+  })
+  let modalCloseCount = 0
+  modal.close = () => { modalCloseCount += 1 }
+  modal.querySelectorAll = (selector) => ({
+    '[booking-element]': [modalField],
+    '[booking-popup-content], [pending-info-text], [booking-action-btn], [booking-card-action-btn], [payment-action-btn], [booking-pm-action], [data-btn-payment], [popup-stripe-card-open], [pm-use-this]': [modalAction, modalPaymentAction],
+  })[selector] || []
   const section = element({ 'bookings-section': 'calls' })
   section.querySelector = (selector) =>
     ({
@@ -346,6 +1646,7 @@ test('auth changes clear identity state and stale requests cannot render', async
           '[hero-element="brand-last-name"]': surname,
           '[hero-element="brand-company"]': company,
           '[hero-element="brand-image"]': image,
+          '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]': modal,
         }[selector] || null
       )
     },
@@ -393,6 +1694,19 @@ test('auth changes clear identity state and stale requests cannot render', async
   })
   await until(() => requests.length === 1)
 
+  modal.setAttribute('open', '')
+  modal.setAttribute('data-booking-id', 'member-a-call')
+  modal.setAttribute('data-booking-status', 'confirmed')
+  modal.setAttribute('data-booking-payment', 'paid')
+  modalField.textContent = 'Member A'
+  modalField.hidden = false
+  modalField.style.display = ''
+  modalAction.hidden = false
+  modalAction.style.display = ''
+  modalPaymentAction.hidden = false
+  modalPaymentAction.style.display = ''
+  const closesBeforeAuthChange = modalCloseCount
+
   currentMember = {
     id: 'member-b',
     customFields: { 'free-user': 'Member B', company: 'Company B' },
@@ -401,6 +1715,16 @@ test('auth changes clear identity state and stale requests cannot render', async
   authChange()
   assert.equal(name.textContent, '')
   assert.equal(company.textContent, '')
+  assert.equal(modalCloseCount, closesBeforeAuthChange + 1)
+  assert.equal(modal.hasAttribute('open'), false)
+  assert.equal(modal.hasAttribute('data-booking-id'), false)
+  assert.equal(modal.hasAttribute('data-booking-status'), false)
+  assert.equal(modal.hasAttribute('data-booking-payment'), false)
+  assert.equal(modalField.textContent, '')
+  assert.equal(modalField.hidden, true)
+  assert.equal(modalGroup.hidden, true)
+  assert.equal(modalAction.hidden, true)
+  assert.equal(modalPaymentAction.hidden, true)
   await until(() => requests.length === 2 && root.attributes['data-dashboard-calls-v3'] === 'ready')
   assert.deepEqual(requests, ['member-a', 'member-b'])
   assert.equal(name.textContent, 'Member B')
@@ -694,12 +2018,19 @@ test('call filters remain visible when the selected status alone has no matches'
   await until(() => root.attributes['data-dashboard-calls-v3'] === 'ready')
   assert.equal(filters.hidden, false)
   assert.equal(renderedCards.length, 1)
+  assert.equal(allFilter.classList.contains('is-active'), true)
+  assert.equal(allFilter.attributes['aria-pressed'], 'true')
+  assert.equal(completedFilter.classList.contains('is-active'), false)
 
   listeners.completed({ preventDefault() {} })
   assert.equal(renderedCards.length, 1)
   assert.equal(list.hidden, true)
   assert.equal(empty.hidden, false)
   assert.equal(filters.hidden, false)
+  assert.equal(allFilter.classList.contains('is-active'), false)
+  assert.equal(allFilter.attributes['aria-pressed'], 'false')
+  assert.equal(completedFilter.classList.contains('is-active'), true)
+  assert.equal(completedFilter.attributes['aria-pressed'], 'true')
 })
 
 test('project filters hide only after an authoritative unfiltered empty result', () => {
@@ -1255,4 +2586,124 @@ test('both project dashboards leave remote filtering to the default wf-xano cont
     'dash-brand-projects': ['status', 'completed'],
   })
   assert.deepEqual(results, keys)
+})
+
+// SFR-232 — the Designer put `#calls-section` inside the *authored* Calls tile, not
+// inside the V3 `[bookings-section="calls"]` tile that replaces it. Hiding the
+// duplicate used to take that id out of layout, so the CALLS tab and every
+// `#calls-section` deep link had nowhere to jump to.
+test('hidden authored duplicates hand their sub-nav anchors to the live V3 tile', () => {
+  const originalDocument = global.document
+  const anchor = element({ id: 'calls-section', class: 'dash-main_anchor' })
+  const liveChildren = [element()]
+  const originalFirstChild = liveChildren[0]
+  const liveTile = element({
+    'bookings-section': 'calls',
+    class: 'dash-main_tile-item',
+  })
+  liveTile.firstChild = originalFirstChild
+  const inserted = []
+  liveTile.insertBefore = (node, reference) => {
+    inserted.push({ node, reference })
+    liveChildren.unshift(node)
+    liveTile.firstChild = liveChildren[0]
+    return node
+  }
+
+  const heading = element()
+  heading.textContent = ' Calls '
+  const duplicate = element({ class: 'dash-main_tile-item' })
+  duplicate.querySelector = (selector) =>
+    selector === 'h1,h2,h3,h4,h5,h6' ? heading : null
+  duplicate.querySelectorAll = (selector) =>
+    selector === '.dash-main_anchor[id]' ? [anchor] : []
+
+  try {
+    global.document = {
+      getElementById: (id) => (id === 'calls-section' ? anchor : null),
+      querySelectorAll(selector) {
+        if (selector === '.dash-main_tile-item[bookings-section]') return [liveTile]
+        if (selector === '.dash-main_tile-item') return [liveTile, duplicate]
+        return []
+      },
+    }
+
+    api.hideAuthoredDuplicates()
+
+    assert.deepEqual(inserted, [{ node: anchor, reference: originalFirstChild }])
+    assert.equal(liveChildren[0], anchor)
+    assert.equal(duplicate.hidden, true)
+    assert.equal(duplicate.style.display, 'none')
+    assert.equal(liveTile.hidden, false)
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('a duplicate with no live counterpart is still hidden and keeps its anchors', () => {
+  const originalDocument = global.document
+  const anchor = element({ id: 'requests-section', class: 'dash-main_anchor' })
+  const heading = element()
+  heading.textContent = 'Call Requests'
+  const duplicate = element({ class: 'dash-main_tile-item' })
+  duplicate.querySelector = (selector) =>
+    selector === 'h1,h2,h3,h4,h5,h6' ? heading : null
+  duplicate.querySelectorAll = (selector) =>
+    selector === '.dash-main_anchor[id]' ? [anchor] : []
+  const unrelated = element({ class: 'dash-main_tile-item' })
+  const unrelatedHeading = element()
+  unrelatedHeading.textContent = 'Projects'
+  unrelated.querySelector = (selector) =>
+    selector === 'h1,h2,h3,h4,h5,h6' ? unrelatedHeading : null
+
+  try {
+    global.document = {
+      getElementById: () => anchor,
+      querySelectorAll(selector) {
+        if (selector === '.dash-main_tile-item[bookings-section]') return []
+        if (selector === '.dash-main_tile-item') return [duplicate, unrelated]
+        return []
+      },
+    }
+
+    api.hideAuthoredDuplicates()
+
+    assert.equal(duplicate.hidden, true)
+    assert.equal(unrelated.hidden, false)
+    assert.equal(unrelated.style.display, undefined)
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('an anchor id another element already owns is never re-parented', () => {
+  const originalDocument = global.document
+  const stray = element({ id: 'calls-section', class: 'dash-main_anchor' })
+  const winner = element({ id: 'calls-section' })
+  const source = element()
+  source.querySelectorAll = (selector) =>
+    selector === '.dash-main_anchor[id]' ? [stray] : []
+  const target = element()
+  let inserts = 0
+  target.insertBefore = () => {
+    inserts += 1
+  }
+
+  try {
+    global.document = { getElementById: () => winner }
+    assert.equal(api.adoptSectionAnchors(source, target), 0)
+    assert.equal(inserts, 0)
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('anchor adoption ignores missing, identical, and inert tiles', () => {
+  const source = element()
+  source.querySelectorAll = () => []
+  assert.equal(api.adoptSectionAnchors(null, element()), 0)
+  assert.equal(api.adoptSectionAnchors(source, null), 0)
+  assert.equal(api.adoptSectionAnchors(source, source), 0)
+  assert.equal(api.adoptSectionAnchors({}, element()), 0)
+  assert.equal(api.adoptSectionAnchors(source, {}), 0)
 })

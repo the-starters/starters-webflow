@@ -172,8 +172,8 @@ learns that anyone finished.
 
 This is the slim solo walk for the redirect alone. Run it behind the Webflow
 password on `the-starters-3-0.webflow.io`, or through `./dev-tunnel.sh` (the
-module deliberately allows `localhost`, `127.0.0.1`, `*.webflow.io`, and
-`*.trycloudflare.com` so the tunnel loop works). Open the console — staging is
+module's [staging gate](../README.md#staging-only-console-diagnostics) covers the
+quick-tunnel hostname, so the tunnel loop works). Open the console — staging is
 chatty, production is silent.
 
 1. **Logged out.** Open `/starter-onboarding`. The page renders, no redirect,

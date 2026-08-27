@@ -22,7 +22,7 @@
       max-width: 100% !important;
       height: auto !important;
       transform: none !important;
-      transition: opacity 200ms ease, visibility 200ms ease;
+      transition: opacity 120ms ease-out, visibility 120ms ease-out;
     }
 
     [data-block="explore-list"] .explore_list {
@@ -82,7 +82,7 @@
       overflow-y: auto;
       overflow-x: hidden;
       background-color: var(--_navbar---explore--bg);
-      transition: opacity 200ms ease, visibility 200ms ease;
+      transition: opacity 120ms ease-out, visibility 120ms ease-out;
       padding-top: 60px;
       padding-left: 1.25rem;
       padding-right: 1.25rem;
@@ -103,7 +103,7 @@
       display: none !important;
     }
 
-    /* Fixed back button. .is-shown delay waits for the column fade before fading in. */
+    /* Fixed back button; fades in together with its column. */
     [data-block="explore-list"] .explore_back-button--mobile {
       position: fixed;
       top: calc(var(--explore-mtop, 5.5rem) + 12px);
@@ -123,13 +123,12 @@
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
-      transition: opacity 200ms ease, visibility 200ms ease;
+      transition: opacity 120ms ease-out, visibility 120ms ease-out;
     }
     [data-block="explore-list"] .explore_back-button--mobile.is-shown {
       opacity: 1;
       visibility: visible;
       pointer-events: auto;
-      transition-delay: 200ms;
     }
     [data-block="explore-list"] .explore_back-button--mobile svg {
       width: 14px;

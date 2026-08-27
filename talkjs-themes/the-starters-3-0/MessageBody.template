@@ -14,11 +14,17 @@ This is a subcomponent used by UserMessage and SystemMessage.
         <ReferencedMessage body="{{ referencedMessage.body }}" sender="{{ referencedMessage.sender }}"/>
     </div>
 
+    <!-- No darkenMenuArea gradient on thumbnails (removed 2026-08-18,
+         ticket 08). The stock theme darkens the image's top-right corner so
+         an overlaid action button stays legible; in this theme the button
+         sits 2.25rem OUTSIDE the bubble and, since ticket 02, vertically
+         centred — so the darkening sat where no control is and helped
+         nothing. The button now carries its own solid circle instead. -->
     <span t:if="{{ body.type == 'location' }}" class="thumbnail location">
-        <Thumbnail location="{{ body.location }}" gradients="{{darkenMenuArea | then: 'top-right'}}"/>
+        <Thumbnail location="{{ body.location }}"/>
     </span>
     <span t:else-if="{{ body.type == 'file' and body.hasThumbnail }}" class="thumbnail {{ body.file.type }} {{body.thumbnailError | then: 'has-error'}}">
-        <Thumbnail file="{{ body.file }}" gradients="{{darkenMenuArea | then: 'top-right'}}"/>
+        <Thumbnail file="{{ body.file }}"/>
     </span>
 
     <t:set t:if="{{ body.type == 'file' }}" filetype="{{ body.file.type }}"/>

@@ -379,6 +379,7 @@ test('component manifest installs auth and routing before deferred controllers',
       { file: 'scheduling-availability-init.js', defer: true },
       { file: 'scheduling-availability-writer.js', defer: true },
       { file: 'scheduling-availability-section.js', defer: true },
+      { file: 'free-call-settings.js', defer: true },
       { file: 'paid-call-settings.js', defer: true },
     ],
   )
@@ -392,6 +393,34 @@ test('maps paid-call settings routes only to their exact authenticated V3 endpoi
     'starter/paid-call-settings/get',
     'starter/paid-call-settings/upsert',
     'starter/paid-call-settings/disable',
+  ]
+
+  for (const route of routes) {
+    const result = await window.fetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      body: '{}',
+    })
+    assert.equal(result.status, 200)
+  }
+  const lookalike = await window.fetch(`${API_BASE}${routes[0]}-debug`)
+
+  assert.deepEqual(
+    authenticatedRequests.map((request) => new URL(request.url).pathname),
+    routes.map((route) => `/api:tCpV3oqd/${route}/v3`),
+  )
+  assert.equal(lookalike.status, 410)
+  assert.equal((await lookalike.json()).code, 'SCHEDULING_V3_ROUTE_BLOCKED')
+  assert.equal(nativeRequests.length, 0)
+})
+
+test('maps free-call settings routes only to their exact authenticated V3 endpoints', async () => {
+  const { authenticatedRequests, nativeRequests, window } = loadStage({
+    pathname: '/starter-dashboard',
+  })
+  const routes = [
+    'starter/free-call-settings/get',
+    'starter/free-call-settings/upsert',
+    'starter/free-call-settings/disable',
   ]
 
   for (const route of routes) {
@@ -626,6 +655,8 @@ test('allows reviewed Brand payment routes on dashboards and Hire', async () => 
   const dashboard = loadStage({ pathname: '/brand-dashboard' })
   const hire = loadStage({ pathname: '/hire/jp-dionisio' })
   const paymentRoutes = [
+    'brand/booking/payment-action/v3',
+    'brand/booking/payment-method-replace/v3',
     'brand/payment-method/setup/v3',
     'brand/payment-method/set-default/v3',
   ]

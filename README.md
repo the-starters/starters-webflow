@@ -38,6 +38,28 @@ Do not discard local changes unless the user explicitly asks.
 - Before adding a script here, check whether native Webflow, `wf-xano`, `wf-algolia`, or another established shared library already owns the behavior. Prefer extending the appropriate library when the capability will be reused. One-off page scripts belong here only when the behavior is genuinely page-specific or cannot fit a shared attribute contract without distorting it.
 - Browser behavior must connect to Webflow elements through custom attributes, not styling classes or generated IDs. Reuse the owning library's vocabulary; do not invent a parallel attribute dialect.
 
+## Staging-only console diagnostics
+
+Almost every script here narrates itself to the console on staging and says
+nothing in production. The predicate is the same in all of them, and this section
+owns it — module docs point here rather than respelling it.
+
+A page counts as staging when `window.location.hostname` is `localhost`,
+`127.0.0.1`, or matches `*.webflow.io` or `*.trycloudflare.com` (the
+`./dev-tunnel.sh` quick tunnel). Setting `window.STARTERS_DEBUG = true` turns
+diagnostics on anywhere, production included.
+
+Two rules hold in every implementation:
+
+- The host patterns are anchored (`/(\.|^)webflow\.io$/`), so a lookalike such as
+  `notwebflow.io` or `evil-trycloudflare.com` cannot read as staging.
+- `STARTERS_DEBUG` is tested outside the host check. It may turn logging on in
+  production, but it must never widen what counts as a staging host.
+
+This gate covers `console` output only. A module that gates something with real
+consequence — a data read, an overlay that prints record ids — uses its own,
+tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it lives.
+
 ## Current Scripts
 
 - `code-components/` — parked, preparation-only Webflow React package containing
@@ -52,8 +74,8 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/algolia-environment.js` — host-owned TEST/LIVE resolver for managed V3 Algolia clients and indexes; see [`v3/ALGOLIA-ENVIRONMENT-WIRING.md`](v3/ALGOLIA-ENVIRONMENT-WIRING.md) for the exact host contract, markup, fail-closed rules, and release prerequisites
 - `quiz-results-email-tester.js` and `.css` — query-gated production tester for the V3 `/quiz-results` email; binds a native Webflow panel, hydrates the signed-in canary Brand's current saved quiz plus current Starter and Learn records, and sends only through the authenticated Xano endpoint described under [Quiz-results email tester](#quiz-results-email-tester)
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
-- `opportunities-3.0.js` — Opportunities 3.0 page and dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, keeps the authored 15-word opportunity-title rule while adding a native 120-character backstop, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`, drives authenticated canonical project actions on both role dashboards, keeps Generate Invoice Starter-only, and uses the shared diagnostic receipt contract below
-- `utils/workflow-diagnostics.js` — authoritative shared receipt contract for the Talent Application, native login/signup/password and Account Profile forms, Build Profile, Quiz Results save and lead-drip enrollment, pause/cancel request intake, opportunity create/edit/close/reopen, application apply/edit/withdraw/archive/restore, Generate Invoice, project lifecycle, project review, Starter Edit Profile, Brand Build Account, Brand/Talent login-email updates, and Starter Onboarding completion workflows. The controllers preserve the native Webflow surfaces and keep diagnostic IDs and receipts out of all user-facing success, error, and status messages. The helper logs only allowlisted metadata to the browser console: diagnostic ID, UTC time, controller/environment, workflow result/stage, safe error code, HTTP status, duration, request-attempted state, canonical record type/ID, and replay state. Receipts exclude names, emails, phone numbers, form answers, prices, tokens, authorization headers, request/response bodies, and idempotency keys. Before a covered mutation starts, its controller attempts to load the helper from the same jsDelivr repository ref; a load failure degrades to the existing workflow behavior without blocking the mutation. Use `copyWorkflowDiagnostic('<workflow>')` from the console to copy the latest receipt in the current tab.
+- `opportunities-3.0.js` — Opportunities 3.0 page and dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, keeps the authored 15-word opportunity-title rule while adding a native 120-character backstop, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`, drives authenticated canonical project actions on both role dashboards, and keeps invoice generation and cancellation Starter-only while using the shared diagnostic receipt contract below
+- `utils/workflow-diagnostics.js` — authoritative shared receipt contract for the Talent Application, native login/signup/password and Account Profile forms, Build Profile, Quiz Results save and lead-drip enrollment, pause/cancel request intake, opportunity create/edit/close/reopen, application apply/edit/withdraw/archive/restore, Generate Invoice, invoice cancellation, project lifecycle, project review, Starter Edit Profile, Brand Build Account, Brand/Talent login-email updates, and Starter Onboarding completion workflows. The controllers preserve the native Webflow surfaces and keep diagnostic IDs and receipts out of all user-facing success, error, and status messages. The helper logs only allowlisted metadata to the browser console: diagnostic ID, UTC time, controller/environment, workflow result/stage, safe error code, HTTP status, duration, request-attempted state, canonical record type/ID, and replay state. Receipts exclude names, emails, phone numbers, form answers, prices, tokens, authorization headers, request/response bodies, and idempotency keys. Before a covered mutation starts, its controller attempts to load the helper from the same jsDelivr repository ref; a load failure degrades to the existing workflow behavior without blocking the mutation. Use `copyWorkflowDiagnostic('<workflow>')` from the console to copy the latest receipt in the current tab.
 - `v3/native-form-diagnostics.js` — sitewide observer for Memberstack-native login, signup, password recovery, and Account Profile forms plus the Webflow-native pause/cancel request forms. Its exact mutation-call-site wrapper covers the allowlisted profile-photo, portfolio, and company-experience operations, recording only request outcome and HTTP status while passing each request function through unchanged. It reads no fields, prevents no submit, and does not add diagnostic content or copy behavior to page messages. Pause/cancel success is classified only as `request_accepted`; it is not proof that a membership changed. Load this asset with `defer` sitewide, before any deferred Build Profile or Starter Edit Profile mutation asset; it loads the shared receipt helper itself.
 - `v3/auth-route.js` — V3 login/signup router on `/login`, `/starter-login`, and `/auth-route`; consumes the sitewide role contract, applies role-scoped `next` destinations, and checks Talent and paid-Brand funnel position through Xano; the authoritative routing table, failure semantics, and install map live in [`v3/README.md`](v3/README.md#login-router) and [`v3/AUTH-ROUTE-WIRING.md`](v3/AUTH-ROUTE-WIRING.md)
 
@@ -64,6 +86,7 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/onboarding-tour.js` — attribute-driven V3 product tours with highlight and disclosure overrides, role targeting, per-member seen-state, and replay/reset controls
 - `v3/starters-ms-redirect.js` — per-page Memberstack signup redirect: copies a hidden CMS-bindable destination marker onto each signup form before Memberstack reads it; the authoritative markup contract and path-safety rules live in [`v3/README.md`](v3/README.md#signup-redirect-marker)
 - `v3/signup-attribution.js` — sitewide UTM/Meta attribution capture and signup persistence, including CAPI event deduplication, the `/quiz` single-writer boundary, and the production-only Collection, Learn, and Starter signup producer for Xano `lead_email/register/v3`; the authoritative cookie, field, arming, retry, and lead-entry contracts live in [`v3/README.md`](v3/README.md#signup-attribution)
+- `v3/opp-alerts-unsubscribe.js` — explicit unsubscribe and re-subscribe controller for the V3 opportunity-alert email page; the authoritative Webflow markup, request, and user-state contract lives in [`v3/README.md`](v3/README.md#opportunity-alert-email-preferences)
 - `v3/all-starters-favorites.js` — paid-Brand favourites controls and Designer-built All/Favourites filtering for `/all-starters`, backed by sitewide `wf-xano` and `wf-algolia`
 - `v3/ai-recruiter.js` — lower-right, role-gated V3 AI Recruiter controller;
   binds native Webflow markup and sends authenticated requests only through
@@ -72,7 +95,8 @@ Do not discard local changes unless the user explicitly asks.
   [`v3/AI-RECRUITER-WIRING.md`](v3/AI-RECRUITER-WIRING.md)
 - `v3/saved-starters-roles.js` — `/favorites` saved-list roles chips: one cloned paragraph per delimited role, so the wf-xano list matches the Algolia browse cards; authoritative behavior and constraints live in [`v3/README.md`](v3/README.md#saved-starters-roles-chips)
 - `v3/hire-profile.js` — `/hire/<slug>` runtime controller for booking, Services, rate cards, and page utilities. Experiences and Clients are native Webflow CMS sections; the authoritative ownership, wiring, dependencies, and verification contract is in [`v3/HIRE-PROFILE-WIRING.md`](v3/HIRE-PROFILE-WIRING.md)
-- `v3/profile-portfolio.js` — sole `/hire/<slug>` portfolio / case-study renderer for the section labelled "Highlights"; reads approved public Xano Portfolios (#28) via `Get_approved_portfolios`, binds by custom attribute with legacy class fallbacks, and carries a `data-portfolio-rendered` guard against repeated CDN execution. The owner-read legacy on-canvas embed must be removed in the coordinated cutover. Wiring and cutover: [`v3/PROFILE-PORTFOLIO-WIRING.md`](v3/PROFILE-PORTFOLIO-WIRING.md)
+- `v3/free-call-booking.js` — GitHub-owned `/hire/<slug>` Free Call namespace for authenticated booking-profile/config reads, one-request chooser previews, the shared authored calendar, and canonical Xano booking-command submission inside native Designer modals; cutover scope and exclusions live in [`v3/HIRE-PROFILE-WIRING.md`](v3/HIRE-PROFILE-WIRING.md#inline-global-code-cutover-boundary)
+- `v3/profile-portfolio.js` — sole `/hire/<slug>` portfolio / case-study renderer for the section labelled "Highlights"; reads approved public Xano Portfolios (#28) via `Get_approved_portfolios`. It renders the card list and fills the Highlights modal with data only — the lumos modal system owns the dialog's presentation. The ownership split, attribute contract, and cutover live in [`v3/PROFILE-PORTFOLIO-WIRING.md`](v3/PROFILE-PORTFOLIO-WIRING.md)
 - `v3/reviews.js` — V3 public-profile reviews adapter; see [`v3/README.md`](v3/README.md#v3-reviews-frontend) for the authoritative ownership, wiring, and release contract
 - `v3/starter-review-form.js` — native `/review-starter` controller for invited V3 review requests; the authoritative token, analytics, form, endpoint, validation, and replay contract lives in [`v3/README.md`](v3/README.md#invited-starter-review-form)
 - `v3/starter-dashboard-messages.js` — shared Brand/Starter dashboard Messages tile; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for the authoritative data, rendering, and deep-link contract
@@ -84,6 +108,13 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/onboarding-done-redirect.js` — read half of the `/starter-onboarding` completion pair: redirects an already-complete member to `/starter-dashboard` and fails open; it installs only with `v3/patch-onboarding-status.js`; authoritative wiring and QA live in [`v3/README.md`](v3/README.md#onboarding-done-redirect) and [`v3/ONBOARDING-DONE-REDIRECT-WIRING.md`](v3/ONBOARDING-DONE-REDIRECT-WIRING.md)
 - `v3/patch-onboarding-status.js` — write half of the same pair: detects Webflow form success, records `onboarding_done` in Xano with retries, emits the shared privacy-safe success/failure receipt, and routes to `/starter-dashboard`; authoritative wiring lives in [`v3/README.md`](v3/README.md#onboarding-patch-status) and [`v3/ONBOARDING-PATCH-STATUS-WIRING.md`](v3/ONBOARDING-PATCH-STATUS-WIRING.md)
 - `v3/build-profile/` — source-controlled Build Profile browser controllers; the authoritative migration scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/build-profile/README.md`](v3/build-profile/README.md)
+- `v3/profile-form/` — shared Build/Edit Profile inline-extraction candidates; the authoritative ownership, provenance, page-Head-Code cutover, loader order, and verification contract lives in [`v3/profile-form/README.md`](v3/profile-form/README.md)
+- `v3/profile-form/shared-foundation.js` — shared native-form model and helper foundation extracted from the authenticated Build/Edit Profile routes
+- `v3/profile-form/incremental-dropdowns.js` — shared incremental dropdown controller extracted from the authenticated Build/Edit Profile routes
+- `v3/build-profile/draft-state.js` — Build Profile local/member draft precedence and one-way draft synchronization controller; blank member-bound draft fields hydrate from the signed-in member while non-empty draft edits keep precedence
+- `v3/build-profile/submit-writer.js` — Build Profile native-form submit writer and normalized payload controller
+- `v3/build-profile/locations-consult.js` — Consult Build Profile country, state, and city controller
+- `v3/build-profile/locations-full-profile.js` — Full Profile country, state, and city controller
 - `v3/build-profile/profile-photo.js` — provenance-locked Build Profile photo controller
 - `v3/build-profile/canonical-profile-hydrator.js` — canonical Xano fallback for missing Memberstack/local Build Profile draft fields; loaded by the existing profile-photo asset without a Webflow block edit
 - `v3/build-profile/portfolio-crud.js` — provenance-locked Build Profile portfolio mutation controller
@@ -91,11 +122,13 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/build-profile/company-autocomplete.js` — provenance-locked Build Profile company autocomplete
 - `v3/build-profile/work-dates.js` — provenance-locked Build Profile work-date controller
 - `v3/build-profile/company-experience-crud.js` — provenance-locked Build Profile company-experience controller
-- `v3/build-profile/field-counters.js` — provenance-locked Build Profile field counters
-- `v3/build-profile/bio-editor.js` — provenance-locked Build Profile bio editor
+- `v3/build-profile/field-counters.js` — provenance-locked Build Profile field counters; skips any `.form_input-wr` group that contains a `[data-editor-id]` element, because a rich-text editor there owns its own counter
+- `v3/build-profile/bio-editor.js` — provenance-locked Build Profile bio editor; enforces a **character** limit (`data-max-chars` on `#bio-plain`, default 1500) rather than a word limit, and owns the bio counter UI: it drops the legacy `count-by-words` attribute, rewrites the counter denominator, and writes the live character count last on every sync
 - `v3/build-profile/grouped-selects.js` — provenance-locked Build Profile grouped-select controller
 - `v3/build-profile/submit-diagnostics.js` — Build Profile submit outcome observer; it keeps diagnostics in the console, leaves the coupled writer unchanged, and never navigates: the authored success-state CTA owns the move to `/starter-onboarding`
 - `v3/starter-edit-profile/` — source-controlled Starter Edit Profile browser controllers; the authoritative extraction scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md)
+- `v3/starter-edit-profile/locations.js` — Starter Edit Profile country, state, and city controller
+- `v3/starter-edit-profile/canonical-profile-loader.js` — read-only canonical Xano hydration for authored Starter Edit Profile fields
 - `v3/starter-edit-profile/portfolio-crud.js` — provenance-locked Edit Profile portfolio mutation controller
 - `v3/starter-edit-profile/portfolio-list.js` — provenance-locked Edit Profile portfolio list controller
 - `v3/starter-edit-profile/company-autocomplete.js` — provenance-locked Edit Profile company autocomplete
@@ -113,7 +146,9 @@ Do not discard local changes unless the user explicitly asks.
 - `profile-image-auth-shim.js` — interim V3 profile auth/image bridge; adds
   Memberstack-derived `user_v3` Bearer auth to profile, Companies, and Portfolio
   mutations, enables `/starter-edit-profile` writes only on the exact Live hosts,
-  and blocks known edit mutations on non-Live hosts
+  and blocks known edit mutations on non-Live hosts. The authoritative photo
+  upload and release-gate contract lives in
+  [`v3/build-profile/README.md`](v3/build-profile/README.md#profile-photo-upload-contract)
 - `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior
   migrated from the legacy Webflow footer. It keeps the existing Designer form
   and modal markup, opens the existing success or error modal through the Lumos
@@ -133,6 +168,14 @@ Do not discard local changes unless the user explicitly asks.
   the controller normalizes its three hidden JSON slots to the same canonical
   `Reviewers` object used by Build Profile before the authenticated Xano PATCH.
   If that native step is absent, the controller does not send `Reviewers`.
+  On the Services and Rates step, a blank rate whose owning control is off —
+  Hourly Rate while the authored `[name="rate"]` control is not required, Paid
+  Call Rate with paid calls disabled, Retainer Rate with retainers disabled — is
+  sent as the canonical integer `0` rather than an empty string, because those
+  controls clear their visible value when their toggle turns off. A blank rate
+  whose control is still live is sent unchanged, so an empty required rate keeps
+  failing instead of silently persisting a zero rate. Non-blank rate values are
+  never rewritten.
   The site-wide Webflow Head Code still initializes
   `MEMBER`, `memberReady`, and the matching helper aliases before deferred page
   scripts. Load `intl-tel-input`, Quill, then this deferred `@latest` asset.
@@ -140,11 +183,22 @@ Do not discard local changes unless the user explicitly asks.
   `guardSecurityForm: 'identity'`; it alone writes a changed Memberstack login
   email, then replays this controller's Xano profile save.
   It uses the shared diagnostic receipt contract above.
+  Its embedded bio editor enforces a **character** limit (`data-max-chars` on
+  `#bio-plain`, default 1500) rather than a word limit and owns that field's
+  counter, matching `v3/build-profile/bio-editor.js`; its embedded
+  `counterFields()` skips any `.form_input-wr` group containing a
+  `[data-editor-id]` element for the same reason.
 - `v3/scheduling-auth.js` — availability and scheduling authentication bridge;
   see `v3/README.md` for its authoritative host and path boundary
 - `v3/dashboard-calls.js` — authenticated canonical call-section and Brand hero
   binder for the V3 dashboards; see `v3/README.md` for its Designer markup,
   identity, state, and endpoint contracts
+- `v3/dashboard-call-actions.js` — native dashboard booking-action binder; see
+  `v3/README.md` for the authoritative decline, cancel, and reschedule boundary
+- `v3/dashboard-call-media.js` — owner-scoped read-only notetaker recording
+  binder; direct transcript provider access stays closed
+- `v3/dashboard-call-payment.js` — server-owned Paid Call recovery helpers;
+  browser Stripe writes and the unreviewed dashboard card UI stay inactive
 - `v3/scheduling-availability-init.js` — scheduling availability and Calendar
   connection-state initializer. Saved hours remain independent from canonical
   grant/calendar/configuration proof, and the Designer-authored Dashboard
@@ -153,6 +207,7 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/scheduling-availability-writer.js` — availability form, manager, Nylas scheduler, timezone, and calendar OAuth writer through `window.xanoAuthFetch`; the authoritative host, path, identity, and safety boundary lives in [`v3/README.md`](v3/README.md#booking-stage-availability-writer)
 - `v3/scheduling-availability-section.js` — non-modal counterpart to the writer above for the Designer "Dashboard / Calendar" section on the canonical Starter dashboard: per-item CRUD with an inline edit form per item, connect/disconnect, timezone, and a live bookable-slots preview, reusing the writer's connection/config logic without its modal steps; see [`v3/README.md`](v3/README.md#booking-stage-availability-section) for its markup contract and the OAuth-callback handoff with the writer
 - `v3/paid-call-settings.js` — native Starter paid-call settings controller backed only by canonical Xano get/upsert/disable endpoints; the authoritative Designer wiring, authority, and release gate live in [`v3/PAID-CALL-SETTINGS-WIRING.md`](v3/PAID-CALL-SETTINGS-WIRING.md)
+- `v3/free-call-settings.js` — native Starter free-call settings controller for the published Call Free Form, fixed at 30 minutes and $0 and backed only by canonical Xano get/upsert/disable endpoints; the authoritative Designer wiring, painted state contract, authority, and release gate live in [`v3/FREE-CALL-SETTINGS-WIRING.md`](v3/FREE-CALL-SETTINGS-WIRING.md)
 - `v3/scheduling-v3-stage.js` — hostname/path-gated scheduling compatibility adapter that rewrites reviewed scheduling calls to exact V3 routes and blocks unclassified and legacy Stripe provider routes; see [V3 Scheduling Authentication](#v3-scheduling-authentication)
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for its existing-conversation and member deep-link contracts
@@ -192,7 +247,7 @@ Do not discard local changes unless the user explicitly asks.
 - `navbar-embeds/transparent-nav-bg.js` — fades in the `.nav_bg` layer on scroll for transparent navbar variants
 - `navbar-embeds/nav-menu.js` — mobile menu button (`#menu-btn`) toggles body scroll lock
 - `navbar-embeds/memberstack/free-paid-anon.js` — Memberstack navbar gating for free/paid/anonymous states (`data-gate`, `data-hide-if-both`), reveals via `.ms-nav-ready`
-- `navbar-embeds/memberstack/ms-code-field-link.js` — turns `[ms-code-field-link]` elements into external links from a Memberstack member custom field
+- `navbar-embeds/memberstack/ms-code-field-link.js` — binds placeholder `[ms-code-field-link]` elements to member-specific destinations. Other fields keep their external-link behavior; `freelancer-profile-url` instead resolves the current member through Xano to the internal `/hire/<slug>` route, never reads the legacy V2 field value, and stays hidden when no published V3 slug exists
 - `navbar-embeds/navbar-explore/explore-menu.css` — explore mega-menu base styles (hidden by default, chevron rotation, Designer preview)
 - `navbar-embeds/navbar-explore/explore-menu-mobile.css` — explore menu mobile full-screen stacked columns; fixed `--explore-mtop` navbar offset
 - `navbar-embeds/navbar-explore/navbar-explore.js` — desktop explore mega-menu flyout column positioning (bails <=991px)
@@ -229,6 +284,12 @@ Attribute-driven components published for reuse across pages. Most carry a
 - `global-embeds/rte-table.css` — **CDN-served** table skin for `[data-rte-table]`: one attribute on `<table>` (or a wrapper) styles every row and cell to match the privacy-policy Finsweet table. `<thead>` / `<th>` get the header bar; a tbody-only table is all data rows. Last column centers by default (Collected); override with `--rte-table-last-align: left`. Load in **Head** from jsDelivr, not a paste embed
 - `global-embeds/logo-wall/logo-wall.css` — **CDN-served** companion structural CSS (overflow mask + flex tracks); load in **Head** from the same jsDelivr ref as the script. It also owns first paint: until the deferred script arms, the wrapper and any raw Webflow CMS chain still inside it (`.w-dyn-list`/`.w-dyn-items`, plus the `display: contents` helper levels the wrapper's gap has to be relayed through) are painted as one clipped, centered row, so the wall never flashes as a tall vertical stack. `data-logo-wall-inited="true"` — written only once the Tracks are built, so a wrapper the script bails on keeps the pre-init row — flips it to the armed Track column. A single-band wall (`data-logo-wall-tracks="1"`, what the homepage uses) is pixel-identical either side of that flip; a multi-band wall grows by its extra rows, so reserve the armed height with a wrapper min-height in Designer. Required: if it does not load, the script leaves the wall static — the original logos only, no clones and no animation.
 
+Run the focused `lumos.modal` dialog-system regressions with:
+
+```sh
+node --test global-embeds/modal/modal.test.js
+```
+
 ### Form embeds (`global-embeds/form-embeds/`)
 
 - `global-embeds/form-embeds/form-validation/form-validation.js` — the form-embeds validation component ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-validation)). Distinct from `utils/wf-validate.js`, which owns the `wf-validate-*` dialect used by the Opportunities forms
@@ -253,6 +314,7 @@ Algolia filter chrome for the Starters browse list; each carries its `// Docs:` 
 - `starters-list-filter/custom-algolia-scripts/clear-filter-visibility/clear-filter-visibility.js` — shows Clear only when something is selected ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/clear-filter-visibility))
 - `starters-list-filter/custom-algolia-scripts/filter-visibility-empty.js` — hides filter groups with no facet values ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/filter-visibility-empty))
 - `starters-list-filter/custom-algolia-scripts/range-backfill-rate.js` — backfills the rate range control's bounds ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/range-backfill-rate))
+- `starters-list-filter/custom-algolia-scripts/range-handle-gap.js` — keeps the rate slider's two thumbs a minimum distance apart so they can't overlap ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/range-handle-gap))
 - `starters-list-filter/custom-algolia-scripts/scroll-filter.js` — scroll handling for the filter column ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/scroll-filter))
 
 ### Algolia result modifiers (`algolia-result-modifiers/`)
@@ -968,8 +1030,38 @@ repaints from canonical signature state without discarding pagination.
 
 The Webflow-authored panel and compact action fail closed from dashboard boot:
 they stay hidden while Memberstack resolves, while the project list is pending or
-unavailable, and when a project card renders before its canonical row. The
-separate Starter invoice control is unchanged.
+unavailable, and when a project card renders before its canonical row.
+
+Each Webflow-authored invoice row may include a
+`[data-project-invoice-action="cancel"]` control inside the existing
+`[wf-xano-element="nest-target"][wf-xano-field="invoices"]` target. The
+controller never creates this control or a cancellation modal. It keeps the
+control hidden until the exact `/starter-dashboard` role gate resolves and the
+matching canonical invoice has a positive id, `status=unpaid`, and
+`cancel_eligible=true`. Brand sessions and unresolved roles always keep it
+hidden. Clicking an eligible control uses a browser prompt; only the exact,
+case-sensitive text `CANCEL` proceeds. At click time, the controller resolves
+the current canonical project, maps the clicked lazy-hydrated nested row to its
+current invoice, and rechecks that invoice's id, unpaid status, and cancellation
+eligibility before showing the prompt. It does not trust a missing or stale
+`data-project-invoice-id` decoration. A modal remains a future enhancement.
+
+The browser posts `invoice_id`, `expected_status=unpaid`, `dry_run=false`, and a
+retry-stable idempotency key to authenticated Xano `invoices/cancel/v3`. Xano
+remains the authority for Starter ownership, V3 Starter-generated origin,
+current unpaid status, and the Stripe Payment Link mapping. A successful cancel
+makes the provider link unpayable, stores canonical `status=void` with display
+label `Cancelled`, and queues the Brand notification exactly once. The
+controller then refreshes the existing wf-xano project page so the cancelled
+state replaces the action in place. Each rendered invoice row receives the
+canonical `data-project-invoice-id` and `data-project-invoice-status`
+attributes. Canonical `void` rows paint the projected `Cancelled` label even
+though the older shared Webflow component still authors that pill as
+`Incomplete`. If the refreshed invoice has no `payment_link` or `invoice_link`,
+the controller removes the anchor target and hides the full `View Invoice`
+button wrapper. Payable rows keep `_blank` plus `noopener noreferrer`. A failed
+request leaves the row available for a retry and shows the endpoint's safe
+action message when present.
 
 The existing `[wf-xano-link="project-end"]` or
 `[wf-xano-link="project-decline"]` control is upgraded to
@@ -984,6 +1076,23 @@ that canonical `status=pending` takes precedence over a more specific
 can request completion or an early termination with a required reason, and a
 counterparty can confirm a pending completion or termination request. Terminal
 projects expose no lifecycle action.
+
+The requesting party never sees a second request. Requester identity comes from
+the canonical `brand_completion_requested_at`, `starter_completion_requested_at`,
+`brand_termination_requested_at`, and `starter_termination_requested_at` fields
+that `starter/projects/mine` and `brand/projects/mine` return on every project
+row. While a request is pending, the party whose timestamp is set reads
+`Waiting for Starter` or `Waiting for Brand`, carries `aria-disabled` plus
+`data-project-action-waiting="true"`, drops its own clicks before any refresh or
+prompt, and is refused again at the intent boundary after the pre-mutation
+refresh, so a stale card cannot replay the request. The same control fails closed
+when either party timestamp for the pending action is absent from the projection,
+or before the dashboard role resolves: the label reads `Status Unavailable`, the
+control carries the same disabled state, and no mutation is posted. A projection
+contract drift therefore degrades to no action instead of an unguarded repeat
+request. Every lifecycle mutation repaints its own card once it settles, so a
+successful request flips that card to its waiting label without a second
+interaction.
 Immediately before every mutation, the controller refreshes the canonical project
 and requires a nonnegative `lifecycle_version`. It then posts `project_id`,
 `expected_version`, `action`, `reason`, and a retry-stable idempotency key to
@@ -1010,6 +1119,14 @@ latest click may open the modal; an older canonical lookup that resolves later
 is discarded. Closing the dialog clears the painted name and pending project
 context. The submit adapter accepts the live `Feedback` field and the legacy
 `Public-Feedback` field during the authored surface transition.
+
+A completed-project review email may deep-link to
+`/brand-dashboard?review_project=<project id>#projects-section`. The controller
+waits for the authenticated Brand project projection, resolves only that exact
+numeric project ID, and opens the existing review modal only when the row is
+still review-eligible and has no review. Unknown, ineligible, already-reviewed,
+non-numeric, or mixed `review_project` plus `review_booking` links fail closed.
+The link does not carry a Brand, Starter, email, or Memberstack identifier.
 
 The V3 post-call review email contract targets the same authored modal through
 a separate, fail-closed booking contract. Its CTA opens
@@ -1059,7 +1176,18 @@ trigger delegation and the mismatch is logged. The dialog itself stays the
 native `dialog[data-modal-target="generate-invoice"]` component, opened through
 `window.lumos.modal`'s registry so its paused GSAP entrance timeline, scroll
 lock, and focus restore all still run; direct `showModal()` remains only as a
-fallback for pages without `modal.js`.
+fallback for pages without `modal.js`. Completed project rows keep this invoice
+entry point: the browser does not hide or reject Generate Invoice because the
+project is in a terminal lifecycle state. Xano remains the authority for whether
+the signed-in Starter can bill the selected project.
+
+Before opening on the Starter dashboard, the controller resolves the selected
+id against the canonical project-list row, waiting for the current list load when
+needed. The opening banner and the success screen therefore show that row's
+project title (or service fallback), `company_name`, and
+`hiring_manager_name`, not possibly stale card text. On the internal
+component-preview page only, authored card text remains the fallback because no
+authenticated project list exists.
 
 The modal keeps its authored Webflow form. The shared button component currently
 renders the visible Send Invoice control as `type="button"` even with its Button
@@ -1095,18 +1223,26 @@ design-system convention `form-validation.js` uses: the wrapper takes
 `aria-disabled="true"`; when it already has a `data-button-theme`, that theme is
 temporarily replaced with `disabled` and restored afterwards. The actionable
 element inside the wrapper takes the native `disabled` property, so a second
-click is visibly refused. After a success the
-wf-xano project list is refreshed best-effort; a failed refresh never reports a
-created invoice as failed.
+click is visibly refused. After a success the canonical wf-xano project list is
+reloaded and the affected card is repainted in place, including its current paid
+status. Reload demand is scoped to the current authenticated member and is
+drained after an already-running refresh, so an older account's response cannot
+repaint a new session. A failed repaint never reports a created invoice as
+failed. The success screen's authored Back to Dashboard link closes the modal
+through `modal.js` without navigation or a page reload.
 
 Keep these markup contracts in the modal:
 
-- `[data-wf-invoice-bind="brand|project|amount|status"]` receive the billed
-  brand, project title, formatted amount, and returned status (`unpaid` when the
-  response omits one). Brand and project come from the card's usual field binds
-  (`wf-xano-bind`, `wf-algolia-text`, or `data-opp-bind`): `title`, plus the
-  first present of `brand`, `company`, and `company_name`, with the last segment
-  of a pipe-separated `heading_display` heading as the only fallback.
+- `[data-wf-invoice-bind="brand|party|project|amount|status"]` receive the billed
+  company, hiring-manager or party name, project title, formatted amount, and
+  returned status (`unpaid` when the response omits one). On the Starter
+  dashboard, company, party, and project come from the canonical project-list
+  row as described above. When Designer authors a distinct `party` bind, the
+  company and party paint on separate rows. Without it, the existing `brand`
+  bind shows both values, separated by ` · `, and removes a duplicate party
+  name that matches the company. The controller also stamps the first two
+  `.generate-invoice_banner p` elements as `project` and `brand` binds when the
+  current Webflow component has not authored those hooks yet.
 - The pay CTA is the anchor whose authored placeholder href is
   `#invoice-payment-link`; the script stamps it with
   `data-wf-invoice="payment-link"` on first use and rewrites the href to the
@@ -1117,6 +1253,13 @@ Keep these markup contracts in the modal:
 - Errors need `[data-wf-invoice="error"]` (the Webflow `.w-form-fail` block is
   accepted) and optionally `[data-wf-invoice="error-message"]` inside it. With
   neither present the failure is only a console warning, invisible to the member.
+- Mark the success close control with `data-wf-invoice="close-success"`. Until
+  that hook is authored, the controller accepts and stamps the existing
+  `.w-form-done a[href="/starter-dashboard"]` control.
+
+Project-card invoice anchors bound as `[wf-xano-link="payment_link"]` receive
+`target="_blank"` and `rel="noopener noreferrer"` whenever the canonical card is
+decorated, so existing invoice links open in a detached new tab.
 
 A Xano refusal for a Talent member with no connected Stripe account is
 translated into the actionable message `Connect your Stripe account from the
@@ -1278,6 +1421,13 @@ node --test build-profile-wiring-audit.test.js
 
 `build-profile-draft-identity-guard.js` loads synchronously in the page head and
 routes the legacy `build_profile` localStorage key to a member-scoped physical key.
+It treats the existing `window.memberReady` promise as a readiness boundary only,
+including when that promise rejects. After it settles, the guard performs a fresh
+Memberstack identity read, aligns `window.MEMBER`, the guard member ID, authored
+callback arguments, and the physical draft key to that result, and then releases
+authored callbacks. An anonymous or failed live read clears stale identity state
+before callbacks run. This keeps every consumer on one member when a browser
+changes sessions and fails closed when no current member can be proved.
 Reads of the legacy key return `null` until the stable Memberstack member ID
 resolves, so a load-time draft restore that reads synchronously would race that
 window and never repopulate the member's own draft. Any authored draft restore

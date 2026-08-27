@@ -236,8 +236,8 @@ The header line carries the pass counters: `flush #`, `writes`, `echoes ignored`
 source's identity changed — i.e. how many re-renders were survived) and
 `template candidates skipped`.
 
-Gating, both required: the URL param **and** a staging host
-(`*.webflow.io`, `localhost`, `127.0.0.1`, `*.trycloudflare.com`). The overlay
+Gating, both required: the URL param **and** a
+[staging host](../../README.md#staging-only-console-diagnostics). The overlay
 prints the page's record ids, so `window.STARTERS_DEBUG` deliberately does **not**
 unlock it — it only re-enables the console warnings.
 

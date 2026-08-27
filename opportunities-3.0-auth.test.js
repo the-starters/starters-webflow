@@ -54,11 +54,13 @@ async function loadBridge(
     search = '',
     wfXano = null,
     getXanoAuthToken = null,
+    getCurrentMemberImpl = null,
     workflowDiagnostics = false,
     autoLoadWorkflowDiagnostics = false,
     workflowDiagnosticsReady = null,
     setTimeoutImpl = setTimeout,
     nowImpl = null,
+    promptImpl = () => null,
   } = {},
 ) {
   const documentListeners = new Map()
@@ -125,7 +127,8 @@ async function loadBridge(
   const copiedDiagnostics = []
   const window = {
     $memberstackDom: {
-      getCurrentMember: async () => ({ data: typeof member === 'function' ? member() : member }),
+      getCurrentMember: getCurrentMemberImpl ||
+        (async () => ({ data: typeof member === 'function' ? member() : member })),
       getMemberCookie: async () => 'memberstack-a',
       onAuthChange(listener) {
         authChange = listener
@@ -149,6 +152,7 @@ async function loadBridge(
     },
     setInterval,
     setTimeout: setTimeoutImpl,
+    prompt: promptImpl,
   }
   window.CustomEvent = class CustomEvent {
     constructor(type, options) {
@@ -446,6 +450,36 @@ test('invoiceCreate sends the V3 invoice payload through the authenticated Xano 
   })
 })
 
+test('invoiceCancel sends the authenticated cancellation contract to Xano', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/cancel/v3')) {
+        return response({ invoice_id: 901, status: 'void', replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember },
+  )
+  const payload = {
+    invoice_id: 901,
+    expected_status: 'unpaid',
+    idempotency_key: 'invoice-cancel-ui:901:test',
+    dry_run: false,
+  }
+
+  const result = await bridge.API.invoiceCancel(payload)
+
+  assert.equal(result.status, 'void')
+  assert.match(requests[1].url, /\/invoices\/cancel\/v3$/)
+  assert.equal(requests[1].init.method, 'POST')
+  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[1].init.body), payload)
+})
+
 test('mutation diagnostics retain only safe invoice lifecycle fields', async () => {
   const bridge = await loadBridge(
     async (input) => {
@@ -725,18 +759,165 @@ test('project lifecycle intent covers cancellation, completion and early termina
     { action: 'terminate', reason: 'Scope changed' },
   )
   assert.deepEqual(
-    plain(intent({ lifecycle_state: 'completion_requested' }, () => true, () => '')),
+    plain(intent(
+      {
+        lifecycle_state: 'completion_requested',
+        brand_completion_requested_at: null,
+        starter_completion_requested_at: '2026-08-23T01:00:00Z',
+      },
+      () => true,
+      () => '',
+      'brand',
+    )),
     { action: 'complete', reason: '' },
+  )
+  assert.equal(
+    intent(
+      {
+        lifecycle_state: 'completion_requested',
+        brand_completion_requested_at: '2026-08-23T01:00:00Z',
+        starter_completion_requested_at: null,
+      },
+      () => true,
+      () => '',
+      'brand',
+    ),
+    null,
   )
   assert.deepEqual(
     plain(intent(
-      { lifecycle_state: 'termination_requested', end_reason: 'Scope changed' },
+      {
+        lifecycle_state: 'termination_requested',
+        end_reason: 'Scope changed',
+        brand_termination_requested_at: '2026-08-23T01:00:00Z',
+        starter_termination_requested_at: null,
+      },
       () => true,
       () => '',
+      'starter',
     )),
     { action: 'terminate', reason: 'Scope changed' },
   )
+  assert.equal(
+    intent(
+      {
+        lifecycle_state: 'termination_requested',
+        end_reason: 'Scope changed',
+        brand_termination_requested_at: null,
+        starter_termination_requested_at: '2026-08-23T01:00:00Z',
+      },
+      () => true,
+      () => '',
+      'starter',
+    ),
+    null,
+  )
   assert.equal(intent({ lifecycle_state: 'completed' }, () => true, () => 'COMPLETE'), null)
+})
+
+test('project lifecycle requests fail closed when the canonical timestamps are missing', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const intent = bridge.window.Opp30.projectActionIntent
+  const rawActionState = bridge.window.Opp30.projectLifecycleActionState
+  const actionState = (project, role) =>
+    JSON.parse(JSON.stringify(rawActionState(project, role)))
+  let confirms = 0
+  const confirmAction = () => {
+    confirms += 1
+    return true
+  }
+
+  for (const project of [
+    { lifecycle_state: 'completion_requested' },
+    { lifecycle_state: 'completion_requested', brand_completion_requested_at: null },
+    { lifecycle_state: 'completion_requested', starter_completion_requested_at: null },
+    { lifecycle_state: 'termination_requested', end_reason: 'Scope changed' },
+    {
+      lifecycle_state: 'termination_requested',
+      end_reason: 'Scope changed',
+      brand_termination_requested_at: null,
+    },
+  ]) {
+    for (const role of ['brand', 'starter']) {
+      assert.equal(intent(project, confirmAction, () => 'COMPLETE', role), null)
+      assert.deepEqual(actionState(project, role), {
+        waitingOn: '',
+        blocked: true,
+        label: 'Status Unavailable',
+      })
+    }
+  }
+  assert.equal(confirms, 0)
+
+  // An unresolved role cannot identify the requesting party either.
+  const canonical = {
+    lifecycle_state: 'completion_requested',
+    brand_completion_requested_at: '2026-08-23T01:00:00Z',
+    starter_completion_requested_at: null,
+  }
+  assert.equal(intent(canonical, confirmAction, () => 'COMPLETE', null), null)
+  assert.deepEqual(actionState(canonical, null), {
+    waitingOn: '',
+    blocked: true,
+    label: 'Status Unavailable',
+  })
+  assert.equal(confirms, 0)
+
+  // The canonical row still resolves to a live counterparty action.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(intent(canonical, confirmAction, () => '', 'starter'))),
+    { action: 'complete', reason: '' },
+  )
+  assert.deepEqual(actionState(canonical, 'starter'), {
+    waitingOn: '',
+    blocked: false,
+    label: 'Confirm Completion',
+  })
+  assert.deepEqual(actionState(canonical, 'brand'), {
+    waitingOn: 'Starter',
+    blocked: true,
+    label: 'Waiting for Starter',
+  })
+  assert.equal(confirms, 1)
+})
+
+test('project lifecycle waiting labels are role-aware for either request order', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const waitingOn = (project, role) =>
+    bridge.window.Opp30.projectLifecycleActionState(project, role).waitingOn
+
+  assert.equal(
+    waitingOn({
+      lifecycle_state: 'completion_requested',
+      brand_completion_requested_at: '2026-08-23T01:00:00Z',
+      starter_completion_requested_at: null,
+    }, 'brand'),
+    'Starter',
+  )
+  assert.equal(
+    waitingOn({
+      lifecycle_state: 'completion_requested',
+      brand_completion_requested_at: null,
+      starter_completion_requested_at: '2026-08-23T01:00:00Z',
+    }, 'starter'),
+    'Brand',
+  )
+  assert.equal(
+    waitingOn({
+      lifecycle_state: 'completion_requested',
+      brand_completion_requested_at: '2026-08-23T01:00:00Z',
+      starter_completion_requested_at: null,
+    }, 'starter'),
+    '',
+  )
+  assert.equal(
+    waitingOn({
+      lifecycle_state: 'completion_requested',
+      brand_completion_requested_at: null,
+      starter_completion_requested_at: '2026-08-23T01:00:00Z',
+    }, 'brand'),
+    '',
+  )
 })
 
 test('project timelines use compact readable calendar ranges without timezone shifts', async () => {
@@ -895,6 +1076,554 @@ test('project dashboard keeps the direct timeline_display binding as a fallback'
   )
 
   assert.ok(await waitFor(() => timeline.textContent === 'August 6–31, 2026'))
+})
+
+test('Starter invoice cancellation requires exact CANCEL and refreshes the canonical row', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'Cancel Invoice'
+  const wrap = el('div', { class: 'button_main-wrap' }, [action, label])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const handlers = new Set()
+  let state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        lifecycle_state: 'active',
+        invoices: [{ id: 901, status: 'unpaid', cancel_eligible: true }],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  let refreshCount = 0
+  const instance = {
+    getState: () => state,
+    refresh() {
+      refreshCount += 1
+      state = {
+        ...state,
+        data: {
+          items: [{
+            id: 746,
+            lifecycle_state: 'active',
+            invoices: [{ id: 901, status: 'void', cancel_eligible: false }],
+          }],
+        },
+      }
+      handlers.forEach((handler) => handler(state))
+      return Promise.resolve(state)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const prompts = ['cancel', 'CANCEL']
+  const cancelBodies = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/cancel/v3')) {
+        cancelBodies.push(JSON.parse(init.body))
+        return response({ invoice_id: 901, status: 'void', replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: () => prompts.shift(),
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '901'))
+  assert.equal(wrap.style.display, '')
+
+  bridge.dispatchDocument('click', clickEvent(action).event)
+  await new Promise(setImmediate)
+  assert.equal(cancelBodies.length, 0)
+
+  bridge.dispatchDocument('click', clickEvent(action).event)
+  assert.ok(await waitFor(() => cancelBodies.length === 1))
+  assert.equal(cancelBodies[0].invoice_id, 901)
+  assert.equal(cancelBodies[0].expected_status, 'unpaid')
+  assert.equal(cancelBodies[0].dry_run, false)
+  assert.match(cancelBodies[0].idempotency_key, /^invoice-cancel-ui:901:/)
+  assert.ok(await waitFor(() => refreshCount === 1))
+  assert.ok(await waitFor(() => wrap.style.display === 'none'))
+})
+
+test('dashboard invoice rows show Cancelled and remove payable actions for canonical void invoices', async () => {
+  const voidLabel = el('div', { class: 'label_text' })
+  let voidLabelText = 'Incomplete'
+  let voidLabelWrites = 0
+  Object.defineProperty(voidLabel, 'textContent', {
+    get: () => voidLabelText,
+    set: (value) => {
+      voidLabelText = value
+      voidLabelWrites += 1
+    },
+  })
+  const voidBadge = el('div', { 'wf-xano-if': "status === 'void'" }, [voidLabel])
+  const voidView = productButtonWrapFixture({
+    buttonTag: 'a',
+    buttonAttrs: { href: '#payment_link', 'wf-xano-link': 'payment_link' },
+    label: 'View Invoice',
+  })
+  const voidRow = el('div', { 'data-wf-xano-nest-clone': '' }, [voidBadge, voidView.wrap])
+
+  const unpaidView = productButtonWrapFixture({
+    buttonTag: 'a',
+    buttonAttrs: {
+      href: 'https://buy.stripe.com/test-link',
+      'wf-xano-link': 'payment_link',
+    },
+    label: 'View Invoice',
+  })
+  const unpaidRow = el('div', { 'data-wf-xano-nest-clone': '' }, [unpaidView.wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [voidRow, unpaidRow],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  const state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        lifecycle_state: 'active',
+        invoices: [
+          {
+            id: 901,
+            status: 'void',
+            status_display: 'Cancelled',
+            payment_link: null,
+            invoice_link: null,
+            cancel_eligible: false,
+          },
+          {
+            id: 902,
+            status: 'unpaid',
+            status_display: 'Unpaid',
+            payment_link: 'https://buy.stripe.com/test-link',
+            cancel_eligible: false,
+          },
+        ],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh: () => Promise.resolve(state),
+    subscribe(handler) {
+      handler(state)
+      return () => {}
+    },
+  }
+
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-brand-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => voidLabel.textContent === 'Cancelled'))
+  assert.equal(voidRow.getAttribute('data-project-invoice-id'), '901')
+  assert.equal(voidRow.getAttribute('data-project-invoice-status'), 'void')
+  assert.equal(voidView.button.getAttribute('href'), null)
+  assert.equal(voidView.wrap.style.display, 'none')
+  assert.equal(voidView.wrap.getAttribute('aria-hidden'), 'true')
+
+  assert.equal(unpaidRow.getAttribute('data-project-invoice-id'), '902')
+  assert.equal(unpaidRow.getAttribute('data-project-invoice-status'), 'unpaid')
+  assert.equal(unpaidView.wrap.style.display, '')
+  assert.equal(unpaidView.button.getAttribute('href'), 'https://buy.stripe.com/test-link')
+  assert.equal(unpaidView.button.getAttribute('target'), '_blank')
+  assert.equal(unpaidView.button.getAttribute('rel'), 'noopener noreferrer')
+
+  assert.equal(voidLabelWrites, 1)
+  bridge.notifyMutations()
+  await new Promise(setImmediate)
+  assert.equal(voidLabelWrites, 1)
+
+  if (process.env.INVOICE_VOID_ROW_EVIDENCE === '1') {
+    console.log(JSON.stringify({
+      surface: 'Brand dashboard invoice rows',
+      void_invoice: {
+        id: voidRow.getAttribute('data-project-invoice-id'),
+        canonical_status: voidRow.getAttribute('data-project-invoice-status'),
+        visible_label: voidLabel.textContent,
+        view_invoice_href: voidView.button.getAttribute('href'),
+        view_invoice_visible: voidView.wrap.style.display !== 'none',
+      },
+      unpaid_invoice: {
+        id: unpaidRow.getAttribute('data-project-invoice-id'),
+        canonical_status: unpaidRow.getAttribute('data-project-invoice-status'),
+        view_invoice_href: unpaidView.button.getAttribute('href'),
+        opens_in_new_tab: unpaidView.button.getAttribute('target') === '_blank',
+      },
+    }))
+  }
+})
+
+test('Starter invoice cancellation resolves a lazy row that hydrated after initial decoration', async () => {
+  const initialAction = el('button', { 'data-project-invoice-action': 'cancel' })
+  const initialWrap = el('div', { class: 'button_main-wrap' }, [initialAction])
+  const initialRow = el('div', { 'data-wf-xano-nest-clone': '' }, [initialWrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [initialRow],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        lifecycle_state: 'active',
+        invoices: [
+          { id: 900, status: 'unpaid', cancel_eligible: true },
+          { id: 901, status: 'unpaid', cancel_eligible: true },
+        ],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh: () => Promise.resolve(state),
+    subscribe(handler) {
+      handler(state)
+      return () => {}
+    },
+  }
+  const cancelBodies = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/cancel/v3')) {
+        cancelBodies.push(JSON.parse(init.body))
+        return response({ invoice_id: 901, status: 'void', replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: () => 'CANCEL',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  assert.ok(await waitFor(() => initialAction.getAttribute('data-project-invoice-id') === '900'))
+  invoices.appendChild(row)
+
+  assert.equal(action.getAttribute('data-project-invoice-id'), null)
+  bridge.dispatchDocument('click', clickEvent(action).event)
+
+  assert.ok(await waitFor(() => cancelBodies.length === 1))
+  assert.equal(action.getAttribute('data-project-invoice-id'), '901')
+  assert.equal(cancelBodies[0].invoice_id, 901)
+})
+
+test('Starter invoice cancellation ignores stale DOM identity and canonical ineligibility', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const handlers = new Set()
+  let state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        lifecycle_state: 'active',
+        invoices: [{ id: 901, status: 'unpaid', cancel_eligible: true }],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const setInvoice = (invoice) => {
+    state = {
+      ...state,
+      data: { items: [{ id: 746, lifecycle_state: 'active', invoices: [invoice] }] },
+    }
+    handlers.forEach((handler) => handler(state))
+  }
+  const instance = {
+    getState: () => state,
+    refresh: () => Promise.resolve(state),
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const cancelBodies = []
+  let promptCount = 0
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/cancel/v3')) {
+        cancelBodies.push(JSON.parse(init.body))
+        return response({ invoice_id: 902, status: 'void', replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: () => {
+        promptCount += 1
+        return 'CANCEL'
+      },
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '901'))
+  setInvoice({ id: 902, status: 'unpaid', cancel_eligible: true })
+  action.setAttribute('data-project-invoice-id', '901')
+  bridge.dispatchDocument('click', clickEvent(action).event)
+
+  assert.ok(await waitFor(() => cancelBodies.length === 1))
+  assert.equal(cancelBodies[0].invoice_id, 902)
+  assert.equal(promptCount, 1)
+
+  setInvoice({ id: 903, status: 'void', cancel_eligible: false })
+  action.setAttribute('data-project-invoice-id', '902')
+  wrap.style.display = ''
+  bridge.dispatchDocument('click', clickEvent(action).event)
+  await new Promise(setImmediate)
+
+  assert.equal(cancelBodies.length, 1)
+  assert.equal(promptCount, 1)
+})
+
+test('reused invoice rows create a new cancellation key for the new invoice', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const handlers = new Set()
+  let state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        lifecycle_state: 'active',
+        invoices: [{ id: 901, status: 'unpaid', cancel_eligible: true }],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh() {
+      state = {
+        ...state,
+        data: {
+          items: [{
+            id: 746,
+            lifecycle_state: 'active',
+            invoices: [{ id: 902, status: 'unpaid', cancel_eligible: true }],
+          }],
+        },
+      }
+      handlers.forEach((handler) => handler(state))
+      return Promise.resolve(state)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const cancelBodies = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/cancel/v3')) {
+        const body = JSON.parse(init.body)
+        cancelBodies.push(body)
+        return response({ invoice_id: body.invoice_id, status: 'void', replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: () => 'CANCEL',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '901'))
+  bridge.dispatchDocument('click', clickEvent(action).event)
+  assert.ok(await waitFor(() => cancelBodies.length === 1))
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '902'))
+
+  bridge.dispatchDocument('click', clickEvent(action).event)
+  assert.ok(await waitFor(() => cancelBodies.length === 2))
+
+  assert.match(cancelBodies[0].idempotency_key, /^invoice-cancel-ui:901:/)
+  assert.match(cancelBodies[1].idempotency_key, /^invoice-cancel-ui:902:/)
+  assert.notEqual(cancelBodies[1].idempotency_key, cancelBodies[0].idempotency_key)
+})
+
+test('Brand dashboard always hides the shared Cancel Invoice control', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+
+  await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 746,
+            lifecycle_state: 'active',
+            invoices: [{ id: 901, status: 'unpaid', cancel_eligible: true }],
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '901'))
+  assert.equal(wrap.style.display, 'none')
+})
+
+test('Brand dashboard hides Cancel Invoice while authorization is unresolved', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  const currentMember = deferred()
+
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 746,
+            lifecycle_state: 'active',
+            invoices: [{ id: 901, status: 'unpaid', cancel_eligible: true }],
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      pathname: '/brand-dashboard',
+      getCurrentMemberImpl: () => currentMember.promise,
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.equal(wrap.style.display, 'none')
+
+  currentMember.resolve({ data: paidBrandMember })
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '901'))
+  assert.equal(wrap.style.display, 'none')
+  assert.equal(bridge.consoleErrors.length, 0)
 })
 
 test('Brand dashboard action wiring starts only after the stable paid-Brand gate', async () => {
@@ -1929,6 +2658,7 @@ function el(tag, attrs = {}, children = []) {
     },
   }
   if (tag === 'button' || tag === 'input') node.disabled = false
+  if (tag === 'input' && attributes.has('checked')) node.checked = true
   children.forEach((child) => {
     child.parent = node
     child.parentNode = node
@@ -1965,6 +2695,9 @@ function descendants(node) {
 // descendant-combined simple selectors built from a tag, #id, .class and
 // [attr] / [attr="value"] terms.
 function simpleMatches(node, simple) {
+  // Honor :checked only on radios/checkboxes. Review fixtures use the same
+  // selector on a text input (Call-Rating); those still match as before.
+  if (/:checked\b/.test(simple) && 'checked' in node && !node.checked) return false
   const terms = simple.match(/^[a-z]+|#[\w-]+|\.[\w-]+|\[[^\]]+\]/gi) || []
   return terms.every((term) => {
     if (term.startsWith('#')) return node.getAttribute('id') === term.slice(1)
@@ -2302,6 +3035,230 @@ test('pending project cards suppress the request-era duplicate and keep one cano
   assert.equal(end.getAttribute('data-project-action'), 'end')
   assert.equal(endWrap.style.display, '')
   assert.equal(endLabel.textContent, 'Cancel Project')
+})
+
+test('Brand requester sees a waiting state and cannot repeat a completion request', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '743' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  let actionCount = 0
+  let listCount = 0
+
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        listCount += 1
+        return response({
+          items: [{
+            id: 743,
+            lifecycle_state: 'completion_requested',
+            lifecycle_version: 4,
+            brand_completion_requested_at: '2026-08-20T09:00:00Z',
+            starter_completion_requested_at: null,
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionCount += 1
+        return response({})
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  let confirms = 0
+  bridge.window.confirm = () => {
+    confirms += 1
+    return true
+  }
+
+  assert.ok(await waitFor(() => label.textContent === 'Waiting for Starter'))
+  assert.equal(end.getAttribute('aria-disabled'), 'true')
+  assert.equal(end.getAttribute('data-project-action-waiting'), 'true')
+
+  // A refused click never reaches the pre-mutation canonical refresh.
+  const listRequests = listCount
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  assert.equal(await waitFor(() => listCount > listRequests || actionCount > 0), false)
+  assert.equal(confirms, 0)
+  assert.equal(actionCount, 0)
+  assert.equal(listCount, listRequests)
+})
+
+test('Starter counterparty can confirm a Brand completion request', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '743' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const actionBodies = []
+
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{
+            id: 743,
+            lifecycle_state: 'completion_requested',
+            lifecycle_version: 4,
+            brand_completion_requested_at: '2026-08-20T09:00:00Z',
+            starter_completion_requested_at: null,
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBodies.push(JSON.parse(init.body))
+        return response({
+          project: { id: 743, lifecycle_state: 'completed', lifecycle_version: 5 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  bridge.window.confirm = () => true
+
+  assert.ok(await waitFor(() => label.textContent === 'Confirm Completion'))
+  assert.equal(end.getAttribute('aria-disabled'), null)
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  assert.ok(await waitFor(() => actionBodies.length === 1))
+  assert.equal(actionBodies[0].action, 'complete')
+  assert.equal(actionBodies[0].expected_version, 4)
+})
+
+test('a project card fails closed when the canonical request timestamps are missing', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '743' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  let actionCount = 0
+
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{ id: 743, lifecycle_state: 'completion_requested', lifecycle_version: 4 }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionCount += 1
+        return response({})
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  let confirms = 0
+  bridge.window.confirm = () => {
+    confirms += 1
+    return true
+  }
+
+  assert.ok(await waitFor(() => label.textContent === 'Status Unavailable'))
+  assert.equal(end.getAttribute('aria-disabled'), 'true')
+  assert.equal(end.getAttribute('data-project-action-waiting'), 'true')
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  await new Promise(setImmediate)
+  assert.equal(confirms, 0)
+  assert.equal(actionCount, 0)
+})
+
+test('requesting completion keeps the waiting lock after the pending lock is released', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '743' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const actionBodies = []
+  const project = {
+    id: 743,
+    lifecycle_state: 'active',
+    lifecycle_version: 4,
+    brand_completion_requested_at: null,
+    starter_completion_requested_at: null,
+  }
+
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) return response({ items: [{ ...project }] })
+      if (url.includes('/projects/action/v3')) {
+        actionBodies.push(JSON.parse(init.body))
+        project.lifecycle_state = 'completion_requested'
+        project.lifecycle_version = 5
+        project.starter_completion_requested_at = '2026-08-23T02:00:00Z'
+        return response({ project: { ...project } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  bridge.window.prompt = () => 'COMPLETE'
+
+  assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+  assert.equal(label.textContent, 'End Project')
+  assert.equal(end.getAttribute('data-project-action-waiting'), null)
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  assert.ok(await waitFor(() => actionBodies.length === 1))
+  assert.equal(actionBodies[0].action, 'complete')
+  assert.ok(await waitFor(() => wrap.getAttribute('data-project-action-result') === 'success'))
+  assert.equal(end.getAttribute('data-project-action-waiting'), 'true')
+  assert.equal(end.getAttribute('aria-disabled'), 'true')
+  assert.equal(label.dataset.projectActionRestLabel, 'Waiting for Brand')
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  await new Promise(setImmediate)
+  assert.equal(actionBodies.length, 1)
 })
 
 test('Starter project cards keep completed contracts off the signing-session route', async () => {
@@ -3716,6 +4673,344 @@ test('call-review email deep link validates the booking before opening and submi
   assert.equal(requests.filter((request) => request.type === 'submit').length, 1)
 })
 
+test('project-review email deep link opens only the eligible authenticated project', async () => {
+  const form = el('form')
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = 'Rate your project with [Starter Name]'
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [modal])
+  let projectRequests = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        projectRequests += 1
+        return response({
+          items: [
+            {
+              id: 675,
+              lifecycle_state: 'completed',
+              review_eligible: true,
+              has_review: false,
+              starter_name: 'Brian',
+            },
+            {
+              id: 676,
+              lifecycle_state: 'completed',
+              review_eligible: false,
+              has_review: true,
+              starter_name: 'Other Starter',
+            },
+          ],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_project=675&utm_source=mandrill',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => modal.getAttribute('open') === ''))
+  assert.equal(projectRequests, 1)
+  assert.equal(starterName.textContent, 'Rate your project with Brian')
+
+  if (process.env.NO_MISTAKES_EVIDENCE_DIR) {
+    fs.mkdirSync(process.env.NO_MISTAKES_EVIDENCE_DIR, { recursive: true })
+    fs.writeFileSync(
+      path.join(process.env.NO_MISTAKES_EVIDENCE_DIR, 'project-review-eligible.json'),
+      JSON.stringify({
+        route: '/brand-dashboard?review_project=675',
+        authenticated_role: 'brand-paid',
+        exact_project_id: 675,
+        project_requests: projectRequests,
+        modal_open: modal.getAttribute('open') === '',
+        visible_prompt: starterName.textContent,
+      }, null, 2) + '\n',
+    )
+  }
+
+  bridge.dispatchWindow('focus')
+  await new Promise(setImmediate)
+  assert.equal(starterName.textContent, 'Rate your project with Brian')
+})
+
+test('project-review email deep link resolves an eligible project beyond the visible page', async () => {
+  const form = el('form')
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = 'Rate your project with [Starter Name]'
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+  const root = el('div', {
+    'wf-xano-instance': 'dash-brand-projects',
+    'wf-xano-source': 'opp30:brand/projects/mine',
+  }, [modal])
+  const visibleState = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 676,
+        lifecycle_state: 'completed',
+        review_eligible: false,
+        has_review: true,
+        starter_name: 'Visible Starter',
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const requestedPages = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        const body = JSON.parse(init.body)
+        requestedPages.push(body.page)
+        if (body.page === 1) {
+          return response({
+            items: visibleState.data.items,
+            itemsTotal: 2,
+            curPage: 1,
+            nextPage: 2,
+          })
+        }
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completed',
+            review_eligible: true,
+            has_review: false,
+            starter_name: 'Brian',
+          }],
+          itemsTotal: 2,
+          curPage: 2,
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_project=675&utm_source=mandrill',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects'
+            ? { getState: () => visibleState, subscribe: () => () => {} }
+            : null
+        },
+      },
+    },
+  )
+
+  assert.ok(await waitFor(() => modal.getAttribute('open') === ''))
+  assert.deepEqual(requestedPages, [1, 2])
+  assert.equal(starterName.textContent, 'Rate your project with Brian')
+  assert.equal(bridge.consoleErrors.length, 0)
+})
+
+test('stale project refresh cannot consume a newer member review deep link', async () => {
+  const form = el('form')
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = 'Rate your project with [Starter Name]'
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+  const root = el('div', {
+    'wf-xano-instance': 'dash-brand-projects',
+    'wf-xano-source': 'opp30:brand/projects/mine',
+  }, [modal])
+  const oldHandlers = new Set()
+  const newHandlers = new Set()
+  const loadingState = { status: 'loading', data: { items: [] }, query: { page: 1, perPage: 12 } }
+  const oldInstance = {
+    getState: () => loadingState,
+    subscribe(handler) {
+      oldHandlers.add(handler)
+      return () => oldHandlers.delete(handler)
+    },
+  }
+  const newInstance = {
+    getState: () => loadingState,
+    subscribe(handler) {
+      newHandlers.add(handler)
+      return () => newHandlers.delete(handler)
+    },
+  }
+  let currentInstance = oldInstance
+  const bridge = await loadBridge(
+    async (input) => {
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_project=675',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: () => currentInstance },
+    },
+  )
+
+  assert.ok(await waitFor(() => oldHandlers.size > 0))
+  currentInstance = newInstance
+  bridge.authChange({ ...paidBrandMember, id: 'm-brand-2' })
+  assert.ok(await waitFor(() => newHandlers.size > 0))
+
+  const oldState = { status: 'success', data: { items: [] }, query: { page: 1, perPage: 12 } }
+  for (const handler of [...oldHandlers]) handler(oldState)
+  await new Promise(setImmediate)
+
+  const newState = {
+    status: 'success',
+    data: { items: [{
+      id: 675,
+      lifecycle_state: 'completed',
+      review_eligible: true,
+      has_review: false,
+      starter_name: 'New Member Starter',
+    }] },
+    query: { page: 1, perPage: 12 },
+  }
+  for (const handler of [...newHandlers]) handler(newState)
+
+  assert.ok(await waitFor(() => modal.getAttribute('open') === ''))
+  assert.equal(starterName.textContent, 'Rate your project with New Member Starter')
+})
+
+test('project-review email deep link fails closed for an ineligible project', async () => {
+  const form = el('form')
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = '[Starter Name]'
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [modal])
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 676,
+            lifecycle_state: 'completed',
+            review_eligible: false,
+            has_review: true,
+            starter_name: 'Brian',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_project=676&utm_source=mandrill',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  await new Promise(setImmediate)
+  await new Promise(setImmediate)
+  assert.equal(modal.getAttribute('open'), null)
+  assert.equal(starterName.textContent, '[Starter Name]')
+  assert.ok(bridge.consoleErrors.length === 0)
+})
+
+test('project-review email deep link fails closed for malformed, mixed, and unauthorized requests', async () => {
+  const cases = [
+    { name: 'malformed project id', member: paidBrandMember, search: '?review_project=not-a-project' },
+    { name: 'mixed review targets', member: paidBrandMember, search: '?review_project=675&review_booking=call-42' },
+    { name: 'wrong member role', member: talentMember, search: '?review_project=675' },
+    { name: 'signed-out visitor', member: null, search: '?review_project=675' },
+  ]
+
+  const evidence = []
+  for (const scenario of cases) {
+    const form = el('form')
+    form.reset = () => {}
+    const starterName = el('p')
+    starterName.textContent = '[Starter Name]'
+    const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+    const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [modal])
+    let projectRequests = 0
+    const bridge = await loadBridge(
+      async (input) => {
+        const url = String(input)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+        if (url.includes('/brand/projects/mine')) {
+          projectRequests += 1
+          return response({
+            items: [{
+              id: 675,
+              lifecycle_state: 'completed',
+              review_eligible: true,
+              has_review: false,
+              starter_name: 'Brian',
+            }],
+          })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      },
+      {
+        member: scenario.member,
+        pathname: '/brand-dashboard',
+        search: scenario.search,
+        querySelector: (selector) =>
+          selectorMatches(root, selector) ? root : root.querySelector(selector),
+        querySelectorAll: (selector) =>
+          [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+        routeGuard: true,
+      },
+    )
+
+    await new Promise(setImmediate)
+    await new Promise(setImmediate)
+    assert.equal(modal.getAttribute('open'), null, scenario.name)
+    assert.equal(starterName.textContent, '[Starter Name]', scenario.name)
+    assert.equal(bridge.consoleErrors.length, 0, scenario.name)
+    assert.equal(
+      projectRequests,
+      scenario.member === paidBrandMember ? 1 : 0,
+      scenario.name,
+    )
+    evidence.push({
+      scenario: scenario.name,
+      route: '/brand-dashboard' + scenario.search,
+      project_requests: projectRequests,
+      modal_open: modal.getAttribute('open') === '',
+      visible_prompt: starterName.textContent,
+    })
+  }
+
+  if (process.env.NO_MISTAKES_EVIDENCE_DIR) {
+    fs.mkdirSync(process.env.NO_MISTAKES_EVIDENCE_DIR, { recursive: true })
+    fs.writeFileSync(
+      path.join(process.env.NO_MISTAKES_EVIDENCE_DIR, 'project-review-fail-closed.json'),
+      JSON.stringify(evidence, null, 2) + '\n',
+    )
+  }
+})
+
 test('pending call-review eligibility cannot replace a newer project review', async () => {
   const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [review])
@@ -4460,9 +5755,395 @@ test('invoiceProjectContext prefers a bound brand field over the pipe-split head
   assert.equal(authored.brand, 'Northwind Coffee')
   assert.equal(authored.title, 'Growth Marketing Lead')
 
+  const canonical = invoiceProjectContext(
+    invoiceCard({
+      heading_display: '#746 | Stale Brand',
+      company_name: 'Stale Brand',
+      title: 'Stale project title',
+    }, '746'),
+    {
+      id: 746,
+      title: 'Test Invoice',
+      company_name: 'The Starters',
+      hiring_manager_name: 'Jai Dolwani',
+    },
+  )
+  assert.equal(canonical.title, 'Test Invoice')
+  assert.equal(canonical.brand, 'The Starters')
+  assert.equal(canonical.party, 'Jai Dolwani')
+
   assert.equal(invoiceProjectContext(invoiceCard({}, '0')), null)
   assert.equal(invoiceProjectContext(invoiceCard({}, '-4')), null)
   assert.equal(invoiceProjectContext(null), null)
+})
+
+test('the opening invoice banner receives the same project, company and party paint as success', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const project = el('p')
+  const company = el('p')
+  const banner = el('div', { class: 'generate-invoice_banner' }, [project, company])
+  const close = el('a', { href: '/starter-dashboard' })
+  const done = el('div', { class: 'w-form-done' }, [close])
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [banner, done])
+
+  bridge.window.Opp30.prepareInvoiceModal(modal, {
+    projectId: 746,
+    title: 'Test Invoice',
+    brand: 'The Starters',
+    party: 'Jai Dolwani',
+  })
+
+  assert.equal(project.getAttribute('data-wf-invoice-bind'), 'project')
+  assert.equal(project.textContent, 'Test Invoice')
+  assert.equal(company.getAttribute('data-wf-invoice-bind'), 'brand')
+  assert.equal(company.textContent, 'The Starters · Jai Dolwani')
+  assert.equal(close.getAttribute('data-wf-invoice'), 'close-success')
+})
+
+test('a separately authored invoice party bind keeps company and party on distinct rows', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const project = el('p', { 'data-wf-invoice-bind': 'project' })
+  const company = el('p', { 'data-wf-invoice-bind': 'brand' })
+  const party = el('p', { 'data-wf-invoice-bind': 'party' })
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [project, company, party])
+
+  bridge.window.Opp30.prepareInvoiceModal(modal, {
+    projectId: 746,
+    title: 'Test Invoice',
+    brand: 'The Starters',
+    party: 'Jai Dolwani',
+  })
+
+  assert.equal(project.textContent, 'Test Invoice')
+  assert.equal(company.textContent, 'The Starters')
+  assert.equal(party.textContent, 'Jai Dolwani')
+})
+
+test('a completed project card can still open Generate Invoice', async () => {
+  const title = el('p', { 'wf-xano-bind': 'title' })
+  title.textContent = 'Completed campaign'
+  const company = el('p', { 'wf-xano-bind': 'company_name' })
+  company.textContent = 'Acme Co'
+  const state = el('p', { 'wf-xano-bind': 'lifecycle_state' })
+  state.textContent = 'completed'
+  const action = el('a', { href: '#generate-invoice' })
+  const card = el('div', { 'data-wf-xano-id': '746' }, [title, company, state, action])
+  const form = el('form', { id: 'wf-form-Generate-Invoice' })
+  form.reset = () => {}
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [form])
+  let opened = 0
+  modal.showModal = () => { opened += 1 }
+  const roots = [card, modal]
+  const bridge = await loadBridge(async () => response({}), {
+    pathname: '/all-modals',
+    querySelector: (selector) => {
+      for (const root of roots) {
+        if (selectorMatches(root, selector)) return root
+        const match = root.querySelector(selector)
+        if (match) return match
+      }
+      return null
+    },
+    querySelectorAll: (selector) => roots.flatMap((root) =>
+      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector))),
+  })
+  const click = clickEvent(action)
+
+  bridge.dispatchDocument('click', click.event)
+
+  assert.equal(opened, 1)
+  assert.equal(click.counts.prevented, 1)
+  assert.equal(click.counts.stopped, 1)
+})
+
+test('Generate Invoice waits for canonical project context before opening', async () => {
+  const title = el('p', { 'wf-xano-bind': 'title' })
+  title.textContent = 'Stale project title'
+  const company = el('p', { 'wf-xano-bind': 'company_name' })
+  company.textContent = 'Stale company'
+  const action = el('a', { href: '#generate-invoice' })
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [
+    title,
+    company,
+    action,
+  ])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const projectBind = el('p', { 'data-wf-invoice-bind': 'project' })
+  const companyBind = el('p', { 'data-wf-invoice-bind': 'brand' })
+  const form = el('form')
+  form.reset = () => {}
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [
+    projectBind,
+    companyBind,
+    form,
+  ])
+  modal.showModal = () => { modal.open = true }
+  const projectList = deferred()
+  let listRequested = false
+  const roots = [root, modal]
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        listRequested = true
+        return projectList.promise
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) => {
+        for (const candidate of roots) {
+          if (selectorMatches(candidate, selector)) return candidate
+          const match = candidate.querySelector(selector)
+          if (match) return match
+        }
+        return null
+      },
+      querySelectorAll: (selector) => roots.flatMap((candidate) =>
+        [candidate, ...descendants(candidate)].filter((node) => selectorMatches(node, selector))),
+      routeGuard: true,
+    },
+  )
+  assert.ok(await waitFor(() => listRequested))
+
+  const click = clickEvent(action)
+  bridge.dispatchDocument('click', click.event)
+  assert.equal(modal.open, undefined)
+  assert.equal(click.counts.prevented, 1)
+
+  projectList.resolve(response({
+    items: [{
+      id: 746,
+      lifecycle_state: 'completed',
+      title: 'Canonical project title',
+      company_name: 'Canonical company',
+      hiring_manager_name: 'Canonical party',
+    }],
+  }))
+
+  assert.ok(await waitFor(() => modal.open === true))
+  assert.equal(projectBind.textContent, 'Canonical project title')
+  assert.equal(companyBind.textContent, 'Canonical company · Canonical party')
+})
+
+test('each invoice success drains a reload after an active project refresh', async () => {
+  const dom = invoiceSubmitDom()
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [dom.modal])
+  const root = el('div', {
+    'wf-xano-instance': 'dash-projects',
+    'wf-xano-source': 'opp30:starter/projects/mine',
+  }, [card])
+  const handlers = new Set()
+  const firstRefresh = deferred()
+  const secondRefresh = deferred()
+  let refreshCount = 0
+  let state = {
+    status: 'success',
+    data: { items: [{ id: 746, lifecycle_state: 'completed', invoice_status: 'unpaid' }] },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh() {
+      refreshCount += 1
+      if (refreshCount === 1) return firstRefresh.promise
+      if (refreshCount === 2) return secondRefresh.promise
+      state = {
+        ...state,
+        data: { items: [{ id: 746, lifecycle_state: 'completed', invoice_status: 'paid-latest' }] },
+      }
+      handlers.forEach((handler) => handler(state))
+      return Promise.resolve(state)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  let invoiceRequests = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/create/v3')) {
+        invoiceRequests += 1
+        return response({ invoice_id: 901, status: 'unpaid' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) { return key === 'dash-projects' ? instance : null },
+      },
+    },
+  )
+  assert.ok(await waitFor(() => bridge.documentListenerCount('submit') > 0))
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+    card,
+    projectId: 746,
+    title: 'Canonical project title',
+    brand: 'Canonical company',
+  })
+
+  bridge.dispatchWindow('focus')
+  assert.ok(await waitFor(() => refreshCount === 1))
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  assert.ok(await waitFor(() => invoiceRequests === 1))
+  assert.equal(refreshCount, 1)
+
+  firstRefresh.resolve(state)
+  assert.ok(await waitFor(() => refreshCount === 2))
+
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+    card,
+    projectId: 746,
+    title: 'Canonical project title',
+    brand: 'Canonical company',
+  })
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  assert.ok(await waitFor(() => invoiceRequests === 2))
+  assert.equal(refreshCount, 2)
+
+  secondRefresh.resolve(state)
+  assert.ok(await waitFor(() => refreshCount === 3))
+  assert.equal(instance.getState().data.items[0].invoice_status, 'paid-latest')
+})
+
+test('project reload ownership resets when the authenticated member changes', async () => {
+  const timeline = el('p', { 'wf-xano-bind': 'timeline_display' })
+  timeline.textContent = 'Authored timeline'
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [timeline])
+  const root = el('div', {
+    'wf-xano-instance': 'dash-projects',
+    'wf-xano-source': 'opp30:starter/projects/mine',
+  }, [card])
+  const oldRefresh = deferred()
+  const oldHandlers = new Set()
+  let oldState = {
+    status: 'success',
+    data: { items: [{ id: 746, lifecycle_state: 'active', start_date: '2026-08-01', end_date: '2026-08-01' }] },
+    query: { page: 1, perPage: 12 },
+  }
+  const oldInstance = {
+    getState: () => oldState,
+    refresh: () => oldRefresh.promise,
+    subscribe(handler) {
+      oldHandlers.add(handler)
+      handler(oldState)
+      return () => oldHandlers.delete(handler)
+    },
+  }
+  const newHandlers = new Set()
+  let newRefreshes = 0
+  const newState = {
+    status: 'success',
+    data: { items: [{ id: 746, lifecycle_state: 'active', start_date: '2026-08-20', end_date: '2026-08-20' }] },
+    query: { page: 1, perPage: 12 },
+  }
+  const newInstance = {
+    getState: () => newState,
+    refresh() {
+      newRefreshes += 1
+      newHandlers.forEach((handler) => handler(newState))
+      return Promise.resolve(newState)
+    },
+    subscribe(handler) {
+      newHandlers.add(handler)
+      handler(newState)
+      return () => newHandlers.delete(handler)
+    },
+  }
+  let currentInstance = oldInstance
+  const bridge = await loadBridge(
+    async (input) => {
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) { return key === 'dash-projects' ? currentInstance : null },
+      },
+    },
+  )
+  assert.ok(await waitFor(() => timeline.textContent === 'August 1, 2026'))
+
+  bridge.dispatchWindow('focus')
+  currentInstance = newInstance
+  bridge.authChange({ ...talentMember, id: 'm-talent-2' })
+  assert.ok(await waitFor(() => timeline.textContent === 'August 20, 2026'))
+
+  bridge.dispatchWindow('focus')
+  assert.ok(await waitFor(() => newRefreshes === 1))
+
+  oldState = {
+    ...oldState,
+    data: { items: [{ id: 746, lifecycle_state: 'active', start_date: '2026-09-01', end_date: '2026-09-01' }] },
+  }
+  oldRefresh.resolve(oldState)
+  await new Promise(setImmediate)
+  await new Promise(setImmediate)
+
+  assert.equal(timeline.textContent, 'August 20, 2026')
+  assert.equal(oldHandlers.size, 0)
+})
+
+test('project invoice links always open in a detached new tab', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const link = el('a', { 'wf-xano-link': 'payment_link', href: '#payment_link' })
+  const card = el('div', { 'data-wf-xano-id': '746' }, [link])
+
+  bridge.window.Opp30.decorateProjectInvoiceLinks(card)
+
+  assert.equal(link.getAttribute('target'), '_blank')
+  assert.equal(link.getAttribute('rel'), 'noopener noreferrer')
+})
+
+test('Back to Dashboard closes the invoice success modal without navigation', async () => {
+  const close = el('a', {
+    'data-wf-invoice': 'close-success',
+    href: '/starter-dashboard',
+  })
+  const modal = el('dialog', { 'data-modal-target': 'generate-invoice' }, [close])
+  const bridge = await loadBridge(async () => response({}), {
+    pathname: '/all-modals',
+    querySelector: (selector) => selectorMatches(modal, selector) ? modal : modal.querySelector(selector),
+    querySelectorAll: (selector) =>
+      [modal, ...descendants(modal)].filter((node) => selectorMatches(node, selector)),
+  })
+  let closed = 0
+  bridge.window.lumos = { modal: { list: { 'generate-invoice': { close: () => { closed += 1 } } } } }
+  const click = clickEvent(close)
+
+  bridge.dispatchDocument('click', click.event)
+
+  assert.equal(closed, 1)
+  assert.equal(click.counts.prevented, 1)
+  assert.equal(click.counts.stopped, 1)
 })
 
 // The Generate Invoice modal's success screen as the authored Webflow component
@@ -5422,6 +7103,267 @@ test('standalone create owner sends one request before returning to the publishe
     1,
   )
   assert.equal(bridge.location.href, '/opportunities')
+})
+
+function opportunityCreateFormFixture() {
+  const listen = (node) => {
+    const listeners = new Map()
+    node.addEventListener = (type, listener) => {
+      const list = listeners.get(type) || []
+      list.push(listener)
+      listeners.set(type, list)
+    }
+    node.dispatchEvent = (event) => {
+      for (const listener of listeners.get(event.type) || []) listener(event)
+      return true
+    }
+    node.setCustomValidity = () => {}
+    return node
+  }
+  const input = (name, value, attrs = {}) => {
+    const field = listen(el('input', { name, ...attrs }))
+    field.value = value
+    return field
+  }
+  const title = input('Opportunity-title', 'V3 canary')
+  const description = input('Description', 'Production email automation canary')
+  const requirements = input('Requirements', 'Verified Brand owner')
+  const category = input('Category-option', 'Email Automation', {
+    'data-opp30-selected-values': '["Email Automation"]',
+  })
+  const categoryValuesFromEvent = []
+  category.addEventListener('opp30:set-category-values', (event) => {
+    const values = event.detail && Array.isArray(event.detail.values) ? event.detail.values : []
+    categoryValuesFromEvent.splice(0, categoryValuesFromEvent.length, ...values)
+    category.setAttribute('data-opp30-selected-values', JSON.stringify(values))
+    category.value = values.join(', ')
+  })
+  const chip = el('button', {
+    'data-opp-role-value': 'Email Automation',
+    'aria-selected': 'true',
+  })
+  const oneTime = input('Project-Type', 'One Time', { id: 'One-Time' })
+  oneTime.id = 'One-Time'
+  oneTime.checked = false
+  const partTime = input('Project-Type', 'Ongoing Part Time', {
+    id: 'Ongoing-Part-Time',
+    checked: '',
+  })
+  partTime.id = 'Ongoing-Part-Time'
+  partTime.checked = true
+  const durationDefault = input('Duration', '≤ 1 months')
+  durationDefault.checked = false
+  const durationLong = input('Duration', '3 to 6 months', { checked: '' })
+  durationLong.checked = true
+  const oneTimeBudget = input('One-Time-Budget', '')
+  const partTimeBudget = input('Part-Time-Budget', '4000')
+  const estimatedHours = input('Estimated-Hours', '25')
+  const hoursGroup = el('div', { 'data-project-type': 'part-time' }, [estimatedHours])
+  const cancel = el('button', { type: 'button' })
+  cancel.textContent = 'Cancel'
+  const button = input('', 'Submit', { type: 'submit' })
+  const form = el('form', { 'data-opp-form': 'create' }, [
+    title,
+    description,
+    requirements,
+    category,
+    chip,
+    oneTime,
+    partTime,
+    durationDefault,
+    durationLong,
+    oneTimeBudget,
+    partTimeBudget,
+    hoursGroup,
+    cancel,
+    button,
+  ])
+  form.resetCount = 0
+  form.reset = function reset() {
+    this.resetCount += 1
+    title.value = ''
+    description.value = ''
+    requirements.value = ''
+    category.value = ''
+    oneTimeBudget.value = ''
+    partTimeBudget.value = ''
+    estimatedHours.value = ''
+    oneTime.checked = true
+    partTime.checked = false
+    durationDefault.checked = true
+    durationLong.checked = false
+  }
+  let submit
+  form.addEventListener = (type, listener) => {
+    if (type === 'submit') submit = listener
+  }
+  const successTitle = el('span', { 'data-opp-bind': 'title' })
+  successTitle.textContent = ''
+  const done = el('div', { class: 'w-form-done' }, [successTitle])
+  const wrap = el('div', { class: 'w-form' }, [form, done])
+  const modal = el('dialog', { 'data-modal-target': 'post-opportunity' }, [wrap])
+  const editTitle = input('Opportunity-title', 'Existing Opportunity')
+  const editForm = el('form', {}, [editTitle])
+  editForm.resetCount = 0
+  editForm.reset = function reset() {
+    this.resetCount += 1
+    editTitle.value = ''
+  }
+  const editModal = el('dialog', { 'data-modal-target': 'edit-opportunity' }, [editForm])
+  return {
+    cancel,
+    category,
+    categoryValuesFromEvent,
+    chip,
+    description,
+    done,
+    durationDefault,
+    durationLong,
+    editForm,
+    editModal,
+    editTitle,
+    estimatedHours,
+    form,
+    hoursGroup,
+    modal,
+    oneTime,
+    oneTimeBudget,
+    partTime,
+    partTimeBudget,
+    requirements,
+    successTitle,
+    title,
+    submit: () => submit,
+  }
+}
+
+function submitEvent() {
+  return {
+    preventDefault() {},
+    stopImmediatePropagation() {},
+    stopPropagation() {},
+  }
+}
+
+async function loadCreateFormBridge(fixture, fetchImpl) {
+  return loadBridge(fetchImpl, {
+    member: paidBrandMember,
+    pathname: '/opportunities---create',
+    querySelector: (selector) => {
+      if (selector === '[data-opp-form="create"]') return fixture.form
+      if (selector === '[data-modal-target="edit-opportunity"]') return fixture.editModal
+      if (selector === '[data-modal-target="post-opportunity"]') return fixture.modal
+      return null
+    },
+    querySelectorAll: (selector) => {
+      if (selector === '[data-opp-form="create"], [data-modal-target="edit-opportunity"] form') {
+        return [fixture.form, fixture.editForm]
+      }
+      return []
+    },
+    routeGuard: true,
+  })
+}
+
+test('successful create restores Create Form Authored Defaults and keeps Review Success title', async () => {
+  const fixture = opportunityCreateFormFixture()
+  const createBodies = []
+  const bridge = await loadCreateFormBridge(fixture, async (request, options = {}) => {
+    const url = String(request)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    if (url.includes('/brand/opportunities/create')) {
+      createBodies.push(JSON.parse(options.body || '{}'))
+      return response({ id: 100 + createBodies.length })
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  })
+
+  assert.ok(await waitFor(() => typeof fixture.submit() === 'function'))
+  await fixture.submit()(submitEvent())
+
+  assert.equal(fixture.successTitle.textContent, 'V3 canary')
+  assert.equal(fixture.title.value, '')
+  assert.equal(fixture.description.value, '')
+  assert.equal(fixture.requirements.value, '')
+  assert.equal(fixture.oneTimeBudget.value, '')
+  assert.equal(fixture.partTimeBudget.value, '')
+  assert.equal(fixture.estimatedHours.value, '')
+  assert.deepEqual(fixture.categoryValuesFromEvent, [])
+  assert.equal(fixture.category.getAttribute('data-opp30-selected-values'), '[]')
+  assert.equal(fixture.chip.getAttribute('aria-selected'), null)
+  assert.equal(fixture.oneTime.checked, true)
+  assert.equal(fixture.partTime.checked, false)
+  assert.equal(fixture.durationDefault.checked, true)
+  assert.equal(fixture.durationLong.checked, false)
+  assert.equal(fixture.hoursGroup.hidden, true)
+  assert.equal(fixture.form.resetCount, 1)
+  assert.equal(bridge.location.href, 'https://example.test/opportunities---create')
+  assert.equal(fixture.editTitle.value, 'Existing Opportunity')
+  assert.equal(fixture.editForm.resetCount, 0)
+
+  bridge.dispatchWindow('modal-open', { modal: fixture.modal })
+  assert.equal(fixture.title.value, '')
+  assert.equal(fixture.form.style.display, '')
+
+  fixture.title.value = 'Second opportunity'
+  fixture.description.value = 'A follow-up brief'
+  fixture.requirements.value = 'Need a writer'
+  fixture.category.setAttribute('data-opp30-selected-values', '["Paid Media"]')
+  fixture.oneTimeBudget.value = '500'
+  await fixture.submit()(submitEvent())
+
+  assert.equal(createBodies.length, 2)
+  assert.equal(createBodies[0].title, 'V3 canary')
+  assert.equal(createBodies[1].title, 'Second opportunity')
+  assert.equal(fixture.successTitle.textContent, 'Second opportunity')
+  assert.equal(fixture.title.value, '')
+
+  bridge.dispatchWindow('modal-open', { modal: fixture.editModal })
+  assert.equal(fixture.editTitle.value, 'Existing Opportunity')
+  assert.equal(fixture.editForm.resetCount, 0)
+})
+
+test('failed create submit leaves the Create Form draft in place', async () => {
+  const fixture = opportunityCreateFormFixture()
+  const bridge = await loadCreateFormBridge(fixture, async (request) => {
+    const url = String(request)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    if (url.includes('/brand/opportunities/create')) {
+      return response({ message: 'Xano rejected the create' }, false, 400)
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  })
+
+  assert.ok(await waitFor(() => typeof fixture.submit() === 'function'))
+  await fixture.submit()(submitEvent())
+
+  assert.equal(fixture.title.value, 'V3 canary')
+  assert.equal(fixture.partTime.checked, true)
+  assert.equal(fixture.category.getAttribute('data-opp30-selected-values'), '["Email Automation"]')
+  assert.equal(fixture.form.resetCount, 0)
+  assert.equal(fixture.successTitle.textContent, '')
+  assert.equal(bridge.location.href, 'https://example.test/opportunities---create')
+})
+
+test('Cancel without a successful create leaves the Create Form draft in place', async () => {
+  const fixture = opportunityCreateFormFixture()
+  const bridge = await loadCreateFormBridge(fixture, async (request) => {
+    const url = String(request)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    throw new Error(`Unexpected request: ${url}`)
+  })
+
+  assert.ok(await waitFor(() => typeof fixture.submit() === 'function'))
+  assert.equal(fixture.cancel.getAttribute('type'), 'button')
+  fixture.modal.style.display = 'none'
+  bridge.dispatchWindow('modal-open', { modal: fixture.modal })
+
+  assert.equal(fixture.title.value, 'V3 canary')
+  assert.equal(fixture.partTime.checked, true)
+  assert.equal(fixture.estimatedHours.value, '25')
+  assert.equal(fixture.category.getAttribute('data-opp30-selected-values'), '["Email Automation"]')
+  assert.equal(fixture.chip.getAttribute('aria-selected'), 'true')
+  assert.equal(fixture.form.resetCount, 0)
 })
 
 test('merged feed re-applies the Talent navbar role after Webflow restores the authored component value', async () => {

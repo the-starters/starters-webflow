@@ -246,9 +246,8 @@ body rather than a freelancer envelope and answers `'build-profile'`,
 
 The funnel never produces a `data-auth-route-error`; it fails open instead. It
 narrates each decision to the console (which state was found, where routing
-goes) only on staging: `*.webflow.io`, `localhost`, `127.0.0.1`,
-`*.trycloudflare.com`, or with `window.STARTERS_DEBUG === true`. Production
-stays silent apart from the configuration errors in the table above.
+goes) only on [staging](../README.md#staging-only-console-diagnostics).
+Production stays silent apart from the configuration errors in the table above.
 
 ## Release Gate
 

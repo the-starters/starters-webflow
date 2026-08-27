@@ -220,12 +220,10 @@ all. It has no dependencies of its own and is safe to load twice (an init guard
 on `window.__startersTurnstileContentsFixBooted`); it needs Webflow's own jQuery
 only to read `jQuery.data(form, '.w-form')`.
 
-Diagnostics are console-only and gated to staging hosts (`*.webflow.io`,
-`localhost`, `127.0.0.1`, `*.trycloudflare.com`) or `window.STARTERS_DEBUG === true`.
-**Production is silent**, including about a mismarked form. The host patterns are
-anchored so a lookalike (`notwebflow.io`, `evil-trycloudflare.com`) cannot read as
-staging, and `STARTERS_DEBUG` may turn logging on in production but must never
-widen what counts as a staging host.
+Diagnostics are console-only and use the repo-wide
+[staging-only console diagnostics](../../README.md#staging-only-console-diagnostics)
+gate, which owns the host predicate and the anchoring rules.
+**Production is silent**, including about a mismarked form.
 
 `window.StartersTurnstileContentsFix` exposes three calls for console checks on
 staging:

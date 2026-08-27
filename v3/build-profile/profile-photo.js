@@ -51,6 +51,11 @@
       if (!MEMBER.id) return;
 
       const MAX_SIZE = 4 * 1024 * 1024; // 4MB
+      const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
+      const BUILD_PROFILE_PATHS = ['/build-profile/full-profile', '/build-profile/consult'];
+      const isBuildProfile = BUILD_PROFILE_PATHS.includes(String(window.location?.pathname || ''));
+      let currentUploadIntent = null;
+      let buildProfileSaved = false;
 
       const XANO_BASE_URL = 'https://x08a-5ko8-jj1r.n7c.xano.io';
       const wrap = document.querySelector('#profile-photo-wrap');
@@ -62,6 +67,12 @@
       const photoUrlInput = document.querySelector('#profile-photo-url');
 
       if (!wrap || !label || !input || !preview || !previewImg || !photoUrlInput) return;
+
+      const photoCaptureAttribute = photoUrlInput.getAttribute('data-input-capture');
+      const hadPhotoCaptureAttribute = photoUrlInput.hasAttribute('data-input-capture');
+
+      const buildPhotoApi = window.StartersBuildProfilePhotoUpload || {};
+      if (isBuildProfile) window.StartersBuildProfilePhotoUpload = buildPhotoApi;
 
       waitProfileData(() => {
         if (activeProfile['data']['step_1']['profile-photo-url'] && activeProfile['data']['step_1']['profile-photo-url'] !== '') {
@@ -92,10 +103,12 @@
       }
 
       function resetPhoto() {
+        currentUploadIntent = null;
         input.value = '';
         previewImg.src = '';
         label.classList.remove('dropping');
 
+        restorePhotoCaptureAttribute();
         photoUrlInput.value = '';
         photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
         photoUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -104,18 +117,49 @@
         wrap.style.display = 'block';
       }
 
-      async function handleFile(file) {
+      function restorePhotoCaptureAttribute() {
+        if (hadPhotoCaptureAttribute) {
+          photoUrlInput.setAttribute('data-input-capture', photoCaptureAttribute || '');
+        }
+      }
+
+      function createSourceMutationId() {
+        const cryptoApi = window.crypto;
+        let id = '';
+
+        if (typeof cryptoApi?.randomUUID === 'function') {
+          id = cryptoApi.randomUUID();
+        } else if (typeof cryptoApi?.getRandomValues === 'function') {
+          const bytes = cryptoApi.getRandomValues(new Uint8Array(24));
+          let binary = '';
+          bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+          id = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+        }
+
+        if (!SOURCE_MUTATION_ID_PATTERN.test(id)) {
+          throw new Error('Secure upload intent ID is unavailable');
+        }
+        return id;
+      }
+
+      async function handleFile(file, { retry = false } = {}) {
         label.classList.remove('dropping');
 
         // hide error block
         showError("text", false);
 
+        if (retry) {
+          if (currentUploadIntent?.state !== 'failed') return;
+          file = currentUploadIntent.file;
+        } else {
+          currentUploadIntent = null;
+        }
         if (!file) return;
 
-        const allowedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/avif', 'image/bmp'];
+        const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
 
         if (!allowedTypes.includes(file.type)) {
-          showError('Please upload a valid image. GIF images are not supported.');
+          showError('Please upload a JPG, PNG, or WebP image.');
           return;
         }
 
@@ -124,34 +168,122 @@
           return;
         }
 
-        setLoader(true, preview);
-
         const imageUrl = URL.createObjectURL(file);
         previewImg.src = imageUrl;
 
         wrap.style.display = 'none';
         preview.style.display = 'block';
 
-        // upload the image to Xano/Webflow and update the profile data with Webflow photo URL
-        const wf_photo_data = await uploadImage(file, MEMBER.id);
-        waitProfileData(async () => {
+        let uploadIntent;
+        try {
+          if (retry) {
+            uploadIntent = currentUploadIntent;
+          } else {
+            uploadIntent = { file, state: 'prepared', result: null, promise: null };
+            currentUploadIntent = uploadIntent;
+            uploadIntent.sourceMutationId = createSourceMutationId();
+          }
+          if (isBuildProfile && !retry) {
+            // Keep the temporary required-field marker out of draft capture. The exact
+            // authored capture attribute is restored after the canonical upload succeeds.
+            // An already stored photo URL satisfies the required field on its own, and
+            // draft capture must keep persisting it while the replacement is pending.
+            if (!String(photoUrlInput.value || '').trim()) {
+              photoUrlInput.removeAttribute('data-input-capture');
+              photoUrlInput.value = 'pending-profile-photo-upload';
+            }
+            setLoader(false, preview);
+            return;
+          }
+          if (isBuildProfile) {
+            await commitPreparedUpload();
+            return;
+          }
+          await applyUploadIntent(uploadIntent);
+        } catch (error) {
+          if (currentUploadIntent !== uploadIntent) return;
+          uploadIntent.state = 'failed';
+          setLoader(false, preview);
+          wrap.style.display = 'block';
+          showError('Image upload failed. Click here to try again.');
+          console.error('Profile image upload failed:', error);
+          return;
+        }
+      }
+
+      async function applyUploadIntent(uploadIntent) {
+        if (!uploadIntent || currentUploadIntent !== uploadIntent) return null;
+        if (uploadIntent.state === 'complete') return uploadIntent.result;
+        if (uploadIntent.promise) return uploadIntent.promise;
+
+        uploadIntent.state = 'uploading';
+        uploadIntent.promise = (async () => {
+          setLoader(true, preview);
+          const wf_photo_data = await uploadImage(
+            uploadIntent.file,
+            uploadIntent.sourceMutationId,
+          );
+          if (currentUploadIntent !== uploadIntent) return;
+          uploadIntent.state = 'applying';
+          restorePhotoCaptureAttribute();
           photoUrlInput.value = wf_photo_data['starter_image'];
           photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
           photoUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
 
           setLoader(false, preview);
 
-          const fileSmaller = await urlToFile(wf_photo_data['starter_image_small'], file.name);
-          const updImgInfo = await window.$memberstackDom.updateMemberProfileImage({ profileImage: fileSmaller });
-          console.log('Smaller image for Memberstack profile:', updImgInfo?.data?.profileImage);
-          
-          // update logo image in the nav bar
-          requestAnimationFrame(() => {
-            qsa('[nav-profile-image]').forEach(img => {
-              img.src = img.srcset = updImgInfo?.data?.profileImage || wf_photo_data['starter_image'];
+          uploadIntent.state = 'complete';
+          uploadIntent.result = wf_photo_data;
+
+          // Memberstack avatar sync is cosmetic. A failure here must not turn an already
+          // committed Xano photo into a failed Build Profile submission or retry the upload.
+          try {
+            const fileSmaller = await urlToFile(wf_photo_data['starter_image_small'], uploadIntent.file.name);
+            if (currentUploadIntent !== uploadIntent) return wf_photo_data;
+            const updImgInfo = await window.$memberstackDom.updateMemberProfileImage({ profileImage: fileSmaller });
+            if (currentUploadIntent !== uploadIntent) return wf_photo_data;
+            console.log('Smaller image for Memberstack profile:', updImgInfo?.data?.profileImage);
+
+            requestAnimationFrame(() => {
+              if (currentUploadIntent !== uploadIntent) return;
+              qsa('[nav-profile-image]').forEach(img => {
+                img.src = img.srcset = updImgInfo?.data?.profileImage || wf_photo_data['starter_image'];
+              });
             });
-          });
-        });
+          } catch (avatarError) {
+            console.warn('Memberstack profile image sync failed after canonical upload:', avatarError);
+          }
+          return wf_photo_data;
+        })();
+
+        try {
+          return await uploadIntent.promise;
+        } catch (error) {
+          if (currentUploadIntent === uploadIntent) uploadIntent.state = 'failed';
+          throw error;
+        } finally {
+          uploadIntent.promise = null;
+        }
+      }
+
+      async function commitPreparedUpload() {
+        if (!isBuildProfile || !currentUploadIntent) return null;
+        if (!buildProfileSaved) throw new Error('Save the profile before uploading its photo');
+        try {
+          return await applyUploadIntent(currentUploadIntent);
+        } catch (error) {
+          setLoader(false, preview);
+          wrap.style.display = 'block';
+          showError('Image upload failed. Click here to try again.');
+          console.error('Profile image upload failed:', error);
+          throw error;
+        }
+      }
+
+      if (isBuildProfile) {
+        buildPhotoApi.hasPendingUpload = () => !!currentUploadIntent && currentUploadIntent.state !== 'complete';
+        buildPhotoApi.markProfileSaved = () => { buildProfileSaved = true; };
+        buildPhotoApi.commitPending = commitPreparedUpload;
       }
 
       async function urlToFile(url, fileName = 'profile-photo.jpg') {
@@ -170,11 +302,11 @@
         });
       }
 
-      async function uploadImage(file, member_id) {
+      async function uploadImage(file, sourceMutationId) {
         const formData = new FormData();
         formData.append('image', file);
-        formData.append('member_id', member_id);
-        return requestJson(
+        formData.append('source_mutation_id', sourceMutationId);
+        const data = await requestJson(
           XANO_BASE_URL + '/api:KZf7nFnk/build_profile/starter/profile_image',
           {
             method: 'POST',
@@ -182,6 +314,15 @@
           },
           'Image upload failed',
         );
+        if (
+          typeof data?.starter_image !== 'string' ||
+          data.starter_image.trim() === '' ||
+          typeof data?.starter_image_small !== 'string' ||
+          data.starter_image_small.trim() === ''
+        ) {
+          throw new Error('Image upload response is incomplete');
+        }
+        return data;
       }
 
       async function requestJson(url, options, errorLabel) {
@@ -200,6 +341,19 @@
 
       input.addEventListener('change', () => {
         handleFile(input.files[0]);
+      });
+
+      input.addEventListener('click', () => {
+        input.value = '';
+      });
+
+      wrap.addEventListener('click', (event) => {
+        if (
+          currentUploadIntent?.state === 'failed' &&
+          event.target?.classList?.contains('upload-error')
+        ) {
+          handleFile(null, { retry: true });
+        }
       });
 
       label.addEventListener('dragenter', (e) => {

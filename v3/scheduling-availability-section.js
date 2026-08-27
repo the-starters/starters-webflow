@@ -51,6 +51,13 @@
   const DAY_VARIANT_SELECTED = 'w-variant-ebea452c-a047-af3f-dd6c-3062ee4c048c'
   const SLOTS_SEARCH_DAYS = 14
   const SLOTS_LIMIT = 8
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
+  // Canonical Paid Call duration, owned by paid-call-settings.js
+  // (FIXED_DURATION_MINUTES) and PAID-CALL-SETTINGS-WIRING.md.
+  const PAID_DURATION_MINUTES = 60
+  const FREE_DURATION_MINUTES = 30
+  const SYNC_READY_STATES = ['ready', 'ok', 'synced', 'active', 'complete', 'completed', 'true']
 
   // Shared "Availability - Notifications" modal (`[data-modal-target=
   // "availability-notification"]`), driven by global-embeds/modal/modal.js.
@@ -68,14 +75,30 @@
     "We couldn't connect your Google calendar. Please try again or contact support."
   const ERROR_TEXT_DISCONNECT_GOOGLE =
     "We couldn't disconnect your Google calendar. Please try again or contact support."
+  const PRE_OAUTH_GOOGLE_COPY = "You’ll be taken to connect your Google calendar."
+  const PRE_OAUTH_GOOGLE_COPY_STALE =
+    PRE_OAUTH_GOOGLE_COPY + ' Your availability settings have been saved.'
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
-  const isStagingHost = window.location.hostname === STAGING_HOST
+  const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
+  const isStagingHost = activeHostname === STAGING_HOST
   const isApprovedProductionPath =
-    PRODUCTION_HOSTS.has(window.location.hostname) && activePath === PRODUCTION_PATH
+    PRODUCTION_HOSTS.has(activeHostname) && activePath === PRODUCTION_PATH
   if (!isStagingHost && !isApprovedProductionPath) return
   if (window.__tsSchedulingAvailabilitySection) return
   window.__tsSchedulingAvailabilitySection = true
+
+  function minimumBookingNoticeMinutes() {
+    return isStagingHost
+      ? STAGING_MIN_BOOKING_NOTICE_MINUTES
+      : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+  }
+
+  function minimumBookingNoticeCopy() {
+    return isStagingHost
+      ? "Bookings require at least 5 minutes' notice."
+      : "Bookings require at least 24 hours' notice."
+  }
 
   let sessionMemberId = null
   let memberFields = {}
@@ -198,6 +221,29 @@
   function setElementVisible(name, visible) {
     qsa(elSel(name)).forEach(function (el) {
       el.style.display = visible ? '' : 'none'
+    })
+  }
+
+  // Outlook is not supported by the current calendar workflow. Keep the
+  // existing Designer elements hidden until the provider path is implemented
+  // and verified. Also remove the stale saved-state claim shown before Google
+  // OAuth has started.
+  function applyCalendarUiCorrections() {
+    qsa(
+      '[' + ACTION + '="open-connect-outlook"],[' +
+        ACTION +
+        '="open-disconnect-outlook"]',
+    ).forEach(function (el) {
+      el.style.display = 'none'
+      el.setAttribute('aria-hidden', 'true')
+    })
+
+    const preOAuthStep = qs('[' + NOTIFICATION_ATTR + '="pre-oauth"]', notificationModal())
+    if (!preOAuthStep) return
+    qsa('p', preOAuthStep).forEach(function (paragraph) {
+      if (paragraph.textContent.trim() === PRE_OAUTH_GOOGLE_COPY_STALE) {
+        paragraph.textContent = PRE_OAUTH_GOOGLE_COPY
+      }
     })
   }
 
@@ -364,55 +410,84 @@
       redirectUri: redirectUri,
       paidCallIntent: paidCallIntent || null,
     }
-    try {
-      window.sessionStorage.setItem(
-        OAUTH_INTENT_PREFIX + memberId,
-        JSON.stringify(intent),
-      )
-      return intent
-    } catch (error) {
-      return null
-    }
+    return writeOAuthIntent(memberId, intent) ? intent : null
   }
 
-  function readOAuthIntent(memberId) {
-    const redirectUri = oauthRedirectUri()
-    const key = OAUTH_INTENT_PREFIX + memberId
-    try {
-      const raw = window.sessionStorage.getItem(key)
-      const intent = raw ? JSON.parse(raw) : null
-      if (
-        intent &&
-        Number.isFinite(intent.createdAt) &&
-        Date.now() - intent.createdAt >= 0 &&
-        Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
-        intent.redirectUri === redirectUri
-      ) {
-        return intent
-      }
-      window.sessionStorage.removeItem(key)
-      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
-    } catch (error) {
+  function oauthIntentStorages(storageNames) {
+    const storages = []
+    ;(storageNames || ['sessionStorage', 'localStorage']).forEach(function (storageName) {
       try {
-        window.sessionStorage.removeItem(key)
-      } catch (storageError) {
+        const storage = window[storageName]
+        if (storage && !storages.includes(storage)) storages.push(storage)
+      } catch (error) {
         /* storage unavailable */
       }
-      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
+    })
+    return storages
+  }
+
+  function writeOAuthIntent(memberId, intent) {
+    const key = OAUTH_INTENT_PREFIX + memberId
+    const value = JSON.stringify(intent)
+    let stored = false
+    oauthIntentStorages().forEach(function (storage) {
+      try {
+        storage.setItem(key, value)
+        stored = true
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
+    return stored
+  }
+
+  function readOAuthIntent(memberId, includeDurableFallback) {
+    const redirectUri = oauthRedirectUri()
+    const key = OAUTH_INTENT_PREFIX + memberId
+    const storageNames = includeDurableFallback
+      ? ['sessionStorage', 'localStorage']
+      : ['sessionStorage']
+    for (const storage of oauthIntentStorages(storageNames)) {
+      try {
+        const raw = storage.getItem(key)
+        const intent = raw ? JSON.parse(raw) : null
+        if (
+          intent &&
+          Number.isFinite(intent.createdAt) &&
+          Date.now() - intent.createdAt >= 0 &&
+          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
+          intent.redirectUri === redirectUri
+        ) {
+          return intent
+        }
+        storage.removeItem(key)
+      } catch (error) {
+        try {
+          storage.removeItem(key)
+        } catch (storageError) {
+          /* storage unavailable */
+        }
+      }
     }
+    return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
   }
 
   function clearOAuthIntent(memberId) {
-    try {
-      window.sessionStorage.removeItem(OAUTH_INTENT_PREFIX + memberId)
-    } catch (error) {
-      /* storage unavailable */
-    }
+    const key = OAUTH_INTENT_PREFIX + memberId
+    oauthIntentStorages().forEach(function (storage) {
+      try {
+        storage.removeItem(key)
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
   }
 
   function persistOAuthIntent(memberId, intent) {
     if (!Number.isFinite(intent.createdAt)) intent.createdAt = Date.now()
-    window.sessionStorage.setItem(OAUTH_INTENT_PREFIX + memberId, JSON.stringify(intent))
+    if (!writeOAuthIntent(memberId, intent)) {
+      throw new Error('OAuth transition could not be retained')
+    }
     return intent
   }
 
@@ -464,6 +539,11 @@
       })
     }
     return data
+  }
+
+  function providerRequestSucceeded(result) {
+    const status = Number(result && result.response && result.response.status)
+    return Number.isFinite(status) && status >= 200 && status < 300
   }
 
   /* ------------------------------------------------------------------ */
@@ -731,7 +811,7 @@
     if (
       intent.title.length < 3 ||
       !Number.isInteger(intent.price_cents) ||
-      intent.price_cents < 500 ||
+      intent.price_cents < 100 ||
       [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1
     ) {
       throw new Error('Canonical paid-call service cannot be preserved')
@@ -821,7 +901,7 @@
     await ensureTimezone()
     const openHours = getAvailArray()
     const price = '0'
-    const duration = 30
+    const duration = FREE_DURATION_MINUTES
     const interval = 15
     const buffer = 10
 
@@ -874,7 +954,7 @@
         cancellation_url: redirectURL + '?cancel=:booking_ref',
         hide_rescheduling_options: true,
         hide_cancellation_options: true,
-        min_booking_notice: 1440,
+        min_booking_notice: minimumBookingNoticeMinutes(),
         additional_fields: {
           call_full_title: { type: 'metadata', label: 'Call Full Title', default: fullTitle, required: false },
           call_tiny_title: { type: 'metadata', label: 'Call Tiny Title', default: tinyTitle, required: false },
@@ -897,7 +977,7 @@
         '/scheduler/configurations/create/v3',
         payload,
       )
-      if (res && res.response && res.response.status === 200) return true
+      if (providerRequestSucceeded(res)) return true
       publishCalendarConnectionError()
       console.warn('[scheduling-section] configuration request rejected')
       return null
@@ -927,7 +1007,7 @@
         },
       },
     })
-    if (res && res.response && res.response.status === 200) return true
+    if (providerRequestSucceeded(res)) return true
     publishCalendarConnectionError()
     return null
   }
@@ -1233,7 +1313,7 @@
         throw invalidOAuthCallback('OAuth state does not match the logged-in member')
       }
       trustedState = true
-      oauthIntent = readOAuthIntent(memberId)
+      oauthIntent = readOAuthIntent(memberId, true)
       if (oauthCallback.hasError) {
         throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
       }
@@ -2073,7 +2153,8 @@
     const region = opts.region || 'us'
     if (!grant || !configId) return []
 
-    const nowInSeconds = Math.floor(Date.now() / 1000) + 24 * 60 * 60
+    const nowInSeconds =
+      Math.floor(Date.now() / 1000) + minimumBookingNoticeMinutes() * 60
     const searchEndInSeconds = nowInSeconds + searchDays * 24 * 60 * 60
 
     try {
@@ -2180,15 +2261,86 @@
     ].join('-')
   }
 
+  function configStamp(value) {
+    return String(value == null ? '' : value).trim().toLowerCase()
+  }
+
+  function configEnvironmentMatches(config) {
+    const dataEnvironment = configStamp(config.data_environment)
+    if (dataEnvironment && dataEnvironment !== (isStagingHost ? 'test' : 'production')) {
+      return false
+    }
+    if (config.is_paid !== true) return true
+    const paymentEnvironment = configStamp(config.payment_environment)
+    return !(paymentEnvironment && paymentEnvironment !== (isStagingHost ? 'test' : 'live'))
+  }
+
+  // Single canonical Free predicate: the same record set decides whether a
+  // free configuration still needs creating and whether the preview can
+  // render one, so the preview can never reach a state the create path
+  // considers already satisfied.
+  function isCanonicalFreeConfig(config) {
+    return Boolean(
+      config &&
+        config.config_id &&
+        config.is_paid === false &&
+        config.active !== false &&
+        configEnvironmentMatches(config),
+    )
+  }
+
   function activeFreeConfigs() {
-    return configs.filter(function (config) {
-      return Boolean(
-        config &&
-          config.config_id &&
-          config.is_paid === false &&
-          config.active !== false,
-      )
-    })
+    return configs.filter(isCanonicalFreeConfig)
+  }
+
+  function previewDuration(config) {
+    const duration = Number(config && config.duration)
+    return Number.isInteger(duration) && duration > 0 ? duration : null
+  }
+
+  // Free records carry no provider-side duration guarantee, so fall back to
+  // the canonical Free duration this module itself creates rather than
+  // dropping the service from the card.
+  function previewDurationLabel(config) {
+    const duration = previewDuration(config)
+    return duration === null ? FREE_DURATION_MINUTES : duration
+  }
+
+  function previewSyncReady(config) {
+    const state = config.sync_status
+    if (state === undefined || state === null || state === '') return true
+    if (typeof state === 'boolean') return state
+    return SYNC_READY_STATES.indexOf(configStamp(state)) !== -1
+  }
+
+  function isCanonicalPaidConfig(config) {
+    if (!config || !config.config_id || config.is_paid !== true) return false
+    if (config.active !== true) return false
+    if (!configEnvironmentMatches(config)) return false
+    if (previewDuration(config) !== PAID_DURATION_MINUTES) return false
+    if (config.currency && String(config.currency).toUpperCase() !== 'USD') return false
+    return Boolean(
+      Number.isInteger(Number(config.price_cents)) &&
+        Number(config.price_cents) >= 100 &&
+        previewSyncReady(config),
+    )
+  }
+
+  function byPreviewConfigId(a, b) {
+    return String(a.config_id).localeCompare(String(b.config_id))
+  }
+
+  // Xano returns configurations in table order, so partition explicitly:
+  // Free first, then Paid, each tie-broken by config_id. This keeps both the
+  // rendered order and the default selection deterministic.
+  function activePreviewConfigs() {
+    const free = configs.filter(isCanonicalFreeConfig).sort(byPreviewConfigId)
+    const paid = configs.filter(isCanonicalPaidConfig).sort(byPreviewConfigId)
+    return free.concat(paid)
+  }
+
+  function formatPreviewPrice(priceCents) {
+    return '$' + (Number(priceCents) / 100).toFixed(2)
   }
 
   function applyStyles(node, styles) {
@@ -2214,9 +2366,16 @@
     })
     shell.setAttribute(EL, 'services-calendar-preview')
 
+    const notice = previewText('span', minimumBookingNoticeCopy(), {
+      color: '#6f746d',
+      fontSize: '12px',
+    })
+    notice.setAttribute(EL, 'preview-booking-notice')
+    shell.appendChild(notice)
+
     if (!services.length) {
       shell.appendChild(
-        previewText('div', 'No active free service is available for preview.', {
+        previewText('div', 'No active call service is available for preview.', {
           padding: '18px',
           border: '1px solid #e2e2e2',
           borderRadius: '8px',
@@ -2234,6 +2393,13 @@
     servicesWrap.setAttribute(EL, 'preview-services')
     services.forEach(function (config) {
       const selected = config.config_id === selectedConfig.config_id
+      const previewTitle =
+        config.title ||
+        (config.is_paid === true ? 'Paid Consultation Call' : 'Free Consultation Call')
+      const previewDetail =
+        String(previewDurationLabel(config)) +
+        ' minutes · ' +
+        (config.is_paid === true ? formatPreviewPrice(config.price_cents) : 'Free')
       const button = applyStyles(document.createElement('button'), {
         padding: '12px 14px',
         border: selected ? '2px solid #1f211d' : '1px solid #d9d9d9',
@@ -2246,14 +2412,15 @@
       button.setAttribute('type', 'button')
       button.setAttribute('aria-pressed', selected ? 'true' : 'false')
       button.setAttribute('data-preview-config-id', config.config_id)
+      button.setAttribute('data-preview-service-type', config.is_paid === true ? 'paid' : 'free')
       button.appendChild(
-        previewText('strong', config.title || 'Free Consultation Call', {
+        previewText('strong', previewTitle, {
           display: 'block',
           fontSize: '14px',
         }),
       )
       button.appendChild(
-        previewText('span', String(Number(config.duration) || 30) + ' minutes · Free', {
+        previewText('span', previewDetail, {
           display: 'block',
           marginTop: '4px',
           color: '#6f746d',
@@ -2483,7 +2650,7 @@
     const renderVersion = ++previewRenderVersion
     setElementVisible('slots-list', false)
     setElementVisible('loading-slots', true)
-    const services = activeFreeConfigs()
+    const services = activePreviewConfigs()
     const selectedConfig =
       services.filter(function (config) {
         return config.config_id === selectedPreviewConfigId
@@ -2541,6 +2708,7 @@
       setStatus('not-applicable')
       return null
     }
+    applyCalendarUiCorrections()
     if (typeof window.xanoAuthFetch !== 'function') {
       setStatus('missing-auth')
       console.warn('[scheduling-section] xanoAuthFetch unavailable; section disabled')
@@ -2627,6 +2795,7 @@
     getAvailArray: getAvailArray,
     applyDayBadges: applyDayBadges,
     getUpcomingTimeSlots: getUpcomingTimeSlots,
+    minimumBookingNoticeMinutes: minimumBookingNoticeMinutes,
     publishCalendarConnectionState: publishCalendarConnectionState,
   }
 

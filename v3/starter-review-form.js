@@ -14,6 +14,16 @@
     var REVIEW_MIN = 10
     var REVIEW_MAX = 4000
     var FEEDBACK_MAX = 2000
+    var REQUEST_TIMEOUT_MS = 15000
+    var CONTEXT_ATTEMPTS = 2
+    var PREFLIGHT_ID = 'starter-review-preflight'
+    var PROFILE_BOUND_ATTRIBUTE = 'data-starter-review-profile-bound'
+    var PROFILE_URL_ATTRIBUTE = 'data-starter-review-profile-url'
+    var PREFLIGHT_CSS =
+        '[data-starter-review]:not([data-starter-review-current-state])' +
+        ' [data-starter-review-state]' +
+        ':not([data-starter-review-state="loading"])' +
+        ' { display: none !important; }'
 
     var normalize = function (value) {
         return String(value == null ? '' : value).trim()
@@ -80,6 +90,22 @@
     if (window.__startersV3ReviewFormBooted) return
     window.__startersV3ReviewFormBooted = true
 
+    // Pre-hide every non-loading state block. A synchronous head tag runs before
+    // the body parses, so this lands before any block can paint. The rule is gated
+    // on the root lacking data-starter-review-current-state, so the first setState
+    // disarms it and setHidden's inline writes own visibility from there.
+    // The id check defers to a legacy page paste that still ships its own
+    // starter-review-preflight style; failure to inject degrades to the inline
+    // writes alone.
+    try {
+        if (!document.getElementById(PREFLIGHT_ID)) {
+            var preflight = document.createElement('style')
+            preflight.id = PREFLIGHT_ID
+            preflight.textContent = PREFLIGHT_CSS
+            document.head.appendChild(preflight)
+        }
+    } catch (error) {}
+
     var makeIdempotencyKey = function () {
         if (window.crypto && typeof window.crypto.randomUUID === 'function') {
             return 'review:' + window.crypto.randomUUID()
@@ -125,25 +151,112 @@
         }
     }
 
-    var postJson = async function (path, body) {
-        var response = await fetch(API_BASE + path, {
+    var requestError = function (status) {
+        var error = new Error('The review request could not be completed.')
+        error.status = status
+        return error
+    }
+
+    var timedOutError = function () {
+        var error = requestError(0)
+        error.timedOut = true
+        return error
+    }
+
+    // A hung request would spin the loading state forever: by then the pre-hide
+    // rule is disarmed and only a rejection can move the UI on. The deadline is
+    // armed unconditionally and rejects on its own — gating it on AbortController
+    // would drop the timeout in exactly the environments that need it most, and a
+    // signal-ignoring polyfill would leave the request hanging regardless.
+    // Aborting the socket is best-effort on top. Same shape as fetchWithTimeout in
+    // v3/onboarding-done-redirect.js.
+    var postJson = function (path, body) {
+        var options = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
             credentials: 'omit',
             referrerPolicy: 'no-referrer',
-        })
-        var payload = await response.json().catch(function () {
-            return {}
-        })
-
-        if (!response.ok) {
-            var error = new Error('The review request could not be completed.')
-            error.status = response.status
-            throw error
         }
 
-        return payload
+        var controller =
+            typeof window.AbortController === 'function'
+                ? new window.AbortController()
+                : null
+        if (controller) options.signal = controller.signal
+
+        return new Promise(function (resolve, reject) {
+            var settled = false
+            var timer = window.setTimeout(function () {
+                if (settled) return
+                settled = true
+                if (controller) {
+                    try {
+                        controller.abort()
+                    } catch (error) {}
+                }
+                reject(timedOutError())
+            }, REQUEST_TIMEOUT_MS)
+
+            Promise.resolve()
+                .then(function () {
+                    return fetch(API_BASE + path, options)
+                })
+                .then(function (response) {
+                    return response
+                        .json()
+                        .catch(function () {
+                            return {}
+                        })
+                        .then(function (payload) {
+                            if (!response.ok) throw requestError(response.status)
+                            return payload
+                        })
+                })
+                .then(
+                    function (payload) {
+                        if (settled) return
+                        settled = true
+                        window.clearTimeout(timer)
+                        resolve(payload)
+                    },
+                    function (error) {
+                        if (settled) return
+                        settled = true
+                        window.clearTimeout(timer)
+                        // Never mask a real failure. An error that already carries
+                        // a numeric status keeps it, even when it lands next to the
+                        // deadline; only a status-free abort becomes a timeout.
+                        if (
+                            error &&
+                            typeof error.status !== 'number' &&
+                            error.name === 'AbortError'
+                        ) {
+                            reject(timedOutError())
+                            return
+                        }
+                        reject(error)
+                    },
+                )
+        })
+    }
+
+    // The context resolve is read-only and idempotent, so one automatic retry on a
+    // timeout is worth it: a single stalled connection stops costing the member the
+    // whole page. Only timeouts retry, and only here — a submit retry stays the
+    // member's own decision, by design.
+    var resolveContext = async function (token) {
+        var attempt = 0
+        for (;;) {
+            attempt += 1
+            try {
+                return await postJson(CONTEXT_PATH, { token: token })
+            } catch (error) {
+                if (attempt >= CONTEXT_ATTEMPTS || !(error && error.timedOut)) {
+                    throw error
+                }
+            }
+        }
     }
 
     var capture = function (name, properties) {
@@ -151,6 +264,62 @@
         try {
             window.posthog.capture(name, properties || {})
         } catch (error) {}
+    }
+
+    // Designer classes (`display: flex`, the base `img { display: inline-block }`)
+    // outrank the UA `[hidden] { display: none }` rule, so hide inline as well.
+    var setHidden = function (node, hide) {
+        node.hidden = hide
+        node.style.display = hide ? 'none' : ''
+    }
+
+    // The marked node is a plain anchor, or the design-system Button component.
+    // That component ships in two flavors: an absolutely-positioned
+    // `a.clickable_link` inside `div.button_main-wrap`, or a `button.clickable_btn`
+    // with no anchor at all. Anchors carry the destination as an href; the button
+    // flavor needs a click handler. Both open a new tab, so this page's
+    // token-bearing history entry — and any review already typed — survive.
+    // Callers must gate this on the /hire/<slug> allowlist first.
+    var bindProfileLink = function (node, profileUrl) {
+        // Only the component's own link element counts. A decorative anchor
+        // elsewhere in the subtree must not absorb the destination.
+        var anchor =
+            String(node.tagName || '').toUpperCase() === 'A'
+                ? node
+                : node.querySelector('a.clickable_link')
+
+        if (anchor) {
+            anchor.setAttribute('href', profileUrl)
+            anchor.setAttribute('target', '_blank')
+            anchor.setAttribute('rel', 'noopener')
+            return
+        }
+
+        // The handler reads the destination at click time, so a re-resolve that
+        // returns a different profile updates it even though the listener binds
+        // only once. Write it before the guard for that reason.
+        node.setAttribute(PROFILE_URL_ATTRIBUTE, profileUrl)
+        if (node.getAttribute(PROFILE_BOUND_ATTRIBUTE) === 'true') return
+        node.setAttribute(PROFILE_BOUND_ATTRIBUTE, 'true')
+        // Capture phase plus stopPropagation so this owns the click before any
+        // component-level or delegated handler sees it, and preventDefault so a
+        // nested <button> can never submit a surrounding form.
+        node.addEventListener(
+            'click',
+            function (event) {
+                event.preventDefault()
+                event.stopPropagation()
+                var url = node.getAttribute(PROFILE_URL_ATTRIBUTE)
+                if (!url) return
+                // Popup blockers and in-app webviews hand back null. A same-tab
+                // trip costs this page's history entry, but it beats a button
+                // that does nothing at all.
+                if (!window.open(url, '_blank', 'noopener')) {
+                    window.location.assign(url)
+                }
+            },
+            true,
+        )
     }
 
     var init = async function () {
@@ -165,7 +334,7 @@
         var setState = function (name) {
             root.setAttribute('data-starter-review-current-state', name)
             root.querySelectorAll('[data-starter-review-state]').forEach(function (node) {
-                node.hidden = node.getAttribute('data-starter-review-state') !== name
+                setHidden(node, node.getAttribute('data-starter-review-state') !== name)
             })
         }
         var setError = function (message) {
@@ -185,7 +354,7 @@
         setState('loading')
 
         try {
-            var context = await postJson(CONTEXT_PATH, { token: capabilityToken })
+            var context = await resolveContext(capabilityToken)
             if (!context || context.available !== true || !context.starter) {
                 throw new Error('Review context is unavailable.')
             }
@@ -197,18 +366,27 @@
 
             if (nameNode) nameNode.textContent = normalize(context.starter.name) || 'Starter'
             if (headlineNode) {
-                headlineNode.textContent = normalize(context.starter.headline)
-                headlineNode.hidden = !normalize(context.starter.headline)
+                var headline = normalize(context.starter.headline)
+                headlineNode.textContent = headline
+                setHidden(headlineNode, !headline)
             }
             if (photoNode) {
                 var photoUrl = normalize(context.starter.photo_url)
-                photoNode.hidden = !/^https:\/\//i.test(photoUrl)
-                if (!photoNode.hidden) photoNode.setAttribute('src', photoUrl)
+                var hasPhoto = /^https:\/\//i.test(photoUrl)
+                setHidden(photoNode, !hasPhoto)
+                if (hasPhoto) {
+                    // Designer imgs carry a placeholder srcset/sizes pair, and a
+                    // w-descriptor srcset outranks the src we set below.
+                    photoNode.removeAttribute('srcset')
+                    photoNode.removeAttribute('sizes')
+                    photoNode.setAttribute('src', photoUrl)
+                }
             }
             if (profileNode) {
                 var profileUrl = normalize(context.starter.profile_url)
-                profileNode.hidden = !/^\/hire\/[a-z0-9-]+$/i.test(profileUrl)
-                if (!profileNode.hidden) profileNode.setAttribute('href', profileUrl)
+                var hasProfile = /^\/hire\/[a-z0-9-]+$/i.test(profileUrl)
+                setHidden(profileNode, !hasProfile)
+                if (hasProfile) bindProfileLink(profileNode, profileUrl)
             }
 
             var form = root.querySelector('form[data-starter-review-form]')
@@ -275,9 +453,13 @@
                     if (submitButton) submitButton.disabled = false
                     setError('We could not submit your review. Try again.')
                     setState('form')
-                    capture('v3_starter_review_submit_failed', {
+                    var failedProperties = {
                         status: Number(error && error.status) || 0,
-                    })
+                    }
+                    if (error && error.timedOut === true) {
+                        failedProperties.timed_out = true
+                    }
+                    capture('v3_starter_review_submit_failed', failedProperties)
                 }
             }, true)
 
@@ -286,9 +468,13 @@
         } catch (error) {
             capabilityToken = ''
             setState('unavailable')
-            capture('v3_starter_review_unavailable', {
+            var unavailableProperties = {
                 reason: Number(error && error.status) === 404 ? 'not_found' : 'load_failed',
-            })
+            }
+            if (error && error.timedOut === true) {
+                unavailableProperties.timed_out = true
+            }
+            capture('v3_starter_review_unavailable', unavailableProperties)
         }
     }
 

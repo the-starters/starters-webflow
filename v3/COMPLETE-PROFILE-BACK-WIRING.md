@@ -221,8 +221,8 @@ revealed or left as authored.
   a side effect exactly the way init does.
 - `init()` is idempotent: calling it once the button is applied re-binds nothing.
 
-Diagnostics narrate every decision on staging only — `*.webflow.io`, `localhost`,
-`127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`.
+Diagnostics narrate every decision on
+[staging only](../README.md#staging-only-console-diagnostics).
 Production is completely silent, on the applied path and on every fail-open path
 alike.
 

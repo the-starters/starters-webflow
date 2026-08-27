@@ -68,7 +68,8 @@ Do not add `data-ms-form="profile"` to this form while
 `brand-account-controller.js` owns submit. Two Memberstack submit owners would
 race. The hidden completion field remains authored for visibility and backward
 compatibility, but the controller writes its value explicitly as the final
-durable member write, before the non-retried password-email attempt.
+durable member write, before any non-retried password-email attempt. Build
+Account only attempts that email when the login email changed.
 
 The upload link stays outside any Memberstack profile-form contract and is
 bound by `complete-profile-photo.js` to:
@@ -97,16 +98,16 @@ keeps its existing authenticated Xano submission owner:
 ```
 
 On `/starter-edit-profile`, the controller reads the form's first email input.
-When the whole form is valid, it updates a changed Talent login email in
-Memberstack and then replays the same native submission. When unrelated required
-profile fields are incomplete, clicking submit still saves a natively valid,
-changed login email through Memberstack without submitting the incomplete
-profile to Xano. The guard only owns this click after a trusted user input event
-changes the login email. The Xano profile prefill emits untrusted input events;
-those events update the email baseline but do not activate identity ownership.
-An unchanged email leaves every section click with the existing Xano profile
-handler, even when required fields in other hidden tabs make the whole form
-invalid. Keep `data-edit-submit` on the Designer-authored submit control and keep
+When the Personal Details section is valid, it updates a changed Talent login
+email in Memberstack and then authorizes one replay of the existing authored
+button click. Required fields in other sections do not block that replay. When
+Personal Details is invalid, clicking submit can still save a natively valid,
+changed login email through Memberstack without submitting the invalid profile
+to Xano. The guard only owns this click after a trusted user input event changes
+the login email. The Xano profile prefill emits untrusted input events; those
+events update the email baseline but do not activate identity ownership. An
+unchanged email leaves every section click with the existing Xano profile
+handler. Keep `data-edit-submit` on the Designer-authored submit control and keep
 that control directly inside its existing wrapper. The invalid-profile state
 can disable pointer events on the control, so the controller recognizes the
 click that lands on that direct wrapper; it does not treat higher ancestors as
@@ -125,11 +126,18 @@ initialization, so it can align both native signup forms with Test or Live Data:
     guardSecurityForm: 'identity'
   }
 </script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE"></script>
 ```
 
 The `identity` setting is the production activation for Starter login-email
 changes. Keep the configuration block before the controller script.
+[Brand controller cache key](#brand-controller-cache-key) owns the `?v=RELEASE`
+substitution and its verification; the versioned tag replaces the previous
+controller tag. Never leave a second, un-versioned
+`brand-account-controller.js` tag in the block. The controller self-guards on
+`window.__startersBrandAccountControllerBooted`, so a stale cached copy that
+boots first makes the freshly requested copy a no-op and the release only looks
+published.
 
 On `/complete-profile`, after the sitewide Memberstack and route-guard installs,
 keep the photo and redirect scripts after that sitewide controller:
@@ -162,6 +170,58 @@ browser console through
 form values to these receipts; the shared README owns the exact allowlist and
 exclusions.
 
+Successful Brand Build Account completion also emits the privacy-safe
+`brand_account_email_decision` event. It contains only `controller_version`,
+`email_change_required`, and `security_email_attempted`. It must never contain
+the submitted email, the authenticated email, a member ID, or form values.
+Emission is best-effort: a missing, blocked, or throwing `StartersTrack` leaves
+the completed account workflow and its user-facing result unchanged.
+
+## Brand controller cache key
+
+The Brand account controller keeps the `@latest` jsDelivr loader, but its
+Webflow script URL must include the released version as a query-string cache
+key:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE"></script>
+```
+
+`RELEASE` is the semver of the release that actually published the current
+controller build, without the leading `v`: tag `v1.59.339` gives `?v=1.59.339`.
+Read it from the published release rather than from an expected next version —
+an unpublished number in this URL cache-busts browsers onto a build jsDelivr
+cannot serve yet. Substitute the same release everywhere `RELEASE` appears
+below, including the version-pinned fallback path.
+
+Update this query value for every Brand account controller release, and in the
+same change bump `CONTROLLER_VERSION` in `brand-account-controller.js` to the
+next build identifier (`brand-account-controller-v2` at this release, following
+the repository's `<controller>-vN` receipt convention rather than the semver
+tag), so the diagnostic receipt and the `brand_account_email_decision` event
+identify which build actually served the member. Then publish Webflow and
+verify the complete saved block and all published domains.
+
+The query key forces *browsers* to request the new controller while preserving
+the repository's `@latest` release contract. It does not defeat jsDelivr's own
+edge cache: jsDelivr resolves `@latest` for a GitHub ref and can keep serving
+that resolved file for hours, and it does not treat the query string as part of
+its cache key. So the query bump alone is not proof that members are served the
+new code. Before the bounded production test, verify the served content:
+
+```bash
+curl -s "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE" \
+  | grep -c "brand-account-controller-v2"
+```
+
+The released `CONTROLLER_VERSION` must be present in that output. If the served
+file is still the previous build, do not run the production test on `@latest`:
+publish the version-pinned path for that release
+(`@vRELEASE/v3/brand-account-controller.js`), which is resolved per ref and
+cannot be answered from a stale `@latest` resolution, and re-run the check. The
+live confirmation is a `brand_account_email_decision` event carrying the
+released `controller_version`.
+
 ## Executed endpoint #1513 replay results
 
 The prerequisite backend replay gate passed using redacted Memberstack Test Mode
@@ -186,11 +246,13 @@ remain required before publishing the frontend install.
 
 ## Configuration switch
 
-Memberstack's browser SDK owns the reset/set-password email call. Its Admin API
-does not expose a server-side reset-email action, so this controller deliberately
-does not depend on or claim a durable email outbox. Do not add an automatic retry
-around `sendMemberResetPasswordEmail`; a lost response is ambiguous and retrying
-could send a second message.
+Memberstack's browser SDK owns reset-password emails for explicit recovery and
+changed login-email security. Build Account sends none when the member keeps the
+email they already authenticated with. Memberstack's Admin API does not expose a
+server-side reset-email action, so this controller deliberately does not depend
+on or claim a durable email outbox. Do not add an automatic retry around
+`sendMemberResetPasswordEmail`; a lost response is ambiguous and retrying could
+send a second message.
 
 Use identity-scoped ownership in production when the controller is installed
 sitewide:
@@ -208,22 +270,23 @@ sitewide:
   `#wf-form-Account-Security` for `brand-free`, `brand-paid`, or `talent`. On
   `/starter-edit-profile`, the same setting also guards the visible
   `#wf-form-Build-Form-Full-Profile` for Talent. A natively valid changed email
-  can be written to Memberstack even while unrelated required profile fields
-  are incomplete, without running the Xano profile save. On a valid full-profile
-  submit, the email is written first and the existing Designer-authored submit
-  is replayed so its authenticated Xano save continues unchanged. An unchanged
-  email preserves native full-profile validation without an auth mutation or
-  reset email.
+  can be written to Memberstack even while Personal Details is invalid, without
+  running the Xano profile save. When Personal Details is valid, the email is
+  written first and the existing Designer-authored button click is replayed so
+  its authenticated Xano save continues unchanged. Required fields in later
+  sections do not block this section-scoped replay. An unchanged email preserves
+  the authored profile handler without an auth mutation or reset email.
 - `guardSecurityForm: 'brand'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
   `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. This is the
   rollback switch if Starter interception must be disabled without changing
   Brand behavior.
 - With either setting, unmapped, conflicted, logged-out, or unreadable identity
-  states retain the form's existing native handler. Account Security therefore
-  stays Memberstack-native, while `/starter-edit-profile` replays its existing
-  authenticated Xano submission. With `brand`, Talent also retains that native
-  path without login-email interception.
+  states fail closed for a changed login email: they do not replay the profile
+  save. Account Security stays Memberstack-native, while a confirmed Talent
+  identity on `/starter-edit-profile` replays its existing authenticated Xano
+  submission. With `brand`, Talent retains the native path without login-email
+  interception.
 
 The ordinary Account Profile form outside `/starter-edit-profile` remains
 Memberstack-native. Endpoint #1513 must route each `member.updated` event by
@@ -288,15 +351,41 @@ projection.
   ID with the member that initiated the workflow. An account change aborts with
   `MEMBER_SCOPE_CHANGED` before `updateMemberAuth` can write into the new session.
 - Build Account writes ordinary fields, any changed login email, and the
-  completion marker before attempting one reset/set-password email.
+  completion marker. It attempts one reset/set-password email only when the
+  login email changed; normal onboarding with the authenticated email sends none.
+- If the authenticated login email is unreadable on the submitting member, Build
+  Account treats the change as not required: it skips the `updateMemberAuth`
+  write and the reset/set-password email, and still completes the account. An
+  empty current email is indistinguishable from a changed one, so comparing
+  against it would send an unsolicited ownership email; completion stays durable
+  and Account Security remains the deliberate path for a later email change.
+- A changed login-email write can land server-side and still report failure.
+  Build Account reconciles that ambiguity in two places, and only for its own
+  form. A 409 or 422 from the write triggers one member read, bounded by the
+  operation timeout and deliberately not retried, so a genuine conflict still
+  surfaces promptly: when the same stable member ID already carries the requested
+  target as its login email, the write is treated as applied and the same submit
+  continues to completion and its one ownership-proof email. A read that returns
+  a different stable member ID fails as `MEMBER_SCOPE_CHANGED` with the
+  refresh-and-retry copy; every other reading, including an unreadable member,
+  keeps the original conflict and its choose-another-address copy. A write that
+  stays ambiguous without a conflict status, such as repeated timeouts, leaves a
+  per-form marker holding the intended target, so a same-page resubmit that finds
+  the target already installed still sends that one email without issuing a
+  second `updateMemberAuth`. That marker is per form and lives only for the page:
+  after a reload the login email is already the target, nothing is attempted, and
+  Forgot Password is the recovery path.
 - Account Security and the guarded Talent edit-profile form attempt that email
   only after a changed login email has been saved successfully.
+- A failed or unconfirmed changed login-email write blocks the guarded Talent
+  profile replay. Before replay, the controller re-reads Memberstack and requires
+  the same stable member ID and normalized login email that initiated the save.
 - An independent Talent login-email save requires the authored email input to
   pass native constraint validation and the normalized email to differ from the
   current Memberstack login email. It does not bypass or submit unrelated
   invalid profile fields.
-- No separate verification email is sent. Successful redemption of the one
-  reset/set-password link is the email-ownership proof.
+- No separate verification email is sent. For a changed login email, successful
+  redemption of the one reset/set-password link is the email-ownership proof.
 - Reset-email delivery is an external, non-idempotent browser side effect. The
   controller records the normalized target in an in-memory per-form marker
   before calling Memberstack and will not attempt that target again during the
@@ -306,16 +395,20 @@ projection.
 - If the reset-email result is failed or ambiguous, the durable account changes
   remain saved and the UI directs the member to the standard Forgot Password
   flow for an explicit recovery attempt. On `/starter-edit-profile`, the native
-  Xano profile submission is still replayed after that email-side-effect failure.
+  Xano profile submission is still replayed after that email-side-effect failure
+  when Personal Details remains valid and the same Memberstack identity and
+  normalized email are confirmed. The recovery error copy remains visible.
 - Successful password-token redemption is the ownership proof. The controller
   does not claim Memberstack `verified=true` without separately observed state.
 - `completed-brand-profile` is the final durable Build Account write. Any
   earlier account-write failure leaves the member on onboarding for a safe
   idempotent replay; an email failure occurs only after completion is durable.
 - Existing account error telemetry still carries only operation path and HTTP
-  status. Shared workflow receipts add only the README-owned allowlisted fields;
-  neither channel carries member ID, email, name, company, tokens, headers, or
-  request/response bodies.
+  status. Shared workflow receipts add only the README-owned allowlisted fields,
+  and the `brand_account_email_decision` event adds only the three flags listed
+  under [Support diagnostic receipts](#support-diagnostic-receipts); no channel
+  carries member ID, email, name, company, tokens, headers, or request/response
+  bodies.
 
 ## Brand canary matrix
 
@@ -329,6 +422,7 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
    form carry the live Brand Free plan. Creating a production member requires
    the separate approval described below.
 3. Existing incomplete Brand submits unchanged email plus ordinary fields.
+   Prove onboarding completes with zero reset/set-password emails.
 4. Read Memberstack, `user_v3`, and `brands_v3` back by Memberstack member ID.
 5. Replay the identical submission; prove one Brand row and unchanged final
    values.
@@ -337,9 +431,15 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
    and no partial Xano email drift.
 8. Change to the approved canary email; prove one reset/set-password message and
    matching Xano values.
-9. Simulate an ambiguous Build Account email response after the completion
-   write; prove a same-page resubmit performs no second email attempt, preserves
-   the completed account, and can continue to the dashboard.
+9. Submit Build Account with unchanged and changed login-email fixtures. Prove
+   the unchanged path calls no reset-email API. Simulate a changed-email write
+   that lands and then answers 409; prove the same submit completes and sends
+   exactly one message with no second `updateMemberAuth`. Simulate a
+   changed-email write that lands and then times out; prove the first submit
+   fails without a message and a same-page resubmit completes and sends exactly
+   one. Simulate an ambiguous email response on the changed path; prove a
+   same-page resubmit performs no second email attempt, preserves the completed
+   account, and can reach the dashboard.
 10. Simulate an ambiguous Account Security email response after the auth
    mutation; prove the saved email remains authoritative and a same-page
    resubmit performs no second email attempt. Prove Forgot Password can issue a

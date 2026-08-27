@@ -4,6 +4,8 @@
  * Loaded by Webflow after intl-tel-input and Quill. Keep the page footer thin;
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
+ *
+ * @release v1.59.346
  */
 
 (() => {
@@ -22,10 +24,57 @@ const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
 let observedMemberstackClient = null;
-let observedMemberstackMemberId = '';
+const personalDetailsReplayProofs = new WeakMap();
 
 function memberFromResult(result) {
 	return result?.data || result?.member || result || null;
+}
+
+function normalizedEmail(value) {
+	return String(value ?? '').trim().toLowerCase();
+}
+
+function memberEmail(member) {
+	return normalizedEmail(member?.auth?.email || member?.email || '');
+}
+
+function authorizePersonalDetailsReplay(form, proof) {
+	const memberId = String(proof?.memberId || '').trim();
+	const email = normalizedEmail(proof?.email);
+	if (!form || !memberId || !email) return false;
+	personalDetailsReplayProofs.set(form, { memberId, email });
+	const storedProof = personalDetailsReplayProofs.get(form);
+	if (typeof proof.onRejected === 'function') storedProof.onRejected = proof.onRejected;
+	return true;
+}
+
+function takePersonalDetailsReplay(form) {
+	const proof = personalDetailsReplayProofs.get(form) || null;
+	personalDetailsReplayProofs.delete(form);
+	return proof;
+}
+
+function clearPersonalDetailsReplay(form) {
+	personalDetailsReplayProofs.delete(form);
+}
+
+function replayProofMatches(scope, proof) {
+	if (!proof) return true;
+	return Boolean(
+		scope?.member?.id === proof.memberId &&
+		memberEmail(scope.member) === proof.email &&
+		normalizedEmail(qs('[name="email"]', stepElement(1))?.value) === proof.email
+	);
+}
+
+function rejectReplayProof(proof) {
+	if (!proof || proof.settled) return;
+	proof.settled = true;
+	if (typeof proof.onRejected === 'function') proof.onRejected();
+}
+
+function acceptReplayProof(proof) {
+	if (proof) proof.settled = true;
 }
 
 function memberScopeChangedError() {
@@ -34,22 +83,22 @@ function memberScopeChangedError() {
 	return error;
 }
 
-// Memberstack immediately replays the current member when this listener subscribes.
-// Ignore only that same-member replay; every later notification invalidates in-flight work,
-// including logout followed by reauthentication as the same member.
-function observeMemberstackAuth(client) {
+// Memberstack immediately replays its auth state when this listener subscribes, and
+// that replay can arrive empty while getCurrentMember() already has the live member.
+// Ignore the first notification only when it is empty or reports the member read just
+// before subscribing. Every other notification invalidates in-flight work, including
+// logout followed by reauthentication as the same member.
+function observeMemberstackAuth(client, subscribedMemberId) {
 	if (observedMemberstackClient === client) return;
 	observedMemberstackClient = client;
-	observedMemberstackMemberId = memberFromResult(window.MEMBER)?.id || '';
 	let awaitingInitialNotification = true;
 	if (typeof client?.onAuthChange === 'function') {
 		client.onAuthChange((result) => {
 			const nextMemberId = memberFromResult(result)?.id || '';
 			if (awaitingInitialNotification) {
 				awaitingInitialNotification = false;
-				if (nextMemberId && nextMemberId === observedMemberstackMemberId) return;
+				if (!nextMemberId || nextMemberId === subscribedMemberId) return;
 			}
-			observedMemberstackMemberId = nextMemberId;
 			memberAuthGeneration += 1;
 		});
 	}
@@ -60,10 +109,21 @@ async function captureMemberScope() {
 	if (!client || typeof client.getCurrentMember !== 'function') {
 		throw new Error('Memberstack member lookup is unavailable.');
 	}
-	observeMemberstackAuth(client);
+	// The pre-subscribe read brackets the subscription window that no generation guard
+	// can cover yet, so it is only needed on the capture that installs the listener.
+	let subscribedMemberId = '';
+	if (observedMemberstackClient !== client) {
+		subscribedMemberId = memberFromResult(await client.getCurrentMember())?.id || '';
+		if (!subscribedMemberId) throw memberScopeChangedError();
+		observeMemberstackAuth(client, subscribedMemberId);
+	}
 	const generation = memberAuthGeneration;
 	const member = memberFromResult(await client.getCurrentMember());
-	if (!member?.id || generation !== memberAuthGeneration) throw memberScopeChangedError();
+	if (
+		!member?.id ||
+		(subscribedMemberId && member.id !== subscribedMemberId) ||
+		generation !== memberAuthGeneration
+	) throw memberScopeChangedError();
 	return { client, generation, member };
 }
 
@@ -363,6 +423,14 @@ function validateOwnedStep(stepIndex, { report = false } = {}) {
 	return { valid: failures.length === 0, failures };
 }
 
+window.StartersStarterEditProfile = Object.assign(window.StartersStarterEditProfile || {}, {
+	validatePersonalDetails(options = {}) {
+		return validateOwnedStep(1, options);
+	},
+	authorizePersonalDetailsReplay,
+	clearPersonalDetailsReplay,
+});
+
 function handleCustomSelects() {
 	if (typeof window.handleCustomSelects === 'function') {
 		window.handleCustomSelects();
@@ -520,30 +588,36 @@ onDomReady(function () {
 
 				submitButton.addEventListener('click', async (event) => {
 					event.preventDefault();
+					const replayProof = stepIndex === 1 ? takePersonalDetailsReplay(form) : null;
+					try {
+						const validation = validateOwnedStep(stepIndex, { report: true });
+						if (!validation.valid) {
+							await workflowDiagnosticsReady;
+							recordProfileDiagnostic(null, {
+								result: 'failed',
+								stage: 'validation',
+								error_code: validation.failures[0]?.code || 'VALIDATION_FAILED',
+								request_started: false,
+							});
+							return;
+						}
 
-					const validation = validateOwnedStep(stepIndex, { report: true });
-					if (!validation.valid) {
-						await workflowDiagnosticsReady;
-						recordProfileDiagnostic(null, {
-							result: 'failed',
-							stage: 'validation',
-							error_code: validation.failures[0]?.code || 'VALIDATION_FAILED',
-							request_started: false,
-						});
-						return;
+						await submitStep(stepIndex, submitButton, replayProof);
+					} finally {
+						rejectReplayProof(replayProof);
 					}
-
-					await submitStep(stepIndex, submitButton);
 				});
 			});
 		}
 
-		async function submitStep(stepIndex, submitButton) {
+		async function submitStep(stepIndex, submitButton, replayProof = null) {
 			setSubmitLoading(submitButton, true);
 			let memberScope;
 			try {
 				memberScope = await captureMemberScope();
+				if (!replayProofMatches(memberScope, replayProof)) throw memberScopeChangedError();
 			} catch (error) {
+				rejectReplayProof(replayProof);
 				await workflowDiagnosticsReady;
 				const diagnostic = recordProfileDiagnostic(null, {
 					result: 'failed',
@@ -559,6 +633,8 @@ onDomReady(function () {
 			await workflowDiagnosticsReady;
 
 			const payload = getStepPayload(stepIndex);
+
+			normalizeOptionalCanonicalRates(payload, stepIndex);
 
 			// Country, State
 			if (payload.Country && payload.State_Province) {
@@ -669,8 +745,12 @@ onDomReady(function () {
 			});
 
 			try {
-				await revalidateMemberScope(memberScope);
+				const currentMember = await revalidateMemberScope(memberScope);
+				if (!replayProofMatches({ ...memberScope, member: currentMember }, replayProof)) {
+					throw memberScopeChangedError();
+				}
 			} catch (error) {
+				rejectReplayProof(replayProof);
 				diagnostic = recordProfileDiagnostic(diagnostic, {
 					result: 'failed',
 					stage: 'auth',
@@ -684,6 +764,7 @@ onDomReady(function () {
 			}
 
 			try {
+				acceptReplayProof(replayProof);
 				requestStarted = true;
 				const response = await fetch(`${PATCH_ENDPOINT}${memberScope.member.id}`, {
 					method: 'PATCH',
@@ -750,6 +831,28 @@ onDomReady(function () {
 			} finally {
 				setSubmitLoading(submitButton, false);
 			}
+		}
+
+		// Optional rate controls clear their visible values when their owning toggle is
+		// off, so the canonical integer contract needs the existing zero sentinel instead
+		// of a blank string. A rate whose control is live stays blank so an empty value
+		// keeps failing instead of silently persisting a zero rate.
+		const OPTIONAL_CANONICAL_RATES = Object.freeze([
+			{ field: 'Hourly_Rate', isOptional: (payload, step) => qs('[name="rate"]', step)?.required === false },
+			{ field: 'Paid_Call_Rate', isOptional: (payload) => payload.Paid_Call_Enabled === false },
+			{ field: 'Retainer_Rate', isOptional: (payload) => payload.Retainer_Enabled === false },
+		]);
+
+		function normalizeOptionalCanonicalRates(payload, stepIndex) {
+			const step = stepElement(stepIndex);
+
+			OPTIONAL_CANONICAL_RATES.forEach(({ field, isOptional }) => {
+				if (!Object.prototype.hasOwnProperty.call(payload, field)) return;
+				if (String(payload[field] ?? '').trim() !== '') return;
+				if (!isOptional(payload, step)) return;
+
+				payload[field] = 0;
+			});
 		}
 
 		function getStepPayload(stepIndex) {
@@ -829,6 +932,14 @@ function counterFields(wrapper = null) {
 		inputs.forEach((input) => {
 			const wrapper = input.closest('.form_input-wr');
 			if (!wrapper) return;
+
+			// A rich-text editor in this group owns its own counter: the textarea is a
+			// mirror, so counting it here would fight the editor script over the span.
+			// Claimed on the way out so a later re-scan skips it without re-checking.
+			if (qs('[data-editor-id]', wrapper)) {
+				input.classList.add('initialized');
+				return;
+			}
 
 			const countSpan = qs('.count-input', wrapper);
 			if (!countSpan) return;
@@ -979,15 +1090,32 @@ function counterFields(wrapper = null) {
 	onDomReady(() => counterFields());
 
 // Inline block 3
+// Bio length contract: CHARACTERS, not words. The limit reads `data-max-chars` on
+// `#bio-plain` and defaults to 1500. A character is one code unit of the Quill plain
+// text with the single trailing newline stripped, so newlines inside the bio count.
+// The limit governs growth: a bio saved under the old 300-word cap is grandfathered
+// and can be edited down, but not up. This block also owns the bio counter UI.
+// v3/build-profile/bio-editor.js carries the same implementation, function for
+// function, for the Build Profile surface; bio-char-limit.test.js pins that parity.
 onDomReady(() => {
 		const outputPlain = qs('#bio-plain');
 		const outputHtml = qs('#bio-html');
 		if (!outputHtml || !outputPlain) return;
 
-		const MAX_WORDS = Number(outputPlain.dataset.maxWords) || 300;
+		const LOG_PREFIX = '[starter-edit-profile]';
+		const MAX_CHARS = Number(outputPlain.dataset.maxChars) || 1500;
+		const DENOMINATOR_PATTERN = /^(\s*)\/\d+(\s*)$/;
 		let isCleaning = false;
 		let prevContents = null;
-		let prevWordCount = 0;
+		let prevCharCount = 0;
+
+		// Counter takeover: this block, not field-counters.js, owns this counter group.
+		outputPlain.removeAttribute('count-by-words');
+
+		const counterWrapper = outputPlain.closest('.form_input-wr');
+		const counterSpan = counterWrapper ? qs('.count-input', counterWrapper) : null;
+
+		setCounterDenominator(counterSpan, MAX_CHARS);
 
 		const bioEditor = new Quill('#bio-editor', {
 			theme: 'snow',
@@ -1030,60 +1158,81 @@ onDomReady(() => {
 					.replaceAll("\u00A0", " ")
 					.replaceAll("&nbsp;", " ");
 
-				bioEditor.root.innerHTML = html;
-				syncQuillValue();
+				// A saved bio may exceed MAX_CHARS under the old word cap. Restore it
+				// intact: silence enforcement across the write, flush Quill's pending
+				// mutation, and adopt the restored document as the baseline. Without
+				// the flush, text-change fires later against the pre-restore baseline
+				// and reverts the member's own bio to empty.
+				isCleaning = true;
+				try {
+					bioEditor.root.innerHTML = html;
+					bioEditor.update();
+				} finally {
+					prevContents = bioEditor.getContents();
+					prevCharCount = getQuillCharCount(bioEditor);
+					// The restore is not a member edit; undo must not cross it.
+					bioEditor.history?.clear?.();
+					isCleaning = false;
+				}
 
-				prevContents = bioEditor.getContents();
-				prevWordCount = getQuillWordCount(bioEditor);
+				syncQuillValue();
 			}
 		});
 
 		prevContents = bioEditor.getContents();
-		prevWordCount = getQuillWordCount(bioEditor);
+		prevCharCount = getQuillCharCount(bioEditor);
 
 		bioEditor.root.addEventListener('paste', handleQuillPaste);
 
-		bioEditor.on('text-change', (delta) => {
+		bioEditor.on('text-change', () => {
 			if (isCleaning) return;
 
-			const wordCount = getQuillWordCount(bioEditor);
-			const isWhitespaceInsert = hasOnlyWhitespaceInsert(delta);
+			const charCount = getQuillCharCount(bioEditor);
 
-			if (
-				wordCount > MAX_WORDS ||
-				(prevWordCount >= MAX_WORDS && isWhitespaceInsert && wordCount > prevWordCount)
-			) {
+			// Growth is what the limit governs. An over-limit legacy bio stays editable
+			// downward, so only an edit that raises the count while over is reverted.
+			if (charCount > MAX_CHARS && charCount > prevCharCount) {
 				const selection = bioEditor.getSelection();
 
 				isCleaning = true;
 
-				bioEditor.setContents(prevContents, 'silent');
+				try {
+					bioEditor.setContents(prevContents, 'silent');
 
-				if (selection) {
-					const safeIndex = Math.min(
-						Math.max(selection.index - 1, 0),
-						bioEditor.getLength() - 1
-					);
+					if (selection) {
+						const safeIndex = Math.min(
+							Math.max(selection.index - 1, 0),
+							bioEditor.getLength() - 1
+						);
 
-					bioEditor.setSelection(safeIndex, 0, 'silent');
+						bioEditor.setSelection(safeIndex, 0, 'silent');
+					}
+				} finally {
+					isCleaning = false;
 				}
 
-				isCleaning = false;
+				prevContents = bioEditor.getContents();
+				prevCharCount = getQuillCharCount(bioEditor);
 
 				syncQuillValue();
 				return;
 			}
 
+			// The baseline must advance synchronously: a burst of keystrokes fires
+			// several text-change events before one animation frame runs, and a revert
+			// that restores a stale snapshot would drop keystrokes that were accepted.
+			prevContents = bioEditor.getContents();
+			prevCharCount = charCount;
+
 			requestAnimationFrame(() => {
 				syncQuillValue();
-
-				prevContents = bioEditor.getContents();
-				prevWordCount = getQuillWordCount(bioEditor);
 			});
 		});
 
 		function handleQuillPaste(event) {
-			const pastedText = event.clipboardData?.getData('text/plain') || '';
+			// An empty text/plain means a rich-only clipboard; let the text-change
+			// revert catch any overflow instead of guessing at the payload here.
+			const pastedText = normalizeCountText(event.clipboardData?.getData('text/plain') || '');
 			if (!pastedText.trim()) return;
 
 			const range = bioEditor.getSelection(true);
@@ -1094,103 +1243,118 @@ onDomReady(() => {
 			const before = currentText.slice(0, range.index);
 			const after = currentText.slice(range.index + range.length);
 
-			const baseWordCount = countWordsFromText(before + after);
-			const availableWords = MAX_WORDS - baseWordCount;
+			const baseCharCount = countCharsFromText(stripTrailingNewline(before + after));
 
-			if (availableWords <= 0) {
+			// Budget against the same growth rule the text-change gate applies, not
+			// against MAX_CHARS alone. A grandfathered bio may not grow past its own
+			// size, but replacing a long selection with a shorter paste shrinks it,
+			// which the typing path allows and this path must not refuse. The count is
+			// of the WHOLE document, taken before the selection is subtracted out, so
+			// for a bio within the limit the ceiling is exactly MAX_CHARS.
+			const currentDocCount = countCharsFromText(stripTrailingNewline(currentText));
+			const ceiling = Math.max(MAX_CHARS, currentDocCount);
+			const availableChars = ceiling - baseCharCount;
+
+			// Load-bearing: slice() with a negative end counts from the right, so an
+			// already-full editor would keep the tail of the paste instead of nothing.
+			if (availableChars <= 0) {
 				event.preventDefault();
 				return;
 			}
 
-			const pastedWordCount = countWordsFromText(pastedText);
-
-			if (baseWordCount + pastedWordCount <= MAX_WORDS) {
+			if (pastedText.length <= availableChars) {
 				return;
 			}
 
 			event.preventDefault();
 
-			const allowedPaste = trimTextToWords(pastedText, availableWords);
+			const allowedPaste = dropSplitSurrogate(pastedText.slice(0, Math.max(availableChars, 0)));
 			if (!allowedPaste) return;
 
 			isCleaning = true;
 
-			if (range.length > 0) {
-				bioEditor.deleteText(range.index, range.length, 'silent');
+			try {
+				if (range.length > 0) {
+					bioEditor.deleteText(range.index, range.length, 'silent');
+				}
+
+				bioEditor.insertText(range.index, allowedPaste, 'silent');
+
+				const newCursorPosition = range.index + allowedPaste.length;
+				bioEditor.setSelection(newCursorPosition, 0, 'silent');
+			} finally {
+				isCleaning = false;
 			}
 
-			bioEditor.insertText(range.index, allowedPaste, 'silent');
-
-			const newCursorPosition = range.index + allowedPaste.length;
-			bioEditor.setSelection(newCursorPosition, 0, 'silent');
-
-			isCleaning = false;
 			syncQuillValue();
 
 			prevContents = bioEditor.getContents();
-			prevWordCount = getQuillWordCount(bioEditor);
+			prevCharCount = getQuillCharCount(bioEditor);
+		}
+
+		function stripTrailingNewline(text) {
+			return (text || '').replace(/\n$/, '');
 		}
 
 		function getPlainQuillText(quillInstance) {
-			const plainText = quillInstance.getText().replace(/\n$/, '');
-			return plainText;
+			return stripTrailingNewline(quillInstance.getText());
 		}
 
-		function getQuillWords(quillInstance) {
-			return getWordsFromText(quillInstance.getText());
-		}
-
-		function getQuillWordCount(quillInstance) {
-			return getQuillWords(quillInstance).length;
-		}
-
-		function getWordsFromText(text) {
-			const plainText = (text || '')
+		// A clipboard newline is CRLF on Windows. Collapsing it keeps one line break
+		// worth one character and keeps a stray \r out of the saved bio. Quill's own
+		// text never contains \r, so this is a no-op for everything else.
+		function normalizeCountText(text) {
+			return (text || '')
 				.replace(/\uFEFF/g, '')
-				.replace(/\u00A0/g, ' ')
-				.replace(/[\r\n]+/g, ' ')
-				.trim();
-
-			if (!plainText) return [];
-
-			return plainText.match(/\S+/g) || [];
-		}
-
-		function countWordsFromText(text) {
-			return getWordsFromText(text).length;
-		}
-
-		function trimTextToWords(text, maxWords) {
-			if (maxWords <= 0) return '';
-
-			const normalizedText = (text || '')
-				.replace(/\uFEFF/g, '')
+				.replace(/\r\n?/g, '\n')
 				.replace(/\u00A0/g, ' ');
+		}
 
-			const tokenRegex = /\S+/g;
+		function countCharsFromText(text) {
+			return normalizeCountText(text).length;
+		}
 
-			let match;
-			let wordsCount = 0;
-			let endIndex = 0;
+		function getQuillCharCount(quillInstance) {
+			return countCharsFromText(getPlainQuillText(quillInstance));
+		}
 
-			while ((match = tokenRegex.exec(normalizedText)) !== null) {
-				wordsCount++;
-				endIndex = match.index + match[0].length;
+		// slice() counts UTF-16 code units, so a cut can land inside an astral
+		// character such as an emoji. A trailing high surrogate has lost its pair.
+		function dropSplitSurrogate(text) {
+			return /[\uD800-\uDBFF]$/.test(text) ? text.slice(0, -1) : text;
+		}
 
-				if (wordsCount >= maxWords) {
-					break;
-				}
+		function setCounterDenominator(span, maxChars) {
+			if (!span) {
+				warnAuthoring('no .count-input in the bio field wrapper; the counter is unowned');
+				return;
 			}
 
-			if (!endIndex) return '';
+			const denominator = span.nextSibling;
+			const authored = denominator && denominator.nodeType === 3 ? denominator.nodeValue || '' : '';
 
-			return normalizedText.slice(0, endIndex).trim();
+			if (!DENOMINATOR_PATTERN.test(authored)) {
+				warnAuthoring('the bio counter denominator is not an authored "/<number>" text node');
+				return;
+			}
+
+			denominator.nodeValue = authored.replace(DENOMINATOR_PATTERN, `$1/${maxChars}$2`);
 		}
 
-		function hasOnlyWhitespaceInsert(delta) {
-			return delta.ops.some((op) => {
-				return typeof op.insert === 'string' && /^\s+$/.test(op.insert);
-			});
+		// Authoring drift is silent by design in production: a missing counter must
+		// never break the editor. Staging and an explicit debug flag still say so.
+		function warnAuthoring(message) {
+			const host = (window.location || {}).hostname || '';
+			const staging = /(\.|^)webflow\.io$/.test(host) ||
+				host === 'localhost' ||
+				host === '127.0.0.1' ||
+				/(\.|^)trycloudflare\.com$/.test(host);
+
+			if (!staging && window.STARTERS_DEBUG !== true) return;
+
+			try {
+				console.warn(LOG_PREFIX + ' ' + message);
+			} catch (error) {}
 		}
 
 		function hasAdjacentSpace(quillInstance, index) {
@@ -1244,13 +1408,21 @@ onDomReady(() => {
 		}
 
 		function syncQuillValue() {
-			outputPlain.value = getPlainQuillText(bioEditor);
+			const plain = getPlainQuillText(bioEditor);
+
+			outputPlain.value = plain;
 			outputPlain.dispatchEvent(new Event('change', { bubbles: true }));
 			outputPlain.dispatchEvent(new Event('input', { bubbles: true }));
 
 			outputHtml.value = getCleanQuillHTML(bioEditor);
 			outputHtml.dispatchEvent(new Event('change', { bubbles: true }));
 			outputHtml.dispatchEvent(new Event('input', { bubbles: true }));
+
+			// Last write wins: any counter listener reacting to the events above
+			// counts the textarea value, which is only ever the plain-text mirror.
+			if (counterSpan) {
+				counterSpan.textContent = String(countCharsFromText(plain)).padStart(2, '0');
+			}
 		}
 
 		syncQuillValue();

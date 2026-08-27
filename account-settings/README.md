@@ -241,8 +241,9 @@ render the `ms-form-pause-empty` text — never a stale date and never
 `Invalid Date`. A page with no `[ms-form-pause-date]` element never calls
 Memberstack at all.
 
-Diagnostics warn on staging, localhost, and Cloudflare tunnel hosts, or with
-`window.STARTERS_DEBUG === true`; production stays silent. What warns: an unknown
+Diagnostics follow the repo-wide
+[staging-only console diagnostics](../README.md#staging-only-console-diagnostics)
+gate; production stays silent. What warns: an unknown
 `ms-form-pause-date` value, an unknown `ms-form-pause-anchor`, a non-numeric
 `ms-form-pause-months`, a **selected** pause control with no month count in its
 value or its label, a failed `getCurrentMember`, and Memberstack never appearing.
@@ -421,8 +422,9 @@ step-flow's — no display-override attribute, no valid-display whitelist.
 
 ### Diagnostics and API
 
-Diagnostics warn on staging, localhost, and Cloudflare tunnel hosts, or with
-`window.STARTERS_DEBUG === true`; production stays silent. They fire once per element,
+Diagnostics follow the repo-wide
+[staging-only console diagnostics](../README.md#staging-only-console-diagnostics)
+gate; production stays silent. They fire once per element,
 on the mistakes that are otherwise invisible: a key with no item, a root with no items,
 a half-tagged or swapped trigger, a button outside every root.
 

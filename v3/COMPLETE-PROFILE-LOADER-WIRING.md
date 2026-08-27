@@ -322,8 +322,8 @@ state: the loader is either up or down.
   On a page with no loader they are replaced by no-ops, so calling them on an
   unrelated page does nothing.
 
-Diagnostics narrate every decision on staging only: `*.webflow.io`, `localhost`,
-`127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`.
+Diagnostics narrate every decision on
+[staging only](../README.md#staging-only-console-diagnostics).
 Production is completely silent, on the applied path and on every fail-open path
 alike.
 

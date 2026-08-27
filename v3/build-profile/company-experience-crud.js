@@ -1,3 +1,91 @@
+function isStarterProfileCompanyPresentDate(value) {
+  return String(value || '').trim().toLowerCase() === 'present';
+}
+
+function starterProfileCompanyDatepickerValue(value) {
+  const text = String(value || '').trim();
+  if (!text || isStarterProfileCompanyPresentDate(text)) return null;
+
+  const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+  function localCalendarDate(year, monthIndex, day) {
+    const date = new Date(year, monthIndex, day);
+    return (
+      date.getFullYear() === year &&
+      date.getMonth() === monthIndex &&
+      date.getDate() === day
+    ) ? date : null;
+  }
+
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/);
+  if (isoMatch) {
+    const date = localCalendarDate(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+    if (date) return date;
+  }
+
+  const monthDayYearMatch = text.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
+  if (monthDayYearMatch) {
+    const monthIndex = monthNames.indexOf(monthDayYearMatch[1].slice(0, 3).toLowerCase());
+    if (monthIndex >= 0) {
+      const date = localCalendarDate(Number(monthDayYearMatch[3]), monthIndex, Number(monthDayYearMatch[2]));
+      if (date) return date;
+    }
+  }
+
+  const monthYearMatch = text.match(/^([A-Za-z]+)\s+(\d{4})$/);
+  if (monthYearMatch) {
+    const monthIndex = monthNames.indexOf(monthYearMatch[1].slice(0, 3).toLowerCase());
+    if (monthIndex >= 0) return new Date(Number(monthYearMatch[2]), monthIndex, 1);
+  }
+
+  // jQuery UI interprets unknown strings as relative-day offsets. Do not let
+  // malformed or new provider formats silently become plausible future dates.
+  return null;
+}
+
+function starterProfileCompanyWidgetDateValue(input, value) {
+  const text = String(value || '').trim();
+  if (!input || !text) return null;
+  if (typeof jQuery === 'undefined' || !jQuery.datepicker || typeof jQuery.datepicker.parseDate !== 'function') return null;
+
+  // dateFormat lives on the Webflow markup, so only the widget knows it. parseDate
+  // throws on a mismatch rather than falling back to relative-day offsets.
+  try {
+    const format = jQuery(input).datepicker('option', 'dateFormat');
+    const date = format ? jQuery.datepicker.parseDate(format, text) : null;
+    return date instanceof Date ? date : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function starterProfileCompanyDatepickerDate(input, value) {
+  return starterProfileCompanyDatepickerValue(value) || starterProfileCompanyWidgetDateValue(input, value);
+}
+
+function setStarterProfileCompanyDatepickerDate(input, value) {
+  if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
+  if (isStarterProfileCompanyPresentDate(value)) return;
+
+  try {
+    jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerDate(input, value));
+  } catch (error) {
+    // The value may not match the widget's configured dateFormat.
+  }
+}
+
+function starterProfileCompanyDateBaseline(input, rawValue) {
+  const rawDate = String(rawValue || '').trim();
+  if (!input || !rawDate || isStarterProfileCompanyPresentDate(rawDate)) return null;
+  return { rawValue: rawDate, pickerValue: input.value.trim() };
+}
+
+function serializeStarterProfileCompanyDate(input, baseline) {
+  const currentValue = input ? input.value.trim() : '';
+  if (baseline && currentValue === baseline.pickerValue) return baseline.rawValue;
+  return currentValue;
+}
+
 /**
  * GitHub-owned copy of the Build Profile Webflow controller block.
  * Original live inline body SHA-256: 6dc7fa7306d9558fb493cb6a6cfd6196659e0b7005c6d49831ffcc5f3261b5d3
@@ -49,7 +137,24 @@
       const cancelCompanyEditButton = qs('[cancel-company-edit]');
 
       let editSelectedCompany = null;
+      let editStartDateBaseline = null;
+      let editEndDateBaseline = null;
+      let editStartDateUserChanged = false;
+      let editEndDateUserChanged = false;
       let isLimitReached = false;
+
+      let editStartDateSelectGuarded = false;
+      let editEndDateSelectGuarded = false;
+
+      if (editStartDateInput) {
+        editStartDateInput.addEventListener('input', () => { editStartDateUserChanged = true; });
+        editStartDateInput.addEventListener('change', () => { editStartDateUserChanged = true; });
+      }
+
+      if (editEndDateInput) {
+        editEndDateInput.addEventListener('input', () => { editEndDateUserChanged = true; });
+        editEndDateInput.addEventListener('change', () => { editEndDateUserChanged = true; });
+      }
 
       if (!companyList || !companyTemplate) {
         console.warn('[Companies] .company-list or .company-card template not found');
@@ -99,9 +204,11 @@
         return input ? input.value.trim() : '';
       }
 
-      // XANO keeps the full day-precision date (e.g. "Apr 22 2026") so the datepicker
-      // can parse it back correctly when the edit popup reopens; cards only ever
-      // display month + year, so this trims it down for display purposes only.
+      // Label-only transform: cards show month + year, so this drops any middle token
+      // from the stored string. It says nothing about what XANO stores — records hold
+      // month-only values like "Jan 2024" as well as day-precision ones — so the edit
+      // popup parses the raw string separately in starterProfileCompanyDatepickerValue.
+      // Contract: ../profile-form/README.md#company-experience-date-hydration
       function toMonthYearLabel(value) {
         const text = String(value || '').trim();
         if (!text || text.toLowerCase() === 'present') return text;
@@ -115,13 +222,7 @@
       // jQuery UI datepicker interop, replacing the old `input._flatpickr` calls now that
       // the picker itself is initialized elsewhere (Global-FormEmbeds-Datepicker.html).
       function setDatepickerDate(input, value) {
-        if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
-
-        try {
-          jQuery(input).datepicker('setDate', value || null);
-        } catch (error) {
-          // value may not match the widget's configured dateFormat — ignore.
-        }
+        setStarterProfileCompanyDatepickerDate(input, value);
       }
 
       // start/end pairs lock each other's minDate/maxDate on selection (see
@@ -136,6 +237,72 @@
         } catch (error) {
           // ignore
         }
+      }
+
+      const EDIT_DATEPICKER_POLL_MS = 100;
+      const EDIT_DATEPICKER_MAX_WAIT_MS = 10000;
+
+      function isEditCompanyDatepickerReady(input) {
+        if (!input) return true;
+        if (typeof jQuery === 'undefined' || !jQuery.fn || !jQuery.fn.datepicker) return false;
+
+        return !!jQuery(input).data('datepicker');
+      }
+
+      // jQuery UI writes a calendar pick straight into the field with `input.val()` and, because
+      // the shared embed pairs these inputs with its own `onSelect`, fires neither `input` nor
+      // `change`. Chain onto that callback so a picked date still counts as user input.
+      function guardEditCompanyDateSelection(input, markChanged) {
+        if (!input || !isEditCompanyDatepickerReady(input)) return false;
+
+        try {
+          const existingOnSelect = jQuery(input).datepicker('option', 'onSelect');
+          jQuery(input).datepicker('option', {
+            onSelect: function () {
+              markChanged();
+              if (typeof existingOnSelect === 'function') existingOnSelect.apply(this, arguments);
+            },
+          });
+          return true;
+        } catch (error) {
+          return false;
+        }
+      }
+
+      function guardEditCompanyDateSelections() {
+        if (!editStartDateSelectGuarded) {
+          editStartDateSelectGuarded = guardEditCompanyDateSelection(editStartDateInput, function () {
+            editStartDateUserChanged = true;
+          });
+        }
+
+        if (!editEndDateSelectGuarded) {
+          editEndDateSelectGuarded = guardEditCompanyDateSelection(editEndDateInput, function () {
+            editEndDateUserChanged = true;
+          });
+        }
+      }
+
+      // jQuery UI is fetched over the network by Global-FormEmbeds-Datepicker.html, so the widget
+      // can initialize - and rewrite these fields from their raw text - after the edit modal is
+      // already open. Run `callback` once both inputs are live; when they already are nothing
+      // further will touch them, so there is nothing to wait for.
+      function whenEditCompanyDatepickerReady(callback) {
+        if (isEditCompanyDatepickerReady(editStartDateInput) && isEditCompanyDatepickerReady(editEndDateInput)) return;
+
+        let waited = 0;
+        const poll = setInterval(function () {
+          waited += EDIT_DATEPICKER_POLL_MS;
+          guardEditCompanyDateSelections();
+
+          if (isEditCompanyDatepickerReady(editStartDateInput) && isEditCompanyDatepickerReady(editEndDateInput)) {
+            clearInterval(poll);
+            callback();
+            return;
+          }
+
+          if (waited >= EDIT_DATEPICKER_MAX_WAIT_MS) clearInterval(poll);
+        }, EDIT_DATEPICKER_POLL_MS);
       }
 
       function setButtonText(text) {
@@ -569,6 +736,39 @@
         if (!editCompanyWrapper || !company) return;
 
         editCompanyWrapper.dataset.id = company.id || '';
+        const rawStartDate = company.start_date || '';
+        const rawEndDate = company.current_work ? 'Present' : (company.end_date || '');
+        editStartDateUserChanged = false;
+        editEndDateUserChanged = false;
+
+        function hydrateEditCompanyDates(onlyIfUnchanged = false) {
+          if (editStartDateInput && (!onlyIfUnchanged || !editStartDateUserChanged)) {
+            editStartDateInput.value = rawStartDate;
+            resetDatepickerBounds(editStartDateInput);
+            setDatepickerDate(editStartDateInput, rawStartDate);
+            editStartDateBaseline = starterProfileCompanyDateBaseline(editStartDateInput, rawStartDate);
+          }
+
+          if (editEndDateInput && (!onlyIfUnchanged || !editEndDateUserChanged)) {
+            editEndDateInput.value = rawEndDate;
+            resetDatepickerBounds(editEndDateInput);
+
+            if (company.end_date && !company.current_work) {
+              setDatepickerDate(editEndDateInput, company.end_date);
+            } else {
+              setDatepickerDate(editEndDateInput, null);
+            }
+
+            if (company.current_work) {
+              editEndDateInput.setAttribute('disabled', 'disabled');
+            } else {
+              editEndDateInput.removeAttribute('disabled');
+            }
+
+            editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
+            editEndDateBaseline = starterProfileCompanyDateBaseline(editEndDateInput, rawEndDate);
+          }
+        }
 
         if (editCompanyInput) {
           editCompanyInput.value = company.company_name || '';
@@ -578,27 +778,7 @@
           editJobTitleInput.value = company.job_title || '';
         }
 
-        if (editStartDateInput) {
-          editStartDateInput.value = company.start_date || '';
-          if (company.start_date) {
-            setDatepickerDate(editStartDateInput, company.start_date);
-          }
-        }
-
-        if (editEndDateInput) {
-          editEndDateInput.value = company.current_work ? 'Present' : (company.end_date || '');
-
-          if (company.current_work) {
-            editEndDateInput.setAttribute('disabled', 'disabled');
-            editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
-          }
-
-          if (company.end_date && !company.current_work) {
-            setDatepickerDate(editEndDateInput, company.end_date);
-          } else {
-            setDatepickerDate(editEndDateInput, null);
-          }
-        }
+        hydrateEditCompanyDates();
 
         setCheckboxState(editCurrentWorkCheckbox, !!company.current_work);
 
@@ -609,6 +789,14 @@
         };
 
         openEditModal();
+        // Opening the modal runs the shared date-picker embed over these inputs, which re-reads
+        // their raw text and can turn it into a relative-day date.
+        hydrateEditCompanyDates();
+        guardEditCompanyDateSelections();
+        whenEditCompanyDatepickerReady(function () {
+          if (String(editCompanyWrapper.dataset.id) !== String(company.id || '')) return;
+          hydrateEditCompanyDates(true);
+        });
       }
 
       function closeEditCompany(notCloseButton = false) {
@@ -646,6 +834,8 @@
           setCheckboxState(editCurrentWorkCheckbox, false);
 
           editSelectedCompany = null;
+          editStartDateBaseline = null;
+          editEndDateBaseline = null;
         }, 800);
       }
 
@@ -771,8 +961,8 @@
             freelancers_id: starter_xano_id,
             company_name: getValue(editCompanyInput),
             job_title: getValue(editJobTitleInput),
-            start_date: getValue(editStartDateInput),
-            end_date: editCurrentWorkCheckbox && editCurrentWorkCheckbox.checked ? "Present" : getValue(editEndDateInput),
+            start_date: serializeStarterProfileCompanyDate(editStartDateInput, editStartDateBaseline),
+            end_date: editCurrentWorkCheckbox && editCurrentWorkCheckbox.checked ? "Present" : serializeStarterProfileCompanyDate(editEndDateInput, editEndDateBaseline),
             current_work: editCurrentWorkCheckbox ? editCurrentWorkCheckbox.checked : false,
             company_domain: editSelectedCompany ? editSelectedCompany.domain : '',
             company_logo_url: editSelectedCompany && editSelectedCompany.logo_url ? editSelectedCompany.logo_url : placeholderLogo,
