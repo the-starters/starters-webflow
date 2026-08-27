@@ -232,8 +232,14 @@ function actionChainHarness(kind, restart) {
   })
   const reasonField = {
     value: kind === 'cancel' ? 'Conflict came up' : 'Not available',
-    reportValidity() {},
-    setCustomValidity() {},
+    customValidity: '',
+    reportValidityCount: 0,
+    reportValidity() {
+      this.reportValidityCount += 1
+    },
+    setCustomValidity(message) {
+      this.customValidity = message
+    },
   }
   const modal = {
     listeners: {},
@@ -413,6 +419,35 @@ test('a null command result keeps the reason panel and skips refresh', async () 
     global.xanoAuthFetch = originalFetch
     console.error = originalError
   }
+})
+
+;['cancel', 'decline'].forEach(function (kind) {
+  test(kind + ' requires a reason before submitting', async () => {
+    const originalFetch = global.xanoAuthFetch
+    let requestCount = 0
+    let restartCount = 0
+    try {
+      global.xanoAuthFetch = async function () {
+        requestCount += 1
+        throw new Error('request must not run')
+      }
+      const harness = actionChainHarness(kind, function () {
+        restartCount += 1
+      })
+      await harness.click('switch-' + kind)
+      await harness.click('switch-' + kind + '-reason')
+      harness.reasonField.value = '   '
+      await harness.click(kind)
+
+      harness.assertActive(kind + '-reason')
+      assert.equal(harness.reasonField.customValidity, 'Please provide a reason.')
+      assert.equal(harness.reasonField.reportValidityCount, 1)
+      assert.equal(requestCount, 0)
+      assert.equal(restartCount, 0)
+    } finally {
+      global.xanoAuthFetch = originalFetch
+    }
+  })
 })
 
 test('cancel eligibility is participant-only, booked, future, scoped, and identified', () => {
