@@ -2078,12 +2078,19 @@ suffix without generating markup. Only the base content state and one
 applicable pending message can be visible. Confirmed calls can show their
 canonical meeting link; cancelled and archived calls cannot. Every authored
 payment or booking action stays hidden except Close, Back, the Starter's
-eligible pending-call Accept and Decline actions, and owner-scoped recording
-access for eligible completed or archived calls. These migrated actions remain
-inside View Details; card-level decline, media, and other legacy controls stay
-hidden. Cancel and reschedule fail closed at their delegated triggers until
-their canonical lifecycle contracts are safe, so their authored dialogs cannot
-open. Direct transcript access and every payment control also stay hidden.
+eligible pending-call Accept and Decline actions, the participant Cancel chain
+for booked calls, and owner-scoped recording access for eligible completed or
+archived calls. These migrated actions remain inside View Details; card-level
+decline, cancel, media, and other legacy controls stay hidden. Cancel is
+available to the Starter or the Brand on a confirmed or rescheduled call whose
+start is still in the future; it sends `booking/cancel/v3` with a required
+reason and a durable `dashboard-cancel:` idempotency key, mirroring the decline
+contract. The decline chain now also exposes its authored reason step
+(`switch-decline-reason`), so the reason dialog is reachable. Reschedule fails
+closed at its delegated trigger until its canonical lifecycle contract is safe,
+so its authored dialog cannot open. Direct transcript access and every payment
+control also stay hidden. There is no hard 24-hour cutoff on cancel; late-change
+copy can warn the participant but must never block the action.
 
 The Starter pending card exposes only the Designer-authored Accept lifecycle
 control while the canonical response window remains open. The details dialog
@@ -2103,17 +2110,23 @@ Call Requests to Starter Calls while it remains in Brand Calls. All other
 legacy mutation controls stay hidden until they have current V3-safe endpoint
 contracts.
 
-`dashboard-call-actions.js` owns the supported decline command. It exposes
-Decline only to the Starter on a canonical pending row that has a booking ID,
-configuration ID, and exact `test` or `production` data environment. The native
-Webflow modal owns `[booking-decline-reason]` and every visible state; the module
-does not generate form or modal markup. It requires a non-empty reason and posts
-only `booking_id`, `config_id`, `reason`, and a tab-scoped idempotency key to
-`booking/decline/v3`. The key is scoped by environment, booking, a non-reversible
-Starter identity hash, and a non-reversible reason hash. An ambiguous or
-malformed result keeps the key for safe replay. Only an exact nested
-`decline.status` of `declined` for the same booking clears it and refreshes the
-canonical list.
+`dashboard-call-actions.js` owns the supported decline and cancel commands.
+Decline is available only to the Starter on a canonical pending row. Cancel is
+available to either participant on a canonical confirmed or rescheduled row
+whose start is in the future. Both commands require a booking ID, configuration
+ID, participant identity, and exact `test` or `production` data environment.
+The native Webflow modal owns `[booking-decline-reason]`,
+`[booking-cancel-reason]`, and every visible state; the module does not generate
+form or modal markup. Each command requires a non-empty reason. Decline posts
+only `booking_id`, `config_id`, `reason`, and `idempotency_key` to
+`booking/decline/v3`; cancel posts only `booking_id`, `config_id`,
+`cancelled_reason`, and `idempotency_key` to `booking/cancel/v3`. Each key is
+tab-scoped and scoped by environment, booking, a non-reversible participant
+identity hash, and a non-reversible reason hash. An ambiguous or malformed
+result keeps the key for safe replay. Only an exact nested result for the same
+booking clears the matching key: `decline.status` must equal `declined`, or
+`cancel.status` must equal `cancelled`. The success panel remains visible until
+the participant closes the modal; closing it then refreshes the canonical list.
 
 `dashboard-call-media.js` owns read-only notetaker recording access. The action
 is eligible only for an owner-scoped canonical completed or archived booking

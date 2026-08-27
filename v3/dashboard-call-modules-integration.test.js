@@ -292,3 +292,77 @@ test('unsupported lifecycle and payment controls stay inactive', () => {
   assert.equal(payment.hidden, true)
   assert.equal(global.StartersDashboardCallPayment.wire(), false)
 })
+
+test('Details exposes the full cancel chain for booked participant calls only', () => {
+  const close = button('switch-close')
+  const switchCancel = button('switch-cancel')
+  const switchCancelReason = button('switch-cancel-reason')
+  const cancel = button('cancel')
+  const reschedule = button('reschedule')
+  const modal = {
+    querySelectorAll() {
+      return [close, switchCancel, switchCancelReason, cancel, reschedule]
+    },
+  }
+  const booking = {
+    booking_id: 'booking-2',
+    config_id: 'config-1',
+    data_environment: 'test',
+    status: 'confirmed',
+    start: Date.now() + 60 * 60 * 1000,
+    starter_data: { memberstack_id: 'mem_sb_starter' },
+    brand_data: { memberstack_id: 'mem_sb_brand' },
+  }
+
+  dashboard.configureDetailActions(modal, 'starter', 'confirmed', booking, Date.now())
+  assert.equal(switchCancel.hidden, false)
+  assert.equal(switchCancelReason.hidden, false)
+  assert.equal(cancel.hidden, false)
+  assert.equal(reschedule.hidden, true)
+
+  dashboard.configureDetailActions(modal, 'brand', 'confirmed', booking, Date.now())
+  assert.equal(switchCancel.hidden, false)
+  assert.equal(cancel.hidden, false)
+
+  dashboard.configureDetailActions(
+    modal,
+    'starter',
+    'pending',
+    { ...booking, status: 'pending' },
+    Date.now(),
+  )
+  assert.equal(switchCancel.hidden, true)
+  assert.equal(switchCancelReason.hidden, true)
+  assert.equal(cancel.hidden, true)
+
+  dashboard.configureDetailActions(
+    modal,
+    'starter',
+    'confirmed',
+    { ...booking, start: Date.now() - 1000 },
+    Date.now(),
+  )
+  assert.equal(switchCancel.hidden, true)
+})
+
+test('Details exposes the decline reason step alongside decline', () => {
+  const switchDecline = button('switch-decline')
+  const switchDeclineReason = button('switch-decline-reason')
+  const decline = button('decline')
+  const modal = {
+    querySelectorAll() {
+      return [switchDecline, switchDeclineReason, decline]
+    },
+  }
+  const booking = {
+    booking_id: 'booking-3',
+    config_id: 'config-1',
+    data_environment: 'test',
+    status: 'pending',
+    starter_data: { memberstack_id: 'mem_sb_starter' },
+  }
+  dashboard.configureDetailActions(modal, 'starter', 'pending', booking, Date.now())
+  assert.equal(switchDecline.hidden, false)
+  assert.equal(switchDeclineReason.hidden, false)
+  assert.equal(decline.hidden, false)
+})
