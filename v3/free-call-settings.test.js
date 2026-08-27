@@ -34,6 +34,9 @@ class El {
   matches(selector) {
     return selector.split(',').some((part) => {
       const candidate = part.trim()
+      if (candidate.startsWith('.')) {
+        return String(this.getAttribute('class') || '').split(/\s+/).includes(candidate.slice(1))
+      }
       const attr = candidate.match(/^(?:([a-z]+))?\[([^=\]]+)(?:="([^"]+)")?\]$/i)
       if (attr) {
         const tagMatches = !attr[1] || attr[1].toUpperCase() === this.tagName
@@ -131,12 +134,17 @@ function buildDom(withRoot = true, publishedRoot = false, authoredPills = false,
   const saveSpinner = new El('svg', { 'data-button-spinner': '', 'aria-hidden': 'true' })
   saveSpinner.style.display = 'none'
   save.append(saveIcon, saveSpinner)
+  const nativeError = new El('div', { class: 'w-form-fail', 'aria-hidden': 'true' })
+  const nativeErrorMessage = new El('div')
+  nativeErrorMessage.textContent = 'Oops! Something went wrong while submitting the form.'
+  nativeError.append(nativeErrorMessage)
+  nativeError.style.display = 'none'
   const prerequisites = ['calendar', 'availability', 'enabled', 'bookable']
     .map((name) => new El('div', { 'data-free-call-prerequisite': name }))
   noLabel.append(noVisual, no)
   yesLabel.append(yesVisual, yes)
   form.append(noLabel, yesLabel, title, close, save)
-  root.append(form)
+  root.append(form, nativeError)
   panel.append(root)
   card.append(open, status, price, on, off, ...prerequisites, panel)
   return {
@@ -150,6 +158,8 @@ function buildDom(withRoot = true, publishedRoot = false, authoredPills = false,
     title,
     close,
     save,
+    nativeError,
+    nativeErrorMessage,
     open,
     status,
     price,
@@ -689,6 +699,176 @@ test('a stale Free description readback leaves the editor open and reports an er
   assert.match(result.dom.status.textContent, /description did not match canonical readback/)
   assert.equal(result.dom.panel.style.display, 'flex')
   assert.equal(result.events.some((event) => event.type === 'starterFreeCallWriteSuccess'), false)
+})
+
+test('a guarded Free update mirrors the error to both outputs and clears the native block on retry', async () => {
+  let attempts = 0
+  const active = canonical({
+    public_description: 'Growth review',
+    services: [service()],
+    readiness: { free_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    initial: active,
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ setState }) => {
+        attempts += 1
+        if (attempts === 1) {
+          return {
+            ok: false,
+            status: 400,
+            json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+          }
+        }
+        setState(active)
+        return { ok: true, status: 200, json: async () => ({ service: service() }) }
+      },
+    },
+  })
+  await settle()
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
+  assert.equal(
+    result.dom.status.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+  assert.equal(
+    result.dom.nativeErrorMessage.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'false')
+  assert.equal(result.dom.nativeError.getAttribute('role'), 'alert')
+  assert.equal(result.dom.panel.style.display, 'flex')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+  assert.equal(result.dom.status.textContent, 'Free calls are on and bookable.')
+  assert.equal(result.dom.nativeErrorMessage.textContent, '')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')
+})
+
+test('an invalid Free retry clears the request error without a second write', async () => {
+  let validityChecks = 0
+  const active = canonical({
+    public_description: 'Growth review',
+    services: [service()],
+    readiness: { free_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    initial: active,
+    routes: {
+      '/starter/free-call-settings/upsert/v3': () => ({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+      }),
+    },
+  })
+  await settle()
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.dom.nativeError.style.display, 'block')
+
+  result.dom.form.reportValidity = () => {
+    validityChecks += 1
+    return false
+  }
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(validityChecks, 1)
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/free-call-settings/upsert/v3').length,
+    1,
+  )
+  assert.equal(result.dom.nativeErrorMessage.textContent, '')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')
+})
+
+test('a Free prerequisite refresh clears an update error while pending and replaces it only on failure', async () => {
+  const successfulRefresh = deferred()
+  const failedRefresh = deferred()
+  let reads = 0
+  const active = canonical({
+    public_description: 'Growth review',
+    services: [service()],
+    readiness: { free_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    initial: active,
+    routes: {
+      '/starter/free-call-settings/get/v3': () => {
+        reads += 1
+        if (reads === 1) return { ok: true, status: 200, json: async () => active }
+        return reads === 2 ? successfulRefresh.promise : failedRefresh.promise
+      },
+      '/starter/free-call-settings/upsert/v3': () => ({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+      }),
+    },
+  })
+  await settle()
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(
+    result.dom.nativeErrorMessage.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle(2)
+
+  assert.equal(result.dom.nativeErrorMessage.textContent, '')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'true')
+
+  successfulRefresh.resolve({ ok: true, status: 200, json: async () => active })
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+  assert.equal(result.dom.nativeErrorMessage.textContent, '')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.dom.nativeError.style.display, 'block')
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle(2)
+
+  assert.equal(result.dom.nativeErrorMessage.textContent, '')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+
+  failedRefresh.resolve({
+    ok: false,
+    status: 503,
+    json: async () => ({ message: 'temporarily unavailable' }),
+  })
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
+  assert.equal(
+    result.dom.nativeErrorMessage.textContent,
+    'Free-call readiness could not be refreshed. Your account was not changed.',
+  )
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'false')
 })
 
 test('Free description longer than 60 characters fails before any write', async () => {

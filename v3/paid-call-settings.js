@@ -202,6 +202,7 @@
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
     if (root) root.setAttribute('data-paid-call-state', value)
+    if (value !== 'error') hideNativeError()
   }
 
   function emit(name, detail) {
@@ -420,6 +421,40 @@
       qs('[data-call-settings-output="status"]', uiScope || root) ||
       qs('[data-paid-call-element="status"]', root)
     if (target) target.textContent = message || ''
+    const nativeError = findNativeError()
+    if (!nativeError) return
+    const text = document.documentElement.getAttribute(STATUS_ATTRIBUTE) === 'error'
+      ? String(message || '')
+      : ''
+    const content = nativeErrorContent(nativeError)
+    content.textContent = text
+    nativeError.style.display = text ? 'block' : 'none'
+    nativeError.setAttribute('aria-hidden', text ? 'false' : 'true')
+    if (text) nativeError.setAttribute('role', 'alert')
+  }
+
+  function findNativeError() {
+    const scope = uiScope || root
+    return (
+      (scope && qs('.w-form-fail', scope)) ||
+      (root && scope !== root ? qs('.w-form-fail', root) : null)
+    )
+  }
+
+  function nativeErrorContent(nativeError) {
+    return (
+      qs('[data-call-settings-error-message]', nativeError) ||
+      qs('div', nativeError) ||
+      nativeError
+    )
+  }
+
+  function hideNativeError() {
+    const nativeError = findNativeError()
+    if (!nativeError) return
+    nativeErrorContent(nativeError).textContent = ''
+    nativeError.style.display = 'none'
+    nativeError.setAttribute('aria-hidden', 'true')
   }
 
   function setFieldValidity(input, message) {
@@ -695,9 +730,9 @@
     const code = error && error.code
     if (code !== 'MEMBER_SESSION_MISSING' && code !== 'MEMBER_SCOPE_CHANGED') return false
     refreshVersion += 1
+    setStatus('error')
     clearRenderedState('Sign in to manage paid calls.')
     setBusy(false)
-    setStatus('error')
     return true
   }
 
@@ -885,6 +920,7 @@
 
   async function refreshFromPrerequisite() {
     if (!root || !sessionMemberId || busy) return settings
+    hideNativeError()
     const version = ++refreshVersion
     const memberId = sessionMemberId
     try {
@@ -963,8 +999,8 @@
       return render(canonical)
     } catch (error) {
       if (version === refreshVersion) {
-        clearRenderedState('Paid-call settings are unavailable. Your account was not changed.')
         setStatus('error')
+        clearRenderedState('Paid-call settings are unavailable. Your account was not changed.')
         console.warn('[paid-call-settings] initialization failed:', error && error.message)
       }
       return null
@@ -1021,6 +1057,7 @@
     if (saveButton) {
       saveButton.addEventListener('click', function (event) {
         event.preventDefault()
+        hideNativeError()
         // The authored Update control is wired either as a plain element this
         // controller intercepts or as the native form's own submit control. The
         // native shape is gated by browser constraint validation, so gate the
