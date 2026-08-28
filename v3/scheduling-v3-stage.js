@@ -79,6 +79,16 @@
     'starter/get_by_memberstack/v3': 'starter/get_booking_profile/v3',
   }
   const LEGACY_PROVIDER_PATH = /^stripe\/(?:live\/)?(?:customer|payment_intent|payment_method|setup_intent)(?:\/|$)/
+  // The legacy "Call Scheduling - Global Code" component reads
+  // stripe_connect_request.connect_id without a null check. On a logged-out
+  // /hire/<slug> visit the authenticated lookup rejects because there is no
+  // Xano session, so the helper reads from nothing and throws a TypeError.
+  // Return a valid body with a null connect_id for this route instead, so the
+  // read finds a value and the paid booking surface still renders.
+  const CONNECT_LOOKUP_ROUTES = new Set([
+    'starter/get_stripe_connect_id',
+    'starter/get_stripe_connect_id/v3',
+  ])
 
   function normalizedPagePath() {
     return window.location.pathname.replace(/\/+$/, '') || '/'
@@ -167,6 +177,25 @@
 
   function requestAt(request, url) {
     return new Request(url.href, request)
+  }
+
+  function connectLookupSoftResponse() {
+    return new Response(
+      JSON.stringify({ connect_id: null }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )
+  }
+
+  function authFetchWithConnectFallback(route, request) {
+    const result = originalXanoAuthFetch(request)
+    if (!CONNECT_LOOKUP_ROUTES.has(route)) return result
+    return Promise.resolve(result).catch((error) => {
+      console.warn(
+        '[scheduling-v3-stage] Stripe Connect lookup has no session; returned a null connect_id:',
+        error && error.message,
+      )
+      return connectLookupSoftResponse()
+    })
   }
 
   function injectBookingIdentity(scheduler) {
@@ -318,7 +347,7 @@
         return blockedResponse(scheduling.route)
       }
       scheduling.url.pathname = API_PREFIX + target
-      return originalXanoAuthFetch(requestAt(request, scheduling.url))
+      return authFetchWithConnectFallback(scheduling.route, requestAt(request, scheduling.url))
     }
 
     if (activeV3Targets.has(scheduling.route)) {
@@ -326,7 +355,7 @@
         setStatus('auth-unavailable')
         return blockedResponse(scheduling.route)
       }
-      return originalXanoAuthFetch(request)
+      return authFetchWithConnectFallback(scheduling.route, request)
     }
 
     if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return blockedResponse(scheduling.route)
@@ -342,11 +371,11 @@
     const target = activeRouteMap[scheduling.route]
     if (target) {
       scheduling.url.pathname = API_PREFIX + target
-      return originalXanoAuthFetch(requestAt(request, scheduling.url))
+      return authFetchWithConnectFallback(scheduling.route, requestAt(request, scheduling.url))
     }
 
     if (activeV3Targets.has(scheduling.route)) {
-      return originalXanoAuthFetch(request)
+      return authFetchWithConnectFallback(scheduling.route, request)
     }
 
     if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return blockedResponse(scheduling.route)

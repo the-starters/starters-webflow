@@ -86,6 +86,7 @@ function loadStage(options = {}) {
   }
   const xanoAuthFetch = async (request) => {
     authenticatedRequests.push(request)
+    if (options.authFetch) return options.authFetch(request)
     return response({ authenticated: true })
   }
   const hostname = options.hostname || 'the-starters-3-0.webflow.io'
@@ -729,6 +730,47 @@ test('routes the environment-bound Stripe Connect lookup through authenticated V
       '/api:tCpV3oqd/starter/get_stripe_connect_id/v3',
       '/api:tCpV3oqd/starter/get_stripe_connect_id/v3',
     ],
+  )
+})
+
+test('returns a null connect_id when the Connect lookup has no session', async () => {
+  const { window } = loadStage({
+    authFetch: async () => {
+      throw new Error('No Memberstack session')
+    },
+  })
+
+  const legacy = await window.fetch(`${API_BASE}starter/get_stripe_connect_id`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ member_id: 'logged-out-visitor' }),
+  })
+  const direct = await window.fetch(`${API_BASE}starter/get_stripe_connect_id/v3`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ member_id: 'logged-out-visitor' }),
+  })
+
+  assert.equal(legacy.status, 200)
+  assert.equal(direct.status, 200)
+  assert.deepEqual(await legacy.json(), { connect_id: null })
+  assert.deepEqual(await direct.json(), { connect_id: null })
+})
+
+test('lets other authenticated routes reject when there is no session', async () => {
+  const { window } = loadStage({
+    authFetch: async () => {
+      throw new Error('No Memberstack session')
+    },
+  })
+
+  await assert.rejects(
+    window.fetch(`${API_BASE}starter/get_charges_enabled`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }),
+    /No Memberstack session/,
   )
 })
 
