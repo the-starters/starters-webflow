@@ -282,9 +282,10 @@ marker is released once the chooser reports itself closed, so the chooser's own
 close fade is covered too, with a 2000 ms failsafe on the theory that an
 invisible open dialog is worse than a late one. Both failure paths — the
 registry open failing, and the row CTA disappearing between the two clicks —
-release it immediately and leave the chooser open, visible and usable. Clearing
-is done by the marker, not by the chooser selector, so a dialog renamed or
-removed mid-flight cannot strand the attribute.
+release it immediately. Registry failure remains failed closed; a disappearing
+row leaves the already-open chooser visible and usable. Clearing is done by the
+marker, not by the chooser selector, so a dialog renamed or removed mid-flight
+cannot strand the attribute.
 
 `data-booking-entry` is written on `[data-modal-target="popup-booking"]` at open
 time and reads `direct` or `chooser`. The direct path stamps it before it
@@ -293,7 +294,11 @@ activates the matching CTA; a capture-phase listener on each
 listener only reads the click — no `preventDefault`, no `stopPropagation`, no
 re-ordering — so the row's two authored hats are untouched. A module flag, not
 `event.isTrusted`, distinguishes the pass-through's own programmatic row click
-from a visitor's, because synthetic drivers make `isTrusted` unreliable.
+from a visitor's, because synthetic drivers make `isTrusted` unreliable. The
+modal embed's close-complete event removes the stamp once the booking dialog is
+closed, so a later opener that does not stamp cannot inherit the previous
+entry. A close-complete event that arrives after the dialog has already reopened
+leaves the fresh stamp alone.
 
 `[data-booking-back]` is **Jerico's to author**, inside the booking dialog. The
 guard stylesheet keyed on `data-booking-entry` shows it only when the entry
