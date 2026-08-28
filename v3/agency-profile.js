@@ -18,8 +18,21 @@
  *      but the wrapper itself stays a laid-out box — and a zero-height box is
  *      still a flex/grid item, so it keeps consuming a `gap` from its parent.
  *      Measured on the profile page: a hidden section left a 96px sibling
- *      distance where a single 48px gap belonged. The wrapper is hidden at
- *      activation and revealed only for a profile that actually shows a card.
+ *      distance where a single 48px gap belonged.
+ *
+ *      The wrapper is hidden when the response arrives, NOT at activation, and
+ *      that ordering is deliberate: the authored loading spinner
+ *      (`wf-xano-element="loader"`) lives inside the wrapper, so hiding the
+ *      wrapper up front would hide the spinner it is supposed to reveal. The
+ *      wrapper therefore stays visible for the length of the request — where it
+ *      is either showing the spinner or, at worst, occupying the same zero-height
+ *      slot it did before this feature existed — and collapses as soon as the
+ *      answer is known. A failed request collapses it too; without that, the
+ *      spinner hides on `error` and the empty wrapper resurrects the gap band.
+ *
+ *      That window is granted only to a wrapper with a live instance. If
+ *      activation cannot wire one, the wrapper is collapsed immediately —
+ *      no events are coming, so there would be nothing left to collapse it.
  *   3. `src` (and `loading`) on the authored video iframe, from the fetched
  *      `agency_video_link`. wf-xano binds text and image `src`, but has no
  *      documented attribute binder for an iframe's `src`. The page loads the
@@ -47,7 +60,11 @@
  * the section shows nothing. wf-xano injects
  * `[wf-xano-element="template"]{display:none!important}`, so even the authored
  * card stays hidden on a page where this script never ran (verified by probe) —
- * only the flex-gap collapse in (2) is lost in that case.
+ * only the flex-gap collapse in (2) is lost in that case. The spinner is
+ * fail-closed by the same logic from the other direction: Designer authors it
+ * hidden with a class, and only wf-xano's inline `display` (from
+ * `wf-xano-display="flex"`) can override that class, so a dead library or a
+ * dead script leaves it hidden rather than spinning forever.
  *
  * Contract shared with `v3/AGENCY-PROFILE-WIRING.md`. These strings must change
  * together or the section goes dark:
@@ -178,7 +195,8 @@
 
   /** Reveal the wrapper only for a profile that actually shows a card, so a
    *  hidden section stops being a flex/grid item and its parent's gap collapses
-   *  with it. */
+   *  with it. Called once the answer is known — never before, or it would hide
+   *  the loading spinner that lives inside the wrapper. */
   function paintWrapper(root, row) {
     if (!root || !root.style) return
     if (showsAgency(row)) root.style.removeProperty('display')
@@ -224,14 +242,29 @@
    * Scoped to this wrapper throughout. The Reviews section on this same page is
    * another wf-xano instance, and a document-wide init would drag it in.
    */
+  function paint(root, row) {
+    paintWrapper(root, row)
+    paintVideo(root, row)
+  }
+
   function activate(wfx, root) {
-    if (!wfx || !root) return null
-    // Hidden before the request, not after it: the wrapper must never occupy a
-    // flex slot during the fetch on a profile that will show nothing.
-    if (root.style) root.style.display = 'none'
+    if (!root) return null
+    // The visible-while-loading window is granted ONLY to a wrapper that ends
+    // up with a live instance. Every path that fails to wire one collapses the
+    // wrapper on its way out: nothing will ever emit 'results' or 'error' for
+    // it, so this is the last chance to stop it sitting in the layout forever.
+    if (!wfx) {
+      paintWrapper(root, null)
+      return null
+    }
     wfx.init(root)
     var instance = wfx.get(INSTANCE)
     if (!instance) {
+      // An Instance that bails in its constructor is never registered —
+      // `init()` only pushes `instance.ok` ones (wf-xano.js:3654) — so a
+      // missing wf-xano-element="wrapper" and a missing template both land
+      // here, silently, with no events to come.
+      paintWrapper(root, null)
       warn(
         'the section wrapper is on the page but no "' +
           INSTANCE +
@@ -241,12 +274,25 @@
       )
       return null
     }
+    // Wired. From here the wrapper stays visible for the length of the request
+    // so the authored spinner inside it can show, and the two handlers below
+    // settle its visibility once the answer is known.
     // 'results' fires after the cards are rendered, and replays the last result
     // to a late subscriber — so this cannot miss a response that landed first.
     instance.on('results', function (result) {
-      var row = agencyRow(result)
-      paintWrapper(root, row)
-      paintVideo(root, row)
+      paint(root, agencyRow(result))
+    })
+    // A failed load emits 'error' (wf-xano.js:3296, in load()'s catch) after it
+    // has already re-rendered the list empty and called setState('error') —
+    // which hides the spinner. Nothing emits 'results' on that path, so without
+    // this the wrapper would be left visible, spinner-less and zero-height, and
+    // the flex-gap band would come back on exactly the pages least able to
+    // afford a layout bug. `on('error')` is used rather than subscribe(): it
+    // fires once per failed load and needs no status filtering, whereas
+    // subscribe() delivers the current value immediately and again on every
+    // transition, including the 'loading' state this must not act on.
+    instance.on('error', function () {
+      paint(root, null)
     })
     return instance
   }
