@@ -522,3 +522,93 @@ test('prefers the reviewer object over the brand join when both are present', ()
   assert.equal(card.childNodes[2].childNodes[0].textContent, 'Reviewer Name')
   assert.equal(card.childNodes[2].childNodes[1].textContent, 'Verified brand @ Reviewer Co')
 })
+
+// Regression: the published Hire template carries `data-reviews-v3="profile"`
+// TWICE, nested — the outer `#reviews` wrapper and, inside it, the authored
+// section that actually holds the list. Configuration hides every marker to
+// fail closed; before this fix the reveal re-showed only roots[0], so the inner
+// section stayed display:none and collapsed the outer to zero height with the
+// rendered cards sealed inside. Live symptom: hero read "4.9 (7 Reviews)" while
+// the section rendered nothing.
+function nestedDocumentFixture() {
+  const outer = new Element({ 'data-reviews-v3': 'profile', 'data-toc-section': 'reviews' })
+  const inner = new Element({ 'data-reviews-v3': 'profile' })
+  const stray = new Element({ 'data-reviews-v3': 'profile' })
+  const list = new Element({ 'data-reviews-v3-list': 'reviews' })
+  const strayList = new Element({ 'data-reviews-v3-list': 'reviews' })
+  // Only the outer and inner markers own the active list.
+  outer.contains = (node) => node === list || node === inner
+  inner.contains = (node) => node === list
+  stray.contains = () => false
+  outer.children['[data-reviews-v3-list="reviews"]'] = list
+  inner.children['[data-reviews-v3-list="reviews"]'] = list
+  stray.children['[data-reviews-v3-list="reviews"]'] = strayList
+  const reviewsTab = new Element({ 'data-hide-when-empty-id': 'reviews' })
+  return {
+    outer, inner, stray, list, strayList, reviewsTab,
+    addEventListener() {}, dispatchEvent() {}, createElement() { return new Element() },
+    querySelector(selector) {
+      if (selector === '[data-reviews-v3="profile"]') return outer
+      if (selector === '[data-reviews-v3-list="reviews"]') return list
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector === '[data-reviews-v3="profile"]') return [outer, inner, stray]
+      if (selector === '[data-hide-when-empty-id="reviews"]') return [reviewsTab]
+      return []
+    },
+  }
+}
+
+test('configuration hides every nested marker and the stray duplicate', () => {
+  const fixture = nestedDocumentFixture()
+  const { api } = load({ document: fixture })
+  assert.equal(api.configureProfileRoot(fixture, '/hire/lydia'), fixture.outer)
+  for (const el of [fixture.outer, fixture.inner, fixture.stray]) {
+    assert.equal(el.getAttribute('data-reviews-v3-hidden'), '')
+    assert.equal(el.style.display, 'none')
+  }
+})
+
+test('painting approved reviews reveals the whole chain that owns the list', () => {
+  const fixture = nestedDocumentFixture()
+  const { api } = load({ document: fixture })
+  api.configureProfileRoot(fixture, '/hire/lydia')
+  api.paintProfile(fixture, fixture.outer, {
+    raw: { reviews: [{ review_id: 7, rating: 5 }], aggregate: { review_count: 1, average_rating: 5 } },
+  })
+  // Both markers own the rendered list, so both must be revealed. Revealing
+  // only the outer leaves the inner display:none, which collapses the outer to
+  // zero height with the rendered cards sealed inside it.
+  assert.equal(fixture.outer.getAttribute('data-reviews-v3-hidden'), null)
+  assert.equal(fixture.outer.style.display, '')
+  assert.equal(fixture.inner.getAttribute('data-reviews-v3-hidden'), null)
+  assert.equal(fixture.inner.style.display, '')
+})
+
+test('a stray marker that owns no list stays hidden after a successful paint', () => {
+  const fixture = nestedDocumentFixture()
+  const { api } = load({ document: fixture })
+  api.configureProfileRoot(fixture, '/hire/lydia')
+  api.paintProfile(fixture, fixture.outer, {
+    raw: { reviews: [{ review_id: 7, rating: 5 }], aggregate: { review_count: 1, average_rating: 5 } },
+  })
+  assert.equal(fixture.stray.getAttribute('data-reviews-v3-hidden'), '')
+  assert.equal(fixture.stray.style.display, 'none')
+})
+
+test('an empty approved response re-hides the whole chain', () => {
+  const fixture = nestedDocumentFixture()
+  const { api } = load({ document: fixture })
+  api.configureProfileRoot(fixture, '/hire/lydia')
+  api.paintProfile(fixture, fixture.outer, {
+    raw: { reviews: [{ review_id: 7, rating: 5 }], aggregate: { review_count: 1, average_rating: 5 } },
+  })
+  api.paintProfile(fixture, fixture.outer, {
+    raw: { reviews: [], aggregate: { review_count: 0, average_rating: 0 } },
+  })
+  for (const el of [fixture.outer, fixture.inner]) {
+    assert.equal(el.getAttribute('data-reviews-v3-hidden'), '')
+    assert.equal(el.style.display, 'none')
+  }
+})

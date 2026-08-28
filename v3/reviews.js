@@ -1,7 +1,7 @@
 /**
  * V3 reviews page integration.
  *
- * @release v1.59.421
+ * @release v1.59.422
  *
  * Designer owns the public Reviews section. This module only:
  *   - derives the public-profile slug from /hire/{slug} and configures the
@@ -99,6 +99,33 @@
   }
 
   /**
+   * The Hire template ships the marker twice, nested: the outer `#reviews`
+   * wrapper and, inside it, the authored section that actually contains the
+   * list. Configuration hides every marker to fail closed, so the reveal has to
+   * re-show the whole chain that owns the rendered list. Revealing only the
+   * outer one leaves the inner section `display:none`, which collapses the
+   * outer to zero height with the rendered cards sealed inside it — the section
+   * reads as "no reviews" while the hero reports a count.
+   *
+   * A marker that owns no list is deliberately not returned: those are the
+   * stray duplicates the configuration step empties, and they must stay hidden.
+   */
+  function listOwningRoots(documentObject, root) {
+    if (!root) return []
+    var list = root.querySelector && root.querySelector(PROFILE_LIST)
+    var candidates = documentObject && documentObject.querySelectorAll
+      ? documentObject.querySelectorAll(PROFILE_ROOT)
+      : []
+    var owners = []
+    Array.prototype.forEach.call(candidates, function (candidate) {
+      if (candidate === root) return
+      if (list && candidate.contains && candidate.contains(list)) owners.push(candidate)
+    })
+    owners.push(root)
+    return owners
+  }
+
+  /**
    * Single writer for the authored section's visibility, and for the profile
    * tab that points at it. `display` and the `hidden` property are both set:
    * Webflow's published CSS can carry a `display` rule that beats the `hidden`
@@ -106,7 +133,9 @@
    * technology reads.
    */
   function setProfileRootVisible(documentObject, root, visible) {
-    setElementVisible(root, visible)
+    Array.prototype.forEach.call(listOwningRoots(documentObject, root), function (owner) {
+      setElementVisible(owner, visible)
+    })
     Array.prototype.forEach.call(sectionTabs(documentObject, root), function (tab) {
       setElementVisible(tab, visible)
     })
@@ -385,7 +414,7 @@
   }
 
   var api = {
-    release: 'v1.59.421',
+    release: 'v1.59.422',
     profileSlug: profileSlug,
     configureProfileRoot: configureProfileRoot,
     paintProfile: paintProfile,
