@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.60.1
+ * @release v1.60.2
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -1385,13 +1385,26 @@
               : null;
           if (!instance || typeof instance.on !== 'function' || !instance.root) return;
 
-          instance.on('results', function (result) {
+          function applyResult(result) {
               Promise.resolve(memberReady).then(function () {
                   adaptXanoServiceCards(instance, result);
               }).catch(function (error) {
                   console.warn('Xano services:', error);
               });
-          });
+          }
+
+          instance.on('results', applyResult);
+
+          // wf-xano does not replay a result that completed before this
+          // deferred controller registered. Read its public state once so a
+          // fast initial request receives the same adapter treatment as later
+          // refreshes. Keep the event listener above for all future results.
+          if (typeof instance.getState === 'function') {
+              const state = instance.getState();
+              if (state && state.status === 'success' && state.data) {
+                  applyResult(state.data);
+              }
+          }
       });
   }
 

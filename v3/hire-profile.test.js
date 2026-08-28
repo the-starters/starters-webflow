@@ -662,10 +662,13 @@ function addXanoServiceFixture(page, serviceName) {
   return { wrapper, template, card, title, description }
 }
 
-function makeWfXanoFixture(root) {
+function makeWfXanoFixture(root, initialState = null) {
   let resultsHandler = null
   const instance = {
     root,
+    getState() {
+      return initialState
+    },
     on(event, handler) {
       if (event === 'results') resultsHandler = handler
       return instance
@@ -2855,6 +2858,36 @@ test('a late wf-xano result repaints dropped nested-component bindings by exact 
   assert.equal(xano.title.textContent, 'Paid Media Audit')
   assert.equal(xano.description.textContent, 'Deep dive')
   assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+})
+
+test('an already-complete wf-xano result is adapted from public state after late registration', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Service Name')
+  xano.description.textContent = 'Service Description'
+  const completed = {
+    status: 'success',
+    data: {
+      items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Deep dive', price: 2500 }],
+      total: 1,
+      page: 1,
+      pages: 1,
+      hasMore: false,
+    },
+  }
+  const wfx = makeWfXanoFixture(xano.wrapper, completed)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(xano.title.textContent, 'Paid Media Audit')
+  assert.equal(xano.description.textContent, 'Deep dive')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+  assert.equal(xano.card.getAttribute('data-xano-service-card'), 'starter-services')
 })
 
 test('a late wf-xano result never repaints a clone whose item id does not match', async () => {
