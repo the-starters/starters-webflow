@@ -116,9 +116,10 @@ missing and stands down if the namespace still cannot load.
   nothing else. The anchor utilities also ignore a bare `#` or an invalid hash
   selector so a placeholder link cannot abort the remaining page utilities
 - `window.WfAlgolia` — the search client, awaited with a 30s deadline
-- `window.WfXano` — the late-safe callback queue used to subscribe to the
-  `starter-services` instance after it renders canonical Service card clones;
-  a missing instance leaves the existing CMS cards unchanged
+- `window.WfXano` — the late-safe callback queue used to reach the
+  `starter-services` instance and consume its current or future canonical
+  Service-card result; a missing instance leaves the existing CMS cards
+  unchanged
 - `window.__startersEmptyNavRefresh` — optional, debounced refresh hook from
   `utils/section-custom-toc/hide-empty-sections.js`. After canonical discovery
   changes a call projection or the rate-card path renders, this file asks the
@@ -287,14 +288,18 @@ Brand project trigger.
 The `starter-services` wf-xano wrapper is a side-by-side canary for canonical
 `freelancers_v3.Services`. Webflow owns one native Service Card template and
 wf-xano clones it after the Xano response. `hire-profile.js` subscribes through
-the late-safe `window.WfXano` callback queue, then modifies only rendered
-`[wf-xano-item]` clones owned by that wrapper. Webflow currently drops the
-nested Label component's title and description Attribute-property overrides
-from published markup, so the adapter repaints those two existing text nodes
-only when the clone's `data-wf-xano-id` exactly matches a returned item id. It
-does not create markup or fall back by position. It gives logged-out cards the
-same signup-attribution contract as CMS cards. For an eligible Brand, it adds
-the normal project smart-fill attributes for the exact canonical service name.
+the late-safe `window.WfXano` callback queue. If that subscription does not
+replay a result that completed before this deferred controller registered, the
+adapter reads the instance's successful public state once. A replayed result is
+not read or adapted again from state. Future result events stay subscribed.
+The adapter then modifies only rendered `[wf-xano-item]` clones owned by that
+wrapper. Webflow currently drops the nested Label component's title and
+description Attribute-property overrides from published markup, so the adapter
+repaints those two existing text nodes only when the clone's
+`data-wf-xano-id` exactly matches a returned item id. It does not create markup
+or fall back by position. It gives logged-out cards the same signup-attribution
+contract as CMS cards. For an eligible Brand, it adds the normal project
+smart-fill attributes for the exact canonical service name.
 Webflow owns the native `Services` select and all authored options. The adapter
 may add a missing exact option tagged
 `data-xano-service-option="starter-services"`, and it removes only stale options

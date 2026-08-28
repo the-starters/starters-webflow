@@ -1367,8 +1367,9 @@
      Webflow owns the visible card template. wf-xano clones that native
      component after this deferred file can already have finished its normal
      member work, so the existing one-shot service wiring cannot see the new
-     cards. Subscribe to wf-xano's late-safe results event and add only the
-     interaction attributes the existing signup and project controllers use.
+     cards. Consume wf-xano's late-safe results event or its completed public
+     state, then add only the interaction attributes the existing signup and
+     project controllers use.
 
      The authored template and every CMS card remain untouched. This adapter
      limits itself to rendered [wf-xano-item] clones owned by the named wrapper.
