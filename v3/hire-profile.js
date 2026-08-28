@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.417
+ * @release v1.60.0
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -17,6 +17,9 @@
  *  - Services call-card visibility. Anonymous viewers stay closed. Signed-in
  *    brands use canonical booking discovery and successful controller installs.
  *    Starter members keep the live-derived owner toggles.
+ *  - Side-by-side canonical Xano Service cards. Webflow owns the visible
+ *    template and form; this file adds role-aware interaction attributes and
+ *    reconciles only adapter-owned native Service options.
  *  - Freelance/Retainer rate cards, cloned from the section's Default card.
  *  - Small page utilities that shipped in the same footer (rate formatting,
  *    rating average, dropdowns, anchor scroll, mobile TOC, view-all).
@@ -36,7 +39,8 @@
  *   starter_memberstack_id, stripe_charges, waitForMember, memberReady, MEMBER,
  *   qs, qsa,
  *   jQuery ($, two utility blocks),
- *   window.WfAlgolia (search record).
+ *   window.WfAlgolia (search record),
+ *   window.WfXano (late-safe canonical Service-card results).
  *
  * StartersFreeCallBooking is loaded from the GitHub/jsDelivr asset when an
  * older Webflow page head does not install it yet. The dependency stays
@@ -1295,10 +1299,12 @@
       })();
   });
 
-  /* PUBLIC-RECORD SERVICES (anonymous + brand viewers)
-     The public record supplies non-call services only. Call projections stay
-     closed for anonymous viewers and use canonical discovery for brands.
-     Starter members keep the live-derived owner toggles above. */
+  /* PUBLIC-RECORD CMS SERVICES (anonymous + brand viewers)
+     Existing CMS cards remain as the side-by-side comparison path. Call
+     projections stay closed for anonymous viewers and use canonical discovery
+     for brands. Starter members keep the live-derived owner toggles above. */
+  installXanoServiceCardsAdapter();
+
   waitForMember(async function () {
       var isBrand = isBrandMember(MEMBER);
       if (MEMBER.id && !isBrand) return;
@@ -1354,6 +1360,110 @@
       serviceCards.forEach(function (card) {
           if (getComputedStyle(card).display === 'none') return;
           card.style.cursor = 'pointer';
+      });
+  }
+
+  /* XANO SERVICE CARDS (side-by-side CMS canary)
+     Webflow owns the visible card template. wf-xano clones that native
+     component after this deferred file can already have finished its normal
+     member work, so the existing one-shot service wiring cannot see the new
+     cards. Subscribe to wf-xano's late-safe results event and add only the
+     interaction attributes the existing signup and project controllers use.
+
+     The authored template and every CMS card remain untouched. This adapter
+     limits itself to rendered [wf-xano-item] clones owned by the named wrapper.
+     The native project form remains Designer-owned. For eligible Brands, this
+     adapter may reconcile only its own option children in the existing
+     Services select so every canonical Xano service has an exact value. */
+  function installXanoServiceCardsAdapter() {
+      window.WfXano = window.WfXano || [];
+      if (typeof window.WfXano.push !== 'function') return;
+
+      window.WfXano.push(function (wfx) {
+          const instance = wfx && typeof wfx.get === 'function'
+              ? wfx.get('starter-services')
+              : null;
+          if (!instance || typeof instance.on !== 'function' || !instance.root) return;
+
+          instance.on('results', function () {
+              Promise.resolve(memberReady).then(function () {
+                  adaptXanoServiceCards(instance);
+              }).catch(function (error) {
+                  console.warn('Xano services:', error);
+              });
+          });
+      });
+  }
+
+  function adaptXanoServiceCards(instance) {
+      const cards = qsa('[wf-xano-item]', instance.root).filter(function (card) {
+          const owner = card.closest('[wf-xano-element="wrapper"]');
+          return owner === instance.root && !!card.closest('#services');
+      });
+      const names = [];
+      cards.forEach(function (card) {
+          const title = qs('[data-service-card-element="title"]', card);
+          const serviceName = title ? String(title.textContent || '').trim() : '';
+          if (!serviceName) return;
+          names.push(serviceName);
+
+          card.setAttribute('data-service-card', 'component');
+          card.setAttribute('data-service-card-state', 'Default');
+          card.setAttribute('data-signup-trigger-element', 'service');
+          card.setAttribute('data-signup-trigger-value', serviceName);
+          card.setAttribute('data-xano-service-card', 'starter-services');
+          ['data-modal-trigger', 'data-sp-fill', 'data-sp-fill-category', 'data-sp-fill-value']
+              .forEach(function (attribute) { card.removeAttribute(attribute); });
+          card.style.cursor = '';
+      });
+
+      if (!MEMBER.id) {
+          markServiceCardsClickable();
+      } else if (isBrandMember(MEMBER) && !isProfileOwner(MEMBER)) {
+          syncProjectServiceOptions(names);
+          wireProjectServiceCards();
+      }
+
+      refreshEmptySectionNav();
+  }
+
+  function syncProjectServiceOptions(serviceNames) {
+      const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
+      if (!serviceField || !serviceField.options) return;
+
+      function canonicalValue(value) {
+          return String(value || '').trim();
+      }
+
+      const desired = [];
+      const desiredKeys = new Set();
+      serviceNames.forEach(function (serviceName) {
+          const value = canonicalValue(serviceName);
+          if (!value || desiredKeys.has(value)) return;
+          desiredKeys.add(value);
+          desired.push(value);
+      });
+
+      Array.from(serviceField.options).forEach(function (option) {
+          const owned = option.getAttribute &&
+              option.getAttribute('data-xano-service-option') === 'starter-services';
+          if (owned && !desiredKeys.has(canonicalValue(option.value || option.textContent))) {
+              option.remove();
+          }
+      });
+
+      desired.forEach(function (serviceName) {
+          const exists = Array.from(serviceField.options).some(function (option) {
+              return canonicalValue(option.value || option.textContent) === serviceName;
+          });
+          if (exists) return;
+
+          const option = document.createElement('option');
+          option.value = serviceName;
+          option.textContent = serviceName;
+          option.setAttribute('value', serviceName);
+          option.setAttribute('data-xano-service-option', 'starter-services');
+          serviceField.appendChild(option);
       });
   }
 
@@ -1496,6 +1606,8 @@
   }
 
   function wireProjectServiceCards() {
+      if (isProfileOwner(MEMBER)) return;
+
       const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
       const options = serviceField && serviceField.options
           ? Array.from(serviceField.options).filter(function (option) {
@@ -1512,7 +1624,13 @@
           const title = qs('[data-service-card-element="title"]', card);
           const titleValue = title ? String(title.textContent || '').trim() : '';
           const rateType = normalized(card.getAttribute('data-rate-card'));
-          const candidates = [titleValue];
+          const exactOption = options.find(function (item) {
+              return String(item.value || '').trim() === titleValue ||
+                  String(item.textContent || '').trim() === titleValue;
+          });
+          if (exactOption) return String(exactOption.value || '').trim();
+
+          const candidates = [];
 
           // Freelance and Retainer are commercial formats, not CMS services,
           // so each maps onto the authored option that matches its format.
