@@ -662,7 +662,7 @@ function addXanoServiceFixture(page, serviceName) {
   return { wrapper, template, card, title, description }
 }
 
-function makeWfXanoFixture(root, initialResult = null) {
+function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = true } = {}) {
   let resultsHandler = null
   let latestResult = initialResult
   let getStateCalls = 0
@@ -675,7 +675,7 @@ function makeWfXanoFixture(root, initialResult = null) {
     on(event, handler) {
       if (event === 'results') {
         resultsHandler = handler
-        if (latestResult) handler(latestResult)
+        if (latestResult && replayOnSubscribe) handler(latestResult)
       }
       return instance
     },
@@ -2896,6 +2896,34 @@ test('an already-complete wf-xano result is adapted by late-subscriber replay', 
   assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
   assert.equal(xano.card.getAttribute('data-xano-service-card'), 'starter-services')
   assert.equal(wfx.getStateCalls(), 0, 'the replayed result must not be adapted again from state')
+})
+
+test('an already-complete wf-xano result falls back to public state without subscriber replay', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Service Name')
+  xano.description.textContent = 'Service Description'
+  const completed = {
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Deep dive', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  }
+  const wfx = makeWfXanoFixture(xano.wrapper, completed, { replayOnSubscribe: false })
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(xano.title.textContent, 'Paid Media Audit')
+  assert.equal(xano.description.textContent, 'Deep dive')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+  assert.equal(xano.card.getAttribute('data-xano-service-card'), 'starter-services')
+  assert.equal(wfx.getStateCalls(), 1, 'public state must be read once when subscription does not replay')
 })
 
 test('a late wf-xano result never repaints a clone whose item id does not match', async () => {
