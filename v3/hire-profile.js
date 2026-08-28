@@ -1368,8 +1368,9 @@
 
      The authored template and every CMS card remain untouched. This adapter
      limits itself to rendered [wf-xano-item] clones owned by the named wrapper.
-     The native project form remains Designer-owned, including its Services
-     options. Cards without an exact authored option stay inert. */
+     The native project form remains Designer-owned. For eligible Brands, this
+     adapter may reconcile only its own option children in the existing
+     Services select so every canonical Xano service has an exact value. */
   function installXanoServiceCardsAdapter() {
       window.WfXano = window.WfXano || [];
       if (typeof window.WfXano.push !== 'function') return;
@@ -1395,10 +1396,12 @@
           const owner = card.closest('[wf-xano-element="wrapper"]');
           return owner === instance.root && !!card.closest('#services');
       });
+      const names = [];
       cards.forEach(function (card) {
           const title = qs('[data-service-card-element="title"]', card);
           const serviceName = title ? String(title.textContent || '').trim() : '';
           if (!serviceName) return;
+          names.push(serviceName);
 
           card.setAttribute('data-service-card', 'component');
           card.setAttribute('data-service-card-state', 'Default');
@@ -1413,10 +1416,52 @@
       if (!MEMBER.id) {
           markServiceCardsClickable();
       } else if (isBrandMember(MEMBER) && !isProfileOwner(MEMBER)) {
+          syncProjectServiceOptions(names);
           wireProjectServiceCards();
       }
 
       refreshEmptySectionNav();
+  }
+
+  function syncProjectServiceOptions(serviceNames) {
+      const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
+      if (!serviceField || !serviceField.options) return;
+
+      function normalized(value) {
+          return String(value || '').trim().toLowerCase();
+      }
+
+      const desired = [];
+      const desiredKeys = new Set();
+      serviceNames.forEach(function (serviceName) {
+          const value = String(serviceName || '').trim();
+          const key = normalized(value);
+          if (!key || desiredKeys.has(key)) return;
+          desiredKeys.add(key);
+          desired.push(value);
+      });
+
+      Array.from(serviceField.options).forEach(function (option) {
+          const owned = option.getAttribute &&
+              option.getAttribute('data-xano-service-option') === 'starter-services';
+          if (owned && !desiredKeys.has(normalized(option.value || option.textContent))) {
+              option.remove();
+          }
+      });
+
+      desired.forEach(function (serviceName) {
+          const exists = Array.from(serviceField.options).some(function (option) {
+              return normalized(option.value || option.textContent) === normalized(serviceName);
+          });
+          if (exists) return;
+
+          const option = document.createElement('option');
+          option.value = serviceName;
+          option.textContent = serviceName;
+          option.setAttribute('value', serviceName);
+          option.setAttribute('data-xano-service-option', 'starter-services');
+          serviceField.appendChild(option);
+      });
   }
 
   /* RATE SERVICE CARDS (all viewers)

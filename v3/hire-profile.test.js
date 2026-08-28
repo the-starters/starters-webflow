@@ -656,7 +656,7 @@ function addXanoServiceFixture(page, serviceName) {
   card.appendChild(title)
   wrapper.appendChild(card)
   page.servicesList.appendChild(wrapper)
-  return { wrapper, template, card }
+  return { wrapper, template, card, title }
 }
 
 function makeWfXanoFixture(root) {
@@ -2855,7 +2855,7 @@ test('a late wf-xano service uses an authored native option and presets the Bran
   wfx.emit(result)
   await settle()
 
-  assert.deepEqual(select.options, authoredOptions, 'the adapter must not change native form options')
+  assert.deepEqual(select.options, authoredOptions, 'an authored exact option must not be duplicated or changed')
   assert.equal(xano.card.getAttribute('data-modal-trigger'), 'generate-contract')
   assert.equal(xano.card.getAttribute('data-sp-fill'), 'button')
   assert.equal(xano.card.getAttribute('data-sp-fill-category'), 'service')
@@ -2863,7 +2863,7 @@ test('a late wf-xano service uses an authored native option and presets the Bran
   assert.equal(xano.card.style.cursor, 'pointer')
 })
 
-test('a late wf-xano service stays inert when its native option is absent', async () => {
+test('a late wf-xano service adds one adapter-owned native option when its authored option is absent', async () => {
   const page = makePage()
   const xano = addXanoServiceFixture(page, 'Paid Media Audit')
   const wfx = makeWfXanoFixture(xano.wrapper)
@@ -2878,19 +2878,47 @@ test('a late wf-xano service stays inert when its native option is absent', asyn
   })
   vm.createContext(context)
   vm.runInContext(source, context)
-  wfx.emit({ items: [{ id: '383:0', name: 'Paid Media Audit' }], total: 1, page: 1, pages: 1, hasMore: false })
+  const result = { items: [{ id: '383:0', name: 'Paid Media Audit' }], total: 1, page: 1, pages: 1, hasMore: false }
+  wfx.emit(result)
+  wfx.emit(result)
   await settle()
 
-  assert.deepEqual(select.options, authoredOptions, 'the adapter must not create native options')
-  for (const attribute of [
-    'data-modal-trigger',
-    'data-sp-fill',
-    'data-sp-fill-category',
-    'data-sp-fill-value',
-  ]) {
-    assert.equal(xano.card.getAttribute(attribute), null, `${attribute} must fail closed without an authored option`)
-  }
-  assert.equal(xano.card.style.cursor, '')
+  assert.deepEqual(select.options.slice(0, authoredOptions.length), authoredOptions, 'authored options stay unchanged')
+  const dynamic = select.options.filter((option) => option.getAttribute && option.getAttribute('data-xano-service-option') === 'starter-services')
+  assert.equal(dynamic.length, 1, 'repeated results must create one adapter-owned option')
+  assert.equal(dynamic[0].value, 'Paid Media Audit')
+  assert.equal(xano.card.getAttribute('data-modal-trigger'), 'generate-contract')
+  assert.equal(xano.card.getAttribute('data-sp-fill'), 'button')
+  assert.equal(xano.card.getAttribute('data-sp-fill-category'), 'service')
+  assert.equal(xano.card.getAttribute('data-sp-fill-value'), 'Paid Media Audit')
+  assert.equal(xano.card.style.cursor, 'pointer')
+})
+
+test('a later wf-xano result removes only stale adapter-owned service options', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const { select } = addContractDialog(page, ['', 'Freelance work'])
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  wfx.emit({ items: [{ id: '383:0', name: 'Paid Media Audit' }], total: 1, page: 1, pages: 1, hasMore: false })
+  await settle()
+  xano.title.textContent = 'Paid Search Audit'
+  wfx.emit({ items: [{ id: '383:1', name: 'Paid Search Audit' }], total: 1, page: 1, pages: 1, hasMore: false })
+  await settle()
+
+  assert.equal(select.options.some((option) => option.value === 'Paid Media Audit'), false)
+  assert.equal(select.options.filter((option) => option.value === 'Paid Search Audit').length, 1)
+  assert.equal(select.options.some((option) => option.value === 'Freelance work'), true, 'authored options remain')
+  assert.equal(xano.card.getAttribute('data-sp-fill-value'), 'Paid Search Audit')
 })
 
 test('a late wf-xano service remains inert for signed-in Talent and the profile owner', async () => {
