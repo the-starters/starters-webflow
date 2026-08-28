@@ -650,13 +650,16 @@ function addXanoServiceFixture(page, serviceName) {
   template.appendChild(templateTitle)
   wrapper.appendChild(template)
 
-  const card = makeElement('div', { 'wf-xano-item': '' })
+  const card = makeElement('div', { 'wf-xano-item': '', 'data-wf-xano-id': '383:0' })
   const title = makeElement('div', { 'data-service-card-element': 'title' })
   title.textContent = serviceName
   card.appendChild(title)
+  const description = makeElement('div', { 'data-service-card-element': 'description' })
+  description.textContent = 'Rendered description'
+  card.appendChild(description)
   wrapper.appendChild(card)
   page.servicesList.appendChild(wrapper)
-  return { wrapper, template, card, title }
+  return { wrapper, template, card, title, description }
 }
 
 function makeWfXanoFixture(root) {
@@ -2826,6 +2829,58 @@ test('a late wf-xano service card receives logged-out signup wiring without chan
   assert.equal(cmsCard.style.cursor, 'pointer', 'the CMS comparison card stays clickable')
   assert.deepEqual(xano.template.attributes, templateBefore, 'the authored template must stay byte-identical')
   assert.ok(context.emptyNavRefreshCalls.length > 0)
+})
+
+test('a late wf-xano result repaints dropped nested-component bindings by exact item id', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Service Name')
+  xano.description.textContent = 'Service Description'
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Deep dive', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.equal(xano.title.textContent, 'Paid Media Audit')
+  assert.equal(xano.description.textContent, 'Deep dive')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+})
+
+test('a late wf-xano result never repaints a clone whose item id does not match', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Service Name')
+  xano.description.textContent = 'Service Description'
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{ id: 'other:0', name: 'Wrong Service', description: 'Wrong description', price: 1 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.equal(xano.title.textContent, 'Service Name')
+  assert.equal(xano.description.textContent, 'Service Description')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Service Name')
 })
 
 test('a late wf-xano service uses an authored native option and presets the Brand project modal idempotently', async () => {
