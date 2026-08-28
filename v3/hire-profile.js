@@ -1427,31 +1427,30 @@
       const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
       if (!serviceField || !serviceField.options) return;
 
-      function normalized(value) {
-          return String(value || '').trim().toLowerCase();
+      function canonicalValue(value) {
+          return String(value || '').trim();
       }
 
       const desired = [];
       const desiredKeys = new Set();
       serviceNames.forEach(function (serviceName) {
-          const value = String(serviceName || '').trim();
-          const key = normalized(value);
-          if (!key || desiredKeys.has(key)) return;
-          desiredKeys.add(key);
+          const value = canonicalValue(serviceName);
+          if (!value || desiredKeys.has(value)) return;
+          desiredKeys.add(value);
           desired.push(value);
       });
 
       Array.from(serviceField.options).forEach(function (option) {
           const owned = option.getAttribute &&
               option.getAttribute('data-xano-service-option') === 'starter-services';
-          if (owned && !desiredKeys.has(normalized(option.value || option.textContent))) {
+          if (owned && !desiredKeys.has(canonicalValue(option.value || option.textContent))) {
               option.remove();
           }
       });
 
       desired.forEach(function (serviceName) {
           const exists = Array.from(serviceField.options).some(function (option) {
-              return normalized(option.value || option.textContent) === normalized(serviceName);
+              return canonicalValue(option.value || option.textContent) === serviceName;
           });
           if (exists) return;
 
@@ -1621,7 +1620,13 @@
           const title = qs('[data-service-card-element="title"]', card);
           const titleValue = title ? String(title.textContent || '').trim() : '';
           const rateType = normalized(card.getAttribute('data-rate-card'));
-          const candidates = [titleValue];
+          const exactOption = options.find(function (item) {
+              return String(item.value || '').trim() === titleValue ||
+                  String(item.textContent || '').trim() === titleValue;
+          });
+          if (exactOption) return String(exactOption.value || '').trim();
+
+          const candidates = [];
 
           // Freelance and Retainer are commercial formats, not CMS services,
           // so each maps onto the authored option that matches its format.

@@ -2894,6 +2894,47 @@ test('a late wf-xano service adds one adapter-owned native option when its autho
   assert.equal(xano.card.style.cursor, 'pointer')
 })
 
+test('case-distinct canonical services keep exact options and exact Brand presets', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'SEO')
+  const lowerCard = makeElement('div', { 'wf-xano-item': '' })
+  const lowerTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  lowerTitle.textContent = 'seo'
+  lowerCard.appendChild(lowerTitle)
+  xano.wrapper.appendChild(lowerCard)
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const { select } = addContractDialog(page, ['', 'Freelance work', 'seo'])
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{ id: '383:0', name: 'SEO' }, { id: '383:1', name: 'seo' }],
+    total: 2,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.deepEqual(
+    select.options.map((option) => option.value).filter((value) => value === 'SEO' || value === 'seo'),
+    ['seo', 'SEO'],
+  )
+  assert.equal(xano.card.getAttribute('data-sp-fill-value'), 'SEO')
+  assert.equal(lowerCard.getAttribute('data-sp-fill-value'), 'seo')
+  assert.equal(
+    select.options.filter((option) => option.getAttribute &&
+      option.getAttribute('data-xano-service-option') === 'starter-services').length,
+    1,
+  )
+})
+
 test('a later wf-xano result removes only stale adapter-owned service options', async () => {
   const page = makePage()
   const xano = addXanoServiceFixture(page, 'Paid Media Audit')
