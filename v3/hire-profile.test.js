@@ -2784,6 +2784,17 @@ test('Paid-only discovery stays closed when the V3 controller is unavailable', a
 
 test('a late wf-xano service card receives logged-out signup wiring without changing its template', async () => {
   const page = makePage()
+  const cmsCard = makeElement('div', {
+    'data-service-card': 'component',
+    'data-service-card-state': 'Default',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'CMS Strategy',
+  })
+  const cmsTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  cmsTitle.textContent = 'CMS Strategy'
+  cmsCard.appendChild(cmsTitle)
+  page.servicesList.appendChild(cmsCard)
+  const cmsBefore = { ...cmsCard.attributes }
   const xano = addXanoServiceFixture(page, 'Paid Media Audit')
   const wfx = makeWfXanoFixture(xano.wrapper)
   const templateBefore = { ...xano.template.attributes }
@@ -2810,6 +2821,9 @@ test('a late wf-xano service card receives logged-out signup wiring without chan
   assert.equal(xano.card.getAttribute('data-xano-service-card'), 'starter-services')
   assert.equal(xano.card.getAttribute('data-modal-trigger'), null)
   assert.equal(xano.card.style.cursor, 'pointer')
+  assert.equal(page.servicesList.children.includes(cmsCard), true, 'the CMS comparison card stays rendered')
+  assert.deepEqual(cmsCard.attributes, cmsBefore, 'the CMS comparison card keeps its authored contract')
+  assert.equal(cmsCard.style.cursor, 'pointer', 'the CMS comparison card stays clickable')
   assert.deepEqual(xano.template.attributes, templateBefore, 'the authored template must stay byte-identical')
   assert.ok(context.emptyNavRefreshCalls.length > 0)
 })
@@ -2851,40 +2865,51 @@ test('a late wf-xano service adds one native option and presets the Brand projec
   assert.equal(xano.card.style.cursor, 'pointer')
 })
 
-test('a late wf-xano service remains inert for a signed-in Talent', async () => {
-  const page = makePage()
-  const xano = addXanoServiceFixture(page, 'Paid Media Audit')
-  const wfx = makeWfXanoFixture(xano.wrapper)
-  const { select } = addContractDialog(page, ['', 'Freelance work'])
-  const context = makeContext({
-    page,
-    record: { rate: 0, 'retainer-enabled': false },
-    member: {
+test('a late wf-xano service remains inert for signed-in Talent and the profile owner', async () => {
+  for (const [viewer, member] of [
+    ['Talent', {
       id: 'talent_member',
       auth: { email: 'talent@example.com' },
       customFields: { 'free-user': 'Starter' },
       planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' }],
-    },
-    wfXano: wfx.api,
-  })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  wfx.emit({ items: [{ id: '383:0', name: 'Paid Media Audit' }], total: 1, page: 1, pages: 1, hasMore: false })
-  await settle()
-
-  assert.equal(
-    Array.from(select.options).some((option) => String(option.value || option.textContent) === 'Paid Media Audit'),
-    false,
-  )
-  for (const attribute of [
-    'data-modal-trigger',
-    'data-sp-fill',
-    'data-sp-fill-category',
-    'data-sp-fill-value',
+    }],
+    ['owner', {
+      id: 'mem_canary',
+      auth: { email: 'owner@example.com' },
+      customFields: { 'free-user': 'Starter' },
+      planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' }],
+    }],
   ]) {
-    assert.equal(xano.card.getAttribute(attribute), null, `${attribute} must fail closed for Talent`)
+    const page = makePage()
+    const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+    const wfx = makeWfXanoFixture(xano.wrapper)
+    const { select } = addContractDialog(page, ['', 'Freelance work'])
+    const context = makeContext({
+      page,
+      record: { rate: 0, 'retainer-enabled': false },
+      member,
+      wfXano: wfx.api,
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    wfx.emit({ items: [{ id: '383:0', name: 'Paid Media Audit' }], total: 1, page: 1, pages: 1, hasMore: false })
+    await settle()
+
+    assert.equal(
+      Array.from(select.options).some((option) => String(option.value || option.textContent) === 'Paid Media Audit'),
+      false,
+      `${viewer} must not receive a canonical service option`,
+    )
+    for (const attribute of [
+      'data-modal-trigger',
+      'data-sp-fill',
+      'data-sp-fill-category',
+      'data-sp-fill-value',
+    ]) {
+      assert.equal(xano.card.getAttribute(attribute), null, `${attribute} must fail closed for ${viewer}`)
+    }
+    assert.equal(xano.card.style.cursor, '', `${viewer} must not receive a click affordance`)
   }
-  assert.equal(xano.card.style.cursor, '')
 })
 
 test('signed-in Brand routes non-call services to Start a Project with a valid native service preset', async () => {
