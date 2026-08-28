@@ -776,7 +776,8 @@ test('an older singleton already installed is adopted with no extra close wiring
   assert.equal(isolated.installFreeBookingController(installSettings(booking.bookingApi)), true)
 
   // The singleton is adopted, not replaced, and it still carries no capability
-  // mark — that absence is how this generation recognises the older one.
+  // mark. Nothing gates on that absence: adoption is unconditional by design.
+  // Asserting it here documents which generation this fixture is standing in.
   assert.equal(window.StartersBookingSurfaceLifecycle, old.lifecycle)
   assert.equal(old.lifecycle.resetTiming, undefined)
 

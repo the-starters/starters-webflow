@@ -7,6 +7,41 @@ global.window = global
 const api = require('./paid-call-brand-payment.js')
 const SOURCE = fs.readFileSync(require.resolve('./paid-call-brand-payment.js'), 'utf8')
 
+/** The close selector the controller actually ships, read off the source. */
+function bookingCloseSelector() {
+  const match = /const BOOKING_CLOSE_SELECTOR =\s*([\s\S]*?)\n\s*const /.exec(SOURCE)
+  if (!match) throw new Error('BOOKING_CLOSE_SELECTOR not found in the controller source')
+  // The literal is written as concatenated single-quoted parts.
+  const parts = [...match[1].matchAll(/'([^']*)'/g)].map((m) => m[1])
+  if (!parts.length) throw new Error('BOOKING_CLOSE_SELECTOR is not a string literal any more')
+  return parts.join('')
+}
+
+/**
+ * Document order + the real selector, which is the pair that decides which
+ * control a synthesized close lands on. Supports the two forms the selector
+ * uses: a bare attribute, and `:not([attribute])`.
+ */
+function firstCloseMatch(selector, candidates) {
+  const groups = String(selector).split(',').map((part) => part.trim()).filter(Boolean)
+  const compiled = groups.map((group) => {
+    const excluded = [...group.matchAll(/:not\(\[([\w-]+)\]\)/g)].map((m) => m[1])
+    const required = [...group.replace(/:not\([^)]*\)/g, '').matchAll(/\[([\w-]+)\]/g)].map((m) => m[1])
+    if (!required.length) return null
+    return (el) => {
+      const has = (name) =>
+        typeof el.getAttribute === 'function'
+          ? el.getAttribute(name) !== null && el.getAttribute(name) !== undefined
+          : !!(el.attrs && Object.prototype.hasOwnProperty.call(el.attrs, name))
+      return required.every(has) && !excluded.some(has)
+    }
+  }).filter(Boolean)
+  if (!compiled.length) return null
+  // querySelector returns the first element in DOCUMENT order that matches any
+  // group, not the first group's match, so order the candidates not the groups.
+  return candidates.find((el) => compiled.some((match) => match(el))) || null
+}
+
 /**
  * The booking surface resets on the modal embed's close-complete event, not on
  * a close control's click, so the suite needs a window-level event bus to close
@@ -1053,7 +1088,11 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
   const changePayment = paymentAction('change', 'Change payment method')
   const confirmPayment = paymentAction('confirm', 'Confirm payment method')
   let closeClicks = 0
-  const popupClose = { click() { closeClicks += 1 } }
+  const popupClose = { attrs: { 'data-modal-close': '' }, click() { closeClicks += 1 } }
+  // Ordered exactly as the DOM would be, and matched by the real selector the
+  // controller uses, so this stops being a string the fixture has to be kept in
+  // step with by hand.
+  const popupCloseCandidates = [popupClose]
   const successCallType = { textContent: 'Free Call' }
   const paidText = {
     attrs: { 'aria-hidden': 'true' },
@@ -1075,7 +1114,8 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
       if (selector === '[nylas-container]') return container
       if (selector === '[booking-success-text]') return successText
       if (selector === '[paid-call-text]') return paidText
-      if (selector === '[data-modal-close], [booking-popup-close], [popup-booking-close]') return popupClose
+      const close = firstCloseMatch(selector, popupCloseCandidates)
+      if (close) return close
       return guestQuery(guestUi, selector)
     },
     querySelectorAll(selector) {
@@ -2400,8 +2440,9 @@ test('an older Paid singleton already installed is adopted with no extra close w
   })
   try {
     // The singleton is adopted, not replaced, and it still carries no
-    // capability mark — that absence is how this generation recognises the
-    // older one.
+    // capability mark. Nothing gates on that absence: adoption is
+    // unconditional by design. Asserting it here documents which generation
+    // this fixture is standing in.
     assert.equal(window.StartersBookingSurfaceLifecycle, old.lifecycle)
     assert.equal(old.lifecycle.resetTiming, undefined)
 
@@ -2566,5 +2607,43 @@ test('a card-dialog marker nested on a child still binds that dialog own backdro
     assert.equal(counts.booking, 0)
   } finally {
     fixture.restore()
+  }
+})
+
+test('a synthesized booking close skips the back arrow and uses a real closer', () => {
+  // The back arrow closes the booking dialog AND opens the chooser, so it
+  // carries a close marker like any other closer. If the success-close lookup
+  // could land on it, finishing a booking would bounce the visitor back into
+  // the Free/Paid chooser instead of closing. Today the backdrop happens to sit
+  // first in the DOM and the bug is unreachable, which is exactly the kind of
+  // accident a Designer reorder undoes.
+  const selector = bookingCloseSelector()
+  const backArrow = {
+    attrs: { 'data-booking-back': '', 'data-modal-close': '', 'data-modal-trigger': 'popup-booking-main' },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null
+    },
+  }
+  const realCloser = {
+    attrs: { 'data-modal-close': '', 'booking-popup-close': '' },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null
+    },
+  }
+
+  // The back arrow first in document order is the case that matters.
+  assert.equal(firstCloseMatch(selector, [backArrow, realCloser]), realCloser)
+  // And it is still skipped when it is the only close-marked control there is,
+  // rather than being picked as a last resort.
+  assert.equal(firstCloseMatch(selector, [backArrow]), null)
+  // An ordinary closer is unaffected on every one of the three markers.
+  for (const marker of ['data-modal-close', 'booking-popup-close', 'popup-booking-close']) {
+    const only = {
+      attrs: { [marker]: '' },
+      getAttribute(name) {
+        return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null
+      },
+    }
+    assert.equal(firstCloseMatch(selector, [only]), only, marker)
   }
 })

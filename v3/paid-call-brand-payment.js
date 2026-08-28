@@ -27,7 +27,15 @@
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  const BOOKING_CLOSE_SELECTOR = '[data-modal-close], [booking-popup-close], [popup-booking-close]'
+  // The back arrow carries a close marker too, because closing the booking
+  // dialog is half of its hand-off back to the chooser. A synthesized close
+  // must never land on it: that would reopen the chooser instead of finishing.
+  // Today the backdrop happens to match first and this is moot, but "happens to
+  // be first in the DOM" is one Designer reorder away from being wrong.
+  const BOOKING_CLOSE_SELECTOR =
+    '[data-modal-close]:not([data-booking-back]), ' +
+    '[booking-popup-close]:not([data-booking-back]), ' +
+    '[popup-booking-close]:not([data-booking-back])'
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
   const guardedGuestSubmitTargets = new WeakSet()

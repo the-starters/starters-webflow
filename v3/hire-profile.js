@@ -750,13 +750,38 @@
   function syncBookingBackControls() {
       bookingDialogs().forEach(function (dialog) {
           const fromChooser = dialog.getAttribute('data-booking-entry') === 'chooser';
+          const hidden = fromChooser ? 'false' : 'true';
           dialog.querySelectorAll('[data-booking-back]').forEach(function (control) {
-              // Cleared rather than set to a value, so the arrow goes back to
-              // whatever display its Designer class gives it.
-              control.style.display = fromChooser ? '' : 'none';
-              control.setAttribute('aria-hidden', fromChooser ? 'false' : 'true');
+              // Display is the guard stylesheet's job: its rule is keyed on the
+              // same entry attribute and carries !important, so it decides this
+              // either way and an inline write here could only ever agree with
+              // it. What CANNOT be done in CSS is the accessible state, so that
+              // is the half this owns, written only when it actually changes.
+              if (control.getAttribute('aria-hidden') !== hidden) {
+                  control.setAttribute('aria-hidden', hidden);
+              }
           });
       });
+  }
+
+  /* ---- forgetting the entry when the booking dialog closes ----
+     The stamp says how the visitor got in, so it has to stop being true when
+     they leave. Left standing, a `chooser` stamp outlives its own visit: the
+     next opener that does not stamp — an authored `data-modal-trigger`
+     elsewhere on the page, or a script calling the modal registry directly —
+     inherits it, and shows a back arrow to a chooser that visitor never saw. */
+  function forgetBookingEntryOnClose(event) {
+      const dialog = event && event.detail && event.detail.modal;
+      if (!dialog || typeof dialog.matches !== 'function') return;
+      if (!dialog.matches(BOOKING_SELECTOR)) return;
+      // The back arrow closes this dialog and opens the chooser in one gesture,
+      // and the close completes a beat later, at the end of the fade. If the
+      // visitor has already come back through the chooser by then, the dialog
+      // is open again and freshly stamped: a late close-complete from the visit
+      // BEFORE that one must not wipe the stamp of the visit they are in.
+      if (dialog.open === true) return;
+      dialog.removeAttribute('data-booking-entry');
+      syncBookingBackControls();
   }
 
   function stampBookingEntry(source) {
@@ -925,6 +950,11 @@
   // Before any entry has happened there is no stamp, so the arrow starts
   // hidden — the same answer the CSS guard gives before this line runs.
   syncBookingBackControls();
+  // Bound to the modal library's own close-complete event rather than to close
+  // controls, so any closer the Designer adds later is covered for free.
+  if (typeof window.addEventListener === 'function') {
+      window.addEventListener('modal-close', forgetBookingEntryOnClose);
+  }
   observeCallServiceCards();
 
   // Page-embed contract. This file is deferred, so all of these are already

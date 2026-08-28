@@ -51,8 +51,18 @@
                 function openModal() {
                     typeof lenis !== "undefined" && lenis.stop ? lenis.stop() : (document.body.style.overflow = "hidden");
                     lastFocusedElement = document.activeElement;
+                    // Re-opening an already-open modal dialog is a no-op by spec: showModal()
+                    // returns at step 1 when the dialog is already modal, so this is safe to
+                    // call on a dialog the visitor is already looking at.
                     modal.showModal();
-                    if (typeof gsap !== "undefined") modal.tl.play();
+                    // play() on a timeline that is mid-reverse is what CANCELS the pending
+                    // close, so a dialog re-entered during its 300ms fade-out stays open
+                    // instead of completing the close underneath the visitor.
+                    //
+                    // Do NOT add an `if (modal.open) return` guard above: it reads like a
+                    // cheap early-out, but it would skip this play() and let the reverse run
+                    // to completion, wiping a dialog the visitor had just re-entered.
+                    if (typeof gsap !== "undefined" && modal.tl) modal.tl.play();
                     modal.querySelectorAll("[data-modal-scroll]").forEach((el) => (el.scrollTop = 0));
                     window.dispatchEvent(new CustomEvent("modal-open", { detail: { modal } }));
                 }
