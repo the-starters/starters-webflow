@@ -1410,7 +1410,7 @@
   }
 
   function adaptXanoServiceCards(instance, result) {
-      const cards = qsa('[wf-xano-item]', instance.root).filter(function (card) {
+      const cards = Array.from(qsa('[wf-xano-item]', instance.root)).filter(function (card) {
           const owner = card.closest('[wf-xano-element="wrapper"]');
           return owner === instance.root && !!card.closest('#services');
       });

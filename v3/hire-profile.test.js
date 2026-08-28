@@ -2870,6 +2870,39 @@ test('a late wf-xano result repaints dropped nested-component bindings by exact 
   assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
 })
 
+test('a browser NodeList of wf-xano cards is adapted without array-only methods', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Service Name')
+  xano.description.textContent = 'Service Description'
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  const arrayQsa = context.qsa
+  context.qsa = (selector, scope) => {
+    const result = arrayQsa(selector, scope)
+    if (selector !== '[wf-xano-item]' || scope !== xano.wrapper) return result
+    return { 0: result[0], length: result.length }
+  }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Deep dive', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.equal(xano.title.textContent, 'Paid Media Audit')
+  assert.equal(xano.description.textContent, 'Deep dive')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+  assert.equal(context.warnings.some((line) => line.includes('filter is not a function')), false)
+})
+
 test('an already-complete wf-xano result is adapted by late-subscriber replay', async () => {
   const page = makePage()
   const xano = addXanoServiceFixture(page, 'Service Name')
