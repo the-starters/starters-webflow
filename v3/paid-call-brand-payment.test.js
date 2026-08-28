@@ -7,6 +7,35 @@ global.window = global
 const api = require('./paid-call-brand-payment.js')
 const SOURCE = fs.readFileSync(require.resolve('./paid-call-brand-payment.js'), 'utf8')
 
+/**
+ * The booking surface resets on the modal embed's close-complete event, not on
+ * a close control's click, so the suite needs a window-level event bus to close
+ * the dialog with. The controller reads `global.addEventListener` when it
+ * registers a popup, which is why this is installed before any test runs.
+ */
+const modalEvents = new EventTarget()
+global.addEventListener = function (name, listener) { modalEvents.addEventListener(name, listener) }
+global.removeEventListener = function (name, listener) { modalEvents.removeEventListener(name, listener) }
+
+function dispatchModal(type, modal) {
+  modalEvents.dispatchEvent(new CustomEvent(type, { detail: { modal } }))
+}
+
+/**
+ * How many times the shared surface reset ran, read off the public ownership
+ * seam: every `lifecycle.reset` claims one generation for the container, so the
+ * gap between two claims minus this probe's own claim is the reset count.
+ */
+function resetCounter(container) {
+  let mark = global.StartersBookingSurfaceOwnership.claim(container)
+  return function since() {
+    const next = global.StartersBookingSurfaceOwnership.claim(container)
+    const count = next - mark - 1
+    mark = next
+    return count
+  }
+}
+
 function loadBrowserApi(hostname, xanoAuthFetch) {
   const window = {
     location: hostname === undefined ? {} : { hostname },
@@ -1278,7 +1307,10 @@ test('Free selection invalidates a pending Paid calendar response', async () => 
     steps[0].style.display = 'none'
     steps[1].style.display = 'flex'
     container.textContent = 'Old calendar'
-    modalClose.listeners.click()
+    // Closing means the whole close: the embed fades the dialog out and only
+    // then reports close-complete, which is what resets the surface.
+    ;(modalClose.listeners.click ? [modalClose.listeners.click] : []).forEach(function (listener) { listener() })
+    dispatchModal('modal-close', popup)
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.rows[0].field.value, '')
     assert.equal(topic.value, '')
@@ -1604,13 +1636,26 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
       },
     }
   }
-  const mainClose = control()
+  // The authored dialog carries several closers — the X, one or more "Close"
+  // buttons, and the backdrop — and every one of them must behave the same.
+  const closeControls = [control(), control(), control()]
+    .slice(0, Math.max(1, fixtureOptions.closers || 1))
+  const mainClose = closeControls[0]
   const paymentClose = control()
+  // The authored page puts `popup-stripe-card-close` on three elements: the
+  // card dialog's X and backdrop, and — this is the cross-dialog trap — the
+  // booking dialog's backdrop, which is also one of the booking closers.
+  const paymentBackdrop = control()
+  const bookingBackdrop = control()
   const save = control()
   const cardMount = { setAttribute() {} }
   const errorText = { textContent: '', setAttribute() {} }
   const statusText = { textContent: '', setAttribute() {} }
   const paymentModalListeners = {}
+  // `nestedPaymentMarker` models a Designer re-nest: the `popup-stripe-card`
+  // marker sits on a child of the dialog, so the dialog's own backdrop is a
+  // sibling of the marker and only the owning `.modal_dialog` can reach it.
+  const nestedMarker = fixtureOptions.nestedPaymentMarker === true
   const paymentModal = {
     addEventListener(name, listener) {
       if (!paymentModalListeners[name]) paymentModalListeners[name] = []
@@ -1621,9 +1666,25 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
         listener({ preventDefault() {} })
       })
     },
+    closest(selector) {
+      if (selector !== '.modal_dialog') return null
+      return nestedMarker ? paymentDialog : paymentModal
+    },
     querySelector() { return null },
-    querySelectorAll() { return [] },
+    querySelectorAll(selector) {
+      if (selector === '[data-modal-close], [popup-stripe-card-close]') {
+        return nestedMarker ? [paymentClose] : [paymentClose, paymentBackdrop]
+      }
+      return []
+    },
     setAttribute() {},
+  }
+  const paymentDialog = {
+    querySelectorAll(selector) {
+      return selector === '[data-modal-close], [popup-stripe-card-close]'
+        ? [paymentClose, paymentBackdrop]
+        : []
+    },
   }
   const topic = { value: '' }
   const context = { value: '' }
@@ -1637,7 +1698,9 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
       return null
     },
     querySelectorAll(selector) {
-      if (selector === '[data-modal-close], [booking-popup-close], [popup-booking-close]') return [mainClose]
+      if (selector === '[data-modal-close], [booking-popup-close], [popup-booking-close]') {
+        return closeControls.concat([bookingBackdrop])
+      }
       if (selector === '[schedule-step]') return steps
       return []
     },
@@ -1665,7 +1728,11 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
     },
     querySelectorAll(selector) {
       if (selector.includes('data-type="paid"')) return [paid]
-      if (selector === '[popup-stripe-card] [data-modal-close], [popup-stripe-card-close]') return [paymentClose]
+      // What the unscoped selector really matched on the authored page: both of
+      // the card dialog's closers *and* the booking dialog's backdrop.
+      if (selector === '[popup-stripe-card] [data-modal-close], [popup-stripe-card-close]') {
+        return [paymentClose, paymentBackdrop, bookingBackdrop]
+      }
       return []
     },
   }
@@ -1695,7 +1762,8 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
     },
   })
   global.xanoAuthFetch = fetch
-  api.installPaidBookingController({
+  const install = fixtureOptions.install || api.installPaidBookingController
+  install({
     config: {
       config_id: 'config_paid',
       grant_id: 'grant_test',
@@ -1721,6 +1789,17 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   return {
     calendars,
     cardListeners,
+    /**
+     * A whole close, in the order the embed performs one: the closer's own
+     * click handling first, then close-complete once the 300ms fade has ended.
+     */
+    closeThroughFade(closer) {
+      ;(closer || mainClose).click()
+      dispatchModal('modal-close', popup)
+    },
+    bookingBackdrop,
+    closeControls,
+    container,
     context,
     getCardConfirmations: () => cardConfirmations,
     getCardCreates: () => cardCreates,
@@ -1729,6 +1808,8 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
     mainClose,
     paid,
     paidText,
+    popup,
+    paymentBackdrop,
     paymentClose,
     paymentModal,
     restore() {
@@ -1811,7 +1892,7 @@ test('main modal reset restores authored Paid copy after calendar failure', asyn
   try {
     await fixture.paid.onclick({ preventDefault() {} })
     assert.equal(fixture.paidText.textContent, 'We could not book this call. Please try again.')
-    fixture.mainClose.click()
+    fixture.closeThroughFade()
     assert.equal(fixture.paidText.textContent, 'Choose a time for your paid call.')
     await fixture.paid.onclick({ preventDefault() {} })
     assert.equal(fixture.paidText.textContent, 'Choose a time for your paid call.')
@@ -1891,7 +1972,7 @@ test('a reset booking blocks a changed command while one is in flight', async ()
     fixture.context.value = 'Original context'
     const stale = fixture.calendars[0].options.onConfirm(slot)
     await new Promise((resolve) => setImmediate(resolve))
-    fixture.mainClose.click()
+    fixture.closeThroughFade()
     assert.equal(fixture.topic.value, '')
     assert.equal(fixture.context.value, '')
     await fixture.paid.onclick({ preventDefault() {} })
@@ -1929,7 +2010,7 @@ test('overlapping paid generations share one card setup installation', async () 
     await fixture.paid.onclick({ preventDefault() {} })
     const first = fixture.calendars[0].options.onConfirm(slot)
     await new Promise((resolve) => setImmediate(resolve))
-    fixture.mainClose.click()
+    fixture.closeThroughFade()
     await fixture.paid.onclick({ preventDefault() {} })
     const second = fixture.calendars[1].options.onConfirm(slot)
     await second
@@ -2075,6 +2156,414 @@ test('stale card save cannot mutate a reopened payment generation', async () => 
     assert.equal(fixture.getCardConfirmations(), 1)
     assert.equal(defaultCount, 1)
     assert.equal(bookingCount, 1)
+  } finally {
+    fixture.restore()
+  }
+})
+
+// --------------------------------------------------------------------------
+// Reset-after-fade: the booking surface must survive the close animation.
+//
+// The modal embed keeps the dialog on screen for a 300ms fade-out and only
+// then dispatches `modal-close`. Resetting any earlier repaints a dialog the
+// visitor can still see — a success screen snapping back to "Book a Call"
+// before it disappears.
+// --------------------------------------------------------------------------
+
+/**
+ * A transcription of the lifecycle singleton shipped before this change: it
+ * resets on a close control's click and on the dialog's `cancel` as well as on
+ * close-complete. Used to stand in for an older generation that already claimed
+ * the first-installer-wins window slot.
+ */
+function oldGenerationLifecycle(scope) {
+  const generations = new WeakMap()
+  const ownership = {
+    claim: function (container) {
+      const generation = (generations.get(container) || 0) + 1
+      generations.set(container, generation)
+      return generation
+    },
+    owns: function (container, generation) {
+      return generations.get(container) === generation
+    },
+  }
+  const bindings = new WeakMap()
+  const lifecycle = {
+    register: function (popup, container, onReset) {
+      let binding = bindings.get(popup)
+      if (!binding) {
+        binding = { container, resets: new Set() }
+        bindings.set(popup, binding)
+        popup.querySelectorAll(
+          '[data-modal-close], [booking-popup-close], [popup-booking-close]',
+        ).forEach(function (control) {
+          control.addEventListener('click', function () { lifecycle.reset(popup) })
+        })
+        if (typeof popup.addEventListener === 'function') {
+          popup.addEventListener('cancel', function () { lifecycle.reset(popup) })
+        }
+        scope.addEventListener('modal-close', function (event) {
+          const modal = event && event.detail && event.detail.modal
+          if (modal === popup) lifecycle.reset(popup)
+        })
+      }
+      if (binding.container !== container) return false
+      binding.resets.add(onReset)
+      return true
+    },
+    reset: function (popup, nextType) {
+      const binding = bindings.get(popup)
+      if (!binding) return 0
+      const generation = ownership.claim(binding.container)
+      binding.resets.forEach(function (reset) { reset(generation, nextType || '') })
+      return generation
+    },
+    runBooking: function (container, fingerprint, createAttempt) {
+      return createAttempt().run()
+    },
+  }
+  return { lifecycle, ownership }
+}
+
+/**
+ * A second, isolated copy of the controller, loaded against its own window so a
+ * pre-installed lifecycle singleton can be planted before module scope runs.
+ * The document and Stripe stubs are read through getters so the copy sees
+ * exactly what makePaidLifecycleFixture installs on the shared globals.
+ */
+function loadIsolated(events) {
+  const window = {
+    location: { hostname: 'www.thestarters.com' },
+    get document() { return global.document },
+    get Stripe() { return global.Stripe },
+    get xanoAuthFetch() { return global.xanoAuthFetch },
+    addEventListener: (name, listener) => events.addEventListener(name, listener),
+    removeEventListener: (name, listener) => events.removeEventListener(name, listener),
+  }
+  return window
+}
+
+function runIsolated(window) {
+  vm.runInNewContext(SOURCE, {
+    URLSearchParams,
+    console,
+    setTimeout,
+    clearTimeout,
+    globalThis: window,
+    window,
+  })
+  return window.StartersPaidCallBrandPayment
+}
+
+async function advancedPaidFixture(options = {}) {
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) return response({ environment: 'test', bookable: true })
+    if (url.endsWith(api.BOOKING_PATH)) {
+      return response({ booking: { booking_id: 'confirmed', row_id: 77 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  }, options)
+  await fixture.paid.onclick({ preventDefault() {} })
+  fixture.topic.value = 'Growth audit'
+  fixture.context.value = 'Review the launch plan'
+  fixture.container.textContent = 'Calendar'
+  fixture.steps[0].style.display = 'none'
+  fixture.steps[1].style.display = 'flex'
+  return fixture
+}
+
+test('the close click leaves the Paid step untouched until the fade ends', async () => {
+  const fixture = await advancedPaidFixture({ closers: 3 })
+  try {
+    // Trap. On the click-bound generation these listeners existed and wiped the
+    // surface right here, while the dialog was still fully opaque.
+    fixture.closeControls.forEach(function (control) { control.click() })
+
+    assert.deepEqual(
+      fixture.closeControls.map((control) => (control.listeners.click || []).length),
+      fixture.closeControls.map(() => 0),
+      'no closer may carry a reset listener — that is the mid-fade repaint',
+    )
+    assert.equal(fixture.steps[1].style.display, 'flex')
+    assert.equal(fixture.steps[0].style.display, 'none')
+    assert.equal(fixture.container.textContent, 'Calendar')
+    assert.equal(fixture.topic.value, 'Growth audit')
+
+    dispatchModal('modal-close', fixture.popup)
+
+    assert.equal(fixture.steps[1].style.display, 'none')
+    assert.equal(fixture.steps[0].style.display, 'flex')
+    assert.equal(fixture.container.textContent, '')
+    assert.equal(fixture.topic.value, '')
+    assert.equal(fixture.context.value, '')
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('every Paid closer resets the booking surface exactly once', async () => {
+  const fixture = await advancedPaidFixture({ closers: 3 })
+  try {
+    const counted = resetCounter(fixture.container)
+    fixture.closeControls.forEach(function (control, index) {
+      dispatchModal('modal-open', fixture.popup)
+      fixture.closeThroughFade(control)
+      assert.equal(counted(), 1, `closer ${index} must reset exactly once`)
+    })
+
+    // A duplicate close-complete for the same close cycle must not reset again.
+    dispatchModal('modal-close', fixture.popup)
+    assert.equal(counted(), 0)
+
+    // Reopening re-arms it.
+    dispatchModal('modal-open', fixture.popup)
+    dispatchModal('modal-close', fixture.popup)
+    assert.equal(counted(), 1)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('closing the Stripe card dialog does not reset the booking surface', async () => {
+  const fixture = await advancedPaidFixture()
+  try {
+    const counted = resetCounter(fixture.container)
+    fixture.paymentModal.cancel()
+    dispatchModal('modal-close', { hasAttribute: (name) => name === 'popup-stripe-card' })
+
+    assert.equal(counted(), 0)
+    assert.equal(fixture.steps[1].style.display, 'flex')
+    assert.equal(fixture.container.textContent, 'Calendar')
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('reopening the Paid surface after a close starts from a fresh default step', async () => {
+  const fixture = await advancedPaidFixture()
+  try {
+    fixture.closeThroughFade()
+    assert.equal(fixture.steps[0].style.display, 'flex')
+    assert.equal(fixture.steps[1].style.display, 'none')
+    assert.equal(fixture.container.textContent, '')
+
+    dispatchModal('modal-open', fixture.popup)
+    await fixture.paid.onclick({ preventDefault() {} })
+    assert.equal(fixture.container.textContent, 'Loading available times...')
+    assert.equal(fixture.steps[0].style.display, 'flex')
+    assert.equal(fixture.calendars.length, 2)
+
+    fixture.steps[1].style.display = 'flex'
+    fixture.closeThroughFade()
+    assert.equal(fixture.steps[0].style.display, 'flex')
+    assert.equal(fixture.steps[1].style.display, 'none')
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('this generation marks the Paid singleton it installs as close-complete', async () => {
+  const fixture = await advancedPaidFixture({ closers: 3 })
+  try {
+    const lifecycle = global.StartersBookingSurfaceLifecycle
+    assert.equal(lifecycle.resetTiming, 'close-complete')
+
+    // An older controller adopting this singleton gets the fixed timing for
+    // free: all of its close wiring lives inside register(), which no longer
+    // binds clicks, so its reset also waits for the fade.
+    let adopted = 0
+    assert.equal(
+      lifecycle.register(fixture.popup, fixture.container, function () { adopted += 1 }),
+      true,
+    )
+    fixture.closeControls.forEach(function (control) { control.click() })
+    assert.equal(adopted, 0)
+    dispatchModal('modal-close', fixture.popup)
+    assert.equal(adopted, 1)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('an older Paid singleton already installed is adopted with no extra close wiring', async () => {
+  const events = new EventTarget()
+  const window = loadIsolated(events)
+  const old = oldGenerationLifecycle(window)
+  window.StartersBookingSurfaceLifecycle = old.lifecycle
+  window.StartersBookingSurfaceOwnership = old.ownership
+  const isolated = runIsolated(window)
+
+  const fixture = await advancedPaidFixture({
+    closers: 3,
+    install: isolated.installPaidBookingController,
+  })
+  try {
+    // The singleton is adopted, not replaced, and it still carries no
+    // capability mark — that absence is how this generation recognises the
+    // older one.
+    assert.equal(window.StartersBookingSurfaceLifecycle, old.lifecycle)
+    assert.equal(old.lifecycle.resetTiming, undefined)
+
+    // Differential: a popup with no controller on it, registered against the
+    // same old singleton, resets exactly as often as the one this controller
+    // registered against. Equal counts mean the new code contributed no close
+    // wiring of its own.
+    // Same shape as the fixture's popup — same closer count, same lack of a
+    // `cancel` binding — so the only difference between the two is whether a
+    // controller registered against it.
+    const controlControls = fixture.closeControls.map(() => ({
+      listeners: {},
+      addEventListener(name, fn) { (this.listeners[name] || (this.listeners[name] = [])).push(fn) },
+      click() { (this.listeners.click || []).forEach((fn) => fn({ preventDefault() {} })) },
+    }))
+    const controlContainer = new CalendarElement('div')
+    const controlPopup = {
+      querySelector() { return null },
+      querySelectorAll(selector) {
+        return selector === '[data-modal-close], [booking-popup-close], [popup-booking-close]'
+          ? controlControls
+          : []
+      },
+    }
+
+    let adopted = 0
+    let control = 0
+    old.lifecycle.register(fixture.popup, fixture.container, function () { adopted += 1 })
+    old.lifecycle.register(controlPopup, controlContainer, function () { control += 1 })
+
+    function driveClose(popup, controls) {
+      controls.forEach(function (item) { item.click() })
+      events.dispatchEvent(new CustomEvent('modal-close', { detail: { modal: popup } }))
+    }
+    driveClose(fixture.popup, fixture.closeControls)
+    driveClose(controlPopup, controlControls)
+
+    assert.ok(control >= 1, 'the old generation must still reset — no missed reset')
+    assert.equal(adopted, control, 'adopting the old singleton must not add a second reset')
+    assert.equal(fixture.steps[0].style.display, 'flex')
+  } finally {
+    fixture.restore()
+  }
+})
+
+// --------------------------------------------------------------------------
+// Payment-cancel scoping: only the card dialog's own dismissal cancels setup.
+//
+// `popup-stripe-card-close` is authored on the booking dialog's backdrop as
+// well as on the card dialog's X and backdrop, so an unscoped attribute match
+// let a backdrop dismissal of the booking modal cancel a visitor's in-progress
+// card setup. Containment decides now, not the marker on its own.
+//
+// (The stubs keep `document.querySelector('[popup-stripe-card-close]')` — the
+// "Card saved" auto-close — resolving to the card dialog's own closer. On the
+// authored page that first match is really the booking dialog's backdrop,
+// because the booking dialog is written first; unrelated to this scoping and
+// left exactly as it is.)
+// --------------------------------------------------------------------------
+
+const SCOPING_SLOT = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+
+/**
+ * A Paid surface parked exactly where the payment matters: a slot confirmed, a
+ * card setup opened and pending, nothing booked yet. Cancelling here drops the
+ * slot; leaving it alone lets the card save go on to book.
+ */
+function makeCardSetupFixture(options = {}) {
+  let readinessCount = 0
+  const counts = { booking: 0 }
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({ environment: 'test', bookable: readinessCount >= 2 })
+    }
+    if (url.endsWith(api.SETUP_PATH)) return response({ client_secret: 'seti_scope' })
+    if (url.endsWith(api.SET_DEFAULT_PATH)) return response({ readiness: 'ready' })
+    if (url.endsWith(api.BOOKING_PATH)) {
+      counts.booking += 1
+      return response({ booking: { booking_id: 'scoped', row_id: 5 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  }, options)
+  return { counts, fixture }
+}
+
+async function openCardSetup(fixture) {
+  await fixture.paid.onclick({ preventDefault() {} })
+  await fixture.calendars[0].options.onConfirm(SCOPING_SLOT)
+  assert.equal(fixture.getOpenCount(), 1)
+  assert.equal(fixture.calendars[0].clearCount, 0)
+}
+
+async function saveCard(fixture) {
+  fixture.cardListeners.change({ complete: true })
+  await fixture.save.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+}
+
+test('dismissing the booking dialog by its backdrop leaves the card setup intact', async () => {
+  const { counts, fixture } = makeCardSetupFixture()
+  try {
+    await openCardSetup(fixture)
+
+    // Trap. The booking dialog's backdrop carries `popup-stripe-card-close`,
+    // so the unscoped match bound the payment cancel to it.
+    assert.equal(
+      (fixture.bookingBackdrop.listeners.click || []).length,
+      0,
+      'a booking closer must carry no payment-cancel listener',
+    )
+
+    fixture.bookingBackdrop.click()
+    assert.equal(
+      fixture.calendars[0].clearCount,
+      0,
+      'the booking backdrop must not clear the selected slot',
+    )
+
+    await saveCard(fixture)
+    assert.equal(counts.booking, 1, 'the pending slot must survive a booking-dialog dismissal')
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('every Stripe card dialog dismissal still cancels the card setup', async () => {
+  const dismissals = [
+    ['the card dialog close control', (fixture) => fixture.paymentClose.click()],
+    ['the card dialog backdrop', (fixture) => fixture.paymentBackdrop.click()],
+    ['Esc on the card dialog', (fixture) => fixture.paymentModal.cancel()],
+  ]
+  for (const [name, dismiss] of dismissals) {
+    const { counts, fixture } = makeCardSetupFixture()
+    try {
+      await openCardSetup(fixture)
+      dismiss(fixture)
+      assert.equal(fixture.calendars[0].clearCount, 1, `${name} must clear the selected slot`)
+      await saveCard(fixture)
+      assert.equal(counts.booking, 0, `${name} must leave nothing to book`)
+    } finally {
+      fixture.restore()
+    }
+  }
+})
+
+test('a card-dialog marker nested on a child still binds that dialog own backdrop', async () => {
+  const { counts, fixture } = makeCardSetupFixture({ nestedPaymentMarker: true })
+  try {
+    await openCardSetup(fixture)
+
+    // The re-nested marker cannot see its own dialog's backdrop, so the scope
+    // widens to the `.modal_dialog` that owns it — and no further.
+    assert.equal(
+      (fixture.bookingBackdrop.listeners.click || []).length,
+      0,
+      'widening to the owning dialog must not reach the booking dialog',
+    )
+
+    fixture.paymentBackdrop.click()
+    assert.equal(fixture.calendars[0].clearCount, 1)
+    await saveCard(fixture)
+    assert.equal(counts.booking, 0)
   } finally {
     fixture.restore()
   }
