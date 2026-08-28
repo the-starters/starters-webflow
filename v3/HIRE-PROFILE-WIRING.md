@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-27
+Last updated: 2026-08-29
 Status: Call projections and Free Call behavior are GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
@@ -78,6 +78,7 @@ remain deferred (`paid-call-brand-payment.js`,
 | Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state · anonymous: closed · brand: accepted canonical configuration plus successful controller install | this file / authenticated Xano, Nylas, and Stripe |
 | Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
+| Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, and Talent or owner cards stay inert | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
 | Freelance / Retainer rate cards | everyone | this file / Algolia record, cloned from the section's Default card |
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
@@ -115,6 +116,9 @@ missing and stands down if the namespace still cannot load.
   nothing else. The anchor utilities also ignore a bare `#` or an invalid hash
   selector so a placeholder link cannot abort the remaining page utilities
 - `window.WfAlgolia` — the search client, awaited with a 30s deadline
+- `window.WfXano` — the late-safe callback queue used to subscribe to the
+  `starter-services` instance after it renders canonical Service card clones;
+  a missing instance leaves the existing CMS cards unchanged
 - `window.__startersEmptyNavRefresh` — optional, debounced refresh hook from
   `utils/section-custom-toc/hide-empty-sections.js`. After canonical discovery
   changes a call projection or the rate-card path renders, this file asks the
@@ -289,11 +293,10 @@ same signup-attribution contract as CMS cards. For an eligible Brand, it adds
 the normal project smart-fill attributes only when the exact canonical service
 name already exists in the native `Services` select. JavaScript does not add or
 remove options. Talent, the profile owner, unknown roles, and services without
-an authored option stay inert. The authored wf-xano template, existing CMS cards, Free Call, Paid
-Call, Freelance, and Retainer behavior remain unchanged. CMS services stay
-visible until a separate cutover decision follows role-matched browser parity
-proof.
-
+an authored option stay inert. The authored wf-xano template, existing CMS
+cards, Free Call, Paid Call, Freelance, and Retainer behavior remain unchanged.
+CMS services stay visible until a separate cutover decision follows role-matched
+browser parity proof.
 
 ## Rate surfaces are repainted from the canonical source
 
