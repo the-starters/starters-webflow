@@ -647,24 +647,69 @@
   const PASS_THROUGH_MAX_MS = 2000;
   const PASS_THROUGH_POLL_MS = 50;
 
+  // A second direct entry can start while the first is still waiting for the
+  // chooser to finish closing: one double-clicked service card is enough. Each
+  // entry therefore takes a generation token. A new entry supersedes the one
+  // before it outright, and the chooser is only ever given back by the entry
+  // that currently owns it. Without that, the first entry's release would
+  // unhide a chooser the second entry had just hidden, and the flash the whole
+  // pass-through exists to remove would be back.
+  let passThroughGeneration = 0;
+  let passThroughOwner = 0;
   let passThroughTimer = null;
-  let directEntryInFlight = false;
+  let passThroughDeadline = 0;
+  // Brackets the pass-through's own click on a chooser row so that click is not
+  // read as a visitor choosing from the chooser. It is held across a single
+  // synchronous call and released in a `finally`, so no failure path anywhere
+  // else can leave it standing and mislabel a later, genuine chooser click.
+  let programmaticRowClickDepth = 0;
 
   function bookingDialogs() {
       return document.querySelectorAll(BOOKING_SELECTOR);
   }
 
-  function beginChooserPassThrough() {
-      document.querySelectorAll(CHOOSER_SELECTOR).forEach(function (dialog) {
-          dialog.setAttribute(PASS_THROUGH_ATTR, '');
-      });
-  }
-
-  function endChooserPassThrough() {
+  function clearPassThroughTimer() {
       if (passThroughTimer !== null) {
           window.clearTimeout(passThroughTimer);
           passThroughTimer = null;
       }
+  }
+
+  /**
+   * Hides the chooser for one direct entry, and returns the generation token
+   * that entry must present to give it back.
+   *
+   * The failsafe is armed HERE rather than on the success path, so every way
+   * out of the pass-through is bounded by it: a throw between this call and the
+   * release can no longer strand the chooser invisible over a page that has
+   * stopped working.
+   */
+  function beginChooserPassThrough() {
+      // Supersede whatever was in flight: cancelling the older chain's timer
+      // here, and the token check below, are two independent reasons it can no
+      // longer speak for a chooser it does not own.
+      clearPassThroughTimer();
+      passThroughGeneration += 1;
+      passThroughOwner = passThroughGeneration;
+      passThroughDeadline = Date.now() + PASS_THROUGH_MAX_MS;
+      const generation = passThroughOwner;
+      passThroughTimer = window.setTimeout(function () {
+          if (generation !== passThroughOwner) return;
+          passThroughTimer = null;
+          endChooserPassThrough(generation);
+      }, PASS_THROUGH_MAX_MS);
+      document.querySelectorAll(CHOOSER_SELECTOR).forEach(function (dialog) {
+          dialog.setAttribute(PASS_THROUGH_ATTR, '');
+      });
+      return generation;
+  }
+
+  function endChooserPassThrough(generation) {
+      // A superseded entry must not give the chooser back: the dialog it hid is
+      // the one the entry that replaced it is still hiding.
+      if (generation !== passThroughOwner) return;
+      clearPassThroughTimer();
+      passThroughOwner = 0;
       // Cleared by the marker rather than by the chooser selector so a dialog
       // that was renamed or removed mid-flight cannot strand the attribute.
       document.querySelectorAll('[' + PASS_THROUGH_ATTR + ']').forEach(function (dialog) {
@@ -678,18 +723,24 @@
       });
   }
 
-  function endChooserPassThroughWhenClosed() {
-      const deadline = Date.now() + PASS_THROUGH_MAX_MS;
+  function endChooserPassThroughWhenClosed(generation) {
+      if (generation !== passThroughOwner) return;
       const tick = function () {
+          // Checked before the handle is cleared, so a tick that has been
+          // superseded cannot drop the newer entry's timer on its way out.
+          if (generation !== passThroughOwner) return;
           passThroughTimer = null;
-          if (!chooserStillOpen() || Date.now() >= deadline) {
-              endChooserPassThrough();
+          if (!chooserStillOpen() || Date.now() >= passThroughDeadline) {
+              endChooserPassThrough(generation);
               return;
           }
           passThroughTimer = window.setTimeout(tick, PASS_THROUGH_POLL_MS);
       };
       // The chooser closes on a fade, so the release has to outlast the click
       // that started it — otherwise the chooser would paint its own fade-out.
+      // This takes over the failsafe's timer slot but keeps the deadline it was
+      // armed with, so polling can never run longer than the failsafe allowed.
+      clearPassThroughTimer();
       passThroughTimer = window.setTimeout(tick, 0);
   }
 
@@ -729,7 +780,7 @@
           cta.addEventListener('click', function () {
               // The direct path activates this very row, so a click during a
               // pass-through is not a visitor choosing from the chooser.
-              stampBookingEntry(directEntryInFlight ? 'direct' : 'chooser');
+              stampBookingEntry(programmaticRowClickDepth > 0 ? 'direct' : 'chooser');
           }, true);
           stampedChooserRows.add(cta);
       });
@@ -747,31 +798,32 @@
       // activate the exact installed CTA after the first click has completed.
       // The sequence is kept in full and only hidden — skipping it is the
       // regression this comment has always guarded against.
-      directEntryInFlight = true;
-      beginChooserPassThrough();
+      const generation = beginChooserPassThrough();
 
       const modalTrigger = findReadyBookingModalTrigger();
       if (modalTrigger) {
           modalTrigger.click();
       } else if (!openBookingModalFromRegistry()) {
-          directEntryInFlight = false;
-          endChooserPassThrough();
+          endChooserPassThrough(generation);
           return false;
       }
       window.setTimeout(function () {
           const currentCta = findReadyCallTypeCta(type);
           if (currentCta) {
               stampBookingEntry('direct');
-              currentCta.click();
-              directEntryInFlight = false;
-              endChooserPassThroughWhenClosed();
+              programmaticRowClickDepth += 1;
+              try {
+                  currentCta.click();
+              } finally {
+                  programmaticRowClickDepth -= 1;
+              }
+              endChooserPassThroughWhenClosed(generation);
               return;
           }
           // The row went away between the two clicks. The chooser is then the
           // only surface the visitor has left, so hand it back visible and
           // usable rather than leaving an invisible open dialog on screen.
-          directEntryInFlight = false;
-          endChooserPassThrough();
+          endChooserPassThrough(generation);
       }, 0);
       return true;
   }

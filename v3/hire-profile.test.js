@@ -5164,3 +5164,119 @@ test('ADR 0003: a logged-out card keeps its signup trigger and opens nothing', (
   assert.equal(card.getAttribute('data-signup-trigger-element'), 'service')
   assert.equal(card.getAttribute('data-signup-trigger-value'), 'Free Call')
 })
+
+/* ------------------- ticket 06 fix round: overlapping direct entries ----- */
+/*
+ * Two review findings, both about a second direct entry starting before the
+ * first has let go of the chooser. A double-clicked service card is enough to
+ * produce one.
+ */
+
+test('a same-tick double direct entry still stamps the booking dialog direct', async () => {
+  // Both entries activate the same chooser row programmatically. If the flag
+  // that tells those clicks apart from a visitor's is a single shared slot,
+  // the first entry clears it before the second one clicks, and the second
+  // entry's booking dialog is labelled as though the visitor had chosen from
+  // the chooser — which would put a back arrow on a chooser they never saw.
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  // A real .click() runs the element's listeners, and the entry stamp IS one of
+  // them. A stub that only flips state would skip the very code path this test
+  // exists to pin, and pass against the defect.
+  page.freeModalCta.click = () => {
+    for (const fn of page.freeModalCta.listeners.click || []) {
+      fn({ preventDefault() {}, stopImmediatePropagation() {}, stopPropagation() {} })
+    }
+    page.bookingDialog.open = false
+  }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  const click = () =>
+    freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  click()
+  click()
+  await settle()
+
+  assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
+  assert.equal(back.style.display, 'none')
+  assert.equal(back.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null, 'and it is given back')
+})
+
+test('a second direct entry supersedes the first, which cannot unhide the chooser', async () => {
+  // The chooser here never closes, so both entries run to their time cap. The
+  // first entry's cap comes up 100 ms earlier than the second's: if it is still
+  // allowed to speak, it hands back a chooser the second entry is holding
+  // hidden, and the chooser is on screen for that gap. Nothing may release the
+  // chooser except the entry that currently owns it.
+  const page = makePage()
+  const { dialog: booking } = addBookingDialog(page)
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  page.freeModalCta.click = () => {}
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  const click = () =>
+    freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+
+  click()
+  await settle()
+  await wait(100)
+  click()
+  await settle()
+
+  // Between the two caps. The chooser is still open, so it must still be hidden.
+  await wait(1950)
+  assert.equal(page.bookingDialog.open, true, 'the fixture keeps the chooser open throughout')
+  assert.equal(
+    page.bookingDialog.getAttribute(PASS_THROUGH),
+    '',
+    'the superseded entry must not give back a chooser the second one is hiding',
+  )
+
+  // Past the owning entry's own cap: it, and only it, lets go.
+  await wait(400)
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null)
+  assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
+})
+
+test('a throw mid-entry still gives the chooser back inside the failsafe', async () => {
+  // The failsafe has to be armed when the chooser is hidden, not when the
+  // entry succeeds. Anything that throws in between — a modal library that
+  // blows up, an extension, a Designer edit mid-flight — otherwise leaves the
+  // chooser invisible on a page that has stopped working, with nothing left
+  // running to undo it.
+  const page = makePage()
+  addBookingDialog(page)
+  page.bookingButton.click = () => {
+    page.bookingDialog.open = true
+    throw new Error('the modal library threw while opening the chooser')
+  }
+  page.freeModalCta.click = () => {}
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.throws(
+    () => freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} }),
+    /the modal library threw/,
+  )
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), '', 'hidden, and nothing ran after')
+
+  await wait(2300)
+  assert.equal(
+    page.bookingDialog.getAttribute(PASS_THROUGH),
+    null,
+    'the failsafe bounds every exit, including a throw',
+  )
+})
