@@ -447,3 +447,77 @@ test('refuses profile wiring without the validated root and descendant list', ()
   assert.equal(api.paintProfile(fixture, fixture.root, { raw: { reviews: [{ rating: 5 }] } }), false)
   assert.equal(fixture.outsideList.childNodes.length, 0)
 })
+
+test('renders a legacy testimonial without claiming verification', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture })
+  fixture.list.appendChild(new Element())
+  assert.equal(api.renderProfileReviews(fixture, fixture.root, [{
+    review_id: 73,
+    rating: 5,
+    review_text: 'Great work',
+    published_at: '2026-08-28T00:00:00.000Z',
+    verified: false,
+    brand: null,
+    reviewer: { display_name: 'Cliff', title: 'Top 1% Media Buyer', company_name: 'First Media' },
+  }]), true)
+  const card = fixture.list.childNodes[0]
+  const badge = card.childNodes[0].childNodes[1]
+  // The badge must not assert verification, and must not carry the check icon.
+  assert.equal(badge.childNodes[0].textContent, 'Testimonial')
+  assert.equal(badge.childNodes.length, 1)
+  assert.match(badge.className, /profile-review-v3_badge-testimonial/)
+  assert.equal(card.childNodes[2].childNodes[0].textContent, 'Cliff')
+  assert.equal(card.childNodes[2].childNodes[1].textContent, 'Top 1% Media Buyer @ First Media')
+})
+
+test('a testimonial never renders the words "Verified brand"', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture })
+  fixture.list.appendChild(new Element())
+  api.renderProfileReviews(fixture, fixture.root, [{
+    review_id: 74,
+    rating: 5,
+    review_text: 'Solid',
+    verified: false,
+    brand: null,
+    reviewer: { display_name: 'Zach', title: '', company_name: '' },
+  }])
+  const card = fixture.list.childNodes[0]
+  assert.equal(card.childNodes[0].childNodes[1].childNodes[0].textContent, 'Testimonial')
+  assert.equal(card.childNodes[2].childNodes[0].textContent, 'Zach')
+  assert.equal(card.childNodes[2].childNodes[1].textContent, 'Client testimonial')
+})
+
+test('a payload with no verified flag still renders as a verified review', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture })
+  fixture.list.appendChild(new Element())
+  api.renderProfileReviews(fixture, fixture.root, [{
+    review_id: 75,
+    rating: 4,
+    review_text: 'Legacy shape',
+    brand: { full_name: 'Cherene Aubert', company_name: 'Growth Capital' },
+  }])
+  const card = fixture.list.childNodes[0]
+  assert.equal(card.childNodes[0].childNodes[1].childNodes[0].textContent, 'Verified Review')
+  assert.equal(card.childNodes[2].childNodes[0].textContent, 'Cherene Aubert')
+  assert.equal(card.childNodes[2].childNodes[1].textContent, 'Verified brand @ Growth Capital')
+})
+
+test('prefers the reviewer object over the brand join when both are present', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture })
+  fixture.list.appendChild(new Element())
+  api.renderProfileReviews(fixture, fixture.root, [{
+    review_id: 76,
+    rating: 5,
+    review_text: 'Both shapes',
+    verified: true,
+    reviewer: { display_name: 'Cherene Aubert', title: null, company_name: 'Growth Capital' },
+    brand: { full_name: 'Cherene Aubert', company_name: 'Growth Capital' },
+  }])
+  const card = fixture.list.childNodes[0]
+  assert.equal(card.childNodes[0].childNodes[1].childNodes[0].textContent, 'Verified Review')
+  assert.equal(card.childNodes[2].childNodes[0].textContent, 'Cherene Aubert')
+})

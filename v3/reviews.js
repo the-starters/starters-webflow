@@ -210,12 +210,34 @@
       }
       heading.appendChild(stars)
 
+      /*
+       * Two card shapes share this list. A brand-verified review carries a
+       * `brand` object; a legacy testimonial carries `verified: false` and a
+       * denormalized `reviewer` object instead, because it has no Brand actor.
+       * Only a verified review may show the check badge — putting it on a
+       * testimonial asserts a verification that never happened. Payloads
+       * predating the `verified` flag are treated as verified so older
+       * responses render exactly as before.
+       */
+      var isVerified = !(review && review.verified === false)
       var badge = documentObject.createElement('div')
-      badge.className = 'profile-review-v3_badge'
-      badge.style.cssText = 'display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border-radius:3px;background:#445046;color:#fff;font-size:12px;line-height:1;white-space:nowrap;'
-      appendTextElement(documentObject, badge, 'span', 'profile-review-v3_badge-text', 'Verified Review')
-      var check = appendIcon(documentObject, badge, 'check-lg', '')
-      check.style.filter = 'brightness(0) invert(1)'
+      badge.className = isVerified
+        ? 'profile-review-v3_badge'
+        : 'profile-review-v3_badge profile-review-v3_badge-testimonial'
+      badge.style.cssText = isVerified
+        ? 'display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border-radius:3px;background:#445046;color:#fff;font-size:12px;line-height:1;white-space:nowrap;'
+        : 'display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border-radius:3px;background:#eceee9;color:#445046;font-size:12px;line-height:1;white-space:nowrap;'
+      appendTextElement(
+        documentObject,
+        badge,
+        'span',
+        'profile-review-v3_badge-text',
+        isVerified ? 'Verified Review' : 'Testimonial',
+      )
+      if (isVerified) {
+        var check = appendIcon(documentObject, badge, 'check-lg', '')
+        check.style.filter = 'brightness(0) invert(1)'
+      }
       heading.appendChild(badge)
       card.appendChild(heading)
 
@@ -231,8 +253,16 @@
       var reviewer = documentObject.createElement('div')
       reviewer.className = 'profile-review-v3_reviewer'
       reviewer.style.cssText = 'display:grid;gap:3px;'
-      var reviewerName = review && review.brand && (review.brand.full_name || review.brand.company_name) || 'Verified reviewer'
-      var companyName = review && review.brand && review.brand.company_name || ''
+      var reviewerInfo = review && review.reviewer
+      var reviewerName =
+        (reviewerInfo && reviewerInfo.display_name) ||
+        (review && review.brand && (review.brand.full_name || review.brand.company_name)) ||
+        (isVerified ? 'Verified reviewer' : 'Client')
+      var companyName =
+        (reviewerInfo && reviewerInfo.company_name) ||
+        (review && review.brand && review.brand.company_name) ||
+        ''
+      var reviewerTitle = (reviewerInfo && reviewerInfo.title) || ''
       var name = appendTextElement(
         documentObject,
         reviewer,
@@ -241,7 +271,13 @@
         reviewerName,
       )
       name.style.cssText = 'font-size:14px;font-weight:600;line-height:1.3;'
-      var context = companyName && companyName !== reviewerName ? 'Verified brand @ ' + companyName : 'Verified brand'
+      var context
+      if (isVerified) {
+        context = companyName && companyName !== reviewerName ? 'Verified brand @ ' + companyName : 'Verified brand'
+      } else {
+        var atCompany = companyName && companyName !== reviewerName ? '@ ' + companyName : ''
+        context = [reviewerTitle, atCompany].filter(Boolean).join(' ') || 'Client testimonial'
+      }
       var meta = appendTextElement(documentObject, reviewer, 'div', 'profile-review-v3_reviewer-meta', context)
       meta.style.cssText = 'color:#444;font-size:12px;line-height:1.35;'
       card.appendChild(reviewer)
