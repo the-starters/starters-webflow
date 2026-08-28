@@ -662,15 +662,21 @@ function addXanoServiceFixture(page, serviceName) {
   return { wrapper, template, card, title, description }
 }
 
-function makeWfXanoFixture(root, initialState = null) {
+function makeWfXanoFixture(root, initialResult = null) {
   let resultsHandler = null
+  let latestResult = initialResult
+  let getStateCalls = 0
   const instance = {
     root,
     getState() {
-      return initialState
+      getStateCalls += 1
+      return latestResult ? { status: 'success', data: latestResult } : null
     },
     on(event, handler) {
-      if (event === 'results') resultsHandler = handler
+      if (event === 'results') {
+        resultsHandler = handler
+        if (latestResult) handler(latestResult)
+      }
       return instance
     },
   }
@@ -682,7 +688,11 @@ function makeWfXanoFixture(root, initialState = null) {
     },
     emit(result = { items: [], total: 0, page: 1, pages: 1, hasMore: false }) {
       assert.ok(resultsHandler, 'starter-services results handler must be registered')
+      latestResult = result
       resultsHandler(result)
+    },
+    getStateCalls() {
+      return getStateCalls
     },
   }
 }
@@ -2860,19 +2870,16 @@ test('a late wf-xano result repaints dropped nested-component bindings by exact 
   assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
 })
 
-test('an already-complete wf-xano result is adapted from public state after late registration', async () => {
+test('an already-complete wf-xano result is adapted by late-subscriber replay', async () => {
   const page = makePage()
   const xano = addXanoServiceFixture(page, 'Service Name')
   xano.description.textContent = 'Service Description'
   const completed = {
-    status: 'success',
-    data: {
-      items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Deep dive', price: 2500 }],
-      total: 1,
-      page: 1,
-      pages: 1,
-      hasMore: false,
-    },
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Deep dive', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
   }
   const wfx = makeWfXanoFixture(xano.wrapper, completed)
   const context = makeContext({
@@ -2888,6 +2895,7 @@ test('an already-complete wf-xano result is adapted from public state after late
   assert.equal(xano.description.textContent, 'Deep dive')
   assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
   assert.equal(xano.card.getAttribute('data-xano-service-card'), 'starter-services')
+  assert.equal(wfx.getStateCalls(), 0, 'the replayed result must not be adapted again from state')
 })
 
 test('a late wf-xano result never repaints a clone whose item id does not match', async () => {

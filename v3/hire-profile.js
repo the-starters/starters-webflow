@@ -1393,13 +1393,13 @@
               });
           }
 
-          instance.on('results', applyResult);
+          let receivedResult = false;
+          instance.on('results', function (result) {
+              receivedResult = true;
+              applyResult(result);
+          });
 
-          // wf-xano does not replay a result that completed before this
-          // deferred controller registered. Read its public state once so a
-          // fast initial request receives the same adapter treatment as later
-          // refreshes. Keep the event listener above for all future results.
-          if (typeof instance.getState === 'function') {
+          if (!receivedResult && typeof instance.getState === 'function') {
               const state = instance.getState();
               if (state && state.status === 'success' && state.data) {
                   applyResult(state.data);
