@@ -40,6 +40,11 @@
                 function resetModal() {
                     typeof lenis !== "undefined" && lenis.start ? lenis.start() : (document.body.style.overflow = "");
                     modal.close();
+                    // A close at progress 0 skips the reverse, so without this the entrance keeps
+                    // playing on the now-hidden dialog and parks at 1 — and the next open's play()
+                    // becomes a no-op, snapping the modal in fully opaque. gsap suppresses callbacks
+                    // when progress is set, so rewinding here cannot re-enter onReverseComplete.
+                    if (modal.tl) modal.tl.pause().progress(0);
                     if (lastFocusedElement) lastFocusedElement.focus();
                     window.dispatchEvent(new CustomEvent("modal-close", { detail: { modal } }));
                 }

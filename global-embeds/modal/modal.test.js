@@ -34,8 +34,16 @@ const SOURCE = fs.readFileSync(path.join(__dirname, 'modal.js'), 'utf8')
  * exit animation ends, so a live page fires the incoming modal-open before the
  * outgoing modal-close. The hand-off tests below run without gsap and pin the
  * no-gsap order only.
+ *
+ * `clock: 'instant'` (the default every existing test uses) treats an opened
+ * timeline as already settled, which is all most of them care about. The entrance
+ * a visitor actually watches takes ~300 ms, though, and a close can land inside
+ * it — so `clock: 'manual'` leaves an opened timeline where a real one starts, at
+ * progress 0, and only `elapse()` walks a still-running timeline to the end. That
+ * is the difference between "the modal is in" and "the modal is coming in", and
+ * it is the only way to see whether a reopen animates or snaps.
  */
-function gsapStub() {
+function gsapStub({ clock = 'instant' } = {}) {
   const contexts = []
   const timelines = []
 
@@ -45,6 +53,7 @@ function gsapStub() {
 
   function timeline(config = {}) {
     let progress = 0
+    let running = false
     const tl = {
       config,
       calls: [],
@@ -53,14 +62,25 @@ function gsapStub() {
       fromTo(target, from, to) { tl.calls.push(['fromTo', target, animated(to)]); return tl },
       from(target, vars) { tl.calls.push(['from', target, animated(vars)]); return tl },
       set(target, vars) { tl.calls.push(['set', target, animated(vars)]); return tl },
-      play() { tl.played = true; progress = 1; return tl },
+      play() { tl.played = true; running = true; if (clock === 'instant') progress = 1; return tl },
       reverse() {
         tl.reversed = true
+        running = false
         progress = 0
         if (typeof config.onReverseComplete === 'function') config.onReverseComplete()
         return tl
       },
-      progress() { return progress },
+      pause() { running = false; return tl },
+      // Real gsap's progress() is a getter with no argument and a setter with one,
+      // and the setter suppresses callbacks — so seeking here cannot re-enter
+      // onReverseComplete, exactly as on a live page.
+      progress(value) {
+        if (value === undefined) return progress
+        progress = value
+        return tl
+      },
+      /** Test-only clock: what ~300 ms of wall time does to a timeline nobody stopped. */
+      elapse() { if (running) progress = 1; return tl },
     }
     timelines.push(tl)
     return tl
@@ -74,6 +94,8 @@ function gsapStub() {
       builder()
     },
     timeline,
+    /** Lets every still-running timeline on the page finish, wherever it is playing. */
+    elapse() { timelines.forEach((tl) => tl.elapse()) },
   }
 }
 
@@ -82,6 +104,7 @@ function makeEnv({
   search = '',
   variants = {},
   gsap = false,
+  clock = 'instant',
 } = {}) {
   const windowEvents = []
   const body = h('body')
@@ -190,7 +213,7 @@ function makeEnv({
     },
   }
 
-  const gsapInstance = gsap ? gsapStub() : null
+  const gsapInstance = gsap ? gsapStub({ clock }) : null
 
   const context = {
     window,
@@ -315,6 +338,10 @@ function makeEnv({
     },
     /** The native `cancel` the Escape key raises on an open dialog. */
     cancel(dialog) { return fire(dialog, 'cancel', dialog) },
+    /** Wall time passing: every timeline still running reaches its end. */
+    elapse() { if (gsapInstance) gsapInstance.elapse() },
+    /** A `[data-modal-close]` scrim inside the dialog — the backdrop closer. */
+    scrimIn(dialog) { return dialog.append(h('div', { class: 'modal_backdrop', 'data-modal-close': '' })) },
     focusable,
     get modalSystem() { return window.lumos.modal },
     types() { return windowEvents.map((event) => event.type) },
@@ -715,6 +742,96 @@ test('builds a different entrance for each authored variant', () => {
     ['fromTo', '.modal_backdrop', ['opacity']],
     ['from', '.modal_content', ['opacity', 'y']],
   ])
+})
+
+/**
+ * The trap. A close that lands before the entrance has moved skips the reverse
+ * and goes straight to the teardown — so if the teardown does not stop the
+ * timeline, it keeps playing on a dialog nobody can see and finishes there. The
+ * assertion is the invariant, not the race: once a modal is closed, nothing of
+ * its entrance may still be running. Red against an embed whose reset only calls
+ * close().
+ */
+test('a close before the entrance has moved leaves nothing running on the hidden dialog', () => {
+  const env = makeEnv({ gsap: true, clock: 'manual' })
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+  assert.equal(dialog.tl.progress(), 0, 'the entrance is at its first frame, as a real one would be')
+
+  env.clickThrough(env.closeControlIn(dialog))
+  assert.equal(dialog.open, false, 'the dialog closes on the click, exactly as before')
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close'], 'and announces the close once')
+
+  env.elapse()
+
+  assert.equal(dialog.tl.progress(), 0, 'the entrance is rewound, not parked at the end')
+  assert.equal(dialog.open, false, 'and the dialog stayed closed while that time passed')
+  assert.equal(dialog.closeCalls, 1, 'the rewind does not close the dialog a second time')
+})
+
+test('a modal closed before its entrance moved animates again when it reopens', () => {
+  const env = makeEnv({ gsap: true, clock: 'manual' })
+  env.boot()
+
+  const dialog = env.dialogsById['modal-a']
+  env.clickDocument(env.triggerFor('modal-a'))
+  env.clickThrough(env.closeControlIn(dialog))
+  env.elapse()
+
+  env.clickDocument(env.triggerFor('modal-a'))
+
+  assert.equal(dialog.open, true)
+  assert.equal(dialog.tl.progress(), 0, 'the reopen starts from the beginning instead of snapping in')
+  env.elapse()
+  assert.equal(dialog.tl.progress(), 1, 'and runs through to the settled state')
+  assert.deepEqual(env.types(), ['modal-open', 'modal-close', 'modal-open'])
+})
+
+test('a modal closed through its exit animation animates again when it reopens', () => {
+  const env = makeEnv({ gsap: true, clock: 'manual' })
+  env.boot()
+
+  const dialog = env.dialogsById['modal-b']
+  env.clickDocument(env.triggerFor('modal-b'))
+  env.elapse()
+  assert.equal(dialog.tl.progress(), 1, 'the entrance settled before the visitor closed it')
+
+  env.clickThrough(env.closeControlIn(dialog))
+  assert.equal(dialog.tl.reversed, true, 'this close is the animated one')
+  assert.equal(dialog.open, false)
+
+  env.clickDocument(env.triggerFor('modal-b'))
+
+  assert.equal(dialog.tl.progress(), 0, 'the reopen still starts from the beginning')
+  env.elapse()
+  assert.equal(dialog.tl.progress(), 1)
+})
+
+test('every closer leaves the entrance rewound when it lands before the animation moves', () => {
+  // The closers a visitor has: the X or Close button, the backdrop scrim, and Escape.
+  const closers = {
+    'close control': (env, dialog) => env.clickThrough(env.closeControlIn(dialog)),
+    scrim: (env, dialog) => env.clickThrough(env.scrimIn(dialog)),
+    escape: (env, dialog) => env.cancel(dialog),
+  }
+
+  for (const [name, close] of Object.entries(closers)) {
+    const env = makeEnv({ gsap: true, clock: 'manual' })
+    env.boot()
+
+    const dialog = env.dialogsById['modal-a']
+    env.clickDocument(env.triggerFor('modal-a'))
+    close(env, dialog)
+    env.elapse()
+
+    assert.equal(dialog.open, false, `${name}: the dialog is closed`)
+    assert.equal(dialog.tl.progress(), 0, `${name}: nothing ran on after the close`)
+
+    env.clickDocument(env.triggerFor('modal-a'))
+    assert.equal(dialog.tl.progress(), 0, `${name}: the next open animates from the start`)
+  }
 })
 
 test('a close control naming another modal hands off to it', () => {
