@@ -17,6 +17,9 @@
  *  - Services call-card visibility. Anonymous viewers stay closed. Signed-in
  *    brands use canonical booking discovery and successful controller installs.
  *    Starter members keep the live-derived owner toggles.
+ *  - Side-by-side canonical Xano Service cards. Webflow owns the visible
+ *    template and form; this file adds role-aware interaction attributes and
+ *    reconciles only adapter-owned native Service options.
  *  - Freelance/Retainer rate cards, cloned from the section's Default card.
  *  - Small page utilities that shipped in the same footer (rate formatting,
  *    rating average, dropdowns, anchor scroll, mobile TOC, view-all).
@@ -36,7 +39,8 @@
  *   starter_memberstack_id, stripe_charges, waitForMember, memberReady, MEMBER,
  *   qs, qsa,
  *   jQuery ($, two utility blocks),
- *   window.WfAlgolia (search record).
+ *   window.WfAlgolia (search record),
+ *   window.WfXano (late-safe canonical Service-card results).
  *
  * StartersFreeCallBooking is loaded from the GitHub/jsDelivr asset when an
  * older Webflow page head does not install it yet. The dependency stays
@@ -1295,10 +1299,10 @@
       })();
   });
 
-  /* PUBLIC-RECORD SERVICES (anonymous + brand viewers)
-     The public record supplies non-call services only. Call projections stay
-     closed for anonymous viewers and use canonical discovery for brands.
-     Starter members keep the live-derived owner toggles above. */
+  /* PUBLIC-RECORD CMS SERVICES (anonymous + brand viewers)
+     Existing CMS cards remain as the side-by-side comparison path. Call
+     projections stay closed for anonymous viewers and use canonical discovery
+     for brands. Starter members keep the live-derived owner toggles above. */
   installXanoServiceCardsAdapter();
 
   waitForMember(async function () {
