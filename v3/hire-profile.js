@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.60.0
+ * @release v1.60.1
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -1385,9 +1385,9 @@
               : null;
           if (!instance || typeof instance.on !== 'function' || !instance.root) return;
 
-          instance.on('results', function () {
+          instance.on('results', function (result) {
               Promise.resolve(memberReady).then(function () {
-                  adaptXanoServiceCards(instance);
+                  adaptXanoServiceCards(instance, result);
               }).catch(function (error) {
                   console.warn('Xano services:', error);
               });
@@ -1395,14 +1395,28 @@
       });
   }
 
-  function adaptXanoServiceCards(instance) {
+  function adaptXanoServiceCards(instance, result) {
       const cards = qsa('[wf-xano-item]', instance.root).filter(function (card) {
           const owner = card.closest('[wf-xano-element="wrapper"]');
           return owner === instance.root && !!card.closest('#services');
       });
+      const itemsById = new Map();
+      const resultItems = result && Array.isArray(result.items) ? result.items : [];
+      resultItems.forEach(function (item) {
+          const id = item && item.id != null ? String(item.id) : '';
+          if (id) itemsById.set(id, item);
+      });
       const names = [];
       cards.forEach(function (card) {
+          // Webflow currently drops Attribute-property overrides on the nested
+          // Label component, although it preserves the direct price binding.
+          // Repaint only the existing clone fields from the exact wf-xano item
+          // id; never fall back by position or touch the authored template.
+          const item = itemsById.get(String(card.getAttribute('data-wf-xano-id') || ''));
           const title = qs('[data-service-card-element="title"]', card);
+          const description = qs('[data-service-card-element="description"]', card);
+          if (item && title) title.textContent = String(item.name || '');
+          if (item && description) description.textContent = String(item.description || '');
           const serviceName = title ? String(title.textContent || '').trim() : '';
           if (!serviceName) return;
           names.push(serviceName);
