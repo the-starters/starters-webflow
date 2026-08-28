@@ -2901,13 +2901,19 @@ authored `.profile-content_reviews_list_item` cards with its own.
 
 The adapter also accepts `items` for the review array, `aggregates` for the
 aggregate object, and the wf-xano raw-item fallback. Aggregate values are never
-recalculated from a paginated review list. Approved reviews render as stacked,
-bordered cards with five Bootstrap star icons, a `Verified Review` badge, the
-review text, and reviewer identity from `brand.full_name` with
-`brand.company_name` as its fallback. Cards are constructed with DOM nodes and
-`textContent` only, so reviewer identity and review text are never interpreted
-as HTML. The adapter contains no Airtable or Make integration and no private
-token or direct authenticated fetch path.
+recalculated from a paginated review list. Approved results render as stacked,
+bordered cards with five Bootstrap star icons. A brand-verified review has a
+`brand` object and shows the existing green `Verified Review` badge with its
+check icon and verified-brand reviewer line. A legacy testimonial has
+`verified: false`, no Brand actor, and a denormalized `reviewer` object with
+`display_name`, `title`, and `company_name`; it shows a neutral `Testimonial`
+badge without a check icon and uses `title @ company_name` as its reviewer
+line. A response without the `verified` field keeps the older verified-review
+rendering for backward compatibility. When both identity objects exist,
+`reviewer` takes precedence over `brand`. Cards are constructed with DOM nodes
+and `textContent` only, so reviewer identity and review text are never
+interpreted as HTML. The adapter contains no Airtable or Make integration and
+no private token or direct authenticated fetch path.
 
 Run the focused checks with:
 
