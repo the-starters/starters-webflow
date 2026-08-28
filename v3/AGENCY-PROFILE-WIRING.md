@@ -207,6 +207,12 @@ element. The row carries the hide; the value element carries the bind.
 | Agency name | `wf-xano-if` = `agency_name` | `wf-xano-bind` = `agency_name` |
 | Team size | `wf-xano-if` = `agency_team_size` | `wf-xano-bind` = `agency_team_size` |
 | Contract type | `wf-xano-if` = `agency_contract_type` | `wf-xano-bind` = `agency_contract_type` |
+| Average project size | `wf-xano-if` = `retainer_rate` | `wf-xano-bind` = `retainer_rate` |
+
+`retainer_rate` arrives **already formatted as currency** (`$10,000.00`). Do not
+add a number format to it — bind it as text. The endpoint returns `""` whenever
+the stored rate is disabled or not a number, so that row hides on its own
+without the page having to know the rule.
 
 A bare field name in `wf-xano-if` means "show only if this field has a value".
 An empty value hides the row instead of printing a blank line.
@@ -305,6 +311,12 @@ removing to add styling.
       <div wf-xano-bind="agency_contract_type"></div>
     </div>
 
+    <!-- Single-element row, using the prefix rather than a typed-in label. -->
+    <div wf-xano-if="retainer_rate">
+      <div wf-xano-bind="retainer_rate"
+           wf-xano-prefix="Average project size: "></div>
+    </div>
+
     <div wf-xano-if="agency_video_link">
       <iframe
         data-agency-v3="video"
@@ -347,7 +359,7 @@ removing to add styling.
 ## The endpoint
 
 `GET {xanoBase}/api:KZf7nFnk/profile/starter/agency/v1?slug=<slug>` — public, no
-auth. Returns exactly these five fields and nothing else:
+auth. Returns exactly these six fields and nothing else:
 
 | Field | Type | Example | Empty looks like |
 | --- | --- | --- | --- |
@@ -356,11 +368,17 @@ auth. Returns exactly these five fields and nothing else:
 | `agency_team_size` | number | `5` | `null` |
 | `agency_contract_type` | text | `12+ months` | `""` |
 | `agency_video_link` | text | `https://player.vimeo.com/video/1123131951?byline=0&portrait=0&title=0` | `""` |
+| `retainer_rate` | text | `$10,000.00` | `""` |
 
 An unknown slug, an empty slug, a missing slug, and a non-agency profile all
 return the same safe empty shape with HTTP 200, so the page never special-cases
 an error. Contract type prints as stored; live values today are
 `Month to Month`, `6-12 months`, and `12+ months`.
+
+`retainer_rate` is display-ready currency, formatted by the endpoint rather than
+by the page. Deciding when a rate is publishable is endpoint-owned policy too: a
+disabled or non-numeric stored rate comes back as `""`, which the row's
+`wf-xano-if` hides. Neither Designer nor the script needs to know that rule.
 
 wf-xano also appends its own `page` and `per_page` query params to the request.
 The endpoint ignores them.
@@ -408,8 +426,8 @@ Staging-only, per the predicate in [`README.md`](../README.md#staging-only-conso
 
 | Profile | Expected |
 | --- | --- |
-| `/hire/jai` | Section visible. **The Starters**, team size **5**, **12+ months**, video player showing. |
-| `/hire/alex-o` | Section visible. **DecimaLabs**, team size **7**, **Month to Month**, **no video row**. |
+| `/hire/jai` | Section visible. **The Starters**, team size **5**, **12+ months**, average project size **$10,000.00**, video player showing. |
+| `/hire/alex-o` | Section visible. **DecimaLabs**, team size **7**, **Month to Month**, average project size **$4,000.00**, **no video row**. |
 | `/hire/maureen` | No section, and no gap where it would be. |
 | Any other starter | Same as `maureen`. |
 
