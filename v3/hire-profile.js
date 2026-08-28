@@ -64,6 +64,19 @@
           '[data-booking-unavailable]{display:none!important}',
           '[data-booking-trigger-unavailable]{display:none!important}',
           '[data-canonical-call-unavailable]{display:none!important}',
+          // The chooser pass-through (see openReadyCallType). !important on the
+          // subtree as well as the dialog is deliberate: the modal library's
+          // GSAP entrance writes inline styles on the backdrop and content, and
+          // an inline declaration without !important loses to this rule. Hiding
+          // by visibility rather than display keeps the dialog laid out, so the
+          // controllers' open-dialog mount contract is unchanged.
+          '[data-booking-pass-through]{visibility:hidden!important}',
+          '[data-booking-pass-through] *{visibility:hidden!important}',
+          // The Designer-authored back arrow defaults to hidden and is revealed
+          // only by a chooser entry stamp. Doing it in CSS as well as in script
+          // means the arrow cannot flash on a direct entry in the window before
+          // the stamp lands.
+          '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"]) [data-booking-back]{display:none!important}',
       ].join('');
       (document.head || document.documentElement).appendChild(style);
   }
@@ -614,6 +627,114 @@
       }
   }
 
+  /* ---- the chooser pass-through, the entry stamp and the back arrow ----
+     Opening a call straight from its service card still runs the two-dialog
+     sequence below, because the controllers only mount against an open dialog.
+     What changes is that the visitor never sees the chooser go by: it is made
+     invisible before the shell is opened and given back the moment it has
+     closed again. Nothing about the ordinary chooser entry is touched.
+
+     The booking dialog is then stamped with where the visitor came from, and
+     that stamp is the single source of truth for the back arrow: an entry the
+     visitor never made must not offer a way "back" to it. */
+
+  const CHOOSER_SELECTOR = '[data-modal-target="popup-booking-main"]';
+  const BOOKING_SELECTOR = '[data-modal-target="popup-booking"]';
+  const PASS_THROUGH_ATTR = 'data-booking-pass-through';
+  // The pass-through is released as soon as the chooser reports itself closed.
+  // The cap is the failsafe for a chooser that never closes: an invisible open
+  // dialog would be worse than a late one, so time always wins in the end.
+  const PASS_THROUGH_MAX_MS = 2000;
+  const PASS_THROUGH_POLL_MS = 50;
+
+  let passThroughTimer = null;
+  let directEntryInFlight = false;
+
+  function bookingDialogs() {
+      return document.querySelectorAll(BOOKING_SELECTOR);
+  }
+
+  function beginChooserPassThrough() {
+      document.querySelectorAll(CHOOSER_SELECTOR).forEach(function (dialog) {
+          dialog.setAttribute(PASS_THROUGH_ATTR, '');
+      });
+  }
+
+  function endChooserPassThrough() {
+      if (passThroughTimer !== null) {
+          window.clearTimeout(passThroughTimer);
+          passThroughTimer = null;
+      }
+      // Cleared by the marker rather than by the chooser selector so a dialog
+      // that was renamed or removed mid-flight cannot strand the attribute.
+      document.querySelectorAll('[' + PASS_THROUGH_ATTR + ']').forEach(function (dialog) {
+          dialog.removeAttribute(PASS_THROUGH_ATTR);
+      });
+  }
+
+  function chooserStillOpen() {
+      return Array.from(document.querySelectorAll(CHOOSER_SELECTOR)).some(function (dialog) {
+          return dialog.open === true;
+      });
+  }
+
+  function endChooserPassThroughWhenClosed() {
+      const deadline = Date.now() + PASS_THROUGH_MAX_MS;
+      const tick = function () {
+          passThroughTimer = null;
+          if (!chooserStillOpen() || Date.now() >= deadline) {
+              endChooserPassThrough();
+              return;
+          }
+          passThroughTimer = window.setTimeout(tick, PASS_THROUGH_POLL_MS);
+      };
+      // The chooser closes on a fade, so the release has to outlast the click
+      // that started it — otherwise the chooser would paint its own fade-out.
+      passThroughTimer = window.setTimeout(tick, 0);
+  }
+
+  /** Shows the authored back arrow on a chooser entry and hides it otherwise.
+      The element is Jerico's to author: this never creates one, and a booking
+      dialog without one is a silent no-op. */
+  function syncBookingBackControls() {
+      bookingDialogs().forEach(function (dialog) {
+          const fromChooser = dialog.getAttribute('data-booking-entry') === 'chooser';
+          dialog.querySelectorAll('[data-booking-back]').forEach(function (control) {
+              // Cleared rather than set to a value, so the arrow goes back to
+              // whatever display its Designer class gives it.
+              control.style.display = fromChooser ? '' : 'none';
+              control.setAttribute('aria-hidden', fromChooser ? 'false' : 'true');
+          });
+      });
+  }
+
+  function stampBookingEntry(source) {
+      bookingDialogs().forEach(function (dialog) {
+          dialog.setAttribute('data-booking-entry', source);
+      });
+      syncBookingBackControls();
+  }
+
+  const stampedChooserRows = new WeakSet();
+
+  /** Stamps the entry source when a chooser row opens the booking dialog.
+      The row's own two hats (close the chooser, open the booking dialog) are
+      authored attributes read by the modal library: this listener only reads
+      the click, and never prevents, stops or re-orders it. */
+  function wireChooserRowsToEntryStamp() {
+      document.querySelectorAll(
+          '[call-type-item] [booking-popup-open][data-type]'
+      ).forEach(function (cta) {
+          if (stampedChooserRows.has(cta)) return;
+          cta.addEventListener('click', function () {
+              // The direct path activates this very row, so a click during a
+              // pass-through is not a visitor choosing from the chooser.
+              stampBookingEntry(directEntryInFlight ? 'direct' : 'chooser');
+          }, true);
+          stampedChooserRows.add(cta);
+      });
+  }
+
   function openReadyCallType(type) {
       const cta = findReadyCallTypeCta(type);
       if (!cta) return false;
@@ -624,12 +745,33 @@
       // That could run the controller while its dialog was still closed and
       // leave Free on an empty/loading surface. Open the shell first, then
       // activate the exact installed CTA after the first click has completed.
+      // The sequence is kept in full and only hidden — skipping it is the
+      // regression this comment has always guarded against.
+      directEntryInFlight = true;
+      beginChooserPassThrough();
+
       const modalTrigger = findReadyBookingModalTrigger();
-      if (modalTrigger) modalTrigger.click();
-      else if (!openBookingModalFromRegistry()) return false;
+      if (modalTrigger) {
+          modalTrigger.click();
+      } else if (!openBookingModalFromRegistry()) {
+          directEntryInFlight = false;
+          endChooserPassThrough();
+          return false;
+      }
       window.setTimeout(function () {
           const currentCta = findReadyCallTypeCta(type);
-          if (currentCta) currentCta.click();
+          if (currentCta) {
+              stampBookingEntry('direct');
+              currentCta.click();
+              directEntryInFlight = false;
+              endChooserPassThroughWhenClosed();
+              return;
+          }
+          // The row went away between the two clicks. The chooser is then the
+          // only surface the visitor has left, so hand it back visible and
+          // usable rather than leaving an invisible open dialog on screen.
+          directEntryInFlight = false;
+          endChooserPassThrough();
       }, 0);
       return true;
   }
@@ -698,6 +840,11 @@
               return record && record.type === 'childList' && record.addedNodes && record.addedNodes.length;
           })) return;
           wireCallServiceCardsToDirectEntry();
+          // Chooser rows and the back arrow arrive on the same late-node paths
+          // as the cards. Both are guarded against rebinding, so re-running
+          // them here is free.
+          wireChooserRowsToEntryStamp();
+          syncBookingBackControls();
           // A late card arrives unpainted, carrying the stale CMS price and the
           // authored slot sentinel. Both painters are idempotent, so re-running
           // them here costs nothing for cards that are already correct.
@@ -722,6 +869,10 @@
   // environment-scoped discovery is the only code path that may enable them.
   setBookingButtonAvailable(false);
   wireCallServiceCardsToDirectEntry();
+  wireChooserRowsToEntryStamp();
+  // Before any entry has happened there is no stamp, so the arrow starts
+  // hidden — the same answer the CSS guard gives before this line runs.
+  syncBookingBackControls();
   observeCallServiceCards();
 
   // Page-embed contract. This file is deferred, so all of these are already
@@ -1879,6 +2030,9 @@
               // discovery so late-rendered hero and Services cards get the same
               // direct Free/Paid entry contract.
               wireCallServiceCardsToDirectEntry();
+              // Discovery is also where a chooser row first becomes a real
+              // opener, so bind the entry stamp on the same pass.
+              wireChooserRowsToEntryStamp();
               repaintCallSurfaces();
               if (callSurfacesChanged) refreshEmptySectionNav();
               if (!bookingSurfaceAvailable) return;

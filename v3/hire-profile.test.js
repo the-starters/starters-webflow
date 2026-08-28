@@ -1790,7 +1790,11 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
     guard.textContent,
     '[data-booking-unavailable]{display:none!important}' +
       '[data-booking-trigger-unavailable]{display:none!important}' +
-      '[data-canonical-call-unavailable]{display:none!important}',
+      '[data-canonical-call-unavailable]{display:none!important}' +
+      '[data-booking-pass-through]{visibility:hidden!important}' +
+      '[data-booking-pass-through] *{visibility:hidden!important}' +
+      '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"])' +
+      ' [data-booking-back]{display:none!important}',
   )
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
@@ -4851,4 +4855,312 @@ test('this file shortens no portfolio text and builds no See more control', () =
     0,
     'no toggle is created for either selector',
   )
+})
+
+/* --------------------------------- ticket 06: the direct-entry seam ------ */
+/*
+ * Opening a call from its service card still runs the two-dialog sequence the
+ * controllers' mount contract needs — the guard these tests protect is that the
+ * visitor never SEES it, and that whatever opened the booking dialog is written
+ * down so the back arrow can only offer a route the visitor actually took.
+ *
+ * Everything below reads the seam a visitor or a dependent script can observe:
+ * which dialog carries the pass-through marker at each click, what the entry
+ * stamp says, and whether the authored back control is displayed.
+ */
+
+const PASS_THROUGH = 'data-booking-pass-through'
+
+/**
+ * The booking dialog and its authored back arrow.
+ *
+ * makePage() ships the chooser (`popup-booking-main`) but not the surface the
+ * chooser hands off to, and every assertion here reads that surface. The back
+ * arrow carries the attributes ticket 07 specifies, so the fixture is the spec
+ * rather than a convenient shape.
+ */
+function addBookingDialog(page, { withBackArrow = true } = {}) {
+  const dialog = makeElement('dialog', { 'data-modal-target': 'popup-booking' })
+  let back = null
+  if (withBackArrow) {
+    back = makeElement(
+      'a',
+      {
+        'data-booking-back': '',
+        'data-modal-close': '',
+        'data-modal-trigger': 'popup-booking-main',
+      },
+      ['clickable-text-link'],
+    )
+    dialog.appendChild(back)
+  }
+  page.root.appendChild(dialog)
+  return { dialog, back }
+}
+
+/** A signed-in Brand whose Free call installs and reports itself ready. */
+function readyFreeContext(page) {
+  return makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    freeController: {
+      getStarterByMemberId: async () => ({
+        nylas_grant_id: 'grant_prod',
+        nylas_grant_email: 'starter@example.com',
+      }),
+      getConfigs: async () => [{
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+      }],
+      installFreeBookingController: () => {
+        page.freeModalCta.setAttribute('data-free-call-v3', 'ready')
+        return true
+      },
+    },
+  })
+}
+
+/** A plain click event that records anything done to it. */
+function spyEvent() {
+  const seen = { prevented: 0, stoppedImmediate: 0, stopped: 0 }
+  return {
+    seen,
+    event: {
+      preventDefault: () => { seen.prevented += 1 },
+      stopImmediatePropagation: () => { seen.stoppedImmediate += 1 },
+      stopPropagation: () => { seen.stopped += 1 },
+    },
+  }
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+test('a direct service-card entry hides the chooser for the whole pass-through', async () => {
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  // What the chooser's marker said at each of the two clicks. Both must read
+  // hidden: between them is the only window in which the chooser could paint.
+  const marks = []
+  page.bookingButton.click = () => {
+    page.bookingDialog.open = true
+    marks.push(['shell', page.bookingDialog.getAttribute(PASS_THROUGH)])
+  }
+  page.freeModalCta.click = () => {
+    marks.push(['row', page.bookingDialog.getAttribute(PASS_THROUGH)])
+    page.bookingDialog.open = false
+  }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null, 'nothing is hidden at rest')
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  await settle()
+
+  assert.deepEqual(marks, [['shell', ''], ['row', '']])
+  assert.equal(
+    page.bookingDialog.getAttribute(PASS_THROUGH),
+    null,
+    'the chooser is given back once it has closed',
+  )
+  assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
+  assert.equal(back.style.display, 'none', 'no back arrow to a chooser the visitor never used')
+  assert.equal(back.getAttribute('aria-hidden'), 'true')
+})
+
+test('the chooser stays hidden until it reports itself closed', async () => {
+  // The chooser closes on a fade. Releasing on the click instead of on the
+  // close would hand back a dialog that is still on screen fading out — the
+  // same flash, moved later.
+  const page = makePage()
+  addBookingDialog(page)
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  page.freeModalCta.click = () => {}
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  await settle()
+
+  assert.equal(
+    page.bookingDialog.getAttribute(PASS_THROUGH),
+    '',
+    'still open, so still hidden',
+  )
+
+  page.bookingDialog.open = false
+  await wait(200)
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null)
+})
+
+test('a direct entry whose row disappears gives the chooser back, visible and open', async () => {
+  const page = makePage()
+  const { dialog: booking } = addBookingDialog(page)
+  let rowClicks = 0
+  page.bookingButton.click = () => {
+    page.bookingDialog.open = true
+    // The row is gone by the time the pass-through goes to activate it.
+    page.freeModalCta.remove()
+  }
+  page.freeModalCta.click = () => { rowClicks += 1 }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  await settle()
+
+  assert.equal(rowClicks, 0)
+  assert.equal(page.bookingDialog.open, true, 'the chooser is all the visitor has left')
+  assert.equal(
+    page.bookingDialog.getAttribute(PASS_THROUGH),
+    null,
+    'an open chooser must never be left invisible',
+  )
+  assert.equal(booking.getAttribute('data-booking-entry'), null, 'nothing was opened to stamp')
+})
+
+test('a genuine chooser entry is untouched and stamps chooser', async () => {
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  // The two hats the modal library reads off the row: close me, open that.
+  page.freeModalCta.setAttribute('data-modal-close', '')
+  page.freeModalCta.setAttribute('data-modal-trigger', 'popup-booking')
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.freeModalCta.listeners.click.length, 1, 'one stamp listener, bound once')
+
+  const spy = spyEvent()
+  page.freeModalCta.listeners.click[0](spy.event)
+
+  assert.equal(booking.getAttribute('data-booking-entry'), 'chooser')
+  assert.equal(back.style.display, '', 'the arrow returns to its authored display')
+  assert.equal(back.getAttribute('aria-hidden'), 'false')
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null, 'the chooser was never hidden')
+  assert.deepEqual(
+    spy.seen,
+    { prevented: 0, stoppedImmediate: 0, stopped: 0 },
+    'the stamp only reads the click',
+  )
+  assert.equal(page.freeModalCta.getAttribute('data-modal-close'), '')
+  assert.equal(page.freeModalCta.getAttribute('data-modal-trigger'), 'popup-booking')
+})
+
+test('the entry stamp is correct across repeated alternating opens', async () => {
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  page.freeModalCta.click = () => { page.bookingDialog.open = false }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  const openDirect = async () => {
+    freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+    await settle()
+  }
+  // A visitor clicking the row inside an already-open chooser: the same
+  // listener, with no pass-through running.
+  const openFromChooser = () => page.freeModalCta.listeners.click[0](spyEvent().event)
+
+  const seen = []
+  for (const step of [openDirect, openFromChooser, openDirect, openFromChooser, openDirect]) {
+    await step()
+    seen.push([booking.getAttribute('data-booking-entry'), back.style.display])
+  }
+
+  assert.deepEqual(seen, [
+    ['direct', 'none'],
+    ['chooser', ''],
+    ['direct', 'none'],
+    ['chooser', ''],
+    ['direct', 'none'],
+  ])
+})
+
+test('a booking dialog with no authored back arrow is a silent no-op', async () => {
+  const page = makePage()
+  const { dialog: booking } = addBookingDialog(page, { withBackArrow: false })
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  page.freeModalCta.click = () => { page.bookingDialog.open = false }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  await assert.doesNotReject(async () => {
+    freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+    await settle()
+  })
+  assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
+
+  assert.doesNotThrow(() => page.freeModalCta.listeners.click[0](spyEvent().event))
+  assert.equal(booking.getAttribute('data-booking-entry'), 'chooser')
+  assert.equal(booking.querySelector('[data-booking-back]'), null, 'the script creates no element')
+})
+
+test('the booking dialog carries no entry stamp until something opens it', async () => {
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(booking.getAttribute('data-booking-entry'), null)
+  assert.equal(back.style.display, 'none', 'the arrow starts hidden, stamp or no stamp')
+  assert.equal(back.getAttribute('aria-hidden'), 'true')
+})
+
+test('ADR 0003: a logged-out card keeps its signup trigger and opens nothing', () => {
+  // The logged-out CTA contract belongs to v3/signup-attribution.js, which
+  // finds the card only through data-signup-trigger-*. The seam work must not
+  // hide the chooser, stamp an entry, or activate a booking row for a visitor
+  // who has no member at all.
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  let rowClicks = 0
+  let shellClicks = 0
+  page.bookingButton.click = () => { shellClicks += 1 }
+  page.freeModalCta.click = () => { rowClicks += 1 }
+  const context = makeContext({ page })
+  delete context.qs
+  delete context.qsa
+  delete context.waitForMember
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  const card = page.servicesList.children[0]
+  assert.equal(card.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(card.getAttribute('data-signup-trigger-value'), 'Free Call')
+  card.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+
+  assert.equal(shellClicks, 0)
+  assert.equal(rowClicks, 0)
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null)
+  assert.equal(booking.getAttribute('data-booking-entry'), null)
+  assert.equal(back.style.display, 'none')
+  assert.equal(card.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(card.getAttribute('data-signup-trigger-value'), 'Free Call')
 })
