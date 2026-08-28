@@ -43,6 +43,7 @@ pre-load queue.
 
 ```
 Section wrapper          ← the fetch lives here
+├── Spinner              ← global component, shown only while loading
 └── Card                 ← everything visible lives in here
     ├── Name row
     ├── Team size row
@@ -50,6 +51,10 @@ Section wrapper          ← the fetch lives here
     └── Video row
         └── Embed → <iframe>
 ```
+
+The spinner is a **sibling** of the card, not a child of it. Inside the card it
+would be cloned once per rendered row and the copy wf-xano toggles would be the
+hidden original.
 
 ### Section wrapper
 
@@ -91,6 +96,85 @@ where the script fails to load falls back to the 0px-tall-but-still-a-flex-item
 behavior. Placing the section outside a gapped flex/grid parent removes the
 dependency entirely.
 
+### Loading spinner
+
+Drop an instance of the **global spinner component** (`data-global-spinner`)
+directly inside the wrapper, as a sibling of the card. On the component
+instance's **outermost element**, add exactly two attributes:
+
+| Attribute | Value |
+| --- | --- |
+| `wf-xano-element` | `loader` |
+| `wf-xano-display` | `flex` |
+
+Then **author it hidden** — give that element a class that sets
+`display: none`.
+
+Those three things together are the whole mechanism, and each one is doing a
+job:
+
+- wf-xano shows the loader for exactly as long as the request is in flight, by
+  writing an **inline** `display` onto the element. An inline style beats a
+  class, which is why `wf-xano-display="flex"` is required — without it the
+  library writes `display: ""`, which clears the inline style and lets the
+  hiding class win, so the spinner never appears.
+- Authoring it hidden is what makes it **fail-closed**. Only wf-xano's inline
+  write can override the class, so if the library or the page script is dead the
+  spinner stays hidden instead of spinning forever over a section that is never
+  going to load.
+- When the request finishes — success *or* failure — wf-xano writes
+  `display: none` back onto it.
+
+**Centering.** The spinner must be centered in the section's main container.
+Style the loader element itself to fill the wrapper's width and center its
+content on both axes — in practice a full-width flex box with content centered
+horizontally and vertically. The class names are yours; the requirement is that
+the element carrying `wf-xano-element="loader"` is the one doing the centering,
+because that is the element whose `display` wf-xano overwrites with `flex`.
+
+**Optional styling hook, with one real limit.** While the request is in flight
+wf-xano puts `is-wf-xano-loading` on the **wrapper** and sets `aria-busy` on it,
+so that class can style the loading state beyond the spinner itself — but only
+on the *first* load. wf-xano also adds `is-wf-xano-error` after a failed load,
+and that one is **not usable here**: the script collapses the wrapper on error
+with an inline `display: none`, which a class cannot beat. Anything styled by
+`is-wf-xano-error`, on the wrapper or anywhere inside it, can never render.
+
+The same applies to a retry after a failure: the wrapper is already inline-hidden
+by then, so `is-wf-xano-loading` will not show a spinner on the second attempt
+either. If the section ever needs a visible error or retry state, it has to live
+in an element **outside** the wrapper, driven separately — not inside a section
+whose whole job is to disappear when there is nothing to show.
+
+**How this interacts with the wrapper hide.** The script does not collapse the
+wrapper until the response lands, precisely so the spinner has somewhere to
+show. On a non-agency profile the sequence a visitor gets is: wrapper visible
+with spinner → response arrives → spinner hidden by wf-xano and wrapper
+collapsed by the script, in the same tick. A failed request collapses the
+wrapper too, as does a section that is misconfigured badly enough that no
+wf-xano instance is created.
+
+### The trade-off this buys — read before styling the spinner
+
+The spinner is inside the section wrapper, and the wrapper cannot be collapsed
+until the answer arrives. So **the spinner appears briefly on every profile**,
+including the roughly 3,000 starters who are not agencies, and then vanishes
+along with the section.
+
+For a non-agency visitor that means a short flash of a centered spinner followed
+by the content below it jumping up by the spinner's height plus the parent's
+gap. This is the agreed behavior, not an oversight — but the size of that jump
+is entirely in the spinner's styling, so:
+
+- **Keep the spinner's height small.** Give it a modest `min-height` rather than
+  a tall reserved block. The layout shift is exactly the height you reserve.
+- Consider whether the section's position on the page makes the shift
+  noticeable. Below the fold, it costs nothing; directly under the hero, it is
+  visible on every non-agency profile.
+
+The alternative — hiding the wrapper up front — was rejected because it would
+hide the spinner too, which is the thing being asked for.
+
 ### Card
 
 A Div Block, the only child of the wrapper that carries styling. Heading, rows,
@@ -131,6 +215,24 @@ The value element can be any text element — Text Block, Paragraph, Heading.
 
 Known and accepted: a team size stored as `0` counts as empty, so that row
 hides. No agency currently stores `0`.
+
+#### Inline labels
+
+For a row that reads as one sentence in a single text element — `Team size: 10`
+rather than a separate label and value — do **not** type the label into the
+bound element. `wf-xano-bind` replaces that element's entire text content, so
+the label is overwritten the moment the data arrives. Use the prefix attribute
+instead:
+
+```html
+<div wf-xano-bind="agency_team_size" wf-xano-prefix="Team size: "></div>
+```
+
+`wf-xano-prefix` (and `wf-xano-suffix`) wrap the value at formatting time and
+are applied only when the value is non-blank, so an empty field still yields an
+empty element rather than a stranded `Team size:` with nothing after it. Keep
+the row's `wf-xano-if` either way — the prefix does not hide anything on its
+own.
 
 ### Video row
 
@@ -177,6 +279,12 @@ removing to add styling.
      wf-xano-method="GET"
      wf-xano-auth="none"
      wf-xano-defer="true">
+
+  <!-- Global spinner component instance. Authored hidden by its class;
+       wf-xano writes display:flex inline for the length of the request. -->
+  <div data-global-spinner
+       wf-xano-element="loader"
+       wf-xano-display="flex"><!-- spinner component markup --></div>
 
   <div wf-xano-element="template" wf-xano-if="is_agency & agency_name">
 
@@ -226,8 +334,12 @@ removing to add styling.
 | `wf-xano-defer="true"` | wf-xano | Waits for the script instead of firing on page load. |
 | `wf-xano-element="wrapper"` | wf-xano | Marks the section as the fetch's root. |
 | `wf-xano-element="template"` | wf-xano | Marks the card to fill in with the response. |
+| `wf-xano-element="loader"` | wf-xano | Shows this element while the request is in flight, hides it afterwards. |
+| `wf-xano-display="flex"` | wf-xano | The inline `display` written while the loader is shown. Required, or the hiding class wins. |
 | `wf-xano-bind="<field>"` | wf-xano | Replaces the element's text with that field. |
+| `wf-xano-prefix="<text>"` | wf-xano | Literal text prepended to a non-blank bound value. |
 | `wf-xano-if="<field>"` | wf-xano | Hides the element when that field is empty. |
+| `data-global-spinner` | the global spinner component | Not read by wf-xano or the script; it is what makes the element a spinner. |
 | `data-agency-v3="section"` | script | Where to write the slug, and whose `display` to control. |
 | `data-agency-v3="video"` | script | Where to write the video URL. |
 | `wf-xano-param-slug` | — | **Not authored.** The script adds it at runtime. |
@@ -261,6 +373,26 @@ extra on the page. wf-xano injects
 `[wf-xano-element="template"]{display:none!important}`, so even the authored
 card stays hidden on a page where this script never ran — the only thing lost in
 that case is the wrapper's flex-slot collapse described above.
+
+| What breaks | Card | Spinner | Wrapper |
+| --- | --- | --- | --- |
+| Nothing (non-agency) | hidden by `wf-xano-if` | shows, then hides | collapses |
+| Request fails | hidden (list re-rendered empty) | hides on `error` | collapses |
+| Section misconfigured (no instance) | hidden by wf-xano's injected CSS | never shows | collapses, and staging logs why |
+| Script never loads | hidden by wf-xano's injected CSS | never shows (authored hidden) | stays visible at 0px height |
+| wf-xano never loads | **visible with empty text** | never shows (authored hidden) | stays visible at 0px height |
+
+The spinner is hidden in every failure row for the same reason: it is authored
+hidden with a class, and only wf-xano's inline write can reveal it.
+
+That last row is the one honest gap, and it is not fixable from this side. If
+wf-xano itself fails to load, its
+`[wf-xano-element="template"]{display:none!important}` rule is never injected
+and the authored card shows with blank values. Do **not** try to pre-empt this
+by giving the card a hiding class: wf-xano reveals a rendered card by clearing
+its *inline* display, which cannot beat a class, so the section would then never
+appear at all. Every wf-xano-driven section on this page — Reviews included —
+shares this failure mode.
 
 ## Diagnostics
 
