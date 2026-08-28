@@ -2828,11 +2828,12 @@ test('a late wf-xano service card receives logged-out signup wiring without chan
   assert.ok(context.emptyNavRefreshCalls.length > 0)
 })
 
-test('a late wf-xano service adds one native option and presets the Brand project modal idempotently', async () => {
+test('a late wf-xano service uses an authored native option and presets the Brand project modal idempotently', async () => {
   const page = makePage()
   const xano = addXanoServiceFixture(page, 'Paid Media Audit')
   const wfx = makeWfXanoFixture(xano.wrapper)
-  const { select } = addContractDialog(page, ['', 'Freelance work', 'Monthly retainer'])
+  const { select } = addContractDialog(page, ['', 'Freelance work', 'Monthly retainer', 'Paid Media Audit'])
+  const authoredOptions = select.options.slice()
   const context = makeContext({
     page,
     record: { rate: 0, 'retainer-enabled': false },
@@ -2854,15 +2855,42 @@ test('a late wf-xano service adds one native option and presets the Brand projec
   wfx.emit(result)
   await settle()
 
-  const matchingOptions = Array.from(select.options).filter((option) =>
-    String(option.value || option.textContent).trim() === 'Paid Media Audit')
-  assert.equal(matchingOptions.length, 1, 'repeated results must not duplicate the native option')
-  assert.equal(matchingOptions[0].getAttribute('data-xano-service-option'), 'starter-services')
+  assert.deepEqual(select.options, authoredOptions, 'the adapter must not change native form options')
   assert.equal(xano.card.getAttribute('data-modal-trigger'), 'generate-contract')
   assert.equal(xano.card.getAttribute('data-sp-fill'), 'button')
   assert.equal(xano.card.getAttribute('data-sp-fill-category'), 'service')
   assert.equal(xano.card.getAttribute('data-sp-fill-value'), 'Paid Media Audit')
   assert.equal(xano.card.style.cursor, 'pointer')
+})
+
+test('a late wf-xano service stays inert when its native option is absent', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const { select } = addContractDialog(page, ['', 'Freelance work'])
+  const authoredOptions = select.options.slice()
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({ items: [{ id: '383:0', name: 'Paid Media Audit' }], total: 1, page: 1, pages: 1, hasMore: false })
+  await settle()
+
+  assert.deepEqual(select.options, authoredOptions, 'the adapter must not create native options')
+  for (const attribute of [
+    'data-modal-trigger',
+    'data-sp-fill',
+    'data-sp-fill-category',
+    'data-sp-fill-value',
+  ]) {
+    assert.equal(xano.card.getAttribute(attribute), null, `${attribute} must fail closed without an authored option`)
+  }
+  assert.equal(xano.card.style.cursor, '')
 })
 
 test('a late wf-xano service remains inert for signed-in Talent and the profile owner', async () => {
@@ -2873,17 +2901,17 @@ test('a late wf-xano service remains inert for signed-in Talent and the profile 
       customFields: { 'free-user': 'Starter' },
       planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' }],
     }],
-    ['owner', {
+    ['Brand owner', {
       id: 'mem_canary',
       auth: { email: 'owner@example.com' },
-      customFields: { 'free-user': 'Starter' },
-      planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' }],
+      customFields: { 'free-user': 'Brand', 'last-name': 'Owner' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     }],
   ]) {
     const page = makePage()
     const xano = addXanoServiceFixture(page, 'Paid Media Audit')
     const wfx = makeWfXanoFixture(xano.wrapper)
-    const { select } = addContractDialog(page, ['', 'Freelance work'])
+    const { select } = addContractDialog(page, ['', 'Freelance work', 'Paid Media Audit'])
     const context = makeContext({
       page,
       record: { rate: 0, 'retainer-enabled': false },
@@ -2896,9 +2924,9 @@ test('a late wf-xano service remains inert for signed-in Talent and the profile 
     await settle()
 
     assert.equal(
-      Array.from(select.options).some((option) => String(option.value || option.textContent) === 'Paid Media Audit'),
-      false,
-      `${viewer} must not receive a canonical service option`,
+      Array.from(select.options).filter((option) => String(option.value || option.textContent) === 'Paid Media Audit').length,
+      1,
+      `${viewer} must keep the authored canonical service option unchanged`,
     )
     for (const attribute of [
       'data-modal-trigger',

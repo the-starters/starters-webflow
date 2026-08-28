@@ -1368,8 +1368,8 @@
 
      The authored template and every CMS card remain untouched. This adapter
      limits itself to rendered [wf-xano-item] clones owned by the named wrapper.
-     It also reconciles native <option> children inside the existing project
-     form. It never creates the form, modal, or visible service-card markup. */
+     The native project form remains Designer-owned, including its Services
+     options. Cards without an exact authored option stay inert. */
   function installXanoServiceCardsAdapter() {
       window.WfXano = window.WfXano || [];
       if (typeof window.WfXano.push !== 'function') return;
@@ -1395,8 +1395,6 @@
           const owner = card.closest('[wf-xano-element="wrapper"]');
           return owner === instance.root && !!card.closest('#services');
       });
-      const names = [];
-
       cards.forEach(function (card) {
           const title = qs('[data-service-card-element="title"]', card);
           const serviceName = title ? String(title.textContent || '').trim() : '';
@@ -1407,63 +1405,18 @@
           card.setAttribute('data-signup-trigger-element', 'service');
           card.setAttribute('data-signup-trigger-value', serviceName);
           card.setAttribute('data-xano-service-card', 'starter-services');
-          names.push(serviceName);
+          ['data-modal-trigger', 'data-sp-fill', 'data-sp-fill-category', 'data-sp-fill-value']
+              .forEach(function (attribute) { card.removeAttribute(attribute); });
+          card.style.cursor = '';
       });
 
       if (!MEMBER.id) {
           markServiceCardsClickable();
-      } else if (isBrandMember(MEMBER)) {
-          syncProjectServiceOptions(names);
+      } else if (isBrandMember(MEMBER) && !isProfileOwner(MEMBER)) {
           wireProjectServiceCards();
-      } else {
-          cards.forEach(function (card) {
-              ['data-modal-trigger', 'data-sp-fill', 'data-sp-fill-category', 'data-sp-fill-value']
-                  .forEach(function (attribute) { card.removeAttribute(attribute); });
-              card.style.cursor = '';
-          });
       }
 
       refreshEmptySectionNav();
-  }
-
-  function syncProjectServiceOptions(serviceNames) {
-      const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
-      if (!serviceField || !serviceField.options) return;
-
-      function normalized(value) {
-          return String(value || '').trim().toLowerCase();
-      }
-
-      const desired = [];
-      const desiredKeys = new Set();
-      serviceNames.forEach(function (serviceName) {
-          const value = String(serviceName || '').trim();
-          const key = normalized(value);
-          if (!key || desiredKeys.has(key)) return;
-          desiredKeys.add(key);
-          desired.push(value);
-      });
-
-      Array.from(serviceField.options).forEach(function (option) {
-          if (option.getAttribute && option.getAttribute('data-xano-service-option') === 'starter-services' &&
-              !desiredKeys.has(normalized(option.value || option.textContent))) {
-              option.remove();
-          }
-      });
-
-      desired.forEach(function (serviceName) {
-          const exists = Array.from(serviceField.options).some(function (option) {
-              return normalized(option.value || option.textContent) === normalized(serviceName);
-          });
-          if (exists) return;
-
-          const option = document.createElement('option');
-          option.value = serviceName;
-          option.textContent = serviceName;
-          option.setAttribute('value', serviceName);
-          option.setAttribute('data-xano-service-option', 'starter-services');
-          serviceField.appendChild(option);
-      });
   }
 
   /* RATE SERVICE CARDS (all viewers)
@@ -1605,6 +1558,8 @@
   }
 
   function wireProjectServiceCards() {
+      if (isProfileOwner(MEMBER)) return;
+
       const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
       const options = serviceField && serviceField.options
           ? Array.from(serviceField.options).filter(function (option) {

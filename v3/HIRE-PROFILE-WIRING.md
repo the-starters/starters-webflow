@@ -286,10 +286,10 @@ wf-xano clones it after the Xano response. `hire-profile.js` subscribes through
 the late-safe `window.WfXano` callback queue, then modifies only rendered
 `[wf-xano-item]` clones owned by that wrapper. It gives logged-out cards the
 same signup-attribution contract as CMS cards. For an eligible Brand, it adds
-only missing canonical values to the existing native `Services` select before
-applying the normal project smart-fill attributes. Talent, the profile owner,
-and unknown roles stay inert. Repeated result events do not add duplicate
-options. The authored wf-xano template, existing CMS cards, Free Call, Paid
+the normal project smart-fill attributes only when the exact canonical service
+name already exists in the native `Services` select. JavaScript does not add or
+remove options. Talent, the profile owner, unknown roles, and services without
+an authored option stay inert. The authored wf-xano template, existing CMS cards, Free Call, Paid
 Call, Freelance, and Retainer behavior remain unchanged. CMS services stay
 visible until a separate cutover decision follows role-matched browser parity
 proof.
