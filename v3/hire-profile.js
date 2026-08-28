@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.417
+ * @release v1.60.0
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -1299,6 +1299,8 @@
      The public record supplies non-call services only. Call projections stay
      closed for anonymous viewers and use canonical discovery for brands.
      Starter members keep the live-derived owner toggles above. */
+  installXanoServiceCardsAdapter();
+
   waitForMember(async function () {
       var isBrand = isBrandMember(MEMBER);
       if (MEMBER.id && !isBrand) return;
@@ -1354,6 +1356,113 @@
       serviceCards.forEach(function (card) {
           if (getComputedStyle(card).display === 'none') return;
           card.style.cursor = 'pointer';
+      });
+  }
+
+  /* XANO SERVICE CARDS (side-by-side CMS canary)
+     Webflow owns the visible card template. wf-xano clones that native
+     component after this deferred file can already have finished its normal
+     member work, so the existing one-shot service wiring cannot see the new
+     cards. Subscribe to wf-xano's late-safe results event and add only the
+     interaction attributes the existing signup and project controllers use.
+
+     The authored template and every CMS card remain untouched. This adapter
+     limits itself to rendered [wf-xano-item] clones owned by the named wrapper.
+     It also reconciles native <option> children inside the existing project
+     form. It never creates the form, modal, or visible service-card markup. */
+  function installXanoServiceCardsAdapter() {
+      window.WfXano = window.WfXano || [];
+      if (typeof window.WfXano.push !== 'function') return;
+
+      window.WfXano.push(function (wfx) {
+          const instance = wfx && typeof wfx.get === 'function'
+              ? wfx.get('starter-services')
+              : null;
+          if (!instance || typeof instance.on !== 'function' || !instance.root) return;
+
+          instance.on('results', function () {
+              Promise.resolve(memberReady).then(function () {
+                  adaptXanoServiceCards(instance);
+              }).catch(function (error) {
+                  console.warn('Xano services:', error);
+              });
+          });
+      });
+  }
+
+  function adaptXanoServiceCards(instance) {
+      const cards = qsa('[wf-xano-item]', instance.root).filter(function (card) {
+          const owner = card.closest('[wf-xano-element="wrapper"]');
+          return owner === instance.root && !!card.closest('#services');
+      });
+      const names = [];
+
+      cards.forEach(function (card) {
+          const title = qs('[data-service-card-element="title"]', card);
+          const serviceName = title ? String(title.textContent || '').trim() : '';
+          if (!serviceName) return;
+
+          card.setAttribute('data-service-card', 'component');
+          card.setAttribute('data-service-card-state', 'Default');
+          card.setAttribute('data-signup-trigger-element', 'service');
+          card.setAttribute('data-signup-trigger-value', serviceName);
+          card.setAttribute('data-xano-service-card', 'starter-services');
+          names.push(serviceName);
+      });
+
+      if (!MEMBER.id) {
+          markServiceCardsClickable();
+      } else if (isBrandMember(MEMBER)) {
+          syncProjectServiceOptions(names);
+          wireProjectServiceCards();
+      } else {
+          cards.forEach(function (card) {
+              ['data-modal-trigger', 'data-sp-fill', 'data-sp-fill-category', 'data-sp-fill-value']
+                  .forEach(function (attribute) { card.removeAttribute(attribute); });
+              card.style.cursor = '';
+          });
+      }
+
+      refreshEmptySectionNav();
+  }
+
+  function syncProjectServiceOptions(serviceNames) {
+      const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
+      if (!serviceField || !serviceField.options) return;
+
+      function normalized(value) {
+          return String(value || '').trim().toLowerCase();
+      }
+
+      const desired = [];
+      const desiredKeys = new Set();
+      serviceNames.forEach(function (serviceName) {
+          const value = String(serviceName || '').trim();
+          const key = normalized(value);
+          if (!key || desiredKeys.has(key)) return;
+          desiredKeys.add(key);
+          desired.push(value);
+      });
+
+      Array.from(serviceField.options).forEach(function (option) {
+          if (option.getAttribute && option.getAttribute('data-xano-service-option') === 'starter-services' &&
+              !desiredKeys.has(normalized(option.value || option.textContent))) {
+              option.remove();
+          }
+      });
+
+      desired.forEach(function (serviceName) {
+          const exists = Array.from(serviceField.options).some(function (option) {
+              return normalized(option.value || option.textContent) === normalized(serviceName);
+          });
+          if (exists) return;
+
+          const option = document.createElement('option');
+          option.value = serviceName;
+          option.textContent = serviceName;
+          option.setAttribute('value', serviceName);
+          option.setAttribute('data-xano-service-option', 'starter-services');
+          serviceField.appendChild(option);
       });
   }
 

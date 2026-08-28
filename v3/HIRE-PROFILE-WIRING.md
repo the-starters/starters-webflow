@@ -280,6 +280,19 @@ contract at all. A missing or unmatched option fails closed. Logged-out cards
 keep the signup-attribution modal, and Talent or unknown roles do not get the
 Brand project trigger.
 
+The `starter-services` wf-xano wrapper is a side-by-side canary for canonical
+`freelancers_v3.Services`. Webflow owns one native Service Card template and
+wf-xano clones it after the Xano response. `hire-profile.js` subscribes through
+the late-safe `window.WfXano` callback queue, then modifies only rendered
+`[wf-xano-item]` clones owned by that wrapper. It gives logged-out cards the
+same signup-attribution contract as CMS cards. For an eligible Brand, it adds
+only missing canonical values to the existing native `Services` select before
+applying the normal project smart-fill attributes. Repeated result events do
+not add duplicate options. The authored wf-xano template, existing CMS cards,
+Free Call, Paid Call, Freelance, and Retainer behavior remain unchanged. CMS
+services stay visible until a separate cutover decision follows role-matched
+browser parity proof.
+
 
 ## Rate surfaces are repainted from the canonical source
 

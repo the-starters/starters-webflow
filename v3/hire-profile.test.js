@@ -146,6 +146,9 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
   el.appendChild = (child) => {
     child.parentElement = el
     el.children.push(child)
+    if (el.tag === 'select' && Array.isArray(el.options) && child.tag === 'option') {
+      if (!el.options.includes(child)) el.options.push(child)
+    }
     return child
   }
   el.prepend = (child) => {
@@ -169,6 +172,9 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
   }
   el.remove = () => {
     if (!el.parentElement) return
+    if (el.parentElement.tag === 'select' && Array.isArray(el.parentElement.options)) {
+      el.parentElement.options = el.parentElement.options.filter((option) => option !== el)
+    }
     el.parentElement.children = el.parentElement.children.filter((c) => c !== el)
     el.parentElement = null
   }
@@ -475,6 +481,7 @@ function makeContext({
   existingHeadScripts = [],
   location = { hostname: 'www.thestarters.com', pathname: '/hire/ashna-rana' },
   schedulingBridge = false,
+  wfXano,
 } = {}) {
   const warnings = []
   const requestedIndexes = []
@@ -586,6 +593,7 @@ function makeContext({
       },
     },
   }
+  if (wfXano) context.WfXano = wfXano
   context.window = context
   const originalHeadAppend = head.appendChild
   head.appendChild = (child) => {
@@ -622,6 +630,55 @@ async function settle(times = 30) {
   for (let i = 0; i < times; i += 1) await Promise.resolve()
   await new Promise((r) => setTimeout(r, 10))
   for (let i = 0; i < times; i += 1) await Promise.resolve()
+}
+
+function addXanoServiceFixture(page, serviceName) {
+  const wrapper = makeElement('div', {
+    'wf-xano-element': 'wrapper',
+    'wf-xano-instance': 'starter-services',
+  })
+  const template = makeElement('div', {
+    'wf-xano-element': 'template',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': '',
+  })
+  const templateTitle = makeElement('div', {
+    'data-service-card-element': 'title',
+    'wf-xano-bind': 'name',
+  })
+  templateTitle.textContent = 'Service Name'
+  template.appendChild(templateTitle)
+  wrapper.appendChild(template)
+
+  const card = makeElement('div', { 'wf-xano-item': '' })
+  const title = makeElement('div', { 'data-service-card-element': 'title' })
+  title.textContent = serviceName
+  card.appendChild(title)
+  wrapper.appendChild(card)
+  page.servicesList.appendChild(wrapper)
+  return { wrapper, template, card }
+}
+
+function makeWfXanoFixture(root) {
+  let resultsHandler = null
+  const instance = {
+    root,
+    on(event, handler) {
+      if (event === 'results') resultsHandler = handler
+      return instance
+    },
+  }
+  return {
+    api: {
+      push(callback) {
+        callback({ get: (key) => (key === 'starter-services' ? instance : null) })
+      },
+    },
+    emit(result = { items: [], total: 0, page: 1, pages: 1, hasMore: false }) {
+      assert.ok(resultsHandler, 'starter-services results handler must be registered')
+      resultsHandler(result)
+    },
+  }
 }
 
 /* ---------------------------------------------------------------- tests --- */
@@ -2723,6 +2780,111 @@ test('Paid-only discovery stays closed when the V3 controller is unavailable', a
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.equal(nearestSlotCalls, 0)
   assert.ok(context.warnings.some((line) => line.includes('Paid Call controller is unavailable')))
+})
+
+test('a late wf-xano service card receives logged-out signup wiring without changing its template', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const templateBefore = { ...xano.template.attributes }
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Audit', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.equal(xano.card.getAttribute('data-service-card'), 'component')
+  assert.equal(xano.card.getAttribute('data-service-card-state'), 'Default')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+  assert.equal(xano.card.getAttribute('data-xano-service-card'), 'starter-services')
+  assert.equal(xano.card.getAttribute('data-modal-trigger'), null)
+  assert.equal(xano.card.style.cursor, 'pointer')
+  assert.deepEqual(xano.template.attributes, templateBefore, 'the authored template must stay byte-identical')
+  assert.ok(context.emptyNavRefreshCalls.length > 0)
+})
+
+test('a late wf-xano service adds one native option and presets the Brand project modal idempotently', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const { select } = addContractDialog(page, ['', 'Freelance work', 'Monthly retainer'])
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  const result = {
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Audit', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  }
+  wfx.emit(result)
+  wfx.emit(result)
+  await settle()
+
+  const matchingOptions = Array.from(select.options).filter((option) =>
+    String(option.value || option.textContent).trim() === 'Paid Media Audit')
+  assert.equal(matchingOptions.length, 1, 'repeated results must not duplicate the native option')
+  assert.equal(matchingOptions[0].getAttribute('data-xano-service-option'), 'starter-services')
+  assert.equal(xano.card.getAttribute('data-modal-trigger'), 'generate-contract')
+  assert.equal(xano.card.getAttribute('data-sp-fill'), 'button')
+  assert.equal(xano.card.getAttribute('data-sp-fill-category'), 'service')
+  assert.equal(xano.card.getAttribute('data-sp-fill-value'), 'Paid Media Audit')
+  assert.equal(xano.card.style.cursor, 'pointer')
+})
+
+test('a late wf-xano service remains inert for a signed-in Talent', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const { select } = addContractDialog(page, ['', 'Freelance work'])
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: {
+      id: 'talent_member',
+      auth: { email: 'talent@example.com' },
+      customFields: { 'free-user': 'Starter' },
+      planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' }],
+    },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({ items: [{ id: '383:0', name: 'Paid Media Audit' }], total: 1, page: 1, pages: 1, hasMore: false })
+  await settle()
+
+  assert.equal(
+    Array.from(select.options).some((option) => String(option.value || option.textContent) === 'Paid Media Audit'),
+    false,
+  )
+  for (const attribute of [
+    'data-modal-trigger',
+    'data-sp-fill',
+    'data-sp-fill-category',
+    'data-sp-fill-value',
+  ]) {
+    assert.equal(xano.card.getAttribute(attribute), null, `${attribute} must fail closed for Talent`)
+  }
+  assert.equal(xano.card.style.cursor, '')
 })
 
 test('signed-in Brand routes non-call services to Start a Project with a valid native service preset', async () => {
