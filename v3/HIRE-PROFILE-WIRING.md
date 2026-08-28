@@ -296,14 +296,15 @@ re-ordering — so the row's two authored hats are untouched. A module flag, not
 from a visitor's, because synthetic drivers make `isTrusted` unreliable.
 
 `[data-booking-back]` is **Jerico's to author**, inside the booking dialog. The
-script only shows it when the entry stamp reads `chooser` and hides it
-otherwise, via `style.display` plus `aria-hidden`, backed by a CSS rule keyed on
-the same attribute so it cannot flash before the stamp lands. The script never
-creates the element, and a booking dialog without one is a silent no-op. The
-element combines the close marker with a trigger naming `popup-booking-main` —
-the cross-modal hand-off pattern the modal embed's trigger precedence
-deliberately preserves — plus this marker attribute, and reuses the existing
-unpublished link-affordance style rather than a new class.
+guard stylesheet keyed on `data-booking-entry` shows it only when the entry
+stamp reads `chooser` and hides it otherwise, so the arrow cannot flash before
+the stamp lands. The script owns only `aria-hidden`, writes it when the state
+changes, and never writes `style.display`. The script never creates the element,
+and a booking dialog without one is a silent no-op. The element combines the
+close marker with a trigger naming `popup-booking-main` — the cross-modal
+hand-off pattern the modal embed's trigger precedence deliberately preserves —
+plus this marker attribute, and reuses the existing unpublished link-affordance
+style rather than a new class.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact

@@ -882,7 +882,7 @@
      * well as on the card dialog's X and its backdrop, so matching that marker
      * across the whole document let a backdrop dismissal of the *booking*
      * modal cancel an in-progress card setup. Containment decides instead: the
-     * scope is the card dialog, widened to the `.modal_dialog` that owns the
+     * scope is the card dialog, widened to the `[data-modal-target]` that owns the
      * marker so a Designer re-nest onto a child cannot silently unbind the
      * dialog's own backdrop. (`closest` returns the marker itself on the
      * authored page, where the marker is the dialog.) A page that nested the
@@ -892,7 +892,7 @@
     function paymentCloseControls() {
       const marker = document.querySelector('[popup-stripe-card]')
       if (!marker) return []
-      const owner = typeof marker.closest === 'function' ? marker.closest('.modal_dialog') : null
+      const owner = typeof marker.closest === 'function' ? marker.closest('[data-modal-target]') : null
       const scope = owner || marker
       if (typeof scope.querySelectorAll !== 'function') return []
       return Array.from(scope.querySelectorAll('[data-modal-close], [popup-stripe-card-close]'))

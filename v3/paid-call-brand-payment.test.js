@@ -1694,7 +1694,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   const paymentModalListeners = {}
   // `nestedPaymentMarker` models a Designer re-nest: the `popup-stripe-card`
   // marker sits on a child of the dialog, so the dialog's own backdrop is a
-  // sibling of the marker and only the owning `.modal_dialog` can reach it.
+  // sibling of the marker and only the owning `[data-modal-target]` can reach it.
   const nestedMarker = fixtureOptions.nestedPaymentMarker === true
   const paymentModal = {
     addEventListener(name, listener) {
@@ -1707,7 +1707,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
       })
     },
     closest(selector) {
-      if (selector !== '.modal_dialog') return null
+      if (selector !== '[data-modal-target]') return null
       return nestedMarker ? paymentDialog : paymentModal
     },
     querySelector() { return null },
@@ -2594,7 +2594,7 @@ test('a card-dialog marker nested on a child still binds that dialog own backdro
     await openCardSetup(fixture)
 
     // The re-nested marker cannot see its own dialog's backdrop, so the scope
-    // widens to the `.modal_dialog` that owns it — and no further.
+    // widens to the `[data-modal-target]` that owns it — and no further.
     assert.equal(
       (fixture.bookingBackdrop.listeners.click || []).length,
       0,
