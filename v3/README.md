@@ -2819,11 +2819,15 @@ second review write.
 
 On the public profile, author exactly one section with
 `data-reviews-v3="profile"` and exactly one descendant list target with
-`data-reviews-v3-list="reviews"`. The live template has shipped duplicate
-markers before, so the adapter tolerates them defensively: every marker is
-hidden and has its list emptied at configuration time, but only the first in
-document order is configured and painted — a duplicate never publishes its
-placeholder cards, and never becomes a second wf-xano wrapper. The adapter
+`data-reviews-v3-list="reviews"`. The published Hire template currently has
+two nested profile markers: the outer `#reviews` wrapper and the authored
+section that contains the list. The adapter tolerates this defensively. It
+hides every marker and empties every marker's list at configuration time, then
+configures and paints only the first marker in document order as the wf-xano
+wrapper. After a positive approved response, it reveals every nested marker
+that contains the active list. A stray marker that does not contain the active
+list stays hidden and empty, so it cannot publish placeholder cards or become
+a second wf-xano wrapper. The adapter
 derives the decoded slug only
 from the canonical `/hire/{slug}` path, configures that section as the
 `starter-reviews` wf-xano wrapper, and sets `wf-xano-param-starter_slug` before
