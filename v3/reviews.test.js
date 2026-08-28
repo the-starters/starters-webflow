@@ -514,10 +514,11 @@ test('prefers the reviewer object over the brand join when both are present', ()
     rating: 5,
     review_text: 'Both shapes',
     verified: true,
-    reviewer: { display_name: 'Cherene Aubert', title: null, company_name: 'Growth Capital' },
-    brand: { full_name: 'Cherene Aubert', company_name: 'Growth Capital' },
+    reviewer: { display_name: 'Reviewer Name', title: 'Head of Growth', company_name: 'Reviewer Co' },
+    brand: { full_name: 'Brand Name', company_name: 'Brand Co' },
   }])
   const card = fixture.list.childNodes[0]
   assert.equal(card.childNodes[0].childNodes[1].childNodes[0].textContent, 'Verified Review')
-  assert.equal(card.childNodes[2].childNodes[0].textContent, 'Cherene Aubert')
+  assert.equal(card.childNodes[2].childNodes[0].textContent, 'Reviewer Name')
+  assert.equal(card.childNodes[2].childNodes[1].textContent, 'Verified brand @ Reviewer Co')
 })
