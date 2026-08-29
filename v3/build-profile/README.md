@@ -96,11 +96,14 @@ exact-host gate remains authoritative for `/starter-edit-profile`: non-Live
 hosts block known mutations and preserve reads, as recorded in the
 [V3 access matrix](../ACCESS-MATRIX.md#enforcement-layers).
 
-After Xano returns both canonical image URLs, the photo commit is complete. The
-controller restores the authored draft-capture attribute and updates the hidden
-photo URL before it attempts the cosmetic Memberstack avatar sync. An avatar-sync
-failure is logged but does not fail the saved profile, show retry UI, or repeat the
-canonical upload.
+After Xano returns both canonical image URLs, the photo commit is complete. Xano
+endpoint #1390 owns the Memberstack `profileImage` write and stores the durable
+Xano vault URL. The controller restores the authored draft-capture attribute,
+updates the hidden photo URL, and refreshes the on-page navbar avatar from the
+canonical `starter_image` URL. It does not write the Memberstack profile image.
+This shared controller is loaded by `/build-profile/full-profile`,
+`/build-profile/consult`, and `/starter-edit-profile`; the second provenance
+manifest in `v3/starter-edit-profile/` pins the same file.
 
 The GitHub assets and executable selection, drop, user-retry, auth-retrade, and
 provenance checks may be prepared before the server change. Do not create a
