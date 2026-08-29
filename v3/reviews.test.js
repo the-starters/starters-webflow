@@ -29,13 +29,20 @@ class Element {
     if (this.closestMap && this.closestMap[selector]) return this.closestMap[selector]
     return selector === 'form[data-review-form-v3]' ? this : null
   }
-  appendChild(element) { this.childNodes.push(element); return element }
+  appendChild(element) { element.parentNode = this; this.childNodes.push(element); return element }
   removeChild(element) {
     const index = this.childNodes.indexOf(element)
-    if (index >= 0) this.childNodes.splice(index, 1)
+    if (index >= 0) {
+      this.childNodes.splice(index, 1)
+      element.parentNode = null
+    }
     return element
   }
-  replaceChildren(...elements) { this.childNodes = elements }
+  replaceChildren(...elements) {
+    for (const element of this.childNodes) element.parentNode = null
+    for (const element of elements) element.parentNode = this
+    this.childNodes = elements
+  }
 }
 
 function documentFixture() {
@@ -642,6 +649,28 @@ test('preserves a Designer template and drops only the placeholder cards', () =>
   assert.deepEqual(fixture.list.childNodes, [template])
   assert.equal(fixture.root.getAttribute('wf-xano-param-starter_slug'), 'elvis-p')
   assert.equal(fixture.list.getAttribute('wf-xano-element'), 'list')
+})
+
+test('preserves the list-child subtree containing a nested Designer template', () => {
+  const fixture = documentFixture()
+  const wrapper = new Element()
+  const template = new Element({ 'wf-xano-element': 'template' })
+  wrapper.appendChild(template)
+  fixture.list.children['[wf-xano-element="template"]'] = template
+  fixture.root.children['[wf-xano-element="template"]'] = template
+  fixture.list.appendChild(new Element())
+  fixture.list.appendChild(wrapper)
+  fixture.list.appendChild(new Element())
+
+  const { api } = load({ document: fixture, pathname: '/hire/elvis-p' })
+  const raw = {
+    reviews: [{ review_id: 41, rating: 4 }, { review_id: 42, rating: 5 }],
+    aggregate: { review_count: 2, average_rating: 4.5 },
+  }
+  assert.deepEqual(fixture.list.childNodes, [wrapper])
+  assert.equal(api.paintProfile(fixture, fixture.root, { raw, items: [raw] }), true)
+  assert.deepEqual(fixture.list.childNodes, [wrapper])
+  assert.deepEqual(wrapper.childNodes, [template])
 })
 
 test('does not append a fallback template when Designer ships one', () => {

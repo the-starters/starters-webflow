@@ -2824,17 +2824,18 @@ two nested profile markers: the outer `#reviews` wrapper and the authored
 section that contains the list. The adapter tolerates this defensively. It
 hides every marker and clears every marker's authored placeholder cards at
 configuration time, while preserving any element that carries
-`wf-xano-element="template"`. It then configures and paints only the first
-marker in document order as the wf-xano wrapper. After a positive approved
-response, it reveals every nested marker that contains the active list. A stray
-marker that does not contain the active list stays hidden and empty, so it
-cannot publish placeholder cards or become a second wf-xano wrapper. The
-adapter derives the decoded slug only from the canonical `/hire/{slug}` path,
-configures that section as the `starter-reviews` wf-xano wrapper, and sets
-`wf-xano-param-starter_slug` from that path before initializing it. It does not
-discover the surface through classes, heading text, or generated IDs. A missing
-section or list target fails closed before wf-xano initialization and makes no
-review request.
+`wf-xano-element="template"`. The template may be nested. In that case, its
+outermost ancestor that is a direct child of the list survives with its whole
+subtree. It then configures and paints only the first marker in document order
+as the wf-xano wrapper. After a positive approved response, it reveals every
+nested marker that contains the active list. A stray marker that does not
+contain the active list stays hidden and empty, so it cannot publish placeholder
+cards or become a second wf-xano wrapper. The adapter derives the decoded slug
+only from the canonical `/hire/{slug}` path, configures that section as the
+`starter-reviews` wf-xano wrapper, and sets `wf-xano-param-starter_slug` from
+that path before initializing it. It does not discover the surface through
+classes, heading text, or generated IDs. A missing section or list target fails
+closed before wf-xano initialization and makes no review request.
 
 When the wrapper has no authored `wf-xano-element="template"`, the adapter adds
 a hidden, aria-hidden placeholder so wf-xano can initialize. If site-level
@@ -2882,12 +2883,14 @@ store and public read authority.
 
 The authored Reviews section is **hidden by default**. The adapter hides it, and
 clears its authored placeholder cards while preserving any
-`wf-xano-element="template"`, at configuration time before wf-xano runs. It
-reveals the section again only when Xano positively reports at least one
-approved review. Absence of a result is treated as "no reviews", never as
-"keep showing what Designer authored", so a failed, blocked, or still-in-flight
-reviews request leaves the section hidden rather than publishing the template's
-placeholder content. Aggregate values are still painted for a zero count.
+`wf-xano-element="template"`, at configuration time before wf-xano runs. A
+nested template keeps its outermost direct-child ancestor and that ancestor's
+subtree. The adapter reveals the section again only when Xano positively
+reports at least one approved review. Absence of a result is treated as "no
+reviews", never as "keep showing what Designer authored", so a failed, blocked,
+or still-in-flight reviews request leaves the section hidden rather than
+publishing the template's placeholder content. Aggregate values are still
+painted for a zero count.
 
 Whichever profile tab points at the section is hidden and revealed with it. The
 adapter reads the section's own `data-toc-section` key and toggles every

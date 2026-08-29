@@ -60,8 +60,16 @@
       emptyElement(list)
       return
     }
+    var retainedChild = template
+    while (retainedChild && retainedChild.parentNode !== list) {
+      retainedChild = retainedChild.parentNode
+    }
+    if (!retainedChild) {
+      emptyElement(list)
+      return
+    }
     Array.prototype.slice.call(list.childNodes).forEach(function (node) {
-      if (node !== template) list.removeChild(node)
+      if (node !== retainedChild) list.removeChild(node)
     })
   }
 
