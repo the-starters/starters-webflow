@@ -1051,19 +1051,24 @@ test('an authored class list is applied verbatim and blank values fall back', as
   assert.equal(fallback.footer.style.display, 'flex')
 })
 
-test('the shell row gap holds at every width, not only on desktop', async () => {
-  // Regression: this rule was first written inside the desktop media query,
-  // which left the mobile layout with no row gap at all and butted the times
-  // list straight against the buttons (measured 0px between them). It has to
-  // sit outside both queries.
+test('the shell declares no row gap, at either width', async () => {
+  // The frame padding is the whole vertical rhythm now. An earlier round put a
+  // 16px row gap on the shell, and once the stacked elements carried their own
+  // padding that gap only ever reached mobile — desktop has overridden it to 0
+  // since the footer became a band. Jerico struck it out; the month's bottom
+  // padding separates it from the times, and the times' from the buttons.
+  //
+  // Nothing replaces it, so this is a check that no gap comes BACK: a row gap
+  // plus the frame would double the spacing on a phone.
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
-  const rule = '[data-modal-target="popup-booking"] [data-paid-calendar-element="shell"]{row-gap:16px}'
-  assert.ok(css.includes(rule))
-  assert.ok(
-    css.indexOf(rule) < css.indexOf('@media'),
-    'the row gap must be declared before either media query, so it holds at every width',
-  )
+  const beforeMedia = css.split('@media')[0]
+  assert.ok(!beforeMedia.includes('row-gap'), 'no unconditional row gap')
+  const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+  assert.ok(!mobileBlock.includes('row-gap'), 'and none added back for mobile')
+  // Desktop still says zero out loud. It is the initial value now, but it is
+  // the declaration that documents the footer band as the only separator.
+  assert.match(css.split('@media (min-width:768px){')[1], /"shell"\]\{column-gap:2rem;row-gap:0;/)
 })
 
 test('the booking shell defers its gaps to the sheet, the dashboard does not', async () => {
@@ -1235,6 +1240,36 @@ test('the layout stylesheet is scoped to the booking dialog, every rule', async 
   assert.ok(!css.includes('!important'))
 })
 
+test('every length in the sheet is a rem, and every px is a border', async () => {
+  // Jerico's round-5 call, and the convention this file and the datepicker
+  // sheet both follow: lengths in rem so they track the site's responsive root
+  // font size, borders in px because a hairline is a device-pixel affordance
+  // (at the 12.93px root a 0.0625rem border computes to 0.81px and renders
+  // inconsistently or not at all).
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+
+  // Media query breakpoints are px by definition — they are viewport widths,
+  // not lengths in the layout — so they are excluded before the sweep.
+  const declarations = css.replace(/@media[^{]*\{/g, '')
+  for (const match of declarations.matchAll(/[\w-]+\s*:[^;{}]*?\d*\.?\d+px/g)) {
+    assert.match(
+      match[0],
+      /^border(-top|-right|-bottom|-left)?(-width)?\s*:/,
+      `every px length must be a border: ${match[0].trim()}`,
+    )
+  }
+
+  // And the conversions themselves, so a future edit cannot quietly go back.
+  assert.ok(css.includes('font-size:0.8125rem'), '13px status text')
+  assert.ok(css.includes('box-shadow:0 0 0 0.1875rem'), '3px picker ring')
+  assert.ok(css.includes('padding-left:0.25rem'), '4px weekday inset')
+  assert.ok(css.includes('::-webkit-scrollbar{width:0.1875rem'), '3px scrollbar')
+  assert.ok(css.includes('border-radius:0.1875rem'), '3px scrollbar thumb')
+  // The one px that survives, named so its exemption is deliberate.
+  assert.ok(css.includes('border-top:1px solid #eee'), 'the footer hairline stays px')
+})
+
 test('the sheet gives the month picker its ring and straightens the weekday row', async () => {
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
@@ -1243,7 +1278,7 @@ test('the sheet gives the month picker its ring and straightens the weekday row'
   // The card, as Jerico tuned it in the browser: the 3px #eee ring and the
   // #eee fill, and nothing else. Earlier rounds tried a flat picker and then a
   // 1px #d8d8d8 outline; this ring is what he meant by an outline all along.
-  assert.ok(css.includes(DIALOG + ' .ui-datepicker.ui-widget-content{box-shadow:0 0 0 3px var(--Fill-Primary, #eee);background:#eee}'))
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker.ui-widget-content{box-shadow:0 0 0 0.1875rem var(--Fill-Primary, #eee);background:#eee}'))
   // The page's original card also carried a `0 4px 8px` drop shadow. It is
   // deliberately NOT restored — his capture has the ring alone.
   assert.ok(!/0 4px 8px/.test(css), 'no drop shadow')
@@ -1258,8 +1293,8 @@ test('the sheet gives the month picker its ring and straightens the weekday row'
   // dates are centred, so the header row sits 9.6-14.3px left of its own
   // columns, unevenly. Centring is the fix, and it survives the re-theme.
   assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th{text-align:center}'))
-  assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th:first-child{padding-left:4px}'))
-  assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th:last-child{padding-right:4px}'))
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th:first-child{padding-left:0.25rem}'))
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th:last-child{padding-right:0.25rem}'))
 })
 
 test('the empty state keeps its bottom breathing room at both widths', async () => {
@@ -1457,7 +1492,7 @@ test('the status is a banner across the top of the modal body', async () => {
 
   assert.ok(css.includes(
     ROLE + '"status"]{position:absolute;top:0;left:0;right:0;z-index:2;'
-      + 'margin:0;padding:1rem;font-size:13px;background:#434B43;color:#fff}',
+      + 'margin:0;padding:1rem;font-size:0.8125rem;background:#434B43;color:#fff}',
   ))
   // The modal's BODY is the containing block, so the band lands under the
   // header bar and runs the panel's full width. `.modal_content` would put it

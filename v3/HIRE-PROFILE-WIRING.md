@@ -356,6 +356,21 @@ names and must stay pixel-identical. The footer's mobile stacking rules key on
 `data-paid-calendar-footer="fallback"`, written only on the engine's own row, so
 an authored `data-booking-footer-class` row still places its own children.
 
+**Lengths in that sheet are rem, and every remaining px is a border.** The rem
+values track the site's responsive root font size; borders stay px because a
+hairline is a device-pixel affordance and at the site's 12.93px root a
+`0.0625rem` border computes to 0.81px and renders inconsistently. The same
+convention now holds in `global-embeds/form-embeds/datepicker/datepicker.css`
+and `.../timepicker/timepicker.css`. Read those as a change rather than a
+rename: the root here is 12.93px at 1280 and 16.34px at 400, so a converted
+value is about 19% smaller on desktop than the pixel it replaced.
+
+The shell declares **no row gap**. The frame padding is the whole vertical
+rhythm: the month's bottom padding separates it from the times and the times'
+from the buttons, one `1.25rem` each. Desktop still says `row-gap:0` out loud,
+which is the initial value now but documents the footer band as the only
+separator.
+
 That sheet also **zeroes the authored step's own padding**
 (`.call-details_layout`, which the site pads by
 `--_spacing---spacer--spacing-14`) at every width, so the interior frame is the

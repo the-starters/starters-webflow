@@ -3428,6 +3428,18 @@ flowchart TD
    wins on specificity, since the site's declarations are flat class selectors
    and the dialog attribute puts this one rank above them.
 
+   Every length in that sheet is a **rem**, so it tracks the site's responsive
+   root font size; the only pixels left are border widths, which stay px
+   because a hairline is a device-pixel affordance and at the site's 12.93px
+   root a `0.0625rem` border computes to 0.81px and renders inconsistently.
+   `global-embeds/form-embeds/datepicker/datepicker.css` and its timepicker
+   twin follow the same convention. Those are paste-in mirrors of Webflow
+   `<style>` embeds and are site-wide, so a re-paste is what makes them live.
+
+   The shell declares no row gap: since every stacked element carries its own
+   frame padding, the month's bottom padding is what separates it from the
+   times and the times' from the buttons.
+
    The status line is a **banner across the top of the modal's body** rather
    than a line under the buttons: absolutely positioned against
    `.modal_content-layout`, so it sits directly under the "Book a Call" header

@@ -643,6 +643,27 @@
   const STATUS_NEUTRAL_BACKGROUND = '#434B43'
   const STATUS_NEUTRAL_COLOR = '#fff'
   const STATUS_BANNER_PADDING = '1rem'
+  const STATUS_FONT_SIZE = '0.8125rem'
+  /* ---- lengths are rem, borders are px ----
+     Jerico's round-5 call: every length in this sheet is a rem so it tracks the
+     site's responsive root font size, the way the frame and the banner's
+     padding already did.
+
+     Borders are the one exception, and it is deliberate rather than an
+     oversight. A hairline is a device-pixel affordance, not part of the type
+     scale: this site's root is 12.93px at 1280, so `0.0625rem` computes to
+     0.81px and renders as an inconsistent, sometimes invisible line. The same
+     rule is applied to the datepicker sheet's own 1px and 2px borders, so
+     "lengths in rem, borders in px" holds across both files.
+
+     Note what a rem IS on this site before reading these as no-ops: the root
+     font size is responsive — 12.93px at 1280, 16.34px at 400 — so these
+     values are about 19% SMALLER than the pixels they replace on desktop and
+     about 2% larger at 400. That scaling is the point of the change, but it is
+     a visible change, not a unit-only one. */
+  const RING = '0.1875rem'
+  const CELL_INSET = '0.25rem'
+  const SCROLLBAR_WIDTH = '0.1875rem'
   /* Jerico's value and Jerico's reason: "I also added min-height so the
      absolute error wouldn't be weird looking". With the banner out of flow
      there is nothing holding the panel open on the empty-availability path —
@@ -687,7 +708,7 @@
          this rule it becomes load-bearing again — the page sets that border to
          0 from a <style> in the BODY, which beats this head-injected sheet at
          equal specificity. */
-      dialog + ' .ui-datepicker.ui-widget-content{box-shadow:0 0 0 3px var(--Fill-Primary, #eee);background:#eee}',
+      dialog + ' .ui-datepicker.ui-widget-content{box-shadow:0 0 0 ' + RING + ' var(--Fill-Primary, #eee);background:#eee}',
       /* The weekday header row is LEFT-aligned below the site's tablet
          breakpoint while the date cells are centred, so every label sits at
          its column's left edge and the header reads as ragged and misaligned
@@ -731,7 +752,7 @@
          his band starts 32px in from the left and overhangs the right edge by
          the same amount, being 100% of a container it is not aligned to. */
       role + '"status"]{position:absolute;top:0;left:0;right:0;z-index:2;'
-        + 'margin:0;padding:' + STATUS_BANNER_PADDING + ';font-size:13px;'
+        + 'margin:0;padding:' + STATUS_BANNER_PADDING + ';font-size:' + STATUS_FONT_SIZE + ';'
         + 'background:' + STATUS_NEUTRAL_BACKGROUND + ';color:' + STATUS_NEUTRAL_COLOR + '}',
       // The failure, and only the failure, wears his red.
       role + '"status"][data-paid-calendar-status="error"]{background:' + STATUS_ERROR_BACKGROUND + ';color:' + STATUS_ERROR_COLOR + '}',
@@ -755,8 +776,8 @@
          it cannot collide with the banner at any width or message length. */
       dialog + ' [nylas-container][data-paid-calendar-state="empty"]{display:flex;flex-direction:column;justify-content:flex-end}',
       dialog + ' .ui-datepicker thead th{text-align:center}',
-      dialog + ' .ui-datepicker thead th:first-child{padding-left:4px}',
-      dialog + ' .ui-datepicker thead th:last-child{padding-right:4px}',
+      dialog + ' .ui-datepicker thead th:first-child{padding-left:' + CELL_INSET + '}',
+      dialog + ' .ui-datepicker thead th:last-child{padding-right:' + CELL_INSET + '}',
 
       /* The authored step stops padding the calendar. `.call-details_layout` is
          the wrapper the mount sits in and the site pads it by
@@ -774,13 +795,19 @@
          — verified against the computed style, not assumed. */
       dialog + ' .call-details_layout{padding:0}',
 
-      /* The row rhythm the shell used to write inline. It lives HERE, outside
-         both media queries, because it has to hold at every width — putting it
-         in the desktop block cost the mobile layout its 16px and butted the
-         times straight against the buttons. The sheet owns it so the desktop
-         block can widen the COLUMN gap without an inline `gap` shorthand
-         outranking it. */
-      role + '"shell"]{row-gap:16px}',
+      /* No row gap rule here any more. It used to be `row-gap:16px`, and by the
+         time round 4 gave every stacked element its own frame padding the only
+         width it still reached was mobile — desktop has overridden it to 0
+         since the footer became a band. Jerico struck it out in the browser,
+         and with the frame carrying the rhythm the elements do not touch:
+         the month's bottom padding is what separates it from the times, and
+         the times' bottom padding separates them from the buttons, one
+         `1.25rem` each rather than a padding plus a gap.
+
+         The shell writes no inline gap on this surface, so removing the rule
+         leaves row-gap at its initial value. The dashboard's shell still
+         writes `gap:16px` inline and has no sheet at all, so it is untouched
+         either way. */
 
       // ---- below the site's mobile breakpoint ----
       '@media (max-width:767px){',
@@ -869,8 +896,8 @@
          leave this list scrollable with no affordance that there is more below.
          Re-enabled here at the same 3px the page already uses for the Nylas
          scheduler's own timeslot list. */
-      role + '"times"]::-webkit-scrollbar{width:3px;display:block;background:transparent}',
-      role + '"times"]::-webkit-scrollbar-thumb{background-color:var(--colors--black-olive-40);border-radius:3px}',
+      role + '"times"]::-webkit-scrollbar{width:' + SCROLLBAR_WIDTH + ';display:block;background:transparent}',
+      role + '"times"]::-webkit-scrollbar-thumb{background-color:var(--colors--black-olive-40);border-radius:' + SCROLLBAR_WIDTH + '}',
       role + '"times"]::-webkit-scrollbar-track{background-color:var(--colors--silver)}',
       /* The footer as its own band: a hairline across the full width, its own
          padding inside it, and the buttons pushed to the right at their
