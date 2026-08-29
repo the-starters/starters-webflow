@@ -3367,10 +3367,11 @@ flowchart TD
    the provider credential and private Scheduler session off the browser.
 2. Render the month calendar, timezone dropdown, time buttons and footer row
    inside the authored `[nylas-container]` mount. In a wide mount, the month
-   calendar is the left column and the timezone dropdown sits above the time
-   buttons in the right column. The two columns automatically stack into that
-   same order when the mount is narrow. The footer remains below the responsive
-   layout. The selected slot is advisory only.
+   calendar and left-aligned timezone dropdown form the left column, with the
+   dropdown below the calendar; the time buttons form the right column. The two
+   columns automatically stack to calendar, timezone, then time buttons when
+   the mount is narrow. The footer remains below the responsive layout. The
+   selected slot is advisory only.
 
    The timezone dropdown defaults to the visitor's browser timezone.
    Changing it clears the selected slot, regroups slots by local date and
@@ -3385,8 +3386,9 @@ flowchart TD
    three optional attributes read from the mount and then from the booking
    dialog: `data-booking-confirm-class`, `data-booking-back-class` and
    `data-booking-footer-class`. Values are space-separated class names applied
-   verbatim, and a control with authored classes is given no inline styles at
-   all, so a Designer stylesheet is never outranked. With no attributes
+   verbatim, and a button with authored classes is given no inline appearance
+   styles, so a Designer stylesheet is never outranked. The footer always sets
+   a 16px column gap between Back and the request button. With no attributes
    authored each control keeps a plain built-in fallback look. Off the booking
    surface — the dashboard's reschedule calendar mounts this same engine —
    there is no back control and no footer, and the confirm button goes straight
