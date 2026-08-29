@@ -499,6 +499,7 @@ function makeContext({
   location = { hostname: 'www.thestarters.com', pathname: '/hire/ashna-rana' },
   schedulingBridge = false,
   wfXano,
+  memberReady,
 } = {}) {
   const warnings = []
   const requestedIndexes = []
@@ -591,7 +592,7 @@ function makeContext({
       ;(windowListeners[type] = windowListeners[type] || []).push(fn)
     },
     MEMBER: member,
-    memberReady: Promise.resolve(member),
+    memberReady: memberReady || Promise.resolve(member),
     waitForMember: (cb) => Promise.resolve().then(() => cb(member)),
     StartersFreeCallBooking: omitInitialFreeController
       ? undefined
@@ -1197,10 +1198,13 @@ test('the authored wf-xano Retainer replaces the runtime fallback after a canoni
   const page = makePage()
   const retainer = addXanoRetainerFixture(page)
   const wfx = makeRetainerWfXanoFixture(retainer.wrapper)
+  let releaseMember
+  const pendingMember = new Promise((resolve) => { releaseMember = resolve })
   const context = makeContext({
     page,
     record: { rate: 0, 'retainer-rate': '10000', 'retainer-enabled': true },
     wfXano: wfx.api,
+    memberReady: pendingMember,
   })
   vm.createContext(context)
   vm.runInContext(source, context)
@@ -1231,7 +1235,6 @@ test('the authored wf-xano Retainer replaces the runtime fallback after a canoni
     pages: 1,
     hasMore: false,
   })
-  await settle()
 
   assert.equal(page.servicesList.querySelectorAll('[data-runtime-rate-card="retainer"]').length, 0)
   assert.equal(retainer.card.getAttribute('data-rate-card'), 'retainer')
@@ -1240,6 +1243,10 @@ test('the authored wf-xano Retainer replaces the runtime fallback after a canoni
   assert.equal(retainer.card.getAttribute('data-xano-retainer-card'), 'starter-retainer')
   assert.equal(retainer.title.textContent, 'Ongoing Advisory Retainer')
   assert.equal(retainer.description.textContent, 'Fractional leadership')
+  assert.equal(retainer.card.style.cursor || '', '')
+
+  releaseMember({})
+  await settle()
   assert.equal(retainer.card.style.cursor, 'pointer')
 })
 
@@ -3537,11 +3544,7 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
   assert.equal(paidCard.getAttribute('data-sp-fill-category'), null)
 })
 
-test('a retainer falls back to Freelance work when the native retainer option is absent', async () => {
-  // 'Monthly retainer' is gated by element-visibility="Retainer Enabled". If a
-  // site ever ships without it, the retainer card must still open a contract
-  // on the closest authored service rather than going inert: an approximate
-  // service beats no contract at all, and the brand can correct it in the form.
+test('a retainer stays inert when the native retainer option is absent', async () => {
   const page = makePage()
   const contractDialog = makeElement('dialog', { 'data-modal-target': 'generate-contract' })
   const serviceSelect = makeElement('select', { name: 'Services' })
@@ -3571,13 +3574,10 @@ test('a retainer falls back to Freelance work when the native retainer option is
     (card) => card.getAttribute('data-rate-card') === 'retainer',
   )
   assert.ok(retainerCard, 'the retainer card must still render')
-  assert.equal(retainerCard.getAttribute('data-modal-trigger'), 'generate-contract')
-  assert.equal(retainerCard.getAttribute('data-sp-fill-category'), 'service')
-  assert.equal(
-    retainerCard.getAttribute('data-sp-fill-value'),
-    'Freelance work',
-    'the retainer must fall back to the authored Freelance work option',
-  )
+  assert.equal(retainerCard.getAttribute('data-modal-trigger'), null)
+  assert.equal(retainerCard.getAttribute('data-sp-fill'), null)
+  assert.equal(retainerCard.getAttribute('data-sp-fill-category'), null)
+  assert.equal(retainerCard.getAttribute('data-sp-fill-value'), null)
 })
 
 test('a page without the hide-empty hook still renders its cards', async () => {

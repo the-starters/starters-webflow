@@ -1780,8 +1780,9 @@
 
           function applyResult(result) {
               canonicalRetainerState = 'resolved';
+              adaptXanoRetainerCard(instance, result);
               Promise.resolve(memberReady).then(function () {
-                  adaptXanoRetainerCard(instance, result);
+                  wireXanoRetainerCardRole();
               }).catch(function (error) {
                   console.warn('Xano retainer:', error);
               });
@@ -1842,6 +1843,10 @@
           card.style.cursor = '';
       });
 
+      refreshEmptySectionNav();
+  }
+
+  function wireXanoRetainerCardRole() {
       if (!MEMBER.id) {
           markServiceCardsClickable();
       } else if (isBrandMember(MEMBER) && !isProfileOwner(MEMBER)) {
@@ -2019,15 +2024,10 @@
 
           // Freelance and Retainer are commercial formats, not CMS services,
           // so each maps onto the authored option that matches its format.
-          // Retainer has its own native option and prefers it; Freelance work
-          // stays as a last resort for the retainer because that option is
-          // gated by element-visibility="Retainer Enabled" and could be
-          // withdrawn, and an approximate service beats no contract at all.
-          // Every CMS service otherwise requires an exact native option match
-          // and fails closed.
+          // Retainer requires its exact native option. Every CMS service also
+          // requires an exact native option match and fails closed.
           if (rateType === 'retainer') {
               candidates.push('Monthly retainer');
-              candidates.push('Freelance work');
           } else if (rateType === 'freelance') {
               candidates.push('Freelance work');
           }

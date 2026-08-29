@@ -269,8 +269,12 @@
     return serviceSlot(entry.label) > 0 || serviceSlot(entry.value) > 0
   }
 
+  function retainerServiceName(value) {
+    return clean(value).toLowerCase() === 'monthly retainer'
+  }
+
   function retainerServiceOption(entry) {
-    return clean(entry && (entry.value || entry.label)).toLowerCase() === 'monthly retainer'
+    return retainerServiceName(entry && entry.value) || retainerServiceName(entry && entry.label)
   }
 
   function authoredServiceOptions(select) {
@@ -303,6 +307,7 @@
     var seen = {}
     target.forEach(function (entry) { seen[entry.value.toLowerCase()] = true })
     names.forEach(function (name) {
+      if (retainerServiceName(name)) return
       var key = name.toLowerCase()
       if (seen[key]) return
       seen[key] = true

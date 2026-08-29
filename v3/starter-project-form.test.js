@@ -514,6 +514,8 @@ test('Monthly retainer requires an enabled canonical flag and a positive rate', 
     { profile: { retainer_enabled: false, retainer_rate: 1000 }, expected: false },
     { profile: { retainer_enabled: true, retainer_rate: 0 }, expected: false },
     { profile: { retainer_enabled: true, retainer_rate: '' }, expected: false },
+    { profile: { services: ['Monthly retainer'] }, expected: false },
+    { profile: { retainer_enabled: false, retainer_rate: 1000, services: ['Monthly retainer'] }, expected: false },
     { profile: {}, expected: false },
   ]
 
