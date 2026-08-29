@@ -854,6 +854,7 @@ test('the calendar footer puts Back beside the confirm control', async () => {
   assert.equal(backParts.text.textContent, 'Back')
   assert.equal(backParts.button.tagName, 'button')
   assert.equal(backParts.button.type, 'button')
+  assert.equal(backParts.button.getAttribute('aria-label'), 'Back')
 
   // Display belongs to the profile script's guard stylesheet, and aria-hidden
   // to the profile script. A second writer here would fight them and could
@@ -876,6 +877,7 @@ test('both footer controls are the site button component, not bare buttons', asy
     assert.equal(parts.wrap.getAttribute('data-button-style'), style, name)
     assert.equal(parts.clickableWrap.getAttribute('class'), 'clickable_wrap', name)
     assert.equal(parts.button.getAttribute('class'), 'clickable_btn', name)
+    assert.equal(parts.button.getAttribute('aria-label'), parts.text.textContent, name)
     assert.equal(parts.element.getAttribute('class'), 'button_main-element', name)
     assert.equal(parts.text.getAttribute('class'), 'button_main-text', name)
     assert.equal(parts.line.getAttribute('class'), 'button_main-line', name)
@@ -939,11 +941,25 @@ test('the slot chips rest on #eee and go back to it after a deselect', async () 
   result.clearSelection()
   assert.equal(chip.style.background, '#eee', 'back to resting, not the old #f3f4ef')
   assert.equal(chip.style.color, '#1f211d')
+
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  reschedule.appendChild(host)
+  const dashboard = await mountFooterFixture({ container: host })
+  const dashboardTimes = dashboard.shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+  const dashboardChip = dashboardTimes.children[0]
+  assert.equal(dashboardChip.style.background, '#f3f4ef', 'dashboard build')
+  dashboardChip.listeners.click()
+  dashboard.result.clearSelection()
+  assert.equal(dashboardChip.style.background, '#f3f4ef', 'dashboard reset')
 })
 
 test('the footer back label is overridable by the caller', async () => {
   const { backParts } = await mountFooterFixture({ backText: 'Back to call options' })
   assert.equal(backParts.text.textContent, 'Back to call options')
+  assert.equal(backParts.button.getAttribute('aria-label'), 'Back to call options')
 })
 
 test('the Free flow gets the same footer with its own confirm label', async () => {
@@ -1603,6 +1619,23 @@ test('a status message scrolls itself into view', async () => {
   assert.equal(scrollport.scrollTop, 0, 'a failure brings its banner into view')
 })
 
+test('empty availability scrolls its status banner into view', async () => {
+  const scrollport = new CalendarElement('div')
+  scrollport.scrollHeight = 1245
+  scrollport.clientHeight = 726
+  scrollport.scrollTop = 519
+
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking')
+  const mount = new CalendarElement('div')
+  mount.setAttribute('nylas-container', '')
+  scrollport.appendChild(mount)
+  dialog.appendChild(scrollport)
+
+  await mountFooterFixture({ container: mount, slots: [] })
+  assert.equal(scrollport.scrollTop, 0)
+})
+
 test('the stacked footer floats, and only because the shell is a flex column', async () => {
   // On a phone the whole panel scrolls inside the modal's body, so the buttons
   // would otherwise sit below the fold on a busy day. Sticky pins them to the
@@ -1643,7 +1676,7 @@ test('the stacked footer floats, and only because the shell is a flex column', a
   assert.match(desktopBlock, /grid-template-areas:"month timezone" "month times" "footer footer"/)
 })
 
-test('the timezone caption sits above the slots at both widths', async () => {
+test('the timezone selector sits above the slots at both widths', async () => {
   // The shared engine renders a note naming the clock the times are shown in,
   // and appends it to the shell with no placement of its own. Left alone on
   // desktop it auto-placed into an implicit row BELOW the footer band, at half
@@ -1657,46 +1690,39 @@ test('the timezone caption sits above the slots at both widths', async () => {
   // Desktop: its own area at the top of the right column, with the month
   // spanning down beside it so the panel does not grow by the caption.
   const desktopBlock = css.split('@media (min-width:768px){')[1]
-  assert.ok(desktopBlock.includes(ROLE + '"timezone"]{grid-area:timezone;padding:1.25rem 1.25rem 1rem 0}'))
+  assert.ok(desktopBlock.includes(ROLE + '"timezone-control"]{grid-area:timezone;padding:1.25rem 1.25rem 1rem 0}'))
   assert.match(desktopBlock, /grid-template-areas:"month timezone" "month times"/)
 
   // Mobile: already between the calendar and the chips in DOM order, so only
   // the frame is needed — and it must be the frame, not a bleed.
   const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
-  assert.ok(mobileBlock.includes(ROLE + '"timezone"]{order:2;padding:0 1.25rem 1rem}'))
+  assert.ok(mobileBlock.includes(ROLE + '"timezone-control"]{order:2;padding:0 1.25rem 1rem}'))
   // Stacked it has to be MOVED, not just padded: the engine appends it AFTER
   // the times, so document order alone renders it below the chips (measured
   // at 400px: the note at y 670 against a list ending at exactly 670).
   assert.ok(mobileBlock.includes('"shell"]{display:flex;flex-direction:column}'))
 
-  // The SIZE is this sheet's now — Jerico's round-8 call, and the one thing it
-  // takes over from the engine's inline styles. Width-independent, so it sits
-  // outside both media queries.
+  // The control's internal label/select layout belongs to the sheet on the
+  // booking surface, because its former inline placement writes overrode the
+  // grid and flex placement rules above.
   const beforeMedia = css.split('@media')[0]
-  assert.ok(beforeMedia.includes(ROLE + '"timezone"]{font-size:0.75rem}'))
+  assert.ok(beforeMedia.includes(ROLE + '"timezone-control"]{display:grid;gap:0.375rem}'))
 
   // Everything else about its appearance stays the engine's. Those are inline
   // declarations and inline outranks every rule here, so asking for them would
   // be a rule that silently loses.
   for (const rule of css.split('}')) {
-    if (!rule.includes('"timezone"]')) continue
+    if (!rule.includes('"timezone-control"]')) continue
     assert.ok(!/(^|;|\{)\s*(color|margin|background)\s*:/.test(rule), rule)
   }
 })
 
-test('the timezone caption drops its inline size only on the booking surface', async () => {
-  // An inline declaration outranks the injected sheet, so the sheet cannot own
-  // the caption's size while the engine still writes one. It is skipped here
-  // and ONLY here: off the booking surface no sheet is injected to take over,
-  // so the inline size stays and that path is byte-identical. Same split the
-  // status element has carried since the banner landed.
+test('the timezone control defers placement styles only on the booking surface', async () => {
   const onSurface = await mountFooterFixture()
-  const zone = onSurface.shell.children
-    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone')
-  assert.ok(zone)
-  assert.equal(zone.style.fontSize, undefined, 'the sheet owns the size here')
-  assert.equal(zone.style.color, '#6f746d', 'colour is still the engine\'s')
-  assert.equal(zone.style.margin, '0', 'and so is the margin')
+  const control = onSurface.shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone-control')
+  assert.ok(control)
+  assert.deepEqual(Object.keys(control.style), [], 'the sheet owns its placement here')
 
   const reschedule = new CalendarElement('dialog')
   reschedule.setAttribute('data-modal-target', 'popup-booking-info')
@@ -1704,30 +1730,30 @@ test('the timezone caption drops its inline size only on the booking surface', a
   host.setAttribute('booking-reschedule-calendar', '')
   reschedule.appendChild(host)
   const away = await mountFooterFixture({ container: host })
-  const awayZone = away.shell.children
-    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone')
-  assert.ok(awayZone)
+  const awayControl = away.shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone-control')
+  assert.ok(awayControl)
   assert.deepEqual(
-    Object.keys(awayZone.style),
-    ['color', 'fontSize', 'margin'],
-    'the dashboard keeps all three, in the order it always wrote them',
+    Object.keys(awayControl.style),
+    ['display', 'gap', 'justifySelf', 'width'],
+    'the dashboard keeps its inline control placement',
   )
-  assert.equal(awayZone.style.fontSize, '13px')
+  assert.equal(awayControl.style.width, 'min(100%, 320px)')
 })
 
-test('the timezone caption cannot come back inside the scrolling list', async () => {
+test('the timezone selector cannot come back inside the scrolling list', async () => {
   // It is a sibling of the times, not a child, and the placement keeps it
   // that way: the chips scroll under a caption that stays put, which is what a
   // label for the whole list wants. A `grid-area:times` here would put it in
   // the scroll box and send it off the top on the first wheel.
   const { document, shell } = await mountFooterFixture()
   const css = document.head.children[0].textContent
-  const zone = shell.children
-    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone')
-  assert.ok(zone, 'the engine renders the caption')
-  assert.equal(zone.parentElement, shell, 'a sibling of the times, never a child')
+  const control = shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone-control')
+  assert.ok(control, 'the engine renders the selector')
+  assert.equal(control.parentElement, shell, 'a sibling of the times, never a child')
   for (const rule of css.split('}')) {
-    if (!rule.includes('"timezone"]')) continue
+    if (!rule.includes('"timezone-control"]')) continue
     assert.ok(!/grid-area:times\b/.test(rule), rule)
   }
 })

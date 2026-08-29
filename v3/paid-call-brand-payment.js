@@ -620,7 +620,7 @@
      built here and their state flips on click; every place that writes the
      resting colour must use this constant, including the deselect reset, or a
      select-then-deselect leaves one chip a different grey from its neighbours. */
-  const SLOT_RESTING_BACKGROUND = '#eee'
+  const BOOKING_SLOT_RESTING_BACKGROUND = '#eee'
   const SLOT_SELECTED_BACKGROUND = '#1f211d'
   /* The rule above the buttons. There is no row gap on desktop any more: the
      footer is its own band, and a hairline plus its own padding is what
@@ -649,12 +649,7 @@
   const STATUS_NEUTRAL_COLOR = '#fff'
   const STATUS_BANNER_PADDING = '1rem'
   const STATUS_FONT_SIZE = '0.8125rem'
-  /* The timezone caption's size, Jerico's round-8 pick. It is the one thing
-     this sheet takes over from the shared engine's inline styles — see the
-     note at the zoneNote build for why that needs a change on their side as
-     well as a rule here. Colour and margin stay theirs. */
-  const TIMEZONE_FONT_SIZE = '0.75rem'
-  /* The gap between the caption and the first row of chips. A full frame would
+  /* The gap between the timezone selector and the first row of chips. A full frame would
      read as a row of its own; this is Jerico's round-8 value, up from the
      0.5rem the placement round shipped. */
   const TIMEZONE_GAP = '1rem'
@@ -786,9 +781,7 @@
          the dialog with the POST open, losing the surface the confirmation was
          about to land on. The engine stamps this while it waits. */
       role + '"back"][data-paid-calendar-busy]{pointer-events:none}',
-      /* Width-independent, so it sits outside both media queries; the two
-         placement rules below carry only what differs by breakpoint. */
-      role + '"timezone"]{font-size:' + TIMEZONE_FONT_SIZE + '}',
+      role + '"timezone-control"]{display:grid;gap:0.375rem}',
       /* The shell's own display, which the engine used to write inline. It is
          a grid at every width by default and the mobile block swaps it for a
          flex column; see the sticky footer rule there. */
@@ -906,7 +899,7 @@
          neighbour is inset. Its top spacing is the month's bottom padding; the
          `1rem` is the gap down to the first chip, the note's own `margin:0`
          being inline and out of this sheet's reach. */
-      role + '"timezone"]{order:2;padding:0 ' + CALENDAR_FRAME + ' ' + TIMEZONE_GAP + '}',
+      role + '"timezone-control"]{order:2;padding:0 ' + CALENDAR_FRAME + ' ' + TIMEZONE_GAP + '}',
       role + '"times"]{order:3;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
       /* The floating footer. On a phone the whole panel scrolls — calendar,
          caption and chips together — inside `.modal_content-layout`, which is
@@ -1021,7 +1014,7 @@
          It sits OUTSIDE the scroll container — a sibling of the times, not a
          child — so it stays put while the chips scroll under it. That is the
          behaviour a caption for the whole list wants. */
-      role + '"timezone"]{grid-area:timezone;padding:' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' ' + TIMEZONE_GAP + ' 0}',
+      role + '"timezone-control"]{grid-area:timezone;padding:' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' ' + TIMEZONE_GAP + ' 0}',
       /* The page hides every inner scrollbar globally
          (`*:not(html):not(body)::-webkit-scrollbar{display:none}`), which would
          leave this list scrollable with no affordance that there is more below.
@@ -1116,6 +1109,7 @@
     const button = document.createElement('button')
     button.type = 'button'
     button.setAttribute('class', 'clickable_btn')
+    button.setAttribute('aria-label', String(label))
     clickableWrap.appendChild(button)
 
     const element = document.createElement('div')
@@ -1270,13 +1264,16 @@
     return unique
   }
 
-  function createTimezoneControl(settings, initialTimezone, timestamp) {
-    const wrapper = applyStyles(global.document.createElement('label'), {
-      display: 'grid',
-      gap: '6px',
-      justifySelf: 'start',
-      width: 'min(100%, 320px)',
-    })
+  function createTimezoneControl(settings, initialTimezone, timestamp, onBookingSurface) {
+    const wrapper = global.document.createElement('label')
+    if (!onBookingSurface) {
+      applyStyles(wrapper, {
+        display: 'grid',
+        gap: '6px',
+        justifySelf: 'start',
+        width: 'min(100%, 320px)',
+      })
+    }
     wrapper.setAttribute('data-paid-calendar-element', 'timezone-control')
 
     const label = applyStyles(global.document.createElement('span'), {
@@ -1411,6 +1408,7 @@
       settings,
       timezone,
       slots.length ? slots[0].start : Date.now(),
+      onBookingSurface,
     )
 
     /* The back control is a hand-off, not a behaviour of its own: the two modal
@@ -1479,8 +1477,8 @@
     }
 
     if (!slots.length) {
-      setStatus('No available times were found in the next 14 days.', 'empty')
       container.appendChild(status)
+      setStatus('No available times were found in the next 14 days.', 'empty')
       // An empty calendar is exactly when a visitor most wants the other kind
       // of call, so the way back out has to survive the early return.
       if (footer) container.appendChild(footer)
@@ -1561,6 +1559,9 @@
     })
     times.setAttribute('data-paid-calendar-element', 'times')
     const confirmLabel = String(settings.confirmText || 'Request paid call')
+    const slotRestingBackground = onBookingSurface
+      ? BOOKING_SLOT_RESTING_BACKGROUND
+      : '#f3f4ef'
     /* On the booking surface the confirm is the site's primary button. Off it,
        the dashboard's reschedule calendar keeps the plain element and the
        authored-class contract it shipped with, unchanged. */
@@ -1613,7 +1614,7 @@
       setStatus('')
       Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (candidate) {
         candidate.setAttribute('aria-pressed', 'false')
-        candidate.style.background = SLOT_RESTING_BACKGROUND
+        candidate.style.background = slotRestingBackground
         candidate.style.color = '#1f211d'
       })
     }
@@ -1636,7 +1637,7 @@
           padding: '10px 11px',
           border: '1px solid transparent',
           borderRadius: '6px',
-          background: SLOT_RESTING_BACKGROUND,
+          background: slotRestingBackground,
           color: '#1f211d',
           cursor: 'pointer',
         })
@@ -1646,7 +1647,7 @@
             candidate.setAttribute('aria-pressed', candidate === button ? 'true' : 'false')
             candidate.style.background = candidate === button
               ? SLOT_SELECTED_BACKGROUND
-              : SLOT_RESTING_BACKGROUND
+              : slotRestingBackground
             candidate.style.color = candidate === button ? '#ffffff' : '#1f211d'
           })
           selectedSlot = slot
