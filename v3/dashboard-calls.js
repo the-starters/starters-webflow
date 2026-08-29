@@ -980,6 +980,7 @@
           button.getAttribute('booking-action-btn') ||
           button.getAttribute('booking-card-action-btn'),
         )
+        if (action === 'switch-base') return
         const accept =
           action === 'switch-confirm' &&
           canConfirmBooking(role, booking, now)
@@ -1026,7 +1027,6 @@
         show(
           button,
           action === 'switch-close' ||
-            action === 'switch-base' ||
             accept ||
             decline ||
             cancel ||
@@ -1094,9 +1094,17 @@
     modal.setAttribute('data-booking-status', status)
     modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
 
-    modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
-      show(content, content.getAttribute('booking-popup-content') === 'base')
-    })
+    const actionsModule = global.StartersDashboardCallActions
+    if (
+      validDashboardModule(actionsModule) &&
+      typeof actionsModule.switchPopupContent === 'function'
+    ) {
+      actionsModule.switchPopupContent(modal, 'base')
+    } else {
+      modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
+        show(content, content.getAttribute('booking-popup-content') === 'base')
+      })
+    }
     setBookingField(modal, 'paid-meeting', isPaid ? 'Paid Call' : 'Free Call', true)
     setBookingField(modal, 'status', statusLabel(status, role), true)
     setBookingField(modal, 'brand-name', booking.brand_data && booking.brand_data.name, true)

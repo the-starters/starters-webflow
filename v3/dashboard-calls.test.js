@@ -1335,6 +1335,7 @@ function detailModalHarness() {
     if (match) return fieldCopies[match[1]] || []
     return {
       '[booking-popup-content]': [base, confirmation],
+      '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]': [back],
       '[booking-element-wrap]': groups,
       '[booking-action-btn], [booking-card-action-btn], [payment-action-btn], [booking-pm-action], [data-btn-payment], [popup-stripe-card-open], [pm-use-this]': actions,
       '[reschedule-blocked-info]': [blocked],
@@ -1356,7 +1357,12 @@ function detailModalHarness() {
   }
 }
 
-test('Free Call details hide paid copy, duplicate copy, and unsupported actions', () => {
+test('Free Call details hide paid copy, duplicate copy, and unsupported actions', (context) => {
+  const originalActions = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
+  context.after(function () {
+    global.StartersDashboardCallActions = originalActions
+  })
   const view = detailModalHarness()
   const booking = {
     booking_id: 'free-one',
@@ -1382,7 +1388,9 @@ test('Free Call details hide paid copy, duplicate copy, and unsupported actions'
   assert.equal(view.pendingOne.hidden, false)
   assert.equal(view.pendingDuplicate.hidden, true)
   assert.equal(view.actions[0].hidden, false)
-  assert.equal(view.actions[1].hidden, false)
+  // switch-base starts hidden on the base panel; the actions module shows it
+  // only after a chain leaves base.
+  assert.equal(view.actions[1].hidden, true)
   assert.equal(view.actions[2].hidden, true)
   assert.equal(view.actions[3].hidden, true)
   assert.equal(view.actions[4].hidden, false)

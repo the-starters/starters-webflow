@@ -1178,3 +1178,109 @@ test('the success panel text nodes render the current counterpart without changi
   assert.equal(directText.nodeValue, 'The call is cancelled. We will notify the other participant.')
   assert.equal(nestedText.nodeValue, 'the other participant will receive an email.')
 })
+
+test('the modal back and close chrome is module-owned', () => {
+  const contents = ['base', 'cancel'].map(function (name) {
+    return {
+      hidden: name !== 'base',
+      style: { display: name === 'base' ? 'flex' : 'none' },
+      getAttribute(attribute) {
+        return attribute === 'booking-popup-content' ? name : null
+      },
+    }
+  })
+  const backControl = { hidden: false, style: {} }
+  const closeControl = {
+    clicks: 0,
+    click() {
+      this.clicks += 1
+    },
+  }
+  const modal = {
+    querySelector(selector) {
+      return selector === '[booking-popup-info-close], [data-modal-close]'
+        ? closeControl
+        : null
+    },
+    querySelectorAll(selector) {
+      if (selector === '[booking-popup-content]') return contents
+      if (selector.includes('switch-base')) return [backControl]
+      return []
+    },
+  }
+  const clickHandlers = []
+  const document = {
+    addEventListener(event, handler) {
+      if (event === 'click') clickHandlers.push(handler)
+    },
+    querySelector() {
+      return modal
+    },
+  }
+  api.wire({
+    document,
+    role: 'brand',
+    restart() {},
+    getBooking() {
+      throw new Error('modal chrome must not resolve a booking')
+    },
+  })
+  function press(action) {
+    let prevented = 0
+    let stopped = 0
+    const button = {
+      getAttribute(attribute) {
+        return attribute === 'booking-action-btn' ? action : null
+      },
+      closest(selector) {
+        return selector.includes('popup-booking-info') ? modal : this
+      },
+    }
+    clickHandlers.forEach(function (handler) {
+      handler({
+        target: button,
+        preventDefault() {
+          prevented += 1
+        },
+        stopImmediatePropagation() {
+          stopped += 1
+        },
+      })
+    })
+    return { prevented, stopped }
+  }
+
+  // Leaving base shows the back control.
+  api.switchPopupContent(modal, 'cancel')
+  assert.equal(backControl.hidden, false)
+  assert.equal(contents[0].hidden, true)
+
+  // Back returns to base, consumes the click, and hides itself again.
+  const back = press('switch-base')
+  assert.equal(back.prevented, 1)
+  assert.equal(back.stopped, 1)
+  assert.equal(contents[0].hidden, false)
+  assert.equal(contents[1].hidden, true)
+  assert.equal(backControl.hidden, true)
+
+  // Close clicks the authored close control so the native modal system runs.
+  const close = press('switch-close')
+  assert.equal(close.prevented, 1)
+  assert.equal(close.stopped, 1)
+  assert.equal(closeControl.clicks, 1)
+})
+
+test('closeDetailModal falls back to the dialog API without an authored control', () => {
+  let closed = 0
+  const modal = {
+    querySelector() {
+      return null
+    },
+    close() {
+      closed += 1
+    },
+  }
+  assert.equal(api.closeDetailModal(modal), true)
+  assert.equal(closed, 1)
+  assert.equal(api.closeDetailModal(null), false)
+})
