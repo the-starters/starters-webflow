@@ -528,15 +528,28 @@
   const CONFIRM_CLASS_ATTRIBUTE = 'data-booking-confirm-class'
   const BACK_CLASS_ATTRIBUTE = 'data-booking-back-class'
 
+  /**
+   * The booking dialog this calendar is mounted inside, or null.
+   *
+   * Null is a real answer, not a failure: the same engine mounts the
+   * dashboard's reschedule calendar (`dashboard-call-actions.js`), which lives
+   * in a different dialog entirely. Only the two markers the booking surface is
+   * actually identified by count — matching any `dialog` would let an unrelated
+   * surface answer for this one.
+   */
+  function bookingSurfaceFor(container) {
+    if (!container || typeof container.closest !== 'function') return null
+    return (
+      container.closest('[data-modal-target="popup-booking"]') ||
+      container.closest('[popup-booking]') ||
+      null
+    )
+  }
+
   function authoredClassSurfaces(container) {
     const surfaces = [container]
-    if (container && typeof container.closest === 'function') {
-      const root =
-        container.closest('[data-modal-target="popup-booking"]') ||
-        container.closest('[popup-booking]') ||
-        container.closest('dialog')
-      if (root && root !== container) surfaces.push(root)
-    }
+    const root = bookingSurfaceFor(container)
+    if (root && root !== container) surfaces.push(root)
     return surfaces
   }
 
@@ -562,6 +575,27 @@
     if (!classes.length) return false
     node.setAttribute('class', classes.join(' '))
     return true
+  }
+
+  /** The back control's markup contract, applied to a fresh button element. */
+  function applyAuthoredBack(back, container, settings) {
+    back.type = 'button'
+    back.textContent = String((settings && settings.backText) || '← Back')
+    back.setAttribute('data-booking-back', '')
+    back.setAttribute('data-modal-close', '')
+    back.setAttribute('data-modal-trigger', 'popup-booking-main')
+    back.setAttribute('data-paid-calendar-element', 'back')
+    if (!applyAuthoredClasses(back, authoredClassList(container, BACK_CLASS_ATTRIBUTE))) {
+      applyStyles(back, {
+        padding: '12px 16px',
+        border: '1px solid transparent',
+        borderRadius: '6px',
+        background: 'transparent',
+        color: '#1f211d',
+        cursor: 'pointer',
+      })
+    }
+    return back
   }
 
   function calendarDateKey(timestamp, timezone) {
@@ -615,9 +649,41 @@
       margin: '0',
     })
     status.setAttribute('data-paid-calendar-element', 'status')
+
+    /* The back control is a hand-off, not a behaviour of its own: the two modal
+       attributes close this dialog and open the Free/Paid chooser, exactly as
+       an authored control would, and `data-booking-back` is the marker the
+       profile script keys its entry-aware visibility on. Nothing here decides
+       when it is on screen — the guard stylesheet owns display and the profile
+       script owns the accessible state, so this must not write either.
+
+       It is built only on the booking surface. This engine also mounts the
+       dashboard's reschedule calendar, where there is no Free/Paid chooser to
+       go back to and no guard stylesheet to hide the control: a back rendered
+       there would be an always-visible button that closes the reschedule
+       dialog and lands the visitor nowhere. */
+    const back = bookingSurfaceFor(container)
+      ? applyAuthoredBack(global.document.createElement('button'), container, settings)
+      : null
+
+    const footer = global.document.createElement('div')
+    footer.setAttribute('data-paid-calendar-element', 'footer')
+    if (!applyAuthoredClasses(footer, authoredClassList(container, FOOTER_CLASS_ATTRIBUTE))) {
+      applyStyles(footer, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        flexWrap: 'wrap',
+      })
+    }
+    if (back) footer.appendChild(back)
+
     if (!slots.length) {
       status.textContent = 'No available times were found in the next 14 days.'
       container.appendChild(status)
+      // An empty calendar is exactly when a visitor most wants the other kind
+      // of call, so the way back out has to survive the early return.
+      if (back) container.appendChild(footer)
       return { slots: [] }
     }
 
@@ -664,42 +730,6 @@
         cursor: 'pointer',
       })
     }
-
-    /* The back control is a hand-off, not a behaviour of its own: the two modal
-       attributes close this dialog and open the Free/Paid chooser, exactly as
-       an authored control would, and `data-booking-back` is the marker the
-       profile script keys its entry-aware visibility on. Nothing here decides
-       when it is on screen — the guard stylesheet owns display and the profile
-       script owns the accessible state, so this must not write either. */
-    const back = global.document.createElement('button')
-    back.type = 'button'
-    back.textContent = String(settings.backText || '← Back')
-    back.setAttribute('data-booking-back', '')
-    back.setAttribute('data-modal-close', '')
-    back.setAttribute('data-modal-trigger', 'popup-booking-main')
-    back.setAttribute('data-paid-calendar-element', 'back')
-    if (!applyAuthoredClasses(back, authoredClassList(container, BACK_CLASS_ATTRIBUTE))) {
-      applyStyles(back, {
-        padding: '12px 16px',
-        border: '1px solid transparent',
-        borderRadius: '6px',
-        background: 'transparent',
-        color: '#1f211d',
-        cursor: 'pointer',
-      })
-    }
-
-    const footer = global.document.createElement('div')
-    footer.setAttribute('data-paid-calendar-element', 'footer')
-    if (!applyAuthoredClasses(footer, authoredClassList(container, FOOTER_CLASS_ATTRIBUTE))) {
-      applyStyles(footer, {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-        flexWrap: 'wrap',
-      })
-    }
-    footer.appendChild(back)
     footer.appendChild(confirm)
 
     function clearSelection() {
@@ -800,6 +830,11 @@
       if (!selectedSlot || confirm.disabled || confirmationPending) return
       confirmationPending = true
       confirm.disabled = true
+      // Back sits in the same row as the button that was just pressed, and it
+      // closes the dialog. Left live, one stray click mid-request wipes the
+      // surface the confirmation was about to appear on, while the booking
+      // still goes through server-side — a call the visitor never sees.
+      if (back) back.disabled = true
       Array.from(calendarHost.querySelectorAll('[data-paid-calendar-date]')).forEach(function (button) {
         button.disabled = true
       })
@@ -832,6 +867,7 @@
             button.disabled = false
           })
           confirm.disabled = !selectedSlot
+          if (back) back.disabled = false
         }
       }
     })

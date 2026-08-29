@@ -72,10 +72,11 @@
           // controllers' open-dialog mount contract is unchanged.
           '[data-booking-pass-through]{visibility:hidden!important}',
           '[data-booking-pass-through] *{visibility:hidden!important}',
-          // The Designer-authored back arrow defaults to hidden and is revealed
-          // only by a chooser entry stamp. Doing it in CSS as well as in script
-          // means the arrow cannot flash on a direct entry in the window before
-          // the stamp lands.
+          // The calendar footer's back control defaults to hidden and is
+          // revealed only by a chooser entry stamp. Doing it in CSS as well as
+          // in script means it cannot flash on a direct entry in the window
+          // before the stamp lands — which matters more now that the control is
+          // rendered by the calendar mount rather than authored.
           '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"]) [data-booking-back]{display:none!important}',
       ].join('');
       (document.head || document.documentElement).appendChild(style);
@@ -528,7 +529,13 @@
       // wrapper can leave a live trigger that opens an empty chooser while
       // canonical discovery is still closed. Gate every chooser trigger with
       // the same discovery result.
-      document.querySelectorAll('[data-modal-trigger="popup-booking-main"]').forEach(function (trigger) {
+      // The calendar engine renders a back control carrying this same trigger
+      // name inside the booking dialog. It is not a page-level entry point, and
+      // stamping it unavailable would hand it to the guard stylesheet's
+      // display:none rule — hiding the way back out for the rest of the visit.
+      document.querySelectorAll(
+          '[data-modal-trigger="popup-booking-main"]:not([data-booking-back])'
+      ).forEach(function (trigger) {
           if (available) {
               trigger.removeAttribute('data-booking-trigger-unavailable');
               trigger.removeAttribute('aria-disabled');
@@ -602,8 +609,11 @@
   }
 
   function findReadyBookingModalTrigger() {
+      // Same exclusion as setBookingButtonAvailable: the in-dialog back control
+      // shares this trigger name, and clicking it here would close the booking
+      // dialog this call is trying to open rather than open the chooser.
       return Array.from(document.querySelectorAll(
-          '[data-modal-trigger="popup-booking-main"]'
+          '[data-modal-trigger="popup-booking-main"]:not([data-booking-back])'
       )).find(function (trigger) {
           return !trigger.hasAttribute('data-booking-trigger-unavailable') &&
               trigger.getAttribute('aria-disabled') !== 'true' &&
@@ -744,9 +754,11 @@
       passThroughTimer = window.setTimeout(tick, 0);
   }
 
-  /** Shows the authored back arrow on a chooser entry and hides it otherwise.
-      The element is Jerico's to author: this never creates one, and a booking
-      dialog without one is a silent no-op. */
+  /** Shows the back control on a chooser entry and hides it otherwise.
+      The control is rendered by the shared calendar engine's footer, inside the
+      mount, which means it arrives on a late-node path: the body observer's
+      call to this is what stamps a freshly mounted one. This never creates a
+      control, and a booking dialog without one is a silent no-op. */
   function syncBookingBackControls() {
       bookingDialogs().forEach(function (dialog) {
           const fromChooser = dialog.getAttribute('data-booking-entry') === 'chooser';

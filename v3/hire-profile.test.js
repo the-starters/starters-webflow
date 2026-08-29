@@ -50,10 +50,27 @@ function compile(selector) {
     const tests = []
     let rest = part
 
-    const not = rest.match(/:not\(\.([\w-]+)\)/)
-    if (not) {
-      tests.push((el) => !el.classList.contains(not[1]))
-      rest = rest.replace(not[0], '')
+    // Every `:not(...)` is peeled off BEFORE the attribute scan below, which
+    // would otherwise read the excluded attribute as a required one — turning
+    // `[data-modal-trigger="x"]:not([data-booking-back])` into a selector that
+    // matches only the back control it is meant to skip.
+    for (const m of [...rest.matchAll(/:not\(([^)]*)\)/g)]) {
+      const inner = m[1].trim()
+      const attribute = inner.match(/^\[([\w-]+)(?:=(?:"([^"]*)"|([^\]]*)))?\]$/)
+      if (attribute) {
+        const name = attribute[1]
+        const want = attribute[2] !== undefined ? attribute[2] : attribute[3]
+        tests.push((el) =>
+          want === undefined
+            ? el.getAttribute(name) === null
+            : el.getAttribute(name) !== want,
+        )
+      } else if (/^\.[\w-]+$/.test(inner)) {
+        tests.push((el) => !el.classList.contains(inner.slice(1)))
+      } else {
+        throw new Error(`compile: unsupported :not(${inner})`)
+      }
+      rest = rest.replace(m[0], '')
     }
     for (const m of rest.matchAll(/\[([\w-]+)(?:=(?:"([^"]*)"|([^\]]*)))?\]/g)) {
       const name = m[1]
@@ -5283,6 +5300,71 @@ test('the booking dialog carries no entry stamp until something opens it', async
     'the arrow starts hidden, stamp or no stamp',
   )
   assert.equal(back.getAttribute('aria-hidden'), 'true')
+})
+
+test('the availability gate leaves the in-dialog back control alone', async () => {
+  // The calendar footer's back control carries the chooser's trigger name, so
+  // it now joins the set this gate sweeps. Stamping it unavailable would hand
+  // it straight to the guard stylesheet's display:none rule and hide the way
+  // back out for the rest of the visit.
+  const page = makePage()
+  const { back } = addBookingDialog(page)
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => null,
+    getConfigs: async () => [],
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(back.getAttribute('data-booking-trigger-unavailable'), null)
+  assert.equal(back.getAttribute('aria-disabled'), null)
+})
+
+test('a direct entry never clicks the in-dialog back control as its trigger', async () => {
+  // Document order decides which trigger the direct-entry lookup takes, and the
+  // back control is one reorder — or one earlier-rendered dialog — away from
+  // being first. Clicking it would close the booking dialog this call is trying
+  // to open, instead of opening the chooser.
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  booking.remove()
+  page.root.prepend(booking)
+  assert.equal(
+    page.root.querySelectorAll('[data-modal-trigger="popup-booking-main"]')[0],
+    back,
+    'the trap only means anything with the back control first in document order',
+  )
+
+  const clickOrder = []
+  back.click = () => { clickOrder.push('back') }
+  page.bookingButton.click = () => {
+    clickOrder.push('shell')
+    page.bookingDialog.open = true
+  }
+  page.freeModalCta.click = () => {
+    clickOrder.push('free')
+    page.bookingDialog.open = false
+  }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  await settle()
+
+  assert.deepEqual(clickOrder, ['shell', 'free'])
+  assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
 })
 
 test('ADR 0003: a logged-out card keeps its signup trigger and opens nothing', () => {

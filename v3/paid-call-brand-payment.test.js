@@ -584,6 +584,19 @@ test('shared call calendar renders dates and times and submits only the selected
 })
 
 /**
+ * A calendar mount inside a booking dialog — the surface the back control is
+ * allowed on. Bare containers model the other mounts this engine serves.
+ */
+function bookingMount() {
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking')
+  const container = new CalendarElement('div')
+  container.setAttribute('nylas-container', '')
+  dialog.appendChild(container)
+  return container
+}
+
+/**
  * Mounts the shared calendar against the element stub and hands back the
  * footer's parts by their `data-paid-calendar-element` role.
  */
@@ -593,7 +606,7 @@ async function mountFooterFixture(options = {}) {
     jQuery: global.jQuery,
     xanoAuthFetch: global.xanoAuthFetch,
   }
-  const container = options.container || new CalendarElement('div')
+  const container = options.container || bookingMount()
   const start =
     Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000) / 86400000) * 86400 + 12 * 60 * 60
   global.document = {
@@ -601,12 +614,15 @@ async function mountFooterFixture(options = {}) {
   }
   global.jQuery = undefined
   global.xanoAuthFetch = async () => response({
-    time_slots: [{ start_time: start, end_time: start + 15 * 60 }],
+    time_slots: options.slots === undefined
+      ? [{ start_time: start, end_time: start + 15 * 60 }]
+      : options.slots,
   })
   try {
     const mount = { container, config: { config_id: 'config_paid', grant_id: 'grant_test', duration: 15 }, async onConfirm() {} }
     if (options.confirmText) mount.confirmText = options.confirmText
     if (options.backText) mount.backText = options.backText
+    if (options.onConfirm) mount.onConfirm = options.onConfirm
     const result = await api.mountPaidCalendar(mount)
     const role = (name) => container.querySelectorAll('[data-paid-calendar-element]')
       .find((node) => node.getAttribute('data-paid-calendar-element') === name) || null
@@ -665,7 +681,7 @@ test('the Free flow gets the same footer with its own confirm label', async () =
   // One engine serves both flows: free-call-booking.js passes only confirmText
   // and reads the class contract off the same authored container, so the Free
   // footer has to come out of this mount identical but for the label.
-  const container = new CalendarElement('div')
+  const container = bookingMount()
   container.setAttribute('data-booking-confirm-class', 'button_main-wrap')
   container.setAttribute('data-booking-back-class', 'clickable-text-link')
   const { footer, back, confirm } = await mountFooterFixture({
@@ -681,7 +697,7 @@ test('the Free flow gets the same footer with its own confirm label', async () =
 })
 
 test('authored classes style the footer and no inline style is written', async () => {
-  const container = new CalendarElement('div')
+  const container = bookingMount()
   container.setAttribute('data-booking-footer-class', 'call-sched_button-group')
   container.setAttribute('data-booking-confirm-class', 'button_main-wrap is-primary')
   container.setAttribute('data-booking-back-class', 'clickable-text-link')
@@ -715,7 +731,7 @@ test('the unauthored footer keeps the engine fallback look and no class', async 
 })
 
 test('one authored control does not drag the others off their fallback', async () => {
-  const container = new CalendarElement('div')
+  const container = bookingMount()
   container.setAttribute('data-booking-confirm-class', 'button_main-wrap')
   const { footer, back, confirm } = await mountFooterFixture({ container })
 
@@ -748,7 +764,7 @@ test('the class contract reads the mount container before the booking dialog', a
 })
 
 test('an authored class list is applied verbatim and blank values fall back', async () => {
-  const container = new CalendarElement('div')
+  const container = bookingMount()
   container.setAttribute('data-booking-back-class', '  is-back   button_main-wrap  ')
   container.setAttribute('data-booking-confirm-class', '   ')
   assert.deepEqual(
@@ -760,6 +776,84 @@ test('an authored class list is applied verbatim and blank values fall back', as
   // Whitespace is not an authored class list, so the confirm keeps its look.
   assert.equal(confirm.getAttribute('class'), null)
   assert.equal(confirm.style.background, '#1f211d')
+})
+
+test('a calendar mounted outside the booking dialog gets no back control', async () => {
+  // This engine also mounts the dashboard's reschedule calendar
+  // (dashboard-call-actions.js -> mountRescheduleCalendar), inside
+  // `popup-booking-info`. There is no Free/Paid chooser to hand off to there
+  // and no guard stylesheet to hide the control, so a back rendered on that
+  // surface would be an always-visible button that closes the reschedule
+  // dialog and lands the visitor nowhere.
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  host.setAttribute('booking-reschedule-calendar', '')
+  reschedule.appendChild(host)
+
+  const away = await mountFooterFixture({ container: host, confirmText: 'Propose new time' })
+  assert.equal(away.back, null)
+  assert.equal(away.confirm.textContent, 'Propose new time')
+  assert.deepEqual(away.footer.children, [away.confirm])
+  assert.equal(host.querySelectorAll('[data-booking-back]').length, 0)
+
+  // The other booking marker still counts as the booking surface: the Paid
+  // controller resolves its mount through `[popup-booking]`, not the dialog's
+  // data-modal-target.
+  const popup = new CalendarElement('div')
+  popup.setAttribute('popup-booking', '')
+  const mount = new CalendarElement('div')
+  mount.setAttribute('nylas-container', '')
+  popup.appendChild(mount)
+  const inside = await mountFooterFixture({ container: mount })
+  assert.equal(inside.back.getAttribute('data-booking-back'), '')
+})
+
+test('an empty calendar still offers the way back to the chooser', async () => {
+  // No times is exactly when a visitor wants the other kind of call, so the
+  // footer has to survive the empty-state early return.
+  const { container, footer, back, confirm, status } = await mountFooterFixture({ slots: [] })
+
+  assert.equal(container.getAttribute('data-paid-calendar-state'), 'empty')
+  assert.equal(status.textContent, 'No available times were found in the next 14 days.')
+  assert.equal(confirm, null, 'there is nothing to request, so no Request button')
+  assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
+  assert.deepEqual(footer.children, [back])
+  assert.equal(container.children.indexOf(footer), 1)
+})
+
+test('an empty calendar off the booking surface renders no footer at all', async () => {
+  const host = new CalendarElement('div')
+  const { container, footer, back } = await mountFooterFixture({ container: host, slots: [] })
+  assert.equal(back, null)
+  assert.equal(footer, null)
+  assert.equal(container.children.length, 1)
+})
+
+test('back is disabled while a booking request is in flight', async () => {
+  // Back closes the dialog. Live during the request, one stray click wipes the
+  // surface the confirmation was about to land on while the booking still goes
+  // through server-side — a call the visitor never sees.
+  let release
+  const { footer, back, confirm } = await mountFooterFixture({
+    onConfirm: () => new Promise((resolve) => { release = resolve }),
+  })
+  const slot = footer.parentElement.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+    .children[0]
+
+  slot.listeners.click()
+  assert.equal(confirm.disabled, false)
+  assert.equal(back.disabled, false)
+
+  const pending = confirm.listeners.click()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(confirm.disabled, true)
+  assert.equal(back.disabled, true, 'back must not close the dialog mid-request')
+
+  release()
+  await pending
+  assert.equal(back.disabled, false, 'and it has to come back after the request')
 })
 
 test('a synthesized booking close never lands on the rendered back control', async () => {

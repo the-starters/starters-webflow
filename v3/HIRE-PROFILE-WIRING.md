@@ -301,16 +301,36 @@ closed, so a later opener that does not stamp cannot inherit the previous
 entry. A close-complete event that arrives after the dialog has already reopened
 leaves the fresh stamp alone.
 
-`[data-booking-back]` is **Jerico's to author**, inside the booking dialog. The
-guard stylesheet keyed on `data-booking-entry` shows it only when the entry
-stamp reads `chooser` and hides it otherwise, so the arrow cannot flash before
-the stamp lands. The script owns only `aria-hidden`, writes it when the state
-changes, and never writes `style.display`. The script never creates the element,
-and a booking dialog without one is a silent no-op. The element combines the
-close marker with a trigger naming `popup-booking-main` — the cross-modal
-hand-off pattern the modal embed's trigger precedence deliberately preserves —
-plus this marker attribute, and reuses the existing unpublished link-affordance
-style rather than a new class.
+`[data-booking-back]` is **built by the shared calendar engine**
+([`paid-call-brand-payment.js`](paid-call-brand-payment.js), `mountPaidCalendar`),
+in the footer row it renders beside the Request call button. It has to be:
+the calendar mounts into `[nylas-container]`, which every reset of the booking
+surface clears, so an authored element inside it would not survive the first
+open. The engine builds it only when the mount resolves inside the booking
+dialog, so the dashboard's reschedule calendar — the same engine, a different
+dialog — does not get one. Jerico authors the CSS classes, not the element:
+`data-booking-confirm-class`, `data-booking-back-class` and the optional
+`data-booking-footer-class` on `[nylas-container]` are applied verbatim, and a
+control with authored classes gets no inline styles at all.
+
+This script still owns *when* the control is on screen. The guard stylesheet
+keyed on `data-booking-entry` shows it only when the entry stamp reads `chooser`
+and hides it otherwise, so it cannot flash before the stamp lands; the script
+owns only `aria-hidden`, writes it when the state changes, and never writes
+`style.display`. The mount is a late-node path, so the body MutationObserver's
+`syncBookingBackControls()` is what stamps the freshly rendered control. An
+absent control is still a silent no-op, which is what a page with no calendar
+mounted looks like. The control combines the close marker with a trigger naming
+`popup-booking-main` — the cross-modal hand-off pattern the modal embed's
+trigger precedence deliberately preserves — plus this marker attribute.
+
+Because that trigger name is now also carried by a script-rendered control
+inside the dialog, the two document-wide passes over
+`[data-modal-trigger="popup-booking-main"]` — the availability gate and the
+direct-entry trigger lookup — exclude `[data-booking-back]`. Without that, the
+availability gate could stamp the back control unavailable (the guard stylesheet
+would then hide it for good), and the direct-entry lookup could click it instead
+of a real chooser opener.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
