@@ -383,7 +383,7 @@
     window.__tsSchedulingAuthBridgeOwner = 'scheduling-auth'
     window.__tsSchedulingAuthBridgePending = false
     wireAuthChanges()
-    console.info('[scheduling-auth] installed on V3 Webflow staging')
+    if (isStagingHost) console.info('[scheduling-auth] installed on V3 Webflow staging')
   }
 
   installBridge()

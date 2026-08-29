@@ -368,5 +368,5 @@
   installSchedulerIdentityObserver()
   installBookedEventSuccessGuard()
   setStatus('ready')
-  console.info('[scheduling-v3-stage] installed')
+  if (activeHost === STAGING_HOST) console.info('[scheduling-v3-stage] installed')
 })()
