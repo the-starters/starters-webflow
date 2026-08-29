@@ -3382,18 +3382,43 @@ flowchart TD
    controls cannot be authored inside it and are built here instead: the
    confirm button, and — only when the mount resolves inside
    `[data-modal-target="popup-booking"]` — a back control beside it that hands
-   off to the Free/Paid chooser. Their CSS classes are Designer-owned through
-   three optional attributes read from the mount and then from the booking
-   dialog: `data-booking-confirm-class`, `data-booking-back-class` and
-   `data-booking-footer-class`. Values are space-separated class names applied
-   verbatim, and a button with authored classes is given no inline appearance
-   styles, so a Designer stylesheet is never outranked. The footer always sets
-   a 16px column gap between Back and the request button. With no attributes
-   authored each control keeps a plain built-in fallback look. Off the booking
-   surface — the dashboard's reschedule calendar mounts this same engine —
-   there is no back control and no footer, and the confirm button goes straight
-   into the calendar shell as it always did. Display and `aria-hidden` on the
-   back control belong to `hire-profile.js`, never to this file.
+   off to the Free/Paid chooser.
+
+   On that surface both controls are rendered as the **site's own button
+   component** (`.button_main-wrap` > `.clickable_wrap` > `button.clickable_btn`
+   plus `.button_main-element` > `.button_main-text`), with `data-button-theme`
+   and `data-button-style` on the wrap: a black primary confirm and a black
+   secondary "Back". Reproducing that markup is the entire styling contract —
+   the fill, colour, border and hover come from the global
+   `[data-button-theme][data-button-style]` rules and the typography from
+   `.button_main-element`, so the buttons match every other button on the page
+   without this file naming a single colour or font. No size variant class is
+   applied, because the default size is the absence of one. The interactive
+   element is the inner `.clickable_btn`; the markers, modal attributes and the
+   disabled theme swap go on the wrap.
+
+   Because the component supersedes them, `data-booking-confirm-class` and
+   `data-booking-back-class` are **ignored on the booking surface**, and are
+   harmless if left authored. The optional `data-booking-footer-class` keeps its
+   meaning everywhere: authored, it is applied to the footer row verbatim and
+   the engine places nothing; unauthored, the row is a full-width flex row and
+   the two wraps share it equally, which is also what lets the confirm fill the
+   whole row on a direct entry where the back control is hidden. Every footer
+   row is given a 16px column gap between Back and the request button; the
+   fallback row's own 12px flex gap supersedes it on that row.
+
+   The calendar is two columns from 768px up — month on the left, times, buttons
+   and status stacked on the right — and stays stacked below that. A media query
+   cannot be an inline style, so this is one id-guarded `<style>` injected into
+   the head once per document, with every rule scoped under
+   `[data-modal-target="popup-booking"]`.
+
+   Off the booking surface — the dashboard's reschedule calendar mounts this
+   same engine — nothing changed: no back control, no footer, no injected
+   stylesheet, and a plain single-element confirm that still reads
+   `data-booking-confirm-class` and otherwise keeps its inline fallback look.
+   Display and `aria-hidden` on the back control belong to `hire-profile.js`,
+   never to this file.
 3. When the Brand confirms a slot, read payment readiness. A canonical
    `bookable=true` result can continue directly to the booking command.
 4. If no ready payment method exists, retain that exact selected slot and open

@@ -515,18 +515,31 @@
   /* ---- the calendar footer's class contract ----
      The calendar mount is wiped on every lifecycle reset, so nothing authored
      can live inside it and the footer's two controls have to be built here.
-     That used to mean their look was hardcoded in this file, which is why the
-     confirm button never matched the site's button styling. Instead of guessing
-     at the design system from JavaScript, the engine reads the class names off
-     the nearest authored surface and applies them verbatim: the styling stays
-     in the Designer, where it can change without a script release.
+
+     ON THE BOOKING SURFACE the two controls are now rendered as the site's own
+     button component — the same wrapper/overlay/label markup the Designer
+     produces — so they inherit the real design system through the global
+     `[data-button-theme]` / `[data-button-style]` attribute rules and
+     `.button_main-element`'s typography. Because the component supersedes them,
+     `data-booking-confirm-class` and `data-booking-back-class` are IGNORED
+     there. Both are harmless if left authored: nothing reads them on that
+     surface, and no warning is raised.
+
+     `data-booking-footer-class` keeps its full meaning on every surface. When it
+     is authored the row's class is applied verbatim and the engine places
+     nothing; when it is not, the engine's own fallback row is used.
+
+     OFF the booking surface — the dashboard's reschedule calendar mounts this
+     same engine — nothing changed at all: no footer, no back control, and a
+     plain single-element confirm that still reads `data-booking-confirm-class`.
+     That surface has no design-system context to inherit and no guard
+     stylesheet, so it keeps the look it shipped with.
 
      Read order is container first, then the dialog the container sits in, so a
      page with several booking surfaces can style one of them differently
      without affecting the rest. */
   const FOOTER_CLASS_ATTRIBUTE = 'data-booking-footer-class'
   const CONFIRM_CLASS_ATTRIBUTE = 'data-booking-confirm-class'
-  const BACK_CLASS_ATTRIBUTE = 'data-booking-back-class'
 
   /**
    * The booking dialog this calendar is mounted inside, or null.
@@ -548,6 +561,64 @@
   function bookingSurfaceFor(container) {
     if (!container || typeof container.closest !== 'function') return null
     return container.closest(BOOKING_SURFACE_SELECTOR)
+  }
+
+  /* ---- the calendar's two-column layout ----
+     Wide enough, the month picker reads as one block and the times, the buttons
+     and the status line as another, so they belong side by side rather than in
+     one tall column the visitor has to scroll to reach the confirm. Narrow, the
+     stacked order is already the right one — month, times, buttons — so the
+     mobile case needs no rules at all and gets none.
+
+     This has to be a stylesheet rather than inline styles because it is a media
+     query, and inline styles cannot carry one. It follows the same shape as the
+     profile script's guard rule: one id-guarded <style> in the head, injected
+     once per document.
+
+     Every rule is scoped to the booking surface. The dashboard's reschedule
+     calendar mounts this same engine into a different dialog and keeps its
+     inline single-column grid untouched — that surface was never part of this
+     change and its shell must stay byte-for-byte what it was.
+
+     The breakpoint is the site's own: its stylesheets treat 767px and below as
+     mobile, so the two-column rules start at 768px.
+
+     No `!important` anywhere, and none is needed: the shell's inline styles set
+     `display`, `gap` and `width`, and nothing below re-declares those three. */
+  const CALENDAR_LAYOUT_STYLE_ID = 'starters-booking-calendar-layout'
+
+  function ensureBookingCalendarLayout(document) {
+    if (
+      !document ||
+      typeof document.getElementById !== 'function' ||
+      typeof document.createElement !== 'function'
+    ) return
+    if (document.getElementById(CALENDAR_LAYOUT_STYLE_ID)) return
+    const scope = BOOKING_SURFACE_SELECTOR + ' [data-paid-calendar-element='
+    const style = document.createElement('style')
+    style.setAttribute('id', CALENDAR_LAYOUT_STYLE_ID)
+    style.textContent = [
+      '@media (min-width:768px){',
+      scope + '"shell"]{',
+      'grid-template-columns:minmax(0,1fr) minmax(0,1fr);',
+      'grid-template-areas:"month times" "month footer" "month status";',
+      // The month spans all three rows, so without explicit row sizing its
+      // height is shared out among them and the buttons stretch to fill a row
+      // far taller than a button. Measured: 84px tall against the site's 38px.
+      // `min-content` pins the times and the footer to their own height and
+      // lets the last row absorb whatever the month has left over.
+      'grid-template-rows:min-content min-content 1fr;',
+      'align-content:start}',
+      // The month keeps its natural height instead of stretching down the
+      // three rows it spans.
+      scope + '"month"]{grid-area:month;align-self:start}',
+      scope + '"times"]{grid-area:times}',
+      scope + '"footer"]{grid-area:footer}',
+      scope + '"status"]{grid-area:status}',
+      '}',
+    ].join('')
+    const host = document.head || document.documentElement
+    if (host && typeof host.appendChild === 'function') host.appendChild(style)
   }
 
   function authoredClassSurfaces(container) {
@@ -581,25 +652,92 @@
     return true
   }
 
-  /** The back control's markup contract, applied to a fresh button element. */
-  function applyAuthoredBack(back, container, settings) {
-    back.type = 'button'
-    back.textContent = String((settings && settings.backText) || '← Back')
-    back.setAttribute('data-booking-back', '')
-    back.setAttribute('data-modal-close', '')
-    back.setAttribute('data-modal-trigger', 'popup-booking-main')
-    back.setAttribute('data-paid-calendar-element', 'back')
-    if (!applyAuthoredClasses(back, authoredClassList(container, BACK_CLASS_ATTRIBUTE))) {
-      applyStyles(back, {
-        padding: '12px 16px',
-        border: '1px solid transparent',
-        borderRadius: '6px',
-        background: 'transparent',
-        color: '#1f211d',
-        cursor: 'pointer',
-      })
-    }
-    return back
+  /* ---- the site's button component ----
+     Copied structurally from the published page, where every button is this
+     shape. The look is not ours to write: the theme fill, text colour and
+     border come from the global `[data-button-theme][data-button-style]` rules,
+     and the padding, uppercase, size and weight come from
+     `.button_main-element`. Reproducing the markup is therefore the whole job —
+     an inline style here would be the old hardcoded look wearing a new class
+     name, and a missing wrapper is a button with the wrong typography.
+
+     Two structural details are load-bearing:
+
+     - The real interactive element is the `.clickable_btn` overlaid INSIDE the
+       wrap, not the wrap itself. `.button_main-element` is `pointer-events:
+       none`, so the label never receives the click. Handlers and `disabled`
+       belong on the inner button; markers and modal attributes belong on the
+       wrap, which is what `closest()` finds from the click target.
+     - No size variant class is applied. The Designer's default size is the
+       absence of a `w-variant-*` / `.small` / `.large-*` class on
+       `.button_main-element`, so adding nothing IS asking for the default. */
+  function buildSiteButton(document, label, style) {
+    const wrap = document.createElement('div')
+    wrap.setAttribute('data-button-theme', 'black')
+    wrap.setAttribute('data-button-style', style)
+    wrap.setAttribute('class', 'button_main-wrap')
+
+    const clickableWrap = document.createElement('div')
+    clickableWrap.setAttribute('class', 'clickable_wrap')
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.setAttribute('class', 'clickable_btn')
+    clickableWrap.appendChild(button)
+
+    const element = document.createElement('div')
+    element.setAttribute('class', 'button_main-element')
+    const text = document.createElement('div')
+    text.setAttribute('class', 'button_main-text')
+    text.textContent = String(label)
+    const line = document.createElement('div')
+    line.setAttribute('class', 'button_main-line')
+    element.appendChild(text)
+    element.appendChild(line)
+
+    wrap.appendChild(clickableWrap)
+    wrap.appendChild(element)
+    return { wrap, button, text }
+  }
+
+  /**
+   * The theme half of a component button's enabled/disabled state.
+   *
+   * `disabled` on the inner button stops the click; the theme swap is what the
+   * visitor sees, and it is how every authored disabled button on the site is
+   * expressed. Doing only one of the two leaves a dead-looking live button or a
+   * live-looking dead one.
+   */
+  function setSiteButtonDisabled(control, disabled) {
+    if (!control) return
+    control.button.disabled = Boolean(disabled)
+    control.wrap.setAttribute('data-button-theme', disabled ? 'disabled' : 'black')
+  }
+
+  /**
+   * The back control: the site's secondary button, carrying the markers and
+   * modal attributes on its WRAP.
+   *
+   * The wrap is the marked node because that is what the modal embed resolves —
+   * it reads `event.target.closest('[data-modal-close]')` and
+   * `closest("[data-modal-trigger='…']")`, both of which walk up from the inner
+   * `.clickable_btn` the visitor actually presses. It is also the node the
+   * profile script's guard stylesheet hides and writes `aria-hidden` on, so the
+   * whole component disappears together rather than leaving an empty wrapper.
+   *
+   * The label is plain "Back". The arrow was a hand-drawn affordance from when
+   * this was an unstyled text button; the component carries its own affordance.
+   */
+  function buildBackControl(document, settings) {
+    const control = buildSiteButton(
+      document,
+      (settings && settings.backText) || 'Back',
+      'secondary',
+    )
+    control.wrap.setAttribute('data-booking-back', '')
+    control.wrap.setAttribute('data-modal-close', '')
+    control.wrap.setAttribute('data-modal-trigger', 'popup-booking-main')
+    control.wrap.setAttribute('data-paid-calendar-element', 'back')
+    return control
   }
 
   /**
@@ -784,9 +922,12 @@
        go back to and no guard stylesheet to hide the control: a back rendered
        there would be an always-visible button that closes the reschedule
        dialog and lands the visitor nowhere. */
-    const back = bookingSurfaceFor(container)
-      ? applyAuthoredBack(global.document.createElement('button'), container, settings)
+    const onBookingSurface = Boolean(bookingSurfaceFor(container))
+    if (onBookingSurface) ensureBookingCalendarLayout(global.document)
+    const backControl = onBookingSurface
+      ? buildBackControl(global.document, settings)
       : null
+    const back = backControl ? backControl.wrap : null
 
     /* No back control means no row to put it in, and the confirm button goes
        straight into the grid shell. That preserves the dashboard reschedule
@@ -803,29 +944,40 @@
         authoredClassList(container, FOOTER_CLASS_ATTRIBUTE),
       )
       // Keep the two actions visually distinct on every booking surface. This
-      // is layout placement, so it applies to both the authored and fallback
-      // rows without changing either button's Designer-owned appearance.
+      // is layout placement, so it applies to every row without changing either
+      // button's Designer-owned appearance. The engine's own fallback row below
+      // declares a flex `gap`, which supersedes this on that row; an authored
+      // row places its own children and this is the only spacing it gets.
       footer.style.columnGap = '16px'
       if (!footerIsAuthored) {
-        // The confirm button used to be a grid item in the shell and stretched
-        // to full width. The fallback row has to keep doing that for it, and it
-        // has to do it from the row: `data-booking-footer-class` is optional, so
-        // the likely shape is an authored confirm — which by contract carries no
-        // inline styles of its own — inside this row.
+        // Two component buttons sharing the row equally, each filling its half.
+        // `data-booking-footer-class` is optional, so this fallback row is the
+        // likely production shape and it has to look finished on its own.
         //
-        // The two `gridColumn` writes below are the one exception to "an
-        // authored control gets no inline styles", and they are PLACEMENT in
-        // this row, never appearance. They are written only when this fallback
-        // row is the one in use; an authored footer places its own children.
-        // Explicit columns are what survives the back control being hidden on a
-        // direct entry: without them the confirm slides into the `auto` column
-        // and shrinks to its label.
+        // The `flex` and `minWidth` writes on the two wraps below are the one
+        // exception to "a component button gets no inline styles from here", and
+        // they are PLACEMENT in this row, never appearance. They are written
+        // only when this fallback row is in use; an authored footer places its
+        // own children.
+        //
+        // Flex rather than fixed columns is what survives the back control being
+        // hidden on a direct entry: `display:none` takes it out of the layout
+        // entirely, and the confirm's `flex: 1 1 0` then fills the whole row
+        // instead of being stranded in a second column beside an empty first.
         applyStyles(footer, {
-          display: 'grid',
-          gridTemplateColumns: 'auto minmax(0, 1fr)',
-          alignItems: 'center',
+          display: 'flex',
+          // Equal heights, which matters because the two labels are different
+          // lengths and the longer one wraps to a second line in a narrow row.
+          // This is only safe because the row is sized to its own content: the
+          // shell's `grid-template-rows:min-content` is what stops a stretched
+          // button growing to a row taller than a button (measured at 84px
+          // against the site's 38px before that was pinned). Change one of
+          // those two and re-measure the other.
+          alignItems: 'stretch',
+          gap: '12px',
+          width: '100%',
         })
-        back.style.gridColumn = '1'
+        applyStyles(back, { flex: '1 1 0', minWidth: '0' })
       }
       footer.appendChild(back)
     }
@@ -897,30 +1049,57 @@
       gap: '8px',
     })
     times.setAttribute('data-paid-calendar-element', 'times')
-    const confirm = global.document.createElement('button')
-    confirm.type = 'button'
-    confirm.disabled = true
-    confirm.textContent = String(settings.confirmText || 'Request paid call')
-    confirm.setAttribute('data-paid-calendar-element', 'confirm')
-    if (!applyAuthoredClasses(confirm, authoredClassList(container, CONFIRM_CLASS_ATTRIBUTE))) {
-      applyStyles(confirm, {
-        padding: '12px 16px',
-        border: '1px solid #1f211d',
-        borderRadius: '6px',
-        background: '#1f211d',
-        color: '#ffffff',
-        cursor: 'pointer',
-      })
+    const confirmLabel = String(settings.confirmText || 'Request paid call')
+    /* On the booking surface the confirm is the site's primary button. Off it,
+       the dashboard's reschedule calendar keeps the plain element and the
+       authored-class contract it shipped with, unchanged. */
+    const confirmControl = onBookingSurface
+      ? buildSiteButton(global.document, confirmLabel, 'primary')
+      : null
+    let confirm
+    let confirmButton
+    if (confirmControl) {
+      confirm = confirmControl.wrap
+      confirmButton = confirmControl.button
+    } else {
+      confirm = global.document.createElement('button')
+      confirm.type = 'button'
+      confirm.textContent = confirmLabel
+      confirmButton = confirm
+      if (!applyAuthoredClasses(confirm, authoredClassList(container, CONFIRM_CLASS_ATTRIBUTE))) {
+        applyStyles(confirm, {
+          padding: '12px 16px',
+          border: '1px solid #1f211d',
+          borderRadius: '6px',
+          background: '#1f211d',
+          color: '#ffffff',
+          cursor: 'pointer',
+        })
+      }
     }
+    confirm.setAttribute('data-paid-calendar-element', 'confirm')
+
+    /**
+     * The confirm's enabled state, in the one place that owns both halves of
+     * it. On the component the visitor reads the theme, not the `disabled`
+     * property; off the booking surface there is no theme to swap and this is
+     * exactly the `confirm.disabled = …` line it replaced.
+     */
+    function setConfirmDisabled(disabled) {
+      if (confirmControl) setSiteButtonDisabled(confirmControl, disabled)
+      else confirmButton.disabled = Boolean(disabled)
+    }
+    setConfirmDisabled(true)
+
     if (footer) {
-      if (!footerIsAuthored) confirm.style.gridColumn = '2'
+      if (!footerIsAuthored) applyStyles(confirm, { flex: '1 1 0', minWidth: '0' })
       footer.appendChild(confirm)
     }
 
     function clearSelection() {
       selectedSlot = null
       onSelectionChange(null)
-      confirm.disabled = true
+      setConfirmDisabled(true)
       status.textContent = ''
       Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (candidate) {
         candidate.setAttribute('aria-pressed', 'false')
@@ -960,7 +1139,7 @@
           })
           selectedSlot = slot
           onSelectionChange(slot)
-          confirm.disabled = false
+          setConfirmDisabled(false)
           status.textContent = ''
         })
         times.appendChild(button)
@@ -1027,16 +1206,16 @@
       renderCalendar()
     })
 
-    confirm.addEventListener('click', async function () {
-      if (!selectedSlot || confirm.disabled || confirmationPending) return
+    confirmButton.addEventListener('click', async function () {
+      if (!selectedSlot || confirmButton.disabled || confirmationPending) return
       confirmationPending = true
-      confirm.disabled = true
+      setConfirmDisabled(true)
       timezoneControl.select.disabled = true
       // Back sits in the same row as the button that was just pressed, and it
       // closes the dialog. Left live, one stray click mid-request wipes the
       // surface the confirmation was about to appear on, while the booking
       // still goes through server-side — a call the visitor never sees.
-      if (back) back.disabled = true
+      if (backControl) backControl.button.disabled = true
       Array.from(calendarHost.querySelectorAll('[data-paid-calendar-date]')).forEach(function (button) {
         button.disabled = true
       })
@@ -1068,9 +1247,9 @@
           Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (button) {
             button.disabled = false
           })
-          confirm.disabled = !selectedSlot
+          setConfirmDisabled(!selectedSlot)
           timezoneControl.select.disabled = false
-          if (back) back.disabled = false
+          if (backControl) backControl.button.disabled = false
         }
       }
     })
@@ -1803,6 +1982,7 @@
     authenticatedRequest,
     authenticatedPost,
     authoredClassList,
+    ensureBookingCalendarLayout,
     bookingPayload,
     bookingRequestFingerprint,
     canonicalPaidPrice,

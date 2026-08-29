@@ -310,10 +310,36 @@ the calendar mounts into `[nylas-container]`, which every reset of the booking
 surface clears, so an authored element inside it would not survive the first
 open. The engine builds it only when the mount resolves inside the booking
 dialog, so the dashboard's reschedule calendar — the same engine, a different
-dialog — does not get one. Jerico authors the CSS classes, not the element:
-`data-booking-confirm-class`, `data-booking-back-class` and the optional
-`data-booking-footer-class` on `[nylas-container]` are applied verbatim, and a
-control with authored classes gets no inline styles at all.
+dialog — does not get one.
+
+Both footer controls are rendered as the **site's own button component** —
+`.button_main-wrap` > `.clickable_wrap` > `button.clickable_btn`, alongside
+`.button_main-element` > `.button_main-text` — carrying `data-button-theme` and
+`data-button-style` on the wrap. Back is the black secondary and reads "Back";
+the confirm is the black primary. That markup is the whole styling contract: the
+fill, text colour, border and hover come from the global
+`[data-button-theme][data-button-style]` rules, and the padding, uppercase, size
+and weight from `.button_main-element`. No size variant class is applied,
+because the Designer's default size is the absence of one.
+
+Because the component supersedes them, **`data-booking-confirm-class` and
+`data-booking-back-class` are ignored on this surface.** Leaving them authored
+is harmless — nothing reads them here and no warning is raised. The optional
+`data-booking-footer-class` keeps its full meaning: authored, its class is
+applied to the footer row verbatim and the engine places nothing; unauthored,
+the engine's own row is a full-width flex row with the two wraps sharing it
+equally. The only inline styles the engine ever writes on a control are that
+row's placement (`flex`/`min-width`), never appearance.
+
+The markers and modal attributes sit on the **wrap**, not the inner button. That
+is the node the modal embed resolves — it reads `closest()` from the click
+target, and the click lands on the overlaid `.clickable_btn` — and it is the
+node this script hides and writes `aria-hidden` on, so the component disappears
+whole.
+
+Off the booking surface nothing changed: the reschedule calendar still gets a
+plain single-element confirm that reads `data-booking-confirm-class` and falls
+back to its own inline styles.
 
 This script still owns *when* the control is on screen. The guard stylesheet
 keyed on `data-booking-entry` shows it only when the entry stamp reads `chooser`
