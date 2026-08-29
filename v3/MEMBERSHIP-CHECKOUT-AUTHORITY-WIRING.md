@@ -18,6 +18,25 @@ Load this GitHub-owned controller once on the V3 `/` and `/quiz-results` pages:
 The controller uses the existing native Memberstack `data-ms-price:add` controls.
 It does not create or replace Webflow form or checkout markup.
 
+## Runtime allowlists
+
+The controller boots only on these V3 hosts:
+
+- `thestarters.com`
+- `www.thestarters.com`
+- `the-starters-3-0.webflow.io`
+
+It supports `/` and `/quiz-results`. It removes trailing slashes before it
+checks the route, so `/quiz-results/` uses the canonical `/quiz-results`
+registrar value. It gates only these V3 Memberstack price IDs:
+
+- `prc_premium-monthly--fn1ae0qjj`
+- `prc_paid-annual-2o5f040u`
+
+The controller does not attach a click listener on any other host or route. On
+a supported page, it leaves a non-allowlisted price control to its existing
+owner without sending a registrar request.
+
 ## Contract
 
 Before Memberstack opens Stripe checkout, the controller:
