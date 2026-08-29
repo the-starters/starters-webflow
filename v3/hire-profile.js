@@ -1857,10 +1857,10 @@
   }
 
   /* RATE SERVICE CARDS (all viewers)
-     The Services section ships only call cards; the Freelance/Retainer
-     rates exist only in the hero tout. Build native-looking rate cards
-     from the public search record until the Designer adds CMS-bound
-     cards (headless APIs cannot author designed components). */
+     Build the Freelance card from the public search record because its rate
+     exists only in the hero tout. Also build the Retainer fallback while the
+     authored canonical wrapper is unresolved or errors. A resolved canonical
+     result removes that fallback, including when it is empty. */
   (async function () {
       try {
           const record = await getPublicStarterRecord();
