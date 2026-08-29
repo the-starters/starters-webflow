@@ -547,23 +547,17 @@ test('shared call calendar renders dates and times and submits only the selected
     })
     assert.equal(result.slots.length, 3)
     assert.equal(container.getAttribute('data-paid-calendar-state'), 'ready')
-    // The calendar has no timezone picker, so it must SAY which clock the
-    // times use (Kaeser QA B4).
-    const zoneNote = container.querySelectorAll('[data-paid-calendar-element]')
-      .find((node) => node.getAttribute('data-paid-calendar-element') === 'timezone')
-    assert.ok(zoneNote, 'timezone note is rendered')
-    assert.match(zoneNote.textContent, /^Times shown in .+/)
-    assert.ok(
-      zoneNote.textContent.includes(Intl.DateTimeFormat().resolvedOptions().timeZone),
-      'timezone note names the detected zone',
-    )
     const timeButtons = container.querySelectorAll('[data-paid-calendar-slot]')
     const dateButtons = container.querySelectorAll('[data-paid-calendar-date]')
     const confirm = container.querySelectorAll('[data-paid-calendar-element]')
       .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
+    const timezone = container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === 'timezone')
     assert.equal(timeButtons.length, 2)
     assert.equal(dateButtons.length, 2)
     assert.equal(confirm.textContent, 'Request free call')
+    assert.equal(timezone.value, result.timezone)
+    assert.equal(timezone.getAttribute('aria-label'), 'Timezone')
     assert.equal(confirm.disabled, true)
     assert.deepEqual(selections, [null])
     timeButtons[1].listeners.click()
@@ -586,6 +580,116 @@ test('shared call calendar renders dates and times and submits only the selected
       end: (secondStart + 15 * 60) * 1000,
       timezone: result.timezone,
     })
+  } finally {
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
+test('timezone changes regroup dates, clear selection, and submit the selected timezone', async () => {
+  const previous = {
+    document: global.document,
+    jQuery: global.jQuery,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const container = new CalendarElement('div')
+  const selections = []
+  const submissions = []
+  const utcDay = Math.floor((Date.now() + 3 * 86400000) / 86400000) * 86400000
+  const early = Math.floor((utcDay + 30 * 60000) / 1000)
+  const later = Math.floor((utcDay + 12.5 * 3600000) / 1000)
+  global.document = {
+    createElement(tagName) { return new CalendarElement(tagName) },
+  }
+  global.jQuery = undefined
+  global.xanoAuthFetch = async () => response({
+    time_slots: [
+      { start_time: early, end_time: early + 15 * 60 },
+      { start_time: later, end_time: later + 15 * 60 },
+    ],
+  })
+
+  try {
+    const result = await api.mountPaidCalendar({
+      container,
+      config: { config_id: 'config_paid', grant_id: 'grant_test', duration: 15 },
+      initialTimezone: 'UTC',
+      timezones: ['UTC', 'Pacific/Honolulu'],
+      onSelectionChange(slot) { selections.push(slot) },
+      async onConfirm(slot) { submissions.push(slot) },
+    })
+    const role = (name) => container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === name)
+    const timezone = role('timezone')
+    const confirm = role('confirm')
+
+    assert.equal(container.querySelectorAll('[data-paid-calendar-date]').length, 1)
+    assert.equal(container.querySelectorAll('[data-paid-calendar-slot]').length, 2)
+    assert.deepEqual(timezone.children.map((option) => option.value), ['UTC', 'Pacific/Honolulu'])
+
+    container.querySelectorAll('[data-paid-calendar-slot]')[0].listeners.click()
+    assert.equal(confirm.disabled, false)
+    timezone.value = 'Pacific/Honolulu'
+    timezone.listeners.change()
+
+    assert.equal(result.timezone, 'Pacific/Honolulu')
+    assert.equal(container.querySelectorAll('[data-paid-calendar-date]').length, 2)
+    assert.equal(container.querySelectorAll('[data-paid-calendar-slot]').length, 1)
+    assert.equal(confirm.disabled, true)
+    assert.equal(selections.at(-1), null)
+
+    container.querySelectorAll('[data-paid-calendar-slot]')[0].listeners.click()
+    await confirm.listeners.click()
+    assert.equal(submissions.length, 1)
+    assert.equal(submissions[0].timezone, 'Pacific/Honolulu')
+  } finally {
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
+test('timezone changes rebuild the production jQuery datepicker', async () => {
+  const previous = {
+    document: global.document,
+    jQuery: global.jQuery,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const container = new CalendarElement('div')
+  const calls = []
+  const start = Math.floor((Date.now() + 3 * 86400000) / 1000)
+  global.document = {
+    createElement(tagName) { return new CalendarElement(tagName) },
+  }
+  const jQuery = function () {
+    return {
+      datepicker(command, option, value) {
+        calls.push({ command, option, value })
+      },
+    }
+  }
+  jQuery.fn = { datepicker() {} }
+  global.jQuery = jQuery
+  global.xanoAuthFetch = async () => response({
+    time_slots: [{ start_time: start, end_time: start + 15 * 60 }],
+  })
+
+  try {
+    await api.mountPaidCalendar({
+      container,
+      config: { config_id: 'config_paid', grant_id: 'grant_test', duration: 15 },
+      initialTimezone: 'UTC',
+      timezones: ['UTC', 'America/New_York'],
+      async onConfirm() {},
+    })
+    const timezone = container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === 'timezone')
+    timezone.value = 'America/New_York'
+    timezone.listeners.change()
+
+    assert.equal(calls.filter(({ command }) => typeof command === 'object').length, 2)
+    assert.equal(calls.filter(({ command }) => command === 'destroy').length, 1)
   } finally {
     global.document = previous.document
     global.jQuery = previous.jQuery
@@ -662,7 +766,7 @@ test('the calendar footer puts Back beside the confirm control', async () => {
   assert.equal(shell.children.indexOf(footer), 3)
   assert.deepEqual(
     shell.children.map((child) => child.getAttribute('data-paid-calendar-element')),
-    ['month', 'times', 'timezone', 'footer', 'status'],
+    ['timezone-control', 'month', 'times', 'footer', 'status'],
   )
   assert.equal(status.getAttribute('data-paid-calendar-element'), 'status')
 

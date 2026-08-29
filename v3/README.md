@@ -3371,6 +3371,11 @@ flowchart TD
    dates shown. An empty calendar omits the note. The selected slot is advisory
    only.
 
+   The calendar timezone dropdown defaults to the visitor's browser timezone.
+   Changing it clears the selected slot, regroups slots by local date and
+   reformats every time. The booking command sends the selected IANA timezone
+   with the unchanged slot timestamps.
+
    The mount is cleared on every reset of the booking surface, so the footer's
    controls cannot be authored inside it and are built here instead: the
    confirm button, and — only when the mount resolves inside

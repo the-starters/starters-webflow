@@ -614,6 +614,10 @@ listeners. Its install does not require a legacy main Book Call button. Each
 Book Call click makes one availability request, and each Free option click
 mounts one authored calendar in the existing `[nylas-container]` and submits
 one idempotent canonical booking command for the selected slot.
+The shared calendar displays a timezone dropdown above the month. It defaults
+to the visitor's browser timezone. A timezone change clears the selected slot,
+regroups dates, and reformats times before the visitor can submit. The booking
+command sends the selected IANA timezone with the unchanged slot timestamps.
 The Free controller uses the calendar and idempotent booking-command primitives
 exported by `paid-call-brand-payment.js`. It does not mount the public Nylas
 scheduler or create a provider booking directly. Success requires the server

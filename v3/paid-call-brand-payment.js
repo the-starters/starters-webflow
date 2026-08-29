@@ -1,7 +1,7 @@
 /**
  * V3 paid-call Brand payment client.
  *
- * @release v1.59.429
+ * @release v1.59.440
  *
  * Xano derives the Brand and payment environment from the authenticated
  * session. A selection attempt owns one bounded idempotency key: retries reuse
@@ -655,6 +655,89 @@
     ].join('-')
   }
 
+  function supportedTimezones(initialTimezone, preferredTimezones) {
+    let values = []
+    if (Array.isArray(preferredTimezones)) {
+      values = preferredTimezones
+    } else if (typeof Intl.supportedValuesOf === 'function') {
+      try {
+        values = Intl.supportedValuesOf('timeZone')
+      } catch (_) {}
+    }
+    if (!values.length) {
+      values = [
+        'UTC',
+        'Pacific/Honolulu',
+        'America/Anchorage',
+        'America/Los_Angeles',
+        'America/Denver',
+        'America/Chicago',
+        'America/New_York',
+        'America/Sao_Paulo',
+        'Europe/London',
+        'Europe/Paris',
+        'Europe/Berlin',
+        'Africa/Johannesburg',
+        'Asia/Dubai',
+        'Asia/Kolkata',
+        'Asia/Bangkok',
+        'Asia/Manila',
+        'Asia/Singapore',
+        'Asia/Hong_Kong',
+        'Asia/Tokyo',
+        'Australia/Perth',
+        'Australia/Sydney',
+        'Pacific/Auckland',
+      ]
+    }
+    const unique = Array.from(new Set(values.map(function (value) {
+      return String(value || '').trim()
+    }).filter(Boolean)))
+    if (initialTimezone && !unique.includes(initialTimezone)) unique.unshift(initialTimezone)
+    if (!unique.includes('UTC')) unique.unshift('UTC')
+    return unique
+  }
+
+  function createTimezoneControl(settings, initialTimezone, timestamp) {
+    const wrapper = applyStyles(global.document.createElement('label'), {
+      display: 'grid',
+      gap: '6px',
+      justifySelf: 'end',
+      width: 'min(100%, 320px)',
+    })
+    wrapper.setAttribute('data-paid-calendar-element', 'timezone-control')
+
+    const label = applyStyles(global.document.createElement('span'), {
+      color: '#6f746d',
+      fontSize: '13px',
+    })
+    label.textContent = 'Timezone'
+
+    const select = applyStyles(global.document.createElement('select'), {
+      width: '100%',
+      minHeight: '42px',
+      padding: '8px 36px 8px 12px',
+      border: '1px solid #d7d9d2',
+      borderRadius: '6px',
+      background: '#ffffff',
+      color: '#1f211d',
+      fontSize: '14px',
+      cursor: 'pointer',
+    })
+    select.setAttribute('data-paid-calendar-element', 'timezone')
+    select.setAttribute('aria-label', 'Timezone')
+    supportedTimezones(initialTimezone, settings.timezones).forEach(function (timezone) {
+      const option = global.document.createElement('option')
+      option.value = timezone
+      option.textContent = timezoneLabel(timezone, timestamp)
+      select.appendChild(option)
+    })
+    select.value = initialTimezone
+    wrapper.appendChild(label)
+    wrapper.appendChild(select)
+    return { wrapper, select }
+  }
+
   async function mountPaidCalendar(options) {
     const settings = options || {}
     const container = settings.container
@@ -669,9 +752,10 @@
     if (!container || !global.document || typeof onConfirm !== 'function') {
       throw new Error('The authored paid-call calendar is unavailable')
     }
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    let timezone = String(
+      settings.initialTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    ).trim() || 'UTC'
     const slots = await getPaidAvailability(config)
-    const zoneText = timezoneLabel(timezone, slots.length ? slots[0].start : undefined)
     if (!isCurrent()) return { slots: [], stale: true }
     container.textContent = ''
     container.setAttribute('data-paid-calendar-state', slots.length ? 'ready' : 'empty')
@@ -682,6 +766,11 @@
       margin: '0',
     })
     status.setAttribute('data-paid-calendar-element', 'status')
+    const timezoneControl = createTimezoneControl(
+      settings,
+      timezone,
+      slots.length ? slots[0].start : Date.now(),
+    )
 
     /* The back control is a hand-off, not a behaviour of its own: the two modal
        attributes close this dialog and open the Free/Paid chooser, exactly as
@@ -744,22 +833,30 @@
       // An empty calendar is exactly when a visitor most wants the other kind
       // of call, so the way back out has to survive the early return.
       if (footer) container.appendChild(footer)
-      return { slots: [] }
+      return { slots: [], timezone }
     }
 
-    const groups = {}
-    const dateKeys = []
-    slots.forEach(function (slot) {
-      const key = calendarDateKey(slot.start, timezone)
-      if (!groups[key]) {
-        groups[key] = []
-        dateKeys.push(key)
-      }
-      groups[key].push(slot)
-    })
-    let selectedDate = dateKeys[0]
+    let groups = {}
+    let dateKeys = []
+    let selectedDate = ''
     let selectedSlot = null
     let confirmationPending = false
+
+    function groupSlots() {
+      groups = {}
+      dateKeys = []
+      slots.forEach(function (slot) {
+        const key = calendarDateKey(slot.start, timezone)
+        if (!groups[key]) {
+          groups[key] = []
+          dateKeys.push(key)
+        }
+        groups[key].push(slot)
+      })
+      selectedDate = dateKeys[0]
+    }
+
+    groupSlots()
 
     const shell = applyStyles(global.document.createElement('div'), {
       display: 'grid',
@@ -846,53 +943,70 @@
     }
 
     const $ = global.jQuery
-    if ($ && $.fn && $.fn.datepicker) {
-      $(calendarHost).datepicker({
-        dateFormat: 'yy-mm-dd',
-        defaultDate: localDateFromKey(selectedDate),
-        minDate: localDateFromKey(dateKeys[0]),
-        maxDate: localDateFromKey(dateKeys[dateKeys.length - 1]),
-        showOtherMonths: true,
-        selectOtherMonths: false,
-        beforeShowDay: function (date) {
-          const available = Boolean(groups[localDateKey(date)])
-          return [available, available ? 'scheduling-preview-available-date' : '', available ? 'Available' : 'Unavailable']
-        },
-        onSelect: function (dateText) {
-          if (confirmationPending) return
-          selectedDate = dateText
-          renderTimes()
-        },
-      })
-    } else {
-      applyStyles(calendarHost, {
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(112px, 1fr))',
-        gap: '8px',
-      })
-      dateKeys.forEach(function (key) {
-        const button = global.document.createElement('button')
-        button.type = 'button'
-        button.setAttribute('data-paid-calendar-date', key)
-        button.textContent = new Intl.DateTimeFormat('en-US', {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-          timeZone: timezone,
-        }).format(new Date(groups[key][0].start))
-        button.addEventListener('click', function () {
-          if (confirmationPending) return
-          selectedDate = key
-          renderTimes()
+    let datepickerMounted = false
+
+    function renderCalendar() {
+      if ($ && $.fn && $.fn.datepicker) {
+        if (datepickerMounted) $(calendarHost).datepicker('destroy')
+        calendarHost.textContent = ''
+        $(calendarHost).datepicker({
+          dateFormat: 'yy-mm-dd',
+          defaultDate: localDateFromKey(selectedDate),
+          minDate: localDateFromKey(dateKeys[0]),
+          maxDate: localDateFromKey(dateKeys[dateKeys.length - 1]),
+          showOtherMonths: true,
+          selectOtherMonths: false,
+          beforeShowDay: function (date) {
+            const available = Boolean(groups[localDateKey(date)])
+            return [available, available ? 'scheduling-preview-available-date' : '', available ? 'Available' : 'Unavailable']
+          },
+          onSelect: function (dateText) {
+            if (confirmationPending) return
+            selectedDate = dateText
+            renderTimes()
+          },
         })
-        calendarHost.appendChild(button)
-      })
+        datepickerMounted = true
+      } else {
+        calendarHost.textContent = ''
+        applyStyles(calendarHost, {
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(112px, 1fr))',
+          gap: '8px',
+        })
+        dateKeys.forEach(function (key) {
+          const button = global.document.createElement('button')
+          button.type = 'button'
+          button.setAttribute('data-paid-calendar-date', key)
+          button.textContent = new Intl.DateTimeFormat('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            timeZone: timezone,
+          }).format(new Date(groups[key][0].start))
+          button.addEventListener('click', function () {
+            if (confirmationPending) return
+            selectedDate = key
+            renderTimes()
+          })
+          calendarHost.appendChild(button)
+        })
+      }
+      renderTimes()
     }
+
+    timezoneControl.select.addEventListener('change', function () {
+      if (confirmationPending) return
+      timezone = String(timezoneControl.select.value || '').trim() || 'UTC'
+      groupSlots()
+      renderCalendar()
+    })
 
     confirm.addEventListener('click', async function () {
       if (!selectedSlot || confirm.disabled || confirmationPending) return
       confirmationPending = true
       confirm.disabled = true
+      timezoneControl.select.disabled = true
       // Back sits in the same row as the button that was just pressed, and it
       // closes the dialog. Left live, one stray click mid-request wipes the
       // surface the confirmation was about to appear on, while the booking
@@ -930,28 +1044,25 @@
             button.disabled = false
           })
           confirm.disabled = !selectedSlot
+          timezoneControl.select.disabled = false
           if (back) back.disabled = false
         }
       }
     })
 
+    shell.appendChild(timezoneControl.wrapper)
     shell.appendChild(calendarHost)
     shell.appendChild(times)
-    if (zoneText) {
-      const zoneNote = applyStyles(global.document.createElement('p'), {
-        color: '#6f746d',
-        fontSize: '13px',
-        margin: '0',
-      })
-      zoneNote.setAttribute('data-paid-calendar-element', 'timezone')
-      zoneNote.textContent = 'Times shown in ' + zoneText
-      shell.appendChild(zoneNote)
-    }
     shell.appendChild(footer || confirm)
     shell.appendChild(status)
     container.appendChild(shell)
-    renderTimes()
-    return { slots, timezone, clearSelection }
+    renderCalendar()
+    const result = { slots, clearSelection }
+    Object.defineProperty(result, 'timezone', {
+      enumerable: true,
+      get: function () { return timezone },
+    })
+    return result
   }
 
   function installPaidBookingController(options) {
@@ -1683,6 +1794,8 @@
     normalizeAvailabilitySlots,
     readGuestEmails,
     requireCanonicalBookingProof,
+    supportedTimezones,
+    timezoneLabel,
     validateKey,
     validatePaymentMethodId,
   }
