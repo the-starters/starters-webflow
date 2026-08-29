@@ -183,6 +183,20 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             let companiesCount = 0;
             let addCompanyFeedbackTimeout = null;
 
+            function selectedCompanyForInput(input, fallback) {
+                if (!input) return null;
+                const currentName = getValue(input);
+                const storedName = String(input.dataset.selectedCompanyName || '').trim();
+                if (storedName && storedName === currentName) {
+                    return {
+                        name: storedName,
+                        domain: String(input.dataset.selectedCompanyDomain || '').trim(),
+                        logo_url: String(input.dataset.selectedCompanyLogoUrl || '').trim(),
+                    };
+                }
+                return fallback && fallback.name === currentName ? fallback : null;
+            }
+
             // pendingUpdateDrafts/pendingDeleteDraftIds only ever hold real (already-in-XANO) ids.
             // pendingCreateDrafts entries always keep their synthetic draft_ id and are never
             // "promoted" into the other two containers.
@@ -1085,19 +1099,26 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     const companyId = editCompanyWrapper.dataset.id;
                     if (!companyId) return;
 
+                    const selectedEditCompany = selectedCompanyForInput(editCompanyInput, editSelectedCompany);
+
                     const payload = {
                         company_name: getValue(editCompanyInput),
                         job_title: getValue(editJobTitleInput),
                         start_date: serializeStarterProfileCompanyDate(editStartDateInput, editStartDateBaseline),
                         end_date: editCurrentWorkCheckbox && editCurrentWorkCheckbox.checked ? "Present" : serializeStarterProfileCompanyDate(editEndDateInput, editEndDateBaseline),
                         current_work: editCurrentWorkCheckbox ? editCurrentWorkCheckbox.checked : false,
-                        company_domain: editSelectedCompany ? editSelectedCompany.domain : '',
-                        company_logo_url: editSelectedCompany && editSelectedCompany.logo_url ? editSelectedCompany.logo_url : placeholderLogo,
+                        company_domain: selectedEditCompany ? selectedEditCompany.domain : '',
+                        company_logo_url: selectedEditCompany && selectedEditCompany.logo_url ? selectedEditCompany.logo_url : placeholderLogo,
                     };
 
                     let isValid = true;
 
                     if (!payload.company_name) {
+                        showFieldError(editCompanyInput.closest('[form-group]'));
+                        isValid = false;
+                    }
+
+                    if (!payload.company_domain) {
                         showFieldError(editCompanyInput.closest('[form-group]'));
                         isValid = false;
                     }
@@ -1168,19 +1189,26 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                         return;
                     }
 
+                    const selectedAddCompany = selectedCompanyForInput(companyInput, selectedCompany);
+
                     const payload = {
                         company_name: getValue(companyInput),
                         job_title: getValue(jobTitleInput),
                         start_date: getValue(startDateInput),
                         end_date: currentWorkCheckbox && currentWorkCheckbox.checked ? "Present" : getValue(endDateInput),
                         current_work: currentWorkCheckbox ? currentWorkCheckbox.checked : false,
-                        company_domain: selectedCompany ? selectedCompany.domain : '',
-                        company_logo_url: selectedCompany && selectedCompany.logo_url ? selectedCompany.logo_url : placeholderLogo,
+                        company_domain: selectedAddCompany ? selectedAddCompany.domain : '',
+                        company_logo_url: selectedAddCompany && selectedAddCompany.logo_url ? selectedAddCompany.logo_url : placeholderLogo,
                     };
 
                     let isValid = true;
 
                     if (!payload.company_name) {
+                        showFieldError(companyInput.closest('[form-group]'));
+                        isValid = false;
+                    }
+
+                    if (!payload.company_domain) {
                         showFieldError(companyInput.closest('[form-group]'));
                         isValid = false;
                     }

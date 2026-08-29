@@ -170,6 +170,20 @@ function serializeStarterProfileCompanyDate(input, baseline) {
       let companiesCount = 0;
       let addCompanyFeedbackTimeout = null;
 
+      function selectedCompanyForInput(input, fallback) {
+        if (!input) return null;
+        const currentName = getValue(input);
+        const storedName = String(input.dataset.selectedCompanyName || '').trim();
+        if (storedName && storedName === currentName) {
+          return {
+            name: storedName,
+            domain: String(input.dataset.selectedCompanyDomain || '').trim(),
+            logo_url: String(input.dataset.selectedCompanyLogoUrl || '').trim(),
+          };
+        }
+        return fallback && fallback.name === currentName ? fallback : null;
+      }
+
       const placeholderLogo = 'https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6a21517ca6c1caa51f014026_company-placeholder.svg';
       const textEl = addCompanyButton ? qs('div:first-child', addCompanyButton) : null;
       const defaultButtonText = textEl ? textEl.textContent : 'add company';
@@ -957,6 +971,8 @@ function serializeStarterProfileCompanyDate(input, baseline) {
           const companyId = editCompanyWrapper.dataset.id;
           if (!companyId) return;
 
+          const selectedEditCompany = selectedCompanyForInput(editCompanyInput, editSelectedCompany);
+
           const payload = {
             freelancers_id: starter_xano_id,
             company_name: getValue(editCompanyInput),
@@ -964,13 +980,18 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             start_date: serializeStarterProfileCompanyDate(editStartDateInput, editStartDateBaseline),
             end_date: editCurrentWorkCheckbox && editCurrentWorkCheckbox.checked ? "Present" : serializeStarterProfileCompanyDate(editEndDateInput, editEndDateBaseline),
             current_work: editCurrentWorkCheckbox ? editCurrentWorkCheckbox.checked : false,
-            company_domain: editSelectedCompany ? editSelectedCompany.domain : '',
-            company_logo_url: editSelectedCompany && editSelectedCompany.logo_url ? editSelectedCompany.logo_url : placeholderLogo,
+            company_domain: selectedEditCompany ? selectedEditCompany.domain : '',
+            company_logo_url: selectedEditCompany && selectedEditCompany.logo_url ? selectedEditCompany.logo_url : placeholderLogo,
           };
 
           let isValid = true;
 
           if (!payload.company_name) {
+            showFieldError(editCompanyInput.closest('[form-group]'));
+            isValid = false;
+          }
+
+          if (!payload.company_domain) {
             showFieldError(editCompanyInput.closest('[form-group]'));
             isValid = false;
           }
@@ -1033,6 +1054,8 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             return;
           }
 
+          const selectedAddCompany = selectedCompanyForInput(companyInput, selectedCompany);
+
           const payload = {
             freelancers_id: starter_xano_id,
             company_name: getValue(companyInput),
@@ -1040,13 +1063,18 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             start_date: getValue(startDateInput),
             end_date: currentWorkCheckbox && currentWorkCheckbox.checked ? "Present" : getValue(endDateInput),
             current_work: currentWorkCheckbox ? currentWorkCheckbox.checked : false,
-            company_domain: selectedCompany ? selectedCompany.domain : '',
-            company_logo_url: selectedCompany && selectedCompany.logo_url ? selectedCompany.logo_url : placeholderLogo,
+            company_domain: selectedAddCompany ? selectedAddCompany.domain : '',
+            company_logo_url: selectedAddCompany && selectedAddCompany.logo_url ? selectedAddCompany.logo_url : placeholderLogo,
           };
 
           let isValid = true;
 
           if (!payload.company_name) {
+            showFieldError(companyInput.closest('[form-group]'));
+            isValid = false;
+          }
+
+          if (!payload.company_domain) {
             showFieldError(companyInput.closest('[form-group]'));
             isValid = false;
           }

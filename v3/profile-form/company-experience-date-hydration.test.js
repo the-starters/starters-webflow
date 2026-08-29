@@ -327,7 +327,8 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
   }
 
   function openEditFor(company) {
-    const card = { dataset: { id: String(company.id), company: JSON.stringify(company) } }
+    const hydratedCompany = { company_domain: 'acme.example', ...company }
+    const card = { dataset: { id: String(company.id), company: JSON.stringify(hydratedCompany) } }
     const editButton = {}
     const event = {
       type: 'click',

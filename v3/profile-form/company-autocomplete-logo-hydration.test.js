@@ -6,10 +6,12 @@ const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
-function createHarness(file, companies) {
+function createHarness(file, companies, { isMulti = true } = {}) {
   let domReady
   let nextId = 0
   const tags = []
+  const inputListeners = {}
+  const dropdownListeners = {}
   const valueInput = {
     value: '',
     dispatchEvent() {},
@@ -38,9 +40,9 @@ function createHarness(file, companies) {
   const input = {
     value: '',
     dataset: {},
-    hasAttribute(name) { return name === 'data-multiple' },
+    hasAttribute(name) { return name === 'data-multiple' && isMulti },
     closest(selector) { return selector === '[form-group]' ? group : searchGroup },
-    addEventListener() {},
+    addEventListener(name, callback) { inputListeners[name] = callback },
     focus() {},
   }
   const document = {
@@ -51,7 +53,10 @@ function createHarness(file, companies) {
       return {
         className: '',
         style: {},
-        addEventListener() {},
+        addEventListener(name, callback) {
+          dropdownListeners[name] ||= []
+          dropdownListeners[name].push(callback)
+        },
       }
     },
   }
@@ -100,7 +105,31 @@ function createHarness(file, companies) {
   vm.runInNewContext(fs.readFileSync(file, 'utf8'), context, { filename: file })
   domReady()
 
-  return { valueInput }
+  return {
+    input,
+    valueInput,
+    selectCompany(selection) {
+      const item = {
+        dataset: {
+          name: selection.name,
+          domain: selection.domain,
+          logoUrl: selection.logo_url,
+        },
+        classList: { contains() { return false }, add() {} },
+      }
+      const target = {
+        closest(selector) {
+          if (selector === '.company-search-item') return item
+          return null
+        },
+      }
+      for (const listener of dropdownListeners.click || []) listener({ target })
+    },
+    changeInput(value) {
+      input.value = value
+      inputListeners.input?.()
+    },
+  }
 }
 
 test('Build Profile preserves a hydrated company logo in the serialized selection', () => {
@@ -123,4 +152,43 @@ test('Edit Profile preserves a hydrated API company logo in the serialized selec
 
   const [company] = Object.values(JSON.parse(valueInput.value))
   assert.equal(company.logo_url, logoUrl)
+})
+
+for (const [label, file] of [
+  ['Build Profile', path.join(__dirname, '../build-profile/company-autocomplete.js')],
+  ['Edit Profile', path.join(__dirname, '../starter-edit-profile/company-autocomplete.js')],
+]) {
+  test(`${label} stores the selected Company domain and logo on the input`, async () => {
+    const harness = createHarness(file, {}, { isMulti: false })
+    harness.selectCompany({
+      name: 'QA Wolf',
+      domain: 'qawolf.com',
+      logo_url: 'https://img.logo.dev/qawolf.com',
+    })
+
+    assert.equal(harness.input.value, 'QA Wolf')
+    assert.equal(harness.input.dataset.selectedCompanyName, 'QA Wolf')
+    assert.equal(harness.input.dataset.selectedCompanyDomain, 'qawolf.com')
+    assert.equal(harness.input.dataset.selectedCompanyLogoUrl, 'https://img.logo.dev/qawolf.com')
+
+    await new Promise((resolve) => setImmediate(resolve))
+    harness.changeInput('QA Wolf renamed')
+    assert.equal(harness.input.dataset.selectedCompanyName, undefined)
+    assert.equal(harness.input.dataset.selectedCompanyDomain, undefined)
+    assert.equal(harness.input.dataset.selectedCompanyLogoUrl, undefined)
+  })
+}
+
+test('both Company CRUD controllers read the stored picker contract at submit time', () => {
+  for (const file of [
+    path.join(__dirname, '../build-profile/company-experience-crud.js'),
+    path.join(__dirname, '../starter-edit-profile/company-experience-crud.js'),
+  ]) {
+    const source = fs.readFileSync(file, 'utf8')
+    assert.match(source, /selectedCompanyForInput\(companyInput, selectedCompany\)/)
+    assert.match(source, /selectedCompanyForInput\(editCompanyInput, editSelectedCompany\)/)
+    assert.match(source, /dataset\.selectedCompanyDomain/)
+    assert.match(source, /dataset\.selectedCompanyLogoUrl/)
+    assert.equal((source.match(/if \(!payload\.company_domain\)/g) || []).length, 2)
+  }
 })

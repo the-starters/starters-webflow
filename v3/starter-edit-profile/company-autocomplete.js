@@ -84,6 +84,20 @@
     let lastQuery = '';
     let selectingCompany = false;
 
+    function storeSingleSelection(name, domain, logoUrl) {
+      input.dataset.selectedCompanyName = name || '';
+      input.dataset.selectedCompanyDomain = domain || '';
+      input.dataset.selectedCompanyLogoUrl = logoUrl || '';
+    }
+
+    function clearStaleSingleSelection() {
+      if (isMulti) return;
+      if ((input.dataset.selectedCompanyName || '') === input.value.trim()) return;
+      delete input.dataset.selectedCompanyName;
+      delete input.dataset.selectedCompanyDomain;
+      delete input.dataset.selectedCompanyLogoUrl;
+    }
+
     let tagTemplate = null;
     let tagWrapper = null;
     if (isMulti) {
@@ -231,6 +245,8 @@
     input.addEventListener('input', function () {
       if (selectingCompany) return;
 
+      clearStaleSingleSelection();
+
       clearTimeout(timer);
       timer = setTimeout(function () {
         searchCompanies(input.value);
@@ -360,6 +376,7 @@
       } else {
         input.value = selectedName;
         lastQuery = selectedName;
+        storeSingleSelection(selectedName, selectedDomain, selectedLogoUrl);
         closeDropdown();
       }
 
