@@ -798,7 +798,7 @@ test('a reschedule proposal posts slot, reason, and a durable propose key', asyn
       rescheduleBooking(),
       'starter',
       'Need a later time',
-      { start, end: start + 30 * 60 * 1000 },
+      { start, end: start + 30 * 60 * 1000, timezone: 'Asia/Manila' },
     )
     assert.equal(result.reschedule.status, 'rescheduled')
     assert.equal(requests.length, 1)
@@ -807,6 +807,7 @@ test('a reschedule proposal posts slot, reason, and a durable propose key', asyn
     assert.equal(payload.rescheduled_reason, 'Need a later time')
     assert.equal(payload.new_start, start)
     assert.equal(payload.new_end, start + 30 * 60 * 1000)
+    assert.equal(payload.timezone, 'Asia/Manila')
     assert.match(payload.idempotency_key, /^dashboard-reschedule-propose:/)
     assert.equal(await api.proposeReschedule(rescheduleBooking(), 'starter', 'x', { start: 5, end: 5 }), null)
   } finally {
@@ -949,11 +950,22 @@ test('reschedule calendar mounts stay scoped to the active modal booking', async
     assert.equal(mounts[0].isCurrent(), false)
     assert.equal(mounts[1].isCurrent(), true)
     const start = Date.now() + 2 * 60 * 60 * 1000
-    await mounts[0].onConfirm({ start, end: start + 30 * 60 * 1000 })
+    await mounts[0].onConfirm({
+      start,
+      end: start + 30 * 60 * 1000,
+      timezone: 'Pacific/Honolulu',
+    })
     assert.equal(requests.length, 0)
-    await mounts[1].onConfirm({ start, end: start + 30 * 60 * 1000 })
+    await mounts[1].onConfirm({
+      start,
+      end: start + 30 * 60 * 1000,
+      timezone: 'Pacific/Honolulu',
+    })
     assert.equal(requests.length, 1)
     assert.equal(requests[0].booking_id, 'booking-b')
+    assert.equal(requests[0].new_start, start)
+    assert.equal(requests[0].new_end, start + 30 * 60 * 1000)
+    assert.equal(requests[0].timezone, 'Pacific/Honolulu')
     assert.equal(reasonField.value, '')
   } finally {
     global.StartersPaidCallBrandPayment = originalCalendar
