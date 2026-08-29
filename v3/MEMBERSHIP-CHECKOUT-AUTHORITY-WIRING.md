@@ -48,7 +48,10 @@ Before Memberstack opens Stripe checkout, the controller:
 4. The registrar registers one `membership_checkout_intent`.
 5. Opens the original native Memberstack checkout only after Xano accepts the intent.
 
-Registration failure blocks checkout. It does not fall back to V2.
+An authentication, secure event identity, or registration failure blocks
+checkout. It does not fall back to V2. After the controller clears its pending
+state, the member can retry. A failed registration keeps the same event identity
+for that route and price; an accepted registration clears it.
 
 The published POST trade endpoint owns Memberstack session verification. The
 Memberstack token stays out of URLs and travels only in its JSON request body.
