@@ -2844,10 +2844,12 @@ adapter calls the runtime's idempotent `init()` for only this configured root.
 Until Designer publishes the template card, the legacy renderer remains the
 fallback and renders review cards only into the attributed list target. When an
 authored template exists, the adapter stands down from card rendering and
-wf-xano owns the list. Designer must later author
-`wf-xano-param-starter_id` by hand and bind it to the Hire collection's
-`xano-id` field, because the Webflow API cannot write a CMS-bound attribute
-value. Inside the authored section, use
+wf-xano owns the list. The adapter deliberately continues to set
+`wf-xano-param-starter_slug` from the canonical profile path. The later
+Designer wiring must also author `wf-xano-param-starter_id` by hand and bind it
+to the Hire collection's `xano-id` field, because the Webflow API cannot author
+a CMS-bound attribute value. This known follow-up does not replace the
+browser adapter's slug job. Inside the authored section, use
 `data-reviews-v3-average` and `data-reviews-v3-count` for the aggregate values
 for the optional aggregate projections. For the profile summary outside the
 Reviews section, use `data-reviews-v3-summary-average` and
@@ -2910,24 +2912,25 @@ the template ships the section's `data-hide-when-empty-section` attribute
 disabled (prefixed `xdata-`) and the engine's fail-safe then leaves the tab
 visible. If Designer re-enables that attribute, make the shared engine the sole
 owner of the pair instead of running both — and note its `data-empty-watch`
-selector must then be `[data-review-id]`, since the adapter replaces the
-authored `.profile-content_reviews_list_item` cards with its own.
+selector must then be `[data-review-id]`, which every rendered review card must
+carry in both the wf-xano template and legacy fallback modes.
 
 The adapter also accepts `items` for the review array, `aggregates` for the
 aggregate object, and the wf-xano raw-item fallback. Aggregate values are never
-recalculated from a paginated review list. Approved results render as stacked,
-bordered cards with five Bootstrap star icons. A brand-verified review has a
-`brand` object and shows the existing green `Verified Review` badge with its
-check icon and verified-brand reviewer line. A legacy testimonial has
+recalculated from a paginated review list. In legacy fallback mode, approved
+results render as stacked, bordered cards with five Bootstrap star icons. A
+brand-verified review has a `brand` object and shows the existing green
+`Verified Review` badge with its check icon and verified-brand reviewer line. A
+legacy testimonial has
 `verified: false`, no Brand actor, and a denormalized `reviewer` object with
 `display_name`, `title`, and `company_name`; it shows a neutral `Testimonial`
 badge without a check icon and uses `title @ company_name` as its reviewer
 line. A response without the `verified` field keeps the older verified-review
 rendering for backward compatibility. When both identity objects exist,
-`reviewer` takes precedence over `brand`. Cards are constructed with DOM nodes
-and `textContent` only, so reviewer identity and review text are never
-interpreted as HTML. The adapter contains no Airtable or Make integration and
-no private token or direct authenticated fetch path.
+`reviewer` takes precedence over `brand`. Legacy fallback cards are constructed
+with DOM nodes and `textContent` only, so reviewer identity and review text are
+never interpreted as HTML. The adapter contains no Airtable or Make integration
+and no private token or direct authenticated fetch path.
 
 Run the focused checks with:
 

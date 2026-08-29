@@ -6,9 +6,9 @@
  * Designer owns the public Reviews section. This module only:
  *   - derives the public-profile slug from /hire/{slug} and configures the
  *     authored Reviews section as a wf-xano wrapper before it loads;
- *   - hides that section, and empties its authored placeholder cards, at
- *     configuration time, so the section is revealed only once Xano has
- *     positively reported at least one approved review;
+ *   - hides that section, and clears its authored placeholder cards while
+ *     preserving a wf-xano template, at configuration time, so the section is
+ *     revealed only once Xano has positively reported an approved review;
  *   - projects Xano's approved aggregate into the authored profile summary;
  *   - renders sanitized cards from Xano's approved response ONLY while the
  *     authored list ships no wf-xano template. Once Designer publishes a
@@ -147,7 +147,8 @@
    * reads as "no reviews" while the hero reports a count.
    *
    * A marker that owns no list is deliberately not returned: those are the
-   * stray duplicates the configuration step empties, and they must stay hidden.
+   * stray duplicates whose placeholders configuration clears, and they must
+   * stay hidden.
    */
   function listOwningRoots(documentObject, root) {
     if (!root) return []
@@ -188,10 +189,11 @@
       ? documentObject.querySelectorAll(PROFILE_ROOT)
       : [documentObject.querySelector(PROFILE_ROOT)].filter(Boolean)
     if (!roots.length) return null
-    // Fail closed FIRST, before anything below can bail: hide and empty every
-    // authored marker (the live template has shipped duplicates — a second
-    // marker left unhandled keeps publishing its placeholder cards), and hide
-    // the authored hero summary placeholder, which lives outside the section.
+    // Fail closed FIRST, before anything below can bail: hide every authored
+    // marker and clear its placeholders while preserving a wf-xano template
+    // (the live template has shipped duplicate markers — one left unhandled
+    // keeps publishing placeholder cards). Also hide the authored hero summary
+    // placeholder, which lives outside the section.
     Array.prototype.forEach.call(roots, function (authoredRoot) {
       var authoredList = authoredRoot.querySelector && authoredRoot.querySelector(PROFILE_LIST)
       if (authoredList) emptyListExceptTemplate(authoredList)
@@ -474,10 +476,10 @@
   var queued = global.WfXano || []
   global.WfXano = queued
   // Site-level wf-xano can finish booting before this page-level loader runs.
-  // In that order it has already skipped the Reviews wrapper because the
-  // authored template did not exist yet. Re-run initialization for only this
-  // configured root after supplying the hidden template; init() is idempotent
-  // for roots that were already initialized.
+  // In that order it has already skipped the not-yet-configured Reviews
+  // wrapper. Re-run initialization for only this root after configuration and
+  // template preservation or fallback creation; init() is idempotent for roots
+  // that were already initialized.
   if (configuredProfileRoot && queued && typeof queued.init === 'function') {
     queued.init(configuredProfileRoot)
   }
