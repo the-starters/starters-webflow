@@ -354,21 +354,9 @@ row, so the buttons anchor to the bottom of the panel rather than to one
 column, and the shared engine's timezone control — a `<label>` wrapping a
 caption and a `<select>` — takes the top of the right column above the slots,
 with the month spanning down beside it so the control costs the panel no
-height. The sheet sets that control's spacing and its box — the wrapper's
-`display:grid` and the `0.375rem` between its caption and its select — and,
-since round 14, its **closed face** as well: `appearance:none` to drop the OS
-chrome, the site's font at `1rem`/500, a white fill with the modal's own `#eee`
-hairline, a `0.375rem` radius, rem padding, a chevron drawn to match the month
-picker's nav arrows, and the timepicker embed's own select-focus treatment on
-`:focus-visible`. The caption keeps the engine's grey at `0.75rem`. The OPEN
-dropdown is drawn by the operating system and cannot be styled — an accepted
-constraint rather than a custom dropdown being built.
-
-To own any of that the engine has to stop writing it: on this surface it skips
-the inline styles on the wrapper, the caption AND the select, because an inline
-declaration outranks every rule in the sheet. Every other surface — the
-dashboard's reschedule calendar — keeps all three untouched, since no sheet is
-injected there to take over. Stacked, `order` holds that control
+height. Its booking-only closed-face treatment and the corresponding inline-style
+split are owned by the [paid-call client reference](README.md#brand-paid-call-payment-method-client).
+Stacked, `order` holds that control
 between the month and the first row of chips; the engine appends it under the
 month, ahead of the times, so document order already reads that way and its
 reading order matches its visual position at both widths. The engine's three

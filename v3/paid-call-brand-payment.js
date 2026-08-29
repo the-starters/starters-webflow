@@ -1065,8 +1065,8 @@
       /* The timezone control's own area. The engine writes no inline styles on
          its wrapper on this surface — inline beats any rule here — so the box
          rule above and this padding are the whole of its layout; the caption
-         and the select inside it keep their inline typography, which this
-         sheet does not try to reach.
+         and select inside it are styled by the sheet's booking-only closed-face
+         rules above.
 
          It carries the frame's top and right edges, so it lines up with the
          times below it and with the month's top opposite. The bottom `1rem`
