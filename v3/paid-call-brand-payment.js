@@ -702,7 +702,7 @@
     const wrapper = applyStyles(global.document.createElement('label'), {
       display: 'grid',
       gap: '6px',
-      justifySelf: 'end',
+      justifySelf: 'start',
       width: 'min(100%, 320px)',
     })
     wrapper.setAttribute('data-paid-calendar-element', 'timezone-control')
@@ -802,6 +802,10 @@
         footer,
         authoredClassList(container, FOOTER_CLASS_ATTRIBUTE),
       )
+      // Keep the two actions visually distinct on every booking surface. This
+      // is layout placement, so it applies to both the authored and fallback
+      // rows without changing either button's Designer-owned appearance.
+      footer.style.columnGap = '16px'
       if (!footerIsAuthored) {
         // The confirm button used to be a grid item in the shell and stretched
         // to full width. The fallback row has to keep doing that for it, and it
@@ -820,7 +824,6 @@
           display: 'grid',
           gridTemplateColumns: 'auto minmax(0, 1fr)',
           alignItems: 'center',
-          gap: '12px',
         })
         back.style.gridColumn = '1'
       }
@@ -872,6 +875,13 @@
       width: '100%',
     })
     layout.setAttribute('data-paid-calendar-element', 'layout')
+    const calendarPanel = applyStyles(global.document.createElement('div'), {
+      display: 'grid',
+      alignContent: 'start',
+      gap: '16px',
+      minWidth: '0',
+    })
+    calendarPanel.setAttribute('data-paid-calendar-element', 'calendar-panel')
     const calendarHost = global.document.createElement('div')
     calendarHost.setAttribute('data-paid-calendar-element', 'month')
     const timePanel = applyStyles(global.document.createElement('div'), {
@@ -1065,8 +1075,9 @@
       }
     })
 
-    layout.appendChild(calendarHost)
-    timePanel.appendChild(timezoneControl.wrapper)
+    calendarPanel.appendChild(calendarHost)
+    calendarPanel.appendChild(timezoneControl.wrapper)
+    layout.appendChild(calendarPanel)
     timePanel.appendChild(times)
     layout.appendChild(timePanel)
     shell.appendChild(layout)
