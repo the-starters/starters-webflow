@@ -291,15 +291,18 @@
     return active[0] || null
   }
 
+  function displayableRate(value) {
+    if (!value || String(value.currency || '').toLowerCase() !== 'usd') return null
+    const cents = Number(value.price_cents)
+    return Number.isInteger(cents) && cents >= 100 ? value : null
+  }
+
   function importedRateSuggestion(value) {
     const suggestion = value && value.suggestion
     if (
-      !suggestion ||
+      !displayableRate(suggestion) ||
       suggestion.source !== 'legacy_v2' ||
       suggestion.requires_confirmation !== true ||
-      String(suggestion.currency || '').toLowerCase() !== 'usd' ||
-      !Number.isInteger(Number(suggestion.price_cents)) ||
-      Number(suggestion.price_cents) < 100 ||
       Number(suggestion.price_cents) % 100 !== 0
     ) return null
     return suggestion
@@ -616,11 +619,8 @@
     return split.length === 1 ? split[0] : null
   }
 
-  // Only a canonical output element is controller-owned and may show a zero
-  // state. The authored tile is borrowed, so it carries a canonical price while
-  // one exists and returns to its authored copy on every reset path.
   function paintAuthoredPrice(rate, emptyText) {
-    const resolved = authoredPriceTarget()
+    const resolved = authoredPriceTarget() || authoredPrice
     if (!resolved) return
     const target = resolved.target
     if (!authoredPrice || authoredPrice.target !== target || authoredPrice.mode !== resolved.mode) {
@@ -637,12 +637,6 @@
     target.textContent = rate && resolved.mode === 'number'
       ? formatted.replace(/^\$\s*/, '')
       : formatted
-  }
-
-  function restoreAuthoredPrice() {
-    if (!authoredPrice) return
-    authoredPrice.target.textContent = authoredPrice.text
-    if (authoredPrice.prefix) authoredPrice.prefix.style.display = authoredPrice.prefixDisplay
   }
 
   function formatUsd(cents) {
@@ -771,8 +765,8 @@
     setActionEnabled(action('save'), false)
     setActionEnabled(action('disable'), false)
     const priceOutput = output('price')
-    if (priceOutput) priceOutput.textContent = formatUsd(0)
-    restoreAuthoredPrice()
+    if (priceOutput) priceOutput.textContent = 'Not set'
+    else paintAuthoredPrice(null, 'Not set')
     paintStatusPills()
     setMessage(message)
   }
@@ -844,12 +838,13 @@
     const titleInput = field('title')
     const priceInput = field('price')
     const durationInput = field('duration')
+    const confirmedRate = displayableRate(service)
 
     setRadioChecked(enabledInput, Boolean(service))
     const disabledInput = disabledField()
     setRadioChecked(disabledInput, !service)
     if (titleInput) titleInput.value = service ? service.title || '' : 'Paid Consultation Call'
-    if (priceInput) priceInput.value = service ? Number(service.price_cents || 0) / 100 : ''
+    if (priceInput) priceInput.value = confirmedRate ? Number(confirmedRate.price_cents) / 100 : ''
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
     clearFieldValidity()
     root.setAttribute(
@@ -873,7 +868,7 @@
     setActionEnabled(action('save'), canSaveSettings(value))
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
-    const displayedRate = service || suggestion
+    const displayedRate = confirmedRate || suggestion
     if (priceOutput) {
       priceOutput.textContent = displayedRate ? formatUsd(displayedRate.price_cents) : 'Not set'
     } else {
