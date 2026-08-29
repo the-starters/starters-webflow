@@ -18,6 +18,13 @@ logged-in member can still open another role's page by navigating directly. This
 that direct-access gap using the same stable plan-ID role matrix documented in
 [ACCESS-MATRIX.md](ACCESS-MATRIX.md).
 
+Before it evaluates any access table or waits for Memberstack, the guard owns
+one V3 compatibility redirect. On the three approved V3 hosts only,
+`/memberstack/search-freelancers` and its trailing-slash form are replaced with
+`/all-starters`. The original query and fragment are appended unchanged. This
+repairs app-level Memberstack checkout and Login as Member destinations without
+changing the retired path on V2 or any unapproved host.
+
 ## What it does
 
 On an approved V3 host, for a page it recognises:
@@ -30,7 +37,7 @@ On an approved V3 host, for a page it recognises:
 | Role not allowed on this page | Replace with that role's own default (never the other role's page) |
 | Authenticated, no mapped active plan | Stay with `html[data-route-guard-error="unmapped-plan"]` |
 | Active Talent plus Brand roles | Stay with `html[data-route-guard-error="conflicting-plan-roles"]` |
-| Page not in any of the three tables | Do nothing (no Memberstack lookup) |
+| Page not in any of the three tables | Do nothing (no Memberstack lookup), except for the V3 compatibility redirect above |
 
 Role defaults (identical to `auth-route.js`): Talent → `/starter-dashboard`,
 Brand paid → `/brand-dashboard`, Brand free → `/quiz` (or `/quiz-results` once
@@ -53,7 +60,9 @@ asserts no path appears in two.
 | `MEMBER_BOUNCE_PAGES` | Untouched | n/a — every mapped member is bounced | [Member-home bounce pages](#member-home-bounce-pages) |
 | `ROLE_BOUNCE_PAGES` | Untouched | Sent to their role home | [Member-only role bounce pages](#member-only-role-bounce-pages) |
 
-At boot the member-bounce test runs first (those paths are absent from
+At boot the V3 compatibility redirect runs first. It returns immediately on a
+match and does not wait for Memberstack. The member-bounce test then runs first
+among the three access tables (those paths are absent from
 `PAGE_ROLES`, so the guarded-path test would bail on them), then the guarded-page
 test, then the role-bounce test — so `PAGE_ROLES` outranks only `ROLE_BOUNCE_PAGES`,
 and the strength ordering in the table above is not the boot ordering. Because the
@@ -417,6 +426,9 @@ every route in its page table:
 - `/quiz-results`, `/all-starters` (both including their trailing-slash URLs) —
   not guarded either, but the sitewide install is what lets the role bounce run
   there
+- `/memberstack/search-freelancers` (including its trailing-slash URL) — a
+  compatibility-only entry that redirects to `/all-starters` before auth state
+  is read
 
 With the guard sitewide, opp30 does not double-guard opportunity pages: it uses
 the guard's presence to defer access redirects and validates the same plan-ID
@@ -505,7 +517,7 @@ curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/r
 ```
 
 ```js
-window.StartersV3RouteGuard.release // -> 'v1.59.163'
+window.StartersV3RouteGuard.release // -> 'v1.59.441'
 window.StartersV3AuthRouter.release
 window.StartersBuildProfileRedirect.release
 window.StartersCompleteProfileRedirect.release
@@ -524,9 +536,10 @@ CDN copy is still in play; purge it with `purge.jsdelivr.net`.
   `brandFreeHome`, `pageRolesFor`, `isGuardedPath`, and `redirectTargetFor` for
   console checks, plus `waitForSharedOpportunitiesAccess` for the merged-feed
   hydration decision, `isMemberBouncePage`, `bounceTargetFor`, `localPath`,
-  and `loggedOutDestinationFor` for the bounce and logged-out-override
-  decisions, `hasCancelledPaidBrandPlan` for the homepage cancelled-Brand
-  decision, and `isRoleBouncePage`, `roleBounceRolesFor`, and
+  `loggedOutDestinationFor`, and `legacyV3RedirectFor` for the bounce,
+  logged-out override, and V3 compatibility decisions,
+  `hasCancelledPaidBrandPlan` for the homepage cancelled-Brand decision, and
+  `isRoleBouncePage`, `roleBounceRolesFor`, and
   `roleBounceTargetFor` for the role-bounce decision.
 - `hasReadyPendingQuiz()` takes no arguments and reports whether
   `sessionStorage.starterQuizPending` currently holds a `ready` payload. It is the

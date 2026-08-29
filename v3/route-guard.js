@@ -1,7 +1,7 @@
 /**
  * V3 protected-route guard.
  *
- * @release v1.59.251
+ * @release v1.59.441
  *
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only runs at
  * /login, /starter-login, and /auth-route, so a logged-in member can still reach
@@ -10,6 +10,9 @@
  * This guard closes that gap: install it once sitewide before page controllers
  * and it will
  *
+ *   - replace the retired `/memberstack/search-freelancers` destination with
+ *     `/all-starters` on approved V3 hosts before waiting for Memberstack,
+ *     preserving the query and fragment,
  *   - send logged-out visitors to /login?next=<current path+query>, or to the
  *     per-page destination in LOGGED_OUT_DESTINATIONS where a funnel page wants
  *     the homepage instead of a login form,
@@ -28,7 +31,8 @@
  *     leaving logged-out visitors completely alone,
  *   - leave an authenticated-but-unmapped or cross-role-conflicted member on
  *     the page with an explicit error state instead of silently redirecting,
- *   - do nothing on a page it does not recognise (public/unlisted route).
+ *   - do nothing on any other page it does not recognise (public/unlisted
+ *     route).
  *
  * The plan-ID → role map and guarded page roles derive from the stable access
  * matrix used by v3/auth-route.js and documented in v3/ACCESS-MATRIX.md.
@@ -66,6 +70,21 @@
   ])
   var BRAND_ACTION_ITEMS_JSON_KEY = 'brandActionItems'
   var BRAND_ALL_STARTERS_VISITED_AT_KEY = 'allStartersVisitedAt'
+
+  // Memberstack's app-level success/login destination still emits this retired
+  // V2 directory path. Keep the compatibility redirect V3-host-only so the
+  // live V2 site and its Memberstack/Zapier flows remain untouched.
+  var LEGACY_V3_REDIRECTS = {
+    '/memberstack/search-freelancers': '/all-starters',
+    '/memberstack/search-freelancers/': '/all-starters',
+  }
+
+  function legacyV3RedirectFor(pathname, search, hash) {
+    if (!Object.prototype.hasOwnProperty.call(LEGACY_V3_REDIRECTS, pathname)) {
+      return ''
+    }
+    return LEGACY_V3_REDIRECTS[pathname] + (search || '') + (hash || '')
+  }
 
   // Identical to v3/auth-route.js and opportunities-3.0.js (MS_PLAN_ROLES).
   var PLAN_ROLES = {
@@ -976,7 +995,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/route-guard.test.js drift guard asserts they match.
-    release: 'v1.59.251',
+    release: 'v1.59.441',
     activePlanIds: activePlanIds,
     roleResolution: roleResolution,
     memberRole: memberRole,
@@ -997,6 +1016,7 @@
     bounceTargetFor: bounceTargetFor,
     localPath: localPath,
     loggedOutDestinationFor: loggedOutDestinationFor,
+    legacyV3RedirectFor: legacyV3RedirectFor,
     // Member-only role bounce (/quiz-results, /all-starters).
     isRoleBouncePage: isRoleBouncePage,
     roleBounceRolesFor: roleBounceRolesFor,
@@ -1006,6 +1026,19 @@
   window.StartersV3RouteGuard = api
 
   if (!APPROVED_HOSTS.has(window.location.hostname)) return
+
+  // This compatibility route must not wait for Memberstack. It is commonly
+  // the destination Memberstack itself chooses after checkout or Login as
+  // Member, including while its browser SDK is still starting.
+  var legacyTarget = legacyV3RedirectFor(
+    window.location.pathname,
+    window.location.search,
+    window.location.hash,
+  )
+  if (legacyTarget) {
+    replaceLocation(legacyTarget)
+    return
+  }
 
   // Checked before the guarded-page test: the bounce pages are intentionally
   // absent from PAGE_ROLES, so isGuardedPath() would bail out on them.

@@ -71,6 +71,7 @@ function loadGuard(options = {}) {
     origin: `https://${options.hostname || 'the-starters-3-0.webflow.io'}`,
     pathname: options.pathname || '/test',
     search: options.search || '',
+    hash: options.hash || '',
     replace(value) {
       location.replaced = value
     },
@@ -189,6 +190,31 @@ test('recognises guarded pages and ignores unlisted ones', () => {
   assert.equal(api.isGuardedPath('/'), false)
   assert.equal(api.isGuardedPath('/about'), false)
   assert.equal(api.isGuardedPath('/opportunities/slug/apply'), false)
+})
+
+test('redirects the retired Memberstack V2 directory path on V3 hosts without waiting for auth', () => {
+  const result = loadGuard({
+    pathname: '/memberstack/search-freelancers',
+    search: '?utm_source=memberstack',
+    hash: '#complete',
+    memberstackMissing: true,
+  })
+
+  assert.equal(
+    result.location.replaced,
+    '/all-starters?utm_source=memberstack#complete',
+  )
+  assert.equal(result.attributes['data-route-guard'], 'redirecting')
+})
+
+test('keeps the retired Memberstack path untouched on V2 hosts', () => {
+  const result = loadGuard({
+    hostname: 'www.hirethestarters.com',
+    pathname: '/memberstack/search-freelancers',
+    memberstackMissing: true,
+  })
+
+  assert.equal(result.location.replaced, undefined)
 })
 
 test('merged /opportunities feed is guarded for both roles (incl. trailing slash)', () => {

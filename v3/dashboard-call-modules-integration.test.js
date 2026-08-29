@@ -110,6 +110,41 @@ test('Details exposes exact supported decline and media actions only', () => {
   assert.equal(media.hidden, false)
 })
 
+test('detail action refresh preserves back control visibility away from base', () => {
+  const back = button('switch-base')
+  back.hidden = true
+  const panels = ['base', 'cancel'].map(function (name) {
+    return {
+      hidden: name !== 'base',
+      style: {},
+      getAttribute(attribute) {
+        return attribute === 'booking-popup-content' ? name : null
+      },
+    }
+  })
+  const modal = {
+    querySelectorAll(selector) {
+      if (selector === '[booking-popup-content]') return panels
+      if (selector.includes('switch-base')) return [back]
+      if (selector.includes('[booking-action-btn]')) return [back]
+      return []
+    },
+  }
+
+  global.StartersDashboardCallActions.switchPopupContent(modal, 'cancel')
+  assert.equal(back.hidden, false)
+
+  dashboard.configureDetailActions(modal, 'starter', 'confirmed', {
+    booking_id: 'booking-refresh',
+    status: 'confirmed',
+    start: Date.now() + 60 * 60 * 1000,
+  })
+
+  assert.equal(back.hidden, false)
+  assert.equal(panels[0].hidden, true)
+  assert.equal(panels[1].hidden, false)
+})
+
 test('dashboard reuses already-loaded narrow modules', async () => {
   const loaded = await dashboard.loadDashboardCallModules()
   assert.equal(loaded.actions, global.StartersDashboardCallActions)
