@@ -913,6 +913,27 @@ test('picking a slot turns the confirm black and live, and clearing it back', as
   assert.equal(confirm.getAttribute('data-button-theme'), 'disabled')
 })
 
+test('the slot chips rest on #eee and go back to it after a deselect', async () => {
+  // The resting colour is written in three places — when a chip is built, when
+  // another chip is picked, and in the deselect reset — and the reset is the
+  // one that gets forgotten. Miss it and a select-then-deselect leaves one chip
+  // a different grey from its neighbours.
+  const { result, shell } = await mountFooterFixture()
+  const times = shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+  const chip = times.children[0]
+
+  assert.equal(chip.style.background, '#eee', 'resting on build')
+
+  chip.listeners.click()
+  assert.equal(chip.style.background, '#1f211d', 'selected')
+  assert.equal(chip.style.color, '#ffffff')
+
+  result.clearSelection()
+  assert.equal(chip.style.background, '#eee', 'back to resting, not the old #f3f4ef')
+  assert.equal(chip.style.color, '#1f211d')
+})
+
 test('the footer back label is overridable by the caller', async () => {
   const { backParts } = await mountFooterFixture({ backText: 'Back to call options' })
   assert.equal(backParts.text.textContent, 'Back to call options')
@@ -967,7 +988,7 @@ test('an authored footer class is applied verbatim and places its own children',
   assert.deepEqual(Object.keys(confirm.style), [])
 })
 
-test('the unauthored footer is a full-width row of two equal halves', async () => {
+test('the unauthored footer row writes only what does not vary by breakpoint', async () => {
   const { footer, back, confirm } = await mountFooterFixture()
 
   assert.equal(footer.getAttribute('class'), null)
@@ -977,18 +998,18 @@ test('the unauthored footer is a full-width row of two equal halves', async () =
   assert.equal(footer.style.columnGap, '16px')
   assert.equal(footer.style.gap, '12px')
   assert.equal(footer.style.width, '100%')
-  // Equal heights: the two labels are different lengths and the longer one
-  // wraps in a narrow row. Safe only because the shell's rows are min-content
-  // sized — a stretched button in an over-tall row measured 84px against the
-  // site's 38px before that was pinned.
-  assert.equal(footer.style.alignItems, 'stretch')
 
-  // Placement in the engine's own fallback row is the ONLY thing written on a
-  // component button. Nothing about its appearance.
+  // Alignment is NOT written here. The row is right-aligned natural-width
+  // buttons on desktop and a full-width stack on mobile, and an inline
+  // declaration outranks any stylesheet rule — writing `align-items` or a
+  // `flex` basis here would pin one of those at both sizes. The sheet owns it.
+  assert.equal(footer.style.alignItems, undefined)
+  assert.equal(footer.style.justifyContent, undefined)
+
+  // And the buttons carry no inline sizing at all any more, so they keep the
+  // component's own padding and size to their label plus that padding.
   for (const [name, node] of [['back', back], ['confirm', confirm]]) {
-    assert.deepEqual(Object.keys(node.style), ['flex', 'minWidth'], name)
-    assert.equal(node.style.flex, '1 1 0', name)
-    assert.equal(node.style.minWidth, '0', name)
+    assert.deepEqual(Object.keys(node.style), [], `${name} carries no inline styles`)
   }
 })
 
@@ -1136,17 +1157,26 @@ test('an empty calendar still offers the way back to the chooser', async () => {
   assert.equal(container.children.indexOf(footer), 1)
 })
 
-test('the confirm fills the row even when the back control is hidden', async () => {
+test('the footer row is right-aligned on desktop and stacked on mobile', async () => {
   // On a direct entry the guard stylesheet hides the back WRAP with
-  // `display:none`, which takes it out of the flex layout entirely. The
-  // confirm's `flex: 1 1 0` is what then fills the whole row rather than
-  // leaving it stranded beside an empty slot — the reason this row is flex and
-  // not a fixed two-column grid.
-  const { footer, back, confirm } = await mountFooterFixture()
-  assert.equal(footer.style.display, 'flex')
-  assert.equal(back.style.flex, '1 1 0')
-  assert.equal(confirm.style.flex, '1 1 0')
-  assert.equal(confirm.style.minWidth, '0')
+  // `display:none`, which takes it out of the flex layout entirely. With the
+  // row right-aligned the confirm simply stays at the right-hand end rather
+  // than stretching to fill — the arrangement Jerico picked from the two
+  // screenshots, and the one the modal's own authored button group uses.
+  const { document, footer, back, confirm } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+
+  assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+  // Nothing inline can fight it.
+  assert.deepEqual(Object.keys(back.style), [])
+  assert.deepEqual(Object.keys(confirm.style), [])
+  assert.equal(footer.style.justifyContent, undefined)
+
+  // Mobile still stacks full width, primary first.
+  const mobile = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+  assert.ok(mobile.includes('{flex-direction:column;align-items:stretch}'))
+  assert.ok(mobile.includes('{order:-1}'))
 
   // An authored row places its own children: the engine writes nothing.
   const authoredFooter = bookingMount()
@@ -1245,7 +1275,7 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
   assert.ok(mobileBlock.includes('[nylas-container]{padding-bottom:1.25rem}'))
 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
-  assert.ok(desktopBlock.includes('"footer"]{grid-area:footer;padding:0 2rem}'))
+  assert.ok(desktopBlock.includes('"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem'))
   // The unconditional mount rule from the earlier round is gone: on desktop it
   // would stack with the frame's own bottom edge.
   const beforeMedia = css.split('@media')[0]
@@ -1284,7 +1314,7 @@ test('an authored footer row is labelled as such and dodges the stacking rules',
   assert.deepEqual(Object.keys(footer.style), [])
 })
 
-test('the desktop footer spans both columns at the bottom of the panel', async () => {
+test('the desktop footer is a full-width band under both columns', async () => {
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
   const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
@@ -1292,9 +1322,9 @@ test('the desktop footer spans both columns at the bottom of the panel', async (
   assert.ok(css.includes('@media (min-width:768px){'))
   // The footer spans BOTH columns on its own row, so the buttons anchor to the
   // bottom of the whole panel rather than the bottom of the right column.
-  // Replayed verbatim, Jerico's `position:absolute; bottom:0` version overlaps
-  // the times by 78px and the month by 110px, and on mobile it covers the
-  // slots so completely that a slot cannot be clicked at all.
+  // Replayed verbatim, Jerico's `position:absolute` version overlaps the times
+  // by 78px and the month by 110px, and on mobile it covers the slots so
+  // completely that a slot cannot be clicked at all.
   assert.match(css, /grid-template-areas:"month times" "footer footer" "status status"/)
   assert.match(css, /grid-template-rows:minmax\(0,1fr\) min-content min-content/)
   assert.ok(!/position:absolute/.test(css), 'the footer stays in flow')
@@ -1305,28 +1335,44 @@ test('the desktop footer spans both columns at the bottom of the panel', async (
   // 438px to 601px. `height:0` takes the times out of track sizing so the
   // month decides the row height; `min-height:100%` refills the area.
   assert.match(css, /"times"\]\{grid-area:times;height:0;min-height:100%;align-content:start;/)
-  // `align-content:start` is what keeps the chips compact — a stretched grid
-  // inflated four chips to 113px against 42.7px on a busy day.
+  // `align-content:start` keeps the chips compact — a stretched grid inflated
+  // four chips to 113px against 42.7px on a busy day.
   assert.match(css, /"times"\]\{[^}]*align-content:start/)
-  assert.ok(css.includes(ROLE + '"times"]::-webkit-scrollbar{width:3px;display:block;background:transparent}'))
 
-  // The 2rem interior frame, formed from the edges that touch the modal's
-  // margins: the month's left, both tops, the times' right, the footer's left,
-  // right and bottom. The month carries no bottom padding — the footer's row
-  // closes the panel, and padding there would stack with the row gap.
-  assert.ok(css.includes(ROLE + '"month"]{grid-area:month;align-self:start;padding:2rem 0 0 2rem}'))
-  assert.match(css, /"times"\]\{[^}]*padding:2rem 2rem 0 0\}/)
-  // Left and right only. Jerico's captured `padding: 2rem` had a bottom edge
-  // because his footer was absolutely positioned and therefore outside the
-  // authored step; in flow it sits inside `.call-details_layout`, which the
-  // Designer already pads by 2.5rem (32.3px). Keeping both put 71px under the
-  // buttons against a 26px frame on the sides.
-  assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer;padding:0 2rem}'))
-  assert.ok(css.includes(ROLE + '"status"]{grid-area:status;padding:0 2rem}'))
+  // The 1.25rem interior frame. Both columns now pad their bottom edge too, so
+  // they end level above the footer's rule.
+  assert.ok(css.includes(ROLE + '"month"]{grid-area:month;align-self:start;padding:1.25rem 0 1.25rem 1.25rem}'))
+  assert.match(css, /"times"\]\{[^}]*padding:1\.25rem 1\.25rem 1\.25rem 0\}/)
 
-  // Column gap wider than the row gap, and the row gap above the buttons
-  // tighter than the 16px rhythm so an overflowing list stops short of them.
-  assert.match(css, /"shell"\]\{column-gap:2rem;row-gap:1rem;/)
+  // Zero row gap: the band's hairline and its own padding do the separating.
+  // A gap AND a rule would read as two dividers.
+  assert.match(css, /"shell"\]\{column-gap:2rem;row-gap:0;/)
+  assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+})
+
+test('the day chips fill their cell, scoped so other date pickers do not', async () => {
+  // Jerico made this edit on the page's GLOBAL datepicker sheet. Shipped
+  // globally it would resize the contract form's date fields too, so it is
+  // re-scoped here. The page's own rule and its mobile 2.5rem override are both
+  // (0,1,2); under the dialog attribute this is (0,2,2) and wins at both widths
+  // without `!important`.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const D = '[data-modal-target="popup-booking"]'
+  assert.ok(css.includes(D + ' .ui-datepicker td a,' + D + ' .ui-datepicker td span{width:100%}'))
+  // Height is left to the page — only the width was his edit.
+  assert.ok(!/td a,[^{]*td span\{[^}]*height/.test(css))
+})
+
+test('the status line hides only when it has nothing to say', async () => {
+  // Jerico set a blanket `display:none` inline on it. The same element carries
+  // "No available times were found in the next 14 days.", the sending state and
+  // every booking error, so a blanket rule would silence all of them. `:empty`
+  // is the case he was actually looking at.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  assert.ok(css.includes('[data-paid-calendar-element="status"]:empty{display:none}'))
+  assert.ok(!/"status"\]\{[^}]*display:none/.test(css), 'never a blanket hide')
 })
 
 test('a second mount reuses the stylesheet rather than stacking copies', async () => {
