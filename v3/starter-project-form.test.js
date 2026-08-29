@@ -452,6 +452,8 @@ test('renders the authenticated Starter services and leaves the Brand rail ident
     professional_headline: 'Retention lead',
     profile_photo: 'https://example.com/photo.jpg',
     freelancer_information: '<p>Builds &amp; improves retention.</p>',
+    retainer_enabled: true,
+    retainer_rate: 2500,
     services: [
       { name: 'Lifecycle Email Program', description: 'Build retention.', price: 2500 },
       { name: 'Retention Audit', description: 'Find gaps.', price: 800 },
@@ -501,8 +503,29 @@ test('the canonical service list never reaches the profile bind projection', asy
   assert.equal(services.textContent, 'Authored services copy')
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.value),
-    ['', 'Freelance work', 'Monthly retainer', 'Lifecycle Email Program', 'Retention Audit'],
+    ['', 'Freelance work', 'Lifecycle Email Program', 'Retention Audit'],
   )
+})
+
+test('Monthly retainer requires an enabled canonical flag and a positive rate', async () => {
+  const cases = [
+    { profile: { retainer_enabled: true, retainer_rate: 1000 }, expected: true },
+    { profile: { Retainer_Enabled: 'true', Retainer_Rate: '$2,500' }, expected: true },
+    { profile: { retainer_enabled: false, retainer_rate: 1000 }, expected: false },
+    { profile: { retainer_enabled: true, retainer_rate: 0 }, expected: false },
+    { profile: { retainer_enabled: true, retainer_rate: '' }, expected: false },
+    { profile: {}, expected: false },
+  ]
+
+  for (const entry of cases) {
+    const loaded = load({ noDocument: true, profile: entry.profile })
+    assert.equal(loaded.api.responseRetainerApplicable(entry.profile), entry.expected)
+    await loaded.api.loadProfile(loaded.form, loaded.window)
+    assert.equal(
+      loaded.form.fields.serviceSelect.options.some((option) => option.value === 'Monthly retainer'),
+      entry.expected,
+    )
+  }
 })
 
 test('normalizes canonical services and removes generic slots from every source', () => {
@@ -541,7 +564,6 @@ test('normalizes canonical services and removes generic slots from every source'
     [
       ['', 'Select one...'],
       ['Freelance work', 'Freelance work'],
-      ['Monthly retainer', 'Monthly retainer'],
       ['Paid Media Audit', 'Paid Media Audit'],
     ],
   )
@@ -554,7 +576,7 @@ test('authored generic service slots stay removed for an empty list and a failed
     noDocument: true,
     starterProfile: () => new Promise((resolve, reject) => { rejectProfile = reject }),
   })
-  const validAuthored = ['Select one...', 'Freelance work', 'Monthly retainer']
+  const validAuthored = ['Select one...', 'Freelance work']
   const labels = () => loaded.form.fields.serviceSelect.options.map((option) => option.textContent)
 
   assert.equal(loaded.api.renderServices(loaded.form, []), true)
@@ -575,7 +597,7 @@ test('a profile response without services keeps only valid authored service opti
   assert.equal((await loaded.api.loadProfile(loaded.form, loaded.window)).full_name, 'Starter Person')
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
-    ['Select one...', 'Freelance work', 'Monthly retainer'],
+    ['Select one...', 'Freelance work'],
   )
 })
 
@@ -585,14 +607,14 @@ test('a member scope change drops the previous Starter services without restorin
   await loaded.api.loadProfile(loaded.form, loaded.window, true)
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
-    ['Select one...', 'Freelance work', 'Monthly retainer', 'CRM Strategy'],
+    ['Select one...', 'Freelance work', 'CRM Strategy'],
   )
 
   loaded.window.listeners['opp30:member-scope-reset']({ detail: { memberId: 'member-b' } })
 
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
-    ['Select one...', 'Freelance work', 'Monthly retainer'],
+    ['Select one...', 'Freelance work'],
   )
 })
 
@@ -609,7 +631,7 @@ test('opening the modal loads the authenticated Starter services', async () => {
   assert.equal(loaded.calls.profile.length, 1)
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
-    ['Select one...', 'Freelance work', 'Monthly retainer', 'CRM Strategy', 'Lifecycle Build'],
+    ['Select one...', 'Freelance work', 'CRM Strategy', 'Lifecycle Build'],
   )
 })
 
@@ -633,7 +655,7 @@ test('the Opp30 starterProfile method stays the primary path and never reaches t
   assert.deepEqual(requests, [])
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.textContent),
-    ['Select one...', 'Freelance work', 'Monthly retainer', 'CRM Strategy'],
+    ['Select one...', 'Freelance work', 'CRM Strategy'],
   )
 })
 
@@ -668,7 +690,6 @@ test('loads Starter services through the shared Xano auth bridge when the cached
     [
       ['', 'Select one...'],
       ['Freelance work', 'Freelance work'],
-      ['Monthly retainer', 'Monthly retainer'],
       ['CRM Strategy', 'CRM Strategy'],
     ],
   )
@@ -676,7 +697,7 @@ test('loads Starter services through the shared Xano auth bridge when the cached
 
 test('a blank shared token issues no fallback request and keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
+  const authored = ['Select one...', 'Freelance work']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.getXanoAuthToken = async () => '   '
@@ -691,14 +712,14 @@ test('a blank shared token issues no fallback request and keeps only valid autho
   assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.value),
-    ['', 'Freelance work', 'Monthly retainer'],
+    ['', 'Freelance work'],
   )
   assert.deepEqual(loaded.calls.submit, [])
 })
 
 test('a missing shared auth bridge issues no fallback request and keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
+  const authored = ['Select one...', 'Freelance work']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.fetch = async (url, options) => {
@@ -715,7 +736,7 @@ test('a missing shared auth bridge issues no fallback request and keeps only val
 
 test('a non-ok fallback response with a non-JSON body keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
+  const authored = ['Select one...', 'Freelance work']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.getXanoAuthToken = async () => 'xano-token'
@@ -734,14 +755,14 @@ test('a non-ok fallback response with a non-JSON body keeps only valid authored 
   assert.deepEqual(loaded.form.fields.serviceSelect.options.map((option) => option.textContent), authored)
   assert.deepEqual(
     loaded.form.fields.serviceSelect.options.map((option) => option.value),
-    ['', 'Freelance work', 'Monthly retainer'],
+    ['', 'Freelance work'],
   )
   assert.deepEqual(loaded.calls.submit, [])
 })
 
 test('a 401 fallback response with a JSON error body keeps only valid authored service slots', async () => {
   const loaded = load({ noDocument: true })
-  const authored = ['Select one...', 'Freelance work', 'Monthly retainer']
+  const authored = ['Select one...', 'Freelance work']
   const requests = []
   delete loaded.window.Opp30.API.starterProfile
   loaded.window.getXanoAuthToken = async () => 'xano-token'

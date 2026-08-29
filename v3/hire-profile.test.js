@@ -690,6 +690,45 @@ function addXanoServiceFixture(page, serviceName) {
   return { wrapper, template, card, title, description }
 }
 
+function addXanoRetainerFixture(page, { withCard = true } = {}) {
+  const wrapper = makeElement('div', {
+    'wf-xano-element': 'wrapper',
+    'wf-xano-instance': 'starter-retainer',
+    'wf-xano-source': 'KZf7nFnk:profile/starter/taxonomy/v3',
+    'wf-xano-param-kind': 'retainer',
+  })
+  const template = makeElement('div', {
+    'wf-xano-element': 'template',
+    'data-service-card': 'component',
+    'data-service-card-state': 'Default',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'Retainer',
+  })
+  const templateTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  templateTitle.textContent = 'Ongoing Advisory Retainer'
+  const templateDescription = makeElement('div', { 'data-service-card-element': 'description' })
+  templateDescription.textContent = 'Retainer Description'
+  template.appendChild(templateTitle)
+  template.appendChild(templateDescription)
+  wrapper.appendChild(template)
+
+  let card = null
+  let title = null
+  let description = null
+  if (withCard) {
+    card = makeElement('div', { 'wf-xano-item': '', 'data-wf-xano-id': 'retainer:424' })
+    title = makeElement('div', { 'data-service-card-element': 'title' })
+    title.textContent = 'Ongoing Advisory Retainer'
+    description = makeElement('div', { 'data-service-card-element': 'description' })
+    description.textContent = 'Retainer Description'
+    card.appendChild(title)
+    card.appendChild(description)
+    wrapper.appendChild(card)
+  }
+  page.servicesList.appendChild(wrapper)
+  return { wrapper, template, card, title, description }
+}
+
 function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = true } = {}) {
   let resultsHandler = null
   let latestResult = initialResult
@@ -722,6 +761,54 @@ function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = tru
     getStateCalls() {
       return getStateCalls
     },
+  }
+}
+
+function makeRetainerWfXanoFixture(root) {
+  let resultsHandler = null
+  let instance = null
+  let destroyCalls = 0
+  let initCalls = 0
+
+  function createInstance() {
+    return {
+      root,
+      getState: () => null,
+      on(event, handler) {
+        if (event === 'results') resultsHandler = handler
+        return this
+      },
+    }
+  }
+  instance = createInstance()
+
+  const api = {
+    push(callback) {
+      callback(api)
+    },
+    get(key) {
+      return key === 'starter-retainer' ? instance : null
+    },
+    destroy(target) {
+      assert.equal(target, root)
+      destroyCalls += 1
+      instance = null
+    },
+    init(target) {
+      assert.equal(target, root)
+      initCalls += 1
+      instance = createInstance()
+    },
+  }
+
+  return {
+    api,
+    emit(result) {
+      assert.ok(resultsHandler, 'starter-retainer results handler must be registered')
+      resultsHandler(result)
+    },
+    destroyCalls: () => destroyCalls,
+    initCalls: () => initCalls,
   }
 }
 
@@ -1104,6 +1191,117 @@ test('a cloned rate card keeps signup attribution and drops the booking wiring',
     0,
     'the template must never receive a script-built chip label',
   )
+})
+
+test('the authored wf-xano Retainer replaces the runtime fallback after a canonical result', async () => {
+  const page = makePage()
+  const retainer = addXanoRetainerFixture(page)
+  const wfx = makeRetainerWfXanoFixture(retainer.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-rate': '10000', 'retainer-enabled': true },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(
+    page.servicesList.querySelectorAll('[data-runtime-rate-card="retainer"]').length,
+    1,
+    'the Algolia-derived card stays available until the canonical request resolves',
+  )
+  assert.equal(retainer.wrapper.getAttribute('wf-xano-source'), 'KZf7nFnk:profile/starter/retainer/v3')
+  assert.equal(retainer.wrapper.getAttribute('wf-xano-param-kind'), null)
+  assert.equal(retainer.wrapper.getAttribute('data-retainer-source-upgraded'), 'true')
+  assert.equal(wfx.destroyCalls(), 1)
+  assert.equal(wfx.initCalls(), 1)
+
+  wfx.emit({
+    items: [{
+      id: 'retainer:424',
+      name: 'Ongoing Advisory Retainer',
+      description: 'Fractional leadership',
+      price: 10000,
+      service_value: 'Monthly retainer',
+      type: 'retainer',
+    }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.equal(page.servicesList.querySelectorAll('[data-runtime-rate-card="retainer"]').length, 0)
+  assert.equal(retainer.card.getAttribute('data-rate-card'), 'retainer')
+  assert.equal(retainer.card.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(retainer.card.getAttribute('data-signup-trigger-value'), 'Retainer')
+  assert.equal(retainer.card.getAttribute('data-xano-retainer-card'), 'starter-retainer')
+  assert.equal(retainer.title.textContent, 'Ongoing Advisory Retainer')
+  assert.equal(retainer.description.textContent, 'Fractional leadership')
+  assert.equal(retainer.card.style.cursor, 'pointer')
+})
+
+test('an empty canonical Retainer result removes a stale runtime fallback', async () => {
+  const page = makePage()
+  const retainer = addXanoRetainerFixture(page, { withCard: false })
+  const wfx = makeRetainerWfXanoFixture(retainer.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-rate': '10000', 'retainer-enabled': true },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  assert.equal(page.servicesList.querySelectorAll('[data-runtime-rate-card="retainer"]').length, 1)
+
+  wfx.emit({ items: [], total: 0, page: 1, pages: 1, hasMore: false })
+  await settle()
+
+  assert.equal(
+    page.servicesList.querySelectorAll('[data-runtime-rate-card="retainer"]').length,
+    0,
+    'canonical disabled state must win over a stale search projection',
+  )
+  assert.equal(retainer.wrapper.querySelectorAll('[wf-xano-item]').length, 0)
+})
+
+test('an eligible Brand receives the Xano Retainer Monthly retainer preset', async () => {
+  const page = makePage()
+  const retainer = addXanoRetainerFixture(page)
+  const wfx = makeRetainerWfXanoFixture(retainer.wrapper)
+  addContractDialog(page, ['', 'Freelance work', 'Monthly retainer'])
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-rate': '10000', 'retainer-enabled': true },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{
+      id: 'retainer:424',
+      name: 'Ongoing Advisory Retainer',
+      description: 'Fractional leadership',
+      price: 10000,
+      service_value: 'Monthly retainer',
+      type: 'retainer',
+    }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.equal(retainer.card.getAttribute('data-modal-trigger'), 'generate-contract')
+  assert.equal(retainer.card.getAttribute('data-sp-fill'), 'button')
+  assert.equal(retainer.card.getAttribute('data-sp-fill-category'), 'service')
+  assert.equal(retainer.card.getAttribute('data-sp-fill-value'), 'Monthly retainer')
 })
 
 test('a price chip with no millify paragraph warns and still renders the cards', async () => {
