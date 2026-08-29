@@ -1746,13 +1746,89 @@ test('the timezone selector sits above the slots at both widths', async () => {
   const beforeMedia = css.split('@media')[0]
   assert.ok(beforeMedia.includes(ROLE + '"timezone-control"]{display:grid;gap:0.375rem}'))
 
-  // Everything else about its appearance stays the engine's. Those are inline
-  // declarations and inline outranks every rule here, so asking for them would
-  // be a rule that silently loses.
+  // The WRAPPER itself still gets layout and nothing else — it is the box the
+  // grid and flex placement rules act on. Its contents are a separate matter:
+  // Jerico asked for the control's own look in round 14, so the caption and
+  // the select below are the sheet's now.
   for (const rule of css.split('}')) {
-    if (!rule.includes('"timezone-control"]')) continue
+    const selector = rule.split('{')[0] || ''
+    if (!/\[data-paid-calendar-element="timezone-control"\]\s*$/.test(selector.trim())) continue
     assert.ok(!/(^|;|\{)\s*(color|margin|background)\s*:/.test(rule), rule)
   }
+})
+
+test('the timezone select wears the modal\'s design, not the OS default', async () => {
+  // Jerico: "keep our UI design". A native select renders as an OS control,
+  // and `appearance:none` plus the rules below rebuild the CLOSED face in the
+  // modal's own language. The OPEN list is drawn by the operating system and
+  // cannot be styled — an accepted constraint, not an omission.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+  const face = css.split(ROLE + '"timezone"]{')[1].split('}')[0]
+
+  // Both spellings: Safari still wants the prefixed one.
+  assert.match(face, /(^|;)appearance:none/)
+  assert.match(face, /-webkit-appearance:none/)
+  // The site's face and the sheet's own scale, not the UA stylesheet's.
+  assert.match(face, /font:inherit/)
+  assert.match(face, /font-size:1rem/)
+  assert.match(face, /font-weight:500/)
+  // White with the modal's own hairline, NOT the chips' #eee fill: the control
+  // sits directly above a field of grey chips and a grey box there reads as
+  // the first chip rather than as a control to open.
+  assert.match(face, /background-color:#fff/)
+  assert.match(face, /border:1px solid #eee/)
+  assert.ok(!/background-color:#eee/.test(face), 'not chip-coloured')
+  // Their off-palette border is gone.
+  assert.ok(!/#d7d9d2/.test(css))
+  // A chevron of our own, since `appearance:none` removes the OS one.
+  assert.match(face, /background-image:url\("data:image\/svg\+xml/)
+  assert.match(face, /stroke='%231e211e'/, 'the month picker nav arrows\' colour')
+  assert.match(face, /background-repeat:no-repeat/)
+  // Room for it on the right, and rem padding like everything else here.
+  assert.match(face, /padding:0\.625rem 2\.25rem 0\.625rem 0\.75rem/)
+
+  // Focus-visible, so a mouse click does not paint a ring nobody asked for.
+  // The treatment is the site's own, lifted from the timepicker embed.
+  const focus = css.split(ROLE + '"timezone"]:focus-visible{')[1].split('}')[0]
+  assert.match(focus, /border-color:#20221f/)
+  assert.match(focus, /box-shadow:0 0 0 0\.1875rem rgba\(32, 34, 31, 0\.1\)/)
+
+  // The caption keeps the engine's grey at the size the old static caption had.
+  assert.ok(css.includes(ROLE + '"timezone-control"] span{font-size:0.75rem;color:#6f746d}'))
+})
+
+test('the timezone control keeps its inline look off the booking surface', async () => {
+  // The dashboard's reschedule calendar has no sheet to take the look over, so
+  // every inline declaration the engine used to write is still written there.
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  host.setAttribute('booking-reschedule-calendar', '')
+  reschedule.appendChild(host)
+  const away = await mountFooterFixture({ container: host })
+
+  const findRole = (root, role) => root.querySelectorAll('[data-paid-calendar-element]')
+    .find((node) => node.getAttribute('data-paid-calendar-element') === role)
+  const control = findRole(away.shell, 'timezone-control')
+  assert.ok(control, 'the control still renders there')
+  const select = findRole(control, 'timezone')
+  const caption = control.children.find((child) => child !== select)
+  assert.equal(select.style.border, '1px solid #d7d9d2')
+  assert.equal(select.style.fontSize, '14px')
+  assert.equal(select.style.minHeight, '42px')
+  assert.equal(select.style.background, '#ffffff')
+  assert.equal(caption.style.color, '#6f746d')
+  assert.equal(caption.style.fontSize, '13px')
+
+  // And on the booking surface it writes none of them.
+  const { shell } = await mountFooterFixture()
+  const onSurface = findRole(shell, 'timezone-control')
+  const onSurfaceSelect = findRole(onSurface, 'timezone')
+  const onSurfaceCaption = onSurface.children.find((child) => child !== onSurfaceSelect)
+  assert.deepEqual(Object.keys(onSurfaceSelect.style), [])
+  assert.deepEqual(Object.keys(onSurfaceCaption.style), [])
 })
 
 test('the timezone control defers placement styles only on the booking surface', async () => {
