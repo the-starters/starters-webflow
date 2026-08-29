@@ -5,10 +5,10 @@
  *
  * The module's rendered behavior is covered end-to-end elsewhere, by the
  * `staging-qa` Playwright suite against the live endpoint. What is worth
- * testing here is the handful of pure decisions that are cheap to get wrong and
- * expensive to notice: the release marker drifting from the header, the slug
- * regex, and the two predicates that decide whether a section renders and
- * whether a URL is allowed into a live iframe.
+ * testing here is the handful of decisions and lifecycle edges that are cheap
+ * to get wrong and expensive to notice: release-marker drift, slug parsing,
+ * render and URL policy, timeout bounds and reloads, instance resolution, and
+ * terminal error cleanup.
  *
  * The module is an IIFE that assigns its api onto the global it is handed, then
  * bails before touching the DOM when that global has no `document`. So a fake
@@ -34,6 +34,23 @@ function loadApi(overrides = {}) {
   const api = sandbox.StartersAgencyProfileV3
   assert.ok(api, 'the module should export StartersAgencyProfileV3')
   return api
+}
+
+function sectionFixture({ frames = [], timeout = null } = {}) {
+  const attrs = Object.create(null)
+  return {
+    style: { display: '', removeProperty(name) { delete this[name] } },
+    hidden: false,
+    attrs,
+    setAttribute(name, value) { attrs[name] = String(value) },
+    removeAttribute(name) { delete attrs[name] },
+    getAttribute(name) {
+      if (name === 'data-agency-v3-timeout-ms') return timeout
+      return name in attrs ? attrs[name] : null
+    },
+    hasAttribute(name) { return name in attrs },
+    querySelectorAll() { return frames },
+  }
 }
 
 test('release marker: the header and the api agree, in vX.Y.Z form', () => {
@@ -201,6 +218,130 @@ test('activate warns about duplicate instance attributes across the document', (
   assert.equal(activate({ init() {}, get() { return instance } }, roots[0]), instance)
   assert.equal(messages.length, 1)
   assert.match(messages[0], /another element on the page also carries wf-xano-instance/)
+})
+
+test('activate resolves a duplicated key root-first and does not subscribe to a terminal error', () => {
+  const frame = {
+    src: 'https://player.vimeo.com/video/stale',
+    removeAttribute(name) { if (name === 'src') this.src = '' },
+  }
+  const root = sectionFixture({ frames: [frame] })
+  const foreignRoot = sectionFixture()
+  const ownInstance = {
+    root,
+    getState() { return { status: 'error' } },
+    on() { assert.fail('a terminal error must not install replaying result handlers') },
+    subscribe() { assert.fail('a terminal error has no retry path to subscribe to') },
+  }
+  const foreignInstance = { root: foreignRoot }
+  root.__wfXano = ownInstance
+
+  const { activate } = loadApi()
+  assert.equal(
+    activate({ init() {}, get() { return foreignInstance } }, root),
+    ownInstance,
+    'the wrapper back-reference wins over another instance returned by the duplicated key',
+  )
+  assert.equal(root.hidden, true)
+  assert.equal(root.style.display, 'none')
+  assert.equal(frame.src, '', 'the terminal error paint strips stale rendered video')
+})
+
+test('the error event performs a full paint and strips a previously rendered video', () => {
+  const handlers = Object.create(null)
+  const frame = {
+    src: '',
+    setAttribute(name, value) { if (name === 'src') this.src = value },
+    removeAttribute(name) { if (name === 'src') this.src = '' },
+  }
+  const root = sectionFixture({ frames: [frame] })
+  const instance = {
+    root,
+    getState() { return { status: 'ready' } },
+    on(name, callback) { handlers[name] = callback },
+    subscribe(select, listener) { listener(select(this.getState())) },
+  }
+  root.__wfXano = instance
+  const { activate } = loadApi({ clearTimeout() {}, setTimeout() { return 1 } })
+
+  activate({ init() {}, get() { return instance } }, root)
+  handlers.results({
+    items: [{
+      is_agency: true,
+      agency_name: 'The Starters',
+      agency_video_link: 'https://player.vimeo.com/video/1123131951',
+    }],
+  })
+  assert.equal(root.hidden, false)
+  assert.equal(frame.src, 'https://player.vimeo.com/video/1123131951')
+
+  handlers.error()
+  assert.equal(root.hidden, true)
+  assert.equal(root.style.display, 'none')
+  assert.equal(frame.src, '', 'an error cannot leave a hidden iframe playing')
+})
+
+test('each reload re-arms the timeout, and a late result can reveal the section again', () => {
+  const handlers = Object.create(null)
+  const timers = []
+  const cleared = []
+  let statusListener
+  const root = sectionFixture({ timeout: '25' })
+  const instance = {
+    root,
+    getState() { return { status: 'ready' } },
+    on(name, callback) { handlers[name] = callback },
+    subscribe(select, listener) {
+      statusListener = listener
+      listener(select(this.getState()))
+    },
+  }
+  root.__wfXano = instance
+  const { activate } = loadApi({
+    clearTimeout(id) { cleared.push(id) },
+    setTimeout(callback, delay) {
+      timers.push({ callback, delay })
+      return timers.length
+    },
+  })
+
+  activate({ init() {}, get() { return instance } }, root)
+  statusListener('loading')
+  statusListener('ready')
+  statusListener('loading')
+  assert.deepEqual(timers.map(({ delay }) => delay), [25, 25])
+  assert.deepEqual(cleared, [1])
+
+  timers[1].callback()
+  assert.equal(root.hidden, true, 'the second stalled request collapses at its own cap')
+
+  handlers.results({ items: [{ is_agency: true, agency_name: 'Late Agency' }] })
+  assert.equal(root.hidden, false, 'a response after the cap still renders normally')
+  assert.equal(root.style.display, undefined)
+})
+
+test('diagnostics are staging-only unless STARTERS_DEBUG explicitly enables them', () => {
+  function messagesFor(hostname, debug) {
+    const messages = []
+    const document = { readyState: 'loading', addEventListener() {} }
+    const root = sectionFixture()
+    const { activate } = loadApi({
+      STARTERS_DEBUG: debug,
+      console: { warn(message) { messages.push(message) } },
+      document,
+      location: { hostname },
+    })
+    activate({ init() {}, get() { return null } }, root)
+    return messages
+  }
+
+  for (const host of ['www.thestarters.com', 'notwebflow.io', 'evil-trycloudflare.com']) {
+    assert.deepEqual(messagesFor(host, false), [], `${host} must stay quiet`)
+  }
+  for (const host of ['the-starters-3-0.webflow.io', 'localhost', '127.0.0.1', 'qa.trycloudflare.com']) {
+    assert.equal(messagesFor(host, false).length, 1, `${host} should receive staging diagnostics`)
+  }
+  assert.equal(messagesFor('www.thestarters.com', true).length, 1)
 })
 
 test('a stalled reload collapses the wrapper and strips the rendered video source', () => {

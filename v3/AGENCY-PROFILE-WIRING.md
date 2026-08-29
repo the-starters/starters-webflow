@@ -287,11 +287,11 @@ own.
 
 ### Video row
 
-> **Status: not built, by choice.** The section is live on staging without the
-> video row, and that is a product decision rather than an outstanding task. The
-> field, the endpoint, and the script's handling of it are all in place, so
-> building the row later is purely a Designer step — nothing else has to change.
-> Everything below applies whenever that happens.
+> **Status: runtime support built; Designer row dormant by choice.** The section
+> is live on staging without an authored video row, and that is a product
+> decision rather than an outstanding engineering task. The field, endpoint, and
+> script handling are all in place, so enabling it later is purely a Designer
+> step. Everything below applies whenever that happens.
 
 A Div Block inside the Card, holding an **HTML Embed**.
 
@@ -406,7 +406,7 @@ removing to add styling.
 | `wf-xano-prefix="<text>"` | wf-xano | Literal text prepended to a non-blank bound value. |
 | `wf-xano-if="<field>"` | wf-xano | Hides the element when that field is empty. |
 | `data-global-spinner` | the global spinner component | Not read by wf-xano or the script; it marks the nested component instance. |
-| `data-agency-v3-timeout-ms` | script | Optional override for the 8s no-response cap. Not needed in Designer. |
+| `data-agency-v3-timeout-ms` | script | Optional override for the no-response cap; see [Failure behavior](#failure-behavior). Not needed in Designer. |
 | `data-agency-v3-hidden` | script | Written by the script when it collapses the wrapper. Do not author or style it. |
 | `data-agency-v3="section"` | script | Where to write the slug, and whose `display` to control. |
 | `data-agency-v3="video"` | script | Where to write the video URL. |
@@ -441,9 +441,9 @@ The endpoint ignores them.
 
 ## Failure behavior
 
-Silent and closed, in every direction. No slug, no authored section, a dead
-endpoint, or the script never loading all end with no card rendered and nothing
-extra on the page. wf-xano injects
+Once wf-xano is present, failures are silent and leave no visible card. No slug,
+no authored section, a dead endpoint, or the page script never loading all end
+without agency content. wf-xano injects
 `[wf-xano-element="template"]{display:none!important}`, so even the authored
 card stays hidden on a page where this script never ran — the only thing lost in
 that case is the wrapper's flex-slot collapse described above.
@@ -451,12 +451,12 @@ that case is the wrapper's flex-slot collapse described above.
 | What breaks | Card | Spinner | Wrapper |
 | --- | --- | --- | --- |
 | Nothing (non-agency) | hidden by `wf-xano-if` | shows, then hides | collapses |
-| Request fails | hidden (list re-rendered empty) | hides on `error` | collapses |
+| Request fails | normally re-rendered empty; any surviving keyed card has its video `src` stripped | hides on `error` | collapses |
+| Instance is already in `error` at activation | any stale card remains inside the collapsed wrapper, with its video `src` stripped | already hidden | collapses without subscribing |
 | Request never settles | hidden (never rendered) | keeps spinning until the cap | collapses at the timeout, and staging logs why |
 | wf-xano throws inside init | hidden by wf-xano's injected CSS | never shows | collapses, and staging logs why |
 | Section misconfigured (no instance) | hidden by wf-xano's injected CSS | never shows | collapses, and staging logs why |
 | `wf-xano-instance` duplicated elsewhere | renders normally | shows, then hides | behaves normally; staging warns about the duplicate |
-| Instance destroyed mid-flight | hidden (list re-rendered empty) | hidden by the destroy | collapses at the timeout |
 | Script never loads | hidden by wf-xano's injected CSS | never shows (authored hidden) | stays visible at 0px height |
 | wf-xano never loads | **visible with empty text** | never shows (authored hidden) | stays visible at 0px height |
 
@@ -474,6 +474,11 @@ rather than by key, so it fetches and renders normally. The warning is there
 because anything else on the page looking up `starter-agency` by key will get
 the wrong element.
 
+The already-error row deliberately returns before installing result or status
+subscriptions. That instance has no retry path, and wf-xano can replay an older
+result to a late listener even after a later failure; subscribing would risk
+repainting stale agency data after the wrapper had been collapsed.
+
 The "request never settles" row is why the script carries an 8-second cap.
 wf-xano's `load()` sets no fetch timeout, so a stalled request emits neither a
 result nor an error and would otherwise leave the spinner turning and the
@@ -482,7 +487,9 @@ section instead. A response that arrives after the cap is still processed — an
 agency's section simply appears late rather than not at all. The cap is
 overridable per page via `data-agency-v3-timeout-ms` on the wrapper; that
 attribute exists for the test harness and for tuning, and is not needed in
-Designer.
+Designer. It accepts a positive integer number of milliseconds. Missing,
+malformed, zero, and negative values fall back to 8,000ms rather than disabling
+the cap; values above 60,000ms are clamped to 60,000ms.
 
 One naming note, because both markers exist on this site and the similarity is
 deliberate rather than accidental: `data-global-spinner` is the reusable spinner
@@ -501,9 +508,9 @@ shares this failure mode.
 
 ## Diagnostics
 
-Staging-only, per the predicate in [`README.md`](../README.md#staging-only-console-diagnostics)
-(`*.webflow.io`, `localhost`, `127.0.0.1`, `*.trycloudflare.com`, or
-`window.STARTERS_DEBUG === true`). Production is silent.
+Staging-only, per the authoritative predicate in
+[`README.md`](../README.md#staging-only-console-diagnostics). Production is
+silent.
 
 Every message is prefixed `[agency-profile]`, so console output is attributable
 at a glance on a page that runs a few dozen scripts. There are five:
@@ -528,12 +535,12 @@ behaving, video row deliberately absent (see above).
 | `/hire/maureen` | No section, and no gap where it would be. |
 | Any other starter | Same as `maureen`. |
 
-Automated coverage sits in two places:
+Automated coverage sits in this repository and the local QA harness:
 
 - `v3/agency-profile.test.js` — in this repo, run by CI on every PR. Guards the
-  release marker against drift and covers the pure decisions: slug parsing, the
-  section's show rule, the https-only video policy, the timeout cap's bounds,
-  and the slug-less collapse.
+  release marker against drift; covers slug parsing, the section's show rule,
+  the https-only video policy, and the timeout cap's bounds; and exercises the
+  activation failure and reload paths.
 - `staging-qa/checks/agency-endpoint-contract.mjs` — the HTTP contract, in the
   local QA harness.
 - `staging-qa/checks/agency-section-fixture.mjs` — the rendered page, against a

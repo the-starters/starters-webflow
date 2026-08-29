@@ -12,7 +12,7 @@
  * Vocabulary on the page, all Designer-authored: `wf-xano-bind` for the four
  * text fields (with `wf-xano-prefix` where a row reads as one sentence),
  * `wf-xano-if` for the section hide (`is_agency & agency_name`) and each
- * per-row hide, and `wf-xano-element="loader"` on the spinner. This module
+ * per-row hide, and `wf-xano-element="loader"` on the loader Div. This module
  * never decides which rows appear — read the wiring doc, not this file, to find
  * out why a row is missing.
  *
@@ -64,21 +64,9 @@
  * Memberstack-session reload (wf-xano.js:1472) and from nothing else, so a
  * one-shot cap would leave a second stalled request spinning forever.
  *
- * Contract shared with `v3/AGENCY-PROFILE-WIRING.md`. These must change
- * together or the section goes dark:
- *
- *   wrapper   [data-agency-v3="section"]
- *             + wf-xano-element="wrapper"
- *             + wf-xano-instance="starter-agency"   (unique on the page)
- *             + wf-xano-defer="true"
- *             and NEVER hidden by a class — this module reveals it by clearing
- *             an inline display, which cannot beat a class
- *   loader    a plain div inside the wrapper carrying
- *             wf-xano-element="loader" + wf-xano-display="flex" + a dedicated
- *             hide class whose only job is display:none (the spinner component
- *             is nested inside it, untouched)
- *   video     [data-agency-v3="video"]     (iframe, no authored src)
- *   param     wf-xano-param-slug           (stamped here)
+ * The complete Designer attribute contract has one owner:
+ * `v3/AGENCY-PROFILE-WIRING.md`. Do not infer or copy it from this local intent
+ * comment.
  *
  * Staging-only console diagnostics, per the predicate documented in
  * `README.md` ("Staging-only console diagnostics"). Production says nothing.
