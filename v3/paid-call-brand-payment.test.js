@@ -758,16 +758,37 @@ async function mountFooterFixture(options = {}) {
 
 test('the calendar footer puts Back beside the confirm control', async () => {
   const { shell, footer, back, confirm, status } = await mountFooterFixture()
+  const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((node) => node.getAttribute('data-paid-calendar-element') === name)
+  const layout = role('layout')
+  const timePanel = role('time-panel')
+  const month = role('month')
+  const timezone = role('timezone-control')
+  const times = role('times')
 
   // Back reads before the call it steps away from, and both sit in one row —
   // the footer is what makes "beside" true rather than "stacked above".
   assert.equal(footer.tagName, 'div')
   assert.deepEqual(footer.children, [back, confirm])
-  assert.equal(shell.children.indexOf(footer), 3)
+  assert.equal(shell.children.indexOf(footer), 1)
   assert.deepEqual(
     shell.children.map((child) => child.getAttribute('data-paid-calendar-element')),
-    ['timezone-control', 'month', 'times', 'footer', 'status'],
+    ['layout', 'footer', 'status'],
   )
+  assert.deepEqual(
+    layout.children.map((child) => child.getAttribute('data-paid-calendar-element')),
+    ['month', 'time-panel'],
+  )
+  assert.deepEqual(
+    timePanel.children.map((child) => child.getAttribute('data-paid-calendar-element')),
+    ['timezone-control', 'times'],
+  )
+  assert.equal(layout.style.gridTemplateColumns, 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))')
+  assert.equal(layout.style.alignItems, 'start')
+  assert.equal(timePanel.style.alignContent, 'start')
+  assert.equal(month.parentElement, layout)
+  assert.equal(timezone.parentElement, timePanel)
+  assert.equal(times.parentElement, timePanel)
   assert.equal(status.getAttribute('data-paid-calendar-element'), 'status')
 
   // The three attributes ARE the behaviour: close this dialog, open the
@@ -914,7 +935,7 @@ test('a calendar mounted outside the booking dialog gets no back control', async
   // No back means no row: the confirm goes straight into the grid shell, where
   // it stretches, rather than becoming a shrink-to-fit flex child.
   assert.equal(away.footer, null)
-  assert.equal(away.shell.children.indexOf(away.confirm), 3)
+  assert.equal(away.shell.children.indexOf(away.confirm), 1)
 
   // Fails closed on any surface the profile script's guard rule cannot reach.
   // `[popup-booking]` alone is such a surface: nothing would ever hide the
@@ -989,9 +1010,7 @@ test('back is disabled while a booking request is in flight', async () => {
   const { footer, back, confirm } = await mountFooterFixture({
     onConfirm: () => new Promise((resolve) => { release = resolve }),
   })
-  const slot = footer.parentElement.children
-    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
-    .children[0]
+  const slot = footer.parentElement.querySelectorAll('[data-paid-calendar-slot]')[0]
 
   slot.listeners.click()
   assert.equal(confirm.disabled, false)
