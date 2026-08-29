@@ -1209,8 +1209,26 @@ test('the sheet flattens the month picker card and straightens its weekday row',
   const DIALOG = '[data-modal-target="popup-booking"]'
 
   // The page paints the picker as a floating card: a #eee fill under a 3px
-  // #eee shadow ring. Inside the modal that reads as an island on the panel.
-  assert.ok(css.includes(DIALOG + ' .ui-datepicker{border:0;box-shadow:none;background:transparent}'))
+  // #eee shadow ring plus a drop shadow. Inside the modal that reads as an
+  // island on the panel, so the fill and both shadows go — but the 1px
+  // outline stays, or the calendar loses its edge against the panel.
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker.ui-widget-content{border:1px solid #d8d8d8;box-shadow:none;background:transparent;padding:8px}'))
+  // The padding is the breathing room: the page insets only its edge cells by
+  // 4px, so a selected chip in column 1 or the last row hugged the outline.
+  // Padding the cells instead is a silent no-op — the page's own edge-cell
+  // rules match at equal specificity and sit later — so it has to be container
+  // padding, and the full-bleed header band is pulled back out over it.
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker .ui-datepicker-header{margin:-8px -8px 0;border-radius:7px 7px 0 0}'))
+  // `.ui-widget-content` is doubled into the selector to win a specificity tie,
+  // and it is load-bearing: the page carries `.ui-widget.ui-widget-content
+  // {border:0}` in a BODY <style>, and at equal specificity the later rule wins
+  // over this head-injected sheet. Without it the outline silently vanishes —
+  // which is exactly what happened to the page's own 1px border.
+  assert.ok(/\.ui-datepicker\.ui-widget-content\{[^}]*border:1px solid/.test(css))
+  // `#d8d8d8` is the page's own datepicker border colour, not a value invented
+  // here: no site token matches it (`--colors--silver` and `--border--border`
+  // are `#eee`, `--colors--disabled-gray` is `#e4e4e4`).
+  assert.ok(!/\.ui-datepicker\{[^}]*border-radius/.test(css), 'the radius is left to the page')
 
   // The weekday labels are left-aligned below the tablet breakpoint while the
   // dates are centred, so the header row sits 9.6-14.3px left of its own
