@@ -614,6 +614,8 @@ listeners. Its install does not require a legacy main Book Call button. Each
 Book Call click makes one availability request, and each Free option click
 mounts one authored calendar in the existing `[nylas-container]` and submits
 one idempotent canonical booking command for the selected slot.
+The timezone dropdown and slot-selection contract are owned by the
+[Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
 The Free controller uses the calendar and idempotent booking-command primitives
 exported by `paid-call-brand-payment.js`. It does not mount the public Nylas
 scheduler or create a provider booking directly. Success requires the server

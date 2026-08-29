@@ -2105,7 +2105,8 @@ environment-bound endpoints: the authored `reschedule` trigger opens a
 module-rendered reason step and then the shared availability calendar. It loads
 `paid-call-brand-payment.js` on demand and reuses the same slot picker as
 `/hire`. The proposal posts `booking/reschedule/propose/v3` with a required
-reason, the selected slot, and a durable `dashboard-reschedule-propose:` key.
+reason, the selected slot's unchanged timestamps, the selected IANA timezone,
+and a durable `dashboard-reschedule-propose:` key.
 Only the counterpart sees the module-rendered "Accept new time" and "Keep
 current time" actions in the base view beside the authored reschedule trigger;
 the actions post `booking/reschedule/confirm/v3` or
@@ -2178,8 +2179,9 @@ It creates that response pair once per modal, marks both controls with
 the details modal is populated. Decline, cancel, and reschedule proposal each
 require a non-empty reason. Decline posts `booking_id`, `config_id`, `reason`, and
 `idempotency_key` to `booking/decline/v3`; cancel uses `cancelled_reason` at
-`booking/cancel/v3`. A proposal posts `rescheduled_reason`, `new_start`, and
-`new_end` with those shared identifiers to `booking/reschedule/propose/v3`.
+`booking/cancel/v3`. A proposal posts `rescheduled_reason`, `new_start`,
+`new_end`, and `timezone` with those shared identifiers to
+`booking/reschedule/propose/v3`.
 Confirm and decline responses post the shared identifiers to their matching
 `booking/reschedule/confirm/v3` or `booking/reschedule/decline/v3` endpoint.
 
@@ -2192,9 +2194,9 @@ status, paid state, and whether the booking has the required identity.
 
 Each idempotency key is tab-scoped and includes the environment, booking, and a
 non-reversible participant identity hash. Decline and cancel also scope the key
-to the reason, a proposal scopes it to reason plus slot start, and each response
-uses a fixed `respond` scope. An ambiguous or malformed result keeps the key for
-safe replay. Only an exact nested result for the same booking clears the
+to the reason, a proposal scopes it to reason, slot start, and timezone, and each
+response uses a fixed `respond` scope. An ambiguous or malformed result keeps
+the key for safe replay. Only an exact nested result for the same booking clears the
 matching key: decline must be `declined`, cancel must be `cancelled`, a proposal
 must be `rescheduled`, and either response must be `confirmed`. The success
 panel replaces `[Starter]` and `[Brand]` in its leaf text nodes with the
@@ -3370,6 +3372,11 @@ flowchart TD
    the first slot's start so it is correct for daylight saving time on the
    dates shown. An empty calendar omits the note. The selected slot is advisory
    only.
+
+   The calendar timezone dropdown defaults to the visitor's browser timezone.
+   Changing it clears the selected slot, regroups slots by local date and
+   reformats every time. The booking command sends the selected IANA timezone
+   with the unchanged slot timestamps.
 
    The mount is cleared on every reset of the booking surface, so the footer's
    controls cannot be authored inside it and are built here instead: the

@@ -414,17 +414,20 @@
   function proposeReschedule(booking, role, reason, slot, now) {
     const start = Number(slot && slot.start)
     const end = Number(slot && slot.end)
+    const timezone = clean(slot && slot.timezone)
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       return Promise.resolve(null)
     }
+    const proposedSlot = { new_start: start, new_end: end }
+    if (timezone) proposedSlot.timezone = timezone
     return submitAction(
       'reschedule-propose',
       role,
       booking,
       reason,
       now,
-      { new_start: start, new_end: end },
-      clean(reason) + '|' + String(start),
+      proposedSlot,
+      clean(reason) + '|' + String(start) + '|' + timezone,
     )
   }
 
@@ -910,6 +913,7 @@
           result = await proposeReschedule(booking, role, reason, {
             start: Number(slot && slot.start),
             end: Number(slot && slot.end),
+            timezone: clean(slot && slot.timezone),
           })
           if (!result) throw new Error(KINDS['reschedule-propose'].failureMessage)
         } catch (error) {
