@@ -2081,15 +2081,17 @@ The selected `[booking-filter]` is the only control with `is-active`,
 
 The authored View Details trigger opens the existing `popup-booking-info`
 dialog. Before Webflow opens it, the controller binds the selected canonical
-row to the authored fields. `is_paid` is authoritative when present, with
-`paid_meeting` retained as the compatibility fallback. Free calls never show
-price, payment, charge, or refund copy. Paid calls show the canonical price as
-a per-call amount, replacing only the adjacent exact Designer-authored legacy
-`/hr` unit; when that unit is absent, the price field carries the `/ Call`
-suffix without generating markup. Only the base content state and one
-applicable pending message can be visible. Confirmed calls can show their
-canonical meeting link; cancelled and archived calls cannot. Every authored
-payment or booking action stays hidden except Close, Back, the Starter's
+row to the authored fields. When the base, cancel, and cancelled panels repeat
+a `[booking-element]` name, every copy receives the same value and visibility.
+`is_paid` is authoritative when present, with `paid_meeting` retained as the
+compatibility fallback. Free calls never show price, payment, charge, or refund
+copy. Paid calls show the canonical price as a per-call amount, replacing only
+the adjacent exact Designer-authored legacy `/hr` unit; when that unit is
+absent, the price field carries the `/ Call` suffix without generating markup.
+Only the base content state and one applicable pending message can be visible.
+Confirmed calls can show their canonical meeting link; cancelled and archived
+calls cannot. Every authored payment or booking action stays hidden except
+Close, Back, the Starter's
 eligible pending-call Accept and Decline actions, the participant Cancel chain
 for eligible Free booked calls, and owner-scoped recording access for eligible
 completed or archived calls. These migrated actions remain inside View Details;
