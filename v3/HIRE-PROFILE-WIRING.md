@@ -325,12 +325,15 @@ mounted looks like. The control combines the close marker with a trigger naming
 trigger precedence deliberately preserves — plus this marker attribute.
 
 Because that trigger name is now also carried by a script-rendered control
-inside the dialog, the two document-wide passes over
-`[data-modal-trigger="popup-booking-main"]` — the availability gate and the
-direct-entry trigger lookup — exclude `[data-booking-back]`. Without that, the
-availability gate could stamp the back control unavailable (the guard stylesheet
-would then hide it for good), and the direct-entry lookup could click it instead
-of a real chooser opener.
+inside the dialog, every document-wide pass over
+`[data-modal-trigger="popup-booking-main"]` excludes `[data-booking-back]`:
+the availability gate and the direct-entry trigger lookup here, and the Free
+controller's next-slot prefetch in
+[`free-call-booking.js`](free-call-booking.js). Without that, the availability
+gate could stamp the back control unavailable (the guard stylesheet would then
+hide it for good), the direct-entry lookup could click it instead of a real
+chooser opener, and the prefetch would fire a stray availability read on the way
+back to the chooser.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact

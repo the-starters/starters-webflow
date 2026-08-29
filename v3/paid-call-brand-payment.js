@@ -676,16 +676,35 @@
        back — byte-for-byte what it was: a footer would have turned its confirm
        from a full-width grid item into a shrink-to-fit flex child. */
     let footer = null
+    let footerIsAuthored = false
     if (back) {
       footer = global.document.createElement('div')
       footer.setAttribute('data-paid-calendar-element', 'footer')
-      if (!applyAuthoredClasses(footer, authoredClassList(container, FOOTER_CLASS_ATTRIBUTE))) {
+      footerIsAuthored = applyAuthoredClasses(
+        footer,
+        authoredClassList(container, FOOTER_CLASS_ATTRIBUTE),
+      )
+      if (!footerIsAuthored) {
+        // The confirm button used to be a grid item in the shell and stretched
+        // to full width. The fallback row has to keep doing that for it, and it
+        // has to do it from the row: `data-booking-footer-class` is optional, so
+        // the likely shape is an authored confirm — which by contract carries no
+        // inline styles of its own — inside this row.
+        //
+        // The two `gridColumn` writes below are the one exception to "an
+        // authored control gets no inline styles", and they are PLACEMENT in
+        // this row, never appearance. They are written only when this fallback
+        // row is the one in use; an authored footer places its own children.
+        // Explicit columns are what survives the back control being hidden on a
+        // direct entry: without them the confirm slides into the `auto` column
+        // and shrinks to its label.
         applyStyles(footer, {
-          display: 'flex',
+          display: 'grid',
+          gridTemplateColumns: 'auto minmax(0, 1fr)',
           alignItems: 'center',
           gap: '12px',
-          flexWrap: 'wrap',
         })
+        back.style.gridColumn = '1'
       }
       footer.appendChild(back)
     }
@@ -740,13 +759,12 @@
         background: '#1f211d',
         color: '#ffffff',
         cursor: 'pointer',
-        // The shell is a grid, so the unwrapped confirm has always stretched to
-        // full width. Inside the footer row it has to be told to, or the button
-        // silently shrinks to its text — inert wherever it stays a grid item.
-        flexGrow: '1',
       })
     }
-    if (footer) footer.appendChild(confirm)
+    if (footer) {
+      if (!footerIsAuthored) confirm.style.gridColumn = '2'
+      footer.appendChild(confirm)
+    }
 
     function clearSelection() {
       selectedSlot = null

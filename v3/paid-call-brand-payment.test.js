@@ -722,7 +722,7 @@ test('the unauthored footer keeps the engine fallback look and no class', async 
   assert.equal(footer.getAttribute('class'), null)
   assert.equal(confirm.getAttribute('class'), null)
   assert.equal(back.getAttribute('class'), null)
-  assert.equal(footer.style.display, 'flex')
+  assert.equal(footer.style.display, 'grid')
   assert.equal(footer.style.gap, '12px')
   assert.equal(confirm.style.background, '#1f211d')
   assert.equal(confirm.style.color, '#ffffff')
@@ -736,10 +736,12 @@ test('one authored control does not drag the others off their fallback', async (
   const { footer, back, confirm } = await mountFooterFixture({ container })
 
   assert.equal(confirm.getAttribute('class'), 'button_main-wrap')
-  assert.deepEqual(Object.keys(confirm.style), [])
+  // Placement in the engine's own fallback row is the one thing it writes on
+  // an authored control. Nothing about its appearance.
+  assert.deepEqual(Object.keys(confirm.style), ['gridColumn'])
   assert.equal(back.getAttribute('class'), null)
   assert.equal(back.style.cursor, 'pointer')
-  assert.equal(footer.style.display, 'flex')
+  assert.equal(footer.style.display, 'grid')
 })
 
 test('the class contract reads the mount container before the booking dialog', async () => {
@@ -826,12 +828,35 @@ test('an empty calendar still offers the way back to the chooser', async () => {
   assert.equal(container.children.indexOf(footer), 1)
 })
 
-test('the fallback confirm still fills its row inside the footer', async () => {
-  // The shell is a grid, so an unwrapped confirm has always been full width.
-  // Dropping it into a flex row without saying so shrinks it to its text.
-  const { confirm } = await mountFooterFixture()
-  assert.equal(confirm.style.flexGrow, '1')
-  assert.equal(confirm.style.background, '#1f211d')
+test('the footer row makes the confirm fill it, whoever styled the confirm', async () => {
+  // The confirm used to be a grid item in the shell and stretched to full
+  // width. The row has to keep doing that for it — and it has to do it from
+  // the ROW, because an authored confirm carries no inline styles of its own
+  // and `data-booking-footer-class` is optional, so the most likely production
+  // shape is an authored button inside the engine's own fallback row.
+  const fallback = await mountFooterFixture()
+  assert.equal(fallback.footer.style.display, 'grid')
+  assert.equal(fallback.footer.style.gridTemplateColumns, 'auto minmax(0, 1fr)')
+  // Explicit columns, so the confirm still fills the row on a direct entry,
+  // where the back control is hidden and drops out of the grid entirely.
+  assert.equal(fallback.back.style.gridColumn, '1')
+  assert.equal(fallback.confirm.style.gridColumn, '2')
+
+  const authoredConfirm = bookingMount()
+  authoredConfirm.setAttribute('data-booking-confirm-class', 'button_main-wrap')
+  const mixed = await mountFooterFixture({ container: authoredConfirm })
+  assert.equal(mixed.confirm.style.gridColumn, '2')
+  assert.deepEqual(Object.keys(mixed.confirm.style), ['gridColumn'])
+
+  // An authored footer places its own children: the engine writes nothing.
+  const authoredFooter = bookingMount()
+  authoredFooter.setAttribute('data-booking-footer-class', 'call-sched_button-group')
+  authoredFooter.setAttribute('data-booking-confirm-class', 'button_main-wrap')
+  authoredFooter.setAttribute('data-booking-back-class', 'clickable-text-link')
+  const owned = await mountFooterFixture({ container: authoredFooter })
+  assert.deepEqual(Object.keys(owned.footer.style), [])
+  assert.deepEqual(Object.keys(owned.confirm.style), [])
+  assert.deepEqual(Object.keys(owned.back.style), [])
 })
 
 test('an empty calendar off the booking surface renders no footer at all', async () => {
