@@ -149,7 +149,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             let alsoWorkedWithBaseline = alsoWorkedWithInput ? alsoWorkedWithInput.value : '';
             let alsoWorkedWithBaselineReady = !alsoWorkedWithInput;
 
-            let editSelectedCompany = null;
             let editStartDateBaseline = null;
             let editEndDateBaseline = null;
             let editStartDateUserChanged = false;
@@ -179,11 +178,24 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
             let isSubmitting = false;
             let submitAction = '';
-            let selectedCompany = null;
             let companiesCount = 0;
             let addCompanyFeedbackTimeout = null;
 
-            function selectedCompanyForInput(input, fallback) {
+            function storeSelectedCompany(input, company) {
+                if (!input) return;
+                input.dataset.selectedCompanyName = company && company.name ? company.name : '';
+                input.dataset.selectedCompanyDomain = company && company.domain ? company.domain : '';
+                input.dataset.selectedCompanyLogoUrl = company && company.logo_url ? company.logo_url : '';
+            }
+
+            function clearSelectedCompany(input) {
+                if (!input) return;
+                delete input.dataset.selectedCompanyName;
+                delete input.dataset.selectedCompanyDomain;
+                delete input.dataset.selectedCompanyLogoUrl;
+            }
+
+            function selectedCompanyForInput(input) {
                 if (!input) return null;
                 const currentName = getValue(input);
                 const storedName = String(input.dataset.selectedCompanyName || '').trim();
@@ -194,7 +206,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                         logo_url: String(input.dataset.selectedCompanyLogoUrl || '').trim(),
                     };
                 }
-                return fallback && fallback.name === currentName ? fallback : null;
+                return null;
             }
 
             // pendingUpdateDrafts/pendingDeleteDraftIds only ever hold real (already-in-XANO) ids.
@@ -800,6 +812,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
                 if (companyInput) {
                     companyInput.value = '';
+                    clearSelectedCompany(companyInput);
                 }
 
                 if (jobTitleInput) {
@@ -831,7 +844,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     }
                 }
 
-                selectedCompany = null;
                 updateAddBtnState();
             }
 
@@ -888,6 +900,11 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
                 if (editCompanyInput) {
                     editCompanyInput.value = company.company_name || '';
+                    storeSelectedCompany(editCompanyInput, {
+                        name: company.company_name || '',
+                        domain: company.company_domain || '',
+                        logo_url: getCompanyLogo(company),
+                    });
                 }
 
                 if (editJobTitleInput) {
@@ -897,12 +914,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 hydrateEditCompanyDates();
 
                 setCheckboxState(editCurrentWorkCheckbox, !!company.current_work);
-
-                editSelectedCompany = {
-                    name: company.company_name || '',
-                    domain: company.company_domain || '',
-                    logo_url: getCompanyLogo(company),
-                };
 
                 openEditModal();
                 // Opening the modal runs the shared date-picker embed over these inputs, which re-reads
@@ -927,6 +938,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
                     if (editCompanyInput) {
                         editCompanyInput.value = '';
+                        clearSelectedCompany(editCompanyInput);
                     }
 
                     if (editJobTitleInput) {
@@ -949,7 +961,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
                     setCheckboxState(editCurrentWorkCheckbox, false);
 
-                    editSelectedCompany = null;
                     editStartDateBaseline = null;
                     editEndDateBaseline = null;
                 }, 800);
@@ -985,27 +996,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 pendingUpdateDrafts = new Map();
                 pendingDeleteDraftIds = new Set();
             }
-
-            document.addEventListener('click', function (event) {
-                const companyItem = event.target.closest('.company-search-item[data-name]');
-                if (!companyItem) return;
-
-                const logo = qs('.company-search-logo', companyItem);
-                const searchGroup = companyItem.closest('[company-search-group]');
-                const input = searchGroup ? qs('[logo-search-input]', searchGroup) : null;
-
-                const companyData = {
-                    name: companyItem.dataset.name || '',
-                    domain: companyItem.dataset.domain || '',
-                    logo_url: logo ? logo.src : '',
-                };
-
-                if (input && input.id === 'edit-company-name') {
-                    editSelectedCompany = companyData;
-                } else {
-                    selectedCompany = companyData;
-                }
-            });
 
             [companyInput, jobTitleInput].forEach(function (input) {
                 if (!input) return;
@@ -1099,7 +1089,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     const companyId = editCompanyWrapper.dataset.id;
                     if (!companyId) return;
 
-                    const selectedEditCompany = selectedCompanyForInput(editCompanyInput, editSelectedCompany);
+                    const selectedEditCompany = selectedCompanyForInput(editCompanyInput);
 
                     const payload = {
                         company_name: getValue(editCompanyInput),
@@ -1189,7 +1179,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                         return;
                     }
 
-                    const selectedAddCompany = selectedCompanyForInput(companyInput, selectedCompany);
+                    const selectedAddCompany = selectedCompanyForInput(companyInput);
 
                     const payload = {
                         company_name: getValue(companyInput),
