@@ -941,6 +941,9 @@
         if (!button) return
         const step = actionForButton(button)
         if (!step) return
+        if (event.preventDefault) event.preventDefault()
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation()
+        else if (event.stopPropagation) event.stopPropagation()
         const booking = settings.getBooking(button)
         if (!canAct(step.kind, settings.role, booking)) {
           // Never fail silently: a blocked click with no trace reads as a dead
@@ -953,9 +956,6 @@
           })
           return
         }
-        if (event.preventDefault) event.preventDefault()
-        if (event.stopImmediatePropagation) event.stopImmediatePropagation()
-        else if (event.stopPropagation) event.stopPropagation()
         const config = KINDS[step.kind]
         const modal =
           button.closest &&

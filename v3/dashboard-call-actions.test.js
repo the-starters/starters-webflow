@@ -550,6 +550,8 @@ test('a blocked legacy Free booking is reported as unpaid', async () => {
   const originalWarn = console.warn
   let clickHandler
   let warning
+  let prevented = 0
+  let stopped = 0
   try {
     console.warn = function () {
       warning = Array.from(arguments)
@@ -573,10 +575,20 @@ test('a blocked legacy Free booking is reported as unpaid', async () => {
         return name === 'booking-action-btn' ? 'cancel' : null
       },
     }
-    await clickHandler({ target: button })
+    await clickHandler({
+      target: button,
+      preventDefault() {
+        prevented += 1
+      },
+      stopImmediatePropagation() {
+        stopped += 1
+      },
+    })
     assert.equal(warning[1].status, 'pending')
     assert.equal(warning[1].paid, false)
     assert.equal(warning[1].identified, true)
+    assert.equal(prevented, 1)
+    assert.equal(stopped, 1)
   } finally {
     console.warn = originalWarn
   }
