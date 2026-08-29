@@ -150,6 +150,20 @@ test('does not activate on V2 host', () => {
   assert.equal(state.requests.length, 0)
 })
 
+test('normalizes the supported quiz-results trailing-slash route', async () => {
+  const state = boot({ pathname: '/quiz-results/' })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  await state.listeners[0].listener(clickEvent(control))
+
+  assert.equal(control.clicks, 1)
+  assert.deepEqual(JSON.parse(state.requests[1].init.body), {
+    source_event_id: 'evt_12345678-1234-1234-1234-123456789abc',
+    source_route: '/quiz-results',
+    stripe_price_id: 'prc_premium-monthly--fn1ae0qjj',
+  })
+})
+
 test('ignores non-allowlisted routes and Memberstack prices', async () => {
   const routeState = boot({ pathname: '/account-settings' })
   assert.equal(routeState.listeners.length, 0)

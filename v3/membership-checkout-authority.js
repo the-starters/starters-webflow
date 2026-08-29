@@ -34,6 +34,12 @@
     return String(value == null ? '' : value).trim()
   }
 
+  function normalizedRoute(value) {
+    var route = clean(value).toLowerCase()
+    if (route.length > 1) route = route.replace(/\/+$/, '')
+    return route || '/'
+  }
+
   function checkoutTarget(node) {
     if (!node) return null
     if (typeof node.closest === 'function') {
@@ -161,7 +167,7 @@
       return
     }
 
-    var route = clean(globalObject.location && globalObject.location.pathname).toLowerCase()
+    var route = normalizedRoute(globalObject.location && globalObject.location.pathname)
     var priceId = clean(target.getAttribute(PRICE_ATTRIBUTE))
     if (!ALLOWED_ROUTES[route] || !ALLOWED_PRICE_IDS[priceId]) return
 
@@ -192,7 +198,7 @@
 
   function boot() {
     var host = clean(globalObject.location && globalObject.location.hostname).toLowerCase()
-    var route = clean(globalObject.location && globalObject.location.pathname).toLowerCase()
+    var route = normalizedRoute(globalObject.location && globalObject.location.pathname)
     if (!ALLOWED_HOSTS[host] || !ALLOWED_ROUTES[route]) return false
     globalObject.document.addEventListener('click', handleCheckout, true)
     return true
