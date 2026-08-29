@@ -497,8 +497,14 @@
     const ctas = Array.from(global.document.querySelectorAll(
       '[call-type-item] [booking-popup-open][data-type="free"]',
     ))
+    // The calendar footer's back control carries this trigger name too, and it
+    // is not a page-level Book Call button. Binding the next-slot prefetch to
+    // it would fire a stray availability read on the way back to the chooser.
+    // The snapshot is taken at install, before any calendar has mounted, so
+    // today this only matters if the controller is ever reinstalled — which is
+    // exactly the kind of thing that changes without this line noticing.
     const mainButtons = Array.from(global.document.querySelectorAll(
-      '[data-modal-trigger="popup-booking-main"]',
+      '[data-modal-trigger="popup-booking-main"]:not([data-booking-back])',
     ))
     const container = popup && (
       popup.querySelector('[nylas-container]') ||

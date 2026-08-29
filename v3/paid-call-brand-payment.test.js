@@ -794,19 +794,23 @@ test('a calendar mounted outside the booking dialog gets no back control', async
   const away = await mountFooterFixture({ container: host, confirmText: 'Propose new time' })
   assert.equal(away.back, null)
   assert.equal(away.confirm.textContent, 'Propose new time')
-  assert.deepEqual(away.footer.children, [away.confirm])
   assert.equal(host.querySelectorAll('[data-booking-back]').length, 0)
+  // No back means no row: the confirm goes straight into the grid shell, where
+  // it stretches, rather than becoming a shrink-to-fit flex child.
+  assert.equal(away.footer, null)
+  assert.equal(away.shell.children.indexOf(away.confirm), 2)
 
-  // The other booking marker still counts as the booking surface: the Paid
-  // controller resolves its mount through `[popup-booking]`, not the dialog's
-  // data-modal-target.
-  const popup = new CalendarElement('div')
-  popup.setAttribute('popup-booking', '')
-  const mount = new CalendarElement('div')
-  mount.setAttribute('nylas-container', '')
-  popup.appendChild(mount)
-  const inside = await mountFooterFixture({ container: mount })
-  assert.equal(inside.back.getAttribute('data-booking-back'), '')
+  // Fails closed on any surface the profile script's guard rule cannot reach.
+  // `[popup-booking]` alone is such a surface: nothing would ever hide the
+  // control there. On the published page both markers sit on the same dialog,
+  // so requiring the guarded one costs nothing.
+  const popupOnly = new CalendarElement('div')
+  popupOnly.setAttribute('popup-booking', '')
+  const looseMount = new CalendarElement('div')
+  looseMount.setAttribute('nylas-container', '')
+  popupOnly.appendChild(looseMount)
+  const loose = await mountFooterFixture({ container: looseMount })
+  assert.equal(loose.back, null, 'an unguarded surface gets no back control')
 })
 
 test('an empty calendar still offers the way back to the chooser', async () => {
@@ -820,6 +824,14 @@ test('an empty calendar still offers the way back to the chooser', async () => {
   assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
   assert.deepEqual(footer.children, [back])
   assert.equal(container.children.indexOf(footer), 1)
+})
+
+test('the fallback confirm still fills its row inside the footer', async () => {
+  // The shell is a grid, so an unwrapped confirm has always been full width.
+  // Dropping it into a flex row without saying so shrinks it to its text.
+  const { confirm } = await mountFooterFixture()
+  assert.equal(confirm.style.flexGrow, '1')
+  assert.equal(confirm.style.background, '#1f211d')
 })
 
 test('an empty calendar off the booking surface renders no footer at all', async () => {

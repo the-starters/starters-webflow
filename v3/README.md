@@ -3315,8 +3315,24 @@ flowchart TD
 1. Read the next 14 days through authenticated
    `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
    the provider credential and private Scheduler session off the browser.
-2. Render the month calendar and time buttons inside the authored
-   `[nylas-container]` mount. The selected slot is advisory only.
+2. Render the month calendar, the time buttons and the footer row inside the
+   authored `[nylas-container]` mount. The selected slot is advisory only.
+
+   The mount is cleared on every reset of the booking surface, so the footer's
+   controls cannot be authored inside it and are built here instead: the
+   confirm button, and — only when the mount resolves inside
+   `[data-modal-target="popup-booking"]` — a back control beside it that hands
+   off to the Free/Paid chooser. Their CSS classes are Designer-owned through
+   three optional attributes read from the mount and then from the booking
+   dialog: `data-booking-confirm-class`, `data-booking-back-class` and
+   `data-booking-footer-class`. Values are space-separated class names applied
+   verbatim, and a control with authored classes is given no inline styles at
+   all, so a Designer stylesheet is never outranked. With no attributes
+   authored each control keeps a plain built-in fallback look. Off the booking
+   surface — the dashboard's reschedule calendar mounts this same engine —
+   there is no back control and no footer, and the confirm button goes straight
+   into the calendar shell as it always did. Display and `aria-hidden` on the
+   back control belong to `hire-profile.js`, never to this file.
 3. When the Brand confirms a slot, read payment readiness. A canonical
    `bookable=true` result can continue directly to the booking command.
 4. If no ready payment method exists, retain that exact selected slot and open

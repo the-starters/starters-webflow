@@ -5302,6 +5302,41 @@ test('the booking dialog carries no entry stamp until something opens it', async
   assert.equal(back.getAttribute('aria-hidden'), 'true')
 })
 
+test('a back control rendered after the entry stamp is still stamped by the observer', async () => {
+  // The control is no longer authored: the calendar engine builds it into the
+  // mount, which happens AFTER the entry stamp lands. So the last sync before
+  // it exists cannot reach it, and the body observer is the only thing that
+  // does. Without that, the aria half of the two-writer contract is dead and
+  // the control's accessible state disagrees with the display the guard rule
+  // gives it.
+  const page = makePage()
+  const { dialog: booking } = addBookingDialog(page, { withBackArrow: false })
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  page.freeModalCta.click = () => { page.bookingDialog.open = false }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  page.freeModalCta.listeners.click[0](spyEvent().event)
+  assert.equal(booking.getAttribute('data-booking-entry'), 'chooser')
+
+  // Now the calendar mounts and brings the control with it.
+  const back = makeElement('button', {
+    'data-booking-back': '',
+    'data-modal-close': '',
+    'data-modal-trigger': 'popup-booking-main',
+  })
+  booking.appendChild(back)
+  assert.equal(back.getAttribute('aria-hidden'), null, 'nothing has answered for it yet')
+
+  for (const callback of context.mutationObserverCallbacks) {
+    callback([{ type: 'childList', addedNodes: [back] }])
+  }
+  assert.equal(backArrowShown(context, booking, back), true)
+  assert.equal(back.getAttribute('aria-hidden'), 'false')
+})
+
 test('the availability gate leaves the in-dialog back control alone', async () => {
   // The calendar footer's back control carries the chooser's trigger name, so
   // it now joins the set this gate sweeps. Stamping it unavailable would hand

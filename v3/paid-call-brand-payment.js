@@ -533,17 +533,21 @@
    *
    * Null is a real answer, not a failure: the same engine mounts the
    * dashboard's reschedule calendar (`dashboard-call-actions.js`), which lives
-   * in a different dialog entirely. Only the two markers the booking surface is
-   * actually identified by count — matching any `dialog` would let an unrelated
-   * surface answer for this one.
+   * in a different dialog entirely.
+   *
+   * This is deliberately the SAME selector `hire-profile.js` keys its guard
+   * stylesheet rule and its `bookingDialogs()` lookup on, and nothing wider.
+   * A back control rendered on a surface those two cannot reach is a control
+   * nothing ever hides on a direct entry — so anything but an exact match
+   * fails closed and renders no control at all. On the published page the
+   * dialog carries `data-modal-target="popup-booking"` and `popup-booking`
+   * together, so the narrower selector loses nothing.
    */
+  const BOOKING_SURFACE_SELECTOR = '[data-modal-target="popup-booking"]'
+
   function bookingSurfaceFor(container) {
     if (!container || typeof container.closest !== 'function') return null
-    return (
-      container.closest('[data-modal-target="popup-booking"]') ||
-      container.closest('[popup-booking]') ||
-      null
-    )
+    return container.closest(BOOKING_SURFACE_SELECTOR)
   }
 
   function authoredClassSurfaces(container) {
@@ -666,24 +670,32 @@
       ? applyAuthoredBack(global.document.createElement('button'), container, settings)
       : null
 
-    const footer = global.document.createElement('div')
-    footer.setAttribute('data-paid-calendar-element', 'footer')
-    if (!applyAuthoredClasses(footer, authoredClassList(container, FOOTER_CLASS_ATTRIBUTE))) {
-      applyStyles(footer, {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-        flexWrap: 'wrap',
-      })
+    /* No back control means no row to put it in, and the confirm button goes
+       straight into the grid shell exactly as it always did. That keeps the
+       dashboard's reschedule calendar — which cannot author classes and has no
+       back — byte-for-byte what it was: a footer would have turned its confirm
+       from a full-width grid item into a shrink-to-fit flex child. */
+    let footer = null
+    if (back) {
+      footer = global.document.createElement('div')
+      footer.setAttribute('data-paid-calendar-element', 'footer')
+      if (!applyAuthoredClasses(footer, authoredClassList(container, FOOTER_CLASS_ATTRIBUTE))) {
+        applyStyles(footer, {
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          flexWrap: 'wrap',
+        })
+      }
+      footer.appendChild(back)
     }
-    if (back) footer.appendChild(back)
 
     if (!slots.length) {
       status.textContent = 'No available times were found in the next 14 days.'
       container.appendChild(status)
       // An empty calendar is exactly when a visitor most wants the other kind
       // of call, so the way back out has to survive the early return.
-      if (back) container.appendChild(footer)
+      if (footer) container.appendChild(footer)
       return { slots: [] }
     }
 
@@ -728,9 +740,13 @@
         background: '#1f211d',
         color: '#ffffff',
         cursor: 'pointer',
+        // The shell is a grid, so the unwrapped confirm has always stretched to
+        // full width. Inside the footer row it has to be told to, or the button
+        // silently shrinks to its text — inert wherever it stays a grid item.
+        flexGrow: '1',
       })
     }
-    footer.appendChild(confirm)
+    if (footer) footer.appendChild(confirm)
 
     function clearSelection() {
       selectedSlot = null
@@ -874,7 +890,7 @@
 
     shell.appendChild(calendarHost)
     shell.appendChild(times)
-    shell.appendChild(footer)
+    shell.appendChild(footer || confirm)
     shell.appendChild(status)
     container.appendChild(shell)
     renderTimes()
