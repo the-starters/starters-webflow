@@ -3478,8 +3478,18 @@ flowchart TD
    top, and the frame comes with them: stacked, there is no column gap to hand
    the inner edges to, so the month is framed on all four sides and the times
    and the footer repeat the horizontal frame while opening their top edge. The
-   footer's bottom padding is what holds the empty-availability state off the
-   modal's bottom edge, at both widths — that spacing used to sit on the mount,
+   footer floats: on a phone the whole panel scrolls — calendar, caption and
+   chips together — inside the modal's body, and the buttons stay pinned to the
+   bottom of it so they are reachable without scrolling to the end. They stay
+   IN FLOW while doing it, so their slot at the end is still reserved and the
+   last row of slots ends above them rather than under them. That took two
+   things beyond the sticky itself: the panel is a flex column at this width,
+   because a grid item can only travel inside its own grid area and a footer on
+   the last row has none; and the authored step around it gives up its
+   `overflow-y:auto`, because it counted as a scrollport that never scrolls and
+   the footer was sticking to that instead of to the body. The footer's bottom
+   padding is what holds the empty-availability state off the modal's bottom
+   edge, at both widths — that spacing used to sit on the mount,
    and would double against this. The stacked footer takes no hairline: its row
    gap is 16px, and a gap and a rule together read as two dividers. The same
    sheet restyles the month

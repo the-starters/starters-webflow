@@ -777,6 +777,10 @@
       /* Width-independent, so it sits outside both media queries; the two
          placement rules below carry only what differs by breakpoint. */
       role + '"timezone"]{font-size:' + TIMEZONE_FONT_SIZE + '}',
+      /* The shell's own display, which the engine used to write inline. It is
+         a grid at every width by default and the mobile block swaps it for a
+         flex column; see the sticky footer rule there. */
+      role + '"shell"]{display:grid}',
       /* Jerico's inline min-height, moved to the sheet. See CALENDAR_MIN_HEIGHT
          — with the banner out of flow, the empty-availability panel has only a
          button left in it to set its height. */
@@ -805,7 +809,20 @@
          narrower-breakpoint `.call-form_layout,.call-details_layout`, both
          (0,1,0). Under the dialog attribute this is (0,2,0) and outranks both
          — verified against the computed style, not assumed. */
-      dialog + ' .call-details_layout{padding:0}',
+      /* `overflow:visible` is not cosmetic — it is what lets the stacked
+         footer stick. The authored step is `overflow-y:auto`, which makes it a
+         SCROLLPORT even though it never actually scrolls (measured: 1245 of
+         content in a 1245 box). Sticky positions against the nearest
+         scrollport, so the footer was sticking to a box that does not move and
+         did nothing at all: measured at 400 on a busy day, the footer sat
+         519px below the visible area at the top of the scroll and only
+         appeared at the end, exactly as if it were static.
+
+         Releasing it hands the job to `.modal_content-layout`, the modal's
+         body and the only box here that really scrolls. Inert everywhere else:
+         nothing overflows this wrapper at either width, on desktop because the
+         times scroll inside their own cell. */
+      dialog + ' .call-details_layout{padding:0;overflow:visible}',
 
       /* No row gap rule here any more. It used to be `row-gap:16px`, and by the
          time round 4 gave every stacked element its own frame padding the only
@@ -847,15 +864,48 @@
          An empty row costs nothing: if the engine resolves no timezone there
          is no element, and an empty track sizes to zero rather than reserving
          a gap. */
-      role + '"shell"]{grid-template-areas:"month" "timezone" "times" "footer"}',
-      role + '"month"]{grid-area:month;padding:' + CALENDAR_FRAME + '}',
+      /* A FLEX column, not the grid the desktop block uses, and the whole
+         reason is the sticky footer below.
+
+         A grid item's containing block is its own grid area, so a footer
+         sitting on the last row has exactly zero room to travel and
+         `position:sticky` does nothing at all. A flex item's containing block
+         is the flex container's content box — the whole shell — so the footer
+         can travel the full scroll and settle back into its own slot at the
+         end. Measured at 400 with a busy day: the shell is 1245px tall inside
+         a 726px scrollport, so that is 519px of travel a grid would have
+         thrown away.
+
+         `order` puts the caption back above the chips, the job the grid's
+         named rows used to do — the engine appends it after the times. */
+      role + '"shell"]{flex-direction:column}',
+      role + '"month"]{order:1;padding:' + CALENDAR_FRAME + '}',
       /* The frame, which it would otherwise run full-bleed past while every
          neighbour is inset. Its top spacing is the month's bottom padding; the
          `1rem` is the gap down to the first chip, the note's own `margin:0`
          being inline and out of this sheet's reach. */
-      role + '"timezone"]{grid-area:timezone;padding:0 ' + CALENDAR_FRAME + ' ' + TIMEZONE_GAP + '}',
-      role + '"times"]{grid-area:times;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
-      role + '"footer"]{grid-area:footer;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
+      role + '"timezone"]{order:2;padding:0 ' + CALENDAR_FRAME + ' ' + TIMEZONE_GAP + '}',
+      role + '"times"]{order:3;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
+      /* The floating footer. On a phone the whole panel scrolls — calendar,
+         caption and chips together — inside `.modal_content-layout`, which is
+         the modal's body and the only thing on the page that scrolls here
+         (measured: 726 visible against 1245 of content on a busy day; the
+         document itself and every box between are not scrollers). Pinned to
+         the bottom of that scrollport, the buttons stay reachable without
+         scrolling to the end.
+
+         `sticky` rather than `fixed` on purpose: it keeps the footer IN FLOW,
+         so its slot at the end of the content is still reserved and the last
+         row of chips ends above the buttons instead of under them. That is the
+         "space needed at the bottom" in Jerico's note, and it is structural
+         rather than a guessed offset.
+
+         The background is what makes it read as a surface rather than as
+         floating text: chips scroll underneath, and without it they show
+         through the gap between the two buttons. White, because that is the
+         modal's own fill. No hairline — his call on the stacked footer stands;
+         a variant with one is captured for comparison. */
+      role + '"footer"]{order:4;position:sticky;bottom:0;background:#fff;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
       // Stacked, full width, primary first. `order` rather than
       // `column-reverse` so the empty state — which has only the back
       // control — is unaffected either way.
@@ -1407,8 +1457,15 @@
        needs. Withholding the shorthand on this one surface is what keeps the
        sheet authoritative and the no-`!important` rule intact. The sheet
        restates the same 16px row gap, so the row rhythm is unchanged. */
+    /* On the booking surface the sheet owns `display` as well as both gaps.
+       An inline declaration outranks every rule in it, and the two breakpoints
+       need DIFFERENT formatting contexts: a grid on desktop, a flex column on
+       a phone so the footer can stick. See the sticky footer rule for why a
+       grid cannot do it — a grid item's containing block is its own grid area,
+       which for a footer on its own row leaves sticky nowhere to travel.
+       Off that surface the inline shorthand stays exactly where it was. */
     const shell = applyStyles(global.document.createElement('div'), onBookingSurface
-      ? { display: 'grid', width: '100%' }
+      ? { width: '100%' }
       : { display: 'grid', gap: '16px', width: '100%' })
     shell.setAttribute('data-paid-calendar-element', 'shell')
     const layout = applyStyles(global.document.createElement('div'), {

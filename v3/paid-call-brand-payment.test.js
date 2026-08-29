@@ -1071,15 +1071,18 @@ test('the shell declares no row gap, at either width', async () => {
   assert.match(css.split('@media (min-width:768px){')[1], /"shell"\]\{column-gap:2rem;row-gap:0;/)
 })
 
-test('the booking shell defers its gaps to the sheet, the dashboard does not', async () => {
+test('the booking shell defers its display and gaps to the sheet, the dashboard does not', async () => {
   // An inline declaration outranks a stylesheet rule whatever its specificity,
   // so an inline `gap` shorthand on the booking shell would pin `column-gap`
   // too and the sheet could not widen the month-to-times space without
-  // `!important`. Off the booking surface the inline shorthand stays exactly
-  // where it was.
+  // `!important`. `display` went the same way once the two breakpoints needed
+  // different formatting contexts — a grid on desktop, a flex column on a
+  // phone so the footer can stick. Off the booking surface both stay inline,
+  // exactly where they were.
   const { shell } = await mountFooterFixture()
-  assert.deepEqual(Object.keys(shell.style), ['display', 'width'])
+  assert.deepEqual(Object.keys(shell.style), ['width'])
   assert.equal(shell.style.gap, undefined, 'the sheet owns the booking shell gaps')
+  assert.equal(shell.style.display, undefined, 'and its display')
 
   const reschedule = new CalendarElement('dialog')
   reschedule.setAttribute('data-modal-target', 'popup-booking-info')
@@ -1308,7 +1311,7 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
   const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
-  assert.ok(mobileBlock.includes('"footer"]{grid-area:footer;padding:0 1.25rem 1.25rem}'))
+  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;padding:0 1.25rem 1.25rem}'))
 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
   assert.ok(desktopBlock.includes('"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem'))
@@ -1331,9 +1334,9 @@ test('the interior frame is the only inset at mobile too', async () => {
   const css = document.head.children[0].textContent
   const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
 
-  assert.ok(mobileBlock.includes('"month"]{grid-area:month;padding:1.25rem}'))
-  assert.ok(mobileBlock.includes('"times"]{grid-area:times;padding:0 1.25rem 1.25rem}'))
-  assert.ok(mobileBlock.includes('"footer"]{grid-area:footer;padding:0 1.25rem 1.25rem}'))
+  assert.ok(mobileBlock.includes('"month"]{order:1;padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('"times"]{order:3;padding:0 1.25rem 1.25rem}'))
+  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;padding:0 1.25rem 1.25rem}'))
 
   // No hairline on the stacked footer. Desktop can carry one because its row
   // gap is zero and the band's rule is the only separator; mobile keeps its
@@ -1360,12 +1363,14 @@ test('the footer stacks primary-first below the site mobile breakpoint', async (
 
   // Every stacking rule that reaches a footer keys on the engine's own row,
   // never on an authored one — an authored footer places its own children by
-  // contract. The mount's own column rule is exempt and named here: it stacks
-  // the empty state's contents, not a footer's.
+  // contract. Two rules are exempt and both are named here: the mount's column
+  // stacks the empty state's contents, and the shell's stacks the panel
+  // itself. Neither reaches into a footer.
   assert.equal(footer.getAttribute('data-paid-calendar-footer'), 'fallback')
   for (const line of css.split('}')) {
     if (!line.includes('flex-direction:column') && !line.includes('order:-1')) continue
     if (line.includes('[nylas-container]')) continue
+    if (line.includes('"shell"]')) continue
     assert.ok(line.includes('[data-paid-calendar-footer="fallback"]'), line)
   }
 })
@@ -1441,13 +1446,51 @@ test('the authored step stops padding the calendar at every width', async () => 
   const D = '[data-modal-target="popup-booking"]'
 
   // Unconditional, so neither breakpoint can be left with a doubled inset.
-  assert.ok(css.split('@media')[0].includes(D + ' .call-details_layout{padding:0}'))
+  assert.ok(css.split('@media')[0].includes(D + ' .call-details_layout{padding:0;overflow:visible}'))
   assert.ok(!css.split('@media (min-width:768px){')[1].includes('.call-details_layout'))
 
   // Specificity rather than `!important`, which this sheet forbids: the site's
   // own declarations are flat `.call-details_layout` class selectors at
   // (0,1,0), and the dialog attribute makes this (0,2,0).
   assert.ok(!/\.call-details_layout[^}]*!important/.test(css))
+})
+
+test('the stacked footer floats, and only because the shell is a flex column', async () => {
+  // On a phone the whole panel scrolls inside the modal's body, so the buttons
+  // would otherwise sit below the fold on a busy day. Sticky pins them to the
+  // bottom of that scrollport while keeping them IN FLOW, which is what
+  // reserves their slot at the end and stops the last chips landing under
+  // them — the "space at the bottom" in Jerico's note, structural rather than
+  // a guessed offset.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+
+  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;padding:0 1.25rem 1.25rem}'))
+
+  /* The flex column is load-bearing, not a refactor. A GRID item's containing
+     block is its own grid area, so a footer on the last row has zero room to
+     travel and sticky does nothing whatsoever; a flex item's containing block
+     is the whole shell. Measured at 400 on a busy day: 1245px of shell inside
+     a 726px scrollport, so a grid would have thrown away 519px of travel.
+     Do not "simplify" this back to grid rows. */
+  assert.ok(mobileBlock.includes('"shell"]{flex-direction:column}'))
+  assert.ok(!mobileBlock.includes('grid-template-areas'), 'a grid here kills the sticky')
+  assert.ok(!/"footer"\]\{[^}]*grid-area/.test(mobileBlock))
+
+  // An opaque fill, because chips scroll underneath and would otherwise show
+  // through the gap between the two buttons.
+  assert.match(mobileBlock, /"footer"\]\{[^}]*background:#fff/)
+
+  // No hairline on the stacked footer — Jerico's earlier call, unchanged by
+  // the footer starting to float.
+  assert.ok(!mobileBlock.includes('border-top'))
+
+  // Desktop keeps the grid and the always-visible band: nothing sticks there,
+  // because the times scroll inside their own cell instead.
+  const desktopBlock = css.split('@media (min-width:768px){')[1]
+  assert.ok(!desktopBlock.includes('position:sticky'))
+  assert.match(desktopBlock, /grid-template-areas:"month timezone" "month times" "footer footer"/)
 })
 
 test('the timezone caption sits above the slots at both widths', async () => {
@@ -1470,11 +1513,11 @@ test('the timezone caption sits above the slots at both widths', async () => {
   // Mobile: already between the calendar and the chips in DOM order, so only
   // the frame is needed — and it must be the frame, not a bleed.
   const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
-  assert.ok(mobileBlock.includes(ROLE + '"timezone"]{grid-area:timezone;padding:0 1.25rem 1rem}'))
+  assert.ok(mobileBlock.includes(ROLE + '"timezone"]{order:2;padding:0 1.25rem 1rem}'))
   // Stacked it has to be MOVED, not just padded: the engine appends it AFTER
   // the times, so document order alone renders it below the chips (measured
   // at 400px: the note at y 670 against a list ending at exactly 670).
-  assert.ok(mobileBlock.includes('"shell"]{grid-template-areas:"month" "timezone" "times" "footer"}'))
+  assert.ok(mobileBlock.includes('"shell"]{flex-direction:column}'))
 
   // The SIZE is this sheet's now — Jerico's round-8 call, and the one thing it
   // takes over from the engine's inline styles. Width-independent, so it sits

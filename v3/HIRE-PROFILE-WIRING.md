@@ -363,6 +363,16 @@ names and must stay pixel-identical. The footer's mobile stacking rules key on
 `data-paid-calendar-footer="fallback"`, written only on the engine's own row, so
 an authored `data-booking-footer-class` row still places its own children.
 
+Below 768px the footer is `position:sticky; bottom:0` with an opaque fill: the
+whole panel scrolls inside `.modal_content-layout` (the modal's body, and the
+only real scrollport here — measured, not assumed), and the buttons stay pinned
+to the bottom of it while remaining in flow, so the last slots still end above
+them. Two supporting rules make that work: the shell is a flex column at this
+width, since a grid item cannot travel outside its own grid area; and
+`.call-details_layout` gives up its `overflow-y:auto`, which made it a
+scrollport that never scrolls and swallowed the sticky. Desktop keeps the grid
+and its always-visible band — the times scroll inside their own cell there.
+
 **Lengths in that sheet are rem, and every remaining px is a border.** The rem
 values track the site's responsive root font size; borders stay px because a
 hairline is a device-pixel affordance and at the site's 12.93px root a
