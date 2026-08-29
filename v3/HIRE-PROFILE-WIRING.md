@@ -444,12 +444,11 @@ anything else keeps both decimals.
 | `[call-type-price]` (chooser row) | written as `$0` | never written |
 
 Both blanks are deliberate. **Paid `[call-type-price]` belongs to the Paid
-controller**, which writes `canonicalPaidPrice` into it at install
-(`paid-call-brand-payment.js:1359`) *after* this file runs — a write here would
-be dead code and a second format of the same number. **Free `[data-millify]` is
-never written** because a free config's amount is always zero, and painting `0`
-over an authored card rate is a visible regression; the chooser row is the one
-intentional `$0`.
+controller**, whose `installPaidBookingController` writes `canonicalPaidPrice`
+into it *after* this file runs — a write here would be dead code and a second
+format of the same number. **Free `[data-millify]` is never written** because a
+free config's amount is always zero, and painting `0` over an authored card rate
+is a visible regression; the chooser row is the one intentional `$0`.
 
 That `$0` matters: `selectBookableConfigurations` deliberately admits a Free
 record whose `price_cents` is `null` or absent, and `Number(undefined)` is `NaN`,

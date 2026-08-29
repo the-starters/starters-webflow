@@ -547,6 +547,16 @@ test('shared call calendar renders dates and times and submits only the selected
     })
     assert.equal(result.slots.length, 3)
     assert.equal(container.getAttribute('data-paid-calendar-state'), 'ready')
+    // The calendar has no timezone picker, so it must SAY which clock the
+    // times use (Kaeser QA B4).
+    const zoneNote = container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === 'timezone')
+    assert.ok(zoneNote, 'timezone note is rendered')
+    assert.match(zoneNote.textContent, /^Times shown in .+/)
+    assert.ok(
+      zoneNote.textContent.includes(Intl.DateTimeFormat().resolvedOptions().timeZone),
+      'timezone note names the detected zone',
+    )
     const timeButtons = container.querySelectorAll('[data-paid-calendar-slot]')
     const dateButtons = container.querySelectorAll('[data-paid-calendar-date]')
     const confirm = container.querySelectorAll('[data-paid-calendar-element]')
@@ -649,10 +659,10 @@ test('the calendar footer puts Back beside the confirm control', async () => {
   // the footer is what makes "beside" true rather than "stacked above".
   assert.equal(footer.tagName, 'div')
   assert.deepEqual(footer.children, [back, confirm])
-  assert.equal(shell.children.indexOf(footer), 2)
+  assert.equal(shell.children.indexOf(footer), 3)
   assert.deepEqual(
     shell.children.map((child) => child.getAttribute('data-paid-calendar-element')),
-    ['month', 'times', 'footer', 'status'],
+    ['month', 'times', 'timezone', 'footer', 'status'],
   )
   assert.equal(status.getAttribute('data-paid-calendar-element'), 'status')
 
@@ -800,7 +810,7 @@ test('a calendar mounted outside the booking dialog gets no back control', async
   // No back means no row: the confirm goes straight into the grid shell, where
   // it stretches, rather than becoming a shrink-to-fit flex child.
   assert.equal(away.footer, null)
-  assert.equal(away.shell.children.indexOf(away.confirm), 2)
+  assert.equal(away.shell.children.indexOf(away.confirm), 3)
 
   // Fails closed on any surface the profile script's guard rule cannot reach.
   // `[popup-booking]` alone is such a surface: nothing would ever hide the
@@ -2998,4 +3008,17 @@ test('a synthesized booking close skips the back arrow and uses a real closer', 
     }
     assert.equal(firstCloseMatch(selector, [only]), only, marker)
   }
+})
+
+test('timezoneLabel names the zone with a DST-correct offset and fails soft', () => {
+  const january = Date.UTC(2026, 0, 15, 12, 0, 0)
+  const july = Date.UTC(2026, 6, 15, 12, 0, 0)
+  assert.equal(api.timezoneLabel('America/New_York', january), 'America/New_York (EST)')
+  assert.equal(api.timezoneLabel('America/New_York', july), 'America/New_York (EDT)')
+  assert.match(api.timezoneLabel('Asia/Manila', july), /^Asia\/Manila \(GMT\+8\)$/)
+  // UTC formats as "UTC" itself, so no duplicate suffix is added.
+  assert.equal(api.timezoneLabel('UTC', july), 'UTC')
+  assert.equal(api.timezoneLabel('', july), '')
+  // An invalid zone still returns the zone name instead of throwing.
+  assert.equal(api.timezoneLabel('Not/A_Zone', july), 'Not/A_Zone')
 })

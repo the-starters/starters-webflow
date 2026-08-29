@@ -3364,7 +3364,12 @@ flowchart TD
    `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
    the provider credential and private Scheduler session off the browser.
 2. Render the month calendar, the time buttons and the footer row inside the
-   authored `[nylas-container]` mount. The selected slot is advisory only.
+   authored `[nylas-container]` mount. Times use the visitor's auto-detected
+   timezone; there is no timezone picker. A muted note below the time grid
+   identifies that clock: `Times shown in <zone> (<offset>)`. Its offset uses
+   the first slot's start so it is correct for daylight saving time on the
+   dates shown. An empty calendar omits the note. The selected slot is advisory
+   only.
 
    The mount is cleared on every reset of the booking surface, so the footer's
    controls cannot be authored inside it and are built here instead: the

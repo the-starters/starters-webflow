@@ -602,6 +602,34 @@
     return back
   }
 
+  /**
+   * Human label for the calendar's timezone, e.g. "Asia/Manila (GMT+8)". The
+   * calendar renders in the visitor's detected zone and offers no picker, so
+   * this label is what tells them which clock the times use (Kaeser QA B4).
+   * The reference timestamp keeps the offset DST-correct for the shown dates.
+   */
+  function timezoneLabel(timezone, referenceMsInput) {
+    const zone = String(timezone || '').trim()
+    if (!zone) return ''
+    const referenceMs = Number.isFinite(Number(referenceMsInput))
+      ? Number(referenceMsInput)
+      : Date.now()
+    let offset = ''
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: zone,
+        timeZoneName: 'short',
+      }).formatToParts(new Date(referenceMs))
+      const name = parts.find(function (part) {
+        return part.type === 'timeZoneName'
+      })
+      offset = String((name && name.value) || '').trim()
+    } catch (_error) {
+      offset = ''
+    }
+    return offset && offset !== zone ? zone + ' (' + offset + ')' : zone
+  }
+
   function calendarDateKey(timestamp, timezone) {
     const parts = new Intl.DateTimeFormat('en-CA', {
       year: 'numeric',
@@ -643,6 +671,7 @@
     }
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     const slots = await getPaidAvailability(config)
+    const zoneText = timezoneLabel(timezone, slots.length ? slots[0].start : undefined)
     if (!isCurrent()) return { slots: [], stale: true }
     container.textContent = ''
     container.setAttribute('data-paid-calendar-state', slots.length ? 'ready' : 'empty')
@@ -908,6 +937,16 @@
 
     shell.appendChild(calendarHost)
     shell.appendChild(times)
+    if (zoneText) {
+      const zoneNote = applyStyles(global.document.createElement('p'), {
+        color: '#6f746d',
+        fontSize: '13px',
+        margin: '0',
+      })
+      zoneNote.setAttribute('data-paid-calendar-element', 'timezone')
+      zoneNote.textContent = 'Times shown in ' + zoneText
+      shell.appendChild(zoneNote)
+    }
     shell.appendChild(footer || confirm)
     shell.appendChild(status)
     container.appendChild(shell)
@@ -1635,6 +1674,7 @@
     availabilityQuery,
     getReadiness,
     getPaidAvailability,
+    timezoneLabel,
     installGuestFormSubmitGuard,
     installPaidBookingController,
     mountPaidCalendar,
