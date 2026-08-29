@@ -644,6 +644,15 @@
   const STATUS_NEUTRAL_COLOR = '#fff'
   const STATUS_BANNER_PADDING = '1rem'
   const STATUS_FONT_SIZE = '0.8125rem'
+  /* The timezone caption's size, Jerico's round-8 pick. It is the one thing
+     this sheet takes over from the shared engine's inline styles — see the
+     note at the zoneNote build for why that needs a change on their side as
+     well as a rule here. Colour and margin stay theirs. */
+  const TIMEZONE_FONT_SIZE = '0.75rem'
+  /* The gap between the caption and the first row of chips. A full frame would
+     read as a row of its own; this is Jerico's round-8 value, up from the
+     0.5rem the placement round shipped. */
+  const TIMEZONE_GAP = '1rem'
   /* ---- lengths are rem, borders are px ----
      Jerico's round-5 call: every length in this sheet is a rem so it tracks the
      site's responsive root font size, the way the frame and the banner's
@@ -765,6 +774,9 @@
          It has to outrank the base rule above, and `:empty` gives it the extra
          specificity to do that without `!important`. */
       role + '"status"]:empty{display:none}',
+      /* Width-independent, so it sits outside both media queries; the two
+         placement rules below carry only what differs by breakpoint. */
+      role + '"timezone"]{font-size:' + TIMEZONE_FONT_SIZE + '}',
       /* Jerico's inline min-height, moved to the sheet. See CALENDAR_MIN_HEIGHT
          — with the banner out of flow, the empty-availability panel has only a
          button left in it to set its height. */
@@ -839,9 +851,9 @@
       role + '"month"]{grid-area:month;padding:' + CALENDAR_FRAME + '}',
       /* The frame, which it would otherwise run full-bleed past while every
          neighbour is inset. Its top spacing is the month's bottom padding; the
-         `0.5rem` is the gap down to the first chip, the note's own `margin:0`
+         `1rem` is the gap down to the first chip, the note's own `margin:0`
          being inline and out of this sheet's reach. */
-      role + '"timezone"]{grid-area:timezone;padding:0 ' + CALENDAR_FRAME + ' 0.5rem}',
+      role + '"timezone"]{grid-area:timezone;padding:0 ' + CALENDAR_FRAME + ' ' + TIMEZONE_GAP + '}',
       role + '"times"]{grid-area:times;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
       role + '"footer"]{grid-area:footer;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
       // Stacked, full width, primary first. `order` rather than
@@ -924,7 +936,7 @@
          padding can give without fighting them.
 
          It carries the frame's top and right edges, so it lines up with the
-         times below it and with the month's top opposite. The bottom `0.5rem`
+         times below it and with the month's top opposite. The bottom `1rem`
          is the gap down to the first chip: the note's own `margin:0` is inline
          and unreachable, so the space has to come from its padding, and half a
          frame reads as a caption attached to the list rather than a row of its
@@ -933,7 +945,7 @@
          It sits OUTSIDE the scroll container — a sibling of the times, not a
          child — so it stays put while the chips scroll under it. That is the
          behaviour a caption for the whole list wants. */
-      role + '"timezone"]{grid-area:timezone;padding:' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' 0.5rem 0}',
+      role + '"timezone"]{grid-area:timezone;padding:' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' ' + TIMEZONE_GAP + ' 0}',
       /* The page hides every inner scrollbar globally
          (`*:not(html):not(body)::-webkit-scrollbar{display:none}`), which would
          leave this list scrollable with no affordance that there is more below.

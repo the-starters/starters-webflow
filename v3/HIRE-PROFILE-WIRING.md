@@ -351,7 +351,10 @@ breakpoint. On desktop the footer spans both grid columns on its own bottom
 row, so the buttons anchor to the bottom of the panel rather than to one
 column, and the shared engine's timezone caption takes the top of the right
 column above the slots, with the month spanning down beside it so the caption
-costs the panel no height. Stacked, that caption has to be MOVED rather than
+costs the panel no height. The sheet sets that caption's spacing and its
+`0.75rem` size; its colour and margin stay the engine's inline declarations,
+and the engine skips only the inline font size on this surface so the sheet's
+size is not outranked. Stacked, that caption has to be MOVED rather than
 just padded: the engine appends it after the times, so document order alone
 renders it below the chips. Every selector in that sheet is scoped under
 `[data-modal-target="popup-booking"]` and none uses `!important`; the contract

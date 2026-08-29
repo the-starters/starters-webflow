@@ -3415,10 +3415,12 @@ flowchart TD
    height it was without the caption — the times area gives up the caption's
    height instead of the modal growing. Stacked, the caption is appended AFTER
    the times, so naming the rows is what puts it back above them. It sits
-   outside the scrolling list, so it stays put while the chips scroll. Only its
-   spacing is set here; its colour, size and margin are inline declarations on
-   the engine's own element and an inline declaration outranks any rule in this
-   sheet.
+   outside the scrolling list, so it stays put while the chips scroll. Its
+   spacing and its `0.75rem` size are set here; its colour and margin stay
+   inline declarations on the engine's own element. Owning the size took a
+   change on that side too — an inline declaration outranks any rule in this
+   sheet, so the engine now skips the inline font size on the booking surface
+   and keeps it everywhere else, exactly as it already did for the status.
 
    The calendar is two columns from 768px up — month on the left, times on the
    right — with the footer spanning BOTH columns on its own row underneath as a

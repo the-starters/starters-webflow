@@ -1464,25 +1464,62 @@ test('the timezone caption sits above the slots at both widths', async () => {
   // Desktop: its own area at the top of the right column, with the month
   // spanning down beside it so the panel does not grow by the caption.
   const desktopBlock = css.split('@media (min-width:768px){')[1]
-  assert.ok(desktopBlock.includes(ROLE + '"timezone"]{grid-area:timezone;padding:1.25rem 1.25rem 0.5rem 0}'))
+  assert.ok(desktopBlock.includes(ROLE + '"timezone"]{grid-area:timezone;padding:1.25rem 1.25rem 1rem 0}'))
   assert.match(desktopBlock, /grid-template-areas:"month timezone" "month times"/)
 
   // Mobile: already between the calendar and the chips in DOM order, so only
   // the frame is needed — and it must be the frame, not a bleed.
   const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
-  assert.ok(mobileBlock.includes(ROLE + '"timezone"]{grid-area:timezone;padding:0 1.25rem 0.5rem}'))
+  assert.ok(mobileBlock.includes(ROLE + '"timezone"]{grid-area:timezone;padding:0 1.25rem 1rem}'))
   // Stacked it has to be MOVED, not just padded: the engine appends it AFTER
   // the times, so document order alone renders it below the chips (measured
   // at 400px: the note at y 670 against a list ending at exactly 670).
   assert.ok(mobileBlock.includes('"shell"]{grid-template-areas:"month" "timezone" "times" "footer"}'))
 
-  // Spacing only. Colour, size and margin are inline declarations on the
-  // engine's own element, and an inline declaration outranks every rule here —
-  // asking for them would be a rule that silently loses.
+  // The SIZE is this sheet's now — Jerico's round-8 call, and the one thing it
+  // takes over from the engine's inline styles. Width-independent, so it sits
+  // outside both media queries.
+  const beforeMedia = css.split('@media')[0]
+  assert.ok(beforeMedia.includes(ROLE + '"timezone"]{font-size:0.75rem}'))
+
+  // Everything else about its appearance stays the engine's. Those are inline
+  // declarations and inline outranks every rule here, so asking for them would
+  // be a rule that silently loses.
   for (const rule of css.split('}')) {
     if (!rule.includes('"timezone"]')) continue
-    assert.ok(!/(^|;|\{)\s*(color|font-size|margin|background)\s*:/.test(rule), rule)
+    assert.ok(!/(^|;|\{)\s*(color|margin|background)\s*:/.test(rule), rule)
   }
+})
+
+test('the timezone caption drops its inline size only on the booking surface', async () => {
+  // An inline declaration outranks the injected sheet, so the sheet cannot own
+  // the caption's size while the engine still writes one. It is skipped here
+  // and ONLY here: off the booking surface no sheet is injected to take over,
+  // so the inline size stays and that path is byte-identical. Same split the
+  // status element has carried since the banner landed.
+  const onSurface = await mountFooterFixture()
+  const zone = onSurface.shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone')
+  assert.ok(zone)
+  assert.equal(zone.style.fontSize, undefined, 'the sheet owns the size here')
+  assert.equal(zone.style.color, '#6f746d', 'colour is still the engine\'s')
+  assert.equal(zone.style.margin, '0', 'and so is the margin')
+
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  host.setAttribute('booking-reschedule-calendar', '')
+  reschedule.appendChild(host)
+  const away = await mountFooterFixture({ container: host })
+  const awayZone = away.shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone')
+  assert.ok(awayZone)
+  assert.deepEqual(
+    Object.keys(awayZone.style),
+    ['color', 'fontSize', 'margin'],
+    'the dashboard keeps all three, in the order it always wrote them',
+  )
+  assert.equal(awayZone.style.fontSize, '13px')
 })
 
 test('the timezone caption cannot come back inside the scrolling list', async () => {
