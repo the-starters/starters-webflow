@@ -512,6 +512,58 @@
     return node
   }
 
+  /* ---- the calendar footer's class contract ----
+     The calendar mount is wiped on every lifecycle reset, so nothing authored
+     can live inside it and the footer's two controls have to be built here.
+     That used to mean their look was hardcoded in this file, which is why the
+     confirm button never matched the site's button styling. Instead of guessing
+     at the design system from JavaScript, the engine reads the class names off
+     the nearest authored surface and applies them verbatim: the styling stays
+     in the Designer, where it can change without a script release.
+
+     Read order is container first, then the dialog the container sits in, so a
+     page with several booking surfaces can style one of them differently
+     without affecting the rest. */
+  const FOOTER_CLASS_ATTRIBUTE = 'data-booking-footer-class'
+  const CONFIRM_CLASS_ATTRIBUTE = 'data-booking-confirm-class'
+  const BACK_CLASS_ATTRIBUTE = 'data-booking-back-class'
+
+  function authoredClassSurfaces(container) {
+    const surfaces = [container]
+    if (container && typeof container.closest === 'function') {
+      const root =
+        container.closest('[data-modal-target="popup-booking"]') ||
+        container.closest('[popup-booking]') ||
+        container.closest('dialog')
+      if (root && root !== container) surfaces.push(root)
+    }
+    return surfaces
+  }
+
+  /** The authored class names for one control, or [] when none are authored. */
+  function authoredClassList(container, attribute) {
+    const surfaces = authoredClassSurfaces(container)
+    for (let index = 0; index < surfaces.length; index += 1) {
+      const surface = surfaces[index]
+      if (!surface || typeof surface.getAttribute !== 'function') continue
+      const authored = String(surface.getAttribute(attribute) || '').trim()
+      if (authored) return authored.split(/\s+/)
+    }
+    return []
+  }
+
+  /**
+   * Applies authored classes and reports whether any were applied, so the
+   * caller can skip its inline fallback. An authored control must carry NO
+   * inline styles: a hardcoded declaration here would outrank the Designer's
+   * own stylesheet and quietly win the parts of the look it names.
+   */
+  function applyAuthoredClasses(node, classes) {
+    if (!classes.length) return false
+    node.setAttribute('class', classes.join(' '))
+    return true
+  }
+
   function calendarDateKey(timestamp, timezone) {
     const parts = new Intl.DateTimeFormat('en-CA', {
       year: 'numeric',
@@ -597,18 +649,58 @@
       gap: '8px',
     })
     times.setAttribute('data-paid-calendar-element', 'times')
-    const confirm = applyStyles(global.document.createElement('button'), {
-      padding: '12px 16px',
-      border: '1px solid #1f211d',
-      borderRadius: '6px',
-      background: '#1f211d',
-      color: '#ffffff',
-      cursor: 'pointer',
-    })
+    const confirm = global.document.createElement('button')
     confirm.type = 'button'
     confirm.disabled = true
     confirm.textContent = String(settings.confirmText || 'Request paid call')
     confirm.setAttribute('data-paid-calendar-element', 'confirm')
+    if (!applyAuthoredClasses(confirm, authoredClassList(container, CONFIRM_CLASS_ATTRIBUTE))) {
+      applyStyles(confirm, {
+        padding: '12px 16px',
+        border: '1px solid #1f211d',
+        borderRadius: '6px',
+        background: '#1f211d',
+        color: '#ffffff',
+        cursor: 'pointer',
+      })
+    }
+
+    /* The back control is a hand-off, not a behaviour of its own: the two modal
+       attributes close this dialog and open the Free/Paid chooser, exactly as
+       an authored control would, and `data-booking-back` is the marker the
+       profile script keys its entry-aware visibility on. Nothing here decides
+       when it is on screen — the guard stylesheet owns display and the profile
+       script owns the accessible state, so this must not write either. */
+    const back = global.document.createElement('button')
+    back.type = 'button'
+    back.textContent = String(settings.backText || '← Back')
+    back.setAttribute('data-booking-back', '')
+    back.setAttribute('data-modal-close', '')
+    back.setAttribute('data-modal-trigger', 'popup-booking-main')
+    back.setAttribute('data-paid-calendar-element', 'back')
+    if (!applyAuthoredClasses(back, authoredClassList(container, BACK_CLASS_ATTRIBUTE))) {
+      applyStyles(back, {
+        padding: '12px 16px',
+        border: '1px solid transparent',
+        borderRadius: '6px',
+        background: 'transparent',
+        color: '#1f211d',
+        cursor: 'pointer',
+      })
+    }
+
+    const footer = global.document.createElement('div')
+    footer.setAttribute('data-paid-calendar-element', 'footer')
+    if (!applyAuthoredClasses(footer, authoredClassList(container, FOOTER_CLASS_ATTRIBUTE))) {
+      applyStyles(footer, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        flexWrap: 'wrap',
+      })
+    }
+    footer.appendChild(back)
+    footer.appendChild(confirm)
 
     function clearSelection() {
       selectedSlot = null
@@ -746,7 +838,7 @@
 
     shell.appendChild(calendarHost)
     shell.appendChild(times)
-    shell.appendChild(confirm)
+    shell.appendChild(footer)
     shell.appendChild(status)
     container.appendChild(shell)
     renderTimes()
@@ -1462,6 +1554,7 @@
     XANO_BASE,
     authenticatedRequest,
     authenticatedPost,
+    authoredClassList,
     bookingPayload,
     bookingRequestFingerprint,
     canonicalPaidPrice,

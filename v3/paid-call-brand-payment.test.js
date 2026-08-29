@@ -114,9 +114,37 @@ class CalendarElement {
   }
 
   setAttribute(name, value) { this.attrs[name] = String(value) }
-  getAttribute(name) { return this.attrs[name] || null }
-  appendChild(child) { this.children.push(child); return child }
+  getAttribute(name) {
+    return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null
+  }
+
+  appendChild(child) {
+    child.parentElement = this
+    this.children.push(child)
+    return child
+  }
+
   addEventListener(name, listener) { this.listeners[name] = listener }
+
+  /**
+   * Enough of `closest` for the footer's class contract: a tag name, a bare
+   * `[attribute]`, or `[attribute="value"]`. The contract walks from the mount
+   * container out to the dialog, so the stub has to model ancestry as well as
+   * descent.
+   */
+  closest(selector) {
+    const attribute = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(String(selector).trim())
+    for (let node = this; node; node = node.parentElement) {
+      if (attribute) {
+        const value = node.getAttribute(attribute[1])
+        if (value !== null && (attribute[2] === undefined || value === attribute[2])) return node
+      } else if (node.tagName === selector) {
+        return node
+      }
+    }
+    return null
+  }
+
   querySelectorAll(selector) {
     const attribute = selector.match(/^\[([^\]]+)\]$/)?.[1]
     const matches = []
@@ -553,6 +581,199 @@ test('shared call calendar renders dates and times and submits only the selected
     global.jQuery = previous.jQuery
     global.xanoAuthFetch = previous.xanoAuthFetch
   }
+})
+
+/**
+ * Mounts the shared calendar against the element stub and hands back the
+ * footer's parts by their `data-paid-calendar-element` role.
+ */
+async function mountFooterFixture(options = {}) {
+  const previous = {
+    document: global.document,
+    jQuery: global.jQuery,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const container = options.container || new CalendarElement('div')
+  const start =
+    Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000) / 86400000) * 86400 + 12 * 60 * 60
+  global.document = {
+    createElement(tagName) { return new CalendarElement(tagName) },
+  }
+  global.jQuery = undefined
+  global.xanoAuthFetch = async () => response({
+    time_slots: [{ start_time: start, end_time: start + 15 * 60 }],
+  })
+  try {
+    const mount = { container, config: { config_id: 'config_paid', grant_id: 'grant_test', duration: 15 }, async onConfirm() {} }
+    if (options.confirmText) mount.confirmText = options.confirmText
+    if (options.backText) mount.backText = options.backText
+    const result = await api.mountPaidCalendar(mount)
+    const role = (name) => container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === name) || null
+    return {
+      container,
+      result,
+      shell: role('shell'),
+      footer: role('footer'),
+      back: role('back'),
+      confirm: role('confirm'),
+      status: role('status'),
+    }
+  } finally {
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+}
+
+test('the calendar footer puts Back beside the confirm control', async () => {
+  const { shell, footer, back, confirm, status } = await mountFooterFixture()
+
+  // Back reads before the call it steps away from, and both sit in one row —
+  // the footer is what makes "beside" true rather than "stacked above".
+  assert.equal(footer.tagName, 'div')
+  assert.deepEqual(footer.children, [back, confirm])
+  assert.equal(shell.children.indexOf(footer), 2)
+  assert.deepEqual(
+    shell.children.map((child) => child.getAttribute('data-paid-calendar-element')),
+    ['month', 'times', 'footer', 'status'],
+  )
+  assert.equal(status.getAttribute('data-paid-calendar-element'), 'status')
+
+  // The three attributes ARE the behaviour: close this dialog, open the
+  // chooser, and carry the marker the entry-aware visibility keys on. A typo
+  // in any of them is a silently dead control.
+  assert.equal(back.tagName, 'button')
+  assert.equal(back.type, 'button')
+  assert.equal(back.textContent, '← Back')
+  assert.equal(back.getAttribute('data-booking-back'), '')
+  assert.equal(back.getAttribute('data-modal-close'), '')
+  assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
+  assert.equal(back.getAttribute('data-paid-calendar-element'), 'back')
+  // Display belongs to the profile script's guard stylesheet. A second writer
+  // here would fight it and could flash the control on a direct entry.
+  assert.equal(back.style.display, undefined)
+  assert.equal(confirm.disabled, true)
+})
+
+test('the footer back label is overridable by the caller', async () => {
+  const { back } = await mountFooterFixture({ backText: 'Back to call options' })
+  assert.equal(back.textContent, 'Back to call options')
+})
+
+test('the Free flow gets the same footer with its own confirm label', async () => {
+  // One engine serves both flows: free-call-booking.js passes only confirmText
+  // and reads the class contract off the same authored container, so the Free
+  // footer has to come out of this mount identical but for the label.
+  const container = new CalendarElement('div')
+  container.setAttribute('data-booking-confirm-class', 'button_main-wrap')
+  container.setAttribute('data-booking-back-class', 'clickable-text-link')
+  const { footer, back, confirm } = await mountFooterFixture({
+    container,
+    confirmText: 'Request free call',
+  })
+
+  assert.equal(confirm.textContent, 'Request free call')
+  assert.equal(confirm.getAttribute('class'), 'button_main-wrap')
+  assert.deepEqual(footer.children, [back, confirm])
+  assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
+  assert.equal(back.getAttribute('class'), 'clickable-text-link')
+})
+
+test('authored classes style the footer and no inline style is written', async () => {
+  const container = new CalendarElement('div')
+  container.setAttribute('data-booking-footer-class', 'call-sched_button-group')
+  container.setAttribute('data-booking-confirm-class', 'button_main-wrap is-primary')
+  container.setAttribute('data-booking-back-class', 'clickable-text-link')
+  const { footer, back, confirm } = await mountFooterFixture({ container })
+
+  assert.equal(footer.getAttribute('class'), 'call-sched_button-group')
+  assert.equal(confirm.getAttribute('class'), 'button_main-wrap is-primary')
+  assert.equal(back.getAttribute('class'), 'clickable-text-link')
+  // The trap. An inline declaration outranks the Designer's stylesheet, so an
+  // authored control that also carries the fallback styles is still the
+  // hardcoded look wearing the right class name.
+  for (const [name, node] of [['footer', footer], ['confirm', confirm], ['back', back]]) {
+    assert.deepEqual(Object.keys(node.style), [], `${name} must carry no inline styles`)
+  }
+})
+
+test('the unauthored footer keeps the engine fallback look and no class', async () => {
+  const { footer, back, confirm } = await mountFooterFixture()
+
+  // The trap the other way: with nothing authored the controls must still be
+  // visible and usable, not bare user-agent buttons in a stacked column.
+  assert.equal(footer.getAttribute('class'), null)
+  assert.equal(confirm.getAttribute('class'), null)
+  assert.equal(back.getAttribute('class'), null)
+  assert.equal(footer.style.display, 'flex')
+  assert.equal(footer.style.gap, '12px')
+  assert.equal(confirm.style.background, '#1f211d')
+  assert.equal(confirm.style.color, '#ffffff')
+  assert.equal(back.style.background, 'transparent')
+  assert.equal(back.style.cursor, 'pointer')
+})
+
+test('one authored control does not drag the others off their fallback', async () => {
+  const container = new CalendarElement('div')
+  container.setAttribute('data-booking-confirm-class', 'button_main-wrap')
+  const { footer, back, confirm } = await mountFooterFixture({ container })
+
+  assert.equal(confirm.getAttribute('class'), 'button_main-wrap')
+  assert.deepEqual(Object.keys(confirm.style), [])
+  assert.equal(back.getAttribute('class'), null)
+  assert.equal(back.style.cursor, 'pointer')
+  assert.equal(footer.style.display, 'flex')
+})
+
+test('the class contract reads the mount container before the booking dialog', async () => {
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking')
+  dialog.setAttribute('data-booking-confirm-class', 'dialog-level')
+  dialog.setAttribute('data-booking-back-class', 'dialog-back')
+  const container = new CalendarElement('div')
+  container.setAttribute('nylas-container', '')
+  container.setAttribute('data-booking-confirm-class', 'container-level')
+  dialog.appendChild(container)
+
+  // Nearest surface wins, so one booking dialog can host a differently styled
+  // mount without the dialog-level default being unset.
+  assert.deepEqual(api.authoredClassList(container, 'data-booking-confirm-class'), ['container-level'])
+  assert.deepEqual(api.authoredClassList(container, 'data-booking-back-class'), ['dialog-back'])
+  assert.deepEqual(api.authoredClassList(container, 'data-booking-footer-class'), [])
+
+  const { back, confirm } = await mountFooterFixture({ container })
+  assert.equal(confirm.getAttribute('class'), 'container-level')
+  assert.equal(back.getAttribute('class'), 'dialog-back')
+})
+
+test('an authored class list is applied verbatim and blank values fall back', async () => {
+  const container = new CalendarElement('div')
+  container.setAttribute('data-booking-back-class', '  is-back   button_main-wrap  ')
+  container.setAttribute('data-booking-confirm-class', '   ')
+  assert.deepEqual(
+    api.authoredClassList(container, 'data-booking-back-class'),
+    ['is-back', 'button_main-wrap'],
+  )
+  const { back, confirm } = await mountFooterFixture({ container })
+  assert.equal(back.getAttribute('class'), 'is-back button_main-wrap')
+  // Whitespace is not an authored class list, so the confirm keeps its look.
+  assert.equal(confirm.getAttribute('class'), null)
+  assert.equal(confirm.style.background, '#1f211d')
+})
+
+test('a synthesized booking close never lands on the rendered back control', async () => {
+  // The back control is now built by this engine rather than authored, so the
+  // close selector's `:not([data-booking-back])` is load-bearing on every page
+  // the calendar mounts on, not only where Jerico happens to author one.
+  const { footer, back, confirm } = await mountFooterFixture()
+  const selector = bookingCloseSelector()
+  const realCloser = { attrs: { 'data-modal-close': '', 'booking-popup-close': '' } }
+
+  assert.equal(firstCloseMatch(selector, [back, realCloser]), realCloser)
+  assert.equal(firstCloseMatch(selector, [back]), null)
+  assert.equal(firstCloseMatch(selector, footer.children), null)
+  assert.equal(firstCloseMatch(selector, [confirm]), null)
 })
 
 test('a stale Paid availability response preserves the newer shared surface', async () => {
