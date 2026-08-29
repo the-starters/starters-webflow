@@ -735,98 +735,18 @@ function calendarDocument() {
   }
 }
 
-function calendarCssRules(source, viewportWidth, rules = []) {
-  let cursor = 0
-  while (cursor < source.length) {
-    const opening = source.indexOf('{', cursor)
-    if (opening === -1) break
-    const prelude = source.slice(cursor, opening).trim()
-    let depth = 1
-    let closing = opening + 1
-    while (closing < source.length && depth) {
-      if (source[closing] === '{') depth += 1
-      if (source[closing] === '}') depth -= 1
-      closing += 1
-    }
-    const body = source.slice(opening + 1, closing - 1)
-    if (/^@media\b/.test(prelude)) {
-      const min = /min-width:\s*([\d.]+)px/.exec(prelude)
-      const max = /max-width:\s*([\d.]+)px/.exec(prelude)
-      if (
-        (!min || viewportWidth >= Number(min[1])) &&
-        (!max || viewportWidth <= Number(max[1]))
-      ) calendarCssRules(body, viewportWidth, rules)
-    } else if (prelude && !prelude.startsWith('@')) {
-      rules.push({ selector: prelude, body })
-    }
-    cursor = closing
-  }
-  return rules
-}
+/* A hand-rolled cascade simulator used to stand here — it parsed the injected
+   sheet and reported a "computed" style per element. It was deleted rather
+   than fixed. It could not tell a class selector it did not understand from
+   one that matched everything, it dropped `:empty` and `:hover` before
+   matching, and it treated `border` and `border-color` as unrelated
+   properties, so it PASSED on rules that a browser would never have applied
+   that way. A test that can pass for the wrong reason is worse than no test.
 
-function calendarSelectorSpecificity(selector) {
-  const attributes = (selector.match(/\[[^\]]+\]/g) || []).length
-  const classes = (selector.match(/\.[\w-]+/g) || []).length
-  const pseudoClasses = (selector.match(/:[\w-]+/g) || []).length
-  const tags = (selector.replace(/\[[^\]]+\]|\.[\w-]+|:[\w-]+/g, '').match(/\b[a-z][\w-]*\b/gi) || []).length
-  return attributes + classes + pseudoClasses + tags / 1000
-}
-
-function calendarCompoundMatches(element, compound, focusVisible) {
-  if (!element) return false
-  const expectsFocusVisible = compound.includes(':focus-visible')
-  if (expectsFocusVisible && !focusVisible) return false
-  const simple = compound.replace(/:[\w-]+/g, '')
-  const tag = /^([a-z][\w-]*)/i.exec(simple)
-  if (tag && String(element.tagName).toLowerCase() !== tag[1].toLowerCase()) return false
-  for (const attribute of simple.matchAll(/\[([\w-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\]]+)))?\]/g)) {
-    const actual = element.getAttribute(attribute[1])
-    const expected = attribute[2] ?? attribute[3] ?? attribute[4]
-    if (actual === null || (expected !== undefined && actual !== expected)) return false
-  }
-  return true
-}
-
-function calendarSelectorMatches(element, selector, focusVisible) {
-  const compounds = selector.trim().split(/\s+/)
-  let candidate = element
-  for (let index = compounds.length - 1; index >= 0; index -= 1) {
-    if (!calendarCompoundMatches(candidate, compounds[index], focusVisible)) {
-      if (index === compounds.length - 1) return false
-      while ((candidate = candidate.parentElement) && !calendarCompoundMatches(candidate, compounds[index], focusVisible)) {}
-      if (!candidate) return false
-    }
-    candidate = candidate.parentElement
-  }
-  return true
-}
-
-function calendarAppliedStyle(document, element, options = {}) {
-  const viewportWidth = options.viewportWidth || 1024
-  const focusVisible = Boolean(options.focusVisible)
-  const declarations = new Map()
-  for (const [property, value] of Object.entries(element.style)) {
-    declarations.set(property.replace(/[A-Z]/g, (letter) => '-' + letter.toLowerCase()), { value, specificity: Infinity, order: Infinity })
-  }
-  calendarCssRules(document.head.children[0].textContent, viewportWidth).forEach((rule, order) => {
-    const selectors = rule.selector.split(',').map((selector) => selector.trim())
-    const specificity = Math.max(...selectors
-      .filter((selector) => calendarSelectorMatches(element, selector, focusVisible))
-      .map(calendarSelectorSpecificity))
-    if (!Number.isFinite(specificity)) return
-    rule.body.split(';').forEach((declaration) => {
-      const colon = declaration.indexOf(':')
-      if (colon === -1) return
-      const property = declaration.slice(0, colon).trim()
-      const value = declaration.slice(colon + 1).trim()
-      const current = declarations.get(property)
-      if (!current || specificity > current.specificity || (specificity === current.specificity && order >= current.order)) {
-        declarations.set(property, { value, specificity, order })
-      }
-    })
-  })
-  return Object.fromEntries([...declarations].map(([property, declaration]) => [property, declaration.value]))
-}
+   The sheet's text is asserted directly below instead, which is what the rest
+   of this file does. What the browser then does with that text is checked
+   where it can actually be observed: the fixture screenshots captured for each
+   round of this work. */
 
 /**
  * The parts of one site button component. Reading them positionally is
@@ -1384,8 +1304,8 @@ test('every length in the sheet is a rem, and every px is a border', async () =>
   for (const match of declarations.matchAll(/[\w-]+\s*:[^;{}]*?\d*\.?\d+px/g)) {
     assert.match(
       match[0],
-      /^border(-top|-right|-bottom|-left)?(-width)?\s*:/,
-      `every px length must be a border: ${match[0].trim()}`,
+      /^(border(-top|-right|-bottom|-left)?(-width)?|outline(-width)?)\s*:/,
+      `every px length must be a border or an outline: ${match[0].trim()}`,
     )
   }
 
@@ -1395,8 +1315,14 @@ test('every length in the sheet is a rem, and every px is a border', async () =>
   assert.ok(css.includes('padding-left:0.25rem'), '4px weekday inset')
   assert.ok(css.includes('::-webkit-scrollbar{width:0.1875rem'), '3px scrollbar')
   assert.ok(css.includes('border-radius:0.1875rem'), '3px scrollbar thumb')
-  // The one px that survives, named so its exemption is deliberate.
+  // The two px lengths that survive, named so each exemption is deliberate.
   assert.ok(css.includes('border-top:1px solid #eee'), 'the footer hairline stays px')
+  // The focus outline is exempt for the same reason a border is, and for one
+  // more: it is transparent, drawn only so forced-colors mode has an outline to
+  // repaint. Its width is never seen in a normal render, and in forced-colors
+  // the OS decides how it is painted anyway — so scaling it with the root font
+  // size would buy nothing.
+  assert.ok(css.includes('outline:2px solid transparent'), 'the forced-colors focus hook')
 })
 
 test('the sheet gives the month picker its ring and straightens the weekday row', async () => {
@@ -1812,36 +1738,44 @@ test('the timezone selector sits above the slots at both widths', async () => {
   // the panel width and flush to the modal's left edge; on a phone it ran
   // full-bleed while every neighbour was inset. Jerico placed it at the top of
   // the times area, above the first row of chips, at both widths.
-  const { document, shell } = await mountFooterFixture()
-  const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
-    .find((node) => node.getAttribute('data-paid-calendar-element') === name)
-  const control = role('timezone-control')
-  const desktop = calendarAppliedStyle(document, control)
-  const mobile = calendarAppliedStyle(document, control, { viewportWidth: 400 })
-  const mobileShell = calendarAppliedStyle(document, shell, { viewportWidth: 400 })
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
 
   // Desktop: its own area at the top of the right column, with the month
   // spanning down beside it so the panel does not grow by the caption.
-  assert.equal(desktop['grid-area'], 'timezone')
-  assert.equal(desktop.padding, '1.25rem 1.25rem 1rem 0')
+  const desktopBlock = css.split('@media (min-width:768px){')[1]
+  assert.ok(desktopBlock.includes(
+    ROLE + '"timezone-control"]{grid-area:timezone;padding:1.25rem 1.25rem 1rem 0}',
+  ))
 
   // Mobile: it has to be MOVED, not just padded. The engine appends it FIRST
   // in the shell, ahead of the month (see the shell order pinned above), so
   // document order alone would render it above the calendar; `order:2` drops
   // it between the month and the chips. The inset is the frame every
   // neighbour carries — and it must be the frame, not a bleed.
-  assert.equal(mobile.order, '2')
-  assert.equal(mobile.padding, '0 1.25rem 1rem')
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
+  assert.ok(mobileBlock.includes(ROLE + '"timezone-control"]{order:2;padding:0 1.25rem 1rem}'))
   // `order` only applies to flex items, so the column is load-bearing for this
   // placement too, not only for the sticky footer.
-  assert.equal(mobileShell.display, 'flex')
-  assert.equal(mobileShell['flex-direction'], 'column')
+  assert.ok(mobileBlock.includes('"shell"]{display:flex;flex-direction:column}'))
 
   // The control's internal label/select layout belongs to the sheet on the
   // booking surface, because its former inline placement writes overrode the
   // grid and flex placement rules above.
-  assert.equal(desktop.display, 'grid')
-  assert.equal(desktop.gap, '0.375rem')
+  const beforeMedia = css.split('@media')[0]
+  assert.ok(beforeMedia.includes(ROLE + '"timezone-control"]{display:grid;gap:0.375rem}'))
+
+  // The WRAPPER itself gets layout and no margin — it is the box the grid and
+  // flex placement rules act on, and a margin here would fight the padding
+  // those rules give it at each width. Only rules that END at the wrapper are
+  // checked: the caption below it is a separate element with its own role, so
+  // this guard has nothing to say about it.
+  for (const rule of css.split('}')) {
+    const selector = (rule.split('{')[0] || '').trim()
+    if (!/\[data-paid-calendar-element="timezone-control"\]$/.test(selector)) continue
+    assert.ok(!/(^|;|\{)\s*margin\s*:/.test(rule), rule)
+  }
 })
 
 test('the timezone select wears the modal\'s design, not the OS default', async () => {
@@ -1849,45 +1783,58 @@ test('the timezone select wears the modal\'s design, not the OS default', async 
   // and `appearance:none` plus the rules below rebuild the CLOSED face in the
   // modal's own language. The OPEN list is drawn by the operating system and
   // cannot be styled — an accepted constraint, not an omission.
-  const { document, shell } = await mountFooterFixture()
-  const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
-    .find((node) => node.getAttribute('data-paid-calendar-element') === name)
-  const control = role('timezone-control')
-  const select = role('timezone')
-  const caption = control.children.find((child) => child !== select)
-  const face = calendarAppliedStyle(document, select)
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+  const face = css.split(ROLE + '"timezone"]{')[1].split('}')[0]
 
   // Both spellings: Safari still wants the prefixed one.
-  assert.equal(face.appearance, 'none')
-  assert.equal(face['-webkit-appearance'], 'none')
+  assert.match(face, /(^|;)appearance:none/)
+  assert.match(face, /-webkit-appearance:none/)
   // The site's face and the sheet's own scale, not the UA stylesheet's.
-  assert.equal(face.font, 'inherit')
-  assert.equal(face['font-size'], '1rem')
-  assert.equal(face['font-weight'], '500')
+  assert.match(face, /font:inherit/)
+  assert.match(face, /font-size:1rem/)
+  assert.match(face, /font-weight:500/)
+  // The floor the suppressed inline styles used to carry, in rem. Without it
+  // the control is shorter than the chips it sits above, because nothing else
+  // in this rule holds it open.
+  assert.match(face, /min-height:2\.625rem/)
   // White with the modal's own hairline, NOT the chips' #eee fill: the control
   // sits directly above a field of grey chips and a grey box there reads as
   // the first chip rather than as a control to open.
-  assert.equal(face['background-color'], '#fff')
-  assert.equal(face.border, '1px solid #eee')
-  assert.equal(face['border-radius'], '0.375rem')
+  assert.match(face, /background-color:#fff/)
+  assert.match(face, /border:1px solid #eee/)
+  assert.match(face, /border-radius:0\.375rem/)
+  assert.ok(!/background-color:#eee/.test(face), 'not chip-coloured')
+  // Their off-palette border is gone.
+  assert.ok(!/#d7d9d2/.test(css))
   // A chevron of our own, since `appearance:none` removes the OS one.
-  assert.match(face['background-image'], /^url\("data:image\/svg\+xml/)
-  assert.match(face['background-image'], /stroke='%231e211e'/, 'the month picker nav arrows\' colour')
-  assert.equal(face['background-repeat'], 'no-repeat')
-  assert.equal(face['background-position'], 'right 0.75rem center')
+  assert.match(face, /background-image:url\("data:image\/svg\+xml/)
+  assert.match(face, /stroke='%231e211e'/, 'the month picker nav arrows\' colour')
+  // A miter join on this vertex projects the point past the bottom of the
+  // 6-unit viewBox and the tip gets clipped; rounding the join keeps the whole
+  // chevron inside the box.
+  assert.match(face, /stroke-linejoin='round'/)
+  assert.match(face, /background-repeat:no-repeat/)
+  assert.match(face, /background-position:right 0\.75rem center/)
   // Room for it on the right, and rem padding like everything else here.
-  assert.equal(face.padding, '0.625rem 2.25rem 0.625rem 0.75rem')
+  assert.match(face, /padding:0\.625rem 2\.25rem 0\.625rem 0\.75rem/)
 
   // Focus-visible, so a mouse click does not paint a ring nobody asked for.
   // The treatment is the site's own, lifted from the timepicker embed.
-  const focus = calendarAppliedStyle(document, select, { focusVisible: true })
-  assert.equal(focus['border-color'], '#20221f')
-  assert.equal(focus['box-shadow'], '0 0 0 0.1875rem rgba(32, 34, 31, 0.1)')
+  const focus = css.split(ROLE + '"timezone"]:focus-visible{')[1].split('}')[0]
+  assert.match(focus, /border-color:#20221f/)
+  assert.match(focus, /box-shadow:0 0 0 0\.1875rem rgba\(32, 34, 31, 0\.1\)/)
+  // A TRANSPARENT outline, never `outline:0`. Forced-colors mode replaces the
+  // border colour with the OS palette and strips the box-shadow, so a
+  // suppressed outline leaves a keyboard user with no focus indicator at all.
+  assert.match(focus, /outline:2px solid transparent/)
+  assert.ok(!/outline:0/.test(focus), 'a suppressed outline is invisible in forced-colors')
 
-  // The caption keeps the engine's grey at the size the old static caption had.
-  const captionStyle = calendarAppliedStyle(document, caption)
-  assert.equal(captionStyle['font-size'], '0.75rem')
-  assert.equal(captionStyle.color, '#6f746d')
+  // The caption keeps the engine's grey at the size the old static caption had,
+  // on a rule that names the caption rather than every span in the control.
+  assert.ok(css.includes(ROLE + '"timezone-caption"]{font-size:0.75rem;color:#6f746d}'))
+  assert.ok(!/"timezone-control"\] span\{/.test(css), 'not any span the wrapper holds')
 })
 
 test('the timezone control keeps its inline look off the booking surface', async () => {
@@ -1905,7 +1852,8 @@ test('the timezone control keeps its inline look off the booking surface', async
   const control = findRole(away.shell, 'timezone-control')
   assert.ok(control, 'the control still renders there')
   const select = findRole(control, 'timezone')
-  const caption = control.children.find((child) => child !== select)
+  const caption = findRole(control, 'timezone-caption')
+  assert.ok(caption, 'the caption carries its own role on every surface')
   assert.equal(select.style.border, '1px solid #d7d9d2')
   assert.equal(select.style.fontSize, '14px')
   assert.equal(select.style.minHeight, '42px')
@@ -1917,7 +1865,8 @@ test('the timezone control keeps its inline look off the booking surface', async
   const { shell } = await mountFooterFixture()
   const onSurface = findRole(shell, 'timezone-control')
   const onSurfaceSelect = findRole(onSurface, 'timezone')
-  const onSurfaceCaption = onSurface.children.find((child) => child !== onSurfaceSelect)
+  const onSurfaceCaption = findRole(onSurface, 'timezone-caption')
+  assert.ok(onSurfaceCaption, 'the sheet has an element to key its caption rule on')
   assert.deepEqual(Object.keys(onSurfaceSelect.style), [])
   assert.deepEqual(Object.keys(onSurfaceCaption.style), [])
 })
