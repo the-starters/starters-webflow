@@ -856,47 +856,57 @@
     }
   }
 
-  function bookingField(modal, name) {
-    return modal && modal.querySelector('[booking-element="' + name + '"]')
+  /**
+   * The authored `cancel` and `cancelled` panels duplicate booking-element
+   * nodes from the `base` panel. Filling only the first match left the panel
+   * copies blank and hidden, which rendered the cancel flow's call details as
+   * empty fields (Kaeser QA F3, 2026-08-29). Every setter therefore fills and
+   * toggles ALL matches of a name together.
+   */
+  function bookingFields(modal, name) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return []
+    return Array.prototype.slice.call(
+      modal.querySelectorAll('[booking-element="' + name + '"]'),
+    )
   }
 
   function setBookingField(modal, name, value, visible) {
-    const field = bookingField(modal, name)
-    if (!field) return
-    const shouldShow = visible !== false && clean(value) !== ''
-    if (shouldShow) field.textContent = clean(value)
-    show(field, shouldShow)
-    const group = field.closest && field.closest('[booking-element-wrap]')
-    if (group) show(group, shouldShow)
+    bookingFields(modal, name).forEach(function (field) {
+      const shouldShow = visible !== false && clean(value) !== ''
+      if (shouldShow) field.textContent = clean(value)
+      show(field, shouldShow)
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      if (group) show(group, shouldShow)
+    })
   }
 
   function setBookingPrice(modal, value, visible) {
-    const field = bookingField(modal, 'price')
-    if (!field) return
-    const shouldShow = visible !== false && clean(value) !== ''
-    if (shouldShow) field.textContent = clean(value)
-    show(field, shouldShow)
-    const group = field.closest && field.closest('[booking-element-wrap]')
-    if (group) show(group, shouldShow)
+    bookingFields(modal, 'price').forEach(function (field) {
+      const shouldShow = visible !== false && clean(value) !== ''
+      if (shouldShow) field.textContent = clean(value)
+      show(field, shouldShow)
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      if (group) show(group, shouldShow)
 
-    // Webflow currently authors the legacy `/hr` unit without its own custom
-    // attribute. Anchor the repair to the canonical price hook and only touch
-    // an adjacent exact legacy unit. This preserves the Designer-owned markup
-    // while making the canonical per-call price unambiguous.
-    const parent = field.parentElement
-    const siblings = parent && parent.children
-      ? Array.prototype.slice.call(parent.children)
-      : []
-    const priceUnit = siblings.find(function (candidate) {
-      const unit = clean(candidate.textContent).toLowerCase()
-      return candidate !== field && (unit === '/hr' || unit === '/call')
+      // Webflow currently authors the legacy `/hr` unit without its own custom
+      // attribute. Anchor the repair to the canonical price hook and only touch
+      // an adjacent exact legacy unit. This preserves the Designer-owned markup
+      // while making the canonical per-call price unambiguous.
+      const parent = field.parentElement
+      const siblings = parent && parent.children
+        ? Array.prototype.slice.call(parent.children)
+        : []
+      const priceUnit = siblings.find(function (candidate) {
+        const unit = clean(candidate.textContent).toLowerCase()
+        return candidate !== field && (unit === '/hr' || unit === '/call')
+      })
+      if (priceUnit) {
+        priceUnit.textContent = '/Call'
+        show(priceUnit, shouldShow)
+      } else if (shouldShow) {
+        field.textContent = clean(value) + ' / Call'
+      }
     })
-    if (priceUnit) {
-      priceUnit.textContent = '/Call'
-      show(priceUnit, shouldShow)
-    } else if (shouldShow) {
-      field.textContent = clean(value) + ' / Call'
-    }
   }
 
   function hideDuplicateDetailCopy(modal) {
@@ -1100,15 +1110,14 @@
     setBookingField(modal, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
 
-    const meetingLink = bookingField(modal, 'meeting-link')
     const showMeeting = status === 'confirmed' && clean(booking.meeting_link) !== ''
-    if (meetingLink) {
+    bookingFields(modal, 'meeting-link').forEach(function (meetingLink) {
       if ('href' in meetingLink) meetingLink.href = showMeeting ? clean(booking.meeting_link) : ''
       meetingLink.textContent = showMeeting ? clean(booking.meeting_link) : ''
       show(meetingLink, showMeeting)
       const group = meetingLink.closest && meetingLink.closest('[booking-element-wrap]')
       if (group) show(group, showMeeting)
-    }
+    })
 
     const base = modal.querySelector('[booking-popup-content="base"]') || modal
     const pendingMessages = Array.prototype.slice.call(

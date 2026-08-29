@@ -1246,7 +1246,18 @@ test('status pill painting does not force a non-status authored wrapper visible'
 
 function detailModalHarness() {
   const fields = {}
+  const fieldCopies = {}
+  const panelCopies = {}
   const groups = []
+  function fieldNode(name) {
+    const field = element({ 'booking-element': name })
+    const group = element({ 'booking-element-wrap': '' })
+    group.querySelector = (selector) => selector === '[booking-element]' ? field : null
+    field.closest = (selector) => selector === '[booking-element-wrap]' ? group : null
+    if (name === 'meeting-link') field.href = 'stale'
+    groups.push(group)
+    return field
+  }
   ;[
     'paid-meeting',
     'status',
@@ -1262,13 +1273,16 @@ function detailModalHarness() {
     'cancel-reason',
     'meeting-link',
   ].forEach((name) => {
-    const field = element({ 'booking-element': name })
-    const group = element({ 'booking-element-wrap': '' })
-    group.querySelector = (selector) => selector === '[booking-element]' ? field : null
-    field.closest = (selector) => selector === '[booking-element-wrap]' ? group : null
-    if (name === 'meeting-link') field.href = 'stale'
+    const field = fieldNode(name)
     fields[name] = field
-    groups.push(group)
+    fieldCopies[name] = [field]
+  })
+  // The authored cancel panel duplicates some base-panel fields; every copy
+  // must be filled together (Kaeser QA F3).
+  ;['context', 'start-date', 'meeting-link'].forEach((name) => {
+    const copy = fieldNode(name)
+    panelCopies[name] = copy
+    fieldCopies[name].push(copy)
   })
   const priceUnit = element()
   priceUnit.textContent = '/hr'
@@ -1316,12 +1330,16 @@ function detailModalHarness() {
     if (selector === '[booking-popup-content="base"]') return base
     return null
   }
-  modal.querySelectorAll = (selector) => ({
-    '[booking-popup-content]': [base, confirmation],
-    '[booking-element-wrap]': groups,
-    '[booking-action-btn], [booking-card-action-btn], [payment-action-btn], [booking-pm-action], [data-btn-payment], [popup-stripe-card-open], [pm-use-this]': actions,
-    '[reschedule-blocked-info]': [blocked],
-  })[selector] || []
+  modal.querySelectorAll = (selector) => {
+    const match = selector.match(/^\[booking-element="(.+)"\]$/)
+    if (match) return fieldCopies[match[1]] || []
+    return {
+      '[booking-popup-content]': [base, confirmation],
+      '[booking-element-wrap]': groups,
+      '[booking-action-btn], [booking-card-action-btn], [payment-action-btn], [booking-pm-action], [data-btn-payment], [popup-stripe-card-open], [pm-use-this]': actions,
+      '[reschedule-blocked-info]': [blocked],
+    }[selector] || []
+  }
 
   return {
     actions,
@@ -1331,6 +1349,7 @@ function detailModalHarness() {
     duplicatePayment,
     fields,
     modal,
+    panelCopies,
     pendingDuplicate,
     pendingOne,
     priceUnit,
@@ -1372,6 +1391,39 @@ test('Free Call details hide paid copy, duplicate copy, and unsupported actions'
   api.populateDetailModal(view.modal, booking, 'starter', 2_000)
   assert.equal(view.pendingOne.hidden, true)
   assert.equal(view.actions[4].hidden, true)
+})
+
+test('details fill every authored panel copy of a booking field', () => {
+  // The authored cancel/cancelled panels duplicate base-panel fields. Filling
+  // only the first match rendered the cancel flow with blank call details
+  // (Kaeser QA F3).
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'copy-one',
+    status: 'confirmed',
+    start: 10_000,
+    paid_meeting: false,
+    duration: 30,
+    call_context: 'Discuss launch',
+    meeting_link: 'https://meet.example/abc',
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+
+  assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 2_000), true)
+  assert.equal(view.fields.context.textContent, 'Discuss launch')
+  assert.equal(view.panelCopies.context.textContent, 'Discuss launch')
+  assert.equal(view.panelCopies.context.hidden, false)
+  assert.equal(view.panelCopies['start-date'].textContent, view.fields['start-date'].textContent)
+  assert.equal(view.panelCopies['start-date'].hidden, false)
+  assert.equal(view.panelCopies['meeting-link'].href, 'https://meet.example/abc')
+  assert.equal(view.panelCopies['meeting-link'].hidden, false)
+
+  // A hidden field hides every copy too.
+  booking.call_context = ''
+  api.populateDetailModal(view.modal, booking, 'starter', 2_000)
+  assert.equal(view.fields.context.hidden, true)
+  assert.equal(view.panelCopies.context.hidden, true)
 })
 
 test('confirmed Paid Call details show per-call price and hide every unsupported payment control', () => {
