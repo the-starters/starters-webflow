@@ -1311,7 +1311,7 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
   const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
-  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;padding:0 1.25rem 1.25rem}'))
+  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
   assert.ok(desktopBlock.includes('"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem'))
@@ -1336,12 +1336,16 @@ test('the interior frame is the only inset at mobile too', async () => {
 
   assert.ok(mobileBlock.includes('"month"]{order:1;padding:1.25rem}'))
   assert.ok(mobileBlock.includes('"times"]{order:3;padding:0 1.25rem 1.25rem}'))
-  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;padding:0 1.25rem 1.25rem}'))
+  // The floating footer is framed on all four sides, not three: its top edge
+  // is where the chips pass behind it, so nothing above can space it.
+  assert.match(mobileBlock, /"footer"\]\{[^}]*padding:1\.25rem\}/)
+  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
 
-  // No hairline on the stacked footer. Desktop can carry one because its row
-  // gap is zero and the band's rule is the only separator; mobile keeps its
-  // 16px row gap, and a gap AND a rule would read as two dividers.
-  assert.ok(!mobileBlock.includes('border-top'))
+  // The stacked footer carries the same hairline as the desktop band. It was
+  // deliberately absent while the footer sat in flow — a row gap AND a rule
+  // read as two dividers — and Jerico added it once the footer began to float,
+  // where the edge is what separates it from the chips passing behind.
+  assert.match(mobileBlock, /"footer"\]\{[^}]*border-top:1px solid #eee/)
 
   // Desktop is untouched by all of this — the two blocks cannot both match.
   const desktopBlock = css.split('@media (min-width:768px){')[1]
@@ -1466,7 +1470,7 @@ test('the stacked footer floats, and only because the shell is a flex column', a
   const css = document.head.children[0].textContent
   const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
 
-  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;padding:0 1.25rem 1.25rem}'))
+  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
 
   /* The flex column is load-bearing, not a refactor. A GRID item's containing
      block is its own grid area, so a footer on the last row has zero room to
@@ -1482,9 +1486,10 @@ test('the stacked footer floats, and only because the shell is a flex column', a
   // through the gap between the two buttons.
   assert.match(mobileBlock, /"footer"\]\{[^}]*background:#fff/)
 
-  // No hairline on the stacked footer — Jerico's earlier call, unchanged by
-  // the footer starting to float.
-  assert.ok(!mobileBlock.includes('border-top'))
+  // The hairline the desktop band carries, which Jerico asked for on the
+  // stacked footer too once he had seen it float — a floating surface wants an
+  // edge. It stays px, like every other border in this sheet.
+  assert.match(mobileBlock, /"footer"\]\{[^}]*border-top:1px solid #eee/)
 
   // Desktop keeps the grid and the always-visible band: nothing sticks there,
   // because the times scroll inside their own cell instead.

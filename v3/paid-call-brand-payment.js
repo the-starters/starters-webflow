@@ -841,10 +841,12 @@
       // ---- below the site's mobile breakpoint ----
       '@media (max-width:767px){',
       /* The interior frame, mapped onto the single stacked column. Jerico
-         specced these exact values as inline edits at 400px: the month framed
-         on all four sides, and the times and the footer repeating the
-         horizontal frame while opening their top edge, so each one's top
-         spacing is the element above it rather than a doubled pair.
+         specced these values as inline edits at 400px: the month framed on all
+         four sides, and the times repeating the horizontal frame while opening
+         their top edge, so their top spacing is the caption above rather than
+         a doubled pair. The footer is framed on all four sides too, since it
+         floats — its top edge is where the chips pass behind, not something
+         the element above it can space.
 
          The desktop asymmetry does not transfer — there the month drops its
          right padding and the times their left, because the 2rem column gap
@@ -853,7 +855,8 @@
 
          The footer's bottom padding here is what keeps the empty-availability
          state off the modal's bottom edge on a phone; an earlier round put
-         that on the MOUNT, which now would double against this. */
+         that on the MOUNT, which now would double against this. The footer's
+         own rule sits further down, with the sticky. */
       /* Stacked, the caption has to be MOVED, not just padded. The shared
          engine appends it after the times (`month, times, timezone, footer`),
          so left to document order it renders BELOW the chips — measured at
@@ -900,12 +903,14 @@
          "space needed at the bottom" in Jerico's note, and it is structural
          rather than a guessed offset.
 
-         The background is what makes it read as a surface rather than as
-         floating text: chips scroll underneath, and without it they show
-         through the gap between the two buttons. White, because that is the
-         modal's own fill. No hairline — his call on the stacked footer stands;
-         a variant with one is captured for comparison. */
-      role + '"footer"]{order:4;position:sticky;bottom:0;background:#fff;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
+         The background and the hairline are what make it read as a surface
+         rather than as floating text: chips scroll underneath, and without the
+         fill they show through the gap between the two buttons. White, because
+         that is the modal's own fill; the hairline is the same one the desktop
+         band carries, and Jerico asked for both once he had seen the footer
+         float. It stays in px — a hairline is a device-pixel affordance, per
+         the unit convention this sheet follows. */
+      role + '"footer"]{order:4;position:sticky;bottom:0;background:#fff;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + '}',
       // Stacked, full width, primary first. `order` rather than
       // `column-reverse` so the empty state — which has only the back
       // control — is unaffected either way.

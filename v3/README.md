@@ -3490,8 +3490,10 @@ flowchart TD
    the footer was sticking to that instead of to the body. The footer's bottom
    padding is what holds the empty-availability state off the modal's bottom
    edge, at both widths — that spacing used to sit on the mount,
-   and would double against this. The stacked footer takes no hairline: its row
-   gap is 16px, and a gap and a rule together read as two dividers. The same
+   and would double against this. The floating footer carries the same
+   `1px #eee` hairline as the desktop band and a full `1.25rem` frame on all
+   four sides, its top edge included — that edge is where the chips pass
+   behind it, so nothing above can space it. The same
    sheet restyles the month
    picker: it keeps the page's 3px `#eee` ring and `#eee` fill but not the drop
    shadow, and the weekday header row is re-centred (the page leaves those
