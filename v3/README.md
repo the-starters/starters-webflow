@@ -3421,10 +3421,14 @@ flowchart TD
    still writes `gap` inline, unchanged. Below 768px it
    stays one column and the two buttons stack full width with the primary on
    top. The same sheet gives the mount bottom padding — which the empty-state
-   path needs, since it appends straight to the mount — and flattens the page's
-   floating-card styling on the month picker, whose weekday header row is also
-   re-centred there (the page leaves those labels left-aligned against centred
-   dates below its tablet breakpoint).
+   path needs, since it appends straight to the mount — and restyles the month
+   picker: the floating-card fill and shadows are dropped in favour of a plain
+   1px `#d8d8d8` outline, the grid is given 8px of breathing room so a selected
+   day never hugs that outline, and the weekday header row is re-centred (the
+   page leaves those labels left-aligned against centred dates below its tablet
+   breakpoint). The picker rules name `.ui-datepicker.ui-widget-content` to
+   outrank `.ui-widget.ui-widget-content{border:0}`, which the page declares in
+   a body `<style>` and which otherwise wins on source order.
 
    A media query cannot be an inline style, so this is one id-guarded `<style>`
    injected into the head once per document. **Every rule is scoped under

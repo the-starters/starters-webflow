@@ -619,12 +619,47 @@
       // footer because the empty path appends status and footer straight to
       // the mount, with no shell in between.
       dialog + ' [nylas-container]{padding-bottom:' + CALENDAR_EDGE_SPACING + '}',
-      // The page styles every `.ui-datepicker` as a floating card: a #eee
-      // background under a 3px #eee shadow ring. Inside the modal that reads
-      // as an island sitting on top of the panel, so it is flattened here and
-      // ONLY here. The month table paints its own white background, so the
-      // grid itself is unaffected.
-      dialog + ' .ui-datepicker{border:0;box-shadow:none;background:transparent}',
+      /* The page styles every `.ui-datepicker` as a floating card: a #eee
+         background under a 3px #eee shadow ring plus a drop shadow. Inside the
+         modal that reads as an island sitting on top of the panel, so the fill
+         and both shadows are dropped here and ONLY here. The month table paints
+         its own white background, so the grid itself is unaffected.
+
+         The 1px outline stays, because without any edge the calendar loses its
+         definition against the panel. `#d8d8d8` is the page's own datepicker
+         border colour rather than a value invented here — no site token matches
+         it (`--colors--silver` and `--border--border` are both `#eee`,
+         `--colors--disabled-gray` is `#e4e4e4`), and it already appears in the
+         page CSS for this component. The 8px radius is left to the page.
+
+         `.ui-widget-content` is in the selector ONLY to win a specificity tie,
+         and it is the difference between this rule working and silently doing
+         nothing. The page carries `.ui-widget.ui-widget-content{border:0}` in a
+         <style> in the BODY; at equal specificity the later rule wins, and this
+         sheet is injected into the head. That rule is also why the page's own
+         `1px solid #d8d8d8` never rendered — the card look was the ring and the
+         fill alone. jQuery UI always stamps both classes on the picker root
+         (verified in the fixture: `ui-datepicker-inline ui-datepicker ui-widget
+         ui-widget-content ui-helper-clearfix ui-corner-all`). */
+      dialog + ' .ui-datepicker.ui-widget-content{border:1px solid #d8d8d8;box-shadow:none;background:transparent;padding:8px}',
+      /* The padding above is the calendar's breathing room. The page sets
+         `.ui-datepicker{padding:0}` and insets only its edge CELLS by 4px, so
+         a selected day in the first column or the last row painted its chip
+         4-5px from the outline and hugged it. Measured at the worst case — the
+         chip in column 1 of the last row — 8px of container padding takes that
+         to 13px on both axes at 375px, and 18px horizontal / 13px vertical at
+         1280px, where the columns are wider than the fixed day box.
+
+         Padding the CELLS instead was tried and is a silent no-op: the page's
+         own `.ui-datepicker .ui-datepicker-calendar tbody tr:first-child td`
+         rules match at equal specificity and sit later in the document, so
+         they win. Container padding is what actually lands.
+
+         The header band is then pulled back out to the edges, because it is a
+         full-bleed bar in this design and an inset one reads as a floating
+         toolbar. 7px is the 8px outer radius less the 1px border, so its top
+         corners follow the outline exactly. */
+      dialog + ' .ui-datepicker .ui-datepicker-header{margin:-8px -8px 0;border-radius:7px 7px 0 0}',
       /* The weekday header row is LEFT-aligned below the site's tablet
          breakpoint while the date cells are centred, so every label sits at
          its column's left edge and the header reads as ragged and misaligned
