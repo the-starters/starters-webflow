@@ -81,6 +81,7 @@ function createHarness({
   const previewImg = element();
   const removeBtn = element();
   const photoUrlInput = element();
+  const navbarImages = [element(), element()];
   photoUrlInput.setAttribute('data-input-capture', '');
   photoUrlInput.value = storedPhotoUrl;
   const elements = new Map([
@@ -92,6 +93,7 @@ function createHarness({
     ['#profile-photo-url', photoUrlInput],
   ]);
   let domReady;
+  let profileImageUpdateCalls = 0;
   let resizeCount = 0;
   const uploads = [];
   const uploadResponses = [
@@ -176,6 +178,7 @@ function createHarness({
     $memberstackDom: {
       async getMemberCookie() { return 'memberstack-token'; },
       async updateMemberProfileImage() {
+        profileImageUpdateCalls += 1;
         if (avatarResponder) return avatarResponder();
         return { data: { profileImage: 'https://example.invalid/small.jpg' } };
       },
@@ -203,7 +206,7 @@ function createHarness({
     waitForMember: (callback) => callback(),
     waitProfileData: (callback) => callback(),
     setLoader() {},
-    qsa: () => [],
+    qsa: (selector) => selector === '[nav-profile-image]' ? navbarImages : [],
     fetch: originalFetch,
     FormData: TestFormData,
     File: TestFile,
@@ -240,12 +243,14 @@ function createHarness({
     preview,
     previewImg,
     photoUrlInput,
+    navbarImages,
     removeBtn,
     uploadError,
     uploads,
     wrap,
     window,
     resizeCount: () => resizeCount,
+    profileImageUpdateCalls: () => profileImageUpdateCalls,
     TestEvent,
   };
 }
@@ -457,23 +462,36 @@ async function run() {
   assert.equal(editProfile.uploads.length, 1);
   assert.equal(editProfile.photoUrlInput.value, 'https://example.invalid/edit-photo.jpg');
 
-  const avatarFailure = createHarness({
-    avatarResponder() { throw new Error('synthetic avatar failure'); },
+  const durableAvatar = createHarness({
+    avatarResponder() {
+      return {
+        data: {
+          profileImage: 'https://ms-application-assets.s3.amazonaws.com/clobbered-photo.jpg',
+        },
+      };
+    },
     uploadResponder() {
       return response(JSON.stringify({
-        starter_image: 'https://example.invalid/canonical-photo.jpg',
-        starter_image_small: 'https://example.invalid/avatar-photo.jpg',
+        starter_image: 'https://xano-vault.example/canonical-photo.jpg',
+        starter_image_small: 'https://xano-vault.example/canonical-photo-small.jpg',
       }));
     },
   });
-  avatarFailure.input.files = [{ name: 'avatar-failure.jpg', type: 'image/jpeg', size: 100 }];
-  avatarFailure.input.dispatchEvent(new avatarFailure.TestEvent('change'));
+  durableAvatar.input.files = [{ name: 'durable-avatar.jpg', type: 'image/jpeg', size: 100 }];
+  durableAvatar.input.dispatchEvent(new durableAvatar.TestEvent('change'));
   await settle();
-  avatarFailure.window.StartersBuildProfilePhotoUpload.markProfileSaved();
-  await avatarFailure.window.StartersBuildProfilePhotoUpload.commitPending();
-  assert.equal(avatarFailure.uploads.length, 1);
-  assert.equal(avatarFailure.photoUrlInput.value, 'https://example.invalid/canonical-photo.jpg');
-  assert.equal(avatarFailure.uploadError.style.display, 'none');
+  durableAvatar.window.StartersBuildProfilePhotoUpload.markProfileSaved();
+  await durableAvatar.window.StartersBuildProfilePhotoUpload.commitPending();
+  assert.equal(durableAvatar.uploads.length, 1);
+  assert.equal(durableAvatar.profileImageUpdateCalls(), 0);
+  assert.equal(durableAvatar.photoUrlInput.value, 'https://xano-vault.example/canonical-photo.jpg');
+  assert.equal(durableAvatar.uploadError.style.display, 'none');
+  for (const navbarImage of durableAvatar.navbarImages) {
+    assert.equal(navbarImage.src, 'https://xano-vault.example/canonical-photo.jpg');
+    assert.equal(navbarImage.srcset, 'https://xano-vault.example/canonical-photo.jpg');
+    assert.notEqual(navbarImage.src, 'https://xano-vault.example/canonical-photo-small.jpg');
+    assert.equal(String(navbarImage.src).includes('ms-application-assets'), false);
+  }
 
   // `data-input-capture` is what the Build Profile draft controller enumerates, and it
   // rewrites the whole of `step_1` from that set on every save - including the Submit
