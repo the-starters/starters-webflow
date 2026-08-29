@@ -267,6 +267,51 @@ diagnostic attribute, owns the listener guard. This covers hero call components
 that Webflow inserts or clones after the initial deferred-script scan while
 keeping the generic Book Call chooser unchanged.
 
+### The chooser pass-through, the entry stamp and the back arrow
+
+Three attributes carry the direct-entry seam. Two are written and read only by
+`hire-profile.js`; the third is a Designer element this file never creates.
+
+`data-booking-pass-through` is set on every
+`[data-modal-target="popup-booking-main"]` dialog for the duration of a direct
+service-card entry. The guard stylesheet hides a marked dialog *and its subtree*
+with `visibility: hidden !important`, which beats the inline styles GSAP writes
+on the backdrop and content while leaving the dialog laid out, so the
+controllers' open-dialog mount contract is untouched. This is what upgrades the
+older "does not remain visible" wording above into "never paints a frame". The
+marker is released once the chooser reports itself closed, so the chooser's own
+close fade is covered too, with a 2000 ms failsafe on the theory that an
+invisible open dialog is worse than a late one. Both failure paths — the
+registry open failing, and the row CTA disappearing between the two clicks —
+release it immediately. Registry failure remains failed closed; a disappearing
+row leaves the already-open chooser visible and usable. Clearing is done by the
+marker, not by the chooser selector, so a dialog renamed or removed mid-flight
+cannot strand the attribute.
+
+`data-booking-entry` is written on `[data-modal-target="popup-booking"]` at open
+time and reads `direct` or `chooser`. The direct path stamps it before it
+activates the matching CTA; a capture-phase listener on each
+`[call-type-item] [booking-popup-open][data-type]` row stamps `chooser`. That
+listener only reads the click — no `preventDefault`, no `stopPropagation`, no
+re-ordering — so the row's two authored hats are untouched. A module flag, not
+`event.isTrusted`, distinguishes the pass-through's own programmatic row click
+from a visitor's, because synthetic drivers make `isTrusted` unreliable. The
+modal embed's close-complete event removes the stamp once the booking dialog is
+closed, so a later opener that does not stamp cannot inherit the previous
+entry. A close-complete event that arrives after the dialog has already reopened
+leaves the fresh stamp alone.
+
+`[data-booking-back]` is **Jerico's to author**, inside the booking dialog. The
+guard stylesheet keyed on `data-booking-entry` shows it only when the entry
+stamp reads `chooser` and hides it otherwise, so the arrow cannot flash before
+the stamp lands. The script owns only `aria-hidden`, writes it when the state
+changes, and never writes `style.display`. The script never creates the element,
+and a booking dialog without one is a silent no-op. The element combines the
+close marker with a trigger naming `popup-booking-main` — the cross-modal
+hand-off pattern the modal embed's trigger precedence deliberately preserves —
+plus this marker attribute, and reuses the existing unpublished link-affordance
+style rather than a new class.
+
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
 native `Services` option. The consumer here is [`project-form.js`](project-form.js),

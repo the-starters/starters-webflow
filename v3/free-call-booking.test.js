@@ -6,6 +6,47 @@ const vm = require('node:vm')
 const api = require('./free-call-booking.js')
 const SOURCE = fs.readFileSync(require.resolve('./free-call-booking.js'), 'utf8')
 
+/**
+ * The booking surface resets on the modal embed's close-complete event, not on
+ * a close control's click, so the suite needs a window-level event bus to close
+ * the dialog with. The controller reads `global.addEventListener` when it
+ * registers a popup, which is why this is installed before any test runs.
+ */
+const modalEvents = new EventTarget()
+global.addEventListener = function (name, listener) { modalEvents.addEventListener(name, listener) }
+global.removeEventListener = function (name, listener) { modalEvents.removeEventListener(name, listener) }
+
+function dispatchModal(type, modal) {
+  modalEvents.dispatchEvent(new CustomEvent(type, { detail: { modal } }))
+}
+
+/**
+ * Everything a real close does, in order: the embed's click handling on the
+ * closer, then — 300ms later, once the fade-out has finished — the
+ * close-complete event. Tests that only want the second half call
+ * `dispatchModal('modal-close', popup)` directly.
+ */
+function closeThroughFade(fixture, closer) {
+  const control = closer || fixture.close
+  ;(control.listeners.click || []).forEach(function (listener) { listener(event()) })
+  dispatchModal('modal-close', fixture.popup)
+}
+
+/**
+ * How many times the shared surface reset ran, read off the public ownership
+ * seam: every `lifecycle.reset` claims one generation for the container, so the
+ * gap between two claims minus this probe's own claim is the reset count.
+ */
+function resetCounter(container) {
+  let mark = global.StartersBookingSurfaceOwnership.claim(container)
+  return function since() {
+    const next = global.StartersBookingSurfaceOwnership.claim(container)
+    const count = next - mark - 1
+    mark = next
+    return count
+  }
+}
+
 function loadBrowserApi(hostname, xanoAuthFetch) {
   const window = {
     location: hostname === undefined ? {} : { hostname },
@@ -110,9 +151,16 @@ function withGlobals(values, run) {
   })
 }
 
-function chooserFixture({ includeMain = true, guests = [] } = {}) {
+function chooserFixture({ includeMain = true, guests = [], closers = 1 } = {}) {
   const popup = new Element('section', { 'popup-booking': '' })
-  const close = new Element('button', { 'data-modal-close': '' })
+  // The authored dialog carries several closers — the X, one or more "Close"
+  // buttons, and the backdrop — and every one of them must behave the same.
+  const closeControls = [
+    new Element('button', { 'data-modal-close': '' }),
+    new Element('div', { 'data-modal-close': '', 'booking-popup-close': '' }),
+    new Element('div', { 'data-modal-close': '', 'popup-booking-close': '' }),
+  ].slice(0, Math.max(1, closers))
+  const close = closeControls[0]
   const freeButtons = new Element('div', { 'success-call-buttons': '', 'data-type': 'free' })
   const paidButtons = new Element('div', { 'success-call-buttons': '', 'data-type': 'paid' })
   const defaultStep = new Element('div', { 'schedule-step': 'default' })
@@ -136,7 +184,7 @@ function chooserFixture({ includeMain = true, guests = [] } = {}) {
   popup.setQuery('[data-call-guest-email]', guests)
   popup.setQuery('[name="topic"], [booking-topic]', topic)
   popup.setQuery('[name="context"], [booking-context]', context)
-  popup.setQuery('[data-modal-close], [booking-popup-close], [popup-booking-close]', close)
+  popup.setQuery('[data-modal-close], [booking-popup-close], [popup-booking-close]', closeControls)
 
   const item = new Element('div', { 'call-type-item': '' })
   const nextSlot = new Element('span', { 'next-available-slot': '' })
@@ -198,6 +246,7 @@ function chooserFixture({ includeMain = true, guests = [] } = {}) {
     },
   }
   return {
+    closeControls,
     container,
     close,
     context,
@@ -443,7 +492,7 @@ test('Free-only modal close resets fields and ignores stale booking success', as
     fixture.container.textContent = 'Calendar'
     const pending = booking.state.mounts[0].onConfirm({ start: 1, end: 2, timezone: 'UTC' })
     await new Promise((resolve) => setImmediate(resolve))
-    fixture.close.listeners.click[0](event())
+    closeThroughFade(fixture)
     assert.equal(fixture.topic.value, '')
     assert.equal(fixture.context.value, '')
     assert.equal(fixture.container.textContent, '')
@@ -474,7 +523,7 @@ test('Free reopen blocks a changed command while one is in flight', async () => 
     fixture.context.value = 'Original context'
     const stale = booking.state.mounts[0].onConfirm(slot)
     await new Promise((resolve) => setImmediate(resolve))
-    fixture.close.listeners.click[0](event())
+    closeThroughFade(fixture)
     assert.equal(fixture.topic.value, '')
     assert.equal(fixture.context.value, '')
     await fixture.cta.onclick(event())
@@ -500,4 +549,257 @@ test('Free install fails closed without the shared canonical booking client', as
       starterSlug: 'starter-slug',
     }), false)
   })
+})
+
+// --------------------------------------------------------------------------
+// Reset-after-fade: the booking surface must survive the close animation.
+//
+// The modal embed keeps the dialog on screen for a 300ms fade-out and only
+// then dispatches `modal-close`. Resetting any earlier repaints a dialog the
+// visitor can still see — a success screen snapping back to "Book a Call"
+// before it disappears.
+// --------------------------------------------------------------------------
+
+/**
+ * A transcription of the lifecycle singleton shipped before this change: it
+ * resets on a close control's click and on the dialog's `cancel` as well as on
+ * close-complete. Used to stand in for an older generation that already claimed
+ * the first-installer-wins window slot.
+ */
+function oldGenerationLifecycle(scope) {
+  const generations = new WeakMap()
+  const ownership = {
+    claim: function (container) {
+      const generation = (generations.get(container) || 0) + 1
+      generations.set(container, generation)
+      return generation
+    },
+    owns: function (container, generation) {
+      return generations.get(container) === generation
+    },
+  }
+  const bindings = new WeakMap()
+  const lifecycle = {
+    register: function (popup, container, onReset) {
+      let binding = bindings.get(popup)
+      if (!binding) {
+        binding = { container, resets: new Set() }
+        bindings.set(popup, binding)
+        popup.querySelectorAll(
+          '[data-modal-close], [booking-popup-close], [popup-booking-close]',
+        ).forEach(function (control) {
+          control.addEventListener('click', function () { lifecycle.reset(popup) })
+        })
+        popup.addEventListener('cancel', function () { lifecycle.reset(popup) })
+        scope.addEventListener('modal-close', function (event) {
+          const modal = event && event.detail && event.detail.modal
+          if (modal === popup) lifecycle.reset(popup)
+        })
+      }
+      if (binding.container !== container) return false
+      binding.resets.add(onReset)
+      return true
+    },
+    reset: function (popup, nextType) {
+      const binding = bindings.get(popup)
+      if (!binding) return 0
+      const generation = ownership.claim(binding.container)
+      binding.resets.forEach(function (reset) { reset(generation, nextType || '') })
+      return generation
+    },
+    runBooking: function (container, fingerprint, createAttempt) {
+      return createAttempt().run()
+    },
+  }
+  return { lifecycle, ownership }
+}
+
+/** Load a second, isolated copy of the controller against a supplied window. */
+function loadIsolated(window) {
+  vm.runInNewContext(SOURCE, {
+    URLSearchParams,
+    console,
+    globalThis: window,
+    window,
+  })
+  return window.StartersFreeCallBooking
+}
+
+function windowFor(document) {
+  const events = new EventTarget()
+  return {
+    document,
+    location: { hostname: 'www.thestarters.com' },
+    addEventListener: (name, listener) => events.addEventListener(name, listener),
+    removeEventListener: (name, listener) => events.removeEventListener(name, listener),
+    dispatch: (type, modal) => events.dispatchEvent(new CustomEvent(type, { detail: { modal } })),
+  }
+}
+
+async function advancedFixture(options) {
+  const fixture = chooserFixture(options)
+  const booking = bookingApiFixture()
+  await withGlobals({ document: fixture.document }, async () => {
+    assert.equal(api.installFreeBookingController(installSettings(booking.bookingApi)), true)
+    await fixture.cta.onclick(event())
+    fixture.topic.value = 'Growth audit'
+    fixture.container.textContent = 'Calendar'
+    await booking.state.mounts[0].onConfirm({ start: 1, end: 2, timezone: 'UTC' })
+  })
+  assert.equal(fixture.successStep.style.display, 'flex')
+  return { booking, fixture }
+}
+
+test('the close click leaves the visitor’s step untouched until the fade ends', async () => {
+  const { fixture } = await advancedFixture()
+
+  // Trap. On the click-bound generation these listeners existed and wiped the
+  // surface right here, while the dialog was still fully opaque.
+  fixture.closeControls.forEach(function (control) {
+    ;(control.listeners.click || []).forEach(function (listener) { listener(event()) })
+  })
+  ;(fixture.popup.listeners.cancel || []).forEach(function (listener) { listener(event()) })
+
+  assert.deepEqual(
+    fixture.closeControls.map((control) => (control.listeners.click || []).length),
+    fixture.closeControls.map(() => 0),
+    'no closer may carry a reset listener — that is the mid-fade repaint',
+  )
+  assert.equal(fixture.successStep.style.display, 'flex')
+  assert.equal(fixture.defaultStep.style.display, 'none')
+  assert.equal(fixture.container.textContent, 'Calendar')
+  assert.equal(fixture.topic.value, 'Growth audit')
+
+  dispatchModal('modal-close', fixture.popup)
+
+  assert.equal(fixture.successStep.style.display, 'none')
+  assert.equal(fixture.defaultStep.style.display, 'flex')
+  assert.equal(fixture.container.textContent, '')
+  assert.equal(fixture.topic.value, '')
+})
+
+test('every closer resets the booking surface exactly once', async () => {
+  const { fixture } = await advancedFixture({ closers: 3 })
+  const counted = resetCounter(fixture.container)
+
+  fixture.closeControls.forEach(function (control, index) {
+    dispatchModal('modal-open', fixture.popup)
+    closeThroughFade(fixture, control)
+    assert.equal(counted(), 1, `closer ${index} must reset exactly once`)
+  })
+
+  // Esc reaches the surface the same way: the embed intercepts `cancel`, plays
+  // the fade, and dispatches close-complete at the end of it.
+  dispatchModal('modal-open', fixture.popup)
+  ;(fixture.popup.listeners.cancel || []).forEach(function (listener) { listener(event()) })
+  assert.equal(counted(), 0, 'cancel alone must not reset — the dialog is still on screen')
+  dispatchModal('modal-close', fixture.popup)
+  assert.equal(counted(), 1)
+})
+
+test('a repeated close-complete event does not reset the surface twice', async () => {
+  const { fixture } = await advancedFixture()
+  const counted = resetCounter(fixture.container)
+
+  dispatchModal('modal-close', fixture.popup)
+  dispatchModal('modal-close', fixture.popup)
+  assert.equal(counted(), 1)
+
+  dispatchModal('modal-open', fixture.popup)
+  dispatchModal('modal-close', fixture.popup)
+  assert.equal(counted(), 1, 'reopening re-arms the surface for the next close')
+})
+
+test('closing a different dialog leaves the booking surface alone', async () => {
+  const { fixture } = await advancedFixture()
+  const counted = resetCounter(fixture.container)
+
+  dispatchModal('modal-close', new Element('dialog', { 'popup-stripe-card': '' }))
+  dispatchModal('modal-close', new Element('dialog', { 'data-modal-target': 'account-settings' }))
+
+  assert.equal(counted(), 0)
+  assert.equal(fixture.successStep.style.display, 'flex')
+  assert.equal(fixture.container.textContent, 'Calendar')
+})
+
+test('reopening after a close starts from a fresh default step', async () => {
+  const { booking, fixture } = await advancedFixture()
+  closeThroughFade(fixture)
+  assert.equal(fixture.defaultStep.style.display, 'flex')
+  assert.equal(fixture.container.textContent, '')
+
+  await withGlobals({ document: fixture.document }, async () => {
+    dispatchModal('modal-open', fixture.popup)
+    assert.equal(fixture.defaultStep.style.display, 'flex')
+    assert.equal(fixture.successStep.style.display, 'none')
+    assert.equal(fixture.topic.value, '')
+
+    // A second run through the flow lands on success again, and the second
+    // close clears it again — the surface is not left latched after one close.
+    await fixture.cta.onclick(event())
+    await booking.state.mounts[1].onConfirm({ start: 3, end: 4, timezone: 'UTC' })
+    assert.equal(fixture.successStep.style.display, 'flex')
+    closeThroughFade(fixture)
+    assert.equal(fixture.defaultStep.style.display, 'flex')
+    assert.equal(fixture.successStep.style.display, 'none')
+  })
+})
+
+test('this generation marks the singleton it installs as close-complete', async () => {
+  const { fixture } = await advancedFixture()
+  const lifecycle = global.StartersBookingSurfaceLifecycle
+  assert.equal(lifecycle.resetTiming, 'close-complete')
+
+  // An older controller adopting this singleton gets the fixed timing for free:
+  // all of its close wiring lives inside register(), which no longer binds
+  // clicks, so its reset also waits for the fade.
+  let adopted = 0
+  assert.equal(lifecycle.register(fixture.popup, fixture.container, function () { adopted += 1 }), true)
+  fixture.closeControls.forEach(function (control) {
+    ;(control.listeners.click || []).forEach(function (listener) { listener(event()) })
+  })
+  assert.equal(adopted, 0)
+  dispatchModal('modal-close', fixture.popup)
+  assert.equal(adopted, 1)
+})
+
+test('an older singleton already installed is adopted with no extra close wiring', async () => {
+  const adoptedFixture = chooserFixture({ closers: 3 })
+  const controlFixture = chooserFixture({ closers: 3 })
+  const window = windowFor(adoptedFixture.document)
+  const old = oldGenerationLifecycle(window)
+  window.StartersBookingSurfaceLifecycle = old.lifecycle
+  window.StartersBookingSurfaceOwnership = old.ownership
+
+  const isolated = loadIsolated(window)
+  const booking = bookingApiFixture()
+  assert.equal(isolated.installFreeBookingController(installSettings(booking.bookingApi)), true)
+
+  // The singleton is adopted, not replaced, and it still carries no capability
+  // mark. Nothing gates on that absence: adoption is unconditional by design.
+  // Asserting it here documents which generation this fixture is standing in.
+  assert.equal(window.StartersBookingSurfaceLifecycle, old.lifecycle)
+  assert.equal(old.lifecycle.resetTiming, undefined)
+
+  // Differential: the same old singleton driving a popup with no controller on
+  // it resets exactly as often as the one this controller registered against.
+  // Equal counts mean the new code contributed no close wiring of its own.
+  let adopted = 0
+  let control = 0
+  old.lifecycle.register(adoptedFixture.popup, adoptedFixture.container, function () { adopted += 1 })
+  old.lifecycle.register(controlFixture.popup, controlFixture.container, function () { control += 1 })
+
+  function driveClose(fixture) {
+    fixture.closeControls.forEach(function (item) {
+      ;(item.listeners.click || []).forEach(function (listener) { listener(event()) })
+    })
+    ;(fixture.popup.listeners.cancel || []).forEach(function (listener) { listener(event()) })
+    window.dispatch('modal-close', fixture.popup)
+  }
+  driveClose(adoptedFixture)
+  driveClose(controlFixture)
+
+  assert.ok(control >= 1, 'the old generation must still reset — no missed reset')
+  assert.equal(adopted, control, 'adopting the old singleton must not add a second reset')
+  assert.equal(adoptedFixture.defaultStep.style.display, 'flex')
 })
