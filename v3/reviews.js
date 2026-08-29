@@ -1,17 +1,18 @@
 /**
  * V3 reviews page integration.
  *
- * @release v1.59.422
+ * @release v1.59.433
  *
  * Designer owns the public Reviews section. This module only:
  *   - derives the public-profile slug from /hire/{slug} and configures the
  *     authored Reviews section as a wf-xano wrapper before it loads;
- *   - hides that section, and empties its authored placeholder cards, at
- *     configuration time, so the section is revealed only once Xano has
- *     positively reported at least one approved review;
+ *   - hides that section, and clears its authored placeholder cards while
+ *     preserving a wf-xano template, at configuration time, so the section is
+ *     revealed only once Xano has positively reported an approved review;
  *   - projects Xano's approved aggregate into the authored profile summary;
- *   - replaces the legacy CMS projection inside the attributed Reviews list
- *     target with sanitized cards from Xano's approved response.
+ *   - renders sanitized cards from Xano's approved response ONLY while the
+ *     authored list ships no wf-xano template. Once Designer publishes a
+ *     template card, wf-xano binds it and this module stops rendering.
  *
  * The section is hidden-by-default on purpose. The authored Designer section
  * ships visible and pre-populated with placeholder "Verified Review" cards, so
@@ -33,6 +34,44 @@
   var PROFILE_INSTANCE = 'starter-reviews'
   var PROFILE_ROOT = '[data-reviews-v3="profile"]'
   var PROFILE_LIST = '[data-reviews-v3-list="reviews"]'
+  var TEMPLATE_SELECTOR = '[wf-xano-element="template"]'
+
+  /**
+   * Designer-owned card mode. When the authored list ships a real wf-xano
+   * template, wf-xano binds that card and this module stops rendering: it keeps
+   * the slug parameter, the aggregate projection, and the section visibility.
+   * Until that template is published the legacy renderer stays in charge, so
+   * the release can ship before the Designer change without an empty window.
+   */
+  function designerTemplate(list) {
+    if (!list || typeof list.querySelector !== 'function') return null
+    return list.querySelector(TEMPLATE_SELECTOR)
+  }
+
+  /**
+   * Clears the authored placeholder cards while preserving the Designer
+   * template. Emptying the whole list would delete the very card wf-xano needs
+   * to clone.
+   */
+  function emptyListExceptTemplate(list) {
+    if (!list) return
+    var template = designerTemplate(list)
+    if (!template) {
+      emptyElement(list)
+      return
+    }
+    var retainedChild = template
+    while (retainedChild && retainedChild.parentNode !== list) {
+      retainedChild = retainedChild.parentNode
+    }
+    if (!retainedChild) {
+      emptyElement(list)
+      return
+    }
+    Array.prototype.slice.call(list.childNodes).forEach(function (node) {
+      if (node !== retainedChild) list.removeChild(node)
+    })
+  }
 
   function configuredProfileList(documentObject, root) {
     if (!documentObject || !documentObject.querySelector || !root || !root.querySelector) return null
@@ -108,7 +147,8 @@
    * reads as "no reviews" while the hero reports a count.
    *
    * A marker that owns no list is deliberately not returned: those are the
-   * stray duplicates the configuration step empties, and they must stay hidden.
+   * stray duplicates whose placeholders configuration clears, and they must
+   * stay hidden.
    */
   function listOwningRoots(documentObject, root) {
     if (!root) return []
@@ -149,13 +189,14 @@
       ? documentObject.querySelectorAll(PROFILE_ROOT)
       : [documentObject.querySelector(PROFILE_ROOT)].filter(Boolean)
     if (!roots.length) return null
-    // Fail closed FIRST, before anything below can bail: hide and empty every
-    // authored marker (the live template has shipped duplicates — a second
-    // marker left unhandled keeps publishing its placeholder cards), and hide
-    // the authored hero summary placeholder, which lives outside the section.
+    // Fail closed FIRST, before anything below can bail: hide every authored
+    // marker and clear its placeholders while preserving a wf-xano template
+    // (the live template has shipped duplicate markers — one left unhandled
+    // keeps publishing placeholder cards). Also hide the authored hero summary
+    // placeholder, which lives outside the section.
     Array.prototype.forEach.call(roots, function (authoredRoot) {
       var authoredList = authoredRoot.querySelector && authoredRoot.querySelector(PROFILE_LIST)
-      if (authoredList) emptyElement(authoredList)
+      if (authoredList) emptyListExceptTemplate(authoredList)
       setProfileRootVisible(documentObject, authoredRoot, false)
     })
     toggleSummaryBlocks(documentObject, false)
@@ -170,10 +211,10 @@
     root.setAttribute('wf-xano-param-starter_slug', slug)
     list.setAttribute('wf-xano-element', 'list')
     list.setAttribute('aria-live', 'polite')
-    // The list was already emptied above, so an authored template that sat
-    // inside the list target is gone by now and a fresh hidden one is created
-    // here rather than found-then-deleted.
-    if (!root.querySelector('[wf-xano-element="template"]')) {
+    // A Designer-authored template inside the list survives the clear above and
+    // is what wf-xano clones. Only the legacy path still needs a placeholder
+    // template, and it must be empty so its clones render nothing.
+    if (!root.querySelector(TEMPLATE_SELECTOR)) {
       var template = documentObject.createElement('div')
       template.setAttribute('wf-xano-element', 'template')
       template.setAttribute('aria-hidden', 'true')
@@ -395,7 +436,10 @@
     setTextAll(documentObject, '[data-reviews-v3-summary-average], #rating', averageText)
     setTextAll(documentObject, '[data-reviews-v3-summary-count], #rating + span', String(count))
     toggleSummaryBlocks(documentObject, count > 0)
-    renderProfileReviews(documentObject, root, items)
+    // wf-xano owns the cards whenever the Designer template is present.
+    if (!designerTemplate(configuredProfileList(documentObject, root))) {
+      renderProfileReviews(documentObject, root, items)
+    }
 
     setProfileRootVisible(documentObject, root, items.length > 0)
     return true
@@ -414,11 +458,13 @@
   }
 
   var api = {
-    release: 'v1.59.422',
+    release: 'v1.59.433',
     profileSlug: profileSlug,
     configureProfileRoot: configureProfileRoot,
     paintProfile: paintProfile,
     renderProfileReviews: renderProfileReviews,
+    designerTemplate: designerTemplate,
+    emptyListExceptTemplate: emptyListExceptTemplate,
     wireInstances: wireInstances,
   }
   global.StartersReviewsV3 = api
@@ -430,10 +476,10 @@
   var queued = global.WfXano || []
   global.WfXano = queued
   // Site-level wf-xano can finish booting before this page-level loader runs.
-  // In that order it has already skipped the Reviews wrapper because the
-  // authored template did not exist yet. Re-run initialization for only this
-  // configured root after supplying the hidden template; init() is idempotent
-  // for roots that were already initialized.
+  // In that order it has already skipped the not-yet-configured Reviews
+  // wrapper. Re-run initialization for only this root after configuration and
+  // template preservation or fallback creation; init() is idempotent for roots
+  // that were already initialized.
   if (configuredProfileRoot && queued && typeof queued.init === 'function') {
     queued.init(configuredProfileRoot)
   }

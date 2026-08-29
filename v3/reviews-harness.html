@@ -11,8 +11,13 @@
     button { border: 1px solid #222; background: white; padding: 10px 16px; cursor: pointer; }
     button[aria-selected="true"] { background: #d8d9d3; }
     output { display: block; padding: 10px 28px; background: #e5f6e8; color: #174d22; font-weight: 700; }
+    .evidence { display: grid; gap: 8px; padding: 16px 28px; background: #f5f5f2; }
+    .evidence code { font-weight: 400; }
     section { padding: 28px; }
     h2 { margin-top: 0; font: 32px/1.2 Georgia, serif; }
+    .review-card { padding: 20px; border: 1px solid #c8c9c3; border-radius: 8px; box-shadow: 0 2px 8px #0000000d; }
+    .review-card strong { display: block; margin-top: 12px; }
+    .mode { display: inline-block; margin-bottom: 12px; padding: 4px 8px; border-radius: 999px; background: #e8e2ff; color: #3e276f; font-size: 13px; font-weight: 700; }
   </style>
   <script>
     window.history.replaceState(null, '', '/hire/review-harness');
@@ -55,6 +60,11 @@
       (<span data-reviews-v3-summary-count>0</span> Reviews)
     </header>
     <output id="nested-root-result">Checking nested review roots…</output>
+    <div class="evidence" aria-label="Designer template handoff checks">
+      <div id="template-result">Checking Designer template ownership…</div>
+      <div>Request parameter: <code id="slug-result">checking…</code></div>
+      <div>Hero aggregate: <code id="aggregate-result">checking…</code></div>
+    </div>
     <nav aria-label="Profile sections">
       <button type="button" data-panel="overview" aria-selected="true">Overview</button>
       <button type="button" data-panel="reviews" aria-selected="false">Reviews</button>
@@ -63,7 +73,15 @@
     <section id="reviews" data-reviews-v3="profile" data-toc-section="reviews" hidden>
       <div class="profile-content_reviews" data-reviews-v3="profile">
         <h2>Reviews</h2>
-        <div class="profile-content_reviews_list" data-reviews-v3-list="reviews"></div>
+        <div class="profile-content_reviews_list" data-reviews-v3-list="reviews">
+          <div class="review-card" wf-xano-element="template">
+            <span class="mode">Designer-authored wf-xano template</span>
+            <div aria-label="5 out of 5 stars">★★★★★</div>
+            <p>Clear communication, thoughtful work, and a strong final delivery.</p>
+            <strong>Verified Brand</strong>
+          </div>
+          <div class="review-card">Placeholder card that must be removed.</div>
+        </div>
       </div>
     </section>
     <section data-reviews-v3="profile">
@@ -87,9 +105,18 @@
     var profileRoots = document.querySelectorAll('[data-reviews-v3="profile"]');
     var nestedOwnersVisible = !profileRoots[0].hidden && !profileRoots[1].hidden;
     var strayFailClosed = profileRoots[2].hidden && profileRoots[2].style.display === 'none';
+    var list = document.querySelector('[data-reviews-v3-list="reviews"]');
+    var template = list.querySelector('[wf-xano-element="template"]');
+    var templateOwnsCards = list.children.length === 1 && template && !list.querySelector('[data-review-id]');
     document.querySelector('#nested-root-result').textContent = nestedOwnersVisible && strayFailClosed
       ? 'PASS: nested review owners are visible; stray placeholder stays hidden.'
       : 'FAIL: nested review visibility contract was not met.';
+    document.querySelector('#template-result').textContent = templateOwnsCards
+      ? 'PASS: Designer template survived; placeholder and legacy-rendered cards are absent.'
+      : 'FAIL: Designer template ownership contract was not met.';
+    document.querySelector('#slug-result').textContent = profileRoots[0].getAttribute('wf-xano-param-starter_slug');
+    document.querySelector('#aggregate-result').textContent = document.querySelector('[data-reviews-v3-summary-average]').textContent
+      + ' average from ' + document.querySelector('[data-reviews-v3-summary-count]').textContent + ' approved review';
   </script>
 </body>
 </html>

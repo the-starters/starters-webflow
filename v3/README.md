@@ -2822,25 +2822,34 @@ On the public profile, author exactly one section with
 `data-reviews-v3-list="reviews"`. The published Hire template currently has
 two nested profile markers: the outer `#reviews` wrapper and the authored
 section that contains the list. The adapter tolerates this defensively. It
-hides every marker and empties every marker's list at configuration time, then
-configures and paints only the first marker in document order as the wf-xano
-wrapper. After a positive approved response, it reveals every nested marker
-that contains the active list. A stray marker that does not contain the active
-list stays hidden and empty, so it cannot publish placeholder cards or become
-a second wf-xano wrapper. The adapter
-derives the decoded slug only
-from the canonical `/hire/{slug}` path, configures that section as the
-`starter-reviews` wf-xano wrapper, and sets `wf-xano-param-starter_slug` before
-initializing it. It does not discover the surface through classes, heading
-text, or generated IDs. A missing section or list target fails closed before
-wf-xano initialization and makes no review request.
+hides every marker and clears every marker's authored placeholder cards at
+configuration time, while preserving any element that carries
+`wf-xano-element="template"`. The template may be nested. In that case, its
+outermost ancestor that is a direct child of the list survives with its whole
+subtree. It then configures and paints only the first marker in document order
+as the wf-xano wrapper. After a positive approved response, it reveals every
+nested marker that contains the active list. A stray marker that does not
+contain the active list stays hidden and empty, so it cannot publish placeholder
+cards or become a second wf-xano wrapper. The adapter derives the decoded slug
+only from the canonical `/hire/{slug}` path, configures that section as the
+`starter-reviews` wf-xano wrapper, and sets `wf-xano-param-starter_slug` from
+that path before initializing it. It does not discover the surface through
+classes, heading text, or generated IDs. A missing section or list target fails
+closed before wf-xano initialization and makes no review request.
 
 When the wrapper has no authored `wf-xano-element="template"`, the adapter adds
 a hidden, aria-hidden placeholder so wf-xano can initialize. If site-level
 wf-xano has already booted and skipped that formerly incomplete wrapper, the
 adapter calls the runtime's idempotent `init()` for only this configured root.
-Review cards are rendered only into the attributed list target. Inside the
-authored section, use
+Until Designer publishes the template card, the legacy renderer remains the
+fallback and renders review cards only into the attributed list target. When an
+authored template exists, the adapter stands down from card rendering and
+wf-xano owns the list. The adapter deliberately continues to set
+`wf-xano-param-starter_slug` from the canonical profile path. The later
+Designer wiring must also author `wf-xano-param-starter_id` by hand and bind it
+to the Hire collection's `xano-id` field, because the Webflow API cannot author
+a CMS-bound attribute value. This known follow-up does not replace the
+browser adapter's slug job. Inside the authored section, use
 `data-reviews-v3-average` and `data-reviews-v3-count` for the aggregate values
 for the optional aggregate projections. For the profile summary outside the
 Reviews section, use `data-reviews-v3-summary-average` and
@@ -2875,12 +2884,15 @@ must not be retained as a second review projection; Xano is the only review
 store and public read authority.
 
 The authored Reviews section is **hidden by default**. The adapter hides it, and
-empties its authored list target, at configuration time — before wf-xano runs —
-and reveals it again only when Xano positively reports at least one approved
-review. Absence of a result is treated as "no reviews", never as "keep showing
-what Designer authored", so a failed, blocked, or still-in-flight reviews
-request leaves the section hidden rather than publishing the template's
-placeholder cards. Aggregate values are still painted for a zero count.
+clears its authored placeholder cards while preserving any
+`wf-xano-element="template"`, at configuration time before wf-xano runs. A
+nested template keeps its outermost direct-child ancestor and that ancestor's
+subtree. The adapter reveals the section again only when Xano positively
+reports at least one approved review. Absence of a result is treated as "no
+reviews", never as "keep showing what Designer authored", so a failed, blocked,
+or still-in-flight reviews request leaves the section hidden rather than
+publishing the template's placeholder content. Aggregate values are still
+painted for a zero count.
 
 Whichever profile tab points at the section is hidden and revealed with it. The
 adapter reads the section's own `data-toc-section` key and toggles every
@@ -2900,24 +2912,25 @@ the template ships the section's `data-hide-when-empty-section` attribute
 disabled (prefixed `xdata-`) and the engine's fail-safe then leaves the tab
 visible. If Designer re-enables that attribute, make the shared engine the sole
 owner of the pair instead of running both — and note its `data-empty-watch`
-selector must then be `[data-review-id]`, since the adapter replaces the
-authored `.profile-content_reviews_list_item` cards with its own.
+selector must then be `[data-review-id]`, which every rendered review card must
+carry in both the wf-xano template and legacy fallback modes.
 
 The adapter also accepts `items` for the review array, `aggregates` for the
 aggregate object, and the wf-xano raw-item fallback. Aggregate values are never
-recalculated from a paginated review list. Approved results render as stacked,
-bordered cards with five Bootstrap star icons. A brand-verified review has a
-`brand` object and shows the existing green `Verified Review` badge with its
-check icon and verified-brand reviewer line. A legacy testimonial has
+recalculated from a paginated review list. In legacy fallback mode, approved
+results render as stacked, bordered cards with five Bootstrap star icons. A
+brand-verified review has a `brand` object and shows the existing green
+`Verified Review` badge with its check icon and verified-brand reviewer line. A
+legacy testimonial has
 `verified: false`, no Brand actor, and a denormalized `reviewer` object with
 `display_name`, `title`, and `company_name`; it shows a neutral `Testimonial`
 badge without a check icon and uses `title @ company_name` as its reviewer
 line. A response without the `verified` field keeps the older verified-review
 rendering for backward compatibility. When both identity objects exist,
-`reviewer` takes precedence over `brand`. Cards are constructed with DOM nodes
-and `textContent` only, so reviewer identity and review text are never
-interpreted as HTML. The adapter contains no Airtable or Make integration and
-no private token or direct authenticated fetch path.
+`reviewer` takes precedence over `brand`. Legacy fallback cards are constructed
+with DOM nodes and `textContent` only, so reviewer identity and review text are
+never interpreted as HTML. The adapter contains no Airtable or Make integration
+and no private token or direct authenticated fetch path.
 
 Run the focused checks with:
 

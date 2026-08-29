@@ -29,8 +29,20 @@ class Element {
     if (this.closestMap && this.closestMap[selector]) return this.closestMap[selector]
     return selector === 'form[data-review-form-v3]' ? this : null
   }
-  appendChild(element) { this.childNodes.push(element); return element }
-  replaceChildren(...elements) { this.childNodes = elements }
+  appendChild(element) { element.parentNode = this; this.childNodes.push(element); return element }
+  removeChild(element) {
+    const index = this.childNodes.indexOf(element)
+    if (index >= 0) {
+      this.childNodes.splice(index, 1)
+      element.parentNode = null
+    }
+    return element
+  }
+  replaceChildren(...elements) {
+    for (const element of this.childNodes) element.parentNode = null
+    for (const element of elements) element.parentNode = this
+    this.childNodes = elements
+  }
 }
 
 function documentFixture() {
@@ -611,4 +623,87 @@ test('an empty approved response re-hides the whole chain', () => {
     assert.equal(el.getAttribute('data-reviews-v3-hidden'), '')
     assert.equal(el.style.display, 'none')
   }
+})
+
+
+/*
+ * Designer-template mode. Once the Hire template publishes a real
+ * `wf-xano-element="template"` card inside the authored list, wf-xano binds
+ * that card and this module must stop rendering its own. Until then the legacy
+ * renderer stays in charge, which is what every test above still covers.
+ */
+function designerTemplateFixture() {
+  const fixture = documentFixture()
+  const template = new Element({ 'wf-xano-element': 'template' })
+  fixture.list.children['[wf-xano-element="template"]'] = template
+  fixture.root.children['[wf-xano-element="template"]'] = template
+  fixture.list.appendChild(template)
+  return { fixture, template }
+}
+
+test('preserves a Designer template and drops only the placeholder cards', () => {
+  const { fixture, template } = designerTemplateFixture()
+  fixture.list.appendChild(new Element())
+  fixture.list.appendChild(new Element())
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+  assert.deepEqual(fixture.list.childNodes, [template])
+  assert.equal(fixture.root.getAttribute('wf-xano-param-starter_slug'), 'elvis-p')
+  assert.equal(fixture.list.getAttribute('wf-xano-element'), 'list')
+})
+
+test('preserves the list-child subtree containing a nested Designer template', () => {
+  const fixture = documentFixture()
+  const wrapper = new Element()
+  const template = new Element({ 'wf-xano-element': 'template' })
+  wrapper.appendChild(template)
+  fixture.list.children['[wf-xano-element="template"]'] = template
+  fixture.root.children['[wf-xano-element="template"]'] = template
+  fixture.list.appendChild(new Element())
+  fixture.list.appendChild(wrapper)
+  fixture.list.appendChild(new Element())
+
+  const { api } = load({ document: fixture, pathname: '/hire/elvis-p' })
+  const raw = {
+    reviews: [{ review_id: 41, rating: 4 }, { review_id: 42, rating: 5 }],
+    aggregate: { review_count: 2, average_rating: 4.5 },
+  }
+  assert.deepEqual(fixture.list.childNodes, [wrapper])
+  assert.equal(api.paintProfile(fixture, fixture.root, { raw, items: [raw] }), true)
+  assert.deepEqual(fixture.list.childNodes, [wrapper])
+  assert.deepEqual(wrapper.childNodes, [template])
+})
+
+test('does not append a fallback template when Designer ships one', () => {
+  const { fixture } = designerTemplateFixture()
+  load({ document: fixture, pathname: '/hire/elvis-p' })
+  assert.equal(fixture.root.childNodes.length, 0)
+})
+
+test('stops rendering cards once the Designer template is present', () => {
+  const { fixture, template } = designerTemplateFixture()
+  const { api } = load({ document: fixture, pathname: '/hire/elvis-p' })
+  const raw = {
+    reviews: [{ review_id: 41, rating: 4 }, { review_id: 42, rating: 5 }],
+    aggregate: { review_count: 2, average_rating: 4.5 },
+  }
+  assert.equal(api.paintProfile(fixture, fixture.root, { raw, items: [raw] }), true)
+  // wf-xano owns the cards: the list still holds only the template.
+  assert.deepEqual(fixture.list.childNodes, [template])
+  // The aggregate projection and the reveal are still this module's job.
+  assert.equal(fixture.average.textContent, '4.5')
+  assert.equal(fixture.count.textContent, '2')
+  assert.equal(fixture.summaryBlockEl.hidden, false)
+  assert.equal(fixture.root.hidden, false)
+})
+
+test('still renders its own cards while no Designer template exists', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture, pathname: '/hire/elvis-p' })
+  const raw = {
+    reviews: [{ review_id: 41, rating: 4 }],
+    aggregate: { review_count: 1, average_rating: 4 },
+  }
+  assert.equal(api.paintProfile(fixture, fixture.root, { raw, items: [raw] }), true)
+  assert.equal(fixture.list.childNodes.length, 1)
+  assert.equal(fixture.list.childNodes[0].getAttribute('data-review-id'), '41')
 })
