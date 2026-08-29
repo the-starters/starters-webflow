@@ -45,7 +45,10 @@ function boot(options = {}) {
       hostname: options.hostname || 'thestarters.com',
       pathname: options.pathname || '/quiz-results',
     },
-    crypto: { randomUUID: () => '12345678-1234-1234-1234-123456789abc' },
+    crypto: {
+      randomUUID:
+        options.randomUUID || (() => '12345678-1234-1234-1234-123456789abc'),
+    },
     sessionStorage,
     document: {
       addEventListener(name, listener, capture) {
@@ -54,6 +57,12 @@ function boot(options = {}) {
     },
     setTimeout,
     $memberstackDom: {
+      getCurrentMember: async () => ({
+        data:
+          typeof options.currentMember === 'function'
+            ? options.currentMember()
+            : { id: options.memberId || 'member-a' },
+      }),
       getMemberCookie: async () => options.memberstackToken || 'memberstack-token',
     },
     fetch: async (url, init) => {
@@ -263,18 +272,20 @@ test('registers from the exact public Join CTA route families', async () => {
   }
 })
 
-test('ignores non-allowlisted Memberstack prices', async () => {
+test('fails closed on non-allowlisted Memberstack prices', async () => {
   const priceState = boot({ pathname: '/all-starters' })
   const control = target('prc_legacy-v2')
   const event = clickEvent(control)
   await priceState.listeners[0].listener(event)
 
-  assert.equal(event.prevented, false)
+  assert.equal(event.prevented, true)
+  assert.equal(event.stopped, true)
   assert.equal(priceState.requests.length, 0)
   assert.equal(control.clicks, 0)
+  assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
 })
 
-test('does not activate on non-checkout V3 routes', () => {
+test('fails closed on non-checkout V3 routes', async () => {
   for (const pathname of [
     '/brand-dashboard',
     '/ALL-STARTERS',
@@ -289,8 +300,14 @@ test('does not activate on non-checkout V3 routes', () => {
     '/categories/example/edit',
   ]) {
     const state = boot({ pathname })
-    assert.equal(state.listeners.length, 0, pathname)
+    const control = target('prc_premium-monthly--fn1ae0qjj')
+    const event = clickEvent(control)
+    await state.listeners[0].listener(event)
+    assert.equal(event.prevented, true, pathname)
+    assert.equal(event.stopped, true, pathname)
     assert.equal(state.requests.length, 0, pathname)
+    assert.equal(control.clicks, 0, pathname)
+    assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
   }
 })
 
@@ -343,6 +360,38 @@ test('a route change reuses the original immutable pending route and event', asy
   assert.equal(second.source_route, '/all-starters')
 })
 
+test('replaces a pending identity when the authenticated member changes', async () => {
+  let memberId = 'member-a'
+  let sequence = 0
+  const state = boot({
+    currentMember: () => ({ id: memberId }),
+    randomUUID: () =>
+      sequence++ === 0
+        ? '12345678-1234-1234-1234-123456789abc'
+        : '87654321-4321-4321-4321-cba987654321',
+  })
+
+  await state.listeners[0].listener(
+    clickEvent(target('prc_premium-monthly--fn1ae0qjj')),
+  )
+  memberId = 'member-b'
+  await state.listeners[0].listener(
+    clickEvent(target('prc_premium-monthly--fn1ae0qjj')),
+  )
+
+  const first = JSON.parse(state.requests[1].init.body)
+  const second = JSON.parse(state.requests[3].init.body)
+  assert.notEqual(second.source_event_id, first.source_event_id)
+  assert.equal(
+    JSON.parse(
+      state.storage.get(
+        'ts:v3:membership-checkout-intent:prc_premium-monthly--fn1ae0qjj',
+      ),
+    ).memberId,
+    'member-b',
+  )
+})
+
 test('fails closed when checkout identity storage is unavailable', async () => {
   const state = boot({
     sessionStorage: {
@@ -354,7 +403,8 @@ test('fails closed when checkout identity storage is unavailable', async () => {
 
   await state.listeners[0].listener(clickEvent(control))
 
-  assert.equal(state.requests.length, 0)
+  assert.equal(state.requests.length, 1)
+  assert.match(state.requests[0].url, /\/auth\/trade-token\/v3$/)
   assert.equal(control.clicks, 0)
   assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
   assert.match(control.getAttribute('title'), /storage is unavailable/)

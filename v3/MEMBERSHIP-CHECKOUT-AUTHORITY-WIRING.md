@@ -26,7 +26,7 @@ The controller boots only on these V3 hosts:
 - `www.thestarters.com`
 - `the-starters-3-0.webflow.io`
 
-It listens on the V3 funnel routes `/` and `/quiz-results`, the public routes
+It allows checkout on the V3 funnel routes `/` and `/quiz-results`, the public routes
 `/all-starters` and `/why-us`, and the single-segment CMS families `/hire`,
 `/categories`, `/subcategories`, `/companies`, `/competitors`, `/functions`,
 `/industries`, `/roles`, `/skills`, and `/tools`. Each CMS route requires one
@@ -39,26 +39,28 @@ only these V3 Memberstack price IDs:
 - `prc_premium-monthly--fn1ae0qjj`
 - `prc_paid-annual-2o5f040u`
 
-The controller does not attach a click listener on any other host. On V3, it
-leaves a non-allowlisted price control to its existing owner without sending a
-registrar request.
+The controller does not attach a click listener on any other host. On a V3 host,
+it blocks price controls on non-allowlisted routes or with non-allowlisted price
+IDs without sending a registrar request.
 
 ## Contract
 
 Before Memberstack opens Stripe checkout, the controller:
 
 1. Confirms the V3 host, safe source path, and price allowlists.
-2. Exchanges the active Memberstack session through the published POST/body
+2. Reads the active Memberstack member so the pending identity cannot cross
+   members.
+3. Exchanges the active Memberstack session through the published POST/body
    `auth/trade-token/v3` boundary.
-3. Sends the returned Xano `user_v3` token to the authenticated registrar.
-4. The registrar registers one `membership_checkout_intent`.
-5. Opens the original native Memberstack checkout only after Xano accepts the intent.
+4. Sends the returned Xano `user_v3` token to the authenticated registrar.
+5. The registrar registers one `membership_checkout_intent`.
+6. Opens the original native Memberstack checkout only after Xano accepts the intent.
 
 An authentication, secure event identity, intent storage, or registration
 failure blocks checkout. It does not fall back to V2. After the controller
 clears its pending state, the member can retry. Failed and accepted registrations
 reuse the same pending event identity and original route for that price until
-the two-hour intent expires.
+the two-hour intent expires. A member change replaces that pending identity.
 
 The published POST trade endpoint owns Memberstack session verification. The
 Memberstack token stays out of URLs and travels only in its JSON request body.
