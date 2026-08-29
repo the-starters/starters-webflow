@@ -22,11 +22,11 @@
     'www.thestarters.com': true,
     'the-starters-3-0.webflow.io': true,
   }
-  var ALLOWED_ROUTES = { '/': true, '/quiz-results': true }
   var ALLOWED_PRICE_IDS = {
     'prc_premium-monthly--fn1ae0qjj': true,
     'prc_paid-annual-2o5f040u': true,
   }
+  var INTENT_TTL_MS = 2 * 60 * 60 * 1000
   var bypassTargets = typeof WeakSet === 'function' ? new WeakSet() : null
   var pendingTargets = typeof WeakSet === 'function' ? new WeakSet() : null
 
@@ -35,9 +35,22 @@
   }
 
   function normalizedRoute(value) {
-    var route = clean(value).toLowerCase()
+    var route = clean(value)
     if (route.length > 1) route = route.replace(/\/+$/, '')
     return route || '/'
+  }
+
+  function validSourceRoute(value) {
+    var route = normalizedRoute(value)
+    if (
+      route === '/' ||
+      route === '/quiz-results' ||
+      route === '/all-starters' ||
+      route === '/why-us'
+    ) {
+      return true
+    }
+    return /^\/(?:hire|categories|subcategories|companies|competitors|functions|industries|roles|skills|tools)\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(route)
   }
 
   function checkoutTarget(node) {
@@ -60,29 +73,46 @@
     throw new Error('Secure checkout identity is unavailable')
   }
 
-  function storageKey(route, priceId) {
-    return 'ts:v3:membership-checkout-intent:' + route + ':' + priceId
+  function storageKey(priceId) {
+    return 'ts:v3:membership-checkout-intent:' + priceId
   }
 
-  function sourceEventId(route, priceId) {
-    var key = storageKey(route, priceId)
+  function checkoutIdentity(route, priceId, memberId) {
+    var key = storageKey(priceId)
+    var existing = null
     try {
-      var existing = clean(globalObject.sessionStorage.getItem(key)).toLowerCase()
-      if (/^evt_[a-z0-9-]{8,116}$/.test(existing)) return existing
-      var created = randomEventId()
-      globalObject.sessionStorage.setItem(key, created)
-      return created
+      existing = JSON.parse(clean(globalObject.sessionStorage.getItem(key)) || 'null')
     } catch (_error) {
-      return randomEventId()
+      existing = null
     }
-  }
-
-  function clearSourceEventId(route, priceId) {
+    var existingEventId = clean(existing && existing.eventId).toLowerCase()
+    var existingRoute = normalizedRoute(existing && existing.sourceRoute)
+    var existingExpiresAt = Number(existing && existing.expiresAt)
+    var existingMemberId = clean(existing && existing.memberId)
+    if (
+      /^evt_[a-z0-9-]{8,116}$/.test(existingEventId) &&
+      validSourceRoute(existingRoute) &&
+      existingMemberId === memberId &&
+      existingExpiresAt > Date.now()
+    ) {
+      return { eventId: existingEventId, sourceRoute: existingRoute }
+    }
+    var created = {
+      eventId: randomEventId(),
+      sourceRoute: route,
+      memberId: memberId,
+      expiresAt: Date.now() + INTENT_TTL_MS,
+    }
     try {
-      globalObject.sessionStorage.removeItem(storageKey(route, priceId))
+      var serialized = JSON.stringify(created)
+      globalObject.sessionStorage.setItem(key, serialized)
+      if (globalObject.sessionStorage.getItem(key) !== serialized) {
+        throw new Error('Checkout identity was not persisted')
+      }
     } catch (_error) {
-      // Storage is optional. The server still owns replay safety.
+      throw new Error('Secure checkout identity storage is unavailable')
     }
+    return { eventId: created.eventId, sourceRoute: created.sourceRoute }
   }
 
   function setControlState(target, state, message) {
@@ -97,7 +127,8 @@
     for (var attempt = 0; attempt < 40; attempt += 1) {
       if (
         globalObject.$memberstackDom &&
-        typeof globalObject.$memberstackDom.getMemberCookie === 'function'
+        typeof globalObject.$memberstackDom.getMemberCookie === 'function' &&
+        typeof globalObject.$memberstackDom.getCurrentMember === 'function'
       ) {
         return globalObject.$memberstackDom
       }
@@ -108,8 +139,12 @@
     throw new Error('Memberstack session is unavailable')
   }
 
-  async function xanoToken() {
+  async function authenticatedSession() {
     var memberstack = await waitForMemberstack()
+    var memberResult = await memberstack.getCurrentMember()
+    var member = memberResult && memberResult.data ? memberResult.data : memberResult
+    var memberId = clean(member && member.id)
+    if (!memberId) throw new Error('Sign in before you choose a plan')
     var memberstackToken = await memberstack.getMemberCookie()
     if (!memberstackToken) throw new Error('Sign in before you choose a plan')
 
@@ -127,11 +162,17 @@
         ? payload
         : payload && (payload.authToken || payload.token)
     if (!response.ok || !token) throw new Error('V3 session exchange failed')
-    return token
+    var confirmedResult = await memberstack.getCurrentMember()
+    var confirmedMember =
+      confirmedResult && confirmedResult.data ? confirmedResult.data : confirmedResult
+    if (clean(confirmedMember && confirmedMember.id) !== memberId) {
+      throw new Error('Your signed-in account changed. Refresh and try again')
+    }
+    return { memberId: memberId, memberstack: memberstack, token: token }
   }
 
-  async function registerIntent(route, priceId, eventId) {
-    var token = await xanoToken()
+  async function registerIntent(route, priceId, eventId, token) {
+    if (!token) token = (await authenticatedSession()).token
     var response = await globalObject.fetch(REGISTER_URL, {
       method: 'POST',
       credentials: 'omit',
@@ -167,22 +208,31 @@
       return
     }
 
-    var route = normalizedRoute(globalObject.location && globalObject.location.pathname)
-    var priceId = clean(target.getAttribute(PRICE_ATTRIBUTE))
-    if (!ALLOWED_ROUTES[route] || !ALLOWED_PRICE_IDS[priceId]) return
-
     if (event && typeof event.preventDefault === 'function') event.preventDefault()
     if (event && typeof event.stopImmediatePropagation === 'function') {
       event.stopImmediatePropagation()
+    }
+
+    var route = normalizedRoute(globalObject.location && globalObject.location.pathname)
+    var priceId = clean(target.getAttribute(PRICE_ATTRIBUTE))
+    if (!validSourceRoute(route) || !ALLOWED_PRICE_IDS[priceId]) {
+      setControlState(target, 'error', 'This checkout is not available from this V3 page')
+      return
     }
     if (pendingTargets && pendingTargets.has(target)) return
     if (pendingTargets) pendingTargets.add(target)
 
     setControlState(target, 'pending', '')
     try {
-      var eventId = sourceEventId(route, priceId)
-      await registerIntent(route, priceId, eventId)
-      clearSourceEventId(route, priceId)
+      var session = await authenticatedSession()
+      var identity = checkoutIdentity(route, priceId, session.memberId)
+      await registerIntent(identity.sourceRoute, priceId, identity.eventId, session.token)
+      var confirmedResult = await session.memberstack.getCurrentMember()
+      var confirmedMember =
+        confirmedResult && confirmedResult.data ? confirmedResult.data : confirmedResult
+      if (clean(confirmedMember && confirmedMember.id) !== session.memberId) {
+        throw new Error('Your signed-in account changed. Refresh and try again')
+      }
       setControlState(target, 'accepted', '')
       resumeNativeCheckout(target)
     } catch (error) {
@@ -198,8 +248,7 @@
 
   function boot() {
     var host = clean(globalObject.location && globalObject.location.hostname).toLowerCase()
-    var route = normalizedRoute(globalObject.location && globalObject.location.pathname)
-    if (!ALLOWED_HOSTS[host] || !ALLOWED_ROUTES[route]) return false
+    if (!ALLOWED_HOSTS[host]) return false
     globalObject.document.addEventListener('click', handleCheckout, true)
     return true
   }
