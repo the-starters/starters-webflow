@@ -356,13 +356,15 @@ height. The sheet sets that control's spacing and its box: the wrapper's
 `display:grid` and the `0.375rem` between its caption and its select. The
 caption's and the select's own typography stay the engine's inline
 declarations, and the engine skips the wrapper's inline styles entirely on this
-surface so the sheet is not outranked. Stacked, that control has to be MOVED
-rather than just padded: the engine appends it first in the shell, ahead of the
-month, so document order alone would render it above the calendar, and `order`
-is what drops it between the month and the first row of chips. Its reading
-order therefore runs ahead of its visual position at both widths — a known
-issue whose fix is a one-line reorder in the engine's own append sequence, left
-as a follow-up. Every selector in that sheet is scoped under
+surface so the sheet is not outranked. Stacked, `order` holds that control
+between the month and the first row of chips; the engine appends it under the
+month, ahead of the times, so document order already reads that way and its
+reading order matches its visual position at both widths. The engine's three
+responsive wrappers — `layout` around the two panels, `calendar-panel` around
+the month and the caption, `time-panel` around the chips — are skipped on this
+surface for the same outranking reason, and the sheet collapses them with
+`display:contents` so the sheet's own placement still reaches the elements
+inside them; off this surface they keep the inline columns they ship with. Every selector in that sheet is scoped under
 `[data-modal-target="popup-booking"]` and none uses `!important`; the contract
 form's datepickers and the dashboard's reschedule calendar share these class
 names and must stay pixel-identical. Every rule that PAINTS the footer — the hairline, the padding, the fill, the

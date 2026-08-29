@@ -786,6 +786,16 @@
          a grid at every width by default and the mobile block swaps it for a
          flex column; see the sticky footer rule there. */
       role + '"shell"]{display:grid}',
+      /* The engine's `layout`, `calendar-panel` and `time-panel` wrappers, taken
+         back out of the box tree. This sheet places the month, the timezone
+         caption, the times and the footer itself — in the shell's grid areas on
+         desktop and its flex column on a phone — and those rules only reach them
+         while they are the shell's own children. `display:contents` restores
+         that without touching the DOM the engine builds, so the dashboard's
+         reschedule calendar keeps the nested columns it just gained, including
+         the caption grouped under the month. The engine writes no inline display
+         on any of the three here, so this rule is unopposed. */
+      role + '"layout"],' + role + '"calendar-panel"],' + role + '"time-panel"]{display:contents}',
       /* Jerico's inline min-height, moved to the sheet. See CALENDAR_MIN_HEIGHT
          — with the banner out of flow, the empty-availability panel has only a
          button left in it to set its height. */
@@ -889,12 +899,11 @@
          actually supposed to rest on. A flex item's containing block is the
          whole shell — 1245px inside a 726px scrollport at 400 on a busy day.
 
-         `order` is what puts the timezone control between the month and the
-         chips: the shared engine appends it FIRST in the shell, ahead of the
-         month, so document order alone would render it above the calendar. Its
-         reading order runs ahead of its visual position either way; correcting
-         that means reordering the engine's own appends, which is a follow-up
-         rather than a job for this sheet. */
+         `order` pins the stacked sequence: month, timezone caption, chips,
+         footer. The engine's own appends now read the same way — the caption
+         sits above the times inside its panel — so reading order and visual
+         order finally agree, and these declarations hold that arrangement
+         steady rather than correcting it. */
       role + '"shell"]{display:flex;flex-direction:column}',
       role + '"month"]{order:1;padding:' + CALENDAR_FRAME + '}',
       /* The frame, which it would otherwise run full-bleed past while every
@@ -1533,29 +1542,43 @@
       ? { width: '100%' }
       : { display: 'grid', gap: '16px', width: '100%' })
     shell.setAttribute('data-paid-calendar-element', 'shell')
-    const layout = applyStyles(global.document.createElement('div'), {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))',
-      alignItems: 'start',
-      gap: '16px',
-      width: '100%',
-    })
+    /* The shared engine's three responsive wrappers. Off the booking surface
+       they carry the inline grid that gives the dashboard its columns — the
+       month with the timezone caption under it on the left, the times on the
+       right — exactly as they shipped. ON it they are left unstyled and the
+       sheet collapses them with `display:contents` — see that rule for why.
+       Writing the inline grid here instead would nest this file's whole
+       arrangement inside a second grid whose declarations no rule in the sheet
+       can outrank without `!important`, which the containment test forbids. */
+    const layout = applyStyles(global.document.createElement('div'), onBookingSurface
+      ? {}
+      : {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))',
+        alignItems: 'start',
+        gap: '16px',
+        width: '100%',
+      })
     layout.setAttribute('data-paid-calendar-element', 'layout')
-    const calendarPanel = applyStyles(global.document.createElement('div'), {
-      display: 'grid',
-      alignContent: 'start',
-      gap: '16px',
-      minWidth: '0',
-    })
+    const calendarPanel = applyStyles(global.document.createElement('div'), onBookingSurface
+      ? {}
+      : {
+        display: 'grid',
+        alignContent: 'start',
+        gap: '16px',
+        minWidth: '0',
+      })
     calendarPanel.setAttribute('data-paid-calendar-element', 'calendar-panel')
     const calendarHost = global.document.createElement('div')
     calendarHost.setAttribute('data-paid-calendar-element', 'month')
-    const timePanel = applyStyles(global.document.createElement('div'), {
-      display: 'grid',
-      alignContent: 'start',
-      gap: '16px',
-      minWidth: '0',
-    })
+    const timePanel = applyStyles(global.document.createElement('div'), onBookingSurface
+      ? {}
+      : {
+        display: 'grid',
+        alignContent: 'start',
+        gap: '16px',
+        minWidth: '0',
+      })
     timePanel.setAttribute('data-paid-calendar-element', 'time-panel')
     const times = applyStyles(global.document.createElement('div'), {
       display: 'grid',

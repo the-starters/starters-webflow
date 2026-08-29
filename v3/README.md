@@ -3417,13 +3417,12 @@ flowchart TD
    desktop that is its own grid area in the right column with the month
    spanning down beside it, which is what keeps the panel exactly the height it
    was without the control — the times area gives up its height instead of the
-   modal growing. Stacked, the control has to be MOVED rather than just padded:
-   the engine appends it FIRST in the shell, ahead of the month, so document
-   order alone would render it above the calendar — `order` is what drops it
-   between the month and the first row of chips. That leaves the control's
-   reading order ahead of its visual position at both widths, a known issue:
-   the fix is a one-line reorder in the shared engine's own append sequence,
-   deliberately left as a follow-up rather than taken here. It sits outside the
+   modal growing. Stacked, `order` holds the control between the
+   month and the first row of chips. The engine appends it under the month,
+   ahead of the times, so document order already reads that way and the
+   control's reading order matches its visual position at both widths — the
+   one-line reorder this file used to flag as a follow-up landed in the shared
+   engine. It sits outside the
    scrolling list, so it stays put while the chips scroll. The sheet owns its
    box as well as its spacing: the wrapper's own `display:grid` and the
    `0.375rem` between its caption and its select. Owning those took a change
@@ -3491,8 +3490,15 @@ flowchart TD
    `display` and both gaps to the sheet, because an inline declaration outranks
    any stylesheet rule: a `gap` shorthand would pin the column gap with it, and
    an inline `display` would stop the mobile block swapping the grid for the
-   flex column the sticky footer needs. The dashboard's shell still writes
-   `display` and `gap` inline, unchanged. Below 768px it stays one column and
+   flex column the sticky footer needs. The engine's three responsive wrappers —
+   the `layout` box around the two panels, the `calendar-panel` box around the
+   month and the caption, and the `time-panel` box around the chips — are
+   skipped on this surface for the same reason, and the sheet collapses them
+   with `display:contents` so the month, the caption, the chips and the footer
+   are placed by the shell's own grid and flex column. The dashboard's shell
+   still writes `display` and `gap` inline, and its wrappers keep the inline
+   columns they ship with — the month with the caption under it on the left and
+   the chips on the right — unchanged. Below 768px it stays one column and
    the two buttons stack full width with the primary on
    top, and the frame comes with them: stacked, there is no column gap to hand
    the inner edges to, so the month is framed on all four sides and the times

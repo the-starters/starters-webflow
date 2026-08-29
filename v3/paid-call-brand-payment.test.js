@@ -797,7 +797,7 @@ async function mountFooterFixture(options = {}) {
 }
 
 test('the calendar footer puts Back beside the confirm control', async () => {
-  const { shell, footer, back, confirm, status, backParts } = await mountFooterFixture()
+  const { document, shell, footer, back, confirm, status, backParts } = await mountFooterFixture()
   const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
     .find((node) => node.getAttribute('data-paid-calendar-element') === name)
   const layout = role('layout')
@@ -828,13 +828,24 @@ test('the calendar footer puts Back beside the confirm control', async () => {
     timePanel.children.map((child) => child.getAttribute('data-paid-calendar-element')),
     ['times'],
   )
-  assert.equal(layout.style.gridTemplateColumns, 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))')
-  assert.equal(layout.style.alignItems, 'start')
-  assert.equal(calendarPanel.style.alignContent, 'start')
-  assert.equal(timePanel.style.alignContent, 'start')
+  // The three responsive wrappers are built but left unstyled HERE, and the
+  // sheet collapses them, because this surface's arrangement is the sheet's: an
+  // inline grid on any of the boxes would nest it inside a second one no rule
+  // could outrank. The dashboard keeps the inline columns — see the off-surface
+  // test below.
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+  const css = document.head.children[0].textContent
+  assert.deepEqual(Object.keys(layout.style), [], 'the sheet owns the booking layout')
+  assert.deepEqual(Object.keys(calendarPanel.style), [], 'and the calendar panel')
+  assert.deepEqual(Object.keys(timePanel.style), [], 'and the time panel with it')
+  assert.ok(css.includes(
+    ROLE + '"layout"],' + ROLE + '"calendar-panel"],' + ROLE + '"time-panel"]{display:contents}',
+  ))
+  // Collapsed, the DOM nesting the dashboard needs costs this surface nothing:
+  // the month, the caption and the times are the shell's own grid items again
+  // and the sheet places each of them by role.
   assert.equal(month.parentElement, calendarPanel)
   assert.equal(timezone.parentElement, calendarPanel)
-  assert.equal(timezone.style.justifySelf, 'start')
   assert.equal(times.parentElement, timePanel)
   assert.equal(status.getAttribute('data-paid-calendar-element'), 'status')
 
@@ -906,7 +917,7 @@ test('the confirm starts disabled in look as well as behaviour', async () => {
 
 test('picking a slot turns the confirm black and live, and clearing it back', async () => {
   const { result, confirm, confirmParts, shell } = await mountFooterFixture()
-  const slot = shell.children
+  const slot = shell.querySelectorAll('[data-paid-calendar-element]')
     .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
     .children[0]
 
@@ -928,7 +939,7 @@ test('the slot chips rest on #eee and go back to it after a deselect', async () 
   // one that gets forgotten. Miss it and a select-then-deselect leaves one chip
   // a different grey from its neighbours.
   const { result, shell } = await mountFooterFixture()
-  const times = shell.children
+  const times = shell.querySelectorAll('[data-paid-calendar-element]')
     .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
   const chip = times.children[0]
 
@@ -947,7 +958,7 @@ test('the slot chips rest on #eee and go back to it after a deselect', async () 
   const host = new CalendarElement('div')
   reschedule.appendChild(host)
   const dashboard = await mountFooterFixture({ container: host })
-  const dashboardTimes = dashboard.shell.children
+  const dashboardTimes = dashboard.shell.querySelectorAll('[data-paid-calendar-element]')
     .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
   const dashboardChip = dashboardTimes.children[0]
   assert.equal(dashboardChip.style.background, '#f3f4ef', 'dashboard build')
@@ -1408,7 +1419,10 @@ test('an authored footer row is labelled as such and dodges the stacking rules',
   const { footer } = await mountFooterFixture({ container })
   assert.equal(footer.getAttribute('data-paid-calendar-footer'), 'authored')
   assert.equal(footer.getAttribute('class'), 'call-sched_button-group')
-  assert.deepEqual(Object.keys(footer.style), [])
+  // The shared action spacing is the only thing written on an authored row,
+  // and it is placement between the two controls rather than appearance.
+  assert.deepEqual(Object.keys(footer.style), ['columnGap'])
+  assert.equal(footer.style.columnGap, '16px')
 })
 
 test('the desktop footer is a full-width band under both columns', async () => {
@@ -1564,7 +1578,7 @@ test('a booking in flight takes the back control out of the pointer path', async
   const css = document.head.children[0].textContent
   assert.ok(css.includes('[data-paid-calendar-element="back"][data-paid-calendar-busy]{pointer-events:none}'))
 
-  const slot = footer.parentElement.children
+  const slot = footer.parentElement.querySelectorAll('[data-paid-calendar-element]')
     .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
     .children[0]
   slot.listeners.click()
@@ -1606,7 +1620,7 @@ test('a status message scrolls itself into view', async () => {
     container: mount,
     onConfirm: async () => { throw new Error('booking refused') },
   })
-  const slot = footer.parentElement.children
+  const slot = footer.parentElement.querySelectorAll('[data-paid-calendar-element]')
     .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
     .children[0]
   slot.listeners.click()
@@ -1721,7 +1735,7 @@ test('the timezone selector sits above the slots at both widths', async () => {
 
 test('the timezone control defers placement styles only on the booking surface', async () => {
   const onSurface = await mountFooterFixture()
-  const control = onSurface.shell.children
+  const control = onSurface.shell.querySelectorAll('[data-paid-calendar-element]')
     .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone-control')
   assert.ok(control)
   assert.deepEqual(Object.keys(control.style), [], 'the sheet owns its placement here')
@@ -1732,7 +1746,7 @@ test('the timezone control defers placement styles only on the booking surface',
   host.setAttribute('booking-reschedule-calendar', '')
   reschedule.appendChild(host)
   const away = await mountFooterFixture({ container: host })
-  const awayControl = away.shell.children
+  const awayControl = away.shell.querySelectorAll('[data-paid-calendar-element]')
     .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone-control')
   assert.ok(awayControl)
   assert.deepEqual(
@@ -1750,10 +1764,18 @@ test('the timezone selector cannot come back inside the scrolling list', async (
   // the scroll box and send it off the top on the first wheel.
   const { document, shell } = await mountFooterFixture()
   const css = document.head.children[0].textContent
-  const control = shell.children
-    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone-control')
+  const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === name)
+  const control = role('timezone-control')
   assert.ok(control, 'the engine renders the selector')
-  assert.equal(control.parentElement, shell, 'a sibling of the times, never a child')
+  // The DOM groups it under the month, which is what gives the dashboard its
+  // left column. That wrapper is collapsed with `display:contents` here, so
+  // what the sheet places is a shell grid item beside the times.
+  assert.equal(control.parentElement, role('calendar-panel'))
+  assert.ok(
+    !role('times').querySelectorAll('[data-paid-calendar-element]').includes(control),
+    'a sibling of the times, never a child',
+  )
   for (const rule of css.split('}')) {
     if (!rule.includes('"timezone-control"]')) continue
     assert.ok(!/grid-area:times\b/.test(rule), rule)
@@ -1848,7 +1870,7 @@ test('each status message is tagged with the tone that colours it', async () => 
   const failing = await mountFooterFixture({
     onConfirm: async () => { throw new Error('booking refused') },
   })
-  const times = failing.shell.children
+  const times = failing.shell.querySelectorAll('[data-paid-calendar-element]')
     .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
 
   assert.equal(failing.status.textContent, '')
@@ -1872,7 +1894,7 @@ test('each status message is tagged with the tone that colours it', async () => 
   const pending = await mountFooterFixture({
     onConfirm: () => new Promise((resolve) => { release = resolve }),
   })
-  const pendingTimes = pending.shell.children
+  const pendingTimes = pending.shell.querySelectorAll('[data-paid-calendar-element]')
     .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
   pendingTimes.children[0].listeners.click()
   const inFlight = pending.confirmParts.button.listeners.click()
