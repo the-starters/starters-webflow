@@ -81,12 +81,20 @@ never become a selectable service. Names are trimmed, empty values dropped, and
 duplicates removed case-insensitively. Generic `Service 1`, `Service 2`, and
 `Service 3` values are dropped from every response shape.
 
+The authored `Monthly retainer` option is a separate canonical gate. The same
+profile response must contain `retainer_enabled: true` and a positive numeric
+`retainer_rate`; the canonical `Retainer_Enabled` and `Retainer_Rate` spellings
+are also accepted. The controller removes `Monthly retainer` when either value
+is missing, disabled, zero, or invalid. A service named `Monthly retainer`
+cannot bypass this gate.
+
 The `freelancers_v3.Services` field is live in production and the profile
 endpoint projects it into the response. A read-only production reconciliation
 on 2026-08-24 found 677 profiles with non-empty canonical service arrays. The
 three production test profiles used for this workflow currently have empty
 arrays. For an empty array, the controller removes the generic service
-placeholders and keeps every valid authored option.
+placeholders, applies the Retainer gate, and keeps every other valid authored
+option.
 
 ### Profile request paths
 
@@ -105,16 +113,18 @@ script owns `window.getXanoAuthToken`, and `/starter-dashboard` is inside its
 install boundary; the authoritative host and path list lives in
 [Scheduling auth](README.md#scheduling-auth). Without the bridge the fallback
 issues no request at all and no error is surfaced. The modal still removes the
-generic service placeholders and keeps every valid authored option. Keep the
+generic service placeholders, removes `Monthly retainer`, and keeps every other
+valid authored option. Keep the
 loader in the Script order block below when installing or auditing this page.
 
 The fallback issues no request when the bridge or `window.fetch` is missing, and
 rejects before issuing one when the bridge resolves a blank token, so it never
 sends `Bearer undefined`. A non-ok response — including one whose body is not
-JSON — also rejects. The profile load swallows every rejection. Valid authored
-service options remain, while `Service 1`, `Service 2`, and `Service 3` never
-return. The token is only ever passed to the `Authorization` header; it is never
-rendered, logged, or submitted.
+JSON — also rejects. The profile load swallows every rejection. The controller
+removes `Monthly retainer` and the generic `Service 1`, `Service 2`, and
+`Service 3` options, while every other valid authored option remains. The token
+is only ever passed to the `Authorization` header; it is never rendered, logged,
+or submitted.
 
 ## Shared Designer contract
 
@@ -147,8 +157,10 @@ The controller binds these existing elements:
   `[data-project-field="service"]` and a lowercase `services` name). Webflow
   authors every option, including **Freelance work**, **Monthly retainer**, and
   the generic **Service 1**, **Service 2**, and **Service 3** placeholders. The
-  controller always drops only the generic `Service 1/2/3` slots. It keeps every
-  other authored option and its order. When canonical services are present, it
+  controller always drops the generic `Service 1/2/3` slots. It also drops
+  **Monthly retainer** unless the authenticated profile enables Retainer and
+  supplies a positive rate. It keeps every other authored option and its order.
+  When canonical services are present, it
   appends each name as both the submitted option value and its visible label. It
   rewrites option data only; it does not replace the select or the form
   structure;
@@ -170,9 +182,11 @@ disable the select and show **No eligible Brands yet**.
 Each modal open refreshes the Starter profile and the service names alongside
 the Brand options. The controller never restores the generic `Service 1/2/3`
 slots after an empty service list, a failed profile request, or a member scope
-change. It keeps every valid authored option. A selection that survives the
-refresh is kept; one whose option no longer exists is cleared to the empty
-value. Service loading is independent of the Brand identity rail: the
+change. It also fails closed by removing `Monthly retainer` until a successful
+profile response proves the enabled flag and positive rate. It keeps every
+other valid authored option. A selection that survives the refresh is kept;
+one whose option no longer exists is cleared to the empty value. Service
+loading is independent of the Brand identity rail: the
 controller still clears the copied Starter photo, role, role list, and profile
 information rather than repainting them from the profile response.
 
@@ -225,7 +239,7 @@ the Starter adapter:
 [Profile request paths](#profile-request-paths). Omit it and any session with a
 cached `opportunities-3.0.js` lacking `Opp30.API.starterProfile` cannot load
 canonical services. The controller still removes the generic placeholders and
-keeps every valid authored option.
+`Monthly retainer`, and keeps every other valid authored option.
 
 Do not add the last loader until both V3 endpoints exist and pass backend tests.
 After release, install it on the Starter Dashboard so the existing Navbar action

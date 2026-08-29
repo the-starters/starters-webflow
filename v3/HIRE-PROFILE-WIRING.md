@@ -79,7 +79,8 @@ remain deferred (`paid-call-brand-payment.js`,
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state · anonymous: closed · brand: accepted canonical configuration plus successful controller install | this file / authenticated Xano, Nylas, and Stripe |
 | Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
 | Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, and Talent or owner cards stay inert | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
-| Freelance / Retainer rate cards | everyone | this file / Algolia record, cloned from the section's Default card |
+| Freelance rate card | everyone | this file / Algolia record, cloned from the section's Default card |
+| Retainer rate card | everyone | authored `starter-retainer` wf-xano wrapper / canonical Xano endpoint `profile/starter/retainer/v3`; the Algolia-derived runtime clone remains only as the unresolved/error fallback |
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
 | Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all |
@@ -117,9 +118,10 @@ missing and stands down if the namespace still cannot load.
   selector so a placeholder link cannot abort the remaining page utilities
 - `window.WfAlgolia` — the search client, awaited with a 30s deadline
 - `window.WfXano` — the late-safe callback queue used to reach the
-  `starter-services` instance and consume its current or future canonical
-  Service-card result; a missing instance leaves the existing CMS cards
-  unchanged
+  `starter-services` and `starter-retainer` instances and consume their current
+  or future canonical results. A missing Services instance leaves the existing
+  CMS cards unchanged. A missing Retainer instance leaves the runtime fallback
+  in place
 - `window.__startersEmptyNavRefresh` — optional, debounced refresh hook from
   `utils/section-custom-toc/hide-empty-sections.js`. After canonical discovery
   changes a call projection or the rate-card path renders, this file asks the
@@ -344,14 +346,11 @@ singular: `project-form.js` routes a category normalizing to `service` straight
 to the form's native `Services` field, and that native priority is what stops a
 stale tagged helper from taking the preset. `Services` would normalize to
 `services`, miss the route, and fall through to the tagged-helper lookup. The
-two rate cards map to different options. Freelance takes `Freelance work`.
-Retainer prefers its own
-`Monthly retainer` option and falls back to `Freelance work` when that option
-is absent, since `Monthly retainer` is gated in the Designer by
-`element-visibility="Retainer Enabled"` and an approximate service beats no
-contract at all. A missing or unmatched option fails closed. Logged-out cards
-keep the signup-attribution modal, and Talent or unknown roles do not get the
-Brand project trigger.
+two rate formats map to different options. Freelance takes `Freelance work`.
+Retainer requires the exact authored `Monthly retainer` option. A missing or
+unmatched option fails closed; Retainer never falls back to `Freelance work`.
+Logged-out cards keep the signup-attribution modal, and Talent or unknown roles
+do not get the Brand project trigger.
 
 The `starter-services` wf-xano wrapper is a side-by-side canary for canonical
 `freelancers_v3.Services`. Webflow owns one native Service Card template and
@@ -374,9 +373,27 @@ may add a missing exact option tagged
 with that same adapter-owned tag. It never changes or removes authored options,
 and repeated results do not create duplicates. Talent, the profile owner, and
 unknown roles stay inert. The authored wf-xano template, existing CMS cards,
-Free Call, Paid Call, Freelance, and Retainer behavior remain unchanged.
+Free Call, Paid Call, and Freelance behavior remain unchanged.
 CMS services stay visible until a separate cutover decision follows role-matched
 browser parity proof.
+
+The separate `starter-retainer` wf-xano wrapper owns the canonical Retainer
+card. Its public source is `KZf7nFnk:profile/starter/retainer/v3` (endpoint
+`#5899`), which returns one item only when canonical `Retainer_Enabled` is true
+and `Retainer_Rate` is positive. The published wrapper initially points at the
+shared taxonomy source. `hire-profile.js` upgrades only that named instance
+through wf-xano's public `destroy`/`init` API; it does not change endpoint
+`#5860` or its unrelated draft. Webflow owns the native wrapper and card
+template. The adapter only repaints the rendered title and description and
+adds the existing signup or exact project-service attributes.
+
+The Algolia-derived runtime Retainer clone remains visible while the canonical
+request is pending or when it errors. The first resolved canonical result
+removes that fallback, including when the result is empty, so a disabled or
+unpriced canonical profile cannot leave a stale Retainer card or create a
+duplicate. Logged-out clicks open `signup-modal` with Retainer attribution.
+Eligible signed-in Brands open `generate-contract` with `Monthly retainer`
+selected. Talent, the profile owner, and unknown roles stay inert.
 
 ## Rate surfaces are repainted from the canonical source
 
@@ -527,10 +544,11 @@ authored row on the failure half of that pair only; the empty answer is
 written for them too.) Each hook carries `data-next-slot-state="painted" |
 "empty" | "error"` so QA can tell the three apart without reading the copy.
 
-The rate cards also get their chip label from this file, and the two cards
-label differently. Freelance prices a unit, so it renders `/hour` under the
-amount. Retainer quotes a starting price, so it renders `from` above the
-amount, as a from-price rather than a unit. Both use the same element, a
+The runtime fallback rate cards also get their chip label from this file, and
+the two formats label differently. Freelance prices a unit, so it renders
+`/hour` under the amount. The fallback Retainer quotes a starting price, so it
+renders `from` above the amount, as a from-price rather than a unit. Both use
+the same element, a
 `<p class="service-card_price-unit text-size-small line-height-100">` placed
 inside the price chip layout so it stacks centred with the amount and
 inherits the white chip text. Only the side differs, and the side carries the
