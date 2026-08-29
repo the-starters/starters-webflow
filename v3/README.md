@@ -3365,15 +3365,14 @@ flowchart TD
 1. Read the next 14 days through authenticated
    `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
    the provider credential and private Scheduler session off the browser.
-2. Render the month calendar, the time buttons and the footer row inside the
-   authored `[nylas-container]` mount. Times use the visitor's auto-detected
-   timezone; there is no timezone picker. A muted note below the time grid
-   identifies that clock: `Times shown in <zone> (<offset>)`. Its offset uses
-   the first slot's start so it is correct for daylight saving time on the
-   dates shown. An empty calendar omits the note. The selected slot is advisory
-   only.
+2. Render the month calendar, timezone dropdown, time buttons and footer row
+   inside the authored `[nylas-container]` mount. In a wide mount, the month
+   calendar is the left column and the timezone dropdown sits above the time
+   buttons in the right column. The two columns automatically stack into that
+   same order when the mount is narrow. The footer remains below the responsive
+   layout. The selected slot is advisory only.
 
-   The calendar timezone dropdown defaults to the visitor's browser timezone.
+   The timezone dropdown defaults to the visitor's browser timezone.
    Changing it clears the selected slot, regroups slots by local date and
    reformats every time. The booking command sends the selected IANA timezone
    with the unchanged slot timestamps.

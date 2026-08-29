@@ -789,10 +789,10 @@
       : null
 
     /* No back control means no row to put it in, and the confirm button goes
-       straight into the grid shell exactly as it always did. That keeps the
-       dashboard's reschedule calendar — which cannot author classes and has no
-       back — byte-for-byte what it was: a footer would have turned its confirm
-       from a full-width grid item into a shrink-to-fit flex child. */
+       straight into the grid shell. That preserves the dashboard reschedule
+       calendar's full-width confirm control: it cannot author classes and has
+       no back, while a footer would turn its confirm from a full-width grid
+       item into a shrink-to-fit flex child. */
     let footer = null
     let footerIsAuthored = false
     if (back) {
