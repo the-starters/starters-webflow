@@ -12,8 +12,6 @@
   if (!globalObject || globalObject.__tsMembershipCheckoutAuthority) return
   globalObject.__tsMembershipCheckoutAuthority = true
 
-  var AUTH_URL =
-    'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh/auth/trade-token/v3'
   var REGISTER_URL =
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/membership/checkout-intent/v3'
   var PRICE_ATTRIBUTE = 'data-ms-price:add'
@@ -108,30 +106,15 @@
     throw new Error('Memberstack session is unavailable')
   }
 
-  async function xanoToken() {
+  async function memberstackToken() {
     var memberstack = await waitForMemberstack()
-    var memberstackToken = await memberstack.getMemberCookie()
-    if (!memberstackToken) throw new Error('Sign in before you choose a plan')
-
-    var response = await globalObject.fetch(AUTH_URL, {
-      method: 'POST',
-      credentials: 'omit',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: memberstackToken }),
-    })
-    var payload = await response.json().catch(function () {
-      return null
-    })
-    var token =
-      typeof payload === 'string'
-        ? payload
-        : payload && (payload.authToken || payload.token)
-    if (!response.ok || !token) throw new Error('V3 session exchange failed')
+    var token = await memberstack.getMemberCookie()
+    if (!token) throw new Error('Sign in before you choose a plan')
     return token
   }
 
   async function registerIntent(route, priceId, eventId) {
-    var token = await xanoToken()
+    var token = await memberstackToken()
     var response = await globalObject.fetch(REGISTER_URL, {
       method: 'POST',
       credentials: 'omit',
