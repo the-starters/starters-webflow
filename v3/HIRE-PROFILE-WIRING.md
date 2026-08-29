@@ -359,9 +359,12 @@ just padded: the engine appends it after the times, so document order alone
 renders it below the chips. Every selector in that sheet is scoped under
 `[data-modal-target="popup-booking"]` and none uses `!important`; the contract
 form's datepickers and the dashboard's reschedule calendar share these class
-names and must stay pixel-identical. The footer's mobile stacking rules key on
-`data-paid-calendar-footer="fallback"`, written only on the engine's own row, so
-an authored `data-booking-footer-class` row still places its own children.
+names and must stay pixel-identical. Every rule that PAINTS the footer — the hairline, the padding, the fill, the
+sticky, the alignment — keys on `data-paid-calendar-footer="fallback"`, written
+only on the engine's own row, so an authored `data-booking-footer-class` row
+still places its own children and paints itself. Only placement (`grid-area`,
+`order`) reaches every footer, and a test walks the emitted CSS to keep that
+split honest.
 
 Below 768px the footer is `position:sticky; bottom:0` with an opaque white
 fill, the desktop band's `1px #eee` hairline and a `1.25rem` frame on all four

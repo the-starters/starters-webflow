@@ -3403,9 +3403,12 @@ flowchart TD
    meaning everywhere: authored, it is applied to the footer row verbatim and
    the engine places nothing; unauthored, the row is a full-width flex row and
    the two wraps share it equally, which is also what lets the confirm fill the
-   whole row on a direct entry where the back control is hidden. Every footer
-   row is given a 16px column gap between Back and the request button; the
-   fallback row's own 12px flex gap supersedes it on that row.
+   whole row on a direct entry where the back control is hidden. The injected
+   sheet keeps that promise: placement rules reach every footer, but everything
+   that paints one keys on the engine's own row and cannot reach an authored
+   one. Every footer row is also given a 16px column gap between Back and the
+   request button; the fallback row's own 12px flex gap supersedes it on that
+   row.
 
    The shared engine also renders a caption naming the clock the times are
    shown in. It arrives with no placement of its own, so this sheet gives it

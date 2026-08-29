@@ -129,17 +129,22 @@ class CalendarElement {
   addEventListener(name, listener) { this.listeners[name] = listener }
 
   /**
-   * Enough of `closest` for the footer's class contract: a tag name, a bare
-   * `[attribute]`, or `[attribute="value"]`. The contract walks from the mount
-   * container out to the dialog, so the stub has to model ancestry as well as
-   * descent.
+   * Enough of `closest` for the contracts this engine walks: a tag name, a
+   * bare `[attribute]`, an `[attribute="value"]`, or a `.class`. The contract
+   * walks from the mount container out to the dialog, so the stub has to model
+   * ancestry as well as descent.
    */
   closest(selector) {
-    const attribute = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(String(selector).trim())
+    const target = String(selector).trim()
+    const attribute = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(target)
+    const className = /^\.([\w-]+)$/.exec(target)
     for (let node = this; node; node = node.parentElement) {
       if (attribute) {
         const value = node.getAttribute(attribute[1])
         if (value !== null && (attribute[2] === undefined || value === attribute[2])) return node
+      } else if (className) {
+        const classes = String(node.getAttribute('class') || '').split(/\s+/)
+        if (classes.includes(className[1])) return node
       } else if (node.tagName === selector) {
         return node
       }
@@ -1064,7 +1069,7 @@ test('the shell declares no row gap, at either width', async () => {
   const css = document.head.children[0].textContent
   const beforeMedia = css.split('@media')[0]
   assert.ok(!beforeMedia.includes('row-gap'), 'no unconditional row gap')
-  const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
   assert.ok(!mobileBlock.includes('row-gap'), 'and none added back for mobile')
   // Desktop still says zero out loud. It is the initial value now, but it is
   // the declaration that documents the footer band as the only separator.
@@ -1177,14 +1182,15 @@ test('the footer row is right-aligned on desktop and stacked on mobile', async (
   const css = document.head.children[0].textContent
   const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
 
-  assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+  assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer}'))
+  assert.ok(css.includes('[data-paid-calendar-footer="fallback"]{border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
   // Nothing inline can fight it.
   assert.deepEqual(Object.keys(back.style), [])
   assert.deepEqual(Object.keys(confirm.style), [])
   assert.equal(footer.style.justifyContent, undefined)
 
   // Mobile still stacks full width, primary first.
-  const mobile = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+  const mobile = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
   assert.ok(mobile.includes('{flex-direction:column;align-items:stretch}'))
   assert.ok(mobile.includes('{order:-1}'))
 
@@ -1310,11 +1316,12 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
   // and the mount would be paying for spacing it no longer owns.
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
-  const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
-  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
+  assert.ok(mobileBlock.includes('"footer"]{order:4}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-footer="fallback"]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
-  assert.ok(desktopBlock.includes('"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem'))
+  assert.ok(desktopBlock.includes('[data-paid-calendar-footer="fallback"]{border-top:1px solid #eee;padding:1.25rem'))
 
   // No mount PADDING anywhere. The mount does carry rules — the banner's
   // min-height and the empty state's column — so this asks about the
@@ -1332,20 +1339,23 @@ test('the interior frame is the only inset at mobile too', async () => {
   // the top.
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
-  const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
 
   assert.ok(mobileBlock.includes('"month"]{order:1;padding:1.25rem}'))
   assert.ok(mobileBlock.includes('"times"]{order:3;padding:0 1.25rem 1.25rem}'))
   // The floating footer is framed on all four sides, not three: its top edge
-  // is where the chips pass behind it, so nothing above can space it.
-  assert.match(mobileBlock, /"footer"\]\{[^}]*padding:1\.25rem\}/)
-  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+  // is where the chips pass behind it, so nothing above can space it. It is a
+  // fallback-row rule, because padding is appearance and an authored row
+  // paints itself.
+  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*padding:1\.25rem\}/)
+  assert.ok(mobileBlock.includes('"footer"]{order:4}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-footer="fallback"]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
 
   // The stacked footer carries the same hairline as the desktop band. It was
   // deliberately absent while the footer sat in flow — a row gap AND a rule
   // read as two dividers — and Jerico added it once the footer began to float,
   // where the edge is what separates it from the chips passing behind.
-  assert.match(mobileBlock, /"footer"\]\{[^}]*border-top:1px solid #eee/)
+  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*border-top:1px solid #eee/)
 
   // Desktop is untouched by all of this — the two blocks cannot both match.
   const desktopBlock = css.split('@media (min-width:768px){')[1]
@@ -1357,13 +1367,10 @@ test('the footer stacks primary-first below the site mobile breakpoint', async (
   const css = document.head.children[0].textContent
   const ROW = '[data-modal-target="popup-booking"] [data-paid-calendar-footer="fallback"]'
 
-  assert.ok(css.includes('@media (max-width:767px){'))
+  assert.ok(css.includes('@media (max-width:767.98px){'))
   assert.ok(css.includes(ROW + '{flex-direction:column;align-items:stretch}'))
   // Primary on top, matching the profile's own vertical CTA rail.
   assert.ok(css.includes(ROW + ' [data-paid-calendar-element="confirm"]{order:-1}'))
-  // The row's placement styles size the wraps along the main axis, which is
-  // vertical here, so they have to be released or each button collapses.
-  assert.ok(css.includes('{flex:0 0 auto}'))
 
   // Every stacking rule that reaches a footer keys on the engine's own row,
   // never on an authored one — an authored footer places its own children by
@@ -1435,7 +1442,7 @@ test('the desktop footer is a full-width band under both columns', async () => {
   // Zero row gap: the band's hairline and its own padding do the separating.
   // A gap AND a rule would read as two dividers.
   assert.match(css, /"shell"\]\{column-gap:2rem;row-gap:0;/)
-  assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+  assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer}'))
 })
 
 test('the authored step stops padding the calendar at every width', async () => {
@@ -1450,13 +1457,150 @@ test('the authored step stops padding the calendar at every width', async () => 
   const D = '[data-modal-target="popup-booking"]'
 
   // Unconditional, so neither breakpoint can be left with a doubled inset.
-  assert.ok(css.split('@media')[0].includes(D + ' .call-details_layout{padding:0;overflow:visible}'))
-  assert.ok(!css.split('@media (min-width:768px){')[1].includes('.call-details_layout'))
+  assert.ok(css.split('@media')[0].includes(D + ' [data-paid-calendar-step]{padding:0;overflow:visible}'))
+  assert.ok(!css.split('@media (min-width:768px){')[1].includes('data-paid-calendar-step'))
+  // NEVER on the bare class. The dialog has four `.call-details_layout`
+  // wrappers — calendar, success, confirmed, payment-methods — and a rule on
+  // the class stripped the authored padding from all of them.
+  assert.ok(!/\.call-details_layout/.test(css), 'the class must not be styled')
 
   // Specificity rather than `!important`, which this sheet forbids: the site's
   // own declarations are flat `.call-details_layout` class selectors at
   // (0,1,0), and the dialog attribute makes this (0,2,0).
   assert.ok(!/\.call-details_layout[^}]*!important/.test(css))
+})
+
+test('only the calendar\'s own step wrapper loses its padding', async () => {
+  // The booking dialog has FOUR `.call-details_layout` wrappers — the calendar
+  // step, success, confirmed and payment-methods. A rule on the bare class
+  // stripped the authored padding from every one of them, which is how the
+  // success step ended up flush against the modal's edges. The engine marks
+  // the one ancestor it actually mounts into.
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking')
+  const calendarStep = new CalendarElement('div')
+  calendarStep.setAttribute('class', 'call-details_layout height-auto')
+  const otherStep = new CalendarElement('div')
+  otherStep.setAttribute('class', 'call-details_layout height-auto')
+  const mount = new CalendarElement('div')
+  mount.setAttribute('nylas-container', '')
+  calendarStep.appendChild(mount)
+  dialog.appendChild(calendarStep)
+  dialog.appendChild(otherStep)
+
+  await mountFooterFixture({ container: mount })
+  assert.equal(calendarStep.getAttribute('data-paid-calendar-step'), '', 'the calendar step is marked')
+  assert.equal(otherStep.getAttribute('data-paid-calendar-step'), null, 'the other steps are not')
+})
+
+test('the step wrapper is marked only on the booking surface', async () => {
+  // Off it there is no sheet to read the marker, and that surface has to stay
+  // as it shipped.
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const step = new CalendarElement('div')
+  step.setAttribute('class', 'call-details_layout')
+  const host = new CalendarElement('div')
+  host.setAttribute('booking-reschedule-calendar', '')
+  step.appendChild(host)
+  reschedule.appendChild(step)
+  await mountFooterFixture({ container: host })
+  assert.equal(step.getAttribute('data-paid-calendar-step'), null)
+})
+
+test('an authored footer row gets placement from the sheet and nothing else', async () => {
+  // The documented contract: an authored `data-booking-footer-class` row
+  // places its own children and paints itself. Appearance rules on the role
+  // selector reached authored rows at winning specificity and broke that.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const PLACEMENT = /^(grid-area|order)$/
+
+  for (const chunk of css.split('}')) {
+    const [selector, body] = chunk.split('{')
+    if (!selector || !body) continue
+    if (!/\[data-paid-calendar-element="footer"\]\s*$/.test(selector.trim())) continue
+    for (const declaration of body.split(';')) {
+      if (!declaration.trim()) continue
+      const property = declaration.split(':')[0].trim()
+      assert.ok(
+        PLACEMENT.test(property),
+        `an authored row would inherit this: ${selector.trim()}{${declaration.trim()}}`,
+      )
+    }
+  }
+
+  // And the appearance really is still applied, to the engine's own row.
+  assert.match(css, /\[data-paid-calendar-footer="fallback"\]\{[^}]*border-top/)
+  assert.match(css, /\[data-paid-calendar-footer="fallback"\]\{[^}]*position:sticky/)
+})
+
+test('a booking in flight takes the back control out of the pointer path', async () => {
+  // Disabling the inner button is not enough. The WRAP carries
+  // `data-modal-close`, and the modal embed resolves it with `closest()` from
+  // the click target, so the border around a disabled button still closed the
+  // dialog with the request open — losing the surface the confirmation was
+  // about to land on.
+  let release
+  const { document, backParts, back, confirmParts, footer } = await mountFooterFixture({
+    onConfirm: () => new Promise((resolve) => { release = resolve }),
+  })
+  const css = document.head.children[0].textContent
+  assert.ok(css.includes('[data-paid-calendar-element="back"][data-paid-calendar-busy]{pointer-events:none}'))
+
+  const slot = footer.parentElement.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+    .children[0]
+  slot.listeners.click()
+  assert.equal(back.getAttribute('data-paid-calendar-busy'), null)
+
+  const pending = confirmParts.button.listeners.click()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(back.getAttribute('data-paid-calendar-busy'), '', 'the wrap stops taking clicks')
+  assert.equal(backParts.button.disabled, true)
+  // The theme swaps too, so it READS disabled rather than just refusing.
+  assert.equal(back.getAttribute('data-button-theme'), 'disabled')
+
+  release()
+  await pending
+  assert.equal(back.getAttribute('data-paid-calendar-busy'), null, 'and it comes back')
+  assert.equal(backParts.button.disabled, false)
+  assert.equal(back.getAttribute('data-button-theme'), 'black')
+})
+
+test('a status message scrolls itself into view', async () => {
+  // The banner is absolute against the modal's body, which is also what
+  // scrolls on a phone — so it paints at the top of the CONTENT, not the top
+  // of what the visitor can see. Measured from the bottom of a busy day's
+  // scroll: a failure message rendered 487px above the viewport and nothing
+  // changed on screen.
+  const scrollport = new CalendarElement('div')
+  scrollport.scrollHeight = 1245
+  scrollport.clientHeight = 726
+  scrollport.scrollTop = 519
+
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking')
+  const mount = new CalendarElement('div')
+  mount.setAttribute('nylas-container', '')
+  scrollport.appendChild(mount)
+  dialog.appendChild(scrollport)
+
+  const { confirmParts, footer } = await mountFooterFixture({
+    container: mount,
+    onConfirm: async () => { throw new Error('booking refused') },
+  })
+  const slot = footer.parentElement.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+    .children[0]
+  slot.listeners.click()
+  assert.equal(
+    scrollport.scrollTop, 519,
+    'clearing the status must NOT scroll — that would yank a visitor browsing slots',
+  )
+
+  await confirmParts.button.listeners.click()
+  assert.equal(scrollport.scrollTop, 0, 'a failure brings its banner into view')
 })
 
 test('the stacked footer floats, and only because the shell is a flex column', async () => {
@@ -1468,9 +1612,10 @@ test('the stacked footer floats, and only because the shell is a flex column', a
   // a guessed offset.
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
-  const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
 
-  assert.ok(mobileBlock.includes('"footer"]{order:4;position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('"footer"]{order:4}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-footer="fallback"]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
 
   /* The flex column is load-bearing, not a refactor. A GRID item's containing
      block is its own grid area, so a footer on the last row has zero room to
@@ -1478,18 +1623,18 @@ test('the stacked footer floats, and only because the shell is a flex column', a
      is the whole shell. Measured at 400 on a busy day: 1245px of shell inside
      a 726px scrollport, so a grid would have thrown away 519px of travel.
      Do not "simplify" this back to grid rows. */
-  assert.ok(mobileBlock.includes('"shell"]{flex-direction:column}'))
+  assert.ok(mobileBlock.includes('"shell"]{display:flex;flex-direction:column}'))
   assert.ok(!mobileBlock.includes('grid-template-areas'), 'a grid here kills the sticky')
   assert.ok(!/"footer"\]\{[^}]*grid-area/.test(mobileBlock))
 
   // An opaque fill, because chips scroll underneath and would otherwise show
   // through the gap between the two buttons.
-  assert.match(mobileBlock, /"footer"\]\{[^}]*background:#fff/)
+  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*background:#fff/)
 
   // The hairline the desktop band carries, which Jerico asked for on the
   // stacked footer too once he had seen it float — a floating surface wants an
   // edge. It stays px, like every other border in this sheet.
-  assert.match(mobileBlock, /"footer"\]\{[^}]*border-top:1px solid #eee/)
+  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*border-top:1px solid #eee/)
 
   // Desktop keeps the grid and the always-visible band: nothing sticks there,
   // because the times scroll inside their own cell instead.
@@ -1517,12 +1662,12 @@ test('the timezone caption sits above the slots at both widths', async () => {
 
   // Mobile: already between the calendar and the chips in DOM order, so only
   // the frame is needed — and it must be the frame, not a bleed.
-  const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
   assert.ok(mobileBlock.includes(ROLE + '"timezone"]{order:2;padding:0 1.25rem 1rem}'))
   // Stacked it has to be MOVED, not just padded: the engine appends it AFTER
   // the times, so document order alone renders it below the chips (measured
   // at 400px: the note at y 670 against a list ending at exactly 670).
-  assert.ok(mobileBlock.includes('"shell"]{flex-direction:column}'))
+  assert.ok(mobileBlock.includes('"shell"]{display:flex;flex-direction:column}'))
 
   // The SIZE is this sheet's now — Jerico's round-8 call, and the one thing it
   // takes over from the engine's inline styles. Width-independent, so it sits
@@ -1748,7 +1893,13 @@ test('the empty state holds itself open under the banner', async () => {
   const css = document.head.children[0].textContent
   const D = '[data-modal-target="popup-booking"]'
 
-  assert.ok(css.includes(D + ' [nylas-container]{min-height:28.125rem}'))
+  assert.ok(css.includes(
+    D + ' [nylas-container][data-paid-calendar-state="ready"],'
+      + D + ' [nylas-container][data-paid-calendar-state="empty"]{min-height:28.125rem}',
+  ))
+  // NOT unconditional: `loading` and `error` render one line of text with no
+  // shell and no footer, and inherited a 450px void underneath it.
+  assert.ok(!/\[nylas-container\]\{min-height/.test(css))
   assert.ok(css.includes(
     D + ' [nylas-container][data-paid-calendar-state="empty"]'
       + '{display:flex;flex-direction:column;justify-content:flex-end}',

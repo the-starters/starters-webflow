@@ -1,7 +1,7 @@
 /**
  * V3 paid-call Brand payment client.
  *
- * @release v1.59.440
+ * @release v1.59.443
  *
  * Xano derives the Brand and payment environment from the authenticated
  * session. A selection attempt owns one bounded idempotency key: retries reuse
@@ -527,7 +527,12 @@
 
      `data-booking-footer-class` keeps its full meaning on every surface. When it
      is authored the row's class is applied verbatim and the engine places
-     nothing; when it is not, the engine's own fallback row is used.
+     nothing; when it is not, the engine's own fallback row is used. The
+     injected sheet honours that split: PLACEMENT rules (`grid-area`, `order`)
+     key on the role attribute and reach every footer, while everything that
+     paints one — the hairline, the padding, the fill, the sticky, the
+     alignment — keys on `data-paid-calendar-footer="fallback"` and cannot
+     reach an authored row.
 
      OFF the booking surface — the dashboard's reschedule calendar mounts this
      same engine — nothing changed at all: no footer, no back control, and a
@@ -774,6 +779,13 @@
          It has to outrank the base rule above, and `:empty` gives it the extra
          specificity to do that without `!important`. */
       role + '"status"]:empty{display:none}',
+      /* The back control while a booking is in flight. Disabling the inner
+         button is not enough on its own: the wrap carries `data-modal-close`,
+         and the modal embed resolves it with `closest()` from whatever was
+         clicked — so the 1px of wrap around the disabled button still closed
+         the dialog with the POST open, losing the surface the confirmation was
+         about to land on. The engine stamps this while it waits. */
+      role + '"back"][data-paid-calendar-busy]{pointer-events:none}',
       /* Width-independent, so it sits outside both media queries; the two
          placement rules below carry only what differs by breakpoint. */
       role + '"timezone"]{font-size:' + TIMEZONE_FONT_SIZE + '}',
@@ -784,7 +796,14 @@
       /* Jerico's inline min-height, moved to the sheet. See CALENDAR_MIN_HEIGHT
          — with the banner out of flow, the empty-availability panel has only a
          button left in it to set its height. */
-      dialog + ' [nylas-container]{min-height:' + CALENDAR_MIN_HEIGHT + '}',
+      /* Only the two states that actually lay a calendar out. It used to be
+         unconditional, and the `loading` and `error` states — a single line of
+         text, with no shell and no footer — inherited a 450px void under one
+         sentence. The free-call controller mounts into this same container and
+         stamps the same states, so it inherited the void too. */
+      dialog + ' [nylas-container][data-paid-calendar-state="ready"],'
+        + dialog + ' [nylas-container][data-paid-calendar-state="empty"]'
+        + '{min-height:' + CALENDAR_MIN_HEIGHT + '}',
       /* And the other half of that: something has to fill the height the
          min-height opens up. On the empty path the mount's only in-flow child
          is the footer, and left at the top it sits UNDER the banner. Pushed to
@@ -821,8 +840,15 @@
          Releasing it hands the job to `.modal_content-layout`, the modal's
          body and the only box here that really scrolls. Inert everywhere else:
          nothing overflows this wrapper at either width, on desktop because the
-         times scroll inside their own cell. */
-      dialog + ' .call-details_layout{padding:0;overflow:visible}',
+         times scroll inside their own cell.
+
+         KEYED ON THE STEP THE CALENDAR MOUNTS INTO, never on the class. The
+         dialog has FOUR `.call-details_layout` wrappers — the calendar step,
+         the success step, the confirmed step and payment-methods — and a rule
+         on the bare class stripped the authored padding from all of them,
+         which is how the success step ended up flush against the modal's
+         edges. The engine stamps the one ancestor it actually mounts into. */
+      dialog + ' [data-paid-calendar-step]{padding:0;overflow:visible}',
 
       /* No row gap rule here any more. It used to be `row-gap:16px`, and by the
          time round 4 gave every stacked element its own frame padding the only
@@ -839,7 +865,7 @@
          either way. */
 
       // ---- below the site's mobile breakpoint ----
-      '@media (max-width:767px){',
+      '@media (max-width:767.98px){',
       /* The interior frame, mapped onto the single stacked column. Jerico
          specced these values as inline edits at 400px: the month framed on all
          four sides, and the times repeating the horizontal frame while opening
@@ -857,31 +883,24 @@
          state off the modal's bottom edge on a phone; an earlier round put
          that on the MOUNT, which now would double against this. The footer's
          own rule sits further down, with the sticky. */
-      /* Stacked, the caption has to be MOVED, not just padded. The shared
-         engine appends it after the times (`month, times, timezone, footer`),
-         so left to document order it renders BELOW the chips — measured at
-         400px before this rule: the note at y 670 against a times list ending
-         at exactly 670. Naming the rows puts it back above them, which is
-         where Jerico placed it at both widths.
+      /* A FLEX column, and it really is emitted here — an earlier round wrote
+         only `flex-direction` and left the base `display:grid` standing, so
+         the comments and tests described a column the sheet never produced.
 
-         An empty row costs nothing: if the engine resolves no timezone there
-         is no element, and an empty track sizes to zero rather than reserving
-         a gap. */
-      /* A FLEX column, not the grid the desktop block uses, and the whole
-         reason is the sticky footer below.
+         The choice is deliberate rather than cosmetic. The footer below is
+         sticky, and a grid item's containing block is its own grid area, which
+         for a footer on the last row leaves it nothing to travel through. The
+         spec is explicit about that; Chromium and WebKit are more forgiving
+         and pin it anyway, which is why the grid version measured as working,
+         but Gecko is unverified and the flex column is what the mechanism is
+         actually supposed to rest on. A flex item's containing block is the
+         whole shell — 1245px inside a 726px scrollport at 400 on a busy day.
 
-         A grid item's containing block is its own grid area, so a footer
-         sitting on the last row has exactly zero room to travel and
-         `position:sticky` does nothing at all. A flex item's containing block
-         is the flex container's content box — the whole shell — so the footer
-         can travel the full scroll and settle back into its own slot at the
-         end. Measured at 400 with a busy day: the shell is 1245px tall inside
-         a 726px scrollport, so that is 519px of travel a grid would have
-         thrown away.
-
-         `order` puts the caption back above the chips, the job the grid's
-         named rows used to do — the engine appends it after the times. */
-      role + '"shell"]{flex-direction:column}',
+         `order` is what puts the caption above the chips: the shared engine
+         appends it AFTER the times, so document order alone renders it below
+         them (measured at 400 before this rule: the note at y 670 against a
+         list ending at exactly 670). */
+      role + '"shell"]{display:flex;flex-direction:column}',
       role + '"month"]{order:1;padding:' + CALENDAR_FRAME + '}',
       /* The frame, which it would otherwise run full-bleed past while every
          neighbour is inset. Its top spacing is the month's bottom padding; the
@@ -910,15 +929,17 @@
          band carries, and Jerico asked for both once he had seen the footer
          float. It stays in px — a hairline is a device-pixel affordance, per
          the unit convention this sheet follows. */
-      role + '"footer"]{order:4;position:sticky;bottom:0;background:#fff;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + '}',
+      /* PLACEMENT on the role selector, which every footer answers to;
+         APPEARANCE on the engine's own row only. An authored
+         `data-booking-footer-class` row places its own children and paints
+         itself — the contract this file documents — and appearance rules on
+         the role selector broke that promise at winning specificity. */
+      role + '"footer"]{order:4}',
+      ownRow + '{position:sticky;bottom:0;background:#fff;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + '}',
       // Stacked, full width, primary first. `order` rather than
       // `column-reverse` so the empty state — which has only the back
       // control — is unaffected either way.
       ownRow + '{flex-direction:column;align-items:stretch}',
-      // The row's placement styles size the wraps along the main axis, which
-      // is now vertical; released here so each button keeps its own height.
-      ownRow + ' [data-paid-calendar-element="back"],',
-      ownRow + ' [data-paid-calendar-element="confirm"]{flex:0 0 auto}',
       ownRow + ' [data-paid-calendar-element="confirm"]{order:-1}',
       '}',
 
@@ -1024,7 +1045,10 @@
          `align-items:center` rather than `stretch`, because with no flex-grow
          the two buttons are sized by their own content and a stretch would only
          matter if their heights differed. */
-      role + '"footer"]{grid-area:footer;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
+      // Placement for every footer; the band's own look for the engine's row
+      // alone. See the mobile split above.
+      role + '"footer"]{grid-area:footer}',
+      ownRow + '{border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
       '}',
     ].join('')
     const host = document.head || document.documentElement
@@ -1313,7 +1337,20 @@
        the back control and the status banner — hangs off this, and the
        dashboard's reschedule calendar takes none of it. */
     const onBookingSurface = Boolean(bookingSurfaceFor(container))
-    if (onBookingSurface) ensureBookingCalendarLayout(global.document)
+    if (onBookingSurface) {
+      ensureBookingCalendarLayout(global.document)
+      /* The authored step this calendar lives in, marked so the sheet can
+         reset ITS padding without touching the dialog's other steps. There are
+         four `.call-details_layout` wrappers in the booking dialog — calendar,
+         success, confirmed and payment-methods — and keying on the class alone
+         stripped the authored padding from all of them. */
+      const step = typeof container.closest === 'function'
+        ? container.closest('.call-details_layout')
+        : null
+      if (step && typeof step.setAttribute === 'function') {
+        step.setAttribute('data-paid-calendar-step', '')
+      }
+    }
 
     const status = global.document.createElement('p')
     status.setAttribute('data-paid-calendar-element', 'status')
@@ -1342,6 +1379,33 @@
       if (!onBookingSurface) return
       if (text && tone) status.setAttribute('data-paid-calendar-status', tone)
       else status.removeAttribute('data-paid-calendar-status')
+      if (text) revealStatus()
+    }
+
+    /**
+     * Bring the banner into view.
+     *
+     * The banner is absolutely positioned against the modal's body, which is
+     * also what scrolls on a phone — so it is painted at the TOP of the
+     * scrollable content, not at the top of what the visitor can see. Measured
+     * from the bottom of a busy day's scroll: a failure message rendered 487px
+     * above the viewport and nothing at all changed on screen. A message the
+     * visitor cannot see is not a message.
+     *
+     * Scrolling the scrollport back to the top is the smallest fix that keeps
+     * the overlay design intact at both widths. It only ever runs when there
+     * is something to say, so it cannot fight a visitor who is browsing slots.
+     */
+    function revealStatus() {
+      let node = status.parentElement
+      while (node) {
+        const scrollable = Number(node.scrollHeight) > Number(node.clientHeight) + 1
+        if (scrollable && typeof node.scrollTop === 'number') {
+          node.scrollTop = 0
+          return
+        }
+        node = node.parentElement
+      }
     }
     const timezoneControl = createTimezoneControl(
       settings,
@@ -1393,20 +1457,13 @@
         footerIsAuthored ? 'authored' : 'fallback',
       )
       if (!footerIsAuthored) {
-        // Two component buttons sharing the row equally, each filling its half.
         // `data-booking-footer-class` is optional, so this fallback row is the
         // likely production shape and it has to look finished on its own.
         //
-        // The `flex` and `minWidth` writes on the two wraps below are the one
-        // exception to "a component button gets no inline styles from here", and
-        // they are PLACEMENT in this row, never appearance. They are written
-        // only when this fallback row is in use; an authored footer places its
-        // own children.
-        //
-        // Flex rather than fixed columns is what survives the back control being
-        // hidden on a direct entry: `display:none` takes it out of the layout
-        // entirely, and the confirm's `flex: 1 1 0` then fills the whole row
-        // instead of being stranded in a second column beside an empty first.
+        // Flex rather than fixed columns is what survives the back control
+        // being hidden on a direct entry: `display:none` takes it out of the
+        // layout entirely and the confirm fills the row, instead of being
+        // stranded in a second column beside an empty first.
         /* Only what does not vary by breakpoint. Alignment and the buttons'
            own sizing are breakpoint-dependent — a right-aligned row of
            natural-width buttons on desktop, a full-width stack on mobile — and
@@ -1670,7 +1727,17 @@
       // closes the dialog. Left live, one stray click mid-request wipes the
       // surface the confirmation was about to appear on, while the booking
       // still goes through server-side — a call the visitor never sees.
-      if (backControl) backControl.button.disabled = true
+      /* Both halves matter. `setSiteButtonDisabled` swaps the component's
+         theme as well as disabling the inner button, so the control reads
+         disabled instead of just refusing clicks. The marker then takes the
+         WRAP out of the pointer path: it carries `data-modal-close`, and the
+         modal embed resolves that with `closest()` from the click target, so
+         the border around a disabled button still closed the dialog with the
+         request open. */
+      if (backControl) {
+        setSiteButtonDisabled(backControl, true)
+        backControl.wrap.setAttribute('data-paid-calendar-busy', '')
+      }
       Array.from(calendarHost.querySelectorAll('[data-paid-calendar-date]')).forEach(function (button) {
         button.disabled = true
       })
@@ -1704,7 +1771,10 @@
           })
           setConfirmDisabled(!selectedSlot)
           timezoneControl.select.disabled = false
-          if (backControl) backControl.button.disabled = false
+          if (backControl) {
+            setSiteButtonDisabled(backControl, false)
+            backControl.wrap.removeAttribute('data-paid-calendar-busy')
+          }
         }
       }
     })
