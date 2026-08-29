@@ -43,10 +43,10 @@ Edit controller and racing its write. Structural Webflow cleanup must still
 remove the obsolete nested Build component; the code gate is the runtime safety
 boundary until that component repair is published.
 
-`company-experience-crud.js` deliberately diverges from the live body it was captured
-from: it carries the work-experience date fix, whose contract is shared with Build
-Profile and owned by
-[Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
+`company-autocomplete.js` and `company-experience-crud.js` deliberately diverge from
+the live bodies they were captured from. Their shared Build Profile contracts are owned
+by [Company selection logo persistence](../profile-form/README.md#company-selection-logo-persistence)
+and [Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
 
 Loader pattern:
 

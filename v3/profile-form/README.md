@@ -88,6 +88,14 @@ serialization. Starter Edit Profile canonical hydration accepts the API's
 `company_logo_url` field and the compatible `logo_url` field. A manually typed
 company has an empty `logo_url`.
 
+The single-company Work History picker stores the selected `name`, `domain`,
+and `logo_url` on its authored input. The Build Profile and Edit Profile CRUD
+controllers read that stored selection when they build a create or update
+payload. If the member types over the selected name, the picker clears the
+stored selection so an old domain can never be attached to new free text.
+The CRUD controller also blocks a local Work History draft when the selection
+has no domain. This keeps the name-only custom fallback from reaching Xano.
+
 Run the shared contract coverage with:
 
 ```sh
