@@ -341,6 +341,18 @@ Off the booking surface nothing changed: the reschedule calendar still gets a
 plain single-element confirm that reads `data-booking-confirm-class` and falls
 back to its own inline styles.
 
+The engine also injects one id-guarded `<style>` (`starters-booking-calendar-layout`)
+carrying what inline styles cannot: the two responsive layouts, bottom spacing
+on the mount, and two repairs to the page's own datepicker CSS inside this
+dialog — the floating-card fill and shadow flattened, and the weekday header
+row re-centred, since the page leaves those labels left-aligned against centred
+dates below its tablet breakpoint. Every selector in that sheet is scoped under
+`[data-modal-target="popup-booking"]` and none uses `!important`; the contract
+form's datepickers and the dashboard's reschedule calendar share these class
+names and must stay pixel-identical. The footer's mobile stacking rules key on
+`data-paid-calendar-footer="fallback"`, written only on the engine's own row, so
+an authored `data-booking-footer-class` row still places its own children.
+
 This script still owns *when* the control is on screen. The guard stylesheet
 keyed on `data-booking-entry` shows it only when the entry stamp reads `chooser`
 and hides it otherwise, so it cannot flash before the stamp lands; the script

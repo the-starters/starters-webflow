@@ -563,29 +563,39 @@
     return container.closest(BOOKING_SURFACE_SELECTOR)
   }
 
-  /* ---- the calendar's two-column layout ----
-     Wide enough, the month picker reads as one block and the times, the buttons
-     and the status line as another, so they belong side by side rather than in
-     one tall column the visitor has to scroll to reach the confirm. Narrow, the
-     stacked order is already the right one — month, times, buttons — so the
-     mobile case needs no rules at all and gets none.
+  /* ---- the calendar's layout, in one injected stylesheet ----
+     Four things live here that inline styles cannot express: two media
+     queries, a descendant override of the page's own datepicker CSS, and
+     bottom spacing that has to apply to the empty-state path as well as the
+     calendar. It follows the same shape as the profile script's guard rule:
+     one id-guarded <style> in the head, injected once per document.
 
-     This has to be a stylesheet rather than inline styles because it is a media
-     query, and inline styles cannot carry one. It follows the same shape as the
-     profile script's guard rule: one id-guarded <style> in the head, injected
-     once per document.
+     EVERY rule is scoped under the booking dialog. That is the whole
+     containment story: the dashboard's reschedule calendar mounts this same
+     engine into a different dialog, and the page has other jQuery-UI
+     datepickers (the contract form's start and end dates) wearing the exact
+     same `.ui-datepicker` class. Scoping is what keeps both pixel-untouched.
 
-     Every rule is scoped to the booking surface. The dashboard's reschedule
-     calendar mounts this same engine into a different dialog and keeps its
-     inline single-column grid untouched — that surface was never part of this
-     change and its shell must stay byte-for-byte what it was.
+     No `!important` anywhere. The page's datepicker rules are plain class
+     selectors, so a descendant selector under the dialog attribute outranks
+     them on specificity alone — verified against computed styles in the
+     fixture, not assumed.
 
-     The breakpoint is the site's own: its stylesheets treat 767px and below as
-     mobile, so the two-column rules start at 768px.
-
-     No `!important` anywhere, and none is needed: the shell's inline styles set
-     `display`, `gap` and `width`, and nothing below re-declares those three. */
+     Layout summary:
+     - Below 768px: one column, and the two footer buttons stack full width
+       with the primary on top. That matches the profile's own vertical CTA
+       rail (Hire above Book Call above Message) and stops the longer label
+       wrapping to two lines in a half-width button.
+     - From 768px up: two columns. The month sets the column height on the
+       left; the times, the buttons and the status line stack on the right,
+       with the times taking the leftover height and scrolling inside itself
+       so a day with many slots cannot grow the modal. */
   const CALENDAR_LAYOUT_STYLE_ID = 'starters-booking-calendar-layout'
+  // The modal's own authored button group (`.call-sched_button-group`) pads
+  // itself by `--_spacing---spacer--spacing-10`. Reusing that value is what
+  // keeps the calendar in the same rhythm as the steps around it instead of
+  // introducing a number of our own.
+  const CALENDAR_EDGE_SPACING = '1.25rem'
 
   function ensureBookingCalendarLayout(document) {
     if (
@@ -594,27 +604,94 @@
       typeof document.createElement !== 'function'
     ) return
     if (document.getElementById(CALENDAR_LAYOUT_STYLE_ID)) return
-    const scope = BOOKING_SURFACE_SELECTOR + ' [data-paid-calendar-element='
+    const dialog = BOOKING_SURFACE_SELECTOR
+    const role = dialog + ' [data-paid-calendar-element='
+    // The engine's own footer row. An authored `data-booking-footer-class`
+    // row places its own children by contract, so the stacking rules below
+    // must not reach it.
+    const ownRow = dialog + ' [data-paid-calendar-footer="fallback"]'
     const style = document.createElement('style')
     style.setAttribute('id', CALENDAR_LAYOUT_STYLE_ID)
     style.textContent = [
+      // ---- every width ----
+      // The calendar and the empty state both end flush against the modal's
+      // bottom edge without this. It sits on the mount rather than on the
+      // footer because the empty path appends status and footer straight to
+      // the mount, with no shell in between.
+      dialog + ' [nylas-container]{padding-bottom:' + CALENDAR_EDGE_SPACING + '}',
+      // The page styles every `.ui-datepicker` as a floating card: a #eee
+      // background under a 3px #eee shadow ring. Inside the modal that reads
+      // as an island sitting on top of the panel, so it is flattened here and
+      // ONLY here. The month table paints its own white background, so the
+      // grid itself is unaffected.
+      dialog + ' .ui-datepicker{border:0;box-shadow:none;background:transparent}',
+      /* The weekday header row is LEFT-aligned below the site's tablet
+         breakpoint while the date cells are centred, so every label sits at
+         its column's left edge and the header reads as ragged and misaligned
+         against the dates. Measured at 375px: the labels drift 9.6-14.3px
+         left of their own columns, unevenly, because the offset tracks each
+         label's width. Verified identical on the published scripts, so this
+         is a pre-existing page-CSS bug rather than anything the layout above
+         introduced — it is repaired here because this is the surface Jerico
+         reported it on, and repaired ONLY here so the contract form's
+         datepickers keep the look they have today.
+         Centring is the whole fix; the two padding rules give the first and
+         last columns the same 4px inset the body cells already have. */
+      dialog + ' .ui-datepicker thead th{text-align:center}',
+      dialog + ' .ui-datepicker thead th:first-child{padding-left:4px}',
+      dialog + ' .ui-datepicker thead th:last-child{padding-right:4px}',
+
+      // ---- below the site's mobile breakpoint ----
+      '@media (max-width:767px){',
+      // Stacked, full width, primary first. `order` rather than
+      // `column-reverse` so the empty state — which has only the back
+      // control — is unaffected either way.
+      ownRow + '{flex-direction:column;align-items:stretch}',
+      // The row's placement styles size the wraps along the main axis, which
+      // is now vertical; released here so each button keeps its own height.
+      ownRow + ' [data-paid-calendar-element="back"],',
+      ownRow + ' [data-paid-calendar-element="confirm"]{flex:0 0 auto}',
+      ownRow + ' [data-paid-calendar-element="confirm"]{order:-1}',
+      '}',
+
+      // ---- from the site's tablet breakpoint up ----
       '@media (min-width:768px){',
-      scope + '"shell"]{',
+      role + '"shell"]{',
       'grid-template-columns:minmax(0,1fr) minmax(0,1fr);',
       'grid-template-areas:"month times" "month footer" "month status";',
-      // The month spans all three rows, so without explicit row sizing its
-      // height is shared out among them and the buttons stretch to fill a row
-      // far taller than a button. Measured: 84px tall against the site's 38px.
-      // `min-content` pins the times and the footer to their own height and
-      // lets the last row absorb whatever the month has left over.
-      'grid-template-rows:min-content min-content 1fr;',
+      // The times row takes what the month leaves; the footer and the status
+      // line are pinned to their own height at the bottom of the column.
+      // `minmax(0,…)` rather than a bare `1fr` because a grid track's implied
+      // minimum is `auto`, and an `auto` minimum refuses to shrink below the
+      // times list's content — which is exactly the overflow this enables.
+      'grid-template-rows:minmax(0,1fr) min-content min-content;',
       'align-content:start}',
       // The month keeps its natural height instead of stretching down the
       // three rows it spans.
-      scope + '"month"]{grid-area:month;align-self:start}',
-      scope + '"times"]{grid-area:times}',
-      scope + '"footer"]{grid-area:footer}',
-      scope + '"status"]{grid-area:status}',
+      role + '"month"]{grid-area:month;align-self:start}',
+      /* `height:0;min-height:100%` is the containment, and it is not
+         decoration. A flexible grid track in an AUTO-height grid is sized to
+         its items' max-content, so `minmax(0,1fr)` plus `min-height:0` alone
+         still let a long slot list grow the modal — measured: the times row
+         went to 397px against the month's 305px and the modal from 438px to
+         601px. Giving the times a definite `height:0` removes it from the
+         track's sizing entirely, so the month alone decides the column
+         height, and `min-height:100%` then fills the area the month left.
+         Measured after: times 234px tall over 397px of content, scrolling,
+         modal back to 438px and the footer at the same y as the short-list
+         case. Do not "simplify" this to `min-height:0`. */
+      role + '"times"]{grid-area:times;height:0;min-height:100%;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}',
+      /* The page hides every inner scrollbar globally
+         (`*:not(html):not(body)::-webkit-scrollbar{display:none}`), which
+         would leave this list scrollable with no affordance that there is
+         more below. Re-enabled here at the same 3px the page already uses for
+         the Nylas scheduler's own timeslot list, so the treatment matches the
+         control this one replaced. */
+      role + '"times"]::-webkit-scrollbar{width:3px;display:block;background:transparent}',
+      role + '"times"]::-webkit-scrollbar-thumb{background-color:var(--colors--black-olive-40);border-radius:3px}',
+      role + '"times"]::-webkit-scrollbar-track{background-color:var(--colors--silver)}',
+      role + '"footer"]{grid-area:footer}',
+      role + '"status"]{grid-area:status}',
       '}',
     ].join('')
     const host = document.head || document.documentElement
@@ -949,6 +1026,12 @@
       // declares a flex `gap`, which supersedes this on that row; an authored
       // row places its own children and this is the only spacing it gets.
       footer.style.columnGap = '16px'
+      // Which row this is, so the injected stylesheet's stacking rules can
+      // reach the engine's own row without ever touching an authored one.
+      footer.setAttribute(
+        'data-paid-calendar-footer',
+        footerIsAuthored ? 'authored' : 'fallback',
+      )
       if (!footerIsAuthored) {
         // Two component buttons sharing the row equally, each filling its half.
         // `data-booking-footer-class` is optional, so this fallback row is the

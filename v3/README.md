@@ -3407,11 +3407,22 @@ flowchart TD
    row is given a 16px column gap between Back and the request button; the
    fallback row's own 12px flex gap supersedes it on that row.
 
-   The calendar is two columns from 768px up — month on the left, times, buttons
-   and status stacked on the right — and stays stacked below that. A media query
-   cannot be an inline style, so this is one id-guarded `<style>` injected into
-   the head once per document, with every rule scoped under
-   `[data-modal-target="popup-booking"]`.
+   The calendar is two columns from 768px up — month on the left; times, buttons
+   and status stacked on the right, with the buttons pinned to the bottom of the
+   column and the times taking the leftover height and scrolling inside
+   themselves so a day with many slots cannot grow the modal. Below 768px it
+   stays one column and the two buttons stack full width with the primary on
+   top. The same sheet gives the mount bottom padding — which the empty-state
+   path needs, since it appends straight to the mount — and flattens the page's
+   floating-card styling on the month picker, whose weekday header row is also
+   re-centred there (the page leaves those labels left-aligned against centred
+   dates below its tablet breakpoint).
+
+   A media query cannot be an inline style, so this is one id-guarded `<style>`
+   injected into the head once per document. **Every rule is scoped under
+   `[data-modal-target="popup-booking"]`**, which is what keeps the contract
+   form's `.ui-datepicker` fields and the dashboard's reschedule calendar
+   untouched, and no rule uses `!important`.
 
    Off the booking surface — the dashboard's reschedule calendar mounts this
    same engine — nothing changed: no back control, no footer, no injected
