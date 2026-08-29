@@ -110,6 +110,24 @@ test('registers one V3 intent before resuming native Memberstack checkout', asyn
   assert.equal(state.storage.size, 0)
 })
 
+test('keeps the Memberstack session token out of the authentication URL', async () => {
+  const state = boot({ memberstackToken: 'private-memberstack-token' })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  await state.listeners[0].listener(clickEvent(control))
+
+  const authentication = state.requests[0]
+  assert.equal(
+    authentication.url,
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh/auth/trade-token/v3',
+  )
+  assert.equal(authentication.init.method, 'POST')
+  assert.equal(authentication.init.headers['Content-Type'], 'application/json')
+  assert.deepEqual(JSON.parse(authentication.init.body), {
+    token: 'private-memberstack-token',
+  })
+})
+
 test('fails closed when V3 intent registration fails', async () => {
   const state = boot({
     registerResponse: { ok: false, status: 409, json: async () => ({}) },

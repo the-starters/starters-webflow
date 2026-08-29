@@ -107,10 +107,12 @@
     var memberstackToken = await memberstack.getMemberCookie()
     if (!memberstackToken) throw new Error('Sign in before you choose a plan')
 
-    var response = await globalObject.fetch(
-      AUTH_URL + '?token=' + encodeURIComponent(memberstackToken),
-      { method: 'GET', credentials: 'omit' },
-    )
+    var response = await globalObject.fetch(AUTH_URL, {
+      method: 'POST',
+      credentials: 'omit',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: memberstackToken }),
+    })
     var payload = await response.json().catch(function () {
       return null
     })
