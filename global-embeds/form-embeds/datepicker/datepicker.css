@@ -1,14 +1,31 @@
 /* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/datepicker */
 
+/* Lengths are rem, borders are px.
+   Every length here tracks the site's responsive root font size, so the picker
+   scales with the type around it. Borders are the deliberate exception: a
+   hairline is a device-pixel affordance, and at the site's 12.93px root a
+   `0.0625rem` border computes to 0.81px and renders inconsistently or not at
+   all. The booking modal's own injected sheet follows the same convention.
+
+   Read the rem values as a CHANGE, not a rename: the root font size here is
+   responsive — 12.93px at 1280, 16.34px at 400 — so these are about 19%
+   smaller than the pixels they replaced on desktop and about 2% larger at
+   400px. Scaling with the site is the point, but it is visible.
+
+   THIS FILE IS A PASTE-IN MIRROR. It is not linked or loaded from anywhere;
+   the live copy is a <style> embed in the Webflow page, so nothing here
+   reaches production until that embed is re-pasted. It is also SITE-WIDE — the
+   contract form's start and end date fields wear these same rules. */
+
   .ui-datepicker {
     width: auto;
     padding: 0;
     border: 1px solid #d8d8d8;
-    border-radius: 8px;
+    border-radius: 0.5rem;
     background: #eee;
     box-shadow:
-      0 0 0 3px var(--Fill-Primary, #eee),
-      0 4px 8px 0 rgba(0, 0, 0, 0.1);
+      0 0 0 0.1875rem var(--Fill-Primary, #eee),
+      0 0.25rem 0.5rem 0 rgba(0, 0, 0, 0.1);
     font-family: inherit;
     font-size: 1rem;
     font-weight: 500;
@@ -19,7 +36,7 @@
 
   .ui-datepicker .ui-datepicker-header {
     position: relative;
-    padding: 14px 48px 14px;
+    padding: 0.875rem 3rem 0.875rem;
     border: 0;
     border-radius: 0;
     background: #f1f1f1;
@@ -37,22 +54,22 @@
 
   .ui-datepicker .ui-datepicker-prev,
   .ui-datepicker .ui-datepicker-next {
-    top: 6px;
-    width: 32px;
-    height: 32px;
+    top: 0.375rem;
+    width: 2rem;
+    height: 2rem;
     border: 0 !important;
-    border-radius: 4px;
+    border-radius: 0.25rem;
     background: transparent !important;
     cursor: pointer;
     position: absolute;
   }
 
   .ui-datepicker .ui-datepicker-prev {
-    left: 6px;
+    left: 0.375rem;
   }
 
   .ui-datepicker .ui-datepicker-next {
-    right: 6px;
+    right: 0.375rem;
   }
 
   .ui-datepicker .ui-datepicker-prev:hover,
@@ -74,8 +91,8 @@
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 8px;
-    height: 8px;
+    width: 0.5rem;
+    height: 0.5rem;
     border-top: 2px solid #1e211e;
     border-left: 2px solid #1e211e;
   }
@@ -98,17 +115,17 @@
   }
 
   .ui-datepicker th {
-    padding: 14px 0 12px;
+    padding: 0.875rem 0 0.75rem;
     border-bottom: 1px solid #eee;
     color: #202020;
-    font-size: 16px;
+    font-size: 1rem;
     font-weight: 500;
     line-height: 1;
   }
 
   .ui-datepicker td {
     width: 14.285%;
-    padding: 0px 0.25rem;
+    padding: 0 0.25rem;
     border: 0;
     background: #ffffff;
     text-align: center;
@@ -123,7 +140,7 @@
     height: 2.75rem;
     padding: 0;
     border: 0 !important;
-    border-radius: 6px;
+    border-radius: 0.375rem;
     background: transparent !important;
     color: #333333;
     font-size: 1rem;
@@ -166,19 +183,19 @@
   }
 
   .ui-datepicker .ui-datepicker-calendar tbody tr:first-child td {
-    padding-top: 4px;
+    padding-top: 0.25rem;
   }
 
   .ui-datepicker .ui-datepicker-calendar tbody tr:last-child td {
-    padding-bottom: 4px;
+    padding-bottom: 0.25rem;
   }
 
   .ui-datepicker .ui-datepicker-calendar tbody td:first-child {
-    padding-left: 4px;
+    padding-left: 0.25rem;
   }
 
   .ui-datepicker .ui-datepicker-calendar tbody td:last-child {
-    padding-right: 4px;
+    padding-right: 0.25rem;
   }
 
   .ui-datepicker-prev.ui-state-disabled::before,
@@ -215,7 +232,7 @@
   }
 
   .ui-datepicker td {
-    padding: 2px 0;
+    padding: 0.125rem 0;
   }
 
   .ui-datepicker td a,
