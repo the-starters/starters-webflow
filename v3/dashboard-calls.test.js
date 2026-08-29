@@ -1417,6 +1417,55 @@ test('confirmed Paid Call details show per-call price and hide every unsupported
   assert.equal(view.fields['meeting-link'].hidden, true)
 })
 
+test('detail modal lifecycle clears module-owned action errors', () => {
+  const originalActions = global.StartersDashboardCallActions
+  const originalDocument = global.document
+  const view = detailModalHarness()
+  const cleared = []
+  const resets = []
+  const booking = {
+    booking_id: 'new-booking',
+    status: 'confirmed',
+    start: Date.now() + 60_000,
+    paid_meeting: false,
+    duration: 30,
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+  try {
+    view.modal.setAttribute('data-booking-id', 'old-booking')
+    global.StartersDashboardCallActions = {
+      wire() {},
+      resetRescheduleState(modal) {
+        resets.push(modal)
+      },
+      showActionError(modal, message) {
+        cleared.push({ modal, message })
+      },
+    }
+    global.document = {
+      querySelector() {
+        return view.modal
+      },
+    }
+
+    api.populateDetailModal(view.modal, booking, 'brand')
+    assert.equal(resets.length, 1)
+    assert.deepEqual(cleared, [{ modal: view.modal, message: '' }])
+
+    api.populateDetailModal(view.modal, booking, 'brand')
+    assert.equal(resets.length, 1)
+    assert.equal(cleared.length, 1)
+
+    api.resetDetailModal()
+    assert.equal(resets.length, 2)
+    assert.deepEqual(cleared[1], { modal: view.modal, message: '' })
+  } finally {
+    global.StartersDashboardCallActions = originalActions
+    global.document = originalDocument
+  }
+})
+
 test('delegated View Details binds the selected canonical booking before Webflow opens', () => {
   let clickListener
   const originalDocument = global.document

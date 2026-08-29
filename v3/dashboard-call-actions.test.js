@@ -546,6 +546,42 @@ test('showActionError renders a module-owned alert and clears it again', () => {
   assert.equal(created[0].hidden, false)
 })
 
+test('a blocked legacy Free booking is reported as unpaid', async () => {
+  const originalWarn = console.warn
+  let clickHandler
+  let warning
+  try {
+    console.warn = function () {
+      warning = Array.from(arguments)
+    }
+    api.wire({
+      document: {
+        addEventListener(_name, handler) {
+          clickHandler = handler
+        },
+      },
+      getBooking() {
+        return pendingBooking()
+      },
+      role: 'starter',
+    })
+    const button = {
+      closest() {
+        return this
+      },
+      getAttribute(name) {
+        return name === 'booking-action-btn' ? 'cancel' : null
+      },
+    }
+    await clickHandler({ target: button })
+    assert.equal(warning[1].status, 'pending')
+    assert.equal(warning[1].paid, false)
+    assert.equal(warning[1].identified, true)
+  } finally {
+    console.warn = originalWarn
+  }
+})
+
 test('cancel payload requires a reason and a bounded durable cancel key', () => {
   const booking = confirmedBooking()
   const key = 'dashboard-cancel:00000000-0000-4000-8000-000000000002'
@@ -907,6 +943,84 @@ test('reschedule calendar mounts stay scoped to the active modal booking', async
     assert.equal(requests.length, 1)
     assert.equal(requests[0].booking_id, 'booking-b')
     assert.equal(reasonField.value, '')
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('reschedule proposal failures replace stale alerts with the server message', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  let mount
+  let alert
+  const container = { textContent: '' }
+  const reasonField = { value: 'Need a later time' }
+  const modal = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-test-3' : null
+    },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      if (selector === '[booking-reschedule-reason]') return reasonField
+      if (selector === '[data-starters-action-error]') return alert || null
+      return null
+    },
+    appendChild(node) {
+      alert = node
+    },
+    ownerDocument: {
+      createElement() {
+        return {
+          hidden: false,
+          style: {},
+          textContent: '',
+          setAttribute() {},
+        }
+      },
+    },
+  }
+  try {
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar(options) {
+        mount = options
+      },
+    }
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000006'
+      },
+    }
+    global.xanoAuthFetch = async function () {
+      assert.equal(alert.hidden, true)
+      return {
+        ok: false,
+        async json() {
+          return { message: 'That time is no longer available.' }
+        },
+      }
+    }
+    api.showActionError(modal, 'Previous booking failed')
+    await api.mountRescheduleCalendar(
+      {},
+      modal,
+      rescheduleBooking(),
+      'starter',
+      reasonField.value,
+    )
+    const start = Date.now() + 2 * 60 * 60 * 1000
+    await assert.rejects(
+      mount.onConfirm({ start, end: start + 30 * 60 * 1000 }),
+      /That time is no longer available/,
+    )
+    assert.equal(alert.textContent, 'That time is no longer available.')
+    assert.equal(alert.hidden, false)
   } finally {
     global.StartersPaidCallBrandPayment = originalCalendar
     global.xanoAuthFetch = originalFetch

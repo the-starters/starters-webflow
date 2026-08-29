@@ -862,11 +862,21 @@
       isCurrent,
       onConfirm: async function (slot) {
         if (!isCurrent()) return null
-        const result = await proposeReschedule(booking, role, reason, {
-          start: Number(slot && slot.start),
-          end: Number(slot && slot.end),
-        })
-        if (!result) throw new Error(KINDS['reschedule-propose'].failureMessage)
+        showActionError(modal, '')
+        let result
+        try {
+          result = await proposeReschedule(booking, role, reason, {
+            start: Number(slot && slot.start),
+            end: Number(slot && slot.end),
+          })
+          if (!result) throw new Error(KINDS['reschedule-propose'].failureMessage)
+        } catch (error) {
+          showActionError(
+            modal,
+            (error && error.message) || KINDS['reschedule-propose'].failureMessage,
+          )
+          throw error
+        }
         if (!isCurrent()) return result
         const reasonField = modal.querySelector('[booking-reschedule-reason]')
         if (reasonField) reasonField.value = ''
@@ -938,7 +948,7 @@
           console.warn('[dashboard-call-actions] ' + step.kind + ' blocked:', {
             role: settings.role,
             status: bookingStatus(booking),
-            paid: booking ? !freeBooking(booking) : null,
+            paid: booking ? paidFlag(booking) : null,
             identified: bookingIdentified(booking),
           })
           return

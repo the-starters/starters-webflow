@@ -1053,17 +1053,22 @@
     )
   }
 
+  function resetDetailActionState(modal) {
+    const actionsModule = global.StartersDashboardCallActions
+    if (!validDashboardModule(actionsModule)) return
+    if (typeof actionsModule.resetRescheduleState === 'function') {
+      actionsModule.resetRescheduleState(modal)
+    }
+    if (typeof actionsModule.showActionError === 'function') {
+      actionsModule.showActionError(modal, '')
+    }
+  }
+
   function populateDetailModal(modal, booking, role, now) {
     if (!modal || !booking) return false
     const nextBookingId = clean(booking.booking_id || booking.id)
     const previousBookingId = clean(modal.getAttribute('data-booking-id'))
-    if (
-      previousBookingId !== nextBookingId &&
-      validDashboardModule(global.StartersDashboardCallActions) &&
-      typeof global.StartersDashboardCallActions.resetRescheduleState === 'function'
-    ) {
-      global.StartersDashboardCallActions.resetRescheduleState(modal)
-    }
+    if (previousBookingId !== nextBookingId) resetDetailActionState(modal)
     const status = bookingStatus(booking, now)
     const isPaid = paidBooking(booking)
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
@@ -1144,12 +1149,7 @@
     if (!global.document || typeof global.document.querySelector !== 'function') return
     const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
     if (!modal) return
-    if (
-      validDashboardModule(global.StartersDashboardCallActions) &&
-      typeof global.StartersDashboardCallActions.resetRescheduleState === 'function'
-    ) {
-      global.StartersDashboardCallActions.resetRescheduleState(modal)
-    }
+    resetDetailActionState(modal)
     if (typeof modal.close === 'function') {
       try {
         modal.close()
