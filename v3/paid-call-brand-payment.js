@@ -620,6 +620,31 @@
      footer is its own band, and a hairline plus its own padding is what
      separates it from the panel. A gap AND a rule would read as two dividers. */
   const CALENDAR_FOOTER_RULE = '1px solid #eee'
+  /* ---- the status banner ----
+     Jerico's round-3 tuning, and a change of kind rather than degree: the
+     status stops being a line of text under the buttons and becomes a band
+     across the top of the modal's body, overlaying the calendar. His capture
+     is `color:white; padding:1rem; width:100%; background:#DD5555`, taken on
+     the booking-failed state.
+
+     Only that state is red. The element carries three strings and the other
+     two — "no times in the next 14 days" and "Sending your request..." — are
+     not failures, so they get the site's own `#eee` fill instead of an alarm
+     colour. The engine tags each write with a tone and these rules colour by
+     it. */
+  const STATUS_ERROR_BACKGROUND = '#DD5555'
+  const STATUS_ERROR_COLOR = '#fff'
+  const STATUS_NEUTRAL_BACKGROUND = '#eee'
+  const STATUS_NEUTRAL_COLOR = '#1f211d'
+  const STATUS_BANNER_PADDING = '1rem'
+  /* Jerico's value and Jerico's reason: "I also added min-height so the
+     absolute error wouldn't be weird looking". With the banner out of flow
+     there is nothing holding the panel open on the empty-availability path —
+     the mount would collapse to the height of one button and the banner would
+     cover it. Rem, so it tracks the site's responsive root font size (363px at
+     1280, 433px at 375); the calendar state is taller than that at both
+     widths, so this only ever shows on the empty path. */
+  const CALENDAR_MIN_HEIGHT = '28.125rem'
 
   function ensureBookingCalendarLayout(document) {
     if (
@@ -678,13 +703,51 @@
          attribute makes this (0,2,2), so it wins at both widths without
          `!important`. Height is left to the page. */
       dialog + ' .ui-datepicker td a,' + dialog + ' .ui-datepicker td span{width:100%}',
-      /* The status line reserves space even with nothing to say, which under a
-         zero row gap shows up as a stray band under the buttons. Jerico set a
+      /* ---- the status banner ----
+         The modal's body is the containing block, so the banner lands directly
+         under the "Book a Call" header bar and runs the full width of the
+         panel rather than being inset by the authored step's own 2.5rem. It is
+         the one element in this sheet that needs a positioned ancestor, and
+         `.modal_content-layout` is it: exactly one of them sits in this dialog,
+         it starts at the header's bottom edge, and it already holds the mount.
+
+         Anchoring to `.modal_content` instead would put the band OVER the
+         header, and anchoring to the mount would inset it by 32px on every
+         side — neither is the full-width band under the header that Jerico's
+         screenshot shows. */
+      dialog + ' .modal_content-layout{position:relative}',
+      /* Out of flow, so a message overlays the panel instead of adding a row
+         under the buttons and growing the modal. Replaying his exact state
+         proves the geometry: `position:absolute` with no offsets already
+         lands at the top of the panel, because the static position of an
+         absolutely-positioned grid child is the grid container's content
+         origin. The offsets here only straighten what that leaves ragged —
+         his band starts 32px in from the left and overhangs the right edge by
+         the same amount, being 100% of a container it is not aligned to. */
+      role + '"status"]{position:absolute;top:0;left:0;right:0;z-index:2;'
+        + 'margin:0;padding:' + STATUS_BANNER_PADDING + ';font-size:13px;'
+        + 'background:' + STATUS_NEUTRAL_BACKGROUND + ';color:' + STATUS_NEUTRAL_COLOR + '}',
+      // The failure, and only the failure, wears his red.
+      role + '"status"][data-paid-calendar-status="error"]{background:' + STATUS_ERROR_BACKGROUND + ';color:' + STATUS_ERROR_COLOR + '}',
+      /* The status line reserves space even with nothing to say, which as a
+         banner means an empty red band across the calendar. Jerico set a
          blanket `display:none` inline; encoded as `:empty` instead, because the
          same element carries "No available times were found in the next 14
          days.", the sending state and every booking error — hiding it outright
-         would silence all of them. Empty is exactly the case he was looking at. */
+         would silence all of them. Empty is exactly the case he was looking at.
+         It has to outrank the base rule above, and `:empty` gives it the extra
+         specificity to do that without `!important`. */
       role + '"status"]:empty{display:none}',
+      /* Jerico's inline min-height, moved to the sheet. See CALENDAR_MIN_HEIGHT
+         — with the banner out of flow, the empty-availability panel has only a
+         button left in it to set its height. */
+      dialog + ' [nylas-container]{min-height:' + CALENDAR_MIN_HEIGHT + '}',
+      /* And the other half of that: something has to fill the height the
+         min-height opens up. On the empty path the mount's only in-flow child
+         is the footer, and left at the top it sits UNDER the banner. Pushed to
+         the bottom it reads as the same band the calendar state ends with, and
+         it cannot collide with the banner at any width or message length. */
+      dialog + ' [nylas-container][data-paid-calendar-state="empty"]{display:flex;flex-direction:column;justify-content:flex-end}',
       dialog + ' .ui-datepicker thead th{text-align:center}',
       dialog + ' .ui-datepicker thead th:first-child{padding-left:4px}',
       dialog + ' .ui-datepicker thead th:last-child{padding-right:4px}',
@@ -738,9 +801,12 @@
          mobile it covers the slots so completely that a slot cannot be clicked
          at all. A spanning grid row gets the same anchoring with the footer
          still in flow. */
-      'grid-template-areas:"month times" "footer footer" "status status";',
+      /* Two rows, not three. The status used to hold the third; it is a banner
+         now, out of flow and anchored to the modal's body, so a `status` area
+         here would be a track nothing ever lands in. */
+      'grid-template-areas:"month times" "footer footer";',
       // The month decides row 1's height; the times fill it and scroll.
-      'grid-template-rows:minmax(0,1fr) min-content min-content;',
+      'grid-template-rows:minmax(0,1fr) min-content;',
       'align-content:start}',
       // The month keeps its natural height rather than stretching down its row.
       // It now carries the frame on its bottom edge as well: with the row gap
@@ -791,9 +857,6 @@
          the two buttons are sized by their own content and a stretch would only
          matter if their heights differed. */
       role + '"footer"]{grid-area:footer;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
-      // Aligned to the same frame so an error message lines up with the
-      // buttons above it rather than with the panel edge.
-      role + '"status"]{grid-area:status;padding:0 ' + CALENDAR_FRAME + '}',
       '}',
     ].join('')
     const host = document.head || document.documentElement
@@ -1077,12 +1140,41 @@
     container.textContent = ''
     container.setAttribute('data-paid-calendar-state', slots.length ? 'ready' : 'empty')
 
-    const status = applyStyles(global.document.createElement('p'), {
-      color: '#6f746d',
-      fontSize: '13px',
-      margin: '0',
-    })
+    /* Whether this mount is the profile's booking dialog. Everything the
+       booking surface adds — the injected stylesheet, the component buttons,
+       the back control and the status banner — hangs off this, and the
+       dashboard's reschedule calendar takes none of it. */
+    const onBookingSurface = Boolean(bookingSurfaceFor(container))
+    if (onBookingSurface) ensureBookingCalendarLayout(global.document)
+
+    const status = global.document.createElement('p')
     status.setAttribute('data-paid-calendar-element', 'status')
+    /* Off the booking surface there is no injected sheet, so the status keeps
+       the plain grey line it has always been and these inline declarations are
+       the only thing giving it one. ON the booking surface the sheet paints it
+       as a banner, and an inline declaration written here would outrank every
+       rule in that sheet — including the colour that tells a failed booking
+       apart from a progress notice. */
+    if (!onBookingSurface) {
+      applyStyles(status, { color: '#6f746d', fontSize: '13px', margin: '0' })
+    }
+
+    /**
+     * The one place the status line is written, so the sheet always has a tone
+     * to colour it by. Three strings ever reach it — the empty-availability
+     * notice, the in-flight notice and the booking failure — and only the last
+     * is a failure, which is why they are not all the same red.
+     *
+     * The tone is a booking-surface concern (it is what the injected sheet
+     * keys on), so it is not written on the dashboard's reschedule calendar:
+     * that surface has no sheet to read it and has to stay as it shipped.
+     */
+    function setStatus(text, tone) {
+      status.textContent = text || ''
+      if (!onBookingSurface) return
+      if (text && tone) status.setAttribute('data-paid-calendar-status', tone)
+      else status.removeAttribute('data-paid-calendar-status')
+    }
     const timezoneControl = createTimezoneControl(
       settings,
       timezone,
@@ -1101,8 +1193,6 @@
        go back to and no guard stylesheet to hide the control: a back rendered
        there would be an always-visible button that closes the reschedule
        dialog and lands the visitor nowhere. */
-    const onBookingSurface = Boolean(bookingSurfaceFor(container))
-    if (onBookingSurface) ensureBookingCalendarLayout(global.document)
     const backControl = onBookingSurface
       ? buildBackControl(global.document, settings)
       : null
@@ -1164,7 +1254,7 @@
     }
 
     if (!slots.length) {
-      status.textContent = 'No available times were found in the next 14 days.'
+      setStatus('No available times were found in the next 14 days.', 'empty')
       container.appendChild(status)
       // An empty calendar is exactly when a visitor most wants the other kind
       // of call, so the way back out has to survive the early return.
@@ -1288,7 +1378,7 @@
       selectedSlot = null
       onSelectionChange(null)
       setConfirmDisabled(true)
-      status.textContent = ''
+      setStatus('')
       Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (candidate) {
         candidate.setAttribute('aria-pressed', 'false')
         candidate.style.background = SLOT_RESTING_BACKGROUND
@@ -1330,7 +1420,7 @@
           selectedSlot = slot
           onSelectionChange(slot)
           setConfirmDisabled(false)
-          status.textContent = ''
+          setStatus('')
         })
         times.appendChild(button)
       })
@@ -1415,7 +1505,7 @@
       Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (button) {
         button.disabled = true
       })
-      status.textContent = 'Sending your request...'
+      setStatus('Sending your request...', 'progress')
       try {
         await onConfirm({
           start: selectedSlot.start,
@@ -1424,7 +1514,7 @@
         })
       } catch (error) {
         console.error('[paid-call] booking failed', error)
-        status.textContent = 'We could not book this call. Please try again.'
+        setStatus('We could not book this call. Please try again.', 'error')
       } finally {
         confirmationPending = false
         if (isCurrent()) {

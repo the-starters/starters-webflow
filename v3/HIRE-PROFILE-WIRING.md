@@ -356,6 +356,23 @@ names and must stay pixel-identical. The footer's mobile stacking rules key on
 `data-paid-calendar-footer="fallback"`, written only on the engine's own row, so
 an authored `data-booking-footer-class` row still places its own children.
 
+That sheet also turns the calendar's status line into a **banner across the top
+of the modal's body**: absolutely positioned against `.modal_content-layout`, so
+it lands directly under the "Book a Call" header bar at the panel's full width
+and overlays the calendar rather than adding a row under the buttons. It is the
+only rule in the sheet that leaves the flow. Each message is tagged by the
+engine with `data-paid-calendar-status`, and the tone is what colours it:
+`error` (a booking that failed) is white on `#DD5555`; `progress` (the in-flight
+notice) and `empty` (no availability in the next 14 days) share the site's own
+`#eee`. With nothing to say the element is `:empty` and collapses. Because the
+banner is out of flow, the mount carries a `28.125rem` min-height and the
+empty-availability state pushes its footer to the bottom — otherwise that panel
+would collapse to the height of one button and the banner would cover it.
+
+None of this reaches the dashboard's reschedule calendar: no sheet is injected
+there, no tone attribute is written, and the status keeps the plain inline grey
+line it has always had.
+
 This script still owns *when* the control is on screen. The guard stylesheet
 keyed on `data-booking-entry` shows it only when the entry stamp reads `chooser`
 and hides it otherwise, so it cannot flash before the stamp lands; the script
@@ -366,6 +383,22 @@ absent control is still a silent no-op, which is what a page with no calendar
 mounted looks like. The control combines the close marker with a trigger naming
 `popup-booking-main` — the cross-modal hand-off pattern the modal embed's
 trigger precedence deliberately preserves — plus this marker attribute.
+
+A second guard rule hides **every `[data-booking-back]` the calendar engine did
+not build**, on every entry:
+
+```css
+[data-modal-target="popup-booking"]
+  [data-booking-back]:not([data-paid-calendar-element="back"]) { display: none !important }
+```
+
+The footer control is the Back now, so a second one in the dialog's header
+would be a duplicate of it. The two are told apart structurally rather than by
+`[data-booking-back]`, which both carry: only the wrap the engine builds is
+stamped `data-paid-calendar-element="back"`. `syncBookingBackControls()` writes
+`aria-hidden="true"` on the unmarked ones to match. Nothing in the published
+Designer authors such a control today, so this rule is inert on the live page
+and exists to keep an old or re-authored header arrow from doubling up.
 
 Because that trigger name is now also carried by a script-rendered control
 inside the dialog, every document-wide pass over

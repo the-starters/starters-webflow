@@ -118,6 +118,8 @@ class CalendarElement {
     return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null
   }
 
+  removeAttribute(name) { delete this.attrs[name] }
+
   appendChild(child) {
     child.parentElement = this
     this.children.push(child)
@@ -1276,10 +1278,15 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
   assert.ok(desktopBlock.includes('"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem'))
-  // The unconditional mount rule from the earlier round is gone: on desktop it
-  // would stack with the frame's own bottom edge.
+  // The unconditional mount PADDING from the earlier round is gone: on desktop
+  // it would stack with the frame's own bottom edge. The mount does carry an
+  // unconditional rule again — the banner's min-height — so this asks about
+  // padding rather than about the selector.
   const beforeMedia = css.split('@media')[0]
-  assert.ok(!beforeMedia.includes('[nylas-container]'), 'no unconditional mount padding')
+  for (const rule of beforeMedia.split('}')) {
+    if (!rule.includes('[nylas-container]')) continue
+    assert.ok(!/padding/.test(rule), `no unconditional mount padding: ${rule}`)
+  }
 })
 
 test('the footer stacks primary-first below the site mobile breakpoint', async () => {
@@ -1295,13 +1302,15 @@ test('the footer stacks primary-first below the site mobile breakpoint', async (
   // vertical here, so they have to be released or each button collapses.
   assert.ok(css.includes('{flex:0 0 auto}'))
 
-  // Every stacking rule keys on the engine's own row, never on an authored
-  // one — an authored footer places its own children by contract.
+  // Every stacking rule that reaches a footer keys on the engine's own row,
+  // never on an authored one — an authored footer places its own children by
+  // contract. The mount's own column rule is exempt and named here: it stacks
+  // the empty state's contents, not a footer's.
   assert.equal(footer.getAttribute('data-paid-calendar-footer'), 'fallback')
   for (const line of css.split('}')) {
-    if (line.includes('flex-direction:column') || line.includes('order:-1')) {
-      assert.ok(line.includes('[data-paid-calendar-footer="fallback"]'), line)
-    }
+    if (!line.includes('flex-direction:column') && !line.includes('order:-1')) continue
+    if (line.includes('[nylas-container]')) continue
+    assert.ok(line.includes('[data-paid-calendar-footer="fallback"]'), line)
   }
 })
 
@@ -1325,9 +1334,20 @@ test('the desktop footer is a full-width band under both columns', async () => {
   // Replayed verbatim, Jerico's `position:absolute` version overlaps the times
   // by 78px and the month by 110px, and on mobile it covers the slots so
   // completely that a slot cannot be clicked at all.
-  assert.match(css, /grid-template-areas:"month times" "footer footer" "status status"/)
-  assert.match(css, /grid-template-rows:minmax\(0,1fr\) min-content min-content/)
-  assert.ok(!/position:absolute/.test(css), 'the footer stays in flow')
+  assert.match(css, /grid-template-areas:"month times" "footer footer"/)
+  assert.match(css, /grid-template-rows:minmax\(0,1fr\) min-content;/)
+  // Two rows, not three: the status became a banner anchored to the modal's
+  // body, so a `status` grid area here would be a track nothing lands in.
+  assert.ok(!/"status status"/.test(css))
+  assert.ok(!/"status"\]\{grid-area/.test(css))
+  // The footer stays in flow. The banner is the ONE absolutely positioned
+  // thing in this sheet, and it is the status, never the footer: replayed
+  // verbatim, an absolute footer overlaps the times by 78px and blocks every
+  // slot tap on mobile.
+  for (const rule of css.split('}')) {
+    if (!rule.includes('position:absolute')) continue
+    assert.ok(rule.includes('"status"]'), `only the status may leave the flow: ${rule}`)
+  }
 
   // The containment, measured rather than reasoned: a flexible track in an
   // auto-height grid is sized to max-content, so `minmax(0,1fr)` alone let the
@@ -1373,6 +1393,150 @@ test('the status line hides only when it has nothing to say', async () => {
   const css = document.head.children[0].textContent
   assert.ok(css.includes('[data-paid-calendar-element="status"]:empty{display:none}'))
   assert.ok(!/"status"\]\{[^}]*display:none/.test(css), 'never a blanket hide')
+  // `:empty` has to come out ahead of the base banner rule, and it does it on
+  // specificity rather than with `!important` — which the containment test
+  // forbids anyway.
+  const base = css.split('"status"]{')[1].split('}')[0]
+  assert.ok(base.includes('position:absolute'), 'the base rule is the banner one')
+})
+
+test('the status is a banner across the top of the modal body', async () => {
+  // Jerico's round 3, and a change of kind: the status stops being a line
+  // under the buttons and becomes a band over the top of the panel. Replaying
+  // his capture verbatim already lands it there — the static position of an
+  // absolutely positioned grid child is the grid container's content origin —
+  // so the offsets here only straighten what that leaves ragged. His band is
+  // 100% of a container it is not aligned to, which insets it 32px on the left
+  // and overhangs the right edge by the same 32px.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const D = '[data-modal-target="popup-booking"]'
+  const ROLE = D + ' [data-paid-calendar-element='
+
+  assert.ok(css.includes(
+    ROLE + '"status"]{position:absolute;top:0;left:0;right:0;z-index:2;'
+      + 'margin:0;padding:1rem;font-size:13px;background:#eee;color:#1f211d}',
+  ))
+  // The modal's BODY is the containing block, so the band lands under the
+  // header bar and runs the panel's full width. `.modal_content` would put it
+  // over the header; the mount would inset it by the authored step's 2.5rem.
+  assert.ok(css.includes(D + ' .modal_content-layout{position:relative}'))
+  assert.ok(!css.includes('.modal_content{position:relative}'))
+  // Every one of those rules is inside the dialog scope, which is what keeps a
+  // `position:relative` off the dashboard's own modal body.
+  assert.ok(css.includes(D + ' .modal_content-layout'))
+})
+
+test('only a failed booking wears the red banner', async () => {
+  // His capture is `#DD5555` taken on the booking-failed state. The element
+  // carries two other strings — the empty-availability notice and "Sending
+  // your request..." — and neither is a failure, so they get the site's own
+  // `#eee` fill rather than an alarm colour. FLAGGED for Jerico: this is the
+  // interpretation, not something his capture says.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+
+  assert.ok(css.includes(
+    ROLE + '"status"][data-paid-calendar-status="error"]{background:#DD5555;color:#fff}',
+  ))
+  // Red is reachable ONLY through the error tone. A red in the base rule would
+  // paint the progress notice as a failure.
+  for (const rule of css.split('}')) {
+    if (!/DD5555/i.test(rule)) continue
+    assert.ok(rule.includes('[data-paid-calendar-status="error"]'), rule)
+  }
+})
+
+test('each status message is tagged with the tone that colours it', async () => {
+  // The tone is the only thing telling the three strings apart, so every write
+  // site has to set it and every clear has to drop it.
+  const failing = await mountFooterFixture({
+    onConfirm: async () => { throw new Error('booking refused') },
+  })
+  const times = failing.shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+
+  assert.equal(failing.status.textContent, '')
+  assert.equal(failing.status.getAttribute('data-paid-calendar-status'), null)
+
+  times.children[0].listeners.click()
+  assert.equal(failing.status.getAttribute('data-paid-calendar-status'), null, 'still nothing to say')
+
+  await failing.confirmParts.button.listeners.click()
+  assert.equal(failing.status.textContent, 'We could not book this call. Please try again.')
+  assert.equal(failing.status.getAttribute('data-paid-calendar-status'), 'error')
+
+  // Picking another slot clears the failure, tone and all — a stale red band
+  // over a fresh selection would be the modal contradicting itself.
+  times.children[0].listeners.click()
+  assert.equal(failing.status.textContent, '')
+  assert.equal(failing.status.getAttribute('data-paid-calendar-status'), null)
+
+  // In flight, and not red: this one is a progress notice.
+  let release
+  const pending = await mountFooterFixture({
+    onConfirm: () => new Promise((resolve) => { release = resolve }),
+  })
+  const pendingTimes = pending.shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+  pendingTimes.children[0].listeners.click()
+  const inFlight = pending.confirmParts.button.listeners.click()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(pending.status.textContent, 'Sending your request...')
+  assert.equal(pending.status.getAttribute('data-paid-calendar-status'), 'progress')
+  release()
+  await inFlight
+
+  // And the empty-availability notice, which is not a failure either.
+  const empty = await mountFooterFixture({ slots: [] })
+  assert.equal(empty.status.textContent, 'No available times were found in the next 14 days.')
+  assert.equal(empty.status.getAttribute('data-paid-calendar-status'), 'empty')
+})
+
+test('the banner leaves the status with no inline styles to outrank the sheet', async () => {
+  // An inline declaration beats any rule in the injected sheet whatever its
+  // specificity, so the grey line this element used to be written as would
+  // have quietly won the banner's own colour back.
+  const { status } = await mountFooterFixture()
+  assert.deepEqual(Object.keys(status.style), [])
+
+  // Off the booking surface there is no sheet, so the inline look is the only
+  // look there is and it stays exactly as it shipped — tone attribute included,
+  // which that surface has nothing to read.
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  host.setAttribute('booking-reschedule-calendar', '')
+  reschedule.appendChild(host)
+  const away = await mountFooterFixture({ container: host, slots: [] })
+  assert.equal(away.status.style.color, '#6f746d')
+  assert.equal(away.status.style.fontSize, '13px')
+  assert.equal(away.status.style.margin, '0')
+  assert.equal(away.status.textContent, 'No available times were found in the next 14 days.')
+  assert.equal(away.status.getAttribute('data-paid-calendar-status'), null)
+})
+
+test('the empty state holds itself open under the banner', async () => {
+  // Jerico's own min-height and his own reason: with the banner out of flow
+  // the empty-availability panel has only a button left to set its height, so
+  // it would collapse to that and the banner would cover it. The mount then
+  // has to push what it does have to the BOTTOM, or the footer sits under the
+  // band at exactly the width where the message wraps.
+  const { document } = await mountFooterFixture({ slots: [] })
+  const css = document.head.children[0].textContent
+  const D = '[data-modal-target="popup-booking"]'
+
+  assert.ok(css.includes(D + ' [nylas-container]{min-height:28.125rem}'))
+  assert.ok(css.includes(
+    D + ' [nylas-container][data-paid-calendar-state="empty"]'
+      + '{display:flex;flex-direction:column;justify-content:flex-end}',
+  ))
+  // Both live outside the media queries: the empty state can be reached at
+  // either width and collapses at both.
+  const beforeMedia = css.split('@media')[0]
+  assert.ok(beforeMedia.includes('min-height:28.125rem'))
+  assert.ok(beforeMedia.includes('justify-content:flex-end'))
 })
 
 test('a second mount reuses the stylesheet rather than stacking copies', async () => {

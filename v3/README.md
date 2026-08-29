@@ -3417,8 +3417,22 @@ flowchart TD
    cannot grow the modal, and the slot chips keep their natural height whatever
    the day looks like. A `1.25rem` interior frame runs around the two columns
    and they sit `2rem` apart. The month's day cells fill their column rather
-   than being a fixed box centred in it, and the status line hides itself only
-   while it is empty.
+   than being a fixed box centred in it.
+
+   The status line is a **banner across the top of the modal's body** rather
+   than a line under the buttons: absolutely positioned against
+   `.modal_content-layout`, so it sits directly under the "Book a Call" header
+   bar at the panel's full width and overlays the calendar instead of growing
+   the modal. It is the only rule in the sheet that leaves the flow. Every
+   message the engine writes is tagged `data-paid-calendar-status` and coloured
+   by that tone: `error` — a booking that failed — is white on `#DD5555`, while
+   `progress` (the in-flight notice) and `empty` (no availability in the next 14
+   days) take the site's own `#eee`. It hides itself only while it is empty. The
+   engine writes no inline styles on it there, since an inline declaration would
+   outrank the sheet's own colour. Because the banner is out of flow the mount
+   carries a `28.125rem` min-height and the empty-availability state pushes its
+   footer to the bottom of it; without both, that panel would collapse to the
+   height of one button and the banner would cover it.
 
    On the booking surface the shell writes only `display` and `width` inline and
    leaves both gaps to the sheet, because an inline `gap` shorthand outranks any
@@ -3442,7 +3456,8 @@ flowchart TD
 
    Off the booking surface — the dashboard's reschedule calendar mounts this
    same engine — nothing changed: no back control, no footer, no injected
-   stylesheet, and a plain single-element confirm that still reads
+   stylesheet, no status tone attribute, a status line that keeps its inline
+   grey, and a plain single-element confirm that still reads
    `data-booking-confirm-class` and otherwise keeps its inline fallback look.
    Display and `aria-hidden` on the back control belong to `hire-profile.js`,
    never to this file.
