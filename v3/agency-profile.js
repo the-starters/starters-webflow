@@ -133,6 +133,19 @@
     } catch (error) {}
   }
 
+  function warnDuplicateInstance(root) {
+    var documentObject = (root && root.ownerDocument) || global.document
+    if (!diagnosticsEnabled() || !documentObject || !documentObject.querySelectorAll) return
+    try {
+      if (documentObject.querySelectorAll('[wf-xano-instance="' + INSTANCE + '"]').length <= 1) return
+      warn(
+        'another element on the page also carries wf-xano-instance="' +
+          INSTANCE +
+          '" — the key should be unique; this section is using its own instance',
+      )
+    } catch (error) {}
+  }
+
   function profileSlug(pathname) {
     var match = String(pathname || '').match(/^\/hire\/([^/?#]+)\/?$/i)
     if (!match) return ''
@@ -291,7 +304,9 @@
    */
   function timeoutMs(root) {
     var raw = root && root.getAttribute ? root.getAttribute(TIMEOUT_ATTR) : null
-    var parsed = parseInt(raw, 10)
+    var value = typeof raw === 'string' ? raw.trim() : ''
+    if (!/^[0-9]+$/.test(value)) return DEFAULT_TIMEOUT_MS
+    var parsed = parseInt(value, 10)
     if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TIMEOUT_MS
     return Math.min(parsed, MAX_TIMEOUT_MS)
   }
@@ -358,17 +373,7 @@
       return null
     }
 
-    if (byKey && byKey !== instance) {
-      // Informational, not fatal: this wrapper has its own live instance and
-      // will render normally. But anything else on the page resolving
-      // "starter-agency" by key gets the other element, so the collision is
-      // worth naming before it causes a subtler bug.
-      warn(
-        'another element on the page also carries wf-xano-instance="' +
-          INSTANCE +
-          '" — the key should be unique; this section is using its own instance',
-      )
-    }
+    warnDuplicateInstance(root)
 
     // The settle check runs BEFORE any subscription, and returns without
     // subscribing when the instance is already terminal. Subscribing first
@@ -397,7 +402,7 @@
       timer = global.setTimeout(function () {
         timer = null
         warn('no response after ' + cap + 'ms — collapsing the section')
-        paintWrapper(root, null)
+        paint(root, null)
       }, cap)
     }
 

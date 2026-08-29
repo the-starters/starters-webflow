@@ -159,12 +159,13 @@ switched on.
 wf-xano puts `is-wf-xano-loading` on the **wrapper** and sets `aria-busy` on it,
 so that class can style the loading state beyond the spinner itself.
 
-This section makes exactly **one** request per page load — `wf-xano-auth="none"`
-means an auth change never reloads it, there is no focus revalidation and no
-pagination — so that class goes on once and comes off once. If a second load
-ever did happen it would re-add the class and re-show the loader, because
-wf-xano's state handling is unconditional; but by then the script has already
-inline-hidden the wrapper, so neither would be visible.
+`wf-xano-auth="none"` means an auth change never reloads this instance, and
+there is no focus revalidation or pagination. However, `WfXano.refresh()` is
+unguarded: any script can call it without an argument and reload every
+registered instance. On an agency profile, each such reload re-adds the loading
+class and re-shows the loader in the still-visible wrapper. The script re-arms
+its no-response timeout on every transition into `loading`, so a later stalled
+reload collapses the wrapper just as the initial stalled request does.
 
 wf-xano also adds `is-wf-xano-error` after a failed load, and that one is **not
 usable here**: the script collapses the wrapper on error with an inline

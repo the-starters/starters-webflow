@@ -26,8 +26,8 @@ const SOURCE_PATH = path.join(__dirname, 'agency-profile.js')
 const SOURCE = fs.readFileSync(SOURCE_PATH, 'utf8')
 
 /** Load the module against a bare global and hand back its exported api. */
-function loadApi() {
-  const sandbox = { URL, console: { warn() {} } }
+function loadApi(overrides = {}) {
+  const sandbox = { URL, console: { warn() {} }, ...overrides }
   sandbox.window = sandbox
   vm.createContext(sandbox)
   vm.runInContext(SOURCE, sandbox, { filename: 'agency-profile.js' })
@@ -163,6 +163,8 @@ test('timeoutMs: the cap cannot be switched off, and cannot be set past the clam
   assert.equal(timeoutMs(wrapper('-1')), 8000)
   assert.equal(timeoutMs(wrapper('')), 8000)
   assert.equal(timeoutMs(wrapper('soon')), 8000)
+  assert.equal(timeoutMs(wrapper('8s')), 8000)
+  assert.equal(timeoutMs(wrapper('8 ')), 8)
   assert.equal(timeoutMs(null), 8000)
   assert.equal(timeoutMs({}), 8000)
 
@@ -172,6 +174,65 @@ test('timeoutMs: the cap cannot be switched off, and cannot be set past the clam
   assert.equal(timeoutMs(wrapper('600000')), 60000, 'a large value is clamped, not honoured')
   assert.equal(timeoutMs(wrapper('2147483648')), 60000, 'past the 32-bit delay limit')
   assert.equal(timeoutMs(wrapper('99999999999')), 60000)
+})
+
+test('activate warns about duplicate instance attributes across the document', () => {
+  const messages = []
+  const roots = [{}, {}]
+  const document = {
+    readyState: 'loading',
+    addEventListener() {},
+    querySelectorAll(selector) {
+      assert.equal(selector, '[wf-xano-instance="starter-agency"]')
+      return roots
+    },
+  }
+  const { activate } = loadApi({
+    STARTERS_DEBUG: true,
+    console: { warn(message) { messages.push(message) } },
+    document,
+  })
+  const instance = {
+    root: roots[0],
+    getState() { return { status: 'error' } },
+  }
+  roots[0].__wfXano = instance
+
+  assert.equal(activate({ init() {}, get() { return instance } }, roots[0]), instance)
+  assert.equal(messages.length, 1)
+  assert.match(messages[0], /another element on the page also carries wf-xano-instance/)
+})
+
+test('a stalled reload collapses the wrapper and strips the rendered video source', () => {
+  let timeout
+  const frame = {
+    src: 'https://player.vimeo.com/video/1',
+    removeAttribute(name) { if (name === 'src') this.src = '' },
+  }
+  const root = {
+    style: { display: '', removeProperty(name) { delete this[name] } },
+    setAttribute() {},
+    removeAttribute() {},
+    getAttribute() { return null },
+    querySelectorAll() { return [frame] },
+  }
+  const instance = {
+    root,
+    getState() { return { status: 'loading' } },
+    on() {},
+    subscribe(select, listener) { listener(select(this.getState())) },
+  }
+  root.__wfXano = instance
+  const { activate } = loadApi({
+    clearTimeout() {},
+    setTimeout(callback) { timeout = callback; return 1 },
+  })
+
+  assert.equal(activate({ init() {}, get() { return instance } }, root), instance)
+  timeout()
+  assert.equal(root.hidden, true)
+  assert.equal(root.style.display, 'none')
+  assert.equal(frame.src, '')
 })
 
 test('configureSection: stamps the slug, or collapses a section the URL cannot fill', () => {
