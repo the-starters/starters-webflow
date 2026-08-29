@@ -864,8 +864,23 @@
       width: '100%',
     })
     shell.setAttribute('data-paid-calendar-element', 'shell')
+    const layout = applyStyles(global.document.createElement('div'), {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))',
+      alignItems: 'start',
+      gap: '16px',
+      width: '100%',
+    })
+    layout.setAttribute('data-paid-calendar-element', 'layout')
     const calendarHost = global.document.createElement('div')
     calendarHost.setAttribute('data-paid-calendar-element', 'month')
+    const timePanel = applyStyles(global.document.createElement('div'), {
+      display: 'grid',
+      alignContent: 'start',
+      gap: '16px',
+      minWidth: '0',
+    })
+    timePanel.setAttribute('data-paid-calendar-element', 'time-panel')
     const times = applyStyles(global.document.createElement('div'), {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fit, minmax(104px, 1fr))',
@@ -1050,9 +1065,11 @@
       }
     })
 
-    shell.appendChild(timezoneControl.wrapper)
-    shell.appendChild(calendarHost)
-    shell.appendChild(times)
+    layout.appendChild(calendarHost)
+    timePanel.appendChild(timezoneControl.wrapper)
+    timePanel.appendChild(times)
+    layout.appendChild(timePanel)
+    shell.appendChild(layout)
     shell.appendChild(footer || confirm)
     shell.appendChild(status)
     container.appendChild(shell)
