@@ -12,7 +12,7 @@
 Load this GitHub-owned controller once on the V3 `/` and `/quiz-results` pages:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/membership-checkout-authority.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.430/v3/membership-checkout-authority.js"></script>
 ```
 
 The controller uses the existing native Memberstack `data-ms-price:add` controls.
@@ -36,7 +36,7 @@ Unbound or legacy subscriptions fail closed from the V3 email path.
 ## Release gate
 
 - Publish the Xano table and registrar first, with exact draft-free readback.
-- Release this script through GitHub, a new semver tag, and jsDelivr purge.
+- Release this script through GitHub with the `v1.59.430` tag and jsDelivr purge.
 - Preserve and verify the complete Webflow custom-code block before publish.
 - Run one owned Stripe Test checkout with action-time confirmation.
 - Prove the V3 payment pattern does not match the unchanged V2 Zap filter.
