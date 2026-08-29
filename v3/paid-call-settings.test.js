@@ -57,6 +57,7 @@ class El {
       this.children.push(child)
     })
   }
+  appendChild(child) { this.append(child); return child }
   addEventListener(name, listener) {
     const listeners = this.listeners.get(name) || []
     listeners.push(listener)
@@ -104,6 +105,16 @@ function canonical(overrides = {}) {
       ...(overrides.readiness || {}),
     },
     services: overrides.services || [],
+    suggestion: overrides.suggestion || null,
+  }
+}
+
+function importedSuggestion(priceCents = 35000) {
+  return {
+    price_cents: priceCents,
+    currency: 'usd',
+    source: 'legacy_v2',
+    requires_confirmation: true,
   }
 }
 
@@ -326,6 +337,11 @@ function load(options = {}) {
   const document = {
     readyState: 'complete',
     documentElement: html,
+    head: new El('head'),
+    createElement(tag) { return new El(tag) },
+    getElementById(id) {
+      return this.head.children.find((child) => child.id === id) || null
+    },
     querySelector(selector) {
       if (selector === '[data-call-settings-service="paid"]') {
         return rootAvailable && options.stableCardMode === true ? dom.root : null
@@ -1575,7 +1591,7 @@ test('the Paid card price output renders grouped two-decimal USD', async () => {
 
   const off = load({ cardMode: true, initial: canonical() })
   await settle()
-  assert.equal(off.dom.priceOutput.textContent, '$0.00')
+  assert.equal(off.dom.priceOutput.textContent, 'Not set')
   assert.equal(off.dom.onOutput.style.display, 'none')
   assert.equal(off.dom.offOutput.style.display, '')
 })
@@ -1648,7 +1664,7 @@ test('an authored Paid amount continued by a cents sibling stays Designer-owned'
   assert.equal(result.dom.authoredPriceCents.textContent, '.00')
 })
 
-test('the authored Paid price tile keeps its Designer copy with paid calls off', async () => {
+test('the authored Paid price tile replaces the placeholder with Not set while calls are off', async () => {
   const result = load({
     cardMode: true,
     priceTile: { canonical: false, authored: true },
@@ -1656,8 +1672,45 @@ test('the authored Paid price tile keeps its Designer copy with paid calls off',
   })
   await settle()
 
-  assert.equal(result.dom.authoredPriceText.textContent, '$150')
+  assert.equal(result.dom.authoredPriceText.textContent, 'Not set')
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Add a rate to turn them on.')
+  assert.equal(result.dom.card.getAttribute('data-paid-call-card-state'), 'off')
+  assert.equal(result.dom.authoredPriceCard.style.opacity, undefined)
+  const busyStyle = result.document.getElementById('ts-call-settings-busy-style')
+  assert.ok(busyStyle)
+  assert.match(
+    busyStyle.textContent,
+    /\[data-paid-call-card-state="off"\] \[data-service-card-element="price-card"\].*opacity:\.6/s,
+  )
+  assert.doesNotMatch(busyStyle.textContent, /\[data-paid-call-card-state="off"\]\{[^}]*opacity/s)
+})
+
+test('an imported V2 suggestion replaces the placeholder but stays off until confirmation', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true },
+    initial: canonical({ suggestion: importedSuggestion(35000) }),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceText.textContent, '$350.00')
+  assert.equal(result.dom.price.value, 350)
+  assert.equal(result.dom.disabled.checked, true)
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), 'legacy_v2')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Confirm the imported V2 rate to turn them on.')
+})
+
+test('a split-span placeholder hides its dollar sign when no rate exists', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true, split: true },
+    initial: canonical(),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceSymbol.style.display, 'none')
+  assert.equal(result.dom.authoredPriceNumber.textContent, 'Not set')
 })
 
 test('the authored Paid price tile returns to its Designer copy when the session ends', async () => {
