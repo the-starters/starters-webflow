@@ -1756,6 +1756,82 @@ test('an imported V2 suggestion replaces the placeholder but stays off until con
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Confirm the imported V2 rate to turn them on.')
 })
 
+test('an imported V2 suggestion writes only after the Starter explicitly turns it on', async () => {
+  const confirmed = service({ price_cents: 35000, revision: 1 })
+  const result = load({
+    cardMode: true,
+    initial: canonical({ suggestion: importedSuggestion(35000) }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        setState(canonical({
+          services: [confirmed],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: confirmed }) }
+      },
+    },
+  })
+  await settle()
+
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'false')
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  const upserts = result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.equal(upserts.length, 1)
+  assert.deepEqual(upserts[0].body, {
+    config_id: null,
+    title: 'Paid Consultation Call',
+    price_cents: 35000,
+    duration_minutes: 60,
+    expected_revision: 0,
+    idempotency_key: 'paid-call-upsert:uuid-fixed',
+  })
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.onOutput.style.display, '')
+  assert.equal(result.dom.offOutput.style.display, 'none')
+})
+
+test('an active canonical V3 service remains authoritative over a legacy suggestion', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ price_cents: 27500 })],
+      suggestion: importedSuggestion(35000),
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.priceOutput.textContent, '$275.00')
+  assert.equal(result.dom.price.value, 275)
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), '')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
+})
+
+test('invalid imported V2 suggestions render Not set and never prefill the form', async () => {
+  for (const priceCents of [null, '', 0, '/bin/zsh', 500.5]) {
+    const result = load({
+      cardMode: true,
+      initial: canonical({ suggestion: importedSuggestion(priceCents) }),
+    })
+    await settle()
+
+    assert.equal(result.dom.priceOutput.textContent, 'Not set')
+    assert.equal(result.dom.price.value, '')
+    assert.equal(result.dom.disabled.checked, true)
+    assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), '')
+  }
+})
+
 test('a split-span placeholder hides its dollar sign when no rate exists', async () => {
   const result = load({
     cardMode: true,
