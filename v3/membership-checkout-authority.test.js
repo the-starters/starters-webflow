@@ -114,7 +114,7 @@ test('registers one V3 intent before resuming native Memberstack checkout', asyn
     stripe_price_id: 'prc_premium-monthly--fn1ae0qjj',
   })
   assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
-  assert.equal(state.storage.size, 0)
+  assert.equal(state.storage.size, 1)
 })
 
 test('keeps the Memberstack session token out of authentication URLs', async () => {
@@ -194,7 +194,7 @@ test('retries registration with the same event identity after cleanup', async ()
   assert.equal(secondEventId, firstEventId)
   assert.equal(control.clicks, 1)
   assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
-  assert.equal(state.storage.size, 0)
+  assert.equal(state.storage.size, 1)
 })
 
 test('does not activate on V2 host', () => {
@@ -217,11 +217,53 @@ test('normalizes the supported quiz-results trailing-slash route', async () => {
   })
 })
 
-test('ignores non-allowlisted routes and Memberstack prices', async () => {
-  const routeState = boot({ pathname: '/account-settings' })
-  assert.equal(routeState.listeners.length, 0)
+test('registers an exact V3 intent from the all-starters shared paywall', async () => {
+  const state = boot({ pathname: '/all-starters/' })
+  const control = target('prc_paid-annual-2o5f040u')
 
-  const priceState = boot()
+  await state.listeners[0].listener(clickEvent(control))
+
+  assert.equal(control.clicks, 1)
+  assert.deepEqual(JSON.parse(state.requests[1].init.body), {
+    source_event_id: 'evt_12345678-1234-1234-1234-123456789abc',
+    source_route: '/all-starters',
+    stripe_price_id: 'prc_paid-annual-2o5f040u',
+  })
+})
+
+test('registers an exact V3 intent from one canonical hire profile', async () => {
+  const state = boot({ pathname: '/hire/jp-test/' })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  await state.listeners[0].listener(clickEvent(control))
+
+  assert.equal(control.clicks, 1)
+  assert.equal(JSON.parse(state.requests[1].init.body).source_route, '/hire/jp-test')
+})
+
+test('registers from the exact public Join CTA route families', async () => {
+  for (const pathname of [
+    '/why-us',
+    '/categories/growth',
+    '/subcategories/paid-social',
+    '/companies/example-brand',
+    '/competitors/example-brand',
+    '/functions/marketing',
+    '/industries/beauty',
+    '/roles/head-of-growth',
+    '/skills/paid-social',
+    '/tools/klaviyo',
+  ]) {
+    const state = boot({ pathname })
+    const control = target('prc_premium-monthly--fn1ae0qjj')
+    await state.listeners[0].listener(clickEvent(control))
+    assert.equal(control.clicks, 1, pathname)
+    assert.equal(JSON.parse(state.requests[1].init.body).source_route, pathname)
+  }
+})
+
+test('ignores non-allowlisted Memberstack prices', async () => {
+  const priceState = boot({ pathname: '/all-starters' })
   const control = target('prc_legacy-v2')
   const event = clickEvent(control)
   await priceState.listeners[0].listener(event)
@@ -229,6 +271,30 @@ test('ignores non-allowlisted routes and Memberstack prices', async () => {
   assert.equal(event.prevented, false)
   assert.equal(priceState.requests.length, 0)
   assert.equal(control.clicks, 0)
+})
+
+test('does not activate on non-checkout V3 routes', () => {
+  for (const pathname of [
+    '/brand-dashboard',
+    '/hire',
+    '/hire/',
+    '/hire/jp-test/edit',
+    '/hire/jp--test',
+    '/hire/%2fbrand-dashboard',
+    '/partners/example',
+    '/services/example',
+    '/categories/example/edit',
+  ]) {
+    const state = boot({ pathname })
+    assert.equal(state.listeners.length, 0, pathname)
+    assert.equal(state.requests.length, 0, pathname)
+  }
+})
+
+test('does not activate on a V2 host for a real V3 checkout route', () => {
+  const state = boot({ hostname: 'www.hirethestarters.com', pathname: '/all-starters' })
+  assert.equal(state.listeners.length, 0)
+  assert.equal(state.requests.length, 0)
 })
 
 test('a bypassed replay continues without a second registration', async () => {
@@ -242,6 +308,36 @@ test('a bypassed replay continues without a second registration', async () => {
   assert.equal(replayEvent.prevented, false)
   assert.equal(replayEvent.stopped, false)
   assert.equal(state.requests.length, 2)
+})
+
+test('a closed checkout reuses the accepted pending intent', async () => {
+  const state = boot({ pathname: '/all-starters' })
+  const control = target('prc_paid-annual-2o5f040u')
+
+  await state.listeners[0].listener(clickEvent(control))
+  await state.listeners[0].listener(clickEvent(control))
+  await state.listeners[0].listener(clickEvent(control))
+
+  assert.equal(state.requests.length, 4)
+  const first = JSON.parse(state.requests[1].init.body)
+  const second = JSON.parse(state.requests[3].init.body)
+  assert.deepEqual(second, first)
+  assert.equal(control.clicks, 2)
+})
+
+test('a route change reuses the original immutable pending route and event', async () => {
+  const state = boot({ pathname: '/all-starters' })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  await state.listeners[0].listener(clickEvent(control))
+  await state.listeners[0].listener(clickEvent(control))
+  state.window.location.pathname = '/hire/jp-test'
+  await state.listeners[0].listener(clickEvent(control))
+
+  const first = JSON.parse(state.requests[1].init.body)
+  const second = JSON.parse(state.requests[3].init.body)
+  assert.deepEqual(second, first)
+  assert.equal(second.source_route, '/all-starters')
 })
 
 test('clears the pending state when secure event identity generation fails', async () => {

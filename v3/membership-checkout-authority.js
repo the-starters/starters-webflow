@@ -22,11 +22,11 @@
     'www.thestarters.com': true,
     'the-starters-3-0.webflow.io': true,
   }
-  var ALLOWED_ROUTES = { '/': true, '/quiz-results': true }
   var ALLOWED_PRICE_IDS = {
     'prc_premium-monthly--fn1ae0qjj': true,
     'prc_paid-annual-2o5f040u': true,
   }
+  var INTENT_TTL_MS = 2 * 60 * 60 * 1000
   var bypassTargets = typeof WeakSet === 'function' ? new WeakSet() : null
   var pendingTargets = typeof WeakSet === 'function' ? new WeakSet() : null
 
@@ -38,6 +38,19 @@
     var route = clean(value).toLowerCase()
     if (route.length > 1) route = route.replace(/\/+$/, '')
     return route || '/'
+  }
+
+  function validSourceRoute(value) {
+    var route = normalizedRoute(value)
+    if (
+      route === '/' ||
+      route === '/quiz-results' ||
+      route === '/all-starters' ||
+      route === '/why-us'
+    ) {
+      return true
+    }
+    return /^\/(?:hire|categories|subcategories|companies|competitors|functions|industries|roles|skills|tools)\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(route)
   }
 
   function checkoutTarget(node) {
@@ -60,28 +73,33 @@
     throw new Error('Secure checkout identity is unavailable')
   }
 
-  function storageKey(route, priceId) {
-    return 'ts:v3:membership-checkout-intent:' + route + ':' + priceId
+  function storageKey(priceId) {
+    return 'ts:v3:membership-checkout-intent:' + priceId
   }
 
-  function sourceEventId(route, priceId) {
-    var key = storageKey(route, priceId)
+  function checkoutIdentity(route, priceId) {
+    var key = storageKey(priceId)
     try {
-      var existing = clean(globalObject.sessionStorage.getItem(key)).toLowerCase()
-      if (/^evt_[a-z0-9-]{8,116}$/.test(existing)) return existing
-      var created = randomEventId()
-      globalObject.sessionStorage.setItem(key, created)
-      return created
+      var existing = JSON.parse(clean(globalObject.sessionStorage.getItem(key)) || 'null')
+      var existingEventId = clean(existing && existing.eventId).toLowerCase()
+      var existingRoute = normalizedRoute(existing && existing.sourceRoute)
+      var existingExpiresAt = Number(existing && existing.expiresAt)
+      if (
+        /^evt_[a-z0-9-]{8,116}$/.test(existingEventId) &&
+        validSourceRoute(existingRoute) &&
+        existingExpiresAt > Date.now()
+      ) {
+        return { eventId: existingEventId, sourceRoute: existingRoute }
+      }
+      var created = {
+        eventId: randomEventId(),
+        sourceRoute: route,
+        expiresAt: Date.now() + INTENT_TTL_MS,
+      }
+      globalObject.sessionStorage.setItem(key, JSON.stringify(created))
+      return { eventId: created.eventId, sourceRoute: created.sourceRoute }
     } catch (_error) {
-      return randomEventId()
-    }
-  }
-
-  function clearSourceEventId(route, priceId) {
-    try {
-      globalObject.sessionStorage.removeItem(storageKey(route, priceId))
-    } catch (_error) {
-      // Storage is optional. The server still owns replay safety.
+      return { eventId: randomEventId(), sourceRoute: route }
     }
   }
 
@@ -169,7 +187,7 @@
 
     var route = normalizedRoute(globalObject.location && globalObject.location.pathname)
     var priceId = clean(target.getAttribute(PRICE_ATTRIBUTE))
-    if (!ALLOWED_ROUTES[route] || !ALLOWED_PRICE_IDS[priceId]) return
+    if (!validSourceRoute(route) || !ALLOWED_PRICE_IDS[priceId]) return
 
     if (event && typeof event.preventDefault === 'function') event.preventDefault()
     if (event && typeof event.stopImmediatePropagation === 'function') {
@@ -180,9 +198,8 @@
 
     setControlState(target, 'pending', '')
     try {
-      var eventId = sourceEventId(route, priceId)
-      await registerIntent(route, priceId, eventId)
-      clearSourceEventId(route, priceId)
+      var identity = checkoutIdentity(route, priceId)
+      await registerIntent(identity.sourceRoute, priceId, identity.eventId)
       setControlState(target, 'accepted', '')
       resumeNativeCheckout(target)
     } catch (error) {
@@ -199,7 +216,7 @@
   function boot() {
     var host = clean(globalObject.location && globalObject.location.hostname).toLowerCase()
     var route = normalizedRoute(globalObject.location && globalObject.location.pathname)
-    if (!ALLOWED_HOSTS[host] || !ALLOWED_ROUTES[route]) return false
+    if (!ALLOWED_HOSTS[host] || !validSourceRoute(route)) return false
     globalObject.document.addEventListener('click', handleCheckout, true)
     return true
   }
