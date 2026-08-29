@@ -1478,9 +1478,10 @@ test('delegated View Details binds the selected canonical booking before Webflow
   }
 })
 
-test('delegated Reschedule is stopped before an empty modal can open', () => {
+test('delegated Reschedule is stopped when the actions module cannot own it', () => {
   let clickListener
   const originalDocument = global.document
+  const originalActions = global.StartersDashboardCallActions
   try {
     global.document = {
       addEventListener(name, listener, capture) {
@@ -1489,6 +1490,7 @@ test('delegated Reschedule is stopped before an empty modal can open', () => {
         clickListener = listener
       },
     }
+    delete global.StartersDashboardCallActions
     api.wireBookingDetails([], 'brand')
     let prevented = 0
     let stopped = 0
@@ -1505,6 +1507,75 @@ test('delegated Reschedule is stopped before an empty modal can open', () => {
     assert.equal(stopped, 1)
   } finally {
     global.document = originalDocument
+    global.StartersDashboardCallActions = originalActions
+  }
+})
+
+test('an eligible Reschedule click is handed to the actions module untouched', () => {
+  let clickListener
+  const originalDocument = global.document
+  const originalActions = global.StartersDashboardCallActions
+  try {
+    global.document = {
+      addEventListener(name, listener, capture) {
+        assert.equal(name, 'click')
+        assert.equal(capture, true)
+        clickListener = listener
+      },
+    }
+    const booking = { booking_id: 'booking-9', status: 'confirmed' }
+    const eligibilityCalls = []
+    global.StartersDashboardCallActions = {
+      wire() {},
+      canProposeReschedule(role, candidate, now) {
+        eligibilityCalls.push({ role, candidate, now })
+        return true
+      },
+    }
+    const card = {
+      getAttribute(name) {
+        return name === 'data-booking-id' ? 'booking-9' : null
+      },
+    }
+    const button = {
+      closest(selector) {
+        return selector === '[data-booking-id]' ? card : null
+      },
+    }
+    api.wireBookingDetails([{ rows: [booking] }], 'starter')
+    let prevented = 0
+    let stopped = 0
+    clickListener({
+      target: {
+        closest(selector) {
+          return selector.includes('reschedule') ? button : null
+        },
+      },
+      preventDefault() { prevented += 1 },
+      stopImmediatePropagation() { stopped += 1 },
+    })
+    assert.equal(prevented, 0)
+    assert.equal(stopped, 0)
+    assert.equal(eligibilityCalls.length, 1)
+    assert.equal(eligibilityCalls[0].role, 'starter')
+    assert.equal(eligibilityCalls[0].candidate, booking)
+
+    // An ineligible booking still swallows the click.
+    global.StartersDashboardCallActions.canProposeReschedule = () => false
+    clickListener({
+      target: {
+        closest(selector) {
+          return selector.includes('reschedule') ? button : null
+        },
+      },
+      preventDefault() { prevented += 1 },
+      stopImmediatePropagation() { stopped += 1 },
+    })
+    assert.equal(prevented, 1)
+    assert.equal(stopped, 1)
+  } finally {
+    global.document = originalDocument
+    global.StartersDashboardCallActions = originalActions
   }
 })
 

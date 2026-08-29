@@ -462,6 +462,88 @@ test('cancel eligibility is participant-only, booked, future, scoped, and identi
   assert.equal(api.canCancel('starter', { ...booking, data_environment: '' }), false)
   assert.equal(api.canCancel('starter', { ...booking, config_id: '' }), false)
   assert.equal(api.canCancel('brand', { ...booking, brand_data: {} }), false)
+  // booking/cancel/v3 rejects Paid bookings until the paid-cancel fast follow
+  // ships, so the button must stay hidden on them. A missing flag counts as
+  // Free so legacy rows keep their Cancel.
+  assert.equal(api.canCancel('starter', { ...booking, is_paid: true }), false)
+  assert.equal(api.canCancel('brand', { ...booking, paid_meeting: true }), false)
+  assert.equal(api.canCancel('starter', { ...booking, is_paid: false }), true)
+  assert.equal(api.canCancel('starter', { ...booking, paid_meeting: null }), true)
+})
+
+test('a refused cancel surfaces the server message instead of the generic failure', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000002'
+      },
+    }
+    global.xanoAuthFetch = async function () {
+      return {
+        ok: false,
+        json: async function () {
+          return {
+            code: 'ERROR_CODE_INPUT_ERROR',
+            message: 'Paid call cancellation is not available yet',
+          }
+        },
+      }
+    }
+    await assert.rejects(
+      api.cancelBooking(confirmedBooking(), 'Test cancel', 'brand'),
+      /Paid call cancellation is not available yet/,
+    )
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('showActionError renders a module-owned alert and clears it again', () => {
+  const created = []
+  const modal = {
+    nodes: [],
+    querySelector(selector) {
+      if (selector !== '[data-starters-action-error]') return null
+      return this.nodes[0] || null
+    },
+    appendChild(node) {
+      this.nodes.push(node)
+    },
+    ownerDocument: {
+      createElement() {
+        const node = {
+          hidden: false,
+          style: {},
+          textContent: '',
+          attributes: {},
+          setAttribute(name, value) {
+            this.attributes[name] = value
+          },
+        }
+        created.push(node)
+        return node
+      },
+    },
+  }
+  api.showActionError(modal, 'Paid call cancellation is not available yet')
+  assert.equal(created.length, 1)
+  assert.equal(created[0].textContent, 'Paid call cancellation is not available yet')
+  assert.equal(created[0].attributes.role, 'alert')
+  assert.equal(created[0].hidden, false)
+  api.showActionError(modal, '')
+  assert.equal(created[0].hidden, true)
+  assert.equal(created[0].style.display, 'none')
+  api.showActionError(modal, 'Second failure')
+  assert.equal(created.length, 1)
+  assert.equal(created[0].textContent, 'Second failure')
+  assert.equal(created[0].hidden, false)
 })
 
 test('cancel payload requires a reason and a bounded durable cancel key', () => {

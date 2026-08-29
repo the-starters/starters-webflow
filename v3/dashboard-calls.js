@@ -912,6 +912,39 @@
     })
   }
 
+  /**
+   * Renders or hides a muted one-line explanation under an authored action
+   * button that eligibility gating hides. Without it a gated action reads as
+   * a missing feature (Kaeser QA, 2026-08-29). The node is module-owned and
+   * marked `data-starters-action-hint`; authored markup is never edited.
+   */
+  function ensureActionHint(modal, anchor, name, message, visible) {
+    if (!modal || typeof modal.querySelector !== 'function') return
+    let hint = modal.querySelector('[data-starters-action-hint="' + name + '"]')
+    if (!visible) {
+      if (hint) show(hint, false)
+      return
+    }
+    if (!hint) {
+      const document = modal.ownerDocument || global.document
+      if (
+        !anchor ||
+        !document ||
+        typeof document.createElement !== 'function' ||
+        typeof anchor.insertAdjacentElement !== 'function'
+      ) return
+      hint = document.createElement('div')
+      hint.setAttribute('data-starters-action-hint', name)
+      hint.style.fontSize = '13px'
+      hint.style.lineHeight = '1.4'
+      hint.style.color = '#6b6f66'
+      hint.style.marginTop = '8px'
+      anchor.insertAdjacentElement('afterend', hint)
+    }
+    hint.textContent = message
+    show(hint, true)
+  }
+
   function configureDetailActions(modal, role, status, booking, now) {
     if (!modal || typeof modal.querySelectorAll !== 'function') return
     if (
@@ -922,6 +955,13 @@
         modal.ownerDocument || global.document,
         modal,
       )
+    }
+    const gates = {
+      rescheduleAnchor: null,
+      rescheduleShown: false,
+      respondShown: false,
+      cancelAnchor: null,
+      cancelShown: false,
     }
     modal
       .querySelectorAll(DETAIL_ACTION_SELECTOR)
@@ -962,6 +1002,17 @@
           validDashboardModule(global.StartersDashboardCallMedia) &&
           typeof global.StartersDashboardCallMedia.canReadMedia === 'function' &&
           global.StartersDashboardCallMedia.canReadMedia(booking, status)
+        if (action === 'reschedule') {
+          if (!gates.rescheduleAnchor) gates.rescheduleAnchor = button
+          if (proposeReschedule) gates.rescheduleShown = true
+        }
+        if (action === 'confirm-reschedule' && respondReschedule) {
+          gates.respondShown = true
+        }
+        if (action === 'switch-cancel' || action === 'cancel') {
+          if (!gates.cancelAnchor) gates.cancelAnchor = button
+          if (cancel) gates.cancelShown = true
+        }
         show(
           button,
           action === 'switch-close' ||
@@ -974,6 +1025,32 @@
             media,
         )
       })
+    const start = Number(booking && booking.start)
+    const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
+    const upcoming = Number.isFinite(start) && start > reference
+    const active = ['pending', 'confirmed', 'rescheduled'].includes(status)
+    ensureActionHint(
+      modal,
+      gates.rescheduleAnchor,
+      'reschedule',
+      'Rescheduling is available for confirmed Free calls.',
+      Boolean(gates.rescheduleAnchor) &&
+        active &&
+        upcoming &&
+        !gates.rescheduleShown &&
+        !gates.respondShown,
+    )
+    ensureActionHint(
+      modal,
+      gates.cancelAnchor,
+      'cancel',
+      'Paid call cancellation is not available yet.',
+      Boolean(gates.cancelAnchor) &&
+        paidBooking(booking) &&
+        ['confirmed', 'rescheduled'].includes(status) &&
+        upcoming &&
+        !gates.cancelShown,
+    )
   }
 
   function populateDetailModal(modal, booking, role, now) {
@@ -1106,6 +1183,23 @@
         ? target.closest('[booking-action-btn="reschedule"], [booking-card-action-btn="reschedule"]')
         : null
       if (reschedule) {
+        // Hide-era guard (v1.59.309): stopping every delegated Reschedule click
+        // kept the empty legacy modal from opening. The reschedule chain now
+        // ships in dashboard-call-actions.js, whose capture listener registers
+        // AFTER this one, so an unconditional stop leaves the authored button
+        // dead. Hand the click to the actions module when it can own it, and
+        // keep swallowing when it cannot: module not loaded yet, booking
+        // unresolved, or booking ineligible.
+        const actionsModule = global.StartersDashboardCallActions
+        const eligible =
+          validDashboardModule(actionsModule) &&
+          typeof actionsModule.canProposeReschedule === 'function' &&
+          actionsModule.canProposeReschedule(
+            role,
+            bookingForActionTarget(refs, reschedule),
+            Date.now(),
+          )
+        if (eligible) return
         if (event.preventDefault) event.preventDefault()
         if (event.stopImmediatePropagation) event.stopImmediatePropagation()
         else if (event.stopPropagation) event.stopPropagation()
