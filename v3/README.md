@@ -3407,6 +3407,19 @@ flowchart TD
    row is given a 16px column gap between Back and the request button; the
    fallback row's own 12px flex gap supersedes it on that row.
 
+   The shared engine also renders a caption naming the clock the times are
+   shown in. It arrives with no placement of its own, so this sheet gives it
+   one: the top of the times area, directly above the first row of chips, at
+   both widths. On desktop that is its own grid area in the right column with
+   the month spanning down beside it, which is what keeps the panel exactly the
+   height it was without the caption — the times area gives up the caption's
+   height instead of the modal growing. Stacked, the caption is appended AFTER
+   the times, so naming the rows is what puts it back above them. It sits
+   outside the scrolling list, so it stays put while the chips scroll. Only its
+   spacing is set here; its colour, size and margin are inline declarations on
+   the engine's own element and an inline declaration outranks any rule in this
+   sheet.
+
    The calendar is two columns from 768px up — month on the left, times on the
    right — with the footer spanning BOTH columns on its own row underneath as a
    band: a `1px #eee` rule across the full width, `1.25rem` of padding, and the

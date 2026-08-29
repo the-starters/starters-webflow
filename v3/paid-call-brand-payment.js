@@ -825,9 +825,25 @@
          The footer's bottom padding here is what keeps the empty-availability
          state off the modal's bottom edge on a phone; an earlier round put
          that on the MOUNT, which now would double against this. */
-      role + '"month"]{padding:' + CALENDAR_FRAME + '}',
-      role + '"times"]{padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
-      role + '"footer"]{padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
+      /* Stacked, the caption has to be MOVED, not just padded. The shared
+         engine appends it after the times (`month, times, timezone, footer`),
+         so left to document order it renders BELOW the chips — measured at
+         400px before this rule: the note at y 670 against a times list ending
+         at exactly 670. Naming the rows puts it back above them, which is
+         where Jerico placed it at both widths.
+
+         An empty row costs nothing: if the engine resolves no timezone there
+         is no element, and an empty track sizes to zero rather than reserving
+         a gap. */
+      role + '"shell"]{grid-template-areas:"month" "timezone" "times" "footer"}',
+      role + '"month"]{grid-area:month;padding:' + CALENDAR_FRAME + '}',
+      /* The frame, which it would otherwise run full-bleed past while every
+         neighbour is inset. Its top spacing is the month's bottom padding; the
+         `0.5rem` is the gap down to the first chip, the note's own `margin:0`
+         being inline and out of this sheet's reach. */
+      role + '"timezone"]{grid-area:timezone;padding:0 ' + CALENDAR_FRAME + ' 0.5rem}',
+      role + '"times"]{grid-area:times;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
+      role + '"footer"]{grid-area:footer;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
       // Stacked, full width, primary first. `order` rather than
       // `column-reverse` so the empty state — which has only the back
       // control — is unaffected either way.
@@ -859,12 +875,21 @@
          mobile it covers the slots so completely that a slot cannot be clicked
          at all. A spanning grid row gets the same anchoring with the footer
          still in flow. */
-      /* Two rows, not three. The status used to hold the third; it is a banner
-         now, out of flow and anchored to the modal's body, so a `status` area
-         here would be a track nothing ever lands in. */
-      'grid-template-areas:"month times" "footer footer";',
-      // The month decides row 1's height; the times fill it and scroll.
-      'grid-template-rows:minmax(0,1fr) min-content;',
+      /* Three rows, and the month spans the first two. The timezone note —
+         the shared engine's caption naming the clock the times are shown in —
+         sits at the TOP of the right column, directly above the first row of
+         chips, which is where Jerico placed it. The status has no area of its
+         own: it is a banner now, out of flow and anchored to the modal's body.
+
+         The month spanning rows 1 and 2 is what keeps the modal the same
+         height. Its own height still decides the whole column, and the note
+         takes its share from INSIDE that, so the panel does not grow by the
+         caption — the times area gives up the note's height instead. */
+      'grid-template-areas:"month timezone" "month times" "footer footer";',
+      /* Row 1 is the caption at its own height, row 2 is what the times get,
+         row 3 the footer band. The month spans 1 and 2, so the two together
+         still measure exactly the month. */
+      'grid-template-rows:min-content minmax(0,1fr) min-content;',
       'align-content:start}',
       // The month keeps its natural height rather than stretching down its row.
       // It now carries the frame on its bottom edge as well: with the row gap
@@ -886,11 +911,29 @@
          day.
 
          The frame padding skips the left edge, which belongs to the column
-         gap; the bottom edge is now padded like the month's so both columns
-         end level above the footer's rule. Note padding is INSIDE
-         the scroll container, so the top inset scrolls away with the content,
-         which is what keeps the first chip aligned with the month's top. */
-      role + '"times"]{grid-area:times;height:0;min-height:100%;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' 0}',
+         gap, and it no longer pads the TOP: the timezone note above now owns
+         that edge of the frame, and a top inset here as well would push the
+         first chip a whole frame below the caption. The bottom edge stays
+         padded like the month's so both columns end level above the footer's
+         rule. Padding is INSIDE the scroll container, so the bottom inset
+         scrolls with the content. */
+      role + '"times"]{grid-area:times;height:0;min-height:100%;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' 0}',
+      /* The caption, placed but NOT restyled. Its colour, size and margin are
+         inline declarations written by the shared engine, and inline beats any
+         rule here — spacing is all this sheet asks for, which is exactly what
+         padding can give without fighting them.
+
+         It carries the frame's top and right edges, so it lines up with the
+         times below it and with the month's top opposite. The bottom `0.5rem`
+         is the gap down to the first chip: the note's own `margin:0` is inline
+         and unreachable, so the space has to come from its padding, and half a
+         frame reads as a caption attached to the list rather than a row of its
+         own.
+
+         It sits OUTSIDE the scroll container — a sibling of the times, not a
+         child — so it stays put while the chips scroll under it. That is the
+         behaviour a caption for the whole list wants. */
+      role + '"timezone"]{grid-area:timezone;padding:' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' 0.5rem 0}',
       /* The page hides every inner scrollbar globally
          (`*:not(html):not(body)::-webkit-scrollbar{display:none}`), which would
          leave this list scrollable with no affordance that there is more below.

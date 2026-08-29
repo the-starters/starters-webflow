@@ -349,7 +349,11 @@ of the ring and fill alone, and the weekday header row re-centred, since the
 page leaves those labels left-aligned against centred dates below its tablet
 breakpoint. On desktop the footer spans both grid columns on its own bottom
 row, so the buttons anchor to the bottom of the panel rather than to one
-column. Every selector in that sheet is scoped under
+column, and the shared engine's timezone caption takes the top of the right
+column above the slots, with the month spanning down beside it so the caption
+costs the panel no height. Stacked, that caption has to be MOVED rather than
+just padded: the engine appends it after the times, so document order alone
+renders it below the chips. Every selector in that sheet is scoped under
 `[data-modal-target="popup-booking"]` and none uses `!important`; the contract
 form's datepickers and the dashboard's reschedule calendar share these class
 names and must stay pixel-identical. The footer's mobile stacking rules key on

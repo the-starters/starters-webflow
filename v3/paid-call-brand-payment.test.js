@@ -1308,7 +1308,7 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
   const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
-  assert.ok(mobileBlock.includes('"footer"]{padding:0 1.25rem 1.25rem}'))
+  assert.ok(mobileBlock.includes('"footer"]{grid-area:footer;padding:0 1.25rem 1.25rem}'))
 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
   assert.ok(desktopBlock.includes('"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem'))
@@ -1331,9 +1331,9 @@ test('the interior frame is the only inset at mobile too', async () => {
   const css = document.head.children[0].textContent
   const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
 
-  assert.ok(mobileBlock.includes('"month"]{padding:1.25rem}'))
-  assert.ok(mobileBlock.includes('"times"]{padding:0 1.25rem 1.25rem}'))
-  assert.ok(mobileBlock.includes('"footer"]{padding:0 1.25rem 1.25rem}'))
+  assert.ok(mobileBlock.includes('"month"]{grid-area:month;padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('"times"]{grid-area:times;padding:0 1.25rem 1.25rem}'))
+  assert.ok(mobileBlock.includes('"footer"]{grid-area:footer;padding:0 1.25rem 1.25rem}'))
 
   // No hairline on the stacked footer. Desktop can carry one because its row
   // gap is zero and the band's rule is the only separator; mobile keeps its
@@ -1390,8 +1390,8 @@ test('the desktop footer is a full-width band under both columns', async () => {
   // Replayed verbatim, Jerico's `position:absolute` version overlaps the times
   // by 78px and the month by 110px, and on mobile it covers the slots so
   // completely that a slot cannot be clicked at all.
-  assert.match(css, /grid-template-areas:"month times" "footer footer"/)
-  assert.match(css, /grid-template-rows:minmax\(0,1fr\) min-content;/)
+  assert.match(css, /grid-template-areas:"month timezone" "month times" "footer footer"/)
+  assert.match(css, /grid-template-rows:min-content minmax\(0,1fr\) min-content;/)
   // Two rows, not three: the status became a banner anchored to the modal's
   // body, so a `status` grid area here would be a track nothing lands in.
   assert.ok(!/"status status"/.test(css))
@@ -1418,7 +1418,10 @@ test('the desktop footer is a full-width band under both columns', async () => {
   // The 1.25rem interior frame. Both columns now pad their bottom edge too, so
   // they end level above the footer's rule.
   assert.ok(css.includes(ROLE + '"month"]{grid-area:month;align-self:start;padding:1.25rem 0 1.25rem 1.25rem}'))
-  assert.match(css, /"times"\]\{[^}]*padding:1\.25rem 1\.25rem 1\.25rem 0\}/)
+  // The times no longer pad their TOP: the timezone caption above owns that
+  // edge of the frame, and padding both would put a whole frame between the
+  // caption and the first chip.
+  assert.match(css, /"times"\]\{[^}]*padding:0 1\.25rem 1\.25rem 0\}/)
 
   // Zero row gap: the band's hairline and its own padding do the separating.
   // A gap AND a rule would read as two dividers.
@@ -1445,6 +1448,58 @@ test('the authored step stops padding the calendar at every width', async () => 
   // own declarations are flat `.call-details_layout` class selectors at
   // (0,1,0), and the dialog attribute makes this (0,2,0).
   assert.ok(!/\.call-details_layout[^}]*!important/.test(css))
+})
+
+test('the timezone caption sits above the slots at both widths', async () => {
+  // The shared engine renders a note naming the clock the times are shown in,
+  // and appends it to the shell with no placement of its own. Left alone on
+  // desktop it auto-placed into an implicit row BELOW the footer band, at half
+  // the panel width and flush to the modal's left edge; on a phone it ran
+  // full-bleed while every neighbour was inset. Jerico placed it at the top of
+  // the times area, above the first row of chips, at both widths.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+
+  // Desktop: its own area at the top of the right column, with the month
+  // spanning down beside it so the panel does not grow by the caption.
+  const desktopBlock = css.split('@media (min-width:768px){')[1]
+  assert.ok(desktopBlock.includes(ROLE + '"timezone"]{grid-area:timezone;padding:1.25rem 1.25rem 0.5rem 0}'))
+  assert.match(desktopBlock, /grid-template-areas:"month timezone" "month times"/)
+
+  // Mobile: already between the calendar and the chips in DOM order, so only
+  // the frame is needed — and it must be the frame, not a bleed.
+  const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+  assert.ok(mobileBlock.includes(ROLE + '"timezone"]{grid-area:timezone;padding:0 1.25rem 0.5rem}'))
+  // Stacked it has to be MOVED, not just padded: the engine appends it AFTER
+  // the times, so document order alone renders it below the chips (measured
+  // at 400px: the note at y 670 against a list ending at exactly 670).
+  assert.ok(mobileBlock.includes('"shell"]{grid-template-areas:"month" "timezone" "times" "footer"}'))
+
+  // Spacing only. Colour, size and margin are inline declarations on the
+  // engine's own element, and an inline declaration outranks every rule here —
+  // asking for them would be a rule that silently loses.
+  for (const rule of css.split('}')) {
+    if (!rule.includes('"timezone"]')) continue
+    assert.ok(!/(^|;|\{)\s*(color|font-size|margin|background)\s*:/.test(rule), rule)
+  }
+})
+
+test('the timezone caption cannot come back inside the scrolling list', async () => {
+  // It is a sibling of the times, not a child, and the placement keeps it
+  // that way: the chips scroll under a caption that stays put, which is what a
+  // label for the whole list wants. A `grid-area:times` here would put it in
+  // the scroll box and send it off the top on the first wheel.
+  const { document, shell } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const zone = shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone')
+  assert.ok(zone, 'the engine renders the caption')
+  assert.equal(zone.parentElement, shell, 'a sibling of the times, never a child')
+  for (const rule of css.split('}')) {
+    if (!rule.includes('"timezone"]')) continue
+    assert.ok(!/grid-area:times\b/.test(rule), rule)
+  }
 })
 
 test('the day chips fill their cell, scoped so other date pickers do not', async () => {
