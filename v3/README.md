@@ -3401,12 +3401,14 @@ flowchart TD
    `data-booking-back-class` are **ignored on the booking surface**, and are
    harmless if left authored. The optional `data-booking-footer-class` keeps its
    meaning everywhere: authored, it is applied to the footer row verbatim and
-   the engine places nothing; unauthored, the row is a full-width flex row and
-   the two wraps share it equally, which is also what lets the confirm fill the
-   whole row on a direct entry where the back control is hidden. The injected
-   sheet keeps that promise: placement rules reach every footer, but everything
-   that paints one keys on the engine's own row and cannot reach an authored
-   one. Every footer row is also given a 16px column gap between Back and the
+   the engine places nothing; unauthored, the row is a full-width flex row
+   (`display:flex;gap:12px;width:100%`) whose contents the injected sheet
+   arranges — pushed to the right at their natural width from 768px up, stacked
+   full width with the confirm on top below it. Flex rather than fixed columns
+   is also what lets the confirm fill the whole row on a direct entry where the
+   back control is hidden. The injected sheet keeps the authored promise:
+   placement rules reach every footer, but everything that paints or arranges
+   one keys on the engine's own row and cannot reach an authored one. Every footer row is also given a 16px column gap between Back and the
    request button; the fallback row's own 12px flex gap supersedes it on that
    row.
 

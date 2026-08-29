@@ -327,9 +327,11 @@ Because the component supersedes them, **`data-booking-confirm-class` and
 is harmless — nothing reads them here and no warning is raised. The optional
 `data-booking-footer-class` keeps its full meaning: authored, its class is
 applied to the footer row verbatim and the engine places nothing; unauthored,
-the engine's own row is a full-width flex row with the two wraps sharing it
-equally. The only inline styles the engine ever writes on a control are that
-row's placement (`flex`/`min-width`), never appearance.
+the engine's own row is a full-width flex row (`display:flex;gap:12px;width:100%`
+inline) and the injected sheet decides how the two wraps sit in it — right-aligned
+at their natural width from 768px up, a full-width stack with the confirm on top
+below it. The engine writes no inline style on either control: their size comes
+from the sheet's rules on the row, and their appearance from the component alone.
 
 The markers and modal attributes sit on the **wrap**, not the inner button. That
 is the node the modal embed resolves — it reads `closest()` from the click

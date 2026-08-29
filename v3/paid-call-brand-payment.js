@@ -1345,7 +1345,8 @@
        booking surface adds — the injected stylesheet, the component buttons,
        the back control and the status banner — hangs off this, and the
        dashboard's reschedule calendar takes none of it. */
-    const onBookingSurface = Boolean(bookingSurfaceFor(container))
+    const bookingSurface = bookingSurfaceFor(container)
+    const onBookingSurface = Boolean(bookingSurface)
     if (onBookingSurface) {
       ensureBookingCalendarLayout(global.document)
       /* The authored step this calendar lives in, marked so the sheet can
@@ -1404,6 +1405,15 @@
      * Scrolling the scrollport back to the top is the smallest fix that keeps
      * the overlay design intact at both widths. It only ever runs when there
      * is something to say, so it cannot fight a visitor who is browsing slots.
+     *
+     * The search for that scrollport stops at the booking dialog. Nothing
+     * between the banner and the dialog is guaranteed to overflow — on desktop
+     * the times list scrolls inside its own grid cell precisely so the panel
+     * never grows, and then no box in the dialog scrolls at all — so an
+     * unbounded walk would climb past it and find the document, which does
+     * scroll on a hire profile page. Yanking the page behind an open modal to
+     * the top is not bringing a banner into view; when the dialog holds no
+     * scrollport, the banner is already on screen and nothing should move.
      */
     function revealStatus() {
       let node = status.parentElement
@@ -1413,6 +1423,7 @@
           node.scrollTop = 0
           return
         }
+        if (node === bookingSurface) return
         node = node.parentElement
       }
     }

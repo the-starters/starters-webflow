@@ -1650,6 +1650,28 @@ test('empty availability scrolls its status banner into view', async () => {
   assert.equal(scrollport.scrollTop, 0)
 })
 
+test('a status message never scrolls a box outside the booking dialog', async () => {
+  // The desktop shape: nothing inside the dialog overflows, because the times
+  // list scrolls inside its own grid cell precisely so the panel never grows.
+  // The first scroller above the banner is then the page itself, and scrolling
+  // that would yank the hire profile behind the open modal to the top while
+  // the banner was already fully in view.
+  const page = new CalendarElement('html')
+  page.scrollHeight = 4820
+  page.clientHeight = 900
+  page.scrollTop = 1640
+
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking')
+  const mount = new CalendarElement('div')
+  mount.setAttribute('nylas-container', '')
+  dialog.appendChild(mount)
+  page.appendChild(dialog)
+
+  await mountFooterFixture({ container: mount, slots: [] })
+  assert.equal(page.scrollTop, 1640, 'the page behind the modal must not move')
+})
+
 test('the stacked footer floats, and only because the shell is a flex column', async () => {
   // On a phone the whole panel scrolls inside the modal's body, so the buttons
   // would otherwise sit below the fold on a busy day. Sticky pins them to the
