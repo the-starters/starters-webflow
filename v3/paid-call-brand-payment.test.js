@@ -1693,13 +1693,15 @@ test('the timezone selector sits above the slots at both widths', async () => {
   assert.ok(desktopBlock.includes(ROLE + '"timezone-control"]{grid-area:timezone;padding:1.25rem 1.25rem 1rem 0}'))
   assert.match(desktopBlock, /grid-template-areas:"month timezone" "month times"/)
 
-  // Mobile: already between the calendar and the chips in DOM order, so only
-  // the frame is needed — and it must be the frame, not a bleed.
+  // Mobile: it has to be MOVED, not just padded. The engine appends it FIRST
+  // in the shell, ahead of the month (see the shell order pinned above), so
+  // document order alone would render it above the calendar; `order:2` drops
+  // it between the month and the chips. The inset is the frame every
+  // neighbour carries — and it must be the frame, not a bleed.
   const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
   assert.ok(mobileBlock.includes(ROLE + '"timezone-control"]{order:2;padding:0 1.25rem 1rem}'))
-  // Stacked it has to be MOVED, not just padded: the engine appends it AFTER
-  // the times, so document order alone renders it below the chips (measured
-  // at 400px: the note at y 670 against a list ending at exactly 670).
+  // `order` only applies to flex items, so the column is load-bearing for this
+  // placement too, not only for the sticky footer.
   assert.ok(mobileBlock.includes('"shell"]{display:flex;flex-direction:column}'))
 
   // The control's internal label/select layout belongs to the sheet on the
