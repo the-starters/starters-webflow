@@ -1203,52 +1203,53 @@ test('the layout stylesheet is scoped to the booking dialog, every rule', async 
   assert.ok(!css.includes('!important'))
 })
 
-test('the sheet flattens the month picker card and straightens its weekday row', async () => {
+test('the sheet gives the month picker its ring and straightens the weekday row', async () => {
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
   const DIALOG = '[data-modal-target="popup-booking"]'
 
-  // The page paints the picker as a floating card: a #eee fill under a 3px
-  // #eee shadow ring plus a drop shadow. Inside the modal that reads as an
-  // island on the panel, so the fill and both shadows go — but the 1px
-  // outline stays, or the calendar loses its edge against the panel.
-  assert.ok(css.includes(DIALOG + ' .ui-datepicker.ui-widget-content{border:1px solid #d8d8d8;box-shadow:none;background:transparent;padding:8px}'))
-  // The padding is the breathing room: the page insets only its edge cells by
-  // 4px, so a selected chip in column 1 or the last row hugged the outline.
-  // Padding the cells instead is a silent no-op — the page's own edge-cell
-  // rules match at equal specificity and sit later — so it has to be container
-  // padding, and the full-bleed header band is pulled back out over it.
-  assert.ok(css.includes(DIALOG + ' .ui-datepicker .ui-datepicker-header{margin:-8px -8px 0;border-radius:7px 7px 0 0}'))
-  // `.ui-widget-content` is doubled into the selector to win a specificity tie,
-  // and it is load-bearing: the page carries `.ui-widget.ui-widget-content
-  // {border:0}` in a BODY <style>, and at equal specificity the later rule wins
-  // over this head-injected sheet. Without it the outline silently vanishes —
-  // which is exactly what happened to the page's own 1px border.
-  assert.ok(/\.ui-datepicker\.ui-widget-content\{[^}]*border:1px solid/.test(css))
-  // `#d8d8d8` is the page's own datepicker border colour, not a value invented
-  // here: no site token matches it (`--colors--silver` and `--border--border`
-  // are `#eee`, `--colors--disabled-gray` is `#e4e4e4`).
-  assert.ok(!/\.ui-datepicker\{[^}]*border-radius/.test(css), 'the radius is left to the page')
+  // The card, as Jerico tuned it in the browser: the 3px #eee ring and the
+  // #eee fill, and nothing else. Earlier rounds tried a flat picker and then a
+  // 1px #d8d8d8 outline; this ring is what he meant by an outline all along.
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker.ui-widget-content{box-shadow:0 0 0 3px var(--Fill-Primary, #eee);background:#eee}'))
+  // The page's original card also carried a `0 4px 8px` drop shadow. It is
+  // deliberately NOT restored — his capture has the ring alone.
+  assert.ok(!/0 4px 8px/.test(css), 'no drop shadow')
+  // No border and no container padding, so the page's own zeroed border stands
+  // and the header band sits flush. The pull-back rule that compensated for
+  // that padding is gone with it.
+  assert.ok(!/\.ui-datepicker\.ui-widget-content\{[^}]*border:/.test(css))
+  assert.ok(!/\.ui-datepicker\.ui-widget-content\{[^}]*padding:/.test(css))
+  assert.ok(!css.includes('.ui-datepicker .ui-datepicker-header'))
 
   // The weekday labels are left-aligned below the tablet breakpoint while the
   // dates are centred, so the header row sits 9.6-14.3px left of its own
-  // columns, unevenly. Centring is the fix.
+  // columns, unevenly. Centring is the fix, and it survives the re-theme.
   assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th{text-align:center}'))
   assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th:first-child{padding-left:4px}'))
   assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th:last-child{padding-right:4px}'))
 })
 
-test('the calendar and the empty state both get bottom breathing room', async () => {
-  // The spacing sits on the MOUNT, not the footer: the empty path appends the
-  // status and the footer straight to the mount with no shell in between, so
-  // a rule on the shell would miss exactly the state Jerico reported.
+test('the empty state keeps its bottom breathing room at both widths', async () => {
+  // Two different mechanisms, and the split is the point. Above 768px the
+  // authored step (`.call-details_layout`, 2.5rem) already pads the bottom, so
+  // the sheet adds none and the footer's frame padding is left/right only.
+  // Below 768px that step padding is not what the empty state ends against, so
+  // the spacing stays on the MOUNT — where it has to be, because the empty
+  // path appends the status and the footer straight to the mount with no shell
+  // in between. Without it the empty state goes back to sitting flush against
+  // the modal's bottom edge on a phone.
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
-  assert.ok(css.includes('[data-modal-target="popup-booking"] [nylas-container]{padding-bottom:1.25rem}'))
+  const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+  assert.ok(mobileBlock.includes('[nylas-container]{padding-bottom:1.25rem}'))
 
-  // 1.25rem is the modal's own `.call-sched_button-group` bottom padding
-  // (`--_spacing---spacer--spacing-10`), not a number invented here.
-  assert.ok(!/padding-bottom:\d+px/.test(css), 'spacing is rem, in the modal rhythm')
+  const desktopBlock = css.split('@media (min-width:768px){')[1]
+  assert.ok(desktopBlock.includes('"footer"]{grid-area:footer;padding:0 2rem}'))
+  // The unconditional mount rule from the earlier round is gone: on desktop it
+  // would stack with the frame's own bottom edge.
+  const beforeMedia = css.split('@media')[0]
+  assert.ok(!beforeMedia.includes('[nylas-container]'), 'no unconditional mount padding')
 })
 
 test('the footer stacks primary-first below the site mobile breakpoint', async () => {
@@ -1283,40 +1284,49 @@ test('an authored footer row is labelled as such and dodges the stacking rules',
   assert.deepEqual(Object.keys(footer.style), [])
 })
 
-test('the desktop column pins the footer to the bottom and scrolls the times', async () => {
+test('the desktop footer spans both columns at the bottom of the panel', async () => {
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
   const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
 
   assert.ok(css.includes('@media (min-width:768px){'))
-  assert.match(css, /grid-template-areas:"month times" "month footer" "month status"/)
-  // The times row takes the leftover height; the footer and status are pinned
-  // to their own height at the bottom of the column.
+  // The footer spans BOTH columns on its own row, so the buttons anchor to the
+  // bottom of the whole panel rather than the bottom of the right column.
+  // Replayed verbatim, Jerico's `position:absolute; bottom:0` version overlaps
+  // the times by 78px and the month by 110px, and on mobile it covers the
+  // slots so completely that a slot cannot be clicked at all.
+  assert.match(css, /grid-template-areas:"month times" "footer footer" "status status"/)
   assert.match(css, /grid-template-rows:minmax\(0,1fr\) min-content min-content/)
-  // Both halves of the overflow contract. A grid TRACK's implied minimum and a
-  // grid ITEM's automatic minimum are both content-sized, so without the
-  // `minmax(0,…)` above AND the `min-height:0` here the times list refuses to
-  // shrink and grows the modal instead of scrolling. Measured both ways.
+  assert.ok(!/position:absolute/.test(css), 'the footer stays in flow')
+
   // The containment, measured rather than reasoned: a flexible track in an
   // auto-height grid is sized to max-content, so `minmax(0,1fr)` alone let the
   // times row reach 397px against the month's 305px and grew the modal from
   // 438px to 601px. `height:0` takes the times out of track sizing so the
-  // month decides the column height; `min-height:100%` refills the area.
-  assert.ok(css.includes(ROLE + '"times"]{grid-area:times;height:0;min-height:100%;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}'))
-  // `align-content:start` is what keeps the chips compact. The times box has a
-  // definite height, and a grid's default align-content is `stretch`, so a day
-  // with few slots inflated its rows to swallow the surplus — measured at
-  // 113px a chip against 42.7px on a busy day.
-  assert.ok(/"times"\]\{[^}]*align-content:start/.test(css))
-  // More air between the month and the times than between the stacked rows.
-  assert.ok(/"shell"\]\{[^}]*column-gap:2rem/.test(css))
-  // The page hides every inner scrollbar globally, so the affordance is put
-  // back at the same 3px the page uses for the Nylas timeslot list.
+  // month decides the row height; `min-height:100%` refills the area.
+  assert.match(css, /"times"\]\{grid-area:times;height:0;min-height:100%;align-content:start;/)
+  // `align-content:start` is what keeps the chips compact — a stretched grid
+  // inflated four chips to 113px against 42.7px on a busy day.
+  assert.match(css, /"times"\]\{[^}]*align-content:start/)
   assert.ok(css.includes(ROLE + '"times"]::-webkit-scrollbar{width:3px;display:block;background:transparent}'))
-  assert.ok(css.includes(ROLE + '"month"]{grid-area:month;align-self:start}'))
-  for (const role of ['shell', 'month', 'times', 'footer', 'status']) {
-    assert.ok(css.includes(ROLE + '"' + role + '"]'), role + ' is placed')
-  }
+
+  // The 2rem interior frame, formed from the edges that touch the modal's
+  // margins: the month's left, both tops, the times' right, the footer's left,
+  // right and bottom. The month carries no bottom padding — the footer's row
+  // closes the panel, and padding there would stack with the row gap.
+  assert.ok(css.includes(ROLE + '"month"]{grid-area:month;align-self:start;padding:2rem 0 0 2rem}'))
+  assert.match(css, /"times"\]\{[^}]*padding:2rem 2rem 0 0\}/)
+  // Left and right only. Jerico's captured `padding: 2rem` had a bottom edge
+  // because his footer was absolutely positioned and therefore outside the
+  // authored step; in flow it sits inside `.call-details_layout`, which the
+  // Designer already pads by 2.5rem (32.3px). Keeping both put 71px under the
+  // buttons against a 26px frame on the sides.
+  assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer;padding:0 2rem}'))
+  assert.ok(css.includes(ROLE + '"status"]{grid-area:status;padding:0 2rem}'))
+
+  // Column gap wider than the row gap, and the row gap above the buttons
+  // tighter than the 16px rhythm so an overflowing list stops short of them.
+  assert.match(css, /"shell"\]\{column-gap:2rem;row-gap:1rem;/)
 })
 
 test('a second mount reuses the stylesheet rather than stacking copies', async () => {
