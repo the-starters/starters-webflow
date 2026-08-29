@@ -57,6 +57,9 @@ function boot(options = {}) {
     },
     fetch: async (url, init) => {
       requests.push({ url, init })
+      if (String(url).includes('/auth/trade-token/v3')) {
+        return { ok: true, json: async () => ({ authToken: 'xano-token' }) }
+      }
       return options.registerResponse || {
         ok: true,
         json: async () => ({ ok: true, checkout_intent_id: 7 }),
@@ -91,13 +94,13 @@ test('registers one V3 intent before resuming native Memberstack checkout', asyn
   assert.equal(event.prevented, true)
   assert.equal(event.stopped, true)
   assert.equal(control.clicks, 1)
-  assert.equal(state.requests.length, 1)
-  const register = state.requests[0]
+  assert.equal(state.requests.length, 2)
+  const register = state.requests[1]
   assert.equal(
     register.url,
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/membership/checkout-intent/v3',
   )
-  assert.equal(register.init.headers.Authorization, 'Bearer memberstack-token')
+  assert.equal(register.init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(register.init.body), {
     source_event_id: 'evt_12345678-1234-1234-1234-123456789abc',
     source_route: '/quiz-results',
@@ -107,21 +110,23 @@ test('registers one V3 intent before resuming native Memberstack checkout', asyn
   assert.equal(state.storage.size, 0)
 })
 
-test('sends the Memberstack session only as the registrar bearer', async () => {
+test('keeps the Memberstack session token out of authentication URLs', async () => {
   const state = boot({ memberstackToken: 'private-memberstack-token' })
   const control = target('prc_premium-monthly--fn1ae0qjj')
 
   await state.listeners[0].listener(clickEvent(control))
 
-  const registration = state.requests[0]
+  const authentication = state.requests[0]
   assert.equal(
-    registration.url,
-    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/membership/checkout-intent/v3',
+    authentication.url,
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh/auth/trade-token/v3',
   )
-  assert.equal(registration.init.method, 'POST')
-  assert.equal(registration.init.headers.Authorization, 'Bearer private-memberstack-token')
-  assert.equal(registration.url.includes('private-memberstack-token'), false)
-  assert.equal(registration.init.body.includes('private-memberstack-token'), false)
+  assert.equal(authentication.init.method, 'POST')
+  assert.equal(authentication.init.headers['Content-Type'], 'application/json')
+  assert.equal(authentication.url.includes('private-memberstack-token'), false)
+  assert.deepEqual(JSON.parse(authentication.init.body), {
+    token: 'private-memberstack-token',
+  })
 })
 
 test('fails closed when V3 intent registration fails', async () => {
@@ -153,7 +158,7 @@ test('normalizes the supported quiz-results trailing-slash route', async () => {
   await state.listeners[0].listener(clickEvent(control))
 
   assert.equal(control.clicks, 1)
-  assert.deepEqual(JSON.parse(state.requests[0].init.body), {
+  assert.deepEqual(JSON.parse(state.requests[1].init.body), {
     source_event_id: 'evt_12345678-1234-1234-1234-123456789abc',
     source_route: '/quiz-results',
     stripe_price_id: 'prc_premium-monthly--fn1ae0qjj',
@@ -184,5 +189,22 @@ test('a bypassed replay continues without a second registration', async () => {
 
   assert.equal(replayEvent.prevented, false)
   assert.equal(replayEvent.stopped, false)
-  assert.equal(state.requests.length, 1)
+  assert.equal(state.requests.length, 2)
+})
+
+test('clears the pending state when secure event identity generation fails', async () => {
+  const state = boot()
+  state.window.crypto.randomUUID = () => {
+    throw new Error('entropy unavailable')
+  }
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  await state.listeners[0].listener(clickEvent(control))
+  assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
+  assert.equal(control.clicks, 0)
+
+  state.window.crypto.randomUUID = () => '12345678-1234-1234-1234-123456789abc'
+  await state.listeners[0].listener(clickEvent(control))
+  assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
+  assert.equal(control.clicks, 1)
 })

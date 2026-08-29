@@ -42,16 +42,18 @@ owner without sending a registrar request.
 Before Memberstack opens Stripe checkout, the controller:
 
 1. Confirms the V3 host, route, and price allowlists.
-2. Sends the active Memberstack session only as the registrar's authorization bearer.
-3. The registrar verifies that session and registers one `membership_checkout_intent`.
-4. Opens the original native Memberstack checkout only after Xano accepts the intent.
+2. Exchanges the active Memberstack session through the published POST/body
+   `auth/trade-token/v3` boundary.
+3. Sends the returned Xano `user_v3` token to the authenticated registrar.
+4. The registrar registers one `membership_checkout_intent`.
+5. Opens the original native Memberstack checkout only after Xano accepts the intent.
 
 Registration failure blocks checkout. It does not fall back to V2.
 
-The registrar owns Memberstack session verification. It must reject a missing,
-invalid, or expired bearer before it writes an intent. The browser does not call
-the shared `trade-token` endpoint, and the Memberstack token is never put in a
-URL or request body.
+The published POST trade endpoint owns Memberstack session verification. The
+Memberstack token stays out of URLs and travels only in its JSON request body.
+The registrar keeps `auth = user_v3`, rejects a missing, invalid, or expired Xano
+bearer before it writes an intent, and resolves the canonical user from `$auth.id`.
 
 The server must later bind the exact Memberstack connection and Stripe subscription
 to the pending intent. A V3 renewal email is allowed only after that exact binding.
