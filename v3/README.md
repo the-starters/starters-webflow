@@ -3410,7 +3410,15 @@ flowchart TD
    The calendar is two columns from 768px up — month on the left; times, buttons
    and status stacked on the right, with the buttons pinned to the bottom of the
    column and the times taking the leftover height and scrolling inside
-   themselves so a day with many slots cannot grow the modal. Below 768px it
+   themselves so a day with many slots cannot grow the modal. The slot chips
+   keep their natural height whatever the day looks like, so the spare room on a
+   quiet day falls between the slots and the buttons rather than inflating the
+   chips, and the two columns sit `2rem` apart.
+
+   On the booking surface the shell writes only `display` and `width` inline and
+   leaves both gaps to the sheet, because an inline `gap` shorthand outranks any
+   stylesheet rule and would pin the column gap with it. The dashboard's shell
+   still writes `gap` inline, unchanged. Below 768px it
    stays one column and the two buttons stack full width with the primary on
    top. The same sheet gives the mount bottom padding — which the empty-state
    path needs, since it appends straight to the mount — and flattens the page's

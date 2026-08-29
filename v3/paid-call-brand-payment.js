@@ -641,6 +641,14 @@
       dialog + ' .ui-datepicker thead th:first-child{padding-left:4px}',
       dialog + ' .ui-datepicker thead th:last-child{padding-right:4px}',
 
+      /* The row rhythm the shell used to write inline. It lives HERE, outside
+         both media queries, because it has to hold at every width — putting it
+         in the desktop block cost the mobile layout its 16px and butted the
+         times straight against the buttons. The sheet owns it so the desktop
+         block can widen the COLUMN gap without an inline `gap` shorthand
+         outranking it. */
+      role + '"shell"]{row-gap:16px}',
+
       // ---- below the site's mobile breakpoint ----
       '@media (max-width:767px){',
       // Stacked, full width, primary first. `order` rather than
@@ -657,6 +665,10 @@
       // ---- from the site's tablet breakpoint up ----
       '@media (min-width:768px){',
       role + '"shell"]{',
+      // More air between the month and the times than between the stacked
+      // rows on the right. Rem, so it tracks the site's responsive root font
+      // size rather than pinning a pixel width.
+      'column-gap:2rem;',
       'grid-template-columns:minmax(0,1fr) minmax(0,1fr);',
       'grid-template-areas:"month times" "month footer" "month status";',
       // The times row takes what the month leaves; the footer and the status
@@ -680,7 +692,15 @@
          Measured after: times 234px tall over 397px of content, scrolling,
          modal back to 438px and the footer at the same y as the short-list
          case. Do not "simplify" this to `min-height:0`. */
-      role + '"times"]{grid-area:times;height:0;min-height:100%;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}',
+      /* `align-content:start` keeps the slot chips at their natural height.
+         The times box has a definite height now, and a grid's default
+         `align-content` is `stretch`, so on a day with few slots the rows
+         inflated to swallow the surplus — measured: four chips at 113px each,
+         against 42.7px on a busy day. Starting them at the top leaves the
+         surplus BELOW the chips, which is the space Jerico wanted between the
+         times and the buttons. On a busy day there is no surplus, so this
+         changes nothing and the list still scrolls. */
+      role + '"times"]{grid-area:times;height:0;min-height:100%;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}',
       /* The page hides every inner scrollbar globally
          (`*:not(html):not(body)::-webkit-scrollbar{display:none}`), which
          would leave this list scrollable with no affordance that there is
@@ -1096,11 +1116,19 @@
 
     groupSlots()
 
-    const shell = applyStyles(global.document.createElement('div'), {
-      display: 'grid',
-      gap: '16px',
-      width: '100%',
-    })
+    /* The booking surface hands its gaps to the injected sheet; the dashboard
+       keeps writing them inline exactly as it always did.
+
+       This split is not tidiness. An inline declaration outranks a stylesheet
+       rule whatever its specificity, so an inline `gap` shorthand would pin
+       `column-gap` too and the sheet could not widen the space between the
+       month and the times without `!important` — which nothing else here
+       needs. Withholding the shorthand on this one surface is what keeps the
+       sheet authoritative and the no-`!important` rule intact. The sheet
+       restates the same 16px row gap, so the row rhythm is unchanged. */
+    const shell = applyStyles(global.document.createElement('div'), onBookingSurface
+      ? { display: 'grid', width: '100%' }
+      : { display: 'grid', gap: '16px', width: '100%' })
     shell.setAttribute('data-paid-calendar-element', 'shell')
     const layout = applyStyles(global.document.createElement('div'), {
       display: 'grid',
