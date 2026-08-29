@@ -1,7 +1,7 @@
 /**
  * GitHub-owned Free Call booking controller for /hire/<slug>.
  *
- * @release v1.59.406
+ * @release v1.59.427
  *
  * Webflow owns the chooser, modal shell, guest fields, and success step. This
  * module binds those authored elements and sends Free requests through the
