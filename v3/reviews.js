@@ -1,7 +1,7 @@
 /**
  * V3 reviews page integration.
  *
- * @release v1.59.422
+ * @release v1.59.433
  *
  * Designer owns the public Reviews section. This module only:
  *   - derives the public-profile slug from /hire/{slug} and configures the
@@ -10,8 +10,9 @@
  *     configuration time, so the section is revealed only once Xano has
  *     positively reported at least one approved review;
  *   - projects Xano's approved aggregate into the authored profile summary;
- *   - replaces the legacy CMS projection inside the attributed Reviews list
- *     target with sanitized cards from Xano's approved response.
+ *   - renders sanitized cards from Xano's approved response ONLY while the
+ *     authored list ships no wf-xano template. Once Designer publishes a
+ *     template card, wf-xano binds it and this module stops rendering.
  *
  * The section is hidden-by-default on purpose. The authored Designer section
  * ships visible and pre-populated with placeholder "Verified Review" cards, so
@@ -33,6 +34,36 @@
   var PROFILE_INSTANCE = 'starter-reviews'
   var PROFILE_ROOT = '[data-reviews-v3="profile"]'
   var PROFILE_LIST = '[data-reviews-v3-list="reviews"]'
+  var TEMPLATE_SELECTOR = '[wf-xano-element="template"]'
+
+  /**
+   * Designer-owned card mode. When the authored list ships a real wf-xano
+   * template, wf-xano binds that card and this module stops rendering: it keeps
+   * the slug parameter, the aggregate projection, and the section visibility.
+   * Until that template is published the legacy renderer stays in charge, so
+   * the release can ship before the Designer change without an empty window.
+   */
+  function designerTemplate(list) {
+    if (!list || typeof list.querySelector !== 'function') return null
+    return list.querySelector(TEMPLATE_SELECTOR)
+  }
+
+  /**
+   * Clears the authored placeholder cards while preserving the Designer
+   * template. Emptying the whole list would delete the very card wf-xano needs
+   * to clone.
+   */
+  function emptyListExceptTemplate(list) {
+    if (!list) return
+    var template = designerTemplate(list)
+    if (!template) {
+      emptyElement(list)
+      return
+    }
+    Array.prototype.slice.call(list.childNodes).forEach(function (node) {
+      if (node !== template) list.removeChild(node)
+    })
+  }
 
   function configuredProfileList(documentObject, root) {
     if (!documentObject || !documentObject.querySelector || !root || !root.querySelector) return null
@@ -155,7 +186,7 @@
     // the authored hero summary placeholder, which lives outside the section.
     Array.prototype.forEach.call(roots, function (authoredRoot) {
       var authoredList = authoredRoot.querySelector && authoredRoot.querySelector(PROFILE_LIST)
-      if (authoredList) emptyElement(authoredList)
+      if (authoredList) emptyListExceptTemplate(authoredList)
       setProfileRootVisible(documentObject, authoredRoot, false)
     })
     toggleSummaryBlocks(documentObject, false)
@@ -170,10 +201,10 @@
     root.setAttribute('wf-xano-param-starter_slug', slug)
     list.setAttribute('wf-xano-element', 'list')
     list.setAttribute('aria-live', 'polite')
-    // The list was already emptied above, so an authored template that sat
-    // inside the list target is gone by now and a fresh hidden one is created
-    // here rather than found-then-deleted.
-    if (!root.querySelector('[wf-xano-element="template"]')) {
+    // A Designer-authored template inside the list survives the clear above and
+    // is what wf-xano clones. Only the legacy path still needs a placeholder
+    // template, and it must be empty so its clones render nothing.
+    if (!root.querySelector(TEMPLATE_SELECTOR)) {
       var template = documentObject.createElement('div')
       template.setAttribute('wf-xano-element', 'template')
       template.setAttribute('aria-hidden', 'true')
@@ -395,7 +426,10 @@
     setTextAll(documentObject, '[data-reviews-v3-summary-average], #rating', averageText)
     setTextAll(documentObject, '[data-reviews-v3-summary-count], #rating + span', String(count))
     toggleSummaryBlocks(documentObject, count > 0)
-    renderProfileReviews(documentObject, root, items)
+    // wf-xano owns the cards whenever the Designer template is present.
+    if (!designerTemplate(configuredProfileList(documentObject, root))) {
+      renderProfileReviews(documentObject, root, items)
+    }
 
     setProfileRootVisible(documentObject, root, items.length > 0)
     return true
@@ -414,11 +448,13 @@
   }
 
   var api = {
-    release: 'v1.59.422',
+    release: 'v1.59.433',
     profileSlug: profileSlug,
     configureProfileRoot: configureProfileRoot,
     paintProfile: paintProfile,
     renderProfileReviews: renderProfileReviews,
+    designerTemplate: designerTemplate,
+    emptyListExceptTemplate: emptyListExceptTemplate,
     wireInstances: wireInstances,
   }
   global.StartersReviewsV3 = api
