@@ -291,6 +291,23 @@
     return active[0] || null
   }
 
+  function displayableRate(value) {
+    if (!value || String(value.currency || '').toLowerCase() !== 'usd') return null
+    const cents = Number(value.price_cents)
+    return Number.isInteger(cents) && cents >= 100 ? value : null
+  }
+
+  function importedRateSuggestion(value) {
+    const suggestion = value && value.suggestion
+    if (
+      !displayableRate(suggestion) ||
+      suggestion.source !== 'legacy_v2' ||
+      suggestion.requires_confirmation !== true ||
+      Number(suggestion.price_cents) % 100 !== 0
+    ) return null
+    return suggestion
+  }
+
   function readinessState(value) {
     const readiness = (value && value.readiness) || {}
     return {
@@ -581,7 +598,9 @@
     if (complete.length > 1) return null
     if (complete.length === 1) {
       const index = leaves.indexOf(complete[0])
-      return endsAuthoredAmount(leaves, index) ? { target: complete[0], mode: 'currency' } : null
+      return endsAuthoredAmount(leaves, index)
+        ? { target: complete[0], mode: 'currency', prefix: null }
+        : null
     }
 
     const split = []
@@ -594,31 +613,30 @@
         AUTHORED_PRICE_NUMBER.test(String(number.textContent || '').trim()) &&
         endsAuthoredAmount(leaves, index + 1)
       ) {
-        split.push(number)
+        split.push({ target: number, mode: 'number', prefix: leaf })
       }
     })
-    return split.length === 1 ? { target: split[0], mode: 'number' } : null
+    return split.length === 1 ? split[0] : null
   }
 
-  // Only a canonical output element is controller-owned and may show a zero
-  // state. The authored tile is borrowed, so it carries a canonical price while
-  // one exists and returns to its authored copy on every reset path.
-  function paintAuthoredPrice(service) {
-    const resolved = authoredPriceTarget()
+  function paintAuthoredPrice(rate, emptyText) {
+    const resolved = authoredPriceTarget() || authoredPrice
     if (!resolved) return
     const target = resolved.target
     if (!authoredPrice || authoredPrice.target !== target || authoredPrice.mode !== resolved.mode) {
-      authoredPrice = { target: target, text: String(target.textContent || ''), mode: resolved.mode }
+      authoredPrice = {
+        target: target,
+        text: String(target.textContent || ''),
+        mode: resolved.mode,
+        prefix: resolved.prefix,
+        prefixDisplay: resolved.prefix ? resolved.prefix.style.display : '',
+      }
     }
-    const formatted = service ? formatUsd(service.price_cents) : authoredPrice.text
-    target.textContent = service && resolved.mode === 'number'
+    const formatted = rate ? formatUsd(rate.price_cents) : String(emptyText || authoredPrice.text)
+    if (authoredPrice.prefix) authoredPrice.prefix.style.display = rate ? authoredPrice.prefixDisplay : 'none'
+    target.textContent = rate && resolved.mode === 'number'
       ? formatted.replace(/^\$\s*/, '')
       : formatted
-  }
-
-  function restoreAuthoredPrice() {
-    if (!authoredPrice) return
-    authoredPrice.target.textContent = authoredPrice.text
   }
 
   function formatUsd(cents) {
@@ -690,7 +708,10 @@
       '[data-call-settings-busy="true"] [data-opp-element="loading-hide"],' +
       '[data-call-settings-busy="true"] [loading-hide]{' +
       'display:none!important}' +
-      '[data-call-settings-error-visible="true"].w-form-fail{display:block!important}'
+      '[data-call-settings-error-visible="true"].w-form-fail{display:block!important}' +
+      '[data-paid-call-card-state="off"] [data-service-card-element="price-card"],' +
+      '[data-paid-call-card-state="off"] [data-call-settings-output="price"]{' +
+      'opacity:.6;transition:opacity .2s ease}'
     document.head.appendChild(style)
   }
 
@@ -744,8 +765,8 @@
     setActionEnabled(action('save'), false)
     setActionEnabled(action('disable'), false)
     const priceOutput = output('price')
-    if (priceOutput) priceOutput.textContent = formatUsd(0)
-    restoreAuthoredPrice()
+    if (priceOutput) priceOutput.textContent = 'Not set'
+    else paintAuthoredPrice(null, 'Not set')
     paintStatusPills()
     setMessage(message)
   }
@@ -817,12 +838,13 @@
     const titleInput = field('title')
     const priceInput = field('price')
     const durationInput = field('duration')
+    const confirmedRate = displayableRate(service)
 
     setRadioChecked(enabledInput, Boolean(service))
     const disabledInput = disabledField()
     setRadioChecked(disabledInput, !service)
     if (titleInput) titleInput.value = service ? service.title || '' : 'Paid Consultation Call'
-    if (priceInput) priceInput.value = service ? Number(service.price_cents || 0) / 100 : ''
+    if (priceInput) priceInput.value = confirmedRate ? Number(confirmedRate.price_cents) / 100 : ''
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
     clearFieldValidity()
     root.setAttribute(
@@ -839,11 +861,20 @@
 
     root.setAttribute('data-paid-call-enabled', service ? 'true' : 'false')
     root.setAttribute('data-paid-call-bookable', bookable ? 'true' : 'false')
+    const suggestion = service ? null : importedRateSuggestion(value)
+    const cardStateTarget = uiScope || root
+    cardStateTarget.setAttribute('data-paid-call-card-state', service ? 'on' : 'off')
+    root.setAttribute('data-paid-call-rate-source', suggestion ? 'legacy_v2' : '')
     setActionEnabled(action('save'), canSaveSettings(value))
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
-    if (priceOutput) priceOutput.textContent = formatUsd(service ? service.price_cents : 0)
-    else paintAuthoredPrice(service)
+    const displayedRate = confirmedRate || suggestion
+    if (priceOutput) {
+      priceOutput.textContent = displayedRate ? formatUsd(displayedRate.price_cents) : 'Not set'
+    } else {
+      paintAuthoredPrice(displayedRate, 'Not set')
+    }
+    if (!service && suggestion && priceInput) priceInput.value = Number(suggestion.price_cents) / 100
     paintStatusPills()
     setMessage(
       service
@@ -852,7 +883,9 @@
           : readiness.bookable
           ? 'Paid calls are on and bookable.'
           : 'Paid calls are saved, but a prerequisite needs attention.'
-        : prerequisitesReady(value)
+        : suggestion
+          ? 'Paid calls are off. Confirm the imported V2 rate to turn them on.'
+          : prerequisitesReady(value)
           ? 'Paid calls are off. Add a rate to turn them on.'
           : 'Complete the required setup before you turn on paid calls.',
     )

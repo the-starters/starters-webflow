@@ -6,11 +6,21 @@ const vm = require('node:vm')
 const SOURCE = fs.readFileSync(require.resolve('./paid-call-settings.js'), 'utf8')
 const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 
-test('the Paid error visibility rule outranks Webflow hide utilities', () => {
-  assert.match(
-    SOURCE,
-    /\[data-call-settings-error-visible="true"\]\.w-form-fail\{display:block!important\}/,
-  )
+test('the Paid error visibility rule outranks Webflow hide utilities', async () => {
+  const result = load({
+    cardMode: true,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => ({
+        ok: false,
+        status: 500,
+        json: async () => ({ message: 'Paid settings unavailable' }),
+      }),
+    },
+  })
+  await settle()
+
+  result.dom.nativeError.style.display = 'none'
+  assert.equal(computedStyle(result.document, result.dom.nativeError).display, 'block')
 })
 
 function deferred() {
@@ -57,6 +67,7 @@ class El {
       this.children.push(child)
     })
   }
+  appendChild(child) { this.append(child); return child }
   addEventListener(name, listener) {
     const listeners = this.listeners.get(name) || []
     listeners.push(listener)
@@ -90,6 +101,54 @@ class El {
   }
 }
 
+function matchesCompound(element, selector) {
+  const tokens = selector.match(/\[[^\]]+\]|\.[\w-]+|[\w-]+/g) || []
+  return tokens.length > 0 && tokens.every((token) => element.matches(token))
+}
+
+function matchesSelector(element, selector) {
+  const parts = selector.trim().split(/\s+/)
+  let candidate = element
+  if (!matchesCompound(candidate, parts.pop())) return false
+  while (parts.length) {
+    const part = parts.pop()
+    candidate = candidate.parentElement
+    while (candidate && !matchesCompound(candidate, part)) candidate = candidate.parentElement
+    if (!candidate) return false
+  }
+  return true
+}
+
+function computedStyle(document, element) {
+  const declarations = {}
+  const apply = (name, value, important, order) => {
+    const current = declarations[name]
+    if (!current || (important && !current.important) || important === current.important && order >= current.order) {
+      declarations[name] = { value, important, order }
+    }
+  }
+  Object.entries(element.style).forEach(([name, value]) => apply(name, value, false, 1000000))
+  let order = 0
+  document.head.children.forEach((sheet) => {
+    const rules = String(sheet.textContent || '').matchAll(/([^{}]+)\{([^{}]+)\}/g)
+    for (const rule of rules) {
+      rule[1].split(',').forEach((selector) => {
+        if (!matchesSelector(element, selector)) return
+        rule[2].split(';').forEach((entry) => {
+          const separator = entry.indexOf(':')
+          if (separator < 0) return
+          const name = entry.slice(0, separator).trim()
+          const raw = entry.slice(separator + 1).trim()
+          const important = /!important\s*$/.test(raw)
+          apply(name, raw.replace(/!important\s*$/, ''), important, order)
+        })
+      })
+      order += 1
+    }
+  })
+  return Object.fromEntries(Object.entries(declarations).map(([name, entry]) => [name, entry.value]))
+}
+
 function canonical(overrides = {}) {
   return {
     stripe_environment: 'live',
@@ -104,6 +163,16 @@ function canonical(overrides = {}) {
       ...(overrides.readiness || {}),
     },
     services: overrides.services || [],
+    suggestion: overrides.suggestion || null,
+  }
+}
+
+function importedSuggestion(priceCents = 35000) {
+  return {
+    price_cents: priceCents,
+    currency: 'usd',
+    source: 'legacy_v2',
+    requires_confirmation: true,
   }
 }
 
@@ -326,6 +395,11 @@ function load(options = {}) {
   const document = {
     readyState: 'complete',
     documentElement: html,
+    head: new El('head'),
+    createElement(tag) { return new El(tag) },
+    getElementById(id) {
+      return this.head.children.find((child) => child.id === id) || null
+    },
     querySelector(selector) {
       if (selector === '[data-call-settings-service="paid"]') {
         return rootAvailable && options.stableCardMode === true ? dom.root : null
@@ -1516,7 +1590,7 @@ test('a fail-closed Paid reset leaves exactly one OFF status pill', async () => 
   assert.equal(result.dom.onOutput.style.display, 'none')
   assert.equal(result.dom.offOutput.hidden, false)
   assert.equal(result.dom.offOutput.style.display, '')
-  assert.equal(result.dom.priceOutput.textContent, '$0.00')
+  assert.equal(result.dom.priceOutput.textContent, 'Not set')
   assert.equal(result.dom.root.getAttribute('data-paid-call-duration-current'), '')
   assert.equal(result.dom.root.getAttribute('data-paid-call-duration-required'), '60')
 })
@@ -1575,7 +1649,7 @@ test('the Paid card price output renders grouped two-decimal USD', async () => {
 
   const off = load({ cardMode: true, initial: canonical() })
   await settle()
-  assert.equal(off.dom.priceOutput.textContent, '$0.00')
+  assert.equal(off.dom.priceOutput.textContent, 'Not set')
   assert.equal(off.dom.onOutput.style.display, 'none')
   assert.equal(off.dom.offOutput.style.display, '')
 })
@@ -1595,7 +1669,7 @@ test('the current native Paid card price marker renders canonical USD without a 
   assert.equal(result.dom.authoredPriceText.textContent, '$5.00')
 })
 
-test('the published split-span Paid price tile renders and restores the canonical amount', async () => {
+test('the published split-span Paid price tile renders and clears the canonical amount', async () => {
   const result = load({
     cardMode: true,
     priceTile: { canonical: false, authored: true, split: true },
@@ -1613,8 +1687,8 @@ test('the published split-span Paid price tile renders and restores the canonica
   await result.dom.save.dispatch('click')
   await settle()
 
-  assert.equal(result.dom.authoredPriceSymbol.textContent, '$')
-  assert.equal(result.dom.authoredPriceNumber.textContent, '150')
+  assert.equal(result.dom.authoredPriceSymbol.style.display, 'none')
+  assert.equal(result.dom.authoredPriceNumber.textContent, 'Not set')
 })
 
 test('a split-span Paid price tile continued by a cents span stays Designer-owned', async () => {
@@ -1648,7 +1722,7 @@ test('an authored Paid amount continued by a cents sibling stays Designer-owned'
   assert.equal(result.dom.authoredPriceCents.textContent, '.00')
 })
 
-test('the authored Paid price tile keeps its Designer copy with paid calls off', async () => {
+test('the authored Paid price tile replaces the placeholder with Not set while calls are off', async () => {
   const result = load({
     cardMode: true,
     priceTile: { canonical: false, authored: true },
@@ -1656,11 +1730,121 @@ test('the authored Paid price tile keeps its Designer copy with paid calls off',
   })
   await settle()
 
-  assert.equal(result.dom.authoredPriceText.textContent, '$150')
+  assert.equal(result.dom.authoredPriceText.textContent, 'Not set')
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Add a rate to turn them on.')
+  assert.equal(result.dom.card.getAttribute('data-paid-call-card-state'), 'off')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).opacity, '.6')
+  assert.equal(computedStyle(result.document, result.dom.card).opacity || '', '')
+  assert.equal(computedStyle(result.document, result.dom.offOutput).opacity || '', '')
+  assert.equal(computedStyle(result.document, result.dom.statusOutput).opacity || '', '')
+  assert.equal(computedStyle(result.document, result.dom.open).opacity || '', '')
 })
 
-test('the authored Paid price tile returns to its Designer copy when the session ends', async () => {
+test('an imported V2 suggestion replaces the placeholder but stays off until confirmation', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true },
+    initial: canonical({ suggestion: importedSuggestion(35000) }),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceText.textContent, '$350.00')
+  assert.equal(result.dom.price.value, 350)
+  assert.equal(result.dom.disabled.checked, true)
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), 'legacy_v2')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Confirm the imported V2 rate to turn them on.')
+})
+
+test('an imported V2 suggestion writes only after the Starter explicitly turns it on', async () => {
+  const confirmed = service({ price_cents: 35000, revision: 1 })
+  const result = load({
+    cardMode: true,
+    initial: canonical({ suggestion: importedSuggestion(35000) }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        setState(canonical({
+          services: [confirmed],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: confirmed }) }
+      },
+    },
+  })
+  await settle()
+
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'false')
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  const upserts = result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.equal(upserts.length, 1)
+  assert.deepEqual(upserts[0].body, {
+    config_id: null,
+    title: 'Paid Consultation Call',
+    price_cents: 35000,
+    duration_minutes: 60,
+    expected_revision: 0,
+    idempotency_key: 'paid-call-upsert:uuid-fixed',
+  })
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.onOutput.style.display, '')
+  assert.equal(result.dom.offOutput.style.display, 'none')
+})
+
+test('an active canonical V3 service remains authoritative over a legacy suggestion', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ price_cents: 27500 })],
+      suggestion: importedSuggestion(35000),
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.priceOutput.textContent, '$275.00')
+  assert.equal(result.dom.price.value, 275)
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), '')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
+})
+
+test('invalid imported V2 suggestions render Not set and never prefill the form', async () => {
+  for (const priceCents of [null, '', 0, '/bin/zsh', 500.5]) {
+    const result = load({
+      cardMode: true,
+      initial: canonical({ suggestion: importedSuggestion(priceCents) }),
+    })
+    await settle()
+
+    assert.equal(result.dom.priceOutput.textContent, 'Not set')
+    assert.equal(result.dom.price.value, '')
+    assert.equal(result.dom.disabled.checked, true)
+    assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), '')
+  }
+})
+
+test('a split-span placeholder hides its dollar sign when no rate exists', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true, split: true },
+    initial: canonical(),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceSymbol.style.display, 'none')
+  assert.equal(result.dom.authoredPriceNumber.textContent, 'Not set')
+})
+
+test('the authored Paid price tile shows Not set when the session ends', async () => {
   const result = load({
     cardMode: true,
     priceTile: { canonical: false, authored: true },
@@ -1677,7 +1861,24 @@ test('the authored Paid price tile returns to its Designer copy when the session
   await settle()
 
   assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
-  assert.equal(result.dom.authoredPriceText.textContent, '$150')
+  assert.equal(result.dom.authoredPriceText.textContent, 'Not set')
+})
+
+test('invalid active Paid rates never render or prefill a fallback', async () => {
+  for (const priceCents of [null, '', 0, '/bin/zsh', 500.5]) {
+    const result = load({
+      cardMode: true,
+      initial: canonical({
+        services: [service({ price_cents: priceCents })],
+        readiness: { paid_call_enabled: true, bookable: true },
+      }),
+    })
+    await settle()
+
+    assert.equal(result.dom.priceOutput.textContent, 'Not set')
+    assert.equal(result.dom.price.value, '')
+    assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  }
 })
 
 test('the authored Paid price tile paints its amount and never a caption', async () => {
