@@ -1,5 +1,6 @@
 /**
  * V3 profile portfolio / case-study renderer — /hire/<slug>
+ * @release v1.59.417
  *
  * Ported (behaviour-for-behaviour) from the on-canvas Code Embed that
  * previously lived inside the "Embed Code" component on the hire template, so
@@ -254,13 +255,15 @@
       if (modalTitle) modalTitle.textContent = truncateText(portfolio.title || '', 150);
 
       if (modalDescription) {
-        // Hand the "see more" clamp in hire-profile.js a clean slate, or it
-        // treats the previous case study's text as the current full text.
+        // A viewer whose browser still holds an older v3/hire-profile.js gets
+        // its "See more" toggle, and that script's empty-description path
+        // returns before removing it — leaving the previous case study's toggle
+        // over the previous case study's text. Each file is cached separately,
+        // so sweep it here and this renderer is correct against every version.
         var oldToggle = modal.querySelector('[data-toggle-for="description"]');
         if (oldToggle) oldToggle.remove();
-        delete modalDescription.dataset.fullTextdescription;
-        delete modalDescription.dataset.expandeddescription;
 
+        // The modal is the read-the-whole-thing surface: nothing clamps this.
         modalDescription.style.whiteSpace = 'pre-line';
         modalDescription.textContent = portfolio.description || '';
       }

@@ -133,7 +133,7 @@ function makeEnv({
   // Same attributes as the real modal children, but OUTSIDE the modal root —
   // stands in for the old hidden modal still present in the published DOM.
   const decoyTitle = { textContent: 'DECOY TITLE' }
-  const decoyDescription = { textContent: 'DECOY DESCRIPTION', style: {}, dataset: {} }
+  const decoyDescription = { textContent: 'DECOY DESCRIPTION', style: {} }
   const decoyImages = mediaContainer()
   const decoyVideos = mediaContainer()
 
@@ -143,8 +143,9 @@ function makeEnv({
       description: {
         textContent: '',
         style: {},
-        dataset: { fullTextdescription: 'previous case study', expandeddescription: 'true' },
       },
+      // A "See more" control left behind by a cached older hire-profile.js.
+      // The renderer sweeps it before writing the description.
       descriptionToggle: { removed: false, remove() { this.removed = true } },
       images: mediaContainer(),
       videos: mediaContainer(),
@@ -609,7 +610,43 @@ test('fills the description without a title element present', async () => {
   assert.equal(env.modalDescription.textContent, 'The story')
 })
 
-test('resets the see-more clamp state before writing a new description', async () => {
+test('replaces the description when a second case study is opened', async () => {
+  const env = makeEnv({
+    response: [
+      { id: 1, description: 'First story' },
+      { id: 2, description: 'Fresh copy' },
+    ],
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+  assert.equal(env.modalDescription.textContent, 'First story')
+
+  await env.appendedCards[1].openButton.click()
+  await settle()
+  assert.equal(env.modalDescription.textContent, 'Fresh copy')
+})
+
+test('shows a long description in full, with no See more inside the modal', async () => {
+  // The modal is the read-it-all surface: nothing clamps this text.
+  const longDescription = 'A very long project story. '.repeat(40)
+  const env = makeEnv({ response: [{ id: 1, description: longDescription }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  await env.appendedCards[0].openButton.click()
+  await settle()
+
+  assert.ok(longDescription.length > 250, 'the fixture is past the old clamp threshold')
+  assert.equal(env.modalDescription.textContent, longDescription)
+})
+
+test('sweeps away a See more control left by a cached older script', async () => {
+  // Each file is cached separately, so a viewer can hold an old
+  // v3/hire-profile.js that still builds the toggle. Its empty-description path
+  // leaves the previous case study's toggle and text behind.
   const env = makeEnv({ response: [{ id: 1, description: 'Fresh copy' }] })
   env.document.dispatch('DOMContentLoaded')
   await settle()
@@ -617,9 +654,7 @@ test('resets the see-more clamp state before writing a new description', async (
   await env.appendedCards[0].openButton.click()
   await settle()
 
-  assert.equal(env.descriptionToggle.removed, true, 'the previous See more control is gone')
-  assert.equal(env.modalDescription.dataset.fullTextdescription, undefined)
-  assert.equal(env.modalDescription.dataset.expandeddescription, undefined)
+  assert.equal(env.descriptionToggle.removed, true)
   assert.equal(env.modalDescription.textContent, 'Fresh copy')
 })
 

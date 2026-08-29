@@ -1,6 +1,8 @@
 /**
  * V3 paid-call Brand payment client.
  *
+ * @release v1.59.427
+ *
  * Xano derives the Brand and payment environment from the authenticated
  * session. A selection attempt owns one bounded idempotency key: retries reuse
  * that key, while every later intentional selection creates a new attempt.
@@ -27,7 +29,15 @@
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  const BOOKING_CLOSE_SELECTOR = '[data-modal-close], [booking-popup-close], [popup-booking-close]'
+  // The back arrow carries a close marker too, because closing the booking
+  // dialog is half of its hand-off back to the chooser. A synthesized close
+  // must never land on it: that would reopen the chooser instead of finishing.
+  // Today the backdrop happens to match first and this is moot, but "happens to
+  // be first in the DOM" is one Designer reorder away from being wrong.
+  const BOOKING_CLOSE_SELECTOR =
+    '[data-modal-close]:not([data-booking-back]), ' +
+    '[booking-popup-close]:not([data-booking-back]), ' +
+    '[popup-booking-close]:not([data-booking-back])'
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
   const guardedGuestSubmitTargets = new WeakSet()
@@ -54,6 +64,26 @@
     return ownership
   }
 
+  /**
+   * Does this `modal-open` / `modal-close` event belong to our booking dialog?
+   *
+   * The modal embed puts the dialog element on `detail.modal`, and on the
+   * authored page that dialog is itself the `[popup-booking]` element. The
+   * wrapper check covers a page where the marker sits on a child of the
+   * dialog instead, so a Designer re-nest cannot silently stop the reset. The
+   * sibling `[popup-stripe-card]` dialog deliberately does not match — its own
+   * close is a different concern, and matching it here would wipe the booking
+   * surface out from under an in-progress payment.
+   */
+  function isOwnBookingModal(popup, event) {
+    const modal = event && event.detail && event.detail.modal
+    if (!modal) return false
+    if (modal === popup || modal === 'popup-booking') return true
+    if (typeof modal.hasAttribute === 'function' && modal.hasAttribute('popup-booking')) return true
+    return typeof modal.querySelector === 'function' &&
+      modal.querySelector('[popup-booking]') === popup
+  }
+
   function getBookingSurfaceLifecycle() {
     const existing = global.StartersBookingSurfaceLifecycle
     if (
@@ -65,27 +95,41 @@
     const bindings = new WeakMap()
     const bookingStates = new WeakMap()
     const lifecycle = {
+      /**
+       * Capability mark for the mixed-generation case.
+       *
+       * This object is a first-installer-wins window singleton shared by the
+       * Free and Paid controllers, so a page can serve one controller from
+       * this generation and one from an older one. `close-complete` means the
+       * surface reset is bound to the embed's close-complete event and nothing
+       * else — an adopting controller must therefore add no close wiring of
+       * its own. An older singleton carries no mark, still resets on the close
+       * click, and is likewise adopted untouched: adding wiring to either one
+       * is what would reset twice, and neither one can miss a close.
+       */
+      resetTiming: 'close-complete',
       register: function (popup, container, onReset) {
         let binding = bindings.get(popup)
         if (!binding) {
-          binding = { container, resets: new Set() }
+          // `closePending` makes the reset idempotent per close cycle: one
+          // reset per close no matter how many close-complete events the embed
+          // emits, re-armed whenever the dialog is opened again or a call type
+          // claims the surface.
+          binding = { container, resets: new Set(), closePending: true }
           bindings.set(popup, binding)
-          Array.from(popup.querySelectorAll(BOOKING_CLOSE_SELECTOR)).forEach(function (control) {
-            if (typeof control.addEventListener === 'function') {
-              control.addEventListener('click', function () { lifecycle.reset(popup) })
-            }
-          })
-          if (typeof popup.addEventListener === 'function') {
-            popup.addEventListener('cancel', function () { lifecycle.reset(popup) })
-          }
           if (typeof global.addEventListener === 'function') {
+            global.addEventListener('modal-open', function (event) {
+              if (isOwnBookingModal(popup, event)) binding.closePending = true
+            })
+            // The reset runs on close-complete, never on the close click: the
+            // embed keeps the dialog on screen for its 300ms fade-out, and
+            // clearing the calendar mount or switching back to the default
+            // step before that fade ends repaints a dialog the visitor can
+            // still see.
             global.addEventListener('modal-close', function (event) {
-              const modal = event && event.detail && event.detail.modal
-              if (
-                modal === popup ||
-                modal === 'popup-booking' ||
-                (modal && typeof modal.hasAttribute === 'function' && modal.hasAttribute('popup-booking'))
-              ) lifecycle.reset(popup)
+              if (!isOwnBookingModal(popup, event) || !binding.closePending) return
+              binding.closePending = false
+              lifecycle.reset(popup)
             })
           }
         }
@@ -96,6 +140,7 @@
       reset: function (popup, nextType) {
         const binding = bindings.get(popup)
         if (!binding) return 0
+        if (nextType) binding.closePending = true
         const generation = bookingSurfaceOwnership.claim(binding.container)
         binding.resets.forEach(function (reset) { reset(generation, nextType || '') })
         return generation
@@ -832,6 +877,29 @@
       }
     }
 
+    /**
+     * The card dialog's own dismissal controls, and only those.
+     *
+     * `popup-stripe-card-close` is authored on the booking dialog's backdrop as
+     * well as on the card dialog's X and its backdrop, so matching that marker
+     * across the whole document let a backdrop dismissal of the *booking*
+     * modal cancel an in-progress card setup. Containment decides instead: the
+     * scope is the card dialog, widened to the `[data-modal-target]` that owns the
+     * marker so a Designer re-nest onto a child cannot silently unbind the
+     * dialog's own backdrop. (`closest` returns the marker itself on the
+     * authored page, where the marker is the dialog.) A page that nested the
+     * card dialog inside the booking dialog would have one dialog, not two, so
+     * the cross-dialog concern cannot arise from the widening.
+     */
+    function paymentCloseControls() {
+      const marker = document.querySelector('[popup-stripe-card]')
+      if (!marker) return []
+      const owner = typeof marker.closest === 'function' ? marker.closest('[data-modal-target]') : null
+      const scope = owner || marker
+      if (typeof scope.querySelectorAll !== 'function') return []
+      return Array.from(scope.querySelectorAll('[data-modal-close], [popup-stripe-card-close]'))
+    }
+
     function installPaymentAccessibility() {
       const paymentModal = document.querySelector('[popup-stripe-card]')
       const nodes = paymentNodes()
@@ -1325,9 +1393,7 @@
       })
     }
 
-    Array.from(document.querySelectorAll(
-      '[popup-stripe-card] [data-modal-close], [popup-stripe-card-close]',
-    )).forEach(function (control) {
+    paymentCloseControls().forEach(function (control) {
       if (typeof control.addEventListener === 'function') {
         control.addEventListener('click', cancelPaymentUi)
       }

@@ -315,6 +315,10 @@ function load(options = {}) {
   let rootAvailable = options.withRoot !== false && options.rootDelayed !== true
   let state = options.initial || canonical()
   let activeMember = { id: options.memberId || 'member-a' }
+  let authSessionActive = true
+  let authScope = {}
+  let authScopeUnavailable = false
+  let authScopeGate = null
   let currentMemberReader = () => activeMember
   let authChange = null
   const routes = options.routes || {}
@@ -346,6 +350,26 @@ function load(options = {}) {
     getCurrentMember: async () => ({ data: await currentMemberReader() }),
     onAuthChange(listener) { authChange = listener },
   }
+  const schedulingAuthFetch = async (url, init) => {
+    if (!authSessionActive) throw new Error('No Memberstack session')
+    const path = url.replace(API_BASE, '')
+    const method = init.method
+    const body = init.body ? JSON.parse(init.body) : undefined
+    calls.push({ path, method, body })
+    if (routes[path]) {
+      return routes[path]({
+        method,
+        body,
+        member: activeMember,
+        state,
+        setState: (next) => { state = next },
+      })
+    }
+    if (path === '/starter/paid-call-settings/get/v3') {
+      return { ok: true, status: 200, json: async () => state }
+    }
+    throw new Error('unrouted request ' + path)
+  }
   const window = {
     location: { hostname: options.hostname || 'thestarters.com' },
     crypto: { randomUUID: () => 'uuid-fixed' },
@@ -362,25 +386,14 @@ function load(options = {}) {
       windowListeners.set(name, listeners)
     },
     dispatchEvent(event) { events.push(event) },
-    xanoAuthFetch: async (url, init) => {
-      const path = url.replace(API_BASE, '')
-      const method = init.method
-      const body = init.body ? JSON.parse(init.body) : undefined
-      calls.push({ path, method, body })
-      if (routes[path]) {
-        return routes[path]({
-          method,
-          body,
-          member: activeMember,
-          state,
-          setState: (next) => { state = next },
-        })
-      }
-      if (path === '/starter/paid-call-settings/get/v3') {
-        return { ok: true, status: 200, json: async () => state }
-      }
-      throw new Error('unrouted request ' + path)
+    __tsSchedulingAuthFetch: schedulingAuthFetch,
+    __tsSchedulingAuthGetScope: async () => {
+      if (!authSessionActive) throw new Error('No Memberstack session')
+      if (authScopeUnavailable) throw new Error('Xano token trade failed')
+      if (authScopeGate) await authScopeGate.promise
+      return authScope
     },
+    xanoAuthFetch: schedulingAuthFetch,
   }
   if (!options.withoutMemberstackAtLoad) window.$memberstackDom = memberstack
 
@@ -417,13 +430,40 @@ function load(options = {}) {
     window,
     document,
     changeMember: async (nextMember) => {
+      if (!activeMember || !nextMember || activeMember.id !== nextMember.id) authScope = {}
       activeMember = nextMember
+      authSessionActive = Boolean(nextMember && nextMember.id)
       if (authChange) return authChange(nextMember)
       return null
     },
+    rotateAuthScope: async () => {
+      authScope = {}
+      return authChange ? authChange(activeMember) : null
+    },
+    beginFailedAuthScopeRotation: () => {
+      authScope = {}
+      authScopeUnavailable = true
+      return authChange ? authChange(activeMember) : Promise.resolve(null)
+    },
+    beginPendingAuthScopeRotation: () => {
+      authScope = {}
+      authScopeGate = deferred()
+      return authChange ? authChange(activeMember) : Promise.resolve(null)
+    },
+    resolvePendingAuthScope: () => {
+      if (authScopeGate) authScopeGate.resolve()
+      authScopeGate = null
+    },
+    recoverAuthScope: () => { authScopeUnavailable = false },
+    switchAuthScopeWithNullNotice: async (nextMember) => {
+      activeMember = nextMember
+      authSessionActive = Boolean(nextMember && nextMember.id)
+      authScope = {}
+      return authChange ? authChange(null) : null
+    },
     setCurrentMemberReader: (reader) => { currentMemberReader = reader },
     notifyAuthChange: async (nextMember) => (authChange ? authChange(nextMember) : null),
-    expireMemberSilently: () => { activeMember = null },
+    expireMemberSilently: () => { activeMember = null; authSessionActive = false; authScope = {} },
     installMemberstack: () => { window.$memberstackDom = memberstack },
     flushTimers: () => {
       const pending = timers.splice(0)
@@ -1197,6 +1237,41 @@ test('an auth change during an in-flight Paid write leaves the card controls usa
   await settle()
 })
 
+test('a transient null DOM member still updates Paid through the scheduling auth bridge', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ price_cents: 100 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 3,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+  result.setCurrentMemberReader(() => null)
+  result.window.xanoAuthFetch = async () => { throw new Error('mutable auth bridge must not run') }
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.method === 'POST').length, 1)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+})
+
 test('an expired session fails a Paid update closed before any POST', async () => {
   const result = load({
     cardMode: true,
@@ -1884,7 +1959,7 @@ test('canonical readback does not report bookable when readiness changed during 
 test('readiness events refresh canonical settings without a reload', async () => {
   const result = load({ initial: canonical({ readiness: { calendar_connected: false } }) })
   await settle()
-  assert.equal(result.dom.save.disabled, true)
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
 
   result.getState().readiness.calendar_connected = true
   await result.dispatchWindow('starterSchedulingConnectionStateChanged', { state: 'connected' })
@@ -1955,10 +2030,11 @@ test('auth changes clear prior settings and load the next member canonically', a
   await result.changeMember(null)
   assert.equal(result.dom.title.value, '')
   assert.equal(result.dom.price.value, '')
-  assert.equal(result.dom.save.disabled, true)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'false')
+  assert.equal(result.dom.status.textContent, 'Sign in to manage paid calls.')
 })
 
-test('a transient empty auth notification suspends and restores the Paid canonical paint', async () => {
+test('a transient empty auth notification preserves and refreshes the Paid canonical paint', async () => {
   const result = load({
     initial: canonical({
       services: [service({ title: 'Paid Consultation Call', price_cents: 100, revision: 8 })],
@@ -1971,9 +2047,8 @@ test('a transient empty auth notification suspends and restores the Paid canonic
     (call) => call.path === '/starter/paid-call-settings/get/v3',
   ).length
   const transition = result.notifyAuthChange(null)
-  assert.equal(result.dom.title.value, '')
-  assert.equal(result.dom.price.value, '')
-  assert.equal(result.dom.save.disabled, true)
+  assert.equal(result.dom.title.value, 'Paid Consultation Call')
+  assert.equal(result.dom.price.value, 1)
 
   await transition
   await settle()
@@ -1988,16 +2063,327 @@ test('a transient empty auth notification suspends and restores the Paid canonic
   )
 })
 
+test('same-member cookie rotation reloads Paid and keeps Update usable', async () => {
+  let reads = 0
+  let writes = 0
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ title: 'Original Paid Call', price_cents: 100 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => state }
+      },
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        writes += 1
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 3,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  await result.rotateAuthScope()
+  await settle()
+
+  assert.equal(reads, 2)
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(writes, 1)
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+})
+
+test('Paid shows reconnecting immediately while same-member scope is pending', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ price_cents: 100 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  const transition = result.beginPendingAuthScopeRotation()
+
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid-call settings are reconnecting. Update will resume automatically.')
+
+  result.resolvePendingAuthScope()
+  await transition
+  await settle()
+
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+})
+
+test('a null same-member rotation reloads Paid without clearing canonical paint', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ title: 'Member A Call', price_cents: 100 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  const transition = result.switchAuthScopeWithNullNotice({ id: 'member-a' })
+  assert.equal(result.dom.title.value, 'Member A Call')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  await transition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member A Call')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+})
+
+test('Paid recovers automatically after a transient same-member token failure', async () => {
+  let reads = 0
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service({ price_cents: 100 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ state }) => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => state }
+      },
+    },
+  })
+  await settle()
+
+  const transition = result.beginFailedAuthScopeRotation()
+  await settle()
+
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid-call settings are reconnecting. Update will resume automatically.')
+
+  result.recoverAuthScope()
+  result.flushTimers()
+  await transition
+  await settle()
+
+  assert.equal(reads, 2)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+})
+
+test('Paid preserves canonical paint and retries a transient rotated-scope GET', async () => {
+  let reads = 0
+  const active = canonical({
+    services: [service({ title: 'Original Paid Call', price_cents: 100 })],
+    readiness: { paid_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 2
+          ? { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+          : { ok: true, status: 200, json: async () => active }
+      },
+    },
+  })
+  await settle()
+
+  const transition = result.rotateAuthScope()
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Original Paid Call')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+
+  result.flushTimers()
+  await transition
+  await settle()
+
+  assert.equal(reads, 3)
+  assert.equal(result.dom.title.value, 'Original Paid Call')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+})
+
+test('account switch supersedes a retrying Paid rotated-scope GET', async () => {
+  let memberAReads = 0
+  const result = load({
+    initial: canonical({ services: [service({ title: 'Member A Call', price_cents: 100 })] }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ member }) => {
+        if (member.id === 'member-b') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => canonical({
+              services: [service({ config_id: 'cfg-b', title: 'Member B Call', price_cents: 45000 })],
+            }),
+          }
+        }
+        memberAReads += 1
+        return memberAReads === 1
+          ? { ok: true, status: 200, json: async () => canonical({ services: [service({ title: 'Member A Call', price_cents: 100 })] }) }
+          : { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) }
+      },
+    },
+  })
+  await settle()
+
+  const staleTransition = result.rotateAuthScope()
+  await settle()
+  await result.changeMember({ id: 'member-b' })
+  result.flushTimers()
+  await staleTransition
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member B Call')
+  assert.equal(result.dom.price.value, 450)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+})
+
+test('Paid Update is blocked while a null-auth canonical read is unresolved', async () => {
+  const refresh = deferred()
+  let reads = 0
+  const active = canonical({
+    services: [service({ price_cents: 100 })],
+    readiness: { paid_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        if (reads === 1) return { ok: true, status: 200, json: async () => active }
+        return refresh.promise
+      },
+    },
+  })
+  await settle()
+
+  const transition = result.notifyAuthChange(null)
+  await settle()
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  await result.dom.save.dispatch('click')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+
+  refresh.resolve({ ok: true, status: 200, json: async () => active })
+  await transition
+  await settle()
+  assert.notEqual(result.dom.save.getAttribute('aria-disabled'), 'true')
+})
+
+test('a final Paid 401 clears stale account settings', async () => {
+  let reads = 0
+  const active = canonical({ services: [service({ price_cents: 100 })], readiness: { paid_call_enabled: true, bookable: true } })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 1
+          ? { ok: true, status: 200, json: async () => active }
+          : { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+      },
+    },
+  })
+  await settle()
+  await result.notifyAuthChange(null)
+  await settle()
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'false')
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
+})
+
+test('Paid rejects an unowned mutable auth fallback and accepts the verified scheduling fallback', async () => {
+  let writes = 0
+  const active = canonical({ services: [service({ price_cents: 100 })], readiness: { paid_call_enabled: true, bookable: true } })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': () => {
+        writes += 1
+        return { ok: true, status: 200, json: async () => ({ service: service({ price_cents: 100 }) }) }
+      },
+    },
+  })
+  await settle()
+  delete result.window.__tsSchedulingAuthFetch
+  result.window.__tsSchedulingAuthBridgeOwner = 'other-bundle'
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(writes, 0)
+
+  result.window.__tsSchedulingAuthBridgeOwner = 'scheduling-auth'
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(writes, 1)
+})
+
+test('an owner-changing null auth notification loads only the live Paid owner', async () => {
+  const result = load({
+    initial: canonical({
+      services: [service({ title: 'Member A Call', price_cents: 12500 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ member }) => ({
+        ok: true,
+        status: 200,
+        json: async () => canonical({
+          services: [service({
+            config_id: member.id === 'member-b' ? 'cfg-paid-b' : 'cfg-paid-a',
+            title: member.id === 'member-b' ? 'Member B Call' : 'Member A Call',
+            price_cents: member.id === 'member-b' ? 45000 : 12500,
+          })],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }),
+      }),
+    },
+  })
+  await settle()
+
+  await result.switchAuthScopeWithNullNotice({ id: 'member-b' })
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member B Call')
+  assert.equal(result.dom.price.value, 450)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.calls.filter(
+    (call) => call.path === '/starter/paid-call-settings/get/v3',
+  ).length, 2)
+})
+
 test('a failed post-write auth read falls back to the verified Paid update', async () => {
   const postStarted = deferred()
   const finishPost = deferred()
   let reads = 0
   let postFinished = false
   const result = load({
-    initial: canonical({
-      services: [service()],
-      readiness: { paid_call_enabled: true, bookable: true },
-    }),
+    initial: canonical(),
     routes: {
       '/starter/paid-call-settings/get/v3': ({ state }) => {
         reads += 1
@@ -2032,12 +2418,14 @@ test('a failed post-write auth read falls back to the verified Paid update', asy
 
   result.dom.title.value = 'Updated Paid Call'
   result.dom.price.value = '475'
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
   await result.dom.save.dispatch('click')
   await postStarted.promise
   const authTransition = result.notifyAuthChange(null)
   await settle()
-  assert.equal(result.dom.title.value, '')
-  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.title.value, 'Updated Paid Call')
+  assert.equal(result.dom.price.value, '475')
 
   finishPost.resolve()
   await authTransition
@@ -2046,7 +2434,15 @@ test('a failed post-write auth read falls back to the verified Paid update', asy
   assert.equal(result.dom.title.value, 'Updated Paid Call')
   assert.equal(result.dom.price.value, 475)
   assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
   assert.equal(reads, 3)
+
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.calls.filter(
+    (call) => call.path === '/starter/paid-call-settings/upsert/v3',
+  ).length, 2)
 })
 
 test('prerequisite events coalesce behind Paid write auth recovery', async () => {
@@ -2100,7 +2496,7 @@ test('prerequisite events coalesce behind Paid write auth recovery', async () =>
   assert.equal(result.dom.title.value, 'Updated Paid Call')
   assert.equal(result.dom.price.value, 475)
   assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
-  assert.equal(reads, 4)
+  assert.equal(reads, 3)
 })
 
 test('queued prerequisite events do not erase a failed Paid write error', async () => {
@@ -2145,6 +2541,51 @@ test('queued prerequisite events do not erase a failed Paid write error', async 
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
   assert.equal(result.dom.nativeError.style.display, 'block')
   assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
+  assert.equal(
+    result.dom.nativeErrorMessage.textContent,
+    'Resolve in-flight bookings before updating this service',
+  )
+})
+
+test('a null auth notice does not leave a failed Paid write busy or erase its error', async () => {
+  const postStarted = deferred()
+  const finishPost = deferred()
+  const active = canonical({
+    services: [service({ price_cents: 100 })],
+    readiness: { paid_call_enabled: true, bookable: true },
+  })
+  const result = load({
+    cardMode: true,
+    initial: active,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => ({
+        ok: true,
+        status: 200,
+        json: async () => active,
+      }),
+      '/starter/paid-call-settings/upsert/v3': () => {
+        postStarted.resolve()
+        return finishPost.promise
+      },
+    },
+  })
+  await settle()
+
+  await result.dom.open.dispatch('click')
+  await result.dom.save.dispatch('click')
+  await postStarted.promise
+  const authTransition = result.notifyAuthChange(null)
+  finishPost.resolve({
+    ok: false,
+    status: 400,
+    json: async () => ({ message: 'Resolve in-flight bookings before updating this service' }),
+  })
+  await authTransition
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.equal(result.dom.save.getAttribute('data-call-settings-busy'), 'false')
+  assert.equal(result.dom.save.querySelector('[data-button-spinner]').style.display, 'none')
   assert.equal(
     result.dom.nativeErrorMessage.textContent,
     'Resolve in-flight bookings before updating this service',
@@ -2299,7 +2740,7 @@ test('a stale Paid same-member revalidation cannot repaint after logout', async 
 
   result.setCurrentMemberReader(() => staleMember.promise)
   const staleTransition = result.notifyAuthChange(null)
-  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.title.value, 'Paid Consultation Call')
 
   result.expireMemberSilently()
   result.setCurrentMemberReader(() => null)
@@ -2310,7 +2751,7 @@ test('a stale Paid same-member revalidation cannot repaint after logout', async 
 
   assert.equal(result.dom.title.value, '')
   assert.equal(result.dom.price.value, '')
-  assert.equal(result.dom.save.disabled, true)
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
   assert.equal(result.dom.status.textContent, 'Sign in to manage paid calls.')
 })
 
@@ -2365,7 +2806,8 @@ test('late Memberstack arrival still wires auth changes', async () => {
   await result.changeMember(null)
   assert.equal(result.dom.title.value, '')
   assert.equal(result.dom.price.value, '')
-  assert.equal(result.dom.save.disabled, true)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'false')
+  assert.equal(result.dom.status.textContent, 'Sign in to manage paid calls.')
 })
 
 test('late Memberstack arrival starts the initial canonical read when memberReady resolved first', async () => {

@@ -10,6 +10,7 @@
     nav { display: flex; gap: 8px; padding: 20px 28px; border-bottom: 1px solid #d8d9d3; }
     button { border: 1px solid #222; background: white; padding: 10px 16px; cursor: pointer; }
     button[aria-selected="true"] { background: #d8d9d3; }
+    output { display: block; padding: 10px 28px; background: #e5f6e8; color: #174d22; font-weight: 700; }
     section { padding: 28px; }
     h2 { margin-top: 0; font: 32px/1.2 Georgia, serif; }
   </style>
@@ -53,14 +54,21 @@
       <span data-reviews-v3-summary-average>0</span>
       (<span data-reviews-v3-summary-count>0</span> Reviews)
     </header>
+    <output id="nested-root-result">Checking nested review roots…</output>
     <nav aria-label="Profile sections">
       <button type="button" data-panel="overview" aria-selected="true">Overview</button>
       <button type="button" data-panel="reviews" aria-selected="false">Reviews</button>
     </nav>
     <section id="overview"><h2>Overview</h2><p>Browser-only test profile.</p></section>
-    <section id="reviews" class="profile-content_reviews" data-reviews-v3="profile" hidden>
-      <h2>Reviews</h2>
-      <div class="profile-content_reviews_list" data-reviews-v3-list="reviews"></div>
+    <section id="reviews" data-reviews-v3="profile" data-toc-section="reviews" hidden>
+      <div class="profile-content_reviews" data-reviews-v3="profile">
+        <h2>Reviews</h2>
+        <div class="profile-content_reviews_list" data-reviews-v3-list="reviews"></div>
+      </div>
+    </section>
+    <section data-reviews-v3="profile">
+      <h2>Placeholder Reviews</h2>
+      <div>Fabricated Designer placeholder that must stay hidden.</div>
     </section>
   </main>
   <script>
@@ -75,5 +83,13 @@
     });
   </script>
   <script src="/v3/reviews.js"></script>
+  <script>
+    var profileRoots = document.querySelectorAll('[data-reviews-v3="profile"]');
+    var nestedOwnersVisible = !profileRoots[0].hidden && !profileRoots[1].hidden;
+    var strayFailClosed = profileRoots[2].hidden && profileRoots[2].style.display === 'none';
+    document.querySelector('#nested-root-result').textContent = nestedOwnersVisible && strayFailClosed
+      ? 'PASS: nested review owners are visible; stray placeholder stays hidden.'
+      : 'FAIL: nested review visibility contract was not met.';
+  </script>
 </body>
 </html>

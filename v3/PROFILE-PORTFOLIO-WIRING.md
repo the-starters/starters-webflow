@@ -72,6 +72,18 @@ the case-study title into it (truncated at 150 characters); when it does not, th
 renderer skips it silently. The static "About the project" heading must not carry
 the attribute.
 
+`portfolio-description` renders the case study in full, with `white-space:
+pre-line` so the writer's line breaks survive. Nothing truncates it and there is
+no "See more" control inside the modal — the modal is already the expanded view.
+The see-more JavaScript is gone from `v3/hire-profile.js` entirely; card titles
+are shortened by the Designer's CSS line clamp (2 lines), not by script.
+
+Before writing the description the renderer removes any
+`[data-toggle-for="description"]` element inside the modal. A viewer whose
+browser still holds an older `hire-profile.js` gets that script's "See more"
+control, and its empty-description path returns before cleaning up — leaving the
+previous case study's toggle over the previous case study's text.
+
 `data-highlights-loader` is an optional element authored inside the modal — its
 copy and styling are the designer's. Author it **outside** the Images and Videos
 containers: the first fill empties those containers, which would destroy a loader

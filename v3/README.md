@@ -1857,7 +1857,9 @@ Current safety boundary:
   canonical dashboards, and valid Hire routes.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
-- Invalidates cached and in-flight authentication when the Memberstack session changes.
+- Reconciles Memberstack auth notifications against the live cookie. A transient empty DOM
+  notification with the same cookie keeps the cached token and in-flight owner requests. A real
+  logout or cookie change invalidates the cached token, auth scope, and in-flight scoped responses.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code. It also retains its own auth-fetch reference for the stage adapter,
   because another page bundle can replace the public compatibility global
@@ -1865,9 +1867,10 @@ Current safety boundary:
 - Dashboard controllers reuse the site-head `window.memberReady` promise for
   their initial identity snapshot and `window.getXanoAuthToken` for the
   Opportunities, Points, Messages, and Stripe reads. This keeps one shared
-  Memberstack bootstrap and one in-flight Xano token trade per member session;
-  live identity checks after auth changes and before writes still call
-  Memberstack directly and fail closed on a changed member.
+  Memberstack bootstrap and one in-flight Xano token trade per member session.
+  The Free and Paid settings controllers use the bridge-owned auth scope and fetch reference for
+  auth-triggered refreshes and writes, so a transient Memberstack DOM null cannot block the current
+  owner. A logout or account switch changes that scope and still fails closed.
 - The Starter **Contract Generation** modal also depends on
   `window.getXanoAuthToken` when a browser session holds a cached
   `opportunities-3.0.js` without `Opp30.API.starterProfile`, so keep
@@ -1893,6 +1896,12 @@ Public helpers:
 - `window.getXanoAuthToken({ forceRefresh: true })` returns the cached,
   member-scoped token or explicitly replaces it. The options argument is
   optional.
+
+The bridge also retains `window.__tsSchedulingAuthFetch` and
+`window.__tsSchedulingAuthGetScope` for the dashboard Free and Paid settings controllers. These
+owner-specific references bind a request and canonical repaint to one auth scope even if another
+page bundle replaces `window.xanoAuthFetch`. They are internal controller contracts, not general
+page integration helpers.
 
 The transparent `window.fetch` wrapper exists only for legacy inline callers. If
 initial token acquisition fails, it logs a warning and makes one unauthenticated
@@ -2153,8 +2162,11 @@ uses a fixed `respond` scope. An ambiguous or malformed result keeps the key for
 safe replay. Only an exact nested result for the same booking clears the
 matching key: decline must be `declined`, cancel must be `cancelled`, a proposal
 must be `rescheduled`, and either response must be `confirmed`. The success
-panel remains visible until the participant closes the modal; closing it then
-refreshes the canonical list.
+panel replaces `[Starter]` and `[Brand]` in its leaf text nodes with the
+counterpart's canonical booking name, or `the other participant` when that name
+is blank. Other authored content stays unchanged. The panel remains visible
+until the participant closes the modal; closing it then refreshes the canonical
+list.
 
 `dashboard-call-media.js` owns read-only notetaker recording access. The action
 is eligible only for an owner-scoped canonical completed or archived booking
@@ -2807,11 +2819,15 @@ second review write.
 
 On the public profile, author exactly one section with
 `data-reviews-v3="profile"` and exactly one descendant list target with
-`data-reviews-v3-list="reviews"`. The live template has shipped duplicate
-markers before, so the adapter tolerates them defensively: every marker is
-hidden and has its list emptied at configuration time, but only the first in
-document order is configured and painted — a duplicate never publishes its
-placeholder cards, and never becomes a second wf-xano wrapper. The adapter
+`data-reviews-v3-list="reviews"`. The published Hire template currently has
+two nested profile markers: the outer `#reviews` wrapper and the authored
+section that contains the list. The adapter tolerates this defensively. It
+hides every marker and empties every marker's list at configuration time, then
+configures and paints only the first marker in document order as the wf-xano
+wrapper. After a positive approved response, it reveals every nested marker
+that contains the active list. A stray marker that does not contain the active
+list stays hidden and empty, so it cannot publish placeholder cards or become
+a second wf-xano wrapper. The adapter
 derives the decoded slug only
 from the canonical `/hire/{slug}` path, configures that section as the
 `starter-reviews` wf-xano wrapper, and sets `wf-xano-param-starter_slug` before
@@ -2889,13 +2905,19 @@ authored `.profile-content_reviews_list_item` cards with its own.
 
 The adapter also accepts `items` for the review array, `aggregates` for the
 aggregate object, and the wf-xano raw-item fallback. Aggregate values are never
-recalculated from a paginated review list. Approved reviews render as stacked,
-bordered cards with five Bootstrap star icons, a `Verified Review` badge, the
-review text, and reviewer identity from `brand.full_name` with
-`brand.company_name` as its fallback. Cards are constructed with DOM nodes and
-`textContent` only, so reviewer identity and review text are never interpreted
-as HTML. The adapter contains no Airtable or Make integration and no private
-token or direct authenticated fetch path.
+recalculated from a paginated review list. Approved results render as stacked,
+bordered cards with five Bootstrap star icons. A brand-verified review has a
+`brand` object and shows the existing green `Verified Review` badge with its
+check icon and verified-brand reviewer line. A legacy testimonial has
+`verified: false`, no Brand actor, and a denormalized `reviewer` object with
+`display_name`, `title`, and `company_name`; it shows a neutral `Testimonial`
+badge without a check icon and uses `title @ company_name` as its reviewer
+line. A response without the `verified` field keeps the older verified-review
+rendering for backward compatibility. When both identity objects exist,
+`reviewer` takes precedence over `brand`. Cards are constructed with DOM nodes
+and `textContent` only, so reviewer identity and review text are never
+interpreted as HTML. The adapter contains no Airtable or Make integration and
+no private token or direct authenticated fetch path.
 
 Run the focused checks with:
 

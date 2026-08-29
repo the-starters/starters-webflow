@@ -146,6 +146,9 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
   el.appendChild = (child) => {
     child.parentElement = el
     el.children.push(child)
+    if (el.tag === 'select' && Array.isArray(el.options) && child.tag === 'option') {
+      if (!el.options.includes(child)) el.options.push(child)
+    }
     return child
   }
   el.prepend = (child) => {
@@ -169,6 +172,9 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
   }
   el.remove = () => {
     if (!el.parentElement) return
+    if (el.parentElement.tag === 'select' && Array.isArray(el.parentElement.options)) {
+      el.parentElement.options = el.parentElement.options.filter((option) => option !== el)
+    }
     el.parentElement.children = el.parentElement.children.filter((c) => c !== el)
     el.parentElement = null
   }
@@ -475,6 +481,7 @@ function makeContext({
   existingHeadScripts = [],
   location = { hostname: 'www.thestarters.com', pathname: '/hire/ashna-rana' },
   schedulingBridge = false,
+  wfXano,
 } = {}) {
   const warnings = []
   const requestedIndexes = []
@@ -482,6 +489,7 @@ function makeContext({
   const requestedObjectIds = []
   const requestedUrls = []
   const mutationObserverCallbacks = []
+  const windowListeners = {}
   const root = page ? page.root : makeElement('body')
   const head = makeElement('head')
 
@@ -560,6 +568,11 @@ function makeContext({
     },
     qs: (s, scope) => (scope || documentObject).querySelector(s),
     qsa: (s, scope) => (scope || documentObject).querySelectorAll(s),
+    // The modal embed announces a finished close on the window, which is how
+    // the booking entry stamp learns the visitor has left.
+    addEventListener: (type, fn) => {
+      ;(windowListeners[type] = windowListeners[type] || []).push(fn)
+    },
     MEMBER: member,
     memberReady: Promise.resolve(member),
     waitForMember: (cb) => Promise.resolve().then(() => cb(member)),
@@ -586,6 +599,7 @@ function makeContext({
       },
     },
   }
+  if (wfXano) context.WfXano = wfXano
   context.window = context
   const originalHeadAppend = head.appendChild
   head.appendChild = (child) => {
@@ -614,6 +628,11 @@ function makeContext({
   context.requestedObjectIds = requestedObjectIds
   context.requestedUrls = requestedUrls
   context.mutationObserverCallbacks = mutationObserverCallbacks
+  context.windowListeners = windowListeners
+  /** Fires the modal embed's close-complete event for one dialog. */
+  context.fireModalClose = (dialog) => {
+    for (const fn of windowListeners['modal-close'] || []) fn({ detail: { modal: dialog } })
+  }
   return context
 }
 
@@ -622,6 +641,71 @@ async function settle(times = 30) {
   for (let i = 0; i < times; i += 1) await Promise.resolve()
   await new Promise((r) => setTimeout(r, 10))
   for (let i = 0; i < times; i += 1) await Promise.resolve()
+}
+
+function addXanoServiceFixture(page, serviceName) {
+  const wrapper = makeElement('div', {
+    'wf-xano-element': 'wrapper',
+    'wf-xano-instance': 'starter-services',
+  })
+  const template = makeElement('div', {
+    'wf-xano-element': 'template',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': '',
+  })
+  const templateTitle = makeElement('div', {
+    'data-service-card-element': 'title',
+    'wf-xano-bind': 'name',
+  })
+  templateTitle.textContent = 'Service Name'
+  template.appendChild(templateTitle)
+  wrapper.appendChild(template)
+
+  const card = makeElement('div', { 'wf-xano-item': '', 'data-wf-xano-id': '383:0' })
+  const title = makeElement('div', { 'data-service-card-element': 'title' })
+  title.textContent = serviceName
+  card.appendChild(title)
+  const description = makeElement('div', { 'data-service-card-element': 'description' })
+  description.textContent = 'Rendered description'
+  card.appendChild(description)
+  wrapper.appendChild(card)
+  page.servicesList.appendChild(wrapper)
+  return { wrapper, template, card, title, description }
+}
+
+function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = true } = {}) {
+  let resultsHandler = null
+  let latestResult = initialResult
+  let getStateCalls = 0
+  const instance = {
+    root,
+    getState() {
+      getStateCalls += 1
+      return latestResult ? { status: 'success', data: latestResult } : null
+    },
+    on(event, handler) {
+      if (event === 'results') {
+        resultsHandler = handler
+        if (latestResult && replayOnSubscribe) handler(latestResult)
+      }
+      return instance
+    },
+  }
+  return {
+    api: {
+      push(callback) {
+        callback({ get: (key) => (key === 'starter-services' ? instance : null) })
+      },
+    },
+    emit(result = { items: [], total: 0, page: 1, pages: 1, hasMore: false }) {
+      assert.ok(resultsHandler, 'starter-services results handler must be registered')
+      latestResult = result
+      resultsHandler(result)
+    },
+    getStateCalls() {
+      return getStateCalls
+    },
+  }
 }
 
 /* ---------------------------------------------------------------- tests --- */
@@ -1730,7 +1814,11 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
     guard.textContent,
     '[data-booking-unavailable]{display:none!important}' +
       '[data-booking-trigger-unavailable]{display:none!important}' +
-      '[data-canonical-call-unavailable]{display:none!important}',
+      '[data-canonical-call-unavailable]{display:none!important}' +
+      '[data-booking-pass-through]{visibility:hidden!important}' +
+      '[data-booking-pass-through] *{visibility:hidden!important}' +
+      '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"])' +
+      ' [data-booking-back]{display:none!important}',
   )
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
@@ -2723,6 +2811,374 @@ test('Paid-only discovery stays closed when the V3 controller is unavailable', a
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.equal(nearestSlotCalls, 0)
   assert.ok(context.warnings.some((line) => line.includes('Paid Call controller is unavailable')))
+})
+
+test('a late wf-xano service card receives logged-out signup wiring without changing its template', async () => {
+  const page = makePage()
+  const cmsCard = makeElement('div', {
+    'data-service-card': 'component',
+    'data-service-card-state': 'Default',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'CMS Strategy',
+  })
+  const cmsTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  cmsTitle.textContent = 'CMS Strategy'
+  cmsCard.appendChild(cmsTitle)
+  page.servicesList.appendChild(cmsCard)
+  const cmsBefore = { ...cmsCard.attributes }
+  const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const templateBefore = { ...xano.template.attributes }
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Audit', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.equal(xano.card.getAttribute('data-service-card'), 'component')
+  assert.equal(xano.card.getAttribute('data-service-card-state'), 'Default')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+  assert.equal(xano.card.getAttribute('data-xano-service-card'), 'starter-services')
+  assert.equal(xano.card.getAttribute('data-modal-trigger'), null)
+  assert.equal(xano.card.style.cursor, 'pointer')
+  assert.equal(page.servicesList.children.includes(cmsCard), true, 'the CMS comparison card stays rendered')
+  assert.deepEqual(cmsCard.attributes, cmsBefore, 'the CMS comparison card keeps its authored contract')
+  assert.equal(cmsCard.style.cursor, 'pointer', 'the CMS comparison card stays clickable')
+  assert.deepEqual(xano.template.attributes, templateBefore, 'the authored template must stay byte-identical')
+  assert.ok(context.emptyNavRefreshCalls.length > 0)
+})
+
+test('a late wf-xano result repaints dropped nested-component bindings by exact item id', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Service Name')
+  xano.description.textContent = 'Service Description'
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Deep dive', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.equal(xano.title.textContent, 'Paid Media Audit')
+  assert.equal(xano.description.textContent, 'Deep dive')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+})
+
+test('a browser NodeList of wf-xano cards is adapted without array-only methods', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Service Name')
+  xano.description.textContent = 'Service Description'
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  const arrayQsa = context.qsa
+  context.qsa = (selector, scope) => {
+    const result = arrayQsa(selector, scope)
+    if (selector !== '[wf-xano-item]' || scope !== xano.wrapper) return result
+    return { 0: result[0], length: result.length }
+  }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Deep dive', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.equal(xano.title.textContent, 'Paid Media Audit')
+  assert.equal(xano.description.textContent, 'Deep dive')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+  assert.equal(context.warnings.some((line) => line.includes('filter is not a function')), false)
+})
+
+test('an already-complete wf-xano result is adapted by late-subscriber replay', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Service Name')
+  xano.description.textContent = 'Service Description'
+  const completed = {
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Deep dive', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  }
+  const wfx = makeWfXanoFixture(xano.wrapper, completed)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(xano.title.textContent, 'Paid Media Audit')
+  assert.equal(xano.description.textContent, 'Deep dive')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+  assert.equal(xano.card.getAttribute('data-xano-service-card'), 'starter-services')
+  assert.equal(wfx.getStateCalls(), 0, 'the replayed result must not be adapted again from state')
+})
+
+test('an already-complete wf-xano result falls back to public state without subscriber replay', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Service Name')
+  xano.description.textContent = 'Service Description'
+  const completed = {
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Deep dive', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  }
+  const wfx = makeWfXanoFixture(xano.wrapper, completed, { replayOnSubscribe: false })
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(xano.title.textContent, 'Paid Media Audit')
+  assert.equal(xano.description.textContent, 'Deep dive')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Paid Media Audit')
+  assert.equal(xano.card.getAttribute('data-xano-service-card'), 'starter-services')
+  assert.equal(wfx.getStateCalls(), 1, 'public state must be read once when subscription does not replay')
+})
+
+test('a late wf-xano result never repaints a clone whose item id does not match', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Service Name')
+  xano.description.textContent = 'Service Description'
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{ id: 'other:0', name: 'Wrong Service', description: 'Wrong description', price: 1 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.equal(xano.title.textContent, 'Service Name')
+  assert.equal(xano.description.textContent, 'Service Description')
+  assert.equal(xano.card.getAttribute('data-signup-trigger-value'), 'Service Name')
+})
+
+test('a late wf-xano service uses an authored native option and presets the Brand project modal idempotently', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const { select } = addContractDialog(page, ['', 'Freelance work', 'Monthly retainer', 'Paid Media Audit'])
+  const authoredOptions = select.options.slice()
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  const result = {
+    items: [{ id: '383:0', name: 'Paid Media Audit', description: 'Audit', price: 2500 }],
+    total: 1,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  }
+  wfx.emit(result)
+  wfx.emit(result)
+  await settle()
+
+  assert.deepEqual(select.options, authoredOptions, 'an authored exact option must not be duplicated or changed')
+  assert.equal(xano.card.getAttribute('data-modal-trigger'), 'generate-contract')
+  assert.equal(xano.card.getAttribute('data-sp-fill'), 'button')
+  assert.equal(xano.card.getAttribute('data-sp-fill-category'), 'service')
+  assert.equal(xano.card.getAttribute('data-sp-fill-value'), 'Paid Media Audit')
+  assert.equal(xano.card.style.cursor, 'pointer')
+})
+
+test('a late wf-xano service adds one adapter-owned native option when its authored option is absent', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const { select } = addContractDialog(page, ['', 'Freelance work'])
+  const authoredOptions = select.options.slice()
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  const result = { items: [{ id: '383:0', name: 'Paid Media Audit' }], total: 1, page: 1, pages: 1, hasMore: false }
+  wfx.emit(result)
+  wfx.emit(result)
+  await settle()
+
+  assert.deepEqual(select.options.slice(0, authoredOptions.length), authoredOptions, 'authored options stay unchanged')
+  const dynamic = select.options.filter((option) => option.getAttribute && option.getAttribute('data-xano-service-option') === 'starter-services')
+  assert.equal(dynamic.length, 1, 'repeated results must create one adapter-owned option')
+  assert.equal(dynamic[0].value, 'Paid Media Audit')
+  assert.equal(xano.card.getAttribute('data-modal-trigger'), 'generate-contract')
+  assert.equal(xano.card.getAttribute('data-sp-fill'), 'button')
+  assert.equal(xano.card.getAttribute('data-sp-fill-category'), 'service')
+  assert.equal(xano.card.getAttribute('data-sp-fill-value'), 'Paid Media Audit')
+  assert.equal(xano.card.style.cursor, 'pointer')
+})
+
+test('case-distinct canonical services keep exact options and exact Brand presets', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'SEO')
+  const lowerCard = makeElement('div', { 'wf-xano-item': '' })
+  const lowerTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  lowerTitle.textContent = 'seo'
+  lowerCard.appendChild(lowerTitle)
+  xano.wrapper.appendChild(lowerCard)
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const { select } = addContractDialog(page, ['', 'Freelance work', 'seo'])
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [{ id: '383:0', name: 'SEO' }, { id: '383:1', name: 'seo' }],
+    total: 2,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  })
+  await settle()
+
+  assert.deepEqual(
+    select.options.map((option) => option.value).filter((value) => value === 'SEO' || value === 'seo'),
+    ['seo', 'SEO'],
+  )
+  assert.equal(xano.card.getAttribute('data-sp-fill-value'), 'SEO')
+  assert.equal(lowerCard.getAttribute('data-sp-fill-value'), 'seo')
+  assert.equal(
+    select.options.filter((option) => option.getAttribute &&
+      option.getAttribute('data-xano-service-option') === 'starter-services').length,
+    1,
+  )
+})
+
+test('a later wf-xano result removes only stale adapter-owned service options', async () => {
+  const page = makePage()
+  const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+  const wfx = makeWfXanoFixture(xano.wrapper)
+  const { select } = addContractDialog(page, ['', 'Freelance work'])
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  wfx.emit({ items: [{ id: '383:0', name: 'Paid Media Audit' }], total: 1, page: 1, pages: 1, hasMore: false })
+  await settle()
+  xano.title.textContent = 'Paid Search Audit'
+  wfx.emit({ items: [{ id: '383:1', name: 'Paid Search Audit' }], total: 1, page: 1, pages: 1, hasMore: false })
+  await settle()
+
+  assert.equal(select.options.some((option) => option.value === 'Paid Media Audit'), false)
+  assert.equal(select.options.filter((option) => option.value === 'Paid Search Audit').length, 1)
+  assert.equal(select.options.some((option) => option.value === 'Freelance work'), true, 'authored options remain')
+  assert.equal(xano.card.getAttribute('data-sp-fill-value'), 'Paid Search Audit')
+})
+
+test('a late wf-xano service remains inert for signed-in Talent and the profile owner', async () => {
+  for (const [viewer, member] of [
+    ['Talent', {
+      id: 'talent_member',
+      auth: { email: 'talent@example.com' },
+      customFields: { 'free-user': 'Starter' },
+      planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' }],
+    }],
+    ['Brand owner', {
+      id: 'mem_canary',
+      auth: { email: 'owner@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Owner' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    }],
+  ]) {
+    const page = makePage()
+    const xano = addXanoServiceFixture(page, 'Paid Media Audit')
+    const wfx = makeWfXanoFixture(xano.wrapper)
+    const { select } = addContractDialog(page, ['', 'Freelance work', 'Paid Media Audit'])
+    const context = makeContext({
+      page,
+      record: { rate: 0, 'retainer-enabled': false },
+      member,
+      wfXano: wfx.api,
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    wfx.emit({ items: [{ id: '383:0', name: 'Paid Media Audit' }], total: 1, page: 1, pages: 1, hasMore: false })
+    await settle()
+
+    assert.equal(
+      Array.from(select.options).filter((option) => String(option.value || option.textContent) === 'Paid Media Audit').length,
+      1,
+      `${viewer} must keep the authored canonical service option unchanged`,
+    )
+    for (const attribute of [
+      'data-modal-trigger',
+      'data-sp-fill',
+      'data-sp-fill-category',
+      'data-sp-fill-value',
+    ]) {
+      assert.equal(xano.card.getAttribute(attribute), null, `${attribute} must fail closed for ${viewer}`)
+    }
+    assert.equal(xano.card.style.cursor, '', `${viewer} must not receive a click affordance`)
+  }
 })
 
 test('signed-in Brand routes non-call services to Start a Project with a valid native service preset', async () => {
@@ -4485,4 +4941,566 @@ test('owner gate: a missing free data_environment fails closed', async () => {
   assert.equal(run.chooserFreePrice.textContent, PRICE_SENTINEL)
   assert.equal(run.hooks.cardFree.textContent, SLOT_SENTINEL)
   assert.deepEqual(run.controller.calls.map((c) => c.configId), ['cfg_owner_paid'])
+})
+
+test('this file shortens no portfolio text and builds no See more control', () => {
+  // The "See more" utility is gone. The Highlights modal is the read-it-all
+  // surface, and card titles are shortened by the Designer's CSS line clamp,
+  // not here — [data-portfolio-card-title] matches nothing on the live page.
+  const context = makeContext({ page: makePage() })
+  const longText = 'A very long project story. '.repeat(20)
+
+  const description = makeElement('p', { 'portfolio-description': '' })
+  description.textContent = longText
+  const cardTitle = makeElement('h3', { 'data-portfolio-card-title': '' })
+  cardTitle.textContent = longText
+  context.document.body.appendChild(description)
+  context.document.body.appendChild(cardTitle)
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  assert.ok(longText.length > 250, 'the fixture is past the clamp both used to get')
+  assert.equal(description.textContent, longText)
+  assert.equal(cardTitle.textContent, longText)
+  assert.equal(
+    context.document.querySelectorAll('.portfolio-text-toggle').length,
+    0,
+    'no toggle is created for either selector',
+  )
+})
+
+/* --------------------------------- ticket 06: the direct-entry seam ------ */
+/*
+ * Opening a call from its service card still runs the two-dialog sequence the
+ * controllers' mount contract needs — the guard these tests protect is that the
+ * visitor never SEES it, and that whatever opened the booking dialog is written
+ * down so the back arrow can only offer a route the visitor actually took.
+ *
+ * Everything below reads the seam a visitor or a dependent script can observe:
+ * which dialog carries the pass-through marker at each click, what the entry
+ * stamp says, and whether the authored back control is displayed.
+ */
+
+const PASS_THROUGH = 'data-booking-pass-through'
+
+/**
+ * The booking dialog and its authored back arrow.
+ *
+ * makePage() ships the chooser (`popup-booking-main`) but not the surface the
+ * chooser hands off to, and every assertion here reads that surface. The back
+ * arrow carries the attributes ticket 07 specifies, so the fixture is the spec
+ * rather than a convenient shape.
+ */
+function addBookingDialog(page, { withBackArrow = true } = {}) {
+  const dialog = makeElement('dialog', { 'data-modal-target': 'popup-booking' })
+  let back = null
+  if (withBackArrow) {
+    back = makeElement(
+      'a',
+      {
+        'data-booking-back': '',
+        'data-modal-close': '',
+        'data-modal-trigger': 'popup-booking-main',
+      },
+      ['clickable-text-link'],
+    )
+    dialog.appendChild(back)
+  }
+  page.root.appendChild(dialog)
+  return { dialog, back }
+}
+
+/** A signed-in Brand whose Free call installs and reports itself ready. */
+function readyFreeContext(page) {
+  return makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    freeController: {
+      getStarterByMemberId: async () => ({
+        nylas_grant_id: 'grant_prod',
+        nylas_grant_email: 'starter@example.com',
+      }),
+      getConfigs: async () => [{
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+      }],
+      installFreeBookingController: () => {
+        page.freeModalCta.setAttribute('data-free-call-v3', 'ready')
+        return true
+      },
+    },
+  })
+}
+
+/** A plain click event that records anything done to it. */
+function spyEvent() {
+  const seen = { prevented: 0, stoppedImmediate: 0, stopped: 0 }
+  return {
+    seen,
+    event: {
+      preventDefault: () => { seen.prevented += 1 },
+      stopImmediatePropagation: () => { seen.stoppedImmediate += 1 },
+      stopPropagation: () => { seen.stopped += 1 },
+    },
+  }
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Whether the authored back arrow is on screen.
+ *
+ * Display belongs to the guard stylesheet's !important rule, and this DOM has
+ * no CSS engine, so this reads the rule the script actually injected and
+ * applies it. Going through the rule keeps these checks behaviour-equivalent
+ * to the inline display writes they replaced, rather than restating the
+ * attribute the script has just set. It also pins that no inline write came
+ * back: a second writer here would be able to disagree with the stylesheet.
+ */
+function backArrowShown(context, dialog, control) {
+  const guard = context.document.getElementById('hire-booking-modal-availability-guard')
+  assert.ok(guard, 'the arrow is only governed at all if the guard stylesheet exists')
+  assert.ok(
+    guard.textContent.includes(
+      '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"])' +
+        ' [data-booking-back]{display:none!important}',
+    ),
+    'the rule that hides the arrow must be present',
+  )
+  assert.equal(control.style.display, undefined, 'display is the stylesheet\'s to set, not JS\'s')
+  return dialog.getAttribute('data-booking-entry') === 'chooser'
+}
+
+test('a direct service-card entry hides the chooser for the whole pass-through', async () => {
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  // What the chooser's marker said at each of the two clicks. Both must read
+  // hidden: between them is the only window in which the chooser could paint.
+  const marks = []
+  page.bookingButton.click = () => {
+    page.bookingDialog.open = true
+    marks.push(['shell', page.bookingDialog.getAttribute(PASS_THROUGH)])
+  }
+  page.freeModalCta.click = () => {
+    marks.push(['row', page.bookingDialog.getAttribute(PASS_THROUGH)])
+    page.bookingDialog.open = false
+  }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null, 'nothing is hidden at rest')
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  await settle()
+
+  assert.deepEqual(marks, [['shell', ''], ['row', '']])
+  assert.equal(
+    page.bookingDialog.getAttribute(PASS_THROUGH),
+    null,
+    'the chooser is given back once it has closed',
+  )
+  assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
+  assert.equal(
+    backArrowShown(context, booking, back),
+    false,
+    'no back arrow to a chooser the visitor never used',
+  )
+  assert.equal(back.getAttribute('aria-hidden'), 'true')
+})
+
+test('the chooser stays hidden until it reports itself closed', async () => {
+  // The chooser closes on a fade. Releasing on the click instead of on the
+  // close would hand back a dialog that is still on screen fading out — the
+  // same flash, moved later.
+  const page = makePage()
+  addBookingDialog(page)
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  page.freeModalCta.click = () => {}
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  await settle()
+
+  assert.equal(
+    page.bookingDialog.getAttribute(PASS_THROUGH),
+    '',
+    'still open, so still hidden',
+  )
+
+  page.bookingDialog.open = false
+  await wait(200)
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null)
+})
+
+test('a direct entry whose row disappears gives the chooser back, visible and open', async () => {
+  const page = makePage()
+  const { dialog: booking } = addBookingDialog(page)
+  let rowClicks = 0
+  page.bookingButton.click = () => {
+    page.bookingDialog.open = true
+    // The row is gone by the time the pass-through goes to activate it.
+    page.freeModalCta.remove()
+  }
+  page.freeModalCta.click = () => { rowClicks += 1 }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  await settle()
+
+  assert.equal(rowClicks, 0)
+  assert.equal(page.bookingDialog.open, true, 'the chooser is all the visitor has left')
+  assert.equal(
+    page.bookingDialog.getAttribute(PASS_THROUGH),
+    null,
+    'an open chooser must never be left invisible',
+  )
+  assert.equal(booking.getAttribute('data-booking-entry'), null, 'nothing was opened to stamp')
+})
+
+test('a genuine chooser entry is untouched and stamps chooser', async () => {
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  // The two hats the modal library reads off the row: close me, open that.
+  page.freeModalCta.setAttribute('data-modal-close', '')
+  page.freeModalCta.setAttribute('data-modal-trigger', 'popup-booking')
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.freeModalCta.listeners.click.length, 1, 'one stamp listener, bound once')
+
+  const spy = spyEvent()
+  page.freeModalCta.listeners.click[0](spy.event)
+
+  assert.equal(booking.getAttribute('data-booking-entry'), 'chooser')
+  assert.equal(
+    backArrowShown(context, booking, back),
+    true,
+    'the arrow is revealed by the stamp, at its authored display',
+  )
+  assert.equal(back.getAttribute('aria-hidden'), 'false')
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null, 'the chooser was never hidden')
+  assert.deepEqual(
+    spy.seen,
+    { prevented: 0, stoppedImmediate: 0, stopped: 0 },
+    'the stamp only reads the click',
+  )
+  assert.equal(page.freeModalCta.getAttribute('data-modal-close'), '')
+  assert.equal(page.freeModalCta.getAttribute('data-modal-trigger'), 'popup-booking')
+})
+
+test('the entry stamp is correct across repeated alternating opens', async () => {
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  page.freeModalCta.click = () => { page.bookingDialog.open = false }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  const openDirect = async () => {
+    freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+    await settle()
+  }
+  // A visitor clicking the row inside an already-open chooser: the same
+  // listener, with no pass-through running.
+  const openFromChooser = () => page.freeModalCta.listeners.click[0](spyEvent().event)
+
+  const seen = []
+  for (const step of [openDirect, openFromChooser, openDirect, openFromChooser, openDirect]) {
+    await step()
+    seen.push([
+      booking.getAttribute('data-booking-entry'),
+      backArrowShown(context, booking, back),
+    ])
+  }
+
+  assert.deepEqual(seen, [
+    ['direct', false],
+    ['chooser', true],
+    ['direct', false],
+    ['chooser', true],
+    ['direct', false],
+  ])
+})
+
+test('a booking dialog with no authored back arrow is a silent no-op', async () => {
+  const page = makePage()
+  const { dialog: booking } = addBookingDialog(page, { withBackArrow: false })
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  page.freeModalCta.click = () => { page.bookingDialog.open = false }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  await assert.doesNotReject(async () => {
+    freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+    await settle()
+  })
+  assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
+
+  assert.doesNotThrow(() => page.freeModalCta.listeners.click[0](spyEvent().event))
+  assert.equal(booking.getAttribute('data-booking-entry'), 'chooser')
+  assert.equal(booking.querySelector('[data-booking-back]'), null, 'the script creates no element')
+})
+
+test('the booking dialog carries no entry stamp until something opens it', async () => {
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(booking.getAttribute('data-booking-entry'), null)
+  assert.equal(
+    backArrowShown(context, booking, back),
+    false,
+    'the arrow starts hidden, stamp or no stamp',
+  )
+  assert.equal(back.getAttribute('aria-hidden'), 'true')
+})
+
+test('ADR 0003: a logged-out card keeps its signup trigger and opens nothing', () => {
+  // The logged-out CTA contract belongs to v3/signup-attribution.js, which
+  // finds the card only through data-signup-trigger-*. The seam work must not
+  // hide the chooser, stamp an entry, or activate a booking row for a visitor
+  // who has no member at all.
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  let rowClicks = 0
+  let shellClicks = 0
+  page.bookingButton.click = () => { shellClicks += 1 }
+  page.freeModalCta.click = () => { rowClicks += 1 }
+  const context = makeContext({ page })
+  delete context.qs
+  delete context.qsa
+  delete context.waitForMember
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  const card = page.servicesList.children[0]
+  assert.equal(card.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(card.getAttribute('data-signup-trigger-value'), 'Free Call')
+  card.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+
+  assert.equal(shellClicks, 0)
+  assert.equal(rowClicks, 0)
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null)
+  assert.equal(booking.getAttribute('data-booking-entry'), null)
+  assert.equal(backArrowShown(context, booking, back), false)
+  assert.equal(card.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(card.getAttribute('data-signup-trigger-value'), 'Free Call')
+})
+
+/* ------------------- ticket 06 fix round: overlapping direct entries ----- */
+/*
+ * Two review findings, both about a second direct entry starting before the
+ * first has let go of the chooser. A double-clicked service card is enough to
+ * produce one.
+ */
+
+test('a same-tick double direct entry still stamps the booking dialog direct', async () => {
+  // Both entries activate the same chooser row programmatically. If the flag
+  // that tells those clicks apart from a visitor's is a single shared slot,
+  // the first entry clears it before the second one clicks, and the second
+  // entry's booking dialog is labelled as though the visitor had chosen from
+  // the chooser — which would put a back arrow on a chooser they never saw.
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  // A real .click() runs the element's listeners, and the entry stamp IS one of
+  // them. A stub that only flips state would skip the very code path this test
+  // exists to pin, and pass against the defect.
+  page.freeModalCta.click = () => {
+    for (const fn of page.freeModalCta.listeners.click || []) {
+      fn({ preventDefault() {}, stopImmediatePropagation() {}, stopPropagation() {} })
+    }
+    page.bookingDialog.open = false
+  }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  const click = () =>
+    freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  click()
+  click()
+  await settle()
+
+  assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
+  assert.equal(backArrowShown(context, booking, back), false)
+  assert.equal(back.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null, 'and it is given back')
+})
+
+test('a second direct entry supersedes the first, which cannot unhide the chooser', async () => {
+  // The chooser here never closes, so both entries run to their time cap. The
+  // first entry's cap comes up 100 ms earlier than the second's: if it is still
+  // allowed to speak, it hands back a chooser the second entry is holding
+  // hidden, and the chooser is on screen for that gap. Nothing may release the
+  // chooser except the entry that currently owns it.
+  const page = makePage()
+  const { dialog: booking } = addBookingDialog(page)
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  page.freeModalCta.click = () => {}
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  const click = () =>
+    freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+
+  click()
+  await settle()
+  await wait(100)
+  click()
+  await settle()
+
+  // Between the two caps. The chooser is still open, so it must still be hidden.
+  await wait(1950)
+  assert.equal(page.bookingDialog.open, true, 'the fixture keeps the chooser open throughout')
+  assert.equal(
+    page.bookingDialog.getAttribute(PASS_THROUGH),
+    '',
+    'the superseded entry must not give back a chooser the second one is hiding',
+  )
+
+  // Past the owning entry's own cap: it, and only it, lets go.
+  await wait(400)
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null)
+  assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
+})
+
+test('a throw mid-entry still gives the chooser back inside the failsafe', async () => {
+  // The failsafe has to be armed when the chooser is hidden, not when the
+  // entry succeeds. Anything that throws in between — a modal library that
+  // blows up, an extension, a Designer edit mid-flight — otherwise leaves the
+  // chooser invisible on a page that has stopped working, with nothing left
+  // running to undo it.
+  const page = makePage()
+  addBookingDialog(page)
+  page.bookingButton.click = () => {
+    page.bookingDialog.open = true
+    throw new Error('the modal library threw while opening the chooser')
+  }
+  page.freeModalCta.click = () => {}
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.throws(
+    () => freeCard.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} }),
+    /the modal library threw/,
+  )
+  assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), '', 'hidden, and nothing ran after')
+
+  await wait(2300)
+  assert.equal(
+    page.bookingDialog.getAttribute(PASS_THROUGH),
+    null,
+    'the failsafe bounds every exit, including a throw',
+  )
+})
+
+/* ---------------- ticket 06 fix round: the stamp has to expire ----------- */
+
+test('a booking dialog reopened by an unstamped opener shows no back arrow', async () => {
+  // Not every way into the booking dialog goes through this script. An authored
+  // data-modal-trigger elsewhere on the page, or anything calling the modal
+  // registry directly, opens it without stamping. If the previous visit's
+  // stamp is still on the dialog, those visitors are offered a way "back" to a
+  // chooser they never saw.
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // Arrive through the chooser, the one route that earns the arrow.
+  booking.open = true
+  page.freeModalCta.listeners.click[0](spyEvent().event)
+  assert.equal(booking.getAttribute('data-booking-entry'), 'chooser')
+  assert.equal(backArrowShown(context, booking, back), true)
+  assert.equal(back.getAttribute('aria-hidden'), 'false')
+
+  // Leave. The embed announces the finished close on the window.
+  booking.open = false
+  context.fireModalClose(booking)
+  assert.equal(booking.getAttribute('data-booking-entry'), null, 'the visit is over')
+  assert.equal(backArrowShown(context, booking, back), false)
+  assert.equal(back.getAttribute('aria-hidden'), 'true')
+
+  // Come back some other way, with nothing stamping on the way in.
+  booking.open = true
+  assert.equal(booking.getAttribute('data-booking-entry'), null)
+  assert.equal(backArrowShown(context, booking, back), false, 'no arrow to a chooser never seen')
+  assert.equal(back.getAttribute('aria-hidden'), 'true')
+})
+
+test('a re-entry during the close fade keeps its stamp when the close lands', async () => {
+  // The back arrow closes the booking dialog and opens the chooser in one
+  // gesture, and the close only completes at the end of the 300 ms fade. A
+  // visitor who picks a call type again before then is already back inside,
+  // freshly stamped. The close-complete belongs to the visit BEFORE that one
+  // and must not take the new visit's stamp with it.
+  const page = makePage()
+  const { dialog: booking, back } = addBookingDialog(page)
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  booking.open = true
+  page.freeModalCta.listeners.click[0](spyEvent().event)
+  assert.equal(booking.getAttribute('data-booking-entry'), 'chooser')
+
+  // Back arrow pressed: the fade starts, the chooser comes back, and the
+  // visitor picks again before the fade has finished.
+  page.freeModalCta.listeners.click[0](spyEvent().event)
+  assert.equal(booking.open, true, 'the dialog is open again by the time the close lands')
+
+  // The late close-complete from the first visit.
+  context.fireModalClose(booking)
+
+  assert.equal(booking.getAttribute('data-booking-entry'), 'chooser', 'the new visit keeps its stamp')
+  assert.equal(backArrowShown(context, booking, back), true)
+  assert.equal(back.getAttribute('aria-hidden'), 'false')
+
+  // And once they really do leave, it clears as normal.
+  booking.open = false
+  context.fireModalClose(booking)
+  assert.equal(booking.getAttribute('data-booking-entry'), null)
+  assert.equal(backArrowShown(context, booking, back), false)
 })

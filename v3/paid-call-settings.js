@@ -40,6 +40,7 @@
   let uiScope = null
   let cardMode = false
   let sessionMemberId = null
+  let sessionAuthScope = null
   let settings = null
   let busy = false
   // Disable is destructive, so only a real user radio change may request it.
@@ -231,31 +232,30 @@
     return member
   }
 
-  async function assertMemberScope() {
-    const member = await currentMember(true)
-    if (!sessionMemberId || member.id !== sessionMemberId) {
-      throw Object.assign(new Error('Member session changed during paid-call request'), {
-        code: 'MEMBER_SCOPE_CHANGED',
-      })
-    }
-  }
-
-  async function xanoRequest(path, method, payload) {
-    if (typeof window.xanoAuthFetch !== 'function') {
+  async function xanoRequest(path, method, payload, expectedScope) {
+    const authFetch = typeof window.__tsSchedulingAuthFetch === 'function'
+      ? window.__tsSchedulingAuthFetch
+      : window.__tsSchedulingAuthBridgeOwner === 'scheduling-auth' &&
+          typeof window.xanoAuthFetch === 'function'
+        ? window.xanoAuthFetch
+        : null
+    if (typeof authFetch !== 'function') {
       throw new Error('xanoAuthFetch is unavailable')
     }
-    await assertMemberScope()
-    const response = await window.xanoAuthFetch(API_BASE + path, {
+    const requestScope = expectedScope || sessionAuthScope
+    assertAuthScope(await currentAuthScope(), requestScope)
+    const response = await authFetch(API_BASE + path, {
       method: method,
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
       },
       body: payload === undefined ? undefined : JSON.stringify(payload),
-    })
+    }, requestScope)
     const data = await response.json().catch(function () {
       return null
     })
+    assertAuthScope(await currentAuthScope(), requestScope)
     if (!response.ok) {
       const serverMessage = data && (data.message || data.error)
       throw Object.assign(new Error(serverMessage || path + ' failed (' + response.status + ')'), {
@@ -264,6 +264,22 @@
       })
     }
     return data
+  }
+
+  async function currentAuthScope() {
+    if (typeof window.__tsSchedulingAuthGetScope !== 'function') {
+      throw new Error('Scheduling auth scope is unavailable')
+    }
+    return window.__tsSchedulingAuthGetScope()
+  }
+
+  function assertAuthScope(scope, expectedScope) {
+    const requestScope = expectedScope || sessionAuthScope
+    if (!requestScope || scope !== requestScope) {
+      throw Object.assign(new Error('Member session changed during paid-call request'), {
+        code: 'MEMBER_SCOPE_CHANGED',
+      })
+    }
   }
 
   function canonicalService(value) {
@@ -706,6 +722,7 @@
     settings = null
     setBusy(false)
     sessionMemberId = null
+    sessionAuthScope = null
     const enabledInput = field('enabled')
     const titleInput = field('title')
     const priceInput = field('price')
@@ -735,7 +752,13 @@
 
   function failClosedSession(error) {
     const code = error && error.code
-    if (code !== 'MEMBER_SESSION_MISSING' && code !== 'MEMBER_SCOPE_CHANGED') return false
+    const message = String((error && error.message) || '')
+    if (
+      code !== 'MEMBER_SESSION_MISSING' &&
+      code !== 'MEMBER_SCOPE_CHANGED' &&
+      Number(error && error.status) !== 401 &&
+      message !== 'No Memberstack session'
+    ) return false
     refreshVersion += 1
     setStatus('error')
     clearRenderedState('Sign in to manage paid calls.')
@@ -842,8 +865,8 @@
     return value
   }
 
-  async function readCanonicalSettings() {
-    const value = await xanoRequest('/starter/paid-call-settings/get/v3', 'GET')
+  async function readCanonicalSettings(expectedScope) {
+    const value = await xanoRequest('/starter/paid-call-settings/get/v3', 'GET', undefined, expectedScope)
     if (!value || !Array.isArray(value.services) || !value.readiness) {
       throw new Error('Paid-call settings reader returned an invalid response')
     }
@@ -908,7 +931,7 @@
   }
 
   async function save() {
-    if (busy || activeWrite) return null
+    if (busy || activeWrite || authTransitionPending) return null
     const enabledInput = field('enabled')
     if (!canonicalService(settings) && enabledInput && !enabledInput.checked) {
       setMessage('Turn on paid calls before you save these settings.')
@@ -990,7 +1013,7 @@
   }
 
   async function disable() {
-    if (busy || activeWrite) return null
+    if (busy || activeWrite || authTransitionPending) return null
     const service = canonicalService(settings)
     if (!service) return settings
     const version = ++refreshVersion
@@ -1034,12 +1057,56 @@
     return value && Object.prototype.hasOwnProperty.call(value, 'data') ? value.data : value
   }
 
+  function waitForAuthRetry() {
+    return new Promise(function (resolve) { window.setTimeout(resolve, 250) })
+  }
+
+  function showAuthRecovery() {
+    setStatus('error')
+    setMessage('Paid-call settings are reconnecting. Update will resume automatically.')
+    setActionEnabled(action('save'), false)
+    setActionEnabled(action('disable'), false)
+  }
+
+  async function reconcileSameMemberScope(transition, notifiedMember, fallbackCanonical) {
+    showAuthRecovery()
+    while (
+      authTransitionPending === transition &&
+      notifiedMember.id === sessionMemberId &&
+      settings
+    ) {
+      let scope = null
+      try {
+        scope = await currentAuthScope()
+        if (authTransitionPending !== transition) return null
+        const canonical = await readCanonicalSettings(scope)
+        if (
+          authTransitionPending !== transition ||
+          notifiedMember.id !== sessionMemberId ||
+          !settings
+        ) return null
+        sessionAuthScope = scope
+        prerequisiteRefreshQueued = false
+        return render(canonical)
+      } catch (error) {
+        if (authTransitionPending !== transition) return null
+        if (error && error.code !== 'MEMBER_SCOPE_CHANGED' && failClosedSession(error)) return null
+        if (fallbackCanonical && scope === sessionAuthScope) return render(fallbackCanonical)
+        showAuthRecovery()
+        await waitForAuthRetry()
+      }
+    }
+    return null
+  }
+
   async function handleAuthChange(nextMemberValue) {
     const notifiedMember = authMember(nextMemberValue)
     if (notifiedMember && notifiedMember.id) {
-      if (notifiedMember.id === sessionMemberId && settings) return settings
       const transition = beginAuthTransition()
       try {
+        if (notifiedMember.id === sessionMemberId && settings) {
+          return await reconcileSameMemberScope(transition, notifiedMember)
+        }
         return await loadSession(notifiedMember, false)
       } finally {
         finishAuthTransition(transition)
@@ -1048,26 +1115,39 @@
     const transition = beginAuthTransition()
     try {
       const memberId = sessionMemberId
+      if (!memberId || !settings) return loadSession(undefined, false)
       const pendingWrite = activeWrite && activeWrite.memberId === memberId ? activeWrite : null
-      const version = ++refreshVersion
-      clearRenderedState('Checking your account…')
-      if (pendingWrite) sessionMemberId = memberId
-      setStatus('loading')
-      let member = null
-      try {
-        member = await currentMember(true)
-      } catch (error) {
-        member = null
+      showAuthRecovery()
+      if (pendingWrite) {
+        await pendingWrite.done
+        if (authTransitionPending !== transition) return null
+        if (pendingWrite.failed) return null
       }
-      if (version !== refreshVersion) return null
-      if (!member || !member.id) {
-        sessionMemberId = null
-        setStatus('error')
-        setMessage('Sign in to manage paid calls.')
-        return null
+      if (memberId !== sessionMemberId || !settings) return null
+      let liveMember = null
+      while (authTransitionPending === transition && memberId === sessionMemberId && settings) {
+        try {
+          liveMember = await currentMember(true)
+          break
+        } catch (error) {
+          if (authTransitionPending !== transition) return null
+          if (failClosedSession(error)) return null
+          showAuthRecovery()
+          await waitForAuthRetry()
+        }
       }
-      return await loadSession(member, false)
+      if (!liveMember || authTransitionPending !== transition) return null
+      if (liveMember.id !== memberId) return await loadSession(liveMember, false)
+      return await reconcileSameMemberScope(
+        transition,
+        liveMember,
+        pendingWrite && pendingWrite.canonical,
+      )
     } finally {
+      if (authTransitionPending === transition && settings && sessionMemberId) {
+        setActionEnabled(action('save'), canSaveSettings(settings))
+        setActionEnabled(action('disable'), Boolean(canonicalService(settings)))
+      }
       finishAuthTransition(transition)
     }
   }
@@ -1087,6 +1167,8 @@
         return null
       }
       sessionMemberId = member.id
+      sessionAuthScope = await currentAuthScope()
+      if (!currentRender(version, member.id)) return null
       const pendingWrite = activeWrite && activeWrite.memberId === member.id ? activeWrite : null
       if (pendingWrite) {
         await pendingWrite.done

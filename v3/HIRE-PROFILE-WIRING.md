@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-27
+Last updated: 2026-08-29
 Status: Call projections and Free Call behavior are GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
@@ -78,10 +78,11 @@ remain deferred (`paid-call-brand-payment.js`,
 | Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state · anonymous: closed · brand: accepted canonical configuration plus successful controller install | this file / authenticated Xano, Nylas, and Stripe |
 | Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
+| Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, and Talent or owner cards stay inert | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
 | Freelance / Retainer rate cards | everyone | this file / Algolia record, cloned from the section's Default card |
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
-| Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more |
+| Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all |
 
 The runtime no longer calls `api:SYL06lUR/companies`,
 `edit_profile/starter/get_also_worked_with`, or `profile/get_companies`.
@@ -115,6 +116,10 @@ missing and stands down if the namespace still cannot load.
   nothing else. The anchor utilities also ignore a bare `#` or an invalid hash
   selector so a placeholder link cannot abort the remaining page utilities
 - `window.WfAlgolia` — the search client, awaited with a 30s deadline
+- `window.WfXano` — the late-safe callback queue used to reach the
+  `starter-services` instance and consume its current or future canonical
+  Service-card result; a missing instance leaves the existing CMS cards
+  unchanged
 - `window.__startersEmptyNavRefresh` — optional, debounced refresh hook from
   `utils/section-custom-toc/hide-empty-sections.js`. After canonical discovery
   changes a call projection or the rate-card path renders, this file asks the
@@ -262,6 +267,51 @@ diagnostic attribute, owns the listener guard. This covers hero call components
 that Webflow inserts or clones after the initial deferred-script scan while
 keeping the generic Book Call chooser unchanged.
 
+### The chooser pass-through, the entry stamp and the back arrow
+
+Three attributes carry the direct-entry seam. Two are written and read only by
+`hire-profile.js`; the third is a Designer element this file never creates.
+
+`data-booking-pass-through` is set on every
+`[data-modal-target="popup-booking-main"]` dialog for the duration of a direct
+service-card entry. The guard stylesheet hides a marked dialog *and its subtree*
+with `visibility: hidden !important`, which beats the inline styles GSAP writes
+on the backdrop and content while leaving the dialog laid out, so the
+controllers' open-dialog mount contract is untouched. This is what upgrades the
+older "does not remain visible" wording above into "never paints a frame". The
+marker is released once the chooser reports itself closed, so the chooser's own
+close fade is covered too, with a 2000 ms failsafe on the theory that an
+invisible open dialog is worse than a late one. Both failure paths — the
+registry open failing, and the row CTA disappearing between the two clicks —
+release it immediately. Registry failure remains failed closed; a disappearing
+row leaves the already-open chooser visible and usable. Clearing is done by the
+marker, not by the chooser selector, so a dialog renamed or removed mid-flight
+cannot strand the attribute.
+
+`data-booking-entry` is written on `[data-modal-target="popup-booking"]` at open
+time and reads `direct` or `chooser`. The direct path stamps it before it
+activates the matching CTA; a capture-phase listener on each
+`[call-type-item] [booking-popup-open][data-type]` row stamps `chooser`. That
+listener only reads the click — no `preventDefault`, no `stopPropagation`, no
+re-ordering — so the row's two authored hats are untouched. A module flag, not
+`event.isTrusted`, distinguishes the pass-through's own programmatic row click
+from a visitor's, because synthetic drivers make `isTrusted` unreliable. The
+modal embed's close-complete event removes the stamp once the booking dialog is
+closed, so a later opener that does not stamp cannot inherit the previous
+entry. A close-complete event that arrives after the dialog has already reopened
+leaves the fresh stamp alone.
+
+`[data-booking-back]` is **Jerico's to author**, inside the booking dialog. The
+guard stylesheet keyed on `data-booking-entry` shows it only when the entry
+stamp reads `chooser` and hides it otherwise, so the arrow cannot flash before
+the stamp lands. The script owns only `aria-hidden`, writes it when the state
+changes, and never writes `style.display`. The script never creates the element,
+and a booking dialog without one is a silent no-op. The element combines the
+close marker with a trigger naming `popup-booking-main` — the cross-modal
+hand-off pattern the modal embed's trigger precedence deliberately preserves —
+plus this marker attribute, and reuses the existing unpublished link-affordance
+style rather than a new class.
+
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
 native `Services` option. The consumer here is [`project-form.js`](project-form.js),
@@ -280,6 +330,30 @@ contract at all. A missing or unmatched option fails closed. Logged-out cards
 keep the signup-attribution modal, and Talent or unknown roles do not get the
 Brand project trigger.
 
+The `starter-services` wf-xano wrapper is a side-by-side canary for canonical
+`freelancers_v3.Services`. Webflow owns one native Service Card template and
+wf-xano clones it after the Xano response. `hire-profile.js` subscribes through
+the late-safe `window.WfXano` callback queue. If that subscription does not
+replay a result that completed before this deferred controller registered, the
+adapter reads the instance's successful public state once. A replayed result is
+not read or adapted again from state. Future result events stay subscribed.
+The adapter then modifies only rendered `[wf-xano-item]` clones owned by that
+wrapper. Webflow currently drops the nested Label component's title and
+description Attribute-property overrides from published markup, so the adapter
+repaints those two existing text nodes only when the clone's
+`data-wf-xano-id` exactly matches a returned item id. It does not create markup
+or fall back by position. It gives logged-out cards the same signup-attribution
+contract as CMS cards. For an eligible Brand, it adds the normal project
+smart-fill attributes for the exact canonical service name.
+Webflow owns the native `Services` select and all authored options. The adapter
+may add a missing exact option tagged
+`data-xano-service-option="starter-services"`, and it removes only stale options
+with that same adapter-owned tag. It never changes or removes authored options,
+and repeated results do not create duplicates. Talent, the profile owner, and
+unknown roles stay inert. The authored wf-xano template, existing CMS cards,
+Free Call, Paid Call, Freelance, and Retainer behavior remain unchanged.
+CMS services stay visible until a separate cutover decision follows role-matched
+browser parity proof.
 
 ## Rate surfaces are repainted from the canonical source
 

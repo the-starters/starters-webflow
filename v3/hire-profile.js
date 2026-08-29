@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.413
+ * @release v1.59.427
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -17,9 +17,12 @@
  *  - Services call-card visibility. Anonymous viewers stay closed. Signed-in
  *    brands use canonical booking discovery and successful controller installs.
  *    Starter members keep the live-derived owner toggles.
+ *  - Side-by-side canonical Xano Service cards. Webflow owns the visible
+ *    template and form; this file adds role-aware interaction attributes and
+ *    reconciles only adapter-owned native Service options.
  *  - Freelance/Retainer rate cards, cloned from the section's Default card.
  *  - Small page utilities that shipped in the same footer (rate formatting,
- *    rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more).
+ *    rating average, dropdowns, anchor scroll, mobile TOC, view-all).
  *
  * SCOPING: every original <script> block keeps its own IIFE. The blocks were
  * separate scripts, so merging them into one shared scope would collide (two
@@ -36,7 +39,8 @@
  *   starter_memberstack_id, stripe_charges, waitForMember, memberReady, MEMBER,
  *   qs, qsa,
  *   jQuery ($, two utility blocks),
- *   window.WfAlgolia (search record).
+ *   window.WfAlgolia (search record),
+ *   window.WfXano (late-safe canonical Service-card results).
  *
  * StartersFreeCallBooking is loaded from the GitHub/jsDelivr asset when an
  * older Webflow page head does not install it yet. The dependency stays
@@ -60,6 +64,19 @@
           '[data-booking-unavailable]{display:none!important}',
           '[data-booking-trigger-unavailable]{display:none!important}',
           '[data-canonical-call-unavailable]{display:none!important}',
+          // The chooser pass-through (see openReadyCallType). !important on the
+          // subtree as well as the dialog is deliberate: the modal library's
+          // GSAP entrance writes inline styles on the backdrop and content, and
+          // an inline declaration without !important loses to this rule. Hiding
+          // by visibility rather than display keeps the dialog laid out, so the
+          // controllers' open-dialog mount contract is unchanged.
+          '[data-booking-pass-through]{visibility:hidden!important}',
+          '[data-booking-pass-through] *{visibility:hidden!important}',
+          // The Designer-authored back arrow defaults to hidden and is revealed
+          // only by a chooser entry stamp. Doing it in CSS as well as in script
+          // means the arrow cannot flash on a direct entry in the window before
+          // the stamp lands.
+          '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"]) [data-booking-back]{display:none!important}',
       ].join('');
       (document.head || document.documentElement).appendChild(style);
   }
@@ -610,6 +627,190 @@
       }
   }
 
+  /* ---- the chooser pass-through, the entry stamp and the back arrow ----
+     Opening a call straight from its service card still runs the two-dialog
+     sequence below, because the controllers only mount against an open dialog.
+     What changes is that the visitor never sees the chooser go by: it is made
+     invisible before the shell is opened and given back the moment it has
+     closed again. Nothing about the ordinary chooser entry is touched.
+
+     The booking dialog is then stamped with where the visitor came from, and
+     that stamp is the single source of truth for the back arrow: an entry the
+     visitor never made must not offer a way "back" to it. */
+
+  const CHOOSER_SELECTOR = '[data-modal-target="popup-booking-main"]';
+  const BOOKING_SELECTOR = '[data-modal-target="popup-booking"]';
+  const PASS_THROUGH_ATTR = 'data-booking-pass-through';
+  // The pass-through is released as soon as the chooser reports itself closed.
+  // The cap is the failsafe for a chooser that never closes: an invisible open
+  // dialog would be worse than a late one, so time always wins in the end.
+  const PASS_THROUGH_MAX_MS = 2000;
+  const PASS_THROUGH_POLL_MS = 50;
+
+  // A second direct entry can start while the first is still waiting for the
+  // chooser to finish closing: one double-clicked service card is enough. Each
+  // entry therefore takes a generation token. A new entry supersedes the one
+  // before it outright, and the chooser is only ever given back by the entry
+  // that currently owns it. Without that, the first entry's release would
+  // unhide a chooser the second entry had just hidden, and the flash the whole
+  // pass-through exists to remove would be back.
+  let passThroughGeneration = 0;
+  let passThroughOwner = 0;
+  let passThroughTimer = null;
+  let passThroughDeadline = 0;
+  // Brackets the pass-through's own click on a chooser row so that click is not
+  // read as a visitor choosing from the chooser. It is held across a single
+  // synchronous call and released in a `finally`, so no failure path anywhere
+  // else can leave it standing and mislabel a later, genuine chooser click.
+  let programmaticRowClickDepth = 0;
+
+  function bookingDialogs() {
+      return document.querySelectorAll(BOOKING_SELECTOR);
+  }
+
+  function clearPassThroughTimer() {
+      if (passThroughTimer !== null) {
+          window.clearTimeout(passThroughTimer);
+          passThroughTimer = null;
+      }
+  }
+
+  /**
+   * Hides the chooser for one direct entry, and returns the generation token
+   * that entry must present to give it back.
+   *
+   * The failsafe is armed HERE rather than on the success path, so every way
+   * out of the pass-through is bounded by it: a throw between this call and the
+   * release can no longer strand the chooser invisible over a page that has
+   * stopped working.
+   */
+  function beginChooserPassThrough() {
+      // Supersede whatever was in flight: cancelling the older chain's timer
+      // here, and the token check below, are two independent reasons it can no
+      // longer speak for a chooser it does not own.
+      clearPassThroughTimer();
+      passThroughGeneration += 1;
+      passThroughOwner = passThroughGeneration;
+      passThroughDeadline = Date.now() + PASS_THROUGH_MAX_MS;
+      const generation = passThroughOwner;
+      passThroughTimer = window.setTimeout(function () {
+          if (generation !== passThroughOwner) return;
+          passThroughTimer = null;
+          endChooserPassThrough(generation);
+      }, PASS_THROUGH_MAX_MS);
+      document.querySelectorAll(CHOOSER_SELECTOR).forEach(function (dialog) {
+          dialog.setAttribute(PASS_THROUGH_ATTR, '');
+      });
+      return generation;
+  }
+
+  function endChooserPassThrough(generation) {
+      // A superseded entry must not give the chooser back: the dialog it hid is
+      // the one the entry that replaced it is still hiding.
+      if (generation !== passThroughOwner) return;
+      clearPassThroughTimer();
+      passThroughOwner = 0;
+      // Cleared by the marker rather than by the chooser selector so a dialog
+      // that was renamed or removed mid-flight cannot strand the attribute.
+      document.querySelectorAll('[' + PASS_THROUGH_ATTR + ']').forEach(function (dialog) {
+          dialog.removeAttribute(PASS_THROUGH_ATTR);
+      });
+  }
+
+  function chooserStillOpen() {
+      return Array.from(document.querySelectorAll(CHOOSER_SELECTOR)).some(function (dialog) {
+          return dialog.open === true;
+      });
+  }
+
+  function endChooserPassThroughWhenClosed(generation) {
+      if (generation !== passThroughOwner) return;
+      const tick = function () {
+          // Checked before the handle is cleared, so a tick that has been
+          // superseded cannot drop the newer entry's timer on its way out.
+          if (generation !== passThroughOwner) return;
+          passThroughTimer = null;
+          if (!chooserStillOpen() || Date.now() >= passThroughDeadline) {
+              endChooserPassThrough(generation);
+              return;
+          }
+          passThroughTimer = window.setTimeout(tick, PASS_THROUGH_POLL_MS);
+      };
+      // The chooser closes on a fade, so the release has to outlast the click
+      // that started it — otherwise the chooser would paint its own fade-out.
+      // This takes over the failsafe's timer slot but keeps the deadline it was
+      // armed with, so polling can never run longer than the failsafe allowed.
+      clearPassThroughTimer();
+      passThroughTimer = window.setTimeout(tick, 0);
+  }
+
+  /** Shows the authored back arrow on a chooser entry and hides it otherwise.
+      The element is Jerico's to author: this never creates one, and a booking
+      dialog without one is a silent no-op. */
+  function syncBookingBackControls() {
+      bookingDialogs().forEach(function (dialog) {
+          const fromChooser = dialog.getAttribute('data-booking-entry') === 'chooser';
+          const hidden = fromChooser ? 'false' : 'true';
+          dialog.querySelectorAll('[data-booking-back]').forEach(function (control) {
+              // Display is the guard stylesheet's job: its rule is keyed on the
+              // same entry attribute and carries !important, so it decides this
+              // either way and an inline write here could only ever agree with
+              // it. What CANNOT be done in CSS is the accessible state, so that
+              // is the half this owns, written only when it actually changes.
+              if (control.getAttribute('aria-hidden') !== hidden) {
+                  control.setAttribute('aria-hidden', hidden);
+              }
+          });
+      });
+  }
+
+  /* ---- forgetting the entry when the booking dialog closes ----
+     The stamp says how the visitor got in, so it has to stop being true when
+     they leave. Left standing, a `chooser` stamp outlives its own visit: the
+     next opener that does not stamp — an authored `data-modal-trigger`
+     elsewhere on the page, or a script calling the modal registry directly —
+     inherits it, and shows a back arrow to a chooser that visitor never saw. */
+  function forgetBookingEntryOnClose(event) {
+      const dialog = event && event.detail && event.detail.modal;
+      if (!dialog || typeof dialog.matches !== 'function') return;
+      if (!dialog.matches(BOOKING_SELECTOR)) return;
+      // The back arrow closes this dialog and opens the chooser in one gesture,
+      // and the close completes a beat later, at the end of the fade. If the
+      // visitor has already come back through the chooser by then, the dialog
+      // is open again and freshly stamped: a late close-complete from the visit
+      // BEFORE that one must not wipe the stamp of the visit they are in.
+      if (dialog.open === true) return;
+      dialog.removeAttribute('data-booking-entry');
+      syncBookingBackControls();
+  }
+
+  function stampBookingEntry(source) {
+      bookingDialogs().forEach(function (dialog) {
+          dialog.setAttribute('data-booking-entry', source);
+      });
+      syncBookingBackControls();
+  }
+
+  const stampedChooserRows = new WeakSet();
+
+  /** Stamps the entry source when a chooser row opens the booking dialog.
+      The row's own two hats (close the chooser, open the booking dialog) are
+      authored attributes read by the modal library: this listener only reads
+      the click, and never prevents, stops or re-orders it. */
+  function wireChooserRowsToEntryStamp() {
+      document.querySelectorAll(
+          '[call-type-item] [booking-popup-open][data-type]'
+      ).forEach(function (cta) {
+          if (stampedChooserRows.has(cta)) return;
+          cta.addEventListener('click', function () {
+              // The direct path activates this very row, so a click during a
+              // pass-through is not a visitor choosing from the chooser.
+              stampBookingEntry(programmaticRowClickDepth > 0 ? 'direct' : 'chooser');
+          }, true);
+          stampedChooserRows.add(cta);
+      });
+  }
+
   function openReadyCallType(type) {
       const cta = findReadyCallTypeCta(type);
       if (!cta) return false;
@@ -620,12 +821,34 @@
       // That could run the controller while its dialog was still closed and
       // leave Free on an empty/loading surface. Open the shell first, then
       // activate the exact installed CTA after the first click has completed.
+      // The sequence is kept in full and only hidden — skipping it is the
+      // regression this comment has always guarded against.
+      const generation = beginChooserPassThrough();
+
       const modalTrigger = findReadyBookingModalTrigger();
-      if (modalTrigger) modalTrigger.click();
-      else if (!openBookingModalFromRegistry()) return false;
+      if (modalTrigger) {
+          modalTrigger.click();
+      } else if (!openBookingModalFromRegistry()) {
+          endChooserPassThrough(generation);
+          return false;
+      }
       window.setTimeout(function () {
           const currentCta = findReadyCallTypeCta(type);
-          if (currentCta) currentCta.click();
+          if (currentCta) {
+              stampBookingEntry('direct');
+              programmaticRowClickDepth += 1;
+              try {
+                  currentCta.click();
+              } finally {
+                  programmaticRowClickDepth -= 1;
+              }
+              endChooserPassThroughWhenClosed(generation);
+              return;
+          }
+          // The row went away between the two clicks. The chooser is then the
+          // only surface the visitor has left, so hand it back visible and
+          // usable rather than leaving an invisible open dialog on screen.
+          endChooserPassThrough(generation);
       }, 0);
       return true;
   }
@@ -694,6 +917,11 @@
               return record && record.type === 'childList' && record.addedNodes && record.addedNodes.length;
           })) return;
           wireCallServiceCardsToDirectEntry();
+          // Chooser rows and the back arrow arrive on the same late-node paths
+          // as the cards. Both are guarded against rebinding, so re-running
+          // them here is free.
+          wireChooserRowsToEntryStamp();
+          syncBookingBackControls();
           // A late card arrives unpainted, carrying the stale CMS price and the
           // authored slot sentinel. Both painters are idempotent, so re-running
           // them here costs nothing for cards that are already correct.
@@ -718,6 +946,15 @@
   // environment-scoped discovery is the only code path that may enable them.
   setBookingButtonAvailable(false);
   wireCallServiceCardsToDirectEntry();
+  wireChooserRowsToEntryStamp();
+  // Before any entry has happened there is no stamp, so the arrow starts
+  // hidden — the same answer the CSS guard gives before this line runs.
+  syncBookingBackControls();
+  // Bound to the modal library's own close-complete event rather than to close
+  // controls, so any closer the Designer adds later is covered for free.
+  if (typeof window.addEventListener === 'function') {
+      window.addEventListener('modal-close', forgetBookingEntryOnClose);
+  }
   observeCallServiceCards();
 
   // Page-embed contract. This file is deferred, so all of these are already
@@ -1295,10 +1532,12 @@
       })();
   });
 
-  /* PUBLIC-RECORD SERVICES (anonymous + brand viewers)
-     The public record supplies non-call services only. Call projections stay
-     closed for anonymous viewers and use canonical discovery for brands.
-     Starter members keep the live-derived owner toggles above. */
+  /* PUBLIC-RECORD CMS SERVICES (anonymous + brand viewers)
+     Existing CMS cards remain as the side-by-side comparison path. Call
+     projections stay closed for anonymous viewers and use canonical discovery
+     for brands. Starter members keep the live-derived owner toggles above. */
+  installXanoServiceCardsAdapter();
+
   waitForMember(async function () {
       var isBrand = isBrandMember(MEMBER);
       if (MEMBER.id && !isBrand) return;
@@ -1354,6 +1593,138 @@
       serviceCards.forEach(function (card) {
           if (getComputedStyle(card).display === 'none') return;
           card.style.cursor = 'pointer';
+      });
+  }
+
+  /* XANO SERVICE CARDS (side-by-side CMS canary)
+     Webflow owns the visible card template. wf-xano clones that native
+     component after this deferred file can already have finished its normal
+     member work, so the existing one-shot service wiring cannot see the new
+     cards. Consume wf-xano's late-safe results event or its completed public
+     state, then add only the interaction attributes the existing signup and
+     project controllers use.
+
+     The authored template and every CMS card remain untouched. This adapter
+     limits itself to rendered [wf-xano-item] clones owned by the named wrapper.
+     The native project form remains Designer-owned. For eligible Brands, this
+     adapter may reconcile only its own option children in the existing
+     Services select so every canonical Xano service has an exact value. */
+  function installXanoServiceCardsAdapter() {
+      window.WfXano = window.WfXano || [];
+      if (typeof window.WfXano.push !== 'function') return;
+
+      window.WfXano.push(function (wfx) {
+          const instance = wfx && typeof wfx.get === 'function'
+              ? wfx.get('starter-services')
+              : null;
+          if (!instance || typeof instance.on !== 'function' || !instance.root) return;
+
+          function applyResult(result) {
+              Promise.resolve(memberReady).then(function () {
+                  adaptXanoServiceCards(instance, result);
+              }).catch(function (error) {
+                  console.warn('Xano services:', error);
+              });
+          }
+
+          let receivedResult = false;
+          instance.on('results', function (result) {
+              receivedResult = true;
+              applyResult(result);
+          });
+
+          if (!receivedResult && typeof instance.getState === 'function') {
+              const state = instance.getState();
+              if (state && state.status === 'success' && state.data) {
+                  applyResult(state.data);
+              }
+          }
+      });
+  }
+
+  function adaptXanoServiceCards(instance, result) {
+      const cards = Array.from(qsa('[wf-xano-item]', instance.root)).filter(function (card) {
+          const owner = card.closest('[wf-xano-element="wrapper"]');
+          return owner === instance.root && !!card.closest('#services');
+      });
+      const itemsById = new Map();
+      const resultItems = result && Array.isArray(result.items) ? result.items : [];
+      resultItems.forEach(function (item) {
+          const id = item && item.id != null ? String(item.id) : '';
+          if (id) itemsById.set(id, item);
+      });
+      const names = [];
+      cards.forEach(function (card) {
+          // Webflow currently drops Attribute-property overrides on the nested
+          // Label component, although it preserves the direct price binding.
+          // Repaint only the existing clone fields from the exact wf-xano item
+          // id; never fall back by position or touch the authored template.
+          const item = itemsById.get(String(card.getAttribute('data-wf-xano-id') || ''));
+          const title = qs('[data-service-card-element="title"]', card);
+          const description = qs('[data-service-card-element="description"]', card);
+          if (item && title) title.textContent = String(item.name || '');
+          if (item && description) description.textContent = String(item.description || '');
+          const serviceName = title ? String(title.textContent || '').trim() : '';
+          if (!serviceName) return;
+          names.push(serviceName);
+
+          card.setAttribute('data-service-card', 'component');
+          card.setAttribute('data-service-card-state', 'Default');
+          card.setAttribute('data-signup-trigger-element', 'service');
+          card.setAttribute('data-signup-trigger-value', serviceName);
+          card.setAttribute('data-xano-service-card', 'starter-services');
+          ['data-modal-trigger', 'data-sp-fill', 'data-sp-fill-category', 'data-sp-fill-value']
+              .forEach(function (attribute) { card.removeAttribute(attribute); });
+          card.style.cursor = '';
+      });
+
+      if (!MEMBER.id) {
+          markServiceCardsClickable();
+      } else if (isBrandMember(MEMBER) && !isProfileOwner(MEMBER)) {
+          syncProjectServiceOptions(names);
+          wireProjectServiceCards();
+      }
+
+      refreshEmptySectionNav();
+  }
+
+  function syncProjectServiceOptions(serviceNames) {
+      const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
+      if (!serviceField || !serviceField.options) return;
+
+      function canonicalValue(value) {
+          return String(value || '').trim();
+      }
+
+      const desired = [];
+      const desiredKeys = new Set();
+      serviceNames.forEach(function (serviceName) {
+          const value = canonicalValue(serviceName);
+          if (!value || desiredKeys.has(value)) return;
+          desiredKeys.add(value);
+          desired.push(value);
+      });
+
+      Array.from(serviceField.options).forEach(function (option) {
+          const owned = option.getAttribute &&
+              option.getAttribute('data-xano-service-option') === 'starter-services';
+          if (owned && !desiredKeys.has(canonicalValue(option.value || option.textContent))) {
+              option.remove();
+          }
+      });
+
+      desired.forEach(function (serviceName) {
+          const exists = Array.from(serviceField.options).some(function (option) {
+              return canonicalValue(option.value || option.textContent) === serviceName;
+          });
+          if (exists) return;
+
+          const option = document.createElement('option');
+          option.value = serviceName;
+          option.textContent = serviceName;
+          option.setAttribute('value', serviceName);
+          option.setAttribute('data-xano-service-option', 'starter-services');
+          serviceField.appendChild(option);
       });
   }
 
@@ -1496,6 +1867,8 @@
   }
 
   function wireProjectServiceCards() {
+      if (isProfileOwner(MEMBER)) return;
+
       const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
       const options = serviceField && serviceField.options
           ? Array.from(serviceField.options).filter(function (option) {
@@ -1512,7 +1885,13 @@
           const title = qs('[data-service-card-element="title"]', card);
           const titleValue = title ? String(title.textContent || '').trim() : '';
           const rateType = normalized(card.getAttribute('data-rate-card'));
-          const candidates = [titleValue];
+          const exactOption = options.find(function (item) {
+              return String(item.value || '').trim() === titleValue ||
+                  String(item.textContent || '').trim() === titleValue;
+          });
+          if (exactOption) return String(exactOption.value || '').trim();
+
+          const candidates = [];
 
           // Freelance and Retainer are commercial formats, not CMS services,
           // so each maps onto the authored option that matches its format.
@@ -1747,6 +2126,9 @@
               // discovery so late-rendered hero and Services cards get the same
               // direct Free/Paid entry contract.
               wireCallServiceCardsToDirectEntry();
+              // Discovery is also where a chooser row first becomes a real
+              // opener, so bind the entry stamp on the same pass.
+              wireChooserRowsToEntryStamp();
               repaintCallSurfaces();
               if (callSurfacesChanged) refreshEmptySectionNav();
               if (!bookingSurfaceAvailable) return;
@@ -1927,107 +2309,4 @@
 
       sections.forEach((sec) => observer.observe(sec));
   })();
-})();
-
-/* ---- portfolio see-more (was a separate footer <script>) ---- */
-(function () {
-  'use strict';
-
-  // "See more" button
-  document.addEventListener('DOMContentLoaded', () => {
-      const configs = [
-          {
-              selector: '[data-portfolio-card-title]',
-              maxLength: 65,
-              key: 'title',
-          },
-          {
-              selector: '[portfolio-description]',
-              maxLength: 250,
-              key: 'description',
-          },
-      ];
-
-      let isUpdating = false;
-
-      function truncateText(text, maxLength) {
-          return text.slice(0, maxLength).trim() + '...';
-      }
-
-      function processElement(el, maxLength, key) {
-          if (isUpdating) return;
-
-          const currentText = el.textContent.trim();
-          if (!currentText) return;
-
-          const fullTextAttr = `fullText${key}`;
-          const expandedAttr = `expanded${key}`;
-          const savedFullText = el.dataset[fullTextAttr];
-
-          if (savedFullText && (currentText === savedFullText || currentText === truncateText(savedFullText, maxLength))) {
-              return;
-          }
-
-          const oldButton = el.parentElement?.querySelector(`.portfolio-text-toggle[data-toggle-for="${key}"]`);
-
-          if (oldButton) oldButton.remove();
-
-          delete el.dataset[expandedAttr];
-          el.dataset[fullTextAttr] = currentText;
-
-          if (currentText.length <= maxLength) return;
-
-          const fullText = currentText;
-          const shortText = truncateText(fullText, maxLength);
-
-          isUpdating = true;
-          el.textContent = shortText;
-          isUpdating = false;
-
-          const button = document.createElement('div');
-          button.className = 'portfolio-text-toggle';
-          button.dataset.toggleFor = key;
-          button.textContent = 'See more';
-
-          button.addEventListener('click', () => {
-              const expanded = el.dataset[expandedAttr] === 'true';
-
-              isUpdating = true;
-
-              if (expanded) {
-                  el.textContent = shortText;
-                  button.textContent = 'See more';
-                  el.dataset[expandedAttr] = 'false';
-              } else {
-                  el.textContent = fullText;
-                  button.textContent = 'See less';
-                  el.dataset[expandedAttr] = 'true';
-              }
-
-              isUpdating = false;
-          });
-
-          el.insertAdjacentElement('afterend', button);
-      }
-
-      function scan() {
-          if (isUpdating) return;
-
-          configs.forEach(({ selector, maxLength, key }) => {
-              document.querySelectorAll(selector).forEach((el) => {
-                  processElement(el, maxLength, key);
-              });
-          });
-      }
-
-      scan();
-
-      const observer = new MutationObserver(scan);
-
-      observer.observe(document.body, {
-          childList: true,
-          subtree: true,
-          characterData: true,
-      });
-  });
 })();

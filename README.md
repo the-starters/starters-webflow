@@ -97,6 +97,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/hire-profile.js` — `/hire/<slug>` runtime controller for booking, Services, rate cards, and page utilities. Experiences and Clients are native Webflow CMS sections; the authoritative ownership, wiring, dependencies, and verification contract is in [`v3/HIRE-PROFILE-WIRING.md`](v3/HIRE-PROFILE-WIRING.md)
 - `v3/free-call-booking.js` — GitHub-owned `/hire/<slug>` Free Call namespace for authenticated booking-profile/config reads, one-request chooser previews, the shared authored calendar, and canonical Xano booking-command submission inside native Designer modals; cutover scope and exclusions live in [`v3/HIRE-PROFILE-WIRING.md`](v3/HIRE-PROFILE-WIRING.md#inline-global-code-cutover-boundary)
 - `v3/profile-portfolio.js` — sole `/hire/<slug>` portfolio / case-study renderer for the section labelled "Highlights"; reads approved public Xano Portfolios (#28) via `Get_approved_portfolios`. It renders the card list and fills the Highlights modal with data only — the lumos modal system owns the dialog's presentation. The ownership split, attribute contract, and cutover live in [`v3/PROFILE-PORTFOLIO-WIRING.md`](v3/PROFILE-PORTFOLIO-WIRING.md)
+- `v3/agency-profile.js` — `/hire/<slug>` Agency section: agency name, team size, contract type, and average project size, read from the public Xano endpoint `profile/starter/agency/v1`; intro-video handling is implemented, but its Designer row remains dormant by product choice. `wf-xano` owns the fetch, text binds, and declarative card/row visibility; this script supplies the URL-path slug, fills the video row when present, and owns the section wrapper's hidden state so a collapsed section consumes no flex/grid gap. Because the authored loading spinner lives inside that wrapper, every profile, agency or not, briefly shows it before the section renders or collapses; keep the spinner short so the layout shifts little. The authoritative behavior, attribute contract, markup, install, and verification live in [`v3/AGENCY-PROFILE-WIRING.md`](v3/AGENCY-PROFILE-WIRING.md)
 - `v3/reviews.js` — V3 public-profile reviews adapter; see [`v3/README.md`](v3/README.md#v3-reviews-frontend) for the authoritative ownership, wiring, and release contract
 - `v3/starter-review-form.js` — native `/review-starter` controller for invited V3 review requests; the authoritative token, analytics, form, endpoint, validation, and replay contract lives in [`v3/README.md`](v3/README.md#invited-starter-review-form)
 - `v3/starter-dashboard-messages.js` — shared Brand/Starter dashboard Messages tile; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for the authoritative data, rendering, and deep-link contract
@@ -265,7 +266,7 @@ Attribute-driven components published for reuse across pages. Most carry a
 - `global-embeds/step-flow/step-flow.js` — multi-step form-flow engine for `[data-form-flow]` roots: linear sequences, radio-gated sub-branching, footer button groups, action inference, opt-in per-step required-field validation that soft-disables Continue, and opt-in scroll-to-top that clears sticky `[data-toc-navbar]` chrome; needs its CSS embed for the invalid-field outline ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/step-flow))
 - `global-embeds/step-flow/panel-nav-flow.js` — panel navigation beside the step engine: swaps sibling panels inside `[data-panel-parent]` with a per-parent history stack for `[data-panel-nav-back-button]`, toggling `display` instantly ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/step-flow/panel-nav-flow))
 - `global-embeds/tabs/tabs.js` — attribute-driven tabs for multi-step forms and layouts (`[data-tab-component="wrapper"]`): global or per-panel prev/next, optional link locking until reached via Next, and optional per-panel validation ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/tabs))
-- `global-embeds/modal/modal.js` — the `lumos.modal` dialog system: inits every `.modal_dialog`, adds GSAP open/close timelines per `data-wf--modal--variant` (side-panel, full-screen), and manages focus restore ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/modal))
+- `global-embeds/modal/modal.js` — the `lumos.modal` dialog system: inits every `.modal_dialog`, adds GSAP open/close timelines per `data-wf--modal--variant` (side-panel, full-screen), and manages focus restore. A `data-modal-close` control never reopens the modal it dismisses (matched by `data-modal-target`, so CMS-duplicated dialogs are covered), while one naming a different modal closes and opens as a hand-off; a close anchor's navigation is suppressed only for `#`, an empty href, and hashes naming a registered modal, so section anchors and real links still work. Closing always leaves the entrance timeline rewound: a close that lands before the animation has moved skips the exit animation, and without the rewind that entrance would play on to the end on the hidden dialog and make the next open snap in fully opaque instead of fading ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/modal))
 - `global-embeds/modal/reset-on-close.js` — opt-in `data-modal-reload-on-submit` reload once a modal's form really succeeded, detected from Webflow hiding the `<form>` **and** showing `.w-form-done` so a Designer-visible done block cannot false-positive ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/modal/reset-on-close))
 - `global-embeds/accordions/accordions.js` — `[data-accordion="wrapper"]` accordions with open-by-default (index or `all`), close-previous, close-on-second-click, and open-on-hover options ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/accordions))
 - `global-embeds/custom-scrollbar/custom-scrollbar.js` — custom scrollbar chrome for overflow regions ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/custom-scrollbar))
@@ -299,6 +300,7 @@ node --test global-embeds/modal/modal.test.js
 - `global-embeds/form-embeds/timepicker/timepicker.js` — time-input picker ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/timepicker))
 - `global-embeds/form-embeds/checkbox-toggle/checkbox-toggle.js` — checkbox-driven visibility toggling ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/checkbox-toggle))
 - `global-embeds/form-embeds/password-toggle/password-toggle.js` — show/hide password control ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-toggle))
+- `global-embeds/form-embeds/password-validation/password-validation.js` — password-requirements checklist with submit gating; each instance picks its rule set through `starters-password-validation-*` wrapper attributes, misconfigured instances fail open, diagnostics staging-gated ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation))
 - `global-embeds/form-embeds/form-input-filter/form-input-filter.js` — input filtering and normalization ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-input-filter))
 - `global-embeds/form-embeds/input-preview.js` — echoes an input's value into a preview element ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/input-preview))
 
@@ -618,20 +620,9 @@ allowlist. Its authoritative host and path boundary is documented in the
 [`v3/README.md` scheduling section](v3/README.md#scheduling-auth). It temporarily
 retains the previous legacy availability/configuration/starter paths as exact
 compatibility entries for staging pages that do not yet load the stage adapter.
-It maintains a member-scoped token cache, adds `Authorization: Bearer <token>` without
-changing the effective request method, body, or other options, and supports string,
-`URL`, and `Request` inputs. Requests that already provide `Authorization`, other Xano
-API groups, other origins, and calls outside the documented page boundary pass
-through unchanged, except that scheduling-group requests on the protected production
-`/hire/jp-dionisio` profile are contained with HTTP `410` as documented in the
-authoritative boundary.
-
-A scoped `401` clears the cached token, trades the current Memberstack JWT once,
-and retries the same request once. A failed refresh preserves the original `401`.
-Legacy plain-`fetch()` callers fall back to one unauthenticated request if initial token
-acquisition fails; direct `window.xanoAuthFetch()` callers receive that error instead.
-Network failures remain fetch rejections. A Memberstack account change invalidates both
-token acquisition and in-flight scoped responses with `MEMBER_SCOPE_CHANGED`.
+The authoritative V3 scheduling section owns the token cache, request-shape,
+Memberstack auth-reconciliation, retry, and failure contracts. Keep this overview
+as a pointer so those security details have one source of truth.
 
 Load `v3/scheduling-auth.js` with `defer` on the pages approved in that boundary.
 It installs before Memberstack is ready and supersedes the legacy
