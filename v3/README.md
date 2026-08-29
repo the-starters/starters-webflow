@@ -2091,13 +2091,12 @@ applicable pending message can be visible. Confirmed calls can show their
 canonical meeting link; cancelled and archived calls cannot. Every authored
 payment or booking action stays hidden except Close, Back, the Starter's
 eligible pending-call Accept and Decline actions, the participant Cancel chain
-for booked calls, and owner-scoped recording access for eligible completed or
-archived calls. These migrated actions remain inside View Details; card-level
-decline, cancel, media, and other legacy controls stay hidden. Cancel is
-available to the Starter or the Brand on a confirmed or rescheduled call whose
-start is still in the future; it sends `booking/cancel/v3` with a required
-reason and a durable `dashboard-cancel:` idempotency key, mirroring the decline
-contract. The decline chain now also exposes its authored reason step
+for eligible Free booked calls, and owner-scoped recording access for eligible
+completed or archived calls. These migrated actions remain inside View Details;
+card-level decline, cancel, media, and other legacy controls stay hidden. The
+exact Cancel and reschedule eligibility and feedback rules live in the
+[dashboard booking action contract](#dashboard-booking-action-contract). The
+decline chain now also exposes its authored reason step
 (`switch-decline-reason`), so the reason dialog is reachable. Free-call
 reschedule now follows a propose-then-confirm contract on the published
 environment-bound endpoints: the authored `reschedule` trigger opens a
@@ -2132,14 +2131,32 @@ Call Requests to Starter Calls while it remains in Brand Calls. All other
 legacy mutation controls stay hidden until they have current V3-safe endpoint
 contracts.
 
+### Dashboard booking action contract
+
 `dashboard-call-actions.js` owns the supported decline, cancel, and Free-call
 reschedule commands. Decline is available only to the Starter on a canonical
-pending row. Cancel is available to either participant on a canonical confirmed
-or rescheduled row whose start is in the future. A reschedule proposal is
-available to either participant only for a Free, confirmed, future call with a
-grant and positive duration. Only the counterpart can confirm or decline a
-pending proposal. Every command requires a booking ID, configuration ID,
-participant identity, and exact `test` or `production` data environment.
+pending row. Cancel is available to either participant only on a canonical Free
+confirmed or rescheduled row whose start is in the future. Xano
+`booking/cancel/v3` rejects Paid cancellation until the paid-cancel follow-up
+ships, so an explicitly Paid row hides Cancel and shows `Paid call cancellation
+is not available yet.` below the authored control. For Cancel eligibility only,
+a row with neither `is_paid` nor `paid_meeting` is treated as legacy Free so
+older Free bookings keep the action. A reschedule proposal keeps the stricter
+contract: it is available to either participant only for a confirmed future
+call with an explicit Free flag, a grant, and positive duration. Only the
+counterpart can confirm or decline a pending proposal. Every command requires a
+booking ID, configuration ID, participant identity, and exact `test` or
+`production` data environment.
+
+For an active upcoming row where neither a proposal nor a response is
+available, the modal shows `Rescheduling is available for confirmed Free calls.`
+below the authored Reschedule control. Both eligibility explanations are
+module-owned `data-starters-action-hint` nodes inserted after the authored
+buttons; the script does not edit Designer markup. The early Reschedule guard
+passes an eligible click to `dashboard-call-actions.js`. It still consumes the
+click when that module is unavailable, the booking cannot be resolved, or the
+booking is ineligible, because the legacy empty `popup-booking-reschedule`
+dialog remains on `/starter-dashboard`.
 
 The native Webflow modal owns `[booking-decline-reason]`,
 `[booking-cancel-reason]`, and the base reschedule trigger. The module renders
@@ -2154,6 +2171,13 @@ require a non-empty reason. Decline posts `booking_id`, `config_id`, `reason`, a
 `new_end` with those shared identifiers to `booking/reschedule/propose/v3`.
 Confirm and decline responses post the shared identifiers to their matching
 `booking/reschedule/confirm/v3` or `booking/reschedule/decline/v3` endpoint.
+
+Each action clears any prior module-owned `[data-starters-action-error]` alert
+when a new attempt starts. A failed command shows the server's `message` or
+`error` text in that alert, falling back to the action's generic failure text.
+A click rejected by the client eligibility gate does not open an authored
+legacy action. It writes a PII-free console warning with only role, booking
+status, paid state, and whether the booking has the required identity.
 
 Each idempotency key is tab-scoped and includes the environment, booking, and a
 non-reversible participant identity hash. Decline and cancel also scope the key
