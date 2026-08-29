@@ -601,18 +601,25 @@
      gone, and the footer's own bottom padding now does that job — including on
      the empty-availability path, where the footer is the last thing in the
      mount. */
-  const CALENDAR_FRAME = '2rem'
+  const CALENDAR_FRAME = '1.25rem'
   /* Mobile's bottom spacing, unchanged from the round that introduced it: the
      modal's own `.call-sched_button-group` bottom padding
      (`--_spacing---spacer--spacing-10`). The desktop frame supersedes it above
      768px, but on a phone it is still the only thing keeping the empty state
      off the modal's bottom edge. */
   const CALENDAR_MOBILE_EDGE = '1.25rem'
-  /* The gap above the buttons. His pick, and deliberately tighter than the
-     16px row rhythm: with the footer spanning the full width under both
-     columns, a slot list that overflows should stop just short of the buttons
-     rather than leaving them adrift. */
-  const CALENDAR_FOOTER_GAP = '1rem'
+  /* The slot chips' two states. Resting is `#eee` — the same grey as the month
+     picker's fill and the footer's hairline, so the three read as one surface.
+     It is written from JavaScript rather than the sheet because the chips are
+     built here and their state flips on click; every place that writes the
+     resting colour must use this constant, including the deselect reset, or a
+     select-then-deselect leaves one chip a different grey from its neighbours. */
+  const SLOT_RESTING_BACKGROUND = '#eee'
+  const SLOT_SELECTED_BACKGROUND = '#1f211d'
+  /* The rule above the buttons. There is no row gap on desktop any more: the
+     footer is its own band, and a hairline plus its own padding is what
+     separates it from the panel. A gap AND a rule would read as two dividers. */
+  const CALENDAR_FOOTER_RULE = '1px solid #eee'
 
   function ensureBookingCalendarLayout(document) {
     if (
@@ -662,6 +669,22 @@
          datepickers keep the look they have today.
          Centring is the whole fix; the two padding rules give the first and
          last columns the same 4px inset the body cells already have. */
+      /* The day chips fill their cell instead of being a fixed 2.75rem box
+         centred in it. Jerico's edit, and he made it on the page's GLOBAL
+         datepicker sheet — re-scoped here so the contract form's date fields
+         keep the size they have today. The page's own rule is
+         `.ui-datepicker td a, .ui-datepicker td span` (0,1,2) and its mobile
+         override is the same selector at 2.5rem; scoping under the dialog
+         attribute makes this (0,2,2), so it wins at both widths without
+         `!important`. Height is left to the page. */
+      dialog + ' .ui-datepicker td a,' + dialog + ' .ui-datepicker td span{width:100%}',
+      /* The status line reserves space even with nothing to say, which under a
+         zero row gap shows up as a stray band under the buttons. Jerico set a
+         blanket `display:none` inline; encoded as `:empty` instead, because the
+         same element carries "No available times were found in the next 14
+         days.", the sending state and every booking error — hiding it outright
+         would silence all of them. Empty is exactly the case he was looking at. */
+      role + '"status"]:empty{display:none}',
       dialog + ' .ui-datepicker thead th{text-align:center}',
       dialog + ' .ui-datepicker thead th:first-child{padding-left:4px}',
       dialog + ' .ui-datepicker thead th:last-child{padding-right:4px}',
@@ -702,9 +725,9 @@
       // rows on the right. Rem, so it tracks the site's responsive root font
       // size rather than pinning a pixel width.
       'column-gap:2rem;',
-      // Tighter than the 16px the row rhythm uses elsewhere — see
-      // CALENDAR_FOOTER_GAP.
-      'row-gap:' + CALENDAR_FOOTER_GAP + ';',
+      // Zero, not small: the footer band's hairline and padding do the
+      // separating now. See CALENDAR_FOOTER_RULE.
+      'row-gap:0;',
       'grid-template-columns:minmax(0,1fr) minmax(0,1fr);',
       /* The footer spans BOTH columns on its own row at the bottom, so the
          buttons anchor to the bottom of the whole panel rather than to the
@@ -720,10 +743,9 @@
       'grid-template-rows:minmax(0,1fr) min-content min-content;',
       'align-content:start}',
       // The month keeps its natural height rather than stretching down its row.
-      // Its bottom edge carries no frame padding: the footer's row is what
-      // closes the panel now, so padding here would stack with the row gap and
-      // the footer's own padding into a gulf under the calendar.
-      role + '"month"]{grid-area:month;align-self:start;padding:' + CALENDAR_FRAME + ' 0 0 ' + CALENDAR_FRAME + '}',
+      // It now carries the frame on its bottom edge as well: with the row gap
+      // gone, this padding is what holds the calendar off the footer's rule.
+      role + '"month"]{grid-area:month;align-self:start;padding:' + CALENDAR_FRAME + ' 0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
       /* `height:0;min-height:100%` is the containment, and it is not
          decoration. A flexible grid track in an AUTO-height grid is sized to
          its items' max-content, so `minmax(0,1fr)` plus `min-height:0` alone
@@ -739,11 +761,12 @@
          `stretch`, which inflated four chips to 113px against 42.7px on a busy
          day.
 
-         The frame padding is top and right only — the left edge belongs to the
-         column gap and the bottom to the footer's row. Note padding is INSIDE
+         The frame padding skips the left edge, which belongs to the column
+         gap; the bottom edge is now padded like the month's so both columns
+         end level above the footer's rule. Note padding is INSIDE
          the scroll container, so the top inset scrolls away with the content,
          which is what keeps the first chip aligned with the month's top. */
-      role + '"times"]{grid-area:times;height:0;min-height:100%;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' 0 0}',
+      role + '"times"]{grid-area:times;height:0;min-height:100%;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' 0}',
       /* The page hides every inner scrollbar globally
          (`*:not(html):not(body)::-webkit-scrollbar{display:none}`), which would
          leave this list scrollable with no affordance that there is more below.
@@ -752,19 +775,22 @@
       role + '"times"]::-webkit-scrollbar{width:3px;display:block;background:transparent}',
       role + '"times"]::-webkit-scrollbar-thumb{background-color:var(--colors--black-olive-40);border-radius:3px}',
       role + '"times"]::-webkit-scrollbar-track{background-color:var(--colors--silver)}',
-      /* The frame's left and right edges only.
+      /* The footer as its own band: a hairline across the full width, its own
+         padding inside it, and the buttons pushed to the right at their
+         natural width.
 
-         No padding-top, because the row gap above already separates the
-         buttons from the panel. And no padding-BOTTOM, which is the one place
-         Jerico's captured `padding: 2rem` cannot be taken literally: his footer
-         was `position:absolute` and therefore outside the authored step, so its
-         bottom padding was the only thing under it. In flow it sits inside
-         `.call-details_layout`, which the Designer already pads by 2.5rem —
-         measured 32.3px. Keeping his value on top of that put 71px under the
-         buttons against a 26px frame on the sides. Dropped, the space below is
-         45px: the authored padding plus the status row's gap, which is exactly
-         what the previously approved desktop layout had. */
-      role + '"footer"]{grid-area:footer;padding:0 ' + CALENDAR_FRAME + '}',
+         Right-aligned rather than sharing the row: that is what Jerico's
+         screenshot shows, it is what his note "the button group flex" asks
+         for, and it is how the modal's own authored `.call-sched_button-group`
+         lays buttons out (`justify-content:flex-end`), so the calendar step now
+         matches the steps either side of it. The buttons keep the component's
+         own padding, which is what makes "natural width" a real size rather
+         than a shrink-to-label.
+
+         `align-items:center` rather than `stretch`, because with no flex-grow
+         the two buttons are sized by their own content and a stretch would only
+         matter if their heights differed. */
+      role + '"footer"]{grid-area:footer;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
       // Aligned to the same frame so an error message lines up with the
       // buttons above it rather than with the panel edge.
       role + '"status"]{grid-area:status;padding:0 ' + CALENDAR_FRAME + '}',
@@ -1123,20 +1149,16 @@
         // hidden on a direct entry: `display:none` takes it out of the layout
         // entirely, and the confirm's `flex: 1 1 0` then fills the whole row
         // instead of being stranded in a second column beside an empty first.
+        /* Only what does not vary by breakpoint. Alignment and the buttons'
+           own sizing are breakpoint-dependent — a right-aligned row of
+           natural-width buttons on desktop, a full-width stack on mobile — and
+           an inline declaration outranks any stylesheet rule, so writing them
+           here would pin them at both sizes. The sheet owns them. */
         applyStyles(footer, {
           display: 'flex',
-          // Equal heights, which matters because the two labels are different
-          // lengths and the longer one wraps to a second line in a narrow row.
-          // This is only safe because the row is sized to its own content: the
-          // shell's `grid-template-rows:min-content` is what stops a stretched
-          // button growing to a row taller than a button (measured at 84px
-          // against the site's 38px before that was pinned). Change one of
-          // those two and re-measure the other.
-          alignItems: 'stretch',
           gap: '12px',
           width: '100%',
         })
-        applyStyles(back, { flex: '1 1 0', minWidth: '0' })
       }
       footer.appendChild(back)
     }
@@ -1259,7 +1281,6 @@
     setConfirmDisabled(true)
 
     if (footer) {
-      if (!footerIsAuthored) applyStyles(confirm, { flex: '1 1 0', minWidth: '0' })
       footer.appendChild(confirm)
     }
 
@@ -1270,7 +1291,7 @@
       status.textContent = ''
       Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (candidate) {
         candidate.setAttribute('aria-pressed', 'false')
-        candidate.style.background = '#f3f4ef'
+        candidate.style.background = SLOT_RESTING_BACKGROUND
         candidate.style.color = '#1f211d'
       })
     }
@@ -1293,7 +1314,7 @@
           padding: '10px 11px',
           border: '1px solid transparent',
           borderRadius: '6px',
-          background: '#f3f4ef',
+          background: SLOT_RESTING_BACKGROUND,
           color: '#1f211d',
           cursor: 'pointer',
         })
@@ -1301,7 +1322,9 @@
           if (confirmationPending) return
           Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (candidate) {
             candidate.setAttribute('aria-pressed', candidate === button ? 'true' : 'false')
-            candidate.style.background = candidate === button ? '#1f211d' : '#f3f4ef'
+            candidate.style.background = candidate === button
+              ? SLOT_SELECTED_BACKGROUND
+              : SLOT_RESTING_BACKGROUND
             candidate.style.color = candidate === button ? '#ffffff' : '#1f211d'
           })
           selectedSlot = slot

@@ -3408,16 +3408,17 @@ flowchart TD
    fallback row's own 12px flex gap supersedes it on that row.
 
    The calendar is two columns from 768px up — month on the left, times on the
-   right — with the footer spanning BOTH columns on its own row underneath, so
-   the buttons anchor to the bottom of the whole panel. The times take the
-   leftover height in their column and scroll inside themselves, so a day with
-   many slots cannot grow the modal. The slot chips keep their natural height
-   whatever the day looks like, the two columns sit `2rem` apart, and the row
-   gap above the buttons is `1rem` so an overflowing list stops just short of
-   them. A `2rem` interior frame runs around the whole thing, formed from the
-   edges that touch the modal's margins: the month's left, both tops, the times'
-   right and the footer's left and right. The footer adds no bottom padding —
-   the authored `.call-details_layout` step already pads that edge by 2.5rem.
+   right — with the footer spanning BOTH columns on its own row underneath as a
+   band: a `1px #eee` rule across the full width, `1.25rem` of padding, and the
+   buttons pushed to the right at their natural width, the way the modal's own
+   authored `.call-sched_button-group` lays buttons out. There is no row gap;
+   the band's rule and padding do the separating. The times take the leftover
+   height in their column and scroll inside themselves, so a day with many slots
+   cannot grow the modal, and the slot chips keep their natural height whatever
+   the day looks like. A `1.25rem` interior frame runs around the two columns
+   and they sit `2rem` apart. The month's day cells fill their column rather
+   than being a fixed box centred in it, and the status line hides itself only
+   while it is empty.
 
    On the booking surface the shell writes only `display` and `width` inline and
    leaves both gaps to the sheet, because an inline `gap` shorthand outranks any
