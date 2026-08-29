@@ -761,6 +761,7 @@ test('the calendar footer puts Back beside the confirm control', async () => {
   const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
     .find((node) => node.getAttribute('data-paid-calendar-element') === name)
   const layout = role('layout')
+  const calendarPanel = role('calendar-panel')
   const timePanel = role('time-panel')
   const month = role('month')
   const timezone = role('timezone-control')
@@ -777,17 +778,23 @@ test('the calendar footer puts Back beside the confirm control', async () => {
   )
   assert.deepEqual(
     layout.children.map((child) => child.getAttribute('data-paid-calendar-element')),
-    ['month', 'time-panel'],
+    ['calendar-panel', 'time-panel'],
+  )
+  assert.deepEqual(
+    calendarPanel.children.map((child) => child.getAttribute('data-paid-calendar-element')),
+    ['month', 'timezone-control'],
   )
   assert.deepEqual(
     timePanel.children.map((child) => child.getAttribute('data-paid-calendar-element')),
-    ['timezone-control', 'times'],
+    ['times'],
   )
   assert.equal(layout.style.gridTemplateColumns, 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))')
   assert.equal(layout.style.alignItems, 'start')
+  assert.equal(calendarPanel.style.alignContent, 'start')
   assert.equal(timePanel.style.alignContent, 'start')
-  assert.equal(month.parentElement, layout)
-  assert.equal(timezone.parentElement, timePanel)
+  assert.equal(month.parentElement, calendarPanel)
+  assert.equal(timezone.parentElement, calendarPanel)
+  assert.equal(timezone.style.justifySelf, 'start')
   assert.equal(times.parentElement, timePanel)
   assert.equal(status.getAttribute('data-paid-calendar-element'), 'status')
 
@@ -831,7 +838,7 @@ test('the Free flow gets the same footer with its own confirm label', async () =
   assert.equal(back.getAttribute('class'), 'clickable-text-link')
 })
 
-test('authored classes style the footer and no inline style is written', async () => {
+test('authored controls keep their classes while the footer gets shared action spacing', async () => {
   const container = bookingMount()
   container.setAttribute('data-booking-footer-class', 'call-sched_button-group')
   container.setAttribute('data-booking-confirm-class', 'button_main-wrap is-primary')
@@ -841,10 +848,11 @@ test('authored classes style the footer and no inline style is written', async (
   assert.equal(footer.getAttribute('class'), 'call-sched_button-group')
   assert.equal(confirm.getAttribute('class'), 'button_main-wrap is-primary')
   assert.equal(back.getAttribute('class'), 'clickable-text-link')
-  // The trap. An inline declaration outranks the Designer's stylesheet, so an
-  // authored control that also carries the fallback styles is still the
-  // hardcoded look wearing the right class name.
-  for (const [name, node] of [['footer', footer], ['confirm', confirm], ['back', back]]) {
+  // Only the row receives shared layout spacing. The two authored controls
+  // keep their Designer-owned appearance with no inline declarations.
+  assert.deepEqual(Object.keys(footer.style), ['columnGap'])
+  assert.equal(footer.style.columnGap, '16px')
+  for (const [name, node] of [['confirm', confirm], ['back', back]]) {
     assert.deepEqual(Object.keys(node.style), [], `${name} must carry no inline styles`)
   }
 })
@@ -858,7 +866,7 @@ test('the unauthored footer keeps the engine fallback look and no class', async 
   assert.equal(confirm.getAttribute('class'), null)
   assert.equal(back.getAttribute('class'), null)
   assert.equal(footer.style.display, 'grid')
-  assert.equal(footer.style.gap, '12px')
+  assert.equal(footer.style.columnGap, '16px')
   assert.equal(confirm.style.background, '#1f211d')
   assert.equal(confirm.style.color, '#ffffff')
   assert.equal(back.style.background, 'transparent')
@@ -989,7 +997,8 @@ test('the footer row makes the confirm fill it, whoever styled the confirm', asy
   authoredFooter.setAttribute('data-booking-confirm-class', 'button_main-wrap')
   authoredFooter.setAttribute('data-booking-back-class', 'clickable-text-link')
   const owned = await mountFooterFixture({ container: authoredFooter })
-  assert.deepEqual(Object.keys(owned.footer.style), [])
+  assert.deepEqual(Object.keys(owned.footer.style), ['columnGap'])
+  assert.equal(owned.footer.style.columnGap, '16px')
   assert.deepEqual(Object.keys(owned.confirm.style), [])
   assert.deepEqual(Object.keys(owned.back.style), [])
 })
