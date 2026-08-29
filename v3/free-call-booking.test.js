@@ -194,6 +194,14 @@ function chooserFixture({ includeMain = true, guests = [], closers = 1 } = {}) {
   item.setQuery('[next-available-slot]', nextSlot)
 
   const main = new Element('button', { 'data-modal-trigger': 'popup-booking-main' })
+  // What the calendar engine renders into the mount: a back control that shares
+  // the chooser's trigger name. It is not a page-level Book Call button and
+  // must never be bound as one.
+  const backControl = new Element('button', {
+    'data-modal-trigger': 'popup-booking-main',
+    'data-booking-back': '',
+    'data-modal-close': '',
+  })
   const container = new Element('div', { 'nylas-container': '' })
   popup.appendChild(container)
   popup.setQuery('[nylas-container]', container)
@@ -241,11 +249,25 @@ function chooserFixture({ includeMain = true, guests = [], closers = 1 } = {}) {
     },
     querySelectorAll(selector) {
       if (selector.includes('[data-type="free"]')) return [cta]
-      if (selector === '[data-modal-trigger="popup-booking-main"]') return includeMain ? [main] : []
+      // The trigger lookup is matched by its BASE selector and the `:not(...)`
+      // clauses are then applied for real. Matching the whole string instead
+      // silently returned nothing the moment the source added an exclusion,
+      // which would have dropped every assertion about this set without
+      // turning a single test red.
+      const base = selector.split(':not(')[0].trim()
+      if (base === '[data-modal-trigger="popup-booking-main"]') {
+        const excluded = [...selector.matchAll(/:not\(\[([\w-]+)\]\)/g)].map((m) => m[1])
+        // The calendar footer's back control carries this trigger name too, so
+        // it is always in the raw set and only the exclusion keeps it out.
+        return [...(includeMain ? [main] : []), backControl].filter(
+          (element) => !excluded.some((name) => element.getAttribute(name) !== null),
+        )
+      }
       return []
     },
   }
   return {
+    backControl,
     closeControls,
     container,
     close,
@@ -367,6 +389,22 @@ test('the authored chooser installs without a legacy main trigger', async () => 
   assert.equal(fixture.cta.getAttribute('data-config'), 'free_prod')
   assert.equal(fixture.cta.getAttribute('data-free-call-v3'), 'ready')
   assert.equal(typeof fixture.cta.onclick, 'function')
+  assert.equal(fixture.backControl.onclick, null, 'the back control is not a Book Call button')
+})
+
+test('the next-slot prefetch binds the Book Call button, never the back control', async () => {
+  // The calendar footer's back control carries the chooser's trigger name, so
+  // it lands in the same document-wide sweep this prefetch is installed from.
+  // Bound, it would fire a stray availability read on the way back out — and
+  // preventDefault on a control whose whole job is a modal hand-off.
+  const fixture = chooserFixture()
+  const booking = bookingApiFixture()
+  await withGlobals({ document: fixture.document }, async () => {
+    assert.equal(api.installFreeBookingController(installSettings(booking.bookingApi)), true)
+  })
+
+  assert.equal(typeof fixture.main.onclick, 'function')
+  assert.equal(fixture.backControl.onclick, null)
 })
 
 test('Free click mounts the authored calendar and canonical command', async () => {

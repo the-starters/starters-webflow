@@ -512,6 +512,96 @@
     return node
   }
 
+  /* ---- the calendar footer's class contract ----
+     The calendar mount is wiped on every lifecycle reset, so nothing authored
+     can live inside it and the footer's two controls have to be built here.
+     That used to mean their look was hardcoded in this file, which is why the
+     confirm button never matched the site's button styling. Instead of guessing
+     at the design system from JavaScript, the engine reads the class names off
+     the nearest authored surface and applies them verbatim: the styling stays
+     in the Designer, where it can change without a script release.
+
+     Read order is container first, then the dialog the container sits in, so a
+     page with several booking surfaces can style one of them differently
+     without affecting the rest. */
+  const FOOTER_CLASS_ATTRIBUTE = 'data-booking-footer-class'
+  const CONFIRM_CLASS_ATTRIBUTE = 'data-booking-confirm-class'
+  const BACK_CLASS_ATTRIBUTE = 'data-booking-back-class'
+
+  /**
+   * The booking dialog this calendar is mounted inside, or null.
+   *
+   * Null is a real answer, not a failure: the same engine mounts the
+   * dashboard's reschedule calendar (`dashboard-call-actions.js`), which lives
+   * in a different dialog entirely.
+   *
+   * This is deliberately the SAME selector `hire-profile.js` keys its guard
+   * stylesheet rule and its `bookingDialogs()` lookup on, and nothing wider.
+   * A back control rendered on a surface those two cannot reach is a control
+   * nothing ever hides on a direct entry — so anything but an exact match
+   * fails closed and renders no control at all. On the published page the
+   * dialog carries `data-modal-target="popup-booking"` and `popup-booking`
+   * together, so the narrower selector loses nothing.
+   */
+  const BOOKING_SURFACE_SELECTOR = '[data-modal-target="popup-booking"]'
+
+  function bookingSurfaceFor(container) {
+    if (!container || typeof container.closest !== 'function') return null
+    return container.closest(BOOKING_SURFACE_SELECTOR)
+  }
+
+  function authoredClassSurfaces(container) {
+    const surfaces = [container]
+    const root = bookingSurfaceFor(container)
+    if (root && root !== container) surfaces.push(root)
+    return surfaces
+  }
+
+  /** The authored class names for one control, or [] when none are authored. */
+  function authoredClassList(container, attribute) {
+    const surfaces = authoredClassSurfaces(container)
+    for (let index = 0; index < surfaces.length; index += 1) {
+      const surface = surfaces[index]
+      if (!surface || typeof surface.getAttribute !== 'function') continue
+      const authored = String(surface.getAttribute(attribute) || '').trim()
+      if (authored) return authored.split(/\s+/)
+    }
+    return []
+  }
+
+  /**
+   * Applies authored classes and reports whether any were applied, so the
+   * caller can skip its inline fallback. An authored control must carry NO
+   * inline styles: a hardcoded declaration here would outrank the Designer's
+   * own stylesheet and quietly win the parts of the look it names.
+   */
+  function applyAuthoredClasses(node, classes) {
+    if (!classes.length) return false
+    node.setAttribute('class', classes.join(' '))
+    return true
+  }
+
+  /** The back control's markup contract, applied to a fresh button element. */
+  function applyAuthoredBack(back, container, settings) {
+    back.type = 'button'
+    back.textContent = String((settings && settings.backText) || '← Back')
+    back.setAttribute('data-booking-back', '')
+    back.setAttribute('data-modal-close', '')
+    back.setAttribute('data-modal-trigger', 'popup-booking-main')
+    back.setAttribute('data-paid-calendar-element', 'back')
+    if (!applyAuthoredClasses(back, authoredClassList(container, BACK_CLASS_ATTRIBUTE))) {
+      applyStyles(back, {
+        padding: '12px 16px',
+        border: '1px solid transparent',
+        borderRadius: '6px',
+        background: 'transparent',
+        color: '#1f211d',
+        cursor: 'pointer',
+      })
+    }
+    return back
+  }
+
   function calendarDateKey(timestamp, timezone) {
     const parts = new Intl.DateTimeFormat('en-CA', {
       year: 'numeric',
@@ -563,9 +653,68 @@
       margin: '0',
     })
     status.setAttribute('data-paid-calendar-element', 'status')
+
+    /* The back control is a hand-off, not a behaviour of its own: the two modal
+       attributes close this dialog and open the Free/Paid chooser, exactly as
+       an authored control would, and `data-booking-back` is the marker the
+       profile script keys its entry-aware visibility on. Nothing here decides
+       when it is on screen — the guard stylesheet owns display and the profile
+       script owns the accessible state, so this must not write either.
+
+       It is built only on the booking surface. This engine also mounts the
+       dashboard's reschedule calendar, where there is no Free/Paid chooser to
+       go back to and no guard stylesheet to hide the control: a back rendered
+       there would be an always-visible button that closes the reschedule
+       dialog and lands the visitor nowhere. */
+    const back = bookingSurfaceFor(container)
+      ? applyAuthoredBack(global.document.createElement('button'), container, settings)
+      : null
+
+    /* No back control means no row to put it in, and the confirm button goes
+       straight into the grid shell exactly as it always did. That keeps the
+       dashboard's reschedule calendar — which cannot author classes and has no
+       back — byte-for-byte what it was: a footer would have turned its confirm
+       from a full-width grid item into a shrink-to-fit flex child. */
+    let footer = null
+    let footerIsAuthored = false
+    if (back) {
+      footer = global.document.createElement('div')
+      footer.setAttribute('data-paid-calendar-element', 'footer')
+      footerIsAuthored = applyAuthoredClasses(
+        footer,
+        authoredClassList(container, FOOTER_CLASS_ATTRIBUTE),
+      )
+      if (!footerIsAuthored) {
+        // The confirm button used to be a grid item in the shell and stretched
+        // to full width. The fallback row has to keep doing that for it, and it
+        // has to do it from the row: `data-booking-footer-class` is optional, so
+        // the likely shape is an authored confirm — which by contract carries no
+        // inline styles of its own — inside this row.
+        //
+        // The two `gridColumn` writes below are the one exception to "an
+        // authored control gets no inline styles", and they are PLACEMENT in
+        // this row, never appearance. They are written only when this fallback
+        // row is the one in use; an authored footer places its own children.
+        // Explicit columns are what survives the back control being hidden on a
+        // direct entry: without them the confirm slides into the `auto` column
+        // and shrinks to its label.
+        applyStyles(footer, {
+          display: 'grid',
+          gridTemplateColumns: 'auto minmax(0, 1fr)',
+          alignItems: 'center',
+          gap: '12px',
+        })
+        back.style.gridColumn = '1'
+      }
+      footer.appendChild(back)
+    }
+
     if (!slots.length) {
       status.textContent = 'No available times were found in the next 14 days.'
       container.appendChild(status)
+      // An empty calendar is exactly when a visitor most wants the other kind
+      // of call, so the way back out has to survive the early return.
+      if (footer) container.appendChild(footer)
       return { slots: [] }
     }
 
@@ -597,18 +746,25 @@
       gap: '8px',
     })
     times.setAttribute('data-paid-calendar-element', 'times')
-    const confirm = applyStyles(global.document.createElement('button'), {
-      padding: '12px 16px',
-      border: '1px solid #1f211d',
-      borderRadius: '6px',
-      background: '#1f211d',
-      color: '#ffffff',
-      cursor: 'pointer',
-    })
+    const confirm = global.document.createElement('button')
     confirm.type = 'button'
     confirm.disabled = true
     confirm.textContent = String(settings.confirmText || 'Request paid call')
     confirm.setAttribute('data-paid-calendar-element', 'confirm')
+    if (!applyAuthoredClasses(confirm, authoredClassList(container, CONFIRM_CLASS_ATTRIBUTE))) {
+      applyStyles(confirm, {
+        padding: '12px 16px',
+        border: '1px solid #1f211d',
+        borderRadius: '6px',
+        background: '#1f211d',
+        color: '#ffffff',
+        cursor: 'pointer',
+      })
+    }
+    if (footer) {
+      if (!footerIsAuthored) confirm.style.gridColumn = '2'
+      footer.appendChild(confirm)
+    }
 
     function clearSelection() {
       selectedSlot = null
@@ -708,6 +864,11 @@
       if (!selectedSlot || confirm.disabled || confirmationPending) return
       confirmationPending = true
       confirm.disabled = true
+      // Back sits in the same row as the button that was just pressed, and it
+      // closes the dialog. Left live, one stray click mid-request wipes the
+      // surface the confirmation was about to appear on, while the booking
+      // still goes through server-side — a call the visitor never sees.
+      if (back) back.disabled = true
       Array.from(calendarHost.querySelectorAll('[data-paid-calendar-date]')).forEach(function (button) {
         button.disabled = true
       })
@@ -740,13 +901,14 @@
             button.disabled = false
           })
           confirm.disabled = !selectedSlot
+          if (back) back.disabled = false
         }
       }
     })
 
     shell.appendChild(calendarHost)
     shell.appendChild(times)
-    shell.appendChild(confirm)
+    shell.appendChild(footer || confirm)
     shell.appendChild(status)
     container.appendChild(shell)
     renderTimes()
@@ -1462,6 +1624,7 @@
     XANO_BASE,
     authenticatedRequest,
     authenticatedPost,
+    authoredClassList,
     bookingPayload,
     bookingRequestFingerprint,
     canonicalPaidPrice,
