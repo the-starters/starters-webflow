@@ -149,7 +149,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             let alsoWorkedWithBaseline = alsoWorkedWithInput ? alsoWorkedWithInput.value : '';
             let alsoWorkedWithBaselineReady = !alsoWorkedWithInput;
 
-            let editSelectedCompany = null;
             let editStartDateBaseline = null;
             let editEndDateBaseline = null;
             let editStartDateUserChanged = false;
@@ -179,9 +178,36 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
             let isSubmitting = false;
             let submitAction = '';
-            let selectedCompany = null;
             let companiesCount = 0;
             let addCompanyFeedbackTimeout = null;
+
+            function storeSelectedCompany(input, company) {
+                if (!input) return;
+                input.dataset.selectedCompanyName = company && company.name ? company.name : '';
+                input.dataset.selectedCompanyDomain = company && company.domain ? company.domain : '';
+                input.dataset.selectedCompanyLogoUrl = company && company.logo_url ? company.logo_url : '';
+            }
+
+            function clearSelectedCompany(input) {
+                if (!input) return;
+                delete input.dataset.selectedCompanyName;
+                delete input.dataset.selectedCompanyDomain;
+                delete input.dataset.selectedCompanyLogoUrl;
+            }
+
+            function selectedCompanyForInput(input) {
+                if (!input) return null;
+                const currentName = getValue(input);
+                const storedName = String(input.dataset.selectedCompanyName || '').trim();
+                if (storedName && storedName === currentName) {
+                    return {
+                        name: storedName,
+                        domain: String(input.dataset.selectedCompanyDomain || '').trim(),
+                        logo_url: String(input.dataset.selectedCompanyLogoUrl || '').trim(),
+                    };
+                }
+                return null;
+            }
 
             // pendingUpdateDrafts/pendingDeleteDraftIds only ever hold real (already-in-XANO) ids.
             // pendingCreateDrafts entries always keep their synthetic draft_ id and are never
@@ -786,6 +812,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
                 if (companyInput) {
                     companyInput.value = '';
+                    clearSelectedCompany(companyInput);
                 }
 
                 if (jobTitleInput) {
@@ -817,7 +844,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     }
                 }
 
-                selectedCompany = null;
                 updateAddBtnState();
             }
 
@@ -874,6 +900,11 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
                 if (editCompanyInput) {
                     editCompanyInput.value = company.company_name || '';
+                    storeSelectedCompany(editCompanyInput, {
+                        name: company.company_name || '',
+                        domain: company.company_domain || '',
+                        logo_url: getCompanyLogo(company),
+                    });
                 }
 
                 if (editJobTitleInput) {
@@ -883,12 +914,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 hydrateEditCompanyDates();
 
                 setCheckboxState(editCurrentWorkCheckbox, !!company.current_work);
-
-                editSelectedCompany = {
-                    name: company.company_name || '',
-                    domain: company.company_domain || '',
-                    logo_url: getCompanyLogo(company),
-                };
 
                 openEditModal();
                 // Opening the modal runs the shared date-picker embed over these inputs, which re-reads
@@ -913,6 +938,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
                     if (editCompanyInput) {
                         editCompanyInput.value = '';
+                        clearSelectedCompany(editCompanyInput);
                     }
 
                     if (editJobTitleInput) {
@@ -935,7 +961,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
                     setCheckboxState(editCurrentWorkCheckbox, false);
 
-                    editSelectedCompany = null;
                     editStartDateBaseline = null;
                     editEndDateBaseline = null;
                 }, 800);
@@ -971,27 +996,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 pendingUpdateDrafts = new Map();
                 pendingDeleteDraftIds = new Set();
             }
-
-            document.addEventListener('click', function (event) {
-                const companyItem = event.target.closest('.company-search-item[data-name]');
-                if (!companyItem) return;
-
-                const logo = qs('.company-search-logo', companyItem);
-                const searchGroup = companyItem.closest('[company-search-group]');
-                const input = searchGroup ? qs('[logo-search-input]', searchGroup) : null;
-
-                const companyData = {
-                    name: companyItem.dataset.name || '',
-                    domain: companyItem.dataset.domain || '',
-                    logo_url: logo ? logo.src : '',
-                };
-
-                if (input && input.id === 'edit-company-name') {
-                    editSelectedCompany = companyData;
-                } else {
-                    selectedCompany = companyData;
-                }
-            });
 
             [companyInput, jobTitleInput].forEach(function (input) {
                 if (!input) return;
@@ -1085,19 +1089,26 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     const companyId = editCompanyWrapper.dataset.id;
                     if (!companyId) return;
 
+                    const selectedEditCompany = selectedCompanyForInput(editCompanyInput);
+
                     const payload = {
                         company_name: getValue(editCompanyInput),
                         job_title: getValue(editJobTitleInput),
                         start_date: serializeStarterProfileCompanyDate(editStartDateInput, editStartDateBaseline),
                         end_date: editCurrentWorkCheckbox && editCurrentWorkCheckbox.checked ? "Present" : serializeStarterProfileCompanyDate(editEndDateInput, editEndDateBaseline),
                         current_work: editCurrentWorkCheckbox ? editCurrentWorkCheckbox.checked : false,
-                        company_domain: editSelectedCompany ? editSelectedCompany.domain : '',
-                        company_logo_url: editSelectedCompany && editSelectedCompany.logo_url ? editSelectedCompany.logo_url : placeholderLogo,
+                        company_domain: selectedEditCompany ? selectedEditCompany.domain : '',
+                        company_logo_url: selectedEditCompany && selectedEditCompany.logo_url ? selectedEditCompany.logo_url : placeholderLogo,
                     };
 
                     let isValid = true;
 
                     if (!payload.company_name) {
+                        showFieldError(editCompanyInput.closest('[form-group]'));
+                        isValid = false;
+                    }
+
+                    if (!payload.company_domain) {
                         showFieldError(editCompanyInput.closest('[form-group]'));
                         isValid = false;
                     }
@@ -1168,19 +1179,26 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                         return;
                     }
 
+                    const selectedAddCompany = selectedCompanyForInput(companyInput);
+
                     const payload = {
                         company_name: getValue(companyInput),
                         job_title: getValue(jobTitleInput),
                         start_date: getValue(startDateInput),
                         end_date: currentWorkCheckbox && currentWorkCheckbox.checked ? "Present" : getValue(endDateInput),
                         current_work: currentWorkCheckbox ? currentWorkCheckbox.checked : false,
-                        company_domain: selectedCompany ? selectedCompany.domain : '',
-                        company_logo_url: selectedCompany && selectedCompany.logo_url ? selectedCompany.logo_url : placeholderLogo,
+                        company_domain: selectedAddCompany ? selectedAddCompany.domain : '',
+                        company_logo_url: selectedAddCompany && selectedAddCompany.logo_url ? selectedAddCompany.logo_url : placeholderLogo,
                     };
 
                     let isValid = true;
 
                     if (!payload.company_name) {
+                        showFieldError(companyInput.closest('[form-group]'));
+                        isValid = false;
+                    }
+
+                    if (!payload.company_domain) {
                         showFieldError(companyInput.closest('[form-group]'));
                         isValid = false;
                     }

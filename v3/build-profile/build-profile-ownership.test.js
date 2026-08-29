@@ -45,14 +45,14 @@ const EXPECTED_CAPTURE = {
   },
 }
 const EXPECTED_CANDIDATES = {
-  sourceCommit: 'working-tree@564c475940e0b441b1b693ecefab5ecb72ddd372',
+  sourceCommit: '9e520631220d1d111efb2ad0901138fafef58522',
   files: {
     'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 14120, sha256: 'c51b30e337060faf2ef3a7f9e131bbd7ba6eb807b1852e9c8e8d79d9bc367b33' },
     'portfolio-crud.js': { path: 'v3/build-profile/portfolio-crud.js', bytes: 38397, sha256: '67a4ae90325477bc931a35d015eeba536e90ad5ff90968dc6c0cccb06872576f' },
     'portfolio-list.js': { path: 'v3/build-profile/portfolio-list.js', bytes: 4036, sha256: '508b94b1f40f05dcc916c79c3cf0bec04f627f75bb607d93d02c02e0950fe11b' },
-    'company-autocomplete.js': { path: 'v3/build-profile/company-autocomplete.js', bytes: 12249, sha256: 'f6ec248c9f530bba3864381fbbfa8a1eda77d4488334d3aeb5a19fc7b0b43799' },
+    'company-autocomplete.js': { path: 'v3/build-profile/company-autocomplete.js', bytes: 12910, sha256: '1c3a18801844b2ce18ea539b54ee11bd6b46716bd8a9d24858a7999a5a94e4ac' },
     'work-dates.js': { path: 'v3/build-profile/work-dates.js', bytes: 1929, sha256: '3be29b0dfecfadd6057e6da6a30af0a47dc41d67bdedda863aca003512fe2890' },
-    'company-experience-crud.js': { path: 'v3/build-profile/company-experience-crud.js', bytes: 39104, sha256: 'd463b86613a42d5bdb1846f3294595441dbdc806d79530758560a03df0f8be85' },
+    'company-experience-crud.js': { path: 'v3/build-profile/company-experience-crud.js', bytes: 39935, sha256: '0d570bb71f6ef49fc44f3f568c58609fbabb064667c9169e793cc927bfdf277d' },
     'field-counters.js': { path: 'v3/build-profile/field-counters.js', bytes: 5027, sha256: '89add4a5af95b6e011116d13c868a7bcc91d36616f216a0ea5ec6aac296fbe61' },
     'bio-editor.js': { path: 'v3/build-profile/bio-editor.js', bytes: 12246, sha256: 'df9f20286ded40b99a04dfe9e9cae41a9737b351ef6e55dda0f7b346091082cc' },
     'grouped-selects.js': { path: 'v3/build-profile/grouped-selects.js', bytes: 1649, sha256: '9fc122b55ae5a0e40bbea47932fbb446d74de656d7818cc3744511adc0a8db22' },
