@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.60.1
+ * @release v1.60.2
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -1600,8 +1600,9 @@
      Webflow owns the visible card template. wf-xano clones that native
      component after this deferred file can already have finished its normal
      member work, so the existing one-shot service wiring cannot see the new
-     cards. Subscribe to wf-xano's late-safe results event and add only the
-     interaction attributes the existing signup and project controllers use.
+     cards. Consume wf-xano's late-safe results event or its completed public
+     state, then add only the interaction attributes the existing signup and
+     project controllers use.
 
      The authored template and every CMS card remain untouched. This adapter
      limits itself to rendered [wf-xano-item] clones owned by the named wrapper.
@@ -1618,18 +1619,31 @@
               : null;
           if (!instance || typeof instance.on !== 'function' || !instance.root) return;
 
-          instance.on('results', function (result) {
+          function applyResult(result) {
               Promise.resolve(memberReady).then(function () {
                   adaptXanoServiceCards(instance, result);
               }).catch(function (error) {
                   console.warn('Xano services:', error);
               });
+          }
+
+          let receivedResult = false;
+          instance.on('results', function (result) {
+              receivedResult = true;
+              applyResult(result);
           });
+
+          if (!receivedResult && typeof instance.getState === 'function') {
+              const state = instance.getState();
+              if (state && state.status === 'success' && state.data) {
+                  applyResult(state.data);
+              }
+          }
       });
   }
 
   function adaptXanoServiceCards(instance, result) {
-      const cards = qsa('[wf-xano-item]', instance.root).filter(function (card) {
+      const cards = Array.from(qsa('[wf-xano-item]', instance.root)).filter(function (card) {
           const owner = card.closest('[wf-xano-element="wrapper"]');
           return owner === instance.root && !!card.closest('#services');
       });
