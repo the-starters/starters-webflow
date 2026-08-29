@@ -518,9 +518,7 @@ test('shared call calendar renders dates and times and submits only the selected
     12 * 60 * 60
   const secondStart = firstStart + 30 * 60
   const thirdStart = firstStart + 24 * 60 * 60
-  global.document = {
-    createElement(tagName) { return new CalendarElement(tagName) },
-  }
+  global.document = calendarDocument()
   global.jQuery = undefined
   global.xanoAuthFetch = async () => response({
     time_slots: [
@@ -714,6 +712,40 @@ function bookingMount() {
  * Mounts the shared calendar against the element stub and hands back the
  * footer's parts by their `data-paid-calendar-element` role.
  */
+/**
+ * A document stub with the head the layout stylesheet needs. The engine bails
+ * out silently on a document without `getElementById`, so without this the
+ * injection would be untestable rather than merely untested.
+ */
+function calendarDocument() {
+  const head = new CalendarElement('head')
+  return {
+    head,
+    createElement(tagName) { return new CalendarElement(tagName) },
+    getElementById(id) {
+      return head.children.find((child) => child.getAttribute('id') === id) || null
+    },
+  }
+}
+
+/**
+ * The parts of one site button component. Reading them positionally is
+ * deliberate: the order IS the contract, because the click overlay has to come
+ * before the label for the label to sit on top of it.
+ */
+function siteButtonParts(wrap) {
+  if (!wrap) return null
+  const [clickableWrap, element] = wrap.children
+  return {
+    wrap,
+    clickableWrap,
+    button: clickableWrap && clickableWrap.children[0],
+    element,
+    text: element && element.children[0],
+    line: element && element.children[1],
+  }
+}
+
 async function mountFooterFixture(options = {}) {
   const previous = {
     document: global.document,
@@ -723,9 +755,7 @@ async function mountFooterFixture(options = {}) {
   const container = options.container || bookingMount()
   const start =
     Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000) / 86400000) * 86400 + 12 * 60 * 60
-  global.document = {
-    createElement(tagName) { return new CalendarElement(tagName) },
-  }
+  global.document = calendarDocument()
   global.jQuery = undefined
   global.xanoAuthFetch = async () => response({
     time_slots: options.slots === undefined
@@ -743,11 +773,14 @@ async function mountFooterFixture(options = {}) {
     return {
       container,
       result,
+      document: global.document,
       shell: role('shell'),
       footer: role('footer'),
       back: role('back'),
       confirm: role('confirm'),
       status: role('status'),
+      backParts: siteButtonParts(role('back')),
+      confirmParts: siteButtonParts(role('confirm')),
     }
   } finally {
     global.document = previous.document
@@ -757,7 +790,7 @@ async function mountFooterFixture(options = {}) {
 }
 
 test('the calendar footer puts Back beside the confirm control', async () => {
-  const { shell, footer, back, confirm, status } = await mountFooterFixture()
+  const { shell, footer, back, confirm, status, backParts } = await mountFooterFixture()
   const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
     .find((node) => node.getAttribute('data-paid-calendar-element') === name)
   const layout = role('layout')
@@ -798,138 +831,210 @@ test('the calendar footer puts Back beside the confirm control', async () => {
   assert.equal(times.parentElement, timePanel)
   assert.equal(status.getAttribute('data-paid-calendar-element'), 'status')
 
-  // The three attributes ARE the behaviour: close this dialog, open the
-  // chooser, and carry the marker the entry-aware visibility keys on. A typo
-  // in any of them is a silently dead control.
-  assert.equal(back.tagName, 'button')
-  assert.equal(back.type, 'button')
-  assert.equal(back.textContent, '← Back')
+  // The markers live on the WRAP, because that is the node the modal embed
+  // finds: it reads `closest()` from the click target, and the click lands on
+  // the overlay button nested inside. The three attributes ARE the behaviour —
+  // close this dialog, open the chooser, and carry the marker the entry-aware
+  // visibility keys on. A typo in any of them is a silently dead control.
+  assert.equal(back.tagName, 'div')
   assert.equal(back.getAttribute('data-booking-back'), '')
   assert.equal(back.getAttribute('data-modal-close'), '')
   assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
   assert.equal(back.getAttribute('data-paid-calendar-element'), 'back')
-  // Display belongs to the profile script's guard stylesheet. A second writer
-  // here would fight it and could flash the control on a direct entry.
+
+  // The label is plain "Back". The arrow belonged to the unstyled text button
+  // this replaced; the component carries its own affordance.
+  assert.equal(backParts.text.textContent, 'Back')
+  assert.equal(backParts.button.tagName, 'button')
+  assert.equal(backParts.button.type, 'button')
+
+  // Display belongs to the profile script's guard stylesheet, and aria-hidden
+  // to the profile script. A second writer here would fight them and could
+  // flash the control on a direct entry.
   assert.equal(back.style.display, undefined)
-  assert.equal(confirm.disabled, true)
+  assert.equal(back.getAttribute('aria-hidden'), null)
 })
 
-test('the footer back label is overridable by the caller', async () => {
-  const { back } = await mountFooterFixture({ backText: 'Back to call options' })
-  assert.equal(back.textContent, 'Back to call options')
-})
+test('both footer controls are the site button component, not bare buttons', async () => {
+  // The whole point of the change: the look is inherited from the design
+  // system rather than written here, and that only works if the markup is the
+  // shape the design system's rules and typography are keyed on.
+  const { backParts, confirmParts } = await mountFooterFixture()
 
-test('the Free flow gets the same footer with its own confirm label', async () => {
-  // One engine serves both flows: free-call-booking.js passes only confirmText
-  // and reads the class contract off the same authored container, so the Free
-  // footer has to come out of this mount identical but for the label.
-  const container = bookingMount()
-  container.setAttribute('data-booking-confirm-class', 'button_main-wrap')
-  container.setAttribute('data-booking-back-class', 'clickable-text-link')
-  const { footer, back, confirm } = await mountFooterFixture({
-    container,
-    confirmText: 'Request free call',
-  })
+  for (const [name, parts, style] of [
+    ['back', backParts, 'secondary'],
+    ['confirm', confirmParts, 'primary'],
+  ]) {
+    assert.equal(parts.wrap.getAttribute('class'), 'button_main-wrap', name)
+    assert.equal(parts.wrap.getAttribute('data-button-style'), style, name)
+    assert.equal(parts.clickableWrap.getAttribute('class'), 'clickable_wrap', name)
+    assert.equal(parts.button.getAttribute('class'), 'clickable_btn', name)
+    assert.equal(parts.element.getAttribute('class'), 'button_main-element', name)
+    assert.equal(parts.text.getAttribute('class'), 'button_main-text', name)
+    assert.equal(parts.line.getAttribute('class'), 'button_main-line', name)
+    // No size variant class. The Designer's default size is the ABSENCE of a
+    // `w-variant-*` / `.small` / `.large-*` class on the element, so anything
+    // extra here is a button at the wrong size and weight.
+    assert.equal(parts.element.children.length, 2, `${name} element holds label + line only`)
+  }
 
-  assert.equal(confirm.textContent, 'Request free call')
-  assert.equal(confirm.getAttribute('class'), 'button_main-wrap')
-  assert.deepEqual(footer.children, [back, confirm])
-  assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
-  assert.equal(back.getAttribute('class'), 'clickable-text-link')
-})
-
-test('authored controls keep their classes while the footer gets shared action spacing', async () => {
-  const container = bookingMount()
-  container.setAttribute('data-booking-footer-class', 'call-sched_button-group')
-  container.setAttribute('data-booking-confirm-class', 'button_main-wrap is-primary')
-  container.setAttribute('data-booking-back-class', 'clickable-text-link')
-  const { footer, back, confirm } = await mountFooterFixture({ container })
-
-  assert.equal(footer.getAttribute('class'), 'call-sched_button-group')
-  assert.equal(confirm.getAttribute('class'), 'button_main-wrap is-primary')
-  assert.equal(back.getAttribute('class'), 'clickable-text-link')
-  // Only the row receives shared layout spacing. The two authored controls
-  // keep their Designer-owned appearance with no inline declarations.
-  assert.deepEqual(Object.keys(footer.style), ['columnGap'])
-  assert.equal(footer.style.columnGap, '16px')
-  for (const [name, node] of [['confirm', confirm], ['back', back]]) {
-    assert.deepEqual(Object.keys(node.style), [], `${name} must carry no inline styles`)
+  // Appearance is never written inline: an inline declaration outranks the
+  // site's stylesheet and is the hardcoded look wearing the right class name.
+  for (const [name, parts] of [['back', backParts], ['confirm', confirmParts]]) {
+    for (const node of [parts.clickableWrap, parts.button, parts.element, parts.text, parts.line]) {
+      assert.deepEqual(Object.keys(node.style), [], `${name} inner nodes carry no inline styles`)
+    }
   }
 })
 
-test('the unauthored footer keeps the engine fallback look and no class', async () => {
-  const { footer, back, confirm } = await mountFooterFixture()
-
-  // The trap the other way: with nothing authored the controls must still be
-  // visible and usable, not bare user-agent buttons in a stacked column.
-  assert.equal(footer.getAttribute('class'), null)
-  assert.equal(confirm.getAttribute('class'), null)
-  assert.equal(back.getAttribute('class'), null)
-  assert.equal(footer.style.display, 'grid')
-  assert.equal(footer.style.columnGap, '16px')
-  assert.equal(confirm.style.background, '#1f211d')
-  assert.equal(confirm.style.color, '#ffffff')
-  assert.equal(back.style.background, 'transparent')
-  assert.equal(back.style.cursor, 'pointer')
+test('the confirm starts disabled in look as well as behaviour', async () => {
+  // A visitor reads the theme, not the `disabled` property. Setting only one of
+  // the two leaves a live-looking button that does nothing.
+  const { confirm, confirmParts } = await mountFooterFixture()
+  assert.equal(confirmParts.button.disabled, true)
+  assert.equal(confirm.getAttribute('data-button-theme'), 'disabled')
 })
 
-test('one authored control does not drag the others off their fallback', async () => {
+test('picking a slot turns the confirm black and live, and clearing it back', async () => {
+  const { result, confirm, confirmParts, shell } = await mountFooterFixture()
+  const slot = shell.children
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+    .children[0]
+
+  slot.listeners.click()
+  assert.equal(confirmParts.button.disabled, false)
+  assert.equal(confirm.getAttribute('data-button-theme'), 'black')
+
+  // Clearing the selection — what changing the day does, and what the booking
+  // controllers call between attempts — has to put the confirm back to BOTH
+  // halves of disabled, not just the property.
+  result.clearSelection()
+  assert.equal(confirmParts.button.disabled, true)
+  assert.equal(confirm.getAttribute('data-button-theme'), 'disabled')
+})
+
+test('the footer back label is overridable by the caller', async () => {
+  const { backParts } = await mountFooterFixture({ backText: 'Back to call options' })
+  assert.equal(backParts.text.textContent, 'Back to call options')
+})
+
+test('the Free flow gets the same footer with its own confirm label', async () => {
+  // One engine serves both flows: free-call-booking.js passes only confirmText,
+  // so the Free footer has to come out of this mount identical but for the
+  // label — including the component markup.
+  const { footer, back, confirm, confirmParts } = await mountFooterFixture({
+    confirmText: 'Request free call',
+  })
+
+  assert.equal(confirmParts.text.textContent, 'Request free call')
+  assert.equal(confirm.getAttribute('class'), 'button_main-wrap')
+  assert.deepEqual(footer.children, [back, confirm])
+  assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
+})
+
+test('the two ignored class attributes change nothing and raise nothing', async () => {
+  // The live site has these authored today, and the component supersedes them.
+  // Reacting to them at all — applying them, or warning — would be a change
+  // Jerico has to chase before this can ship.
   const container = bookingMount()
-  container.setAttribute('data-booking-confirm-class', 'button_main-wrap')
+  container.setAttribute('data-booking-confirm-class', 'button_main-wrap is-primary')
+  container.setAttribute('data-booking-back-class', 'clickable-text-link')
+  const plain = await mountFooterFixture()
+  const authored = await mountFooterFixture({ container })
+
+  assert.equal(authored.confirm.getAttribute('class'), 'button_main-wrap')
+  assert.equal(authored.back.getAttribute('class'), 'button_main-wrap')
+  assert.deepEqual(
+    Object.keys(authored.confirm.style),
+    Object.keys(plain.confirm.style),
+    'an ignored attribute cannot change the placement writes either',
+  )
+})
+
+test('an authored footer class is applied verbatim and places its own children', async () => {
+  const container = bookingMount()
+  container.setAttribute('data-booking-footer-class', 'call-sched_button-group')
   const { footer, back, confirm } = await mountFooterFixture({ container })
 
-  assert.equal(confirm.getAttribute('class'), 'button_main-wrap')
-  // Placement in the engine's own fallback row is the one thing it writes on
-  // an authored control. Nothing about its appearance.
-  assert.deepEqual(Object.keys(confirm.style), ['gridColumn'])
-  assert.equal(back.getAttribute('class'), null)
-  assert.equal(back.style.cursor, 'pointer')
-  assert.equal(footer.style.display, 'grid')
+  assert.equal(footer.getAttribute('class'), 'call-sched_button-group')
+  // The trap. An inline declaration outranks the Designer's stylesheet, so an
+  // authored row that also carries the fallback layout is still the engine's
+  // layout wearing the right class name. The shared action spacing is the one
+  // exception, and it is placement between the two controls, not appearance.
+  assert.deepEqual(Object.keys(footer.style), ['columnGap'])
+  assert.equal(footer.style.columnGap, '16px')
+  assert.deepEqual(Object.keys(back.style), [], 'an authored row places its own children')
+  assert.deepEqual(Object.keys(confirm.style), [])
 })
 
-test('the class contract reads the mount container before the booking dialog', async () => {
+test('the unauthored footer is a full-width row of two equal halves', async () => {
+  const { footer, back, confirm } = await mountFooterFixture()
+
+  assert.equal(footer.getAttribute('class'), null)
+  assert.equal(footer.style.display, 'flex')
+  // The shared action spacing is written on every row; this row's own flex
+  // `gap` supersedes it here, which is what the visitor sees between the two.
+  assert.equal(footer.style.columnGap, '16px')
+  assert.equal(footer.style.gap, '12px')
+  assert.equal(footer.style.width, '100%')
+  // Equal heights: the two labels are different lengths and the longer one
+  // wraps in a narrow row. Safe only because the shell's rows are min-content
+  // sized — a stretched button in an over-tall row measured 84px against the
+  // site's 38px before that was pinned.
+  assert.equal(footer.style.alignItems, 'stretch')
+
+  // Placement in the engine's own fallback row is the ONLY thing written on a
+  // component button. Nothing about its appearance.
+  for (const [name, node] of [['back', back], ['confirm', confirm]]) {
+    assert.deepEqual(Object.keys(node.style), ['flex', 'minWidth'], name)
+    assert.equal(node.style.flex, '1 1 0', name)
+    assert.equal(node.style.minWidth, '0', name)
+  }
+})
+
+test('the class contract still reads the mount container before the dialog', async () => {
+  // `authoredClassList` is unchanged and still serves the footer attribute and
+  // the off-surface confirm, so its read order has to keep working.
   const dialog = new CalendarElement('dialog')
   dialog.setAttribute('data-modal-target', 'popup-booking')
-  dialog.setAttribute('data-booking-confirm-class', 'dialog-level')
-  dialog.setAttribute('data-booking-back-class', 'dialog-back')
+  dialog.setAttribute('data-booking-footer-class', 'dialog-level')
   const container = new CalendarElement('div')
   container.setAttribute('nylas-container', '')
-  container.setAttribute('data-booking-confirm-class', 'container-level')
   dialog.appendChild(container)
 
-  // Nearest surface wins, so one booking dialog can host a differently styled
-  // mount without the dialog-level default being unset.
-  assert.deepEqual(api.authoredClassList(container, 'data-booking-confirm-class'), ['container-level'])
-  assert.deepEqual(api.authoredClassList(container, 'data-booking-back-class'), ['dialog-back'])
-  assert.deepEqual(api.authoredClassList(container, 'data-booking-footer-class'), [])
+  assert.deepEqual(api.authoredClassList(container, 'data-booking-footer-class'), ['dialog-level'])
+  container.setAttribute('data-booking-footer-class', 'container-level')
+  assert.deepEqual(api.authoredClassList(container, 'data-booking-footer-class'), ['container-level'])
 
-  const { back, confirm } = await mountFooterFixture({ container })
-  assert.equal(confirm.getAttribute('class'), 'container-level')
-  assert.equal(back.getAttribute('class'), 'dialog-back')
+  const { footer } = await mountFooterFixture({ container })
+  assert.equal(footer.getAttribute('class'), 'container-level')
 })
 
 test('an authored class list is applied verbatim and blank values fall back', async () => {
   const container = bookingMount()
-  container.setAttribute('data-booking-back-class', '  is-back   button_main-wrap  ')
-  container.setAttribute('data-booking-confirm-class', '   ')
+  container.setAttribute('data-booking-footer-class', '  is-row   call-sched_button-group  ')
   assert.deepEqual(
-    api.authoredClassList(container, 'data-booking-back-class'),
-    ['is-back', 'button_main-wrap'],
+    api.authoredClassList(container, 'data-booking-footer-class'),
+    ['is-row', 'call-sched_button-group'],
   )
-  const { back, confirm } = await mountFooterFixture({ container })
-  assert.equal(back.getAttribute('class'), 'is-back button_main-wrap')
-  // Whitespace is not an authored class list, so the confirm keeps its look.
-  assert.equal(confirm.getAttribute('class'), null)
-  assert.equal(confirm.style.background, '#1f211d')
+  const authored = await mountFooterFixture({ container })
+  assert.equal(authored.footer.getAttribute('class'), 'is-row call-sched_button-group')
+
+  const blank = bookingMount()
+  blank.setAttribute('data-booking-footer-class', '   ')
+  const fallback = await mountFooterFixture({ container: blank })
+  // Whitespace is not an authored class list, so the row keeps its own layout.
+  assert.equal(fallback.footer.getAttribute('class'), null)
+  assert.equal(fallback.footer.style.display, 'flex')
 })
 
-test('a calendar mounted outside the booking dialog gets no back control', async () => {
+test('a calendar mounted outside the booking dialog is completely unchanged', async () => {
   // This engine also mounts the dashboard's reschedule calendar
   // (dashboard-call-actions.js -> mountRescheduleCalendar), inside
-  // `popup-booking-info`. There is no Free/Paid chooser to hand off to there
-  // and no guard stylesheet to hide the control, so a back rendered on that
-  // surface would be an always-visible button that closes the reschedule
-  // dialog and lands the visitor nowhere.
+  // `popup-booking-info`. There is no Free/Paid chooser to hand off to there,
+  // no guard stylesheet to hide a back control, and no design-system context to
+  // inherit — so that surface keeps the plain button and the authored-class
+  // contract it shipped with, down to the inline fallback styles.
   const reschedule = new CalendarElement('dialog')
   reschedule.setAttribute('data-modal-target', 'popup-booking-info')
   const host = new CalendarElement('div')
@@ -938,12 +1043,34 @@ test('a calendar mounted outside the booking dialog gets no back control', async
 
   const away = await mountFooterFixture({ container: host, confirmText: 'Propose new time' })
   assert.equal(away.back, null)
-  assert.equal(away.confirm.textContent, 'Propose new time')
   assert.equal(host.querySelectorAll('[data-booking-back]').length, 0)
-  // No back means no row: the confirm goes straight into the grid shell, where
-  // it stretches, rather than becoming a shrink-to-fit flex child.
   assert.equal(away.footer, null)
+
+  // A plain single element, not the component: no wrap, no overlay, no label
+  // div — and the confirm goes straight into the grid shell, where it
+  // stretches, rather than becoming a flex child of a row.
+  assert.equal(away.confirm.tagName, 'button')
+  assert.equal(away.confirm.type, 'button')
+  assert.equal(away.confirm.textContent, 'Propose new time')
+  assert.equal(away.confirm.children.length, 0)
+  assert.equal(away.confirm.disabled, true)
+  assert.equal(away.confirm.getAttribute('data-button-theme'), null)
+  // Index 1: the month, timezone note and time slots all sit inside the
+  // responsive layout wrapper, so the shell is layout -> confirm -> status.
   assert.equal(away.shell.children.indexOf(away.confirm), 1)
+  assert.equal(away.confirm.style.background, '#1f211d')
+  assert.equal(away.confirm.style.color, '#ffffff')
+  assert.equal(away.confirm.style.gridColumn, undefined, 'no row means no placement write')
+
+  // The off-surface confirm still reads its authored class attribute.
+  const classed = new CalendarElement('dialog')
+  classed.setAttribute('data-modal-target', 'popup-booking-info')
+  const classedHost = new CalendarElement('div')
+  classedHost.setAttribute('data-booking-confirm-class', 'reschedule-cta')
+  classed.appendChild(classedHost)
+  const styled = await mountFooterFixture({ container: classedHost })
+  assert.equal(styled.confirm.getAttribute('class'), 'reschedule-cta')
+  assert.deepEqual(Object.keys(styled.confirm.style), [])
 
   // Fails closed on any surface the profile script's guard rule cannot reach.
   // `[popup-booking]` alone is such a surface: nothing would ever hide the
@@ -956,46 +1083,40 @@ test('a calendar mounted outside the booking dialog gets no back control', async
   popupOnly.appendChild(looseMount)
   const loose = await mountFooterFixture({ container: looseMount })
   assert.equal(loose.back, null, 'an unguarded surface gets no back control')
+  assert.equal(loose.confirm.tagName, 'button', 'and no component confirm either')
 })
 
 test('an empty calendar still offers the way back to the chooser', async () => {
   // No times is exactly when a visitor wants the other kind of call, so the
   // footer has to survive the empty-state early return.
-  const { container, footer, back, confirm, status } = await mountFooterFixture({ slots: [] })
+  const { container, footer, back, confirm, status, backParts } =
+    await mountFooterFixture({ slots: [] })
 
   assert.equal(container.getAttribute('data-paid-calendar-state'), 'empty')
   assert.equal(status.textContent, 'No available times were found in the next 14 days.')
   assert.equal(confirm, null, 'there is nothing to request, so no Request button')
   assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
+  assert.equal(backParts.text.textContent, 'Back')
+  assert.equal(backParts.button.getAttribute('class'), 'clickable_btn')
   assert.deepEqual(footer.children, [back])
   assert.equal(container.children.indexOf(footer), 1)
 })
 
-test('the footer row makes the confirm fill it, whoever styled the confirm', async () => {
-  // The confirm used to be a grid item in the shell and stretched to full
-  // width. The row has to keep doing that for it — and it has to do it from
-  // the ROW, because an authored confirm carries no inline styles of its own
-  // and `data-booking-footer-class` is optional, so the most likely production
-  // shape is an authored button inside the engine's own fallback row.
-  const fallback = await mountFooterFixture()
-  assert.equal(fallback.footer.style.display, 'grid')
-  assert.equal(fallback.footer.style.gridTemplateColumns, 'auto minmax(0, 1fr)')
-  // Explicit columns, so the confirm still fills the row on a direct entry,
-  // where the back control is hidden and drops out of the grid entirely.
-  assert.equal(fallback.back.style.gridColumn, '1')
-  assert.equal(fallback.confirm.style.gridColumn, '2')
+test('the confirm fills the row even when the back control is hidden', async () => {
+  // On a direct entry the guard stylesheet hides the back WRAP with
+  // `display:none`, which takes it out of the flex layout entirely. The
+  // confirm's `flex: 1 1 0` is what then fills the whole row rather than
+  // leaving it stranded beside an empty slot — the reason this row is flex and
+  // not a fixed two-column grid.
+  const { footer, back, confirm } = await mountFooterFixture()
+  assert.equal(footer.style.display, 'flex')
+  assert.equal(back.style.flex, '1 1 0')
+  assert.equal(confirm.style.flex, '1 1 0')
+  assert.equal(confirm.style.minWidth, '0')
 
-  const authoredConfirm = bookingMount()
-  authoredConfirm.setAttribute('data-booking-confirm-class', 'button_main-wrap')
-  const mixed = await mountFooterFixture({ container: authoredConfirm })
-  assert.equal(mixed.confirm.style.gridColumn, '2')
-  assert.deepEqual(Object.keys(mixed.confirm.style), ['gridColumn'])
-
-  // An authored footer places its own children: the engine writes nothing.
+  // An authored row places its own children: the engine writes nothing.
   const authoredFooter = bookingMount()
   authoredFooter.setAttribute('data-booking-footer-class', 'call-sched_button-group')
-  authoredFooter.setAttribute('data-booking-confirm-class', 'button_main-wrap')
-  authoredFooter.setAttribute('data-booking-back-class', 'clickable-text-link')
   const owned = await mountFooterFixture({ container: authoredFooter })
   assert.deepEqual(Object.keys(owned.footer.style), ['columnGap'])
   assert.equal(owned.footer.style.columnGap, '16px')
@@ -1011,28 +1132,86 @@ test('an empty calendar off the booking surface renders no footer at all', async
   assert.equal(container.children.length, 1)
 })
 
+test('the two-column layout is one scoped stylesheet, injected once', async () => {
+  // Inline styles cannot carry a media query, so the responsive half of the
+  // layout has to be a stylesheet. Everything in it is scoped to the booking
+  // surface: the dashboard's reschedule calendar keeps its inline
+  // single-column grid, untouched.
+  const { document } = await mountFooterFixture()
+  const injected = document.head.children.filter((child) => child.tagName === 'style')
+  assert.equal(injected.length, 1)
+
+  const css = injected[0].textContent
+  assert.equal(injected[0].getAttribute('id'), 'starters-booking-calendar-layout')
+  assert.match(css, /@media \(min-width:768px\)/)
+  assert.match(css, /grid-template-areas:"month times" "month footer" "month status"/)
+  // The month spans all three rows. Without explicit row sizing its height is
+  // shared out among them and the buttons stretch to fill.
+  assert.match(css, /grid-template-rows:min-content min-content 1fr/)
+  for (const role of ['shell', 'month', 'times', 'footer', 'status']) {
+    assert.ok(
+      css.includes('[data-modal-target="popup-booking"] [data-paid-calendar-element="' + role + '"]'),
+      role + ' is scoped to the booking surface',
+    )
+  }
+  // No rule may escape the booking surface, or the dashboard calendar moves.
+  const scopeCount = css.split('[data-paid-calendar-element=').length - 1
+  const scopedCount = css.split('[data-modal-target="popup-booking"] [data-paid-calendar-element=').length - 1
+  assert.equal(scopeCount, scopedCount, 'every rule is surface-scoped')
+  // The shell's own inline styles are never re-declared, so no !important is
+  // needed and none is used.
+  assert.ok(!css.includes('!important'))
+})
+
+test('a second mount reuses the stylesheet rather than stacking copies', async () => {
+  const container = bookingMount()
+  const first = await mountFooterFixture({ container })
+  assert.equal(first.document.head.children.length, 1)
+  // Each mount gets a fresh document stub, so re-running the injector against
+  // the SAME document is what has to be proven inert.
+  api.ensureBookingCalendarLayout(first.document)
+  api.ensureBookingCalendarLayout(first.document)
+  assert.equal(first.document.head.children.length, 1)
+})
+
+test('the layout injector is inert on a document that cannot host it', async () => {
+  // The dashboard controller and the unit fixtures both mount against reduced
+  // documents. A throw here would take the whole calendar down with it.
+  assert.doesNotThrow(() => api.ensureBookingCalendarLayout(undefined))
+  assert.doesNotThrow(() => api.ensureBookingCalendarLayout({}))
+  assert.doesNotThrow(() => api.ensureBookingCalendarLayout({
+    createElement() { return new CalendarElement('style') },
+    getElementById() { return null },
+  }))
+})
+
 test('back is disabled while a booking request is in flight', async () => {
   // Back closes the dialog. Live during the request, one stray click wipes the
   // surface the confirmation was about to land on while the booking still goes
-  // through server-side — a call the visitor never sees.
+  // through server-side — a call the visitor never sees. The disable lands on
+  // the inner button, which is the element that actually takes the click.
   let release
-  const { footer, back, confirm } = await mountFooterFixture({
+  const { footer, confirm, backParts, confirmParts } = await mountFooterFixture({
     onConfirm: () => new Promise((resolve) => { release = resolve }),
   })
   const slot = footer.parentElement.querySelectorAll('[data-paid-calendar-slot]')[0]
 
   slot.listeners.click()
-  assert.equal(confirm.disabled, false)
-  assert.equal(back.disabled, false)
+  assert.equal(confirmParts.button.disabled, false)
+  assert.equal(backParts.button.disabled, false)
 
-  const pending = confirm.listeners.click()
+  const pending = confirmParts.button.listeners.click()
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(confirm.disabled, true)
-  assert.equal(back.disabled, true, 'back must not close the dialog mid-request')
+  assert.equal(confirmParts.button.disabled, true)
+  assert.equal(confirm.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(backParts.button.disabled, true, 'back must not close the dialog mid-request')
 
   release()
   await pending
-  assert.equal(back.disabled, false, 'and it has to come back after the request')
+  assert.equal(backParts.button.disabled, false, 'and it has to come back after the request')
+  // The slot is still selected, so the confirm returns to live in both halves.
+  assert.equal(confirmParts.button.disabled, false)
+  assert.equal(confirm.getAttribute('data-button-theme'), 'black')
 })
 
 test('a synthesized booking close never lands on the rendered back control', async () => {
@@ -1058,9 +1237,7 @@ test('a stale Paid availability response preserves the newer shared surface', as
   const container = new CalendarElement('div')
   let resolveAvailability
   let current = true
-  global.document = {
-    createElement(tagName) { return new CalendarElement(tagName) },
-  }
+  global.document = calendarDocument()
   global.jQuery = undefined
   global.xanoAuthFetch = async () => new Promise((resolve) => {
     resolveAvailability = () => resolve(response({
