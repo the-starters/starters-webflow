@@ -591,11 +591,28 @@
        with the times taking the leftover height and scrolling inside itself
        so a day with many slots cannot grow the modal. */
   const CALENDAR_LAYOUT_STYLE_ID = 'starters-booking-calendar-layout'
-  // The modal's own authored button group (`.call-sched_button-group`) pads
-  // itself by `--_spacing---spacer--spacing-10`. Reusing that value is what
-  // keeps the calendar in the same rhythm as the steps around it instead of
-  // introducing a number of our own.
-  const CALENDAR_EDGE_SPACING = '1.25rem'
+  /* The interior frame Jerico tuned in the browser: 2rem of air between the
+     modal's edges and the calendar's contents, formed from the edges that
+     actually touch those margins — the month's left, the month and times' top,
+     the times' right, and the footer's left, right and bottom. Rem, so it
+     tracks the site's responsive root font size (25.85px at 1280).
+
+     It replaces the mount's bottom padding from an earlier round: that rule is
+     gone, and the footer's own bottom padding now does that job — including on
+     the empty-availability path, where the footer is the last thing in the
+     mount. */
+  const CALENDAR_FRAME = '2rem'
+  /* Mobile's bottom spacing, unchanged from the round that introduced it: the
+     modal's own `.call-sched_button-group` bottom padding
+     (`--_spacing---spacer--spacing-10`). The desktop frame supersedes it above
+     768px, but on a phone it is still the only thing keeping the empty state
+     off the modal's bottom edge. */
+  const CALENDAR_MOBILE_EDGE = '1.25rem'
+  /* The gap above the buttons. His pick, and deliberately tighter than the
+     16px row rhythm: with the footer spanning the full width under both
+     columns, a slot list that overflows should stop just short of the buttons
+     rather than leaving them adrift. */
+  const CALENDAR_FOOTER_GAP = '1rem'
 
   function ensureBookingCalendarLayout(document) {
     if (
@@ -614,52 +631,25 @@
     style.setAttribute('id', CALENDAR_LAYOUT_STYLE_ID)
     style.textContent = [
       // ---- every width ----
-      // The calendar and the empty state both end flush against the modal's
-      // bottom edge without this. It sits on the mount rather than on the
-      // footer because the empty path appends status and footer straight to
-      // the mount, with no shell in between.
-      dialog + ' [nylas-container]{padding-bottom:' + CALENDAR_EDGE_SPACING + '}',
-      /* The page styles every `.ui-datepicker` as a floating card: a #eee
-         background under a 3px #eee shadow ring plus a drop shadow. Inside the
-         modal that reads as an island sitting on top of the panel, so the fill
-         and both shadows are dropped here and ONLY here. The month table paints
-         its own white background, so the grid itself is unaffected.
+      /* The month picker's card, as Jerico tuned it in the browser: the 3px
+         `#eee` ring and the `#eee` fill, and nothing else. Earlier rounds tried
+         a flat picker and then a 1px `#d8d8d8` outline; this ring is what he
+         meant by an outline all along, so both of those are gone. The original
+         page styling also carried a `0 4px 8px` drop shadow — deliberately NOT
+         restored, his capture has the ring alone.
 
-         The 1px outline stays, because without any edge the calendar loses its
-         definition against the panel. `#d8d8d8` is the page's own datepicker
-         border colour rather than a value invented here — no site token matches
-         it (`--colors--silver` and `--border--border` are both `#eee`,
-         `--colors--disabled-gray` is `#e4e4e4`), and it already appears in the
-         page CSS for this component. The 8px radius is left to the page.
+         No `border` and no `padding` here on purpose. Without a `border`
+         declaration the page's own `.ui-widget.ui-widget-content{border:0}`
+         applies and the picker has no border, which is what he tuned against;
+         and with no container padding the header band sits flush again, so the
+         pull-back rule that used to compensate for it is gone too.
 
-         `.ui-widget-content` is in the selector ONLY to win a specificity tie,
-         and it is the difference between this rule working and silently doing
-         nothing. The page carries `.ui-widget.ui-widget-content{border:0}` in a
-         <style> in the BODY; at equal specificity the later rule wins, and this
-         sheet is injected into the head. That rule is also why the page's own
-         `1px solid #d8d8d8` never rendered — the card look was the ring and the
-         fill alone. jQuery UI always stamps both classes on the picker root
-         (verified in the fixture: `ui-datepicker-inline ui-datepicker ui-widget
-         ui-widget-content ui-helper-clearfix ui-corner-all`). */
-      dialog + ' .ui-datepicker.ui-widget-content{border:1px solid #d8d8d8;box-shadow:none;background:transparent;padding:8px}',
-      /* The padding above is the calendar's breathing room. The page sets
-         `.ui-datepicker{padding:0}` and insets only its edge CELLS by 4px, so
-         a selected day in the first column or the last row painted its chip
-         4-5px from the outline and hugged it. Measured at the worst case — the
-         chip in column 1 of the last row — 8px of container padding takes that
-         to 13px on both axes at 375px, and 18px horizontal / 13px vertical at
-         1280px, where the columns are wider than the fixed day box.
-
-         Padding the CELLS instead was tried and is a silent no-op: the page's
-         own `.ui-datepicker .ui-datepicker-calendar tbody tr:first-child td`
-         rules match at equal specificity and sit later in the document, so
-         they win. Container padding is what actually lands.
-
-         The header band is then pulled back out to the edges, because it is a
-         full-bleed bar in this design and an inset one reads as a floating
-         toolbar. 7px is the 8px outer radius less the 1px border, so its top
-         corners follow the outline exactly. */
-      dialog + ' .ui-datepicker .ui-datepicker-header{margin:-8px -8px 0;border-radius:7px 7px 0 0}',
+         `.ui-widget-content` still doubles the specificity. It is not needed
+         for these two properties, but the moment anyone adds `border` back to
+         this rule it becomes load-bearing again — the page sets that border to
+         0 from a <style> in the BODY, which beats this head-injected sheet at
+         equal specificity. */
+      dialog + ' .ui-datepicker.ui-widget-content{box-shadow:0 0 0 3px var(--Fill-Primary, #eee);background:#eee}',
       /* The weekday header row is LEFT-aligned below the site's tablet
          breakpoint while the date cells are centred, so every label sits at
          its column's left edge and the header reads as ragged and misaligned
@@ -686,6 +676,14 @@
 
       // ---- below the site's mobile breakpoint ----
       '@media (max-width:767px){',
+      /* Mobile keeps the bottom spacing on the MOUNT. The desktop frame below
+         puts it on the footer instead, but that frame is desktop-only, and
+         without this the empty-availability state would go back to sitting
+         flush against the modal's bottom edge on a phone — the exact bug an
+         earlier round fixed. It sits on the mount rather than the footer
+         because the empty path appends status and footer straight to the mount
+         with no shell in between. */
+      dialog + ' [nylas-container]{padding-bottom:' + CALENDAR_MOBILE_EDGE + '}',
       // Stacked, full width, primary first. `order` rather than
       // `column-reverse` so the empty state — which has only the back
       // control — is unaffected either way.
@@ -704,49 +702,72 @@
       // rows on the right. Rem, so it tracks the site's responsive root font
       // size rather than pinning a pixel width.
       'column-gap:2rem;',
+      // Tighter than the 16px the row rhythm uses elsewhere — see
+      // CALENDAR_FOOTER_GAP.
+      'row-gap:' + CALENDAR_FOOTER_GAP + ';',
       'grid-template-columns:minmax(0,1fr) minmax(0,1fr);',
-      'grid-template-areas:"month times" "month footer" "month status";',
-      // The times row takes what the month leaves; the footer and the status
-      // line are pinned to their own height at the bottom of the column.
-      // `minmax(0,…)` rather than a bare `1fr` because a grid track's implied
-      // minimum is `auto`, and an `auto` minimum refuses to shrink below the
-      // times list's content — which is exactly the overflow this enables.
+      /* The footer spans BOTH columns on its own row at the bottom, so the
+         buttons anchor to the bottom of the whole panel rather than to the
+         bottom of the right-hand column. That is the arrangement Jerico was
+         reaching for with a `position:absolute; bottom:0` footer in the
+         browser — replayed verbatim, that version pulls the footer out of flow
+         and it OVERLAPS the times list by 78px and the month by 110px, and on
+         mobile it covers the slots so completely that a slot cannot be clicked
+         at all. A spanning grid row gets the same anchoring with the footer
+         still in flow. */
+      'grid-template-areas:"month times" "footer footer" "status status";',
+      // The month decides row 1's height; the times fill it and scroll.
       'grid-template-rows:minmax(0,1fr) min-content min-content;',
       'align-content:start}',
-      // The month keeps its natural height instead of stretching down the
-      // three rows it spans.
-      role + '"month"]{grid-area:month;align-self:start}',
+      // The month keeps its natural height rather than stretching down its row.
+      // Its bottom edge carries no frame padding: the footer's row is what
+      // closes the panel now, so padding here would stack with the row gap and
+      // the footer's own padding into a gulf under the calendar.
+      role + '"month"]{grid-area:month;align-self:start;padding:' + CALENDAR_FRAME + ' 0 0 ' + CALENDAR_FRAME + '}',
       /* `height:0;min-height:100%` is the containment, and it is not
          decoration. A flexible grid track in an AUTO-height grid is sized to
          its items' max-content, so `minmax(0,1fr)` plus `min-height:0` alone
          still let a long slot list grow the modal — measured: the times row
          went to 397px against the month's 305px and the modal from 438px to
          601px. Giving the times a definite `height:0` removes it from the
-         track's sizing entirely, so the month alone decides the column
-         height, and `min-height:100%` then fills the area the month left.
-         Measured after: times 234px tall over 397px of content, scrolling,
-         modal back to 438px and the footer at the same y as the short-list
-         case. Do not "simplify" this to `min-height:0`. */
-      /* `align-content:start` keeps the slot chips at their natural height.
-         The times box has a definite height now, and a grid's default
-         `align-content` is `stretch`, so on a day with few slots the rows
-         inflated to swallow the surplus — measured: four chips at 113px each,
-         against 42.7px on a busy day. Starting them at the top leaves the
-         surplus BELOW the chips, which is the space Jerico wanted between the
-         times and the buttons. On a busy day there is no surplus, so this
-         changes nothing and the list still scrolls. */
-      role + '"times"]{grid-area:times;height:0;min-height:100%;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}',
+         track's sizing entirely, so the month alone decides the row height,
+         and `min-height:100%` then fills the area the month left. Do not
+         "simplify" this to `min-height:0`.
+
+         `align-content:start` keeps the slot chips at their natural height: the
+         box has a definite height now and a grid's default `align-content` is
+         `stretch`, which inflated four chips to 113px against 42.7px on a busy
+         day.
+
+         The frame padding is top and right only — the left edge belongs to the
+         column gap and the bottom to the footer's row. Note padding is INSIDE
+         the scroll container, so the top inset scrolls away with the content,
+         which is what keeps the first chip aligned with the month's top. */
+      role + '"times"]{grid-area:times;height:0;min-height:100%;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' 0 0}',
       /* The page hides every inner scrollbar globally
-         (`*:not(html):not(body)::-webkit-scrollbar{display:none}`), which
-         would leave this list scrollable with no affordance that there is
-         more below. Re-enabled here at the same 3px the page already uses for
-         the Nylas scheduler's own timeslot list, so the treatment matches the
-         control this one replaced. */
+         (`*:not(html):not(body)::-webkit-scrollbar{display:none}`), which would
+         leave this list scrollable with no affordance that there is more below.
+         Re-enabled here at the same 3px the page already uses for the Nylas
+         scheduler's own timeslot list. */
       role + '"times"]::-webkit-scrollbar{width:3px;display:block;background:transparent}',
       role + '"times"]::-webkit-scrollbar-thumb{background-color:var(--colors--black-olive-40);border-radius:3px}',
       role + '"times"]::-webkit-scrollbar-track{background-color:var(--colors--silver)}',
-      role + '"footer"]{grid-area:footer}',
-      role + '"status"]{grid-area:status}',
+      /* The frame's left and right edges only.
+
+         No padding-top, because the row gap above already separates the
+         buttons from the panel. And no padding-BOTTOM, which is the one place
+         Jerico's captured `padding: 2rem` cannot be taken literally: his footer
+         was `position:absolute` and therefore outside the authored step, so its
+         bottom padding was the only thing under it. In flow it sits inside
+         `.call-details_layout`, which the Designer already pads by 2.5rem —
+         measured 32.3px. Keeping his value on top of that put 71px under the
+         buttons against a 26px frame on the sides. Dropped, the space below is
+         45px: the authored padding plus the status row's gap, which is exactly
+         what the previously approved desktop layout had. */
+      role + '"footer"]{grid-area:footer;padding:0 ' + CALENDAR_FRAME + '}',
+      // Aligned to the same frame so an error message lines up with the
+      // buttons above it rather than with the panel edge.
+      role + '"status"]{grid-area:status;padding:0 ' + CALENDAR_FRAME + '}',
       '}',
     ].join('')
     const host = document.head || document.documentElement

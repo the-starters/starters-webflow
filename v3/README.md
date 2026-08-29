@@ -3407,13 +3407,17 @@ flowchart TD
    row is given a 16px column gap between Back and the request button; the
    fallback row's own 12px flex gap supersedes it on that row.
 
-   The calendar is two columns from 768px up — month on the left; times, buttons
-   and status stacked on the right, with the buttons pinned to the bottom of the
-   column and the times taking the leftover height and scrolling inside
-   themselves so a day with many slots cannot grow the modal. The slot chips
-   keep their natural height whatever the day looks like, so the spare room on a
-   quiet day falls between the slots and the buttons rather than inflating the
-   chips, and the two columns sit `2rem` apart.
+   The calendar is two columns from 768px up — month on the left, times on the
+   right — with the footer spanning BOTH columns on its own row underneath, so
+   the buttons anchor to the bottom of the whole panel. The times take the
+   leftover height in their column and scroll inside themselves, so a day with
+   many slots cannot grow the modal. The slot chips keep their natural height
+   whatever the day looks like, the two columns sit `2rem` apart, and the row
+   gap above the buttons is `1rem` so an overflowing list stops just short of
+   them. A `2rem` interior frame runs around the whole thing, formed from the
+   edges that touch the modal's margins: the month's left, both tops, the times'
+   right and the footer's left and right. The footer adds no bottom padding —
+   the authored `.call-details_layout` step already pads that edge by 2.5rem.
 
    On the booking surface the shell writes only `display` and `width` inline and
    leaves both gaps to the sheet, because an inline `gap` shorthand outranks any
@@ -3421,12 +3425,11 @@ flowchart TD
    still writes `gap` inline, unchanged. Below 768px it
    stays one column and the two buttons stack full width with the primary on
    top. The same sheet gives the mount bottom padding — which the empty-state
-   path needs, since it appends straight to the mount — and restyles the month
-   picker: the floating-card fill and shadows are dropped in favour of a plain
-   1px `#d8d8d8` outline, the grid is given 8px of breathing room so a selected
-   day never hugs that outline, and the weekday header row is re-centred (the
-   page leaves those labels left-aligned against centred dates below its tablet
-   breakpoint). The picker rules name `.ui-datepicker.ui-widget-content` to
+   path needs on a phone, since it appends straight to the mount — and restyles
+   the month
+   picker: it keeps the page's 3px `#eee` ring and `#eee` fill but not the drop
+   shadow, and the weekday header row is re-centred (the page leaves those
+   labels left-aligned against centred dates below its tablet breakpoint). The picker rules name `.ui-datepicker.ui-widget-content` to
    outrank `.ui-widget.ui-widget-content{border:0}`, which the page declares in
    a body `<style>` and which otherwise wins on source order.
 
