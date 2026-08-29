@@ -342,8 +342,8 @@ plain single-element confirm that reads `data-booking-confirm-class` and falls
 back to its own inline styles.
 
 The engine also injects one id-guarded `<style>` (`starters-booking-calendar-layout`)
-carrying what inline styles cannot: the two responsive layouts, the desktop
-interior frame, mobile's bottom spacing on the mount, and the page's own
+carrying what inline styles cannot: the two responsive layouts, the interior
+frame that spaces the calendar off the modal's edges at both widths, and the page's own
 datepicker CSS adjusted inside this dialog — the drop shadow dropped in favour
 of the ring and fill alone, and the weekday header row re-centred, since the
 page leaves those labels left-aligned against centred dates below its tablet
@@ -356,6 +356,15 @@ names and must stay pixel-identical. The footer's mobile stacking rules key on
 `data-paid-calendar-footer="fallback"`, written only on the engine's own row, so
 an authored `data-booking-footer-class` row still places its own children.
 
+That sheet also **zeroes the authored step's own padding**
+(`.call-details_layout`, which the site pads by
+`--_spacing---spacer--spacing-14`) at every width, so the interior frame is the
+only inset between the modal's edges and the calendar. Without it the two
+stacked: the footer's hairline stopped short of both modal edges and the status
+banner could not run the panel's full width. It wins on specificity — the
+site's declarations are flat class selectors, and the dialog attribute puts this
+one rank above them — never with `!important`.
+
 That sheet also turns the calendar's status line into a **banner across the top
 of the modal's body**: absolutely positioned against `.modal_content-layout`, so
 it lands directly under the "Book a Call" header bar at the panel's full width
@@ -363,8 +372,8 @@ and overlays the calendar rather than adding a row under the buttons. It is the
 only rule in the sheet that leaves the flow. Each message is tagged by the
 engine with `data-paid-calendar-status`, and the tone is what colours it:
 `error` (a booking that failed) is white on `#DD5555`; `progress` (the in-flight
-notice) and `empty` (no availability in the next 14 days) share the site's own
-`#eee`. With nothing to say the element is `:empty` and collapses. Because the
+notice) and `empty` (no availability in the next 14 days) share a white-on-dark
+`#434B43`. With nothing to say the element is `:empty` and collapses. Because the
 banner is out of flow, the mount carries a `28.125rem` min-height and the
 empty-availability state pushes its footer to the bottom — otherwise that panel
 would collapse to the height of one button and the banner would cover it.

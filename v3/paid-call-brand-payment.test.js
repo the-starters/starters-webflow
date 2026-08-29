@@ -1263,30 +1263,51 @@ test('the sheet gives the month picker its ring and straightens the weekday row'
 })
 
 test('the empty state keeps its bottom breathing room at both widths', async () => {
-  // Two different mechanisms, and the split is the point. Above 768px the
-  // authored step (`.call-details_layout`, 2.5rem) already pads the bottom, so
-  // the sheet adds none and the footer's frame padding is left/right only.
-  // Below 768px that step padding is not what the empty state ends against, so
-  // the spacing stays on the MOUNT — where it has to be, because the empty
-  // path appends the status and the footer straight to the mount with no shell
-  // in between. Without it the empty state goes back to sitting flush against
-  // the modal's bottom edge on a phone.
+  // One mechanism now, at both widths: the FOOTER's own bottom padding. The
+  // empty path appends the status and the footer straight to the mount with no
+  // shell in between, so the footer is the last thing in it either way.
+  //
+  // Earlier rounds put this on the mount, for mobile only. That rule is gone:
+  // with the footer padded on its bottom edge at both widths it would double,
+  // and the mount would be paying for spacing it no longer owns.
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
   const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
-  assert.ok(mobileBlock.includes('[nylas-container]{padding-bottom:1.25rem}'))
+  assert.ok(mobileBlock.includes('"footer"]{padding:0 1.25rem 1.25rem}'))
 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
   assert.ok(desktopBlock.includes('"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem'))
-  // The unconditional mount PADDING from the earlier round is gone: on desktop
-  // it would stack with the frame's own bottom edge. The mount does carry an
-  // unconditional rule again — the banner's min-height — so this asks about
-  // padding rather than about the selector.
-  const beforeMedia = css.split('@media')[0]
-  for (const rule of beforeMedia.split('}')) {
+
+  // No mount PADDING anywhere. The mount does carry rules — the banner's
+  // min-height and the empty state's column — so this asks about the
+  // declaration rather than about the selector.
+  for (const rule of css.split('}')) {
     if (!rule.includes('[nylas-container]')) continue
-    assert.ok(!/padding/.test(rule), `no unconditional mount padding: ${rule}`)
+    assert.ok(!/padding/.test(rule), `no mount padding: ${rule}`)
   }
+})
+
+test('the interior frame is the only inset at mobile too', async () => {
+  // Jerico specced these element by element at 400px. The desktop asymmetry
+  // does not transfer: stacked, there is no column gap to hand the inner edges
+  // to, so every element repeats the horizontal frame and only the month opens
+  // the top.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const mobileBlock = css.split('@media (max-width:767px){')[1].split('}@media')[0]
+
+  assert.ok(mobileBlock.includes('"month"]{padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('"times"]{padding:0 1.25rem 1.25rem}'))
+  assert.ok(mobileBlock.includes('"footer"]{padding:0 1.25rem 1.25rem}'))
+
+  // No hairline on the stacked footer. Desktop can carry one because its row
+  // gap is zero and the band's rule is the only separator; mobile keeps its
+  // 16px row gap, and a gap AND a rule would read as two dividers.
+  assert.ok(!mobileBlock.includes('border-top'))
+
+  // Desktop is untouched by all of this — the two blocks cannot both match.
+  const desktopBlock = css.split('@media (min-width:768px){')[1]
+  assert.ok(desktopBlock.includes('"month"]{grid-area:month;align-self:start;padding:1.25rem 0 1.25rem 1.25rem}'))
 })
 
 test('the footer stacks primary-first below the site mobile breakpoint', async () => {
@@ -1370,6 +1391,27 @@ test('the desktop footer is a full-width band under both columns', async () => {
   assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer;border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
 })
 
+test('the authored step stops padding the calendar at every width', async () => {
+  // `.call-details_layout` is the wrapper the mount sits in, and the site pads
+  // it by `--_spacing---spacer--spacing-14` (32.3px measured at 1280, 15.4px
+  // at 375). With the interior frame doing that job on the elements
+  // themselves, that padding was a second frame outside the first: the
+  // footer's hairline stopped short of both modal edges, the banner could not
+  // run the panel's full width, and on a phone the two insets stacked.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const D = '[data-modal-target="popup-booking"]'
+
+  // Unconditional, so neither breakpoint can be left with a doubled inset.
+  assert.ok(css.split('@media')[0].includes(D + ' .call-details_layout{padding:0}'))
+  assert.ok(!css.split('@media (min-width:768px){')[1].includes('.call-details_layout'))
+
+  // Specificity rather than `!important`, which this sheet forbids: the site's
+  // own declarations are flat `.call-details_layout` class selectors at
+  // (0,1,0), and the dialog attribute makes this (0,2,0).
+  assert.ok(!/\.call-details_layout[^}]*!important/.test(css))
+})
+
 test('the day chips fill their cell, scoped so other date pickers do not', async () => {
   // Jerico made this edit on the page's GLOBAL datepicker sheet. Shipped
   // globally it would resize the contract form's date fields too, so it is
@@ -1415,7 +1457,7 @@ test('the status is a banner across the top of the modal body', async () => {
 
   assert.ok(css.includes(
     ROLE + '"status"]{position:absolute;top:0;left:0;right:0;z-index:2;'
-      + 'margin:0;padding:1rem;font-size:13px;background:#eee;color:#1f211d}',
+      + 'margin:0;padding:1rem;font-size:13px;background:#434B43;color:#fff}',
   ))
   // The modal's BODY is the containing block, so the band lands under the
   // header bar and runs the panel's full width. `.modal_content` would put it
@@ -1430,9 +1472,9 @@ test('the status is a banner across the top of the modal body', async () => {
 test('only a failed booking wears the red banner', async () => {
   // His capture is `#DD5555` taken on the booking-failed state. The element
   // carries two other strings — the empty-availability notice and "Sending
-  // your request..." — and neither is a failure, so they get the site's own
-  // `#eee` fill rather than an alarm colour. FLAGGED for Jerico: this is the
-  // interpretation, not something his capture says.
+  // your request..." — and neither is a failure, so they take the dark olive
+  // notification fill rather than an alarm colour. Jerico picked that pair in
+  // round 4, after `#eee` on `#1f211d` read as a panel at banner size.
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
   const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
@@ -1440,6 +1482,10 @@ test('only a failed booking wears the red banner', async () => {
   assert.ok(css.includes(
     ROLE + '"status"][data-paid-calendar-status="error"]{background:#DD5555;color:#fff}',
   ))
+  // Both neutral messages share one rule, so they cannot drift apart: the tone
+  // attribute only ever selects the red away from this default.
+  assert.ok(!/status="progress"/.test(css))
+  assert.ok(!/status="empty"/.test(css))
   // Red is reachable ONLY through the error tone. A red in the base rule would
   // paint the progress notice as a failure.
   for (const rule of css.split('}')) {

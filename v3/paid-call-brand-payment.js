@@ -591,23 +591,24 @@
        with the times taking the leftover height and scrolling inside itself
        so a day with many slots cannot grow the modal. */
   const CALENDAR_LAYOUT_STYLE_ID = 'starters-booking-calendar-layout'
-  /* The interior frame Jerico tuned in the browser: 2rem of air between the
-     modal's edges and the calendar's contents, formed from the edges that
-     actually touch those margins — the month's left, the month and times' top,
-     the times' right, and the footer's left, right and bottom. Rem, so it
-     tracks the site's responsive root font size (25.85px at 1280).
+  /* The interior frame Jerico tuned in the browser, and the ONLY inset between
+     the modal's edges and the calendar's contents at any width — the authored
+     step's own padding is zeroed above so these two do not stack. Rem, so it
+     tracks the site's responsive root font size (25.85px at 1280, 19.25px at
+     375).
 
-     It replaces the mount's bottom padding from an earlier round: that rule is
-     gone, and the footer's own bottom padding now does that job — including on
-     the empty-availability path, where the footer is the last thing in the
-     mount. */
+     Which edges carry it differs by breakpoint, because the layout does. In
+     two columns it goes on the edges that actually touch the panel's margins:
+     the month's left, both columns' top and bottom, the times' right, and the
+     footer all round. Stacked, every element repeats the horizontal frame and
+     only the month opens the top — Jerico specced those values element by
+     element at 400px.
+
+     It also replaces the mount's bottom padding from an earlier round: that
+     rule is gone at both widths, and the footer's own bottom padding does that
+     job — including on the empty-availability path, where the footer is the
+     last thing in the mount. */
   const CALENDAR_FRAME = '1.25rem'
-  /* Mobile's bottom spacing, unchanged from the round that introduced it: the
-     modal's own `.call-sched_button-group` bottom padding
-     (`--_spacing---spacer--spacing-10`). The desktop frame supersedes it above
-     768px, but on a phone it is still the only thing keeping the empty state
-     off the modal's bottom edge. */
-  const CALENDAR_MOBILE_EDGE = '1.25rem'
   /* The slot chips' two states. Resting is `#eee` — the same grey as the month
      picker's fill and the footer's hairline, so the three read as one surface.
      It is written from JavaScript rather than the sheet because the chips are
@@ -629,13 +630,18 @@
 
      Only that state is red. The element carries three strings and the other
      two — "no times in the next 14 days" and "Sending your request..." — are
-     not failures, so they get the site's own `#eee` fill instead of an alarm
-     colour. The engine tags each write with a tone and these rules colour by
-     it. */
+     not failures, so they take a dark olive notification fill instead of an
+     alarm colour. The engine tags each write with a tone and these rules
+     colour by it.
+
+     The neutral pair is Jerico's round-4 pick. It was `#eee` on `#1f211d`
+     first, matching the picker fill and the footer hairline; at banner size
+     that read as a panel rather than a notice, so both neutral messages now
+     wear the same weight as the failure and differ only in hue. */
   const STATUS_ERROR_BACKGROUND = '#DD5555'
   const STATUS_ERROR_COLOR = '#fff'
-  const STATUS_NEUTRAL_BACKGROUND = '#eee'
-  const STATUS_NEUTRAL_COLOR = '#1f211d'
+  const STATUS_NEUTRAL_BACKGROUND = '#434B43'
+  const STATUS_NEUTRAL_COLOR = '#fff'
   const STATUS_BANNER_PADDING = '1rem'
   /* Jerico's value and Jerico's reason: "I also added min-height so the
      absolute error wouldn't be weird looking". With the banner out of flow
@@ -752,6 +758,22 @@
       dialog + ' .ui-datepicker thead th:first-child{padding-left:4px}',
       dialog + ' .ui-datepicker thead th:last-child{padding-right:4px}',
 
+      /* The authored step stops padding the calendar. `.call-details_layout` is
+         the wrapper the mount sits in and the site pads it by
+         `--_spacing---spacer--spacing-14` (32.3px measured at 1280, 15.4px at
+         375). With the interior frame below doing that job on the elements
+         themselves at every width, this was a second frame outside the first:
+         the footer's hairline stopped short of both modal edges, the status
+         banner could not run the panel's full width, and on a phone the two
+         insets stacked.
+
+         Specificity, not `!important` (which this sheet forbids): the site's
+         two declarations are the flat `.call-details_layout` and a
+         narrower-breakpoint `.call-form_layout,.call-details_layout`, both
+         (0,1,0). Under the dialog attribute this is (0,2,0) and outranks both
+         — verified against the computed style, not assumed. */
+      dialog + ' .call-details_layout{padding:0}',
+
       /* The row rhythm the shell used to write inline. It lives HERE, outside
          both media queries, because it has to hold at every width — putting it
          in the desktop block cost the mobile layout its 16px and butted the
@@ -762,14 +784,23 @@
 
       // ---- below the site's mobile breakpoint ----
       '@media (max-width:767px){',
-      /* Mobile keeps the bottom spacing on the MOUNT. The desktop frame below
-         puts it on the footer instead, but that frame is desktop-only, and
-         without this the empty-availability state would go back to sitting
-         flush against the modal's bottom edge on a phone — the exact bug an
-         earlier round fixed. It sits on the mount rather than the footer
-         because the empty path appends status and footer straight to the mount
-         with no shell in between. */
-      dialog + ' [nylas-container]{padding-bottom:' + CALENDAR_MOBILE_EDGE + '}',
+      /* The interior frame, mapped onto the single stacked column. Jerico
+         specced these exact values as inline edits at 400px: the month framed
+         on all four sides, and the times and the footer repeating the
+         horizontal frame while opening their top edge, so each one's top
+         spacing is the element above it rather than a doubled pair.
+
+         The desktop asymmetry does not transfer — there the month drops its
+         right padding and the times their left, because the 2rem column gap
+         between them is doing that job. Stacked, there is no column gap to
+         hand it to.
+
+         The footer's bottom padding here is what keeps the empty-availability
+         state off the modal's bottom edge on a phone; an earlier round put
+         that on the MOUNT, which now would double against this. */
+      role + '"month"]{padding:' + CALENDAR_FRAME + '}',
+      role + '"times"]{padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
+      role + '"footer"]{padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
       // Stacked, full width, primary first. `order` rather than
       // `column-reverse` so the empty state — which has only the back
       // control — is unaffected either way.

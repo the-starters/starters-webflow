@@ -3419,6 +3419,15 @@ flowchart TD
    and they sit `2rem` apart. The month's day cells fill their column rather
    than being a fixed box centred in it.
 
+   That frame is the **only** inset between the modal's edges and the calendar,
+   at either width: the same sheet zeroes the padding the site puts on the
+   authored step around the mount (`.call-details_layout`,
+   `--_spacing---spacer--spacing-14`). Left in, the two stacked — the footer's
+   hairline stopped short of both modal edges, the status banner could not run
+   the panel's full width, and on a phone every element was inset twice. It
+   wins on specificity, since the site's declarations are flat class selectors
+   and the dialog attribute puts this one rank above them.
+
    The status line is a **banner across the top of the modal's body** rather
    than a line under the buttons: absolutely positioned against
    `.modal_content-layout`, so it sits directly under the "Book a Call" header
@@ -3427,7 +3436,7 @@ flowchart TD
    message the engine writes is tagged `data-paid-calendar-status` and coloured
    by that tone: `error` — a booking that failed — is white on `#DD5555`, while
    `progress` (the in-flight notice) and `empty` (no availability in the next 14
-   days) take the site's own `#eee`. It hides itself only while it is empty. The
+   days) take a white-on-dark `#434B43`. It hides itself only while it is empty. The
    engine writes no inline styles on it there, since an inline declaration would
    outrank the sheet's own colour. Because the banner is out of flow the mount
    carries a `28.125rem` min-height and the empty-availability state pushes its
@@ -3439,9 +3448,14 @@ flowchart TD
    stylesheet rule and would pin the column gap with it. The dashboard's shell
    still writes `gap` inline, unchanged. Below 768px it
    stays one column and the two buttons stack full width with the primary on
-   top. The same sheet gives the mount bottom padding — which the empty-state
-   path needs on a phone, since it appends straight to the mount — and restyles
-   the month
+   top, and the frame comes with them: stacked, there is no column gap to hand
+   the inner edges to, so the month is framed on all four sides and the times
+   and the footer repeat the horizontal frame while opening their top edge. The
+   footer's bottom padding is what holds the empty-availability state off the
+   modal's bottom edge, at both widths — that spacing used to sit on the mount,
+   and would double against this. The stacked footer takes no hairline: its row
+   gap is 16px, and a gap and a rule together read as two dividers. The same
+   sheet restyles the month
    picker: it keeps the page's 3px `#eee` ring and `#eee` fill but not the drop
    shadow, and the weekday header row is re-centred (the page leaves those
    labels left-aligned against centred dates below its tablet breakpoint). The picker rules name `.ui-datepicker.ui-widget-content` to
