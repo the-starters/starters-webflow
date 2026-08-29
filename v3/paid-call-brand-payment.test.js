@@ -1132,35 +1132,132 @@ test('an empty calendar off the booking surface renders no footer at all', async
   assert.equal(container.children.length, 1)
 })
 
-test('the two-column layout is one scoped stylesheet, injected once', async () => {
-  // Inline styles cannot carry a media query, so the responsive half of the
-  // layout has to be a stylesheet. Everything in it is scoped to the booking
-  // surface: the dashboard's reschedule calendar keeps its inline
-  // single-column grid, untouched.
+test('the layout stylesheet is scoped to the booking dialog, every rule', async () => {
+  // This is the containment test, and it is the important one. The page has
+  // other jQuery-UI datepickers wearing the same `.ui-datepicker` class — the
+  // contract form's start and end dates — and the dashboard mounts this same
+  // engine into a different dialog. One unscoped rule here restyles them.
   const { document } = await mountFooterFixture()
   const injected = document.head.children.filter((child) => child.tagName === 'style')
   assert.equal(injected.length, 1)
-
   const css = injected[0].textContent
   assert.equal(injected[0].getAttribute('id'), 'starters-booking-calendar-layout')
-  assert.match(css, /@media \(min-width:768px\)/)
-  assert.match(css, /grid-template-areas:"month times" "month footer" "month status"/)
-  // The month spans all three rows. Without explicit row sizing its height is
-  // shared out among them and the buttons stretch to fill.
-  assert.match(css, /grid-template-rows:min-content min-content 1fr/)
-  for (const role of ['shell', 'month', 'times', 'footer', 'status']) {
-    assert.ok(
-      css.includes('[data-modal-target="popup-booking"] [data-paid-calendar-element="' + role + '"]'),
-      role + ' is scoped to the booking surface',
-    )
+
+  const DIALOG = '[data-modal-target="popup-booking"]'
+  // Split into selector/body pairs and require a dialog-scoped prefix on every
+  // selector that is not a media query boundary or a brace.
+  const selectors = css
+    .split('}')
+    .map((chunk) => chunk.split('{')[0].trim())
+    .filter((sel) => sel && !sel.startsWith('@media') && sel !== '')
+  assert.ok(selectors.length >= 8, 'the sheet should carry every layout rule')
+  for (const sel of selectors) {
+    for (const one of sel.split(',')) {
+      assert.ok(
+        one.trim().startsWith(DIALOG),
+        `unscoped selector would leak off the booking dialog: ${one.trim()}`,
+      )
+    }
   }
-  // No rule may escape the booking surface, or the dashboard calendar moves.
-  const scopeCount = css.split('[data-paid-calendar-element=').length - 1
-  const scopedCount = css.split('[data-modal-target="popup-booking"] [data-paid-calendar-element=').length - 1
-  assert.equal(scopeCount, scopedCount, 'every rule is surface-scoped')
-  // The shell's own inline styles are never re-declared, so no !important is
-  // needed and none is used.
+  // Named explicitly, because a `.ui-datepicker` rule that escaped this file
+  // would repaint the contract form's date fields on a page nobody was
+  // testing.
+  assert.ok(!/(^|[,{}])\s*\.ui-datepicker/.test(css), 'no unscoped .ui-datepicker rule')
+  // The page's rules are plain class selectors, so a scoped descendant
+  // selector already outranks them. Reaching for !important would mean the
+  // scoping was wrong.
   assert.ok(!css.includes('!important'))
+})
+
+test('the sheet flattens the month picker card and straightens its weekday row', async () => {
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const DIALOG = '[data-modal-target="popup-booking"]'
+
+  // The page paints the picker as a floating card: a #eee fill under a 3px
+  // #eee shadow ring. Inside the modal that reads as an island on the panel.
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker{border:0;box-shadow:none;background:transparent}'))
+
+  // The weekday labels are left-aligned below the tablet breakpoint while the
+  // dates are centred, so the header row sits 9.6-14.3px left of its own
+  // columns, unevenly. Centring is the fix.
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th{text-align:center}'))
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th:first-child{padding-left:4px}'))
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th:last-child{padding-right:4px}'))
+})
+
+test('the calendar and the empty state both get bottom breathing room', async () => {
+  // The spacing sits on the MOUNT, not the footer: the empty path appends the
+  // status and the footer straight to the mount with no shell in between, so
+  // a rule on the shell would miss exactly the state Jerico reported.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  assert.ok(css.includes('[data-modal-target="popup-booking"] [nylas-container]{padding-bottom:1.25rem}'))
+
+  // 1.25rem is the modal's own `.call-sched_button-group` bottom padding
+  // (`--_spacing---spacer--spacing-10`), not a number invented here.
+  assert.ok(!/padding-bottom:\d+px/.test(css), 'spacing is rem, in the modal rhythm')
+})
+
+test('the footer stacks primary-first below the site mobile breakpoint', async () => {
+  const { document, footer } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROW = '[data-modal-target="popup-booking"] [data-paid-calendar-footer="fallback"]'
+
+  assert.ok(css.includes('@media (max-width:767px){'))
+  assert.ok(css.includes(ROW + '{flex-direction:column;align-items:stretch}'))
+  // Primary on top, matching the profile's own vertical CTA rail.
+  assert.ok(css.includes(ROW + ' [data-paid-calendar-element="confirm"]{order:-1}'))
+  // The row's placement styles size the wraps along the main axis, which is
+  // vertical here, so they have to be released or each button collapses.
+  assert.ok(css.includes('{flex:0 0 auto}'))
+
+  // Every stacking rule keys on the engine's own row, never on an authored
+  // one — an authored footer places its own children by contract.
+  assert.equal(footer.getAttribute('data-paid-calendar-footer'), 'fallback')
+  for (const line of css.split('}')) {
+    if (line.includes('flex-direction:column') || line.includes('order:-1')) {
+      assert.ok(line.includes('[data-paid-calendar-footer="fallback"]'), line)
+    }
+  }
+})
+
+test('an authored footer row is labelled as such and dodges the stacking rules', async () => {
+  const container = bookingMount()
+  container.setAttribute('data-booking-footer-class', 'call-sched_button-group')
+  const { footer } = await mountFooterFixture({ container })
+  assert.equal(footer.getAttribute('data-paid-calendar-footer'), 'authored')
+  assert.equal(footer.getAttribute('class'), 'call-sched_button-group')
+  assert.deepEqual(Object.keys(footer.style), [])
+})
+
+test('the desktop column pins the footer to the bottom and scrolls the times', async () => {
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+
+  assert.ok(css.includes('@media (min-width:768px){'))
+  assert.match(css, /grid-template-areas:"month times" "month footer" "month status"/)
+  // The times row takes the leftover height; the footer and status are pinned
+  // to their own height at the bottom of the column.
+  assert.match(css, /grid-template-rows:minmax\(0,1fr\) min-content min-content/)
+  // Both halves of the overflow contract. A grid TRACK's implied minimum and a
+  // grid ITEM's automatic minimum are both content-sized, so without the
+  // `minmax(0,…)` above AND the `min-height:0` here the times list refuses to
+  // shrink and grows the modal instead of scrolling. Measured both ways.
+  // The containment, measured rather than reasoned: a flexible track in an
+  // auto-height grid is sized to max-content, so `minmax(0,1fr)` alone let the
+  // times row reach 397px against the month's 305px and grew the modal from
+  // 438px to 601px. `height:0` takes the times out of track sizing so the
+  // month decides the column height; `min-height:100%` refills the area.
+  assert.ok(css.includes(ROLE + '"times"]{grid-area:times;height:0;min-height:100%;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}'))
+  // The page hides every inner scrollbar globally, so the affordance is put
+  // back at the same 3px the page uses for the Nylas timeslot list.
+  assert.ok(css.includes(ROLE + '"times"]::-webkit-scrollbar{width:3px;display:block;background:transparent}'))
+  assert.ok(css.includes(ROLE + '"month"]{grid-area:month;align-self:start}'))
+  for (const role of ['shell', 'month', 'times', 'footer', 'status']) {
+    assert.ok(css.includes(ROLE + '"' + role + '"]'), role + ' is placed')
+  }
 })
 
 test('a second mount reuses the stylesheet rather than stacking copies', async () => {
