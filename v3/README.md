@@ -3382,18 +3382,165 @@ flowchart TD
    controls cannot be authored inside it and are built here instead: the
    confirm button, and — only when the mount resolves inside
    `[data-modal-target="popup-booking"]` — a back control beside it that hands
-   off to the Free/Paid chooser. Their CSS classes are Designer-owned through
-   three optional attributes read from the mount and then from the booking
-   dialog: `data-booking-confirm-class`, `data-booking-back-class` and
-   `data-booking-footer-class`. Values are space-separated class names applied
-   verbatim, and a button with authored classes is given no inline appearance
-   styles, so a Designer stylesheet is never outranked. The footer always sets
-   a 16px column gap between Back and the request button. With no attributes
-   authored each control keeps a plain built-in fallback look. Off the booking
-   surface — the dashboard's reschedule calendar mounts this same engine —
-   there is no back control and no footer, and the confirm button goes straight
-   into the calendar shell as it always did. Display and `aria-hidden` on the
-   back control belong to `hire-profile.js`, never to this file.
+   off to the Free/Paid chooser.
+
+   On that surface both controls are rendered as the **site's own button
+   component** (`.button_main-wrap` > `.clickable_wrap` > `button.clickable_btn`
+   plus `.button_main-element` > `.button_main-text`), with `data-button-theme`
+   and `data-button-style` on the wrap: a black primary confirm and a black
+   secondary "Back". Reproducing that markup is the entire styling contract —
+   the fill, colour, border and hover come from the global
+   `[data-button-theme][data-button-style]` rules and the typography from
+   `.button_main-element`, so the buttons match every other button on the page
+   without this file naming a single colour or font. No size variant class is
+   applied, because the default size is the absence of one. The interactive
+   element is the inner `.clickable_btn`; the markers, modal attributes and the
+   disabled theme swap go on the wrap.
+
+   Because the component supersedes them, `data-booking-confirm-class` and
+   `data-booking-back-class` are **ignored on the booking surface**, and are
+   harmless if left authored. The optional `data-booking-footer-class` keeps its
+   meaning everywhere: authored, it is applied to the footer row verbatim and
+   the engine places nothing; unauthored, the row is a full-width flex row
+   (`display:flex;gap:12px;width:100%`) whose contents the injected sheet
+   arranges — pushed to the right at their natural width from 768px up, stacked
+   full width with the confirm on top below it. Flex rather than fixed columns
+   is also what lets the confirm fill the whole row on a direct entry where the
+   back control is hidden. The injected sheet keeps the authored promise:
+   placement rules reach every footer, but everything that paints or arranges
+   one keys on the engine's own row and cannot reach an authored one. Every footer row is also given a 16px column gap between Back and the
+   request button; the fallback row's own 12px flex gap supersedes it on that
+   row.
+
+   The shared engine also renders a timezone control — a `<label>` wrapping a
+   caption and the `<select>` that names the clock the times are shown in. It
+   arrives with no placement of its own, so this sheet gives it one: the top of
+   the times area, directly above the first row of chips, at both widths. On
+   desktop that is its own grid area in the right column with the month
+   spanning down beside it, which is what keeps the panel exactly the height it
+   was without the control — the times area gives up its height instead of the
+   modal growing. Stacked, `order` holds the control between the
+   month and the first row of chips. The engine appends it under the month,
+   ahead of the times, so document order already reads that way and the
+   control's reading order matches its visual position at both widths — the
+   one-line reorder this file used to flag as a follow-up landed in the shared
+   engine. It sits outside the
+   scrolling list, so it stays put while the chips scroll. The sheet owns its
+   box as well as its spacing: the wrapper's own `display:grid` and the
+   `0.375rem` between its caption and its select. Owning those took a change
+   on the engine's side — an inline declaration outranks any rule in this
+   sheet, so the engine now writes no inline styles on that wrapper on the
+   booking surface and keeps them everywhere else, exactly as it already did
+   for the status. The caption and the select keep their own inline typography
+   on both surfaces.
+
+   The calendar is two columns from 768px up — month on the left, times on the
+   right — with the footer spanning BOTH columns on its own row underneath as a
+   band: a `1px #eee` rule across the full width, `1.25rem` of padding, and the
+   buttons pushed to the right at their natural width, the way the modal's own
+   authored `.call-sched_button-group` lays buttons out. There is no row gap;
+   the band's rule and padding do the separating. The times take the leftover
+   height in their column and scroll inside themselves, so a day with many slots
+   cannot grow the modal, and the slot chips keep their natural height whatever
+   the day looks like. A `1.25rem` interior frame runs around the two columns
+   and they sit `2rem` apart. The month's day cells fill their column rather
+   than being a fixed box centred in it.
+
+   That frame is the **only** inset between the modal's edges and the calendar,
+   at either width: the same sheet zeroes the padding the site puts on the
+   authored step around the mount (`.call-details_layout`,
+   `--_spacing---spacer--spacing-14`). Left in, the two stacked — the footer's
+   hairline stopped short of both modal edges, the status banner could not run
+   the panel's full width, and on a phone every element was inset twice. It
+   wins on specificity, since the site's declarations are flat class selectors
+   and the dialog attribute puts this one rank above them.
+
+   Every length in that sheet is a **rem**, so it tracks the site's responsive
+   root font size; the only pixels left are border widths, which stay px
+   because a hairline is a device-pixel affordance and at the site's 12.93px
+   root a `0.0625rem` border computes to 0.81px and renders inconsistently.
+   `global-embeds/form-embeds/datepicker/datepicker.css` and its timepicker
+   twin follow the same convention. Those are paste-in mirrors of Webflow
+   `<style>` embeds and are site-wide, so a re-paste is what makes them live.
+
+   The shell declares no row gap: since every stacked element carries its own
+   frame padding, the month's bottom padding is what separates it from the
+   times and the times' from the buttons.
+
+   The status line is a **banner across the top of the modal's body** rather
+   than a line under the buttons: absolutely positioned against
+   `.modal_content-layout`, so it sits directly under the "Book a Call" header
+   bar at the panel's full width and overlays the calendar instead of growing
+   the modal. It is the only rule in the sheet that leaves the flow. Every
+   message the engine writes is tagged `data-paid-calendar-status` and coloured
+   by that tone: `error` — a booking that failed — is white on `#DD5555`, while
+   `progress` (the in-flight notice) and `empty` (no availability in the next 14
+   days) take a white-on-dark `#434B43`. It hides itself only while it is empty. The
+   engine writes no inline styles on it there, since an inline declaration would
+   outrank the sheet's own colour. Writing a message also scrolls the modal's
+   body back to the top: the banner is painted at the top of the scrollable
+   content, so on a phone mid-scroll it would otherwise land far above anything
+   the visitor can see. Because the banner is out of flow the mount carries a
+   `28.125rem` min-height and the empty-availability state pushes its
+   footer to the bottom of it; without both, that panel would collapse to the
+   height of one button and the banner would cover it. That min-height is
+   scoped to the two states that lay a calendar out (`ready` and `empty`), so
+   the one-line `loading` and `error` states — which the free-call controller
+   stamps on this same mount too — do not inherit a void under one sentence.
+
+   On the booking surface the shell writes only `width` inline and leaves its
+   `display` and both gaps to the sheet, because an inline declaration outranks
+   any stylesheet rule: a `gap` shorthand would pin the column gap with it, and
+   an inline `display` would stop the mobile block swapping the grid for the
+   flex column the sticky footer needs. The engine's three responsive wrappers —
+   the `layout` box around the two panels, the `calendar-panel` box around the
+   month and the caption, and the `time-panel` box around the chips — are
+   skipped on this surface for the same reason, and the sheet collapses them
+   with `display:contents` so the month, the caption, the chips and the footer
+   are placed by the shell's own grid and flex column. The dashboard's shell
+   still writes `display` and `gap` inline, and its wrappers keep the inline
+   columns they ship with — the month with the caption under it on the left and
+   the chips on the right — unchanged. Below 768px it stays one column and
+   the two buttons stack full width with the primary on
+   top, and the frame comes with them: stacked, there is no column gap to hand
+   the inner edges to, so the month is framed on all four sides and the times
+   and the footer repeat the horizontal frame while opening their top edge. The
+   footer floats: on a phone the whole panel scrolls — calendar, timezone
+   control and chips together — inside the modal's body, and the buttons stay
+   pinned to the bottom of it so they are reachable without scrolling to the end. They stay
+   IN FLOW while doing it, so their slot at the end is still reserved and the
+   last row of slots ends above them rather than under them. That took two
+   things beyond the sticky itself: the panel is a flex column at this width,
+   because a grid item can only travel inside its own grid area and a footer on
+   the last row has none; and the authored step around it gives up its
+   `overflow-y:auto`, because it counted as a scrollport that never scrolls and
+   the footer was sticking to that instead of to the body. The footer's bottom
+   padding is what holds the empty-availability state off the modal's bottom
+   edge, at both widths — that spacing used to sit on the mount,
+   and would double against this. The floating footer carries the same
+   `1px #eee` hairline as the desktop band and a full `1.25rem` frame on all
+   four sides, its top edge included — that edge is where the chips pass
+   behind it, so nothing above can space it. The same
+   sheet restyles the month
+   picker: it keeps the page's 3px `#eee` ring and `#eee` fill but not the drop
+   shadow, and the weekday header row is re-centred (the page leaves those
+   labels left-aligned against centred dates below its tablet breakpoint). The picker rules name `.ui-datepicker.ui-widget-content` to
+   outrank `.ui-widget.ui-widget-content{border:0}`, which the page declares in
+   a body `<style>` and which otherwise wins on source order.
+
+   A media query cannot be an inline style, so this is one id-guarded `<style>`
+   injected into the head once per document. **Every rule is scoped under
+   `[data-modal-target="popup-booking"]`**, which is what keeps the contract
+   form's `.ui-datepicker` fields and the dashboard's reschedule calendar
+   untouched, and no rule uses `!important`.
+
+   Off the booking surface — the dashboard's reschedule calendar mounts this
+   same engine — nothing changed: no back control, no footer, no injected
+   stylesheet, no status tone attribute, a status line that keeps its inline
+   grey, and a plain single-element confirm that still reads
+   `data-booking-confirm-class` and otherwise keeps its inline fallback look.
+   Display and `aria-hidden` on the back control belong to `hire-profile.js`,
+   never to this file.
 3. When the Brand confirms a slot, read payment readiness. A canonical
    `bookable=true` result can continue directly to the booking command.
 4. If no ready payment method exists, retain that exact selected slot and open

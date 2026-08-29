@@ -118,6 +118,8 @@ class CalendarElement {
     return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null
   }
 
+  removeAttribute(name) { delete this.attrs[name] }
+
   appendChild(child) {
     child.parentElement = this
     this.children.push(child)
@@ -127,17 +129,22 @@ class CalendarElement {
   addEventListener(name, listener) { this.listeners[name] = listener }
 
   /**
-   * Enough of `closest` for the footer's class contract: a tag name, a bare
-   * `[attribute]`, or `[attribute="value"]`. The contract walks from the mount
-   * container out to the dialog, so the stub has to model ancestry as well as
-   * descent.
+   * Enough of `closest` for the contracts this engine walks: a tag name, a
+   * bare `[attribute]`, an `[attribute="value"]`, or a `.class`. The contract
+   * walks from the mount container out to the dialog, so the stub has to model
+   * ancestry as well as descent.
    */
   closest(selector) {
-    const attribute = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(String(selector).trim())
+    const target = String(selector).trim()
+    const attribute = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(target)
+    const className = /^\.([\w-]+)$/.exec(target)
     for (let node = this; node; node = node.parentElement) {
       if (attribute) {
         const value = node.getAttribute(attribute[1])
         if (value !== null && (attribute[2] === undefined || value === attribute[2])) return node
+      } else if (className) {
+        const classes = String(node.getAttribute('class') || '').split(/\s+/)
+        if (classes.includes(className[1])) return node
       } else if (node.tagName === selector) {
         return node
       }
@@ -518,9 +525,7 @@ test('shared call calendar renders dates and times and submits only the selected
     12 * 60 * 60
   const secondStart = firstStart + 30 * 60
   const thirdStart = firstStart + 24 * 60 * 60
-  global.document = {
-    createElement(tagName) { return new CalendarElement(tagName) },
-  }
+  global.document = calendarDocument()
   global.jQuery = undefined
   global.xanoAuthFetch = async () => response({
     time_slots: [
@@ -714,6 +719,40 @@ function bookingMount() {
  * Mounts the shared calendar against the element stub and hands back the
  * footer's parts by their `data-paid-calendar-element` role.
  */
+/**
+ * A document stub with the head the layout stylesheet needs. The engine bails
+ * out silently on a document without `getElementById`, so without this the
+ * injection would be untestable rather than merely untested.
+ */
+function calendarDocument() {
+  const head = new CalendarElement('head')
+  return {
+    head,
+    createElement(tagName) { return new CalendarElement(tagName) },
+    getElementById(id) {
+      return head.children.find((child) => child.getAttribute('id') === id) || null
+    },
+  }
+}
+
+/**
+ * The parts of one site button component. Reading them positionally is
+ * deliberate: the order IS the contract, because the click overlay has to come
+ * before the label for the label to sit on top of it.
+ */
+function siteButtonParts(wrap) {
+  if (!wrap) return null
+  const [clickableWrap, element] = wrap.children
+  return {
+    wrap,
+    clickableWrap,
+    button: clickableWrap && clickableWrap.children[0],
+    element,
+    text: element && element.children[0],
+    line: element && element.children[1],
+  }
+}
+
 async function mountFooterFixture(options = {}) {
   const previous = {
     document: global.document,
@@ -723,9 +762,7 @@ async function mountFooterFixture(options = {}) {
   const container = options.container || bookingMount()
   const start =
     Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000) / 86400000) * 86400 + 12 * 60 * 60
-  global.document = {
-    createElement(tagName) { return new CalendarElement(tagName) },
-  }
+  global.document = calendarDocument()
   global.jQuery = undefined
   global.xanoAuthFetch = async () => response({
     time_slots: options.slots === undefined
@@ -743,11 +780,14 @@ async function mountFooterFixture(options = {}) {
     return {
       container,
       result,
+      document: global.document,
       shell: role('shell'),
       footer: role('footer'),
       back: role('back'),
       confirm: role('confirm'),
       status: role('status'),
+      backParts: siteButtonParts(role('back')),
+      confirmParts: siteButtonParts(role('confirm')),
     }
   } finally {
     global.document = previous.document
@@ -757,7 +797,7 @@ async function mountFooterFixture(options = {}) {
 }
 
 test('the calendar footer puts Back beside the confirm control', async () => {
-  const { shell, footer, back, confirm, status } = await mountFooterFixture()
+  const { document, shell, footer, back, confirm, status, backParts } = await mountFooterFixture()
   const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
     .find((node) => node.getAttribute('data-paid-calendar-element') === name)
   const layout = role('layout')
@@ -788,148 +828,310 @@ test('the calendar footer puts Back beside the confirm control', async () => {
     timePanel.children.map((child) => child.getAttribute('data-paid-calendar-element')),
     ['times'],
   )
-  assert.equal(layout.style.gridTemplateColumns, 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))')
-  assert.equal(layout.style.alignItems, 'start')
-  assert.equal(calendarPanel.style.alignContent, 'start')
-  assert.equal(timePanel.style.alignContent, 'start')
+  // The three responsive wrappers are built but left unstyled HERE, and the
+  // sheet collapses them, because this surface's arrangement is the sheet's: an
+  // inline grid on any of the boxes would nest it inside a second one no rule
+  // could outrank. The dashboard keeps the inline columns — see the off-surface
+  // test below.
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+  const css = document.head.children[0].textContent
+  assert.deepEqual(Object.keys(layout.style), [], 'the sheet owns the booking layout')
+  assert.deepEqual(Object.keys(calendarPanel.style), [], 'and the calendar panel')
+  assert.deepEqual(Object.keys(timePanel.style), [], 'and the time panel with it')
+  assert.ok(css.includes(
+    ROLE + '"layout"],' + ROLE + '"calendar-panel"],' + ROLE + '"time-panel"]{display:contents}',
+  ))
+  // Collapsed, the DOM nesting the dashboard needs costs this surface nothing:
+  // the month, the caption and the times are the shell's own grid items again
+  // and the sheet places each of them by role.
   assert.equal(month.parentElement, calendarPanel)
   assert.equal(timezone.parentElement, calendarPanel)
-  assert.equal(timezone.style.justifySelf, 'start')
   assert.equal(times.parentElement, timePanel)
   assert.equal(status.getAttribute('data-paid-calendar-element'), 'status')
 
-  // The three attributes ARE the behaviour: close this dialog, open the
-  // chooser, and carry the marker the entry-aware visibility keys on. A typo
-  // in any of them is a silently dead control.
-  assert.equal(back.tagName, 'button')
-  assert.equal(back.type, 'button')
-  assert.equal(back.textContent, '← Back')
+  // The markers live on the WRAP, because that is the node the modal embed
+  // finds: it reads `closest()` from the click target, and the click lands on
+  // the overlay button nested inside. The three attributes ARE the behaviour —
+  // close this dialog, open the chooser, and carry the marker the entry-aware
+  // visibility keys on. A typo in any of them is a silently dead control.
+  assert.equal(back.tagName, 'div')
   assert.equal(back.getAttribute('data-booking-back'), '')
   assert.equal(back.getAttribute('data-modal-close'), '')
   assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
   assert.equal(back.getAttribute('data-paid-calendar-element'), 'back')
-  // Display belongs to the profile script's guard stylesheet. A second writer
-  // here would fight it and could flash the control on a direct entry.
+
+  // The label is plain "Back". The arrow belonged to the unstyled text button
+  // this replaced; the component carries its own affordance.
+  assert.equal(backParts.text.textContent, 'Back')
+  assert.equal(backParts.button.tagName, 'button')
+  assert.equal(backParts.button.type, 'button')
+  assert.equal(backParts.button.getAttribute('aria-label'), 'Back')
+
+  // Display belongs to the profile script's guard stylesheet, and aria-hidden
+  // to the profile script. A second writer here would fight them and could
+  // flash the control on a direct entry.
   assert.equal(back.style.display, undefined)
-  assert.equal(confirm.disabled, true)
+  assert.equal(back.getAttribute('aria-hidden'), null)
 })
 
-test('the footer back label is overridable by the caller', async () => {
-  const { back } = await mountFooterFixture({ backText: 'Back to call options' })
-  assert.equal(back.textContent, 'Back to call options')
-})
+test('both footer controls are the site button component, not bare buttons', async () => {
+  // The whole point of the change: the look is inherited from the design
+  // system rather than written here, and that only works if the markup is the
+  // shape the design system's rules and typography are keyed on.
+  const { backParts, confirmParts } = await mountFooterFixture()
 
-test('the Free flow gets the same footer with its own confirm label', async () => {
-  // One engine serves both flows: free-call-booking.js passes only confirmText
-  // and reads the class contract off the same authored container, so the Free
-  // footer has to come out of this mount identical but for the label.
-  const container = bookingMount()
-  container.setAttribute('data-booking-confirm-class', 'button_main-wrap')
-  container.setAttribute('data-booking-back-class', 'clickable-text-link')
-  const { footer, back, confirm } = await mountFooterFixture({
-    container,
-    confirmText: 'Request free call',
-  })
+  for (const [name, parts, style] of [
+    ['back', backParts, 'secondary'],
+    ['confirm', confirmParts, 'primary'],
+  ]) {
+    assert.equal(parts.wrap.getAttribute('class'), 'button_main-wrap', name)
+    assert.equal(parts.wrap.getAttribute('data-button-style'), style, name)
+    assert.equal(parts.clickableWrap.getAttribute('class'), 'clickable_wrap', name)
+    assert.equal(parts.button.getAttribute('class'), 'clickable_btn', name)
+    assert.equal(parts.button.getAttribute('aria-label'), parts.text.textContent, name)
+    assert.equal(parts.element.getAttribute('class'), 'button_main-element', name)
+    assert.equal(parts.text.getAttribute('class'), 'button_main-text', name)
+    assert.equal(parts.line.getAttribute('class'), 'button_main-line', name)
+    // No size variant class. The Designer's default size is the ABSENCE of a
+    // `w-variant-*` / `.small` / `.large-*` class on the element, so anything
+    // extra here is a button at the wrong size and weight.
+    assert.equal(parts.element.children.length, 2, `${name} element holds label + line only`)
+  }
 
-  assert.equal(confirm.textContent, 'Request free call')
-  assert.equal(confirm.getAttribute('class'), 'button_main-wrap')
-  assert.deepEqual(footer.children, [back, confirm])
-  assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
-  assert.equal(back.getAttribute('class'), 'clickable-text-link')
-})
-
-test('authored controls keep their classes while the footer gets shared action spacing', async () => {
-  const container = bookingMount()
-  container.setAttribute('data-booking-footer-class', 'call-sched_button-group')
-  container.setAttribute('data-booking-confirm-class', 'button_main-wrap is-primary')
-  container.setAttribute('data-booking-back-class', 'clickable-text-link')
-  const { footer, back, confirm } = await mountFooterFixture({ container })
-
-  assert.equal(footer.getAttribute('class'), 'call-sched_button-group')
-  assert.equal(confirm.getAttribute('class'), 'button_main-wrap is-primary')
-  assert.equal(back.getAttribute('class'), 'clickable-text-link')
-  // Only the row receives shared layout spacing. The two authored controls
-  // keep their Designer-owned appearance with no inline declarations.
-  assert.deepEqual(Object.keys(footer.style), ['columnGap'])
-  assert.equal(footer.style.columnGap, '16px')
-  for (const [name, node] of [['confirm', confirm], ['back', back]]) {
-    assert.deepEqual(Object.keys(node.style), [], `${name} must carry no inline styles`)
+  // Appearance is never written inline: an inline declaration outranks the
+  // site's stylesheet and is the hardcoded look wearing the right class name.
+  for (const [name, parts] of [['back', backParts], ['confirm', confirmParts]]) {
+    for (const node of [parts.clickableWrap, parts.button, parts.element, parts.text, parts.line]) {
+      assert.deepEqual(Object.keys(node.style), [], `${name} inner nodes carry no inline styles`)
+    }
   }
 })
 
-test('the unauthored footer keeps the engine fallback look and no class', async () => {
-  const { footer, back, confirm } = await mountFooterFixture()
-
-  // The trap the other way: with nothing authored the controls must still be
-  // visible and usable, not bare user-agent buttons in a stacked column.
-  assert.equal(footer.getAttribute('class'), null)
-  assert.equal(confirm.getAttribute('class'), null)
-  assert.equal(back.getAttribute('class'), null)
-  assert.equal(footer.style.display, 'grid')
-  assert.equal(footer.style.columnGap, '16px')
-  assert.equal(confirm.style.background, '#1f211d')
-  assert.equal(confirm.style.color, '#ffffff')
-  assert.equal(back.style.background, 'transparent')
-  assert.equal(back.style.cursor, 'pointer')
+test('the confirm starts disabled in look as well as behaviour', async () => {
+  // A visitor reads the theme, not the `disabled` property. Setting only one of
+  // the two leaves a live-looking button that does nothing.
+  const { confirm, confirmParts } = await mountFooterFixture()
+  assert.equal(confirmParts.button.disabled, true)
+  assert.equal(confirm.getAttribute('data-button-theme'), 'disabled')
 })
 
-test('one authored control does not drag the others off their fallback', async () => {
+test('picking a slot turns the confirm black and live, and clearing it back', async () => {
+  const { result, confirm, confirmParts, shell } = await mountFooterFixture()
+  const slot = shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+    .children[0]
+
+  slot.listeners.click()
+  assert.equal(confirmParts.button.disabled, false)
+  assert.equal(confirm.getAttribute('data-button-theme'), 'black')
+
+  // Clearing the selection — what changing the day does, and what the booking
+  // controllers call between attempts — has to put the confirm back to BOTH
+  // halves of disabled, not just the property.
+  result.clearSelection()
+  assert.equal(confirmParts.button.disabled, true)
+  assert.equal(confirm.getAttribute('data-button-theme'), 'disabled')
+})
+
+test('the slot chips rest on #eee and go back to it after a deselect', async () => {
+  // The resting colour is written in three places — when a chip is built, when
+  // another chip is picked, and in the deselect reset — and the reset is the
+  // one that gets forgotten. Miss it and a select-then-deselect leaves one chip
+  // a different grey from its neighbours.
+  const { result, shell } = await mountFooterFixture()
+  const times = shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+  const chip = times.children[0]
+
+  assert.equal(chip.style.background, '#eee', 'resting on build')
+
+  chip.listeners.click()
+  assert.equal(chip.style.background, '#1f211d', 'selected')
+  assert.equal(chip.style.color, '#ffffff')
+
+  result.clearSelection()
+  assert.equal(chip.style.background, '#eee', 'back to resting, not the old #f3f4ef')
+  assert.equal(chip.style.color, '#1f211d')
+
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  reschedule.appendChild(host)
+  const dashboard = await mountFooterFixture({ container: host })
+  const dashboardTimes = dashboard.shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+  const dashboardChip = dashboardTimes.children[0]
+  assert.equal(dashboardChip.style.background, '#f3f4ef', 'dashboard build')
+  dashboardChip.listeners.click()
+  dashboard.result.clearSelection()
+  assert.equal(dashboardChip.style.background, '#f3f4ef', 'dashboard reset')
+})
+
+test('the footer back label is overridable by the caller', async () => {
+  const { backParts } = await mountFooterFixture({ backText: 'Back to call options' })
+  assert.equal(backParts.text.textContent, 'Back to call options')
+  assert.equal(backParts.button.getAttribute('aria-label'), 'Back to call options')
+})
+
+test('the Free flow gets the same footer with its own confirm label', async () => {
+  // One engine serves both flows: free-call-booking.js passes only confirmText,
+  // so the Free footer has to come out of this mount identical but for the
+  // label — including the component markup.
+  const { footer, back, confirm, confirmParts } = await mountFooterFixture({
+    confirmText: 'Request free call',
+  })
+
+  assert.equal(confirmParts.text.textContent, 'Request free call')
+  assert.equal(confirm.getAttribute('class'), 'button_main-wrap')
+  assert.deepEqual(footer.children, [back, confirm])
+  assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
+})
+
+test('the two ignored class attributes change nothing and raise nothing', async () => {
+  // The live site has these authored today, and the component supersedes them.
+  // Reacting to them at all — applying them, or warning — would be a change
+  // Jerico has to chase before this can ship.
   const container = bookingMount()
-  container.setAttribute('data-booking-confirm-class', 'button_main-wrap')
+  container.setAttribute('data-booking-confirm-class', 'button_main-wrap is-primary')
+  container.setAttribute('data-booking-back-class', 'clickable-text-link')
+  const plain = await mountFooterFixture()
+  const authored = await mountFooterFixture({ container })
+
+  assert.equal(authored.confirm.getAttribute('class'), 'button_main-wrap')
+  assert.equal(authored.back.getAttribute('class'), 'button_main-wrap')
+  assert.deepEqual(
+    Object.keys(authored.confirm.style),
+    Object.keys(plain.confirm.style),
+    'an ignored attribute cannot change the placement writes either',
+  )
+})
+
+test('an authored footer class is applied verbatim and places its own children', async () => {
+  const container = bookingMount()
+  container.setAttribute('data-booking-footer-class', 'call-sched_button-group')
   const { footer, back, confirm } = await mountFooterFixture({ container })
 
-  assert.equal(confirm.getAttribute('class'), 'button_main-wrap')
-  // Placement in the engine's own fallback row is the one thing it writes on
-  // an authored control. Nothing about its appearance.
-  assert.deepEqual(Object.keys(confirm.style), ['gridColumn'])
-  assert.equal(back.getAttribute('class'), null)
-  assert.equal(back.style.cursor, 'pointer')
-  assert.equal(footer.style.display, 'grid')
+  assert.equal(footer.getAttribute('class'), 'call-sched_button-group')
+  // The trap. An inline declaration outranks the Designer's stylesheet, so an
+  // authored row that also carries the fallback layout is still the engine's
+  // layout wearing the right class name. The shared action spacing is the one
+  // exception, and it is placement between the two controls, not appearance.
+  assert.deepEqual(Object.keys(footer.style), ['columnGap'])
+  assert.equal(footer.style.columnGap, '16px')
+  assert.deepEqual(Object.keys(back.style), [], 'an authored row places its own children')
+  assert.deepEqual(Object.keys(confirm.style), [])
 })
 
-test('the class contract reads the mount container before the booking dialog', async () => {
+test('the unauthored footer row writes only what does not vary by breakpoint', async () => {
+  const { footer, back, confirm } = await mountFooterFixture()
+
+  assert.equal(footer.getAttribute('class'), null)
+  assert.equal(footer.style.display, 'flex')
+  // The shared action spacing is written on every row; this row's own flex
+  // `gap` supersedes it here, which is what the visitor sees between the two.
+  assert.equal(footer.style.columnGap, '16px')
+  assert.equal(footer.style.gap, '12px')
+  assert.equal(footer.style.width, '100%')
+
+  // Alignment is NOT written here. The row is right-aligned natural-width
+  // buttons on desktop and a full-width stack on mobile, and an inline
+  // declaration outranks any stylesheet rule — writing `align-items` or a
+  // `flex` basis here would pin one of those at both sizes. The sheet owns it.
+  assert.equal(footer.style.alignItems, undefined)
+  assert.equal(footer.style.justifyContent, undefined)
+
+  // And the buttons carry no inline sizing at all any more, so they keep the
+  // component's own padding and size to their label plus that padding.
+  for (const [name, node] of [['back', back], ['confirm', confirm]]) {
+    assert.deepEqual(Object.keys(node.style), [], `${name} carries no inline styles`)
+  }
+})
+
+test('the class contract still reads the mount container before the dialog', async () => {
+  // `authoredClassList` is unchanged and still serves the footer attribute and
+  // the off-surface confirm, so its read order has to keep working.
   const dialog = new CalendarElement('dialog')
   dialog.setAttribute('data-modal-target', 'popup-booking')
-  dialog.setAttribute('data-booking-confirm-class', 'dialog-level')
-  dialog.setAttribute('data-booking-back-class', 'dialog-back')
+  dialog.setAttribute('data-booking-footer-class', 'dialog-level')
   const container = new CalendarElement('div')
   container.setAttribute('nylas-container', '')
-  container.setAttribute('data-booking-confirm-class', 'container-level')
   dialog.appendChild(container)
 
-  // Nearest surface wins, so one booking dialog can host a differently styled
-  // mount without the dialog-level default being unset.
-  assert.deepEqual(api.authoredClassList(container, 'data-booking-confirm-class'), ['container-level'])
-  assert.deepEqual(api.authoredClassList(container, 'data-booking-back-class'), ['dialog-back'])
-  assert.deepEqual(api.authoredClassList(container, 'data-booking-footer-class'), [])
+  assert.deepEqual(api.authoredClassList(container, 'data-booking-footer-class'), ['dialog-level'])
+  container.setAttribute('data-booking-footer-class', 'container-level')
+  assert.deepEqual(api.authoredClassList(container, 'data-booking-footer-class'), ['container-level'])
 
-  const { back, confirm } = await mountFooterFixture({ container })
-  assert.equal(confirm.getAttribute('class'), 'container-level')
-  assert.equal(back.getAttribute('class'), 'dialog-back')
+  const { footer } = await mountFooterFixture({ container })
+  assert.equal(footer.getAttribute('class'), 'container-level')
 })
 
 test('an authored class list is applied verbatim and blank values fall back', async () => {
   const container = bookingMount()
-  container.setAttribute('data-booking-back-class', '  is-back   button_main-wrap  ')
-  container.setAttribute('data-booking-confirm-class', '   ')
+  container.setAttribute('data-booking-footer-class', '  is-row   call-sched_button-group  ')
   assert.deepEqual(
-    api.authoredClassList(container, 'data-booking-back-class'),
-    ['is-back', 'button_main-wrap'],
+    api.authoredClassList(container, 'data-booking-footer-class'),
+    ['is-row', 'call-sched_button-group'],
   )
-  const { back, confirm } = await mountFooterFixture({ container })
-  assert.equal(back.getAttribute('class'), 'is-back button_main-wrap')
-  // Whitespace is not an authored class list, so the confirm keeps its look.
-  assert.equal(confirm.getAttribute('class'), null)
-  assert.equal(confirm.style.background, '#1f211d')
+  const authored = await mountFooterFixture({ container })
+  assert.equal(authored.footer.getAttribute('class'), 'is-row call-sched_button-group')
+
+  const blank = bookingMount()
+  blank.setAttribute('data-booking-footer-class', '   ')
+  const fallback = await mountFooterFixture({ container: blank })
+  // Whitespace is not an authored class list, so the row keeps its own layout.
+  assert.equal(fallback.footer.getAttribute('class'), null)
+  assert.equal(fallback.footer.style.display, 'flex')
 })
 
-test('a calendar mounted outside the booking dialog gets no back control', async () => {
+test('the shell declares no row gap, at either width', async () => {
+  // The frame padding is the whole vertical rhythm now. An earlier round put a
+  // 16px row gap on the shell, and once the stacked elements carried their own
+  // padding that gap only ever reached mobile — desktop has overridden it to 0
+  // since the footer became a band. Jerico struck it out; the month's bottom
+  // padding separates it from the times, and the times' from the buttons.
+  //
+  // Nothing replaces it, so this is a check that no gap comes BACK: a row gap
+  // plus the frame would double the spacing on a phone.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const beforeMedia = css.split('@media')[0]
+  assert.ok(!beforeMedia.includes('row-gap'), 'no unconditional row gap')
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
+  assert.ok(!mobileBlock.includes('row-gap'), 'and none added back for mobile')
+  // Desktop still says zero out loud. It is the initial value now, but it is
+  // the declaration that documents the footer band as the only separator.
+  assert.match(css.split('@media (min-width:768px){')[1], /"shell"\]\{column-gap:2rem;row-gap:0;/)
+})
+
+test('the booking shell defers its display and gaps to the sheet, the dashboard does not', async () => {
+  // An inline declaration outranks a stylesheet rule whatever its specificity,
+  // so an inline `gap` shorthand on the booking shell would pin `column-gap`
+  // too and the sheet could not widen the month-to-times space without
+  // `!important`. `display` went the same way once the two breakpoints needed
+  // different formatting contexts — a grid on desktop, a flex column on a
+  // phone so the footer can stick. Off the booking surface both stay inline,
+  // exactly where they were.
+  const { shell } = await mountFooterFixture()
+  assert.deepEqual(Object.keys(shell.style), ['width'])
+  assert.equal(shell.style.gap, undefined, 'the sheet owns the booking shell gaps')
+  assert.equal(shell.style.display, undefined, 'and its display')
+
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  reschedule.appendChild(host)
+  const away = await mountFooterFixture({ container: host })
+  assert.deepEqual(Object.keys(away.shell.style), ['display', 'gap', 'width'])
+  assert.equal(away.shell.style.gap, '16px', 'the dashboard shell is untouched')
+})
+
+test('a calendar mounted outside the booking dialog is completely unchanged', async () => {
   // This engine also mounts the dashboard's reschedule calendar
   // (dashboard-call-actions.js -> mountRescheduleCalendar), inside
-  // `popup-booking-info`. There is no Free/Paid chooser to hand off to there
-  // and no guard stylesheet to hide the control, so a back rendered on that
-  // surface would be an always-visible button that closes the reschedule
-  // dialog and lands the visitor nowhere.
+  // `popup-booking-info`. There is no Free/Paid chooser to hand off to there,
+  // no guard stylesheet to hide a back control, and no design-system context to
+  // inherit — so that surface keeps the plain button and the authored-class
+  // contract it shipped with, down to the inline fallback styles.
   const reschedule = new CalendarElement('dialog')
   reschedule.setAttribute('data-modal-target', 'popup-booking-info')
   const host = new CalendarElement('div')
@@ -938,12 +1140,34 @@ test('a calendar mounted outside the booking dialog gets no back control', async
 
   const away = await mountFooterFixture({ container: host, confirmText: 'Propose new time' })
   assert.equal(away.back, null)
-  assert.equal(away.confirm.textContent, 'Propose new time')
   assert.equal(host.querySelectorAll('[data-booking-back]').length, 0)
-  // No back means no row: the confirm goes straight into the grid shell, where
-  // it stretches, rather than becoming a shrink-to-fit flex child.
   assert.equal(away.footer, null)
+
+  // A plain single element, not the component: no wrap, no overlay, no label
+  // div — and the confirm goes straight into the grid shell, where it
+  // stretches, rather than becoming a flex child of a row.
+  assert.equal(away.confirm.tagName, 'button')
+  assert.equal(away.confirm.type, 'button')
+  assert.equal(away.confirm.textContent, 'Propose new time')
+  assert.equal(away.confirm.children.length, 0)
+  assert.equal(away.confirm.disabled, true)
+  assert.equal(away.confirm.getAttribute('data-button-theme'), null)
+  // Index 1: the month, timezone note and time slots all sit inside the
+  // responsive layout wrapper, so the shell is layout -> confirm -> status.
   assert.equal(away.shell.children.indexOf(away.confirm), 1)
+  assert.equal(away.confirm.style.background, '#1f211d')
+  assert.equal(away.confirm.style.color, '#ffffff')
+  assert.equal(away.confirm.style.gridColumn, undefined, 'no row means no placement write')
+
+  // The off-surface confirm still reads its authored class attribute.
+  const classed = new CalendarElement('dialog')
+  classed.setAttribute('data-modal-target', 'popup-booking-info')
+  const classedHost = new CalendarElement('div')
+  classedHost.setAttribute('data-booking-confirm-class', 'reschedule-cta')
+  classed.appendChild(classedHost)
+  const styled = await mountFooterFixture({ container: classedHost })
+  assert.equal(styled.confirm.getAttribute('class'), 'reschedule-cta')
+  assert.deepEqual(Object.keys(styled.confirm.style), [])
 
   // Fails closed on any surface the profile script's guard rule cannot reach.
   // `[popup-booking]` alone is such a surface: nothing would ever hide the
@@ -956,46 +1180,50 @@ test('a calendar mounted outside the booking dialog gets no back control', async
   popupOnly.appendChild(looseMount)
   const loose = await mountFooterFixture({ container: looseMount })
   assert.equal(loose.back, null, 'an unguarded surface gets no back control')
+  assert.equal(loose.confirm.tagName, 'button', 'and no component confirm either')
 })
 
 test('an empty calendar still offers the way back to the chooser', async () => {
   // No times is exactly when a visitor wants the other kind of call, so the
   // footer has to survive the empty-state early return.
-  const { container, footer, back, confirm, status } = await mountFooterFixture({ slots: [] })
+  const { container, footer, back, confirm, status, backParts } =
+    await mountFooterFixture({ slots: [] })
 
   assert.equal(container.getAttribute('data-paid-calendar-state'), 'empty')
   assert.equal(status.textContent, 'No available times were found in the next 14 days.')
   assert.equal(confirm, null, 'there is nothing to request, so no Request button')
   assert.equal(back.getAttribute('data-modal-trigger'), 'popup-booking-main')
+  assert.equal(backParts.text.textContent, 'Back')
+  assert.equal(backParts.button.getAttribute('class'), 'clickable_btn')
   assert.deepEqual(footer.children, [back])
   assert.equal(container.children.indexOf(footer), 1)
 })
 
-test('the footer row makes the confirm fill it, whoever styled the confirm', async () => {
-  // The confirm used to be a grid item in the shell and stretched to full
-  // width. The row has to keep doing that for it — and it has to do it from
-  // the ROW, because an authored confirm carries no inline styles of its own
-  // and `data-booking-footer-class` is optional, so the most likely production
-  // shape is an authored button inside the engine's own fallback row.
-  const fallback = await mountFooterFixture()
-  assert.equal(fallback.footer.style.display, 'grid')
-  assert.equal(fallback.footer.style.gridTemplateColumns, 'auto minmax(0, 1fr)')
-  // Explicit columns, so the confirm still fills the row on a direct entry,
-  // where the back control is hidden and drops out of the grid entirely.
-  assert.equal(fallback.back.style.gridColumn, '1')
-  assert.equal(fallback.confirm.style.gridColumn, '2')
+test('the footer row is right-aligned on desktop and stacked on mobile', async () => {
+  // On a direct entry the guard stylesheet hides the back WRAP with
+  // `display:none`, which takes it out of the flex layout entirely. With the
+  // row right-aligned the confirm simply stays at the right-hand end rather
+  // than stretching to fill — the arrangement Jerico picked from the two
+  // screenshots, and the one the modal's own authored button group uses.
+  const { document, footer, back, confirm } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
 
-  const authoredConfirm = bookingMount()
-  authoredConfirm.setAttribute('data-booking-confirm-class', 'button_main-wrap')
-  const mixed = await mountFooterFixture({ container: authoredConfirm })
-  assert.equal(mixed.confirm.style.gridColumn, '2')
-  assert.deepEqual(Object.keys(mixed.confirm.style), ['gridColumn'])
+  assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer}'))
+  assert.ok(css.includes('[data-paid-calendar-footer="fallback"]{border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+  // Nothing inline can fight it.
+  assert.deepEqual(Object.keys(back.style), [])
+  assert.deepEqual(Object.keys(confirm.style), [])
+  assert.equal(footer.style.justifyContent, undefined)
 
-  // An authored footer places its own children: the engine writes nothing.
+  // Mobile still stacks full width, primary first.
+  const mobile = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
+  assert.ok(mobile.includes('{flex-direction:column;align-items:stretch}'))
+  assert.ok(mobile.includes('{order:-1}'))
+
+  // An authored row places its own children: the engine writes nothing.
   const authoredFooter = bookingMount()
   authoredFooter.setAttribute('data-booking-footer-class', 'call-sched_button-group')
-  authoredFooter.setAttribute('data-booking-confirm-class', 'button_main-wrap')
-  authoredFooter.setAttribute('data-booking-back-class', 'clickable-text-link')
   const owned = await mountFooterFixture({ container: authoredFooter })
   assert.deepEqual(Object.keys(owned.footer.style), ['columnGap'])
   assert.equal(owned.footer.style.columnGap, '16px')
@@ -1011,28 +1239,799 @@ test('an empty calendar off the booking surface renders no footer at all', async
   assert.equal(container.children.length, 1)
 })
 
+test('the layout stylesheet is scoped to the booking dialog, every rule', async () => {
+  // This is the containment test, and it is the important one. The page has
+  // other jQuery-UI datepickers wearing the same `.ui-datepicker` class — the
+  // contract form's start and end dates — and the dashboard mounts this same
+  // engine into a different dialog. One unscoped rule here restyles them.
+  const { document } = await mountFooterFixture()
+  const injected = document.head.children.filter((child) => child.tagName === 'style')
+  assert.equal(injected.length, 1)
+  const css = injected[0].textContent
+  assert.equal(injected[0].getAttribute('id'), 'starters-booking-calendar-layout')
+
+  const DIALOG = '[data-modal-target="popup-booking"]'
+  // Split into selector/body pairs and require a dialog-scoped prefix on every
+  // selector that is not a media query boundary or a brace.
+  const selectors = css
+    .split('}')
+    .map((chunk) => chunk.split('{')[0].trim())
+    .filter((sel) => sel && !sel.startsWith('@media') && sel !== '')
+  assert.ok(selectors.length >= 8, 'the sheet should carry every layout rule')
+  for (const sel of selectors) {
+    for (const one of sel.split(',')) {
+      assert.ok(
+        one.trim().startsWith(DIALOG),
+        `unscoped selector would leak off the booking dialog: ${one.trim()}`,
+      )
+    }
+  }
+  // Named explicitly, because a `.ui-datepicker` rule that escaped this file
+  // would repaint the contract form's date fields on a page nobody was
+  // testing.
+  assert.ok(!/(^|[,{}])\s*\.ui-datepicker/.test(css), 'no unscoped .ui-datepicker rule')
+  // The page's rules are plain class selectors, so a scoped descendant
+  // selector already outranks them. Reaching for !important would mean the
+  // scoping was wrong.
+  assert.ok(!css.includes('!important'))
+})
+
+test('every length in the sheet is a rem, and every px is a border', async () => {
+  // Jerico's round-5 call, and the convention this file and the datepicker
+  // sheet both follow: lengths in rem so they track the site's responsive root
+  // font size, borders in px because a hairline is a device-pixel affordance
+  // (at the 12.93px root a 0.0625rem border computes to 0.81px and renders
+  // inconsistently or not at all).
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+
+  // Media query breakpoints are px by definition — they are viewport widths,
+  // not lengths in the layout — so they are excluded before the sweep.
+  const declarations = css.replace(/@media[^{]*\{/g, '')
+  for (const match of declarations.matchAll(/[\w-]+\s*:[^;{}]*?\d*\.?\d+px/g)) {
+    assert.match(
+      match[0],
+      /^border(-top|-right|-bottom|-left)?(-width)?\s*:/,
+      `every px length must be a border: ${match[0].trim()}`,
+    )
+  }
+
+  // And the conversions themselves, so a future edit cannot quietly go back.
+  assert.ok(css.includes('font-size:0.8125rem'), '13px status text')
+  assert.ok(css.includes('box-shadow:0 0 0 0.1875rem'), '3px picker ring')
+  assert.ok(css.includes('padding-left:0.25rem'), '4px weekday inset')
+  assert.ok(css.includes('::-webkit-scrollbar{width:0.1875rem'), '3px scrollbar')
+  assert.ok(css.includes('border-radius:0.1875rem'), '3px scrollbar thumb')
+  // The one px that survives, named so its exemption is deliberate.
+  assert.ok(css.includes('border-top:1px solid #eee'), 'the footer hairline stays px')
+})
+
+test('the sheet gives the month picker its ring and straightens the weekday row', async () => {
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const DIALOG = '[data-modal-target="popup-booking"]'
+
+  // The card, as Jerico tuned it in the browser: the 3px #eee ring and the
+  // #eee fill, and nothing else. Earlier rounds tried a flat picker and then a
+  // 1px #d8d8d8 outline; this ring is what he meant by an outline all along.
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker.ui-widget-content{box-shadow:0 0 0 0.1875rem var(--Fill-Primary, #eee);background:#eee}'))
+  // The page's original card also carried a `0 4px 8px` drop shadow. It is
+  // deliberately NOT restored — his capture has the ring alone.
+  assert.ok(!/0 4px 8px/.test(css), 'no drop shadow')
+  // No border and no container padding, so the page's own zeroed border stands
+  // and the header band sits flush. The pull-back rule that compensated for
+  // that padding is gone with it.
+  assert.ok(!/\.ui-datepicker\.ui-widget-content\{[^}]*border:/.test(css))
+  assert.ok(!/\.ui-datepicker\.ui-widget-content\{[^}]*padding:/.test(css))
+  assert.ok(!css.includes('.ui-datepicker .ui-datepicker-header'))
+
+  // The weekday labels are left-aligned below the tablet breakpoint while the
+  // dates are centred, so the header row sits 9.6-14.3px left of its own
+  // columns, unevenly. Centring is the fix, and it survives the re-theme.
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th{text-align:center}'))
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th:first-child{padding-left:0.25rem}'))
+  assert.ok(css.includes(DIALOG + ' .ui-datepicker thead th:last-child{padding-right:0.25rem}'))
+})
+
+test('the empty state keeps its bottom breathing room at both widths', async () => {
+  // One mechanism now, at both widths: the FOOTER's own bottom padding. The
+  // empty path appends the status and the footer straight to the mount with no
+  // shell in between, so the footer is the last thing in it either way.
+  //
+  // Earlier rounds put this on the mount, for mobile only. That rule is gone:
+  // with the footer padded on its bottom edge at both widths it would double,
+  // and the mount would be paying for spacing it no longer owns.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
+  assert.ok(mobileBlock.includes('"footer"]{order:4}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-footer="fallback"]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+
+  const desktopBlock = css.split('@media (min-width:768px){')[1]
+  assert.ok(desktopBlock.includes('[data-paid-calendar-footer="fallback"]{border-top:1px solid #eee;padding:1.25rem'))
+
+  // No mount PADDING anywhere. The mount does carry rules — the banner's
+  // min-height and the empty state's column — so this asks about the
+  // declaration rather than about the selector.
+  for (const rule of css.split('}')) {
+    if (!rule.includes('[nylas-container]')) continue
+    assert.ok(!/padding/.test(rule), `no mount padding: ${rule}`)
+  }
+})
+
+test('the interior frame is the only inset at mobile too', async () => {
+  // Jerico specced these element by element at 400px. The desktop asymmetry
+  // does not transfer: stacked, there is no column gap to hand the inner edges
+  // to, so every element repeats the horizontal frame and only the month opens
+  // the top.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
+
+  assert.ok(mobileBlock.includes('"month"]{order:1;padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('"times"]{order:3;padding:0 1.25rem 1.25rem}'))
+  // The floating footer is framed on all four sides, not three: its top edge
+  // is where the chips pass behind it, so nothing above can space it. It is a
+  // fallback-row rule, because padding is appearance and an authored row
+  // paints itself.
+  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*padding:1\.25rem\}/)
+  assert.ok(mobileBlock.includes('"footer"]{order:4}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-footer="fallback"]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+
+  // The stacked footer carries the same hairline as the desktop band. It was
+  // deliberately absent while the footer sat in flow — a row gap AND a rule
+  // read as two dividers — and Jerico added it once the footer began to float,
+  // where the edge is what separates it from the chips passing behind.
+  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*border-top:1px solid #eee/)
+
+  // Desktop is untouched by all of this — the two blocks cannot both match.
+  const desktopBlock = css.split('@media (min-width:768px){')[1]
+  assert.ok(desktopBlock.includes('"month"]{grid-area:month;align-self:start;padding:1.25rem 0 1.25rem 1.25rem}'))
+})
+
+test('the footer stacks primary-first below the site mobile breakpoint', async () => {
+  const { document, footer } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROW = '[data-modal-target="popup-booking"] [data-paid-calendar-footer="fallback"]'
+
+  assert.ok(css.includes('@media (max-width:767.98px){'))
+  assert.ok(css.includes(ROW + '{flex-direction:column;align-items:stretch}'))
+  // Primary on top, matching the profile's own vertical CTA rail.
+  assert.ok(css.includes(ROW + ' [data-paid-calendar-element="confirm"]{order:-1}'))
+
+  // Every stacking rule that reaches a footer keys on the engine's own row,
+  // never on an authored one — an authored footer places its own children by
+  // contract. Two rules are exempt and both are named here: the mount's column
+  // stacks the empty state's contents, and the shell's stacks the panel
+  // itself. Neither reaches into a footer.
+  assert.equal(footer.getAttribute('data-paid-calendar-footer'), 'fallback')
+  for (const line of css.split('}')) {
+    if (!line.includes('flex-direction:column') && !line.includes('order:-1')) continue
+    if (line.includes('[nylas-container]')) continue
+    if (line.includes('"shell"]')) continue
+    assert.ok(line.includes('[data-paid-calendar-footer="fallback"]'), line)
+  }
+})
+
+test('an authored footer row is labelled as such and dodges the stacking rules', async () => {
+  const container = bookingMount()
+  container.setAttribute('data-booking-footer-class', 'call-sched_button-group')
+  const { footer } = await mountFooterFixture({ container })
+  assert.equal(footer.getAttribute('data-paid-calendar-footer'), 'authored')
+  assert.equal(footer.getAttribute('class'), 'call-sched_button-group')
+  // The shared action spacing is the only thing written on an authored row,
+  // and it is placement between the two controls rather than appearance.
+  assert.deepEqual(Object.keys(footer.style), ['columnGap'])
+  assert.equal(footer.style.columnGap, '16px')
+})
+
+test('the desktop footer is a full-width band under both columns', async () => {
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+
+  assert.ok(css.includes('@media (min-width:768px){'))
+  // The footer spans BOTH columns on its own row, so the buttons anchor to the
+  // bottom of the whole panel rather than the bottom of the right column.
+  // Replayed verbatim, Jerico's `position:absolute` version overlaps the times
+  // by 78px and the month by 110px, and on mobile it covers the slots so
+  // completely that a slot cannot be clicked at all.
+  assert.match(css, /grid-template-areas:"month timezone" "month times" "footer footer"/)
+  assert.match(css, /grid-template-rows:min-content minmax\(0,1fr\) min-content;/)
+  // Two rows, not three: the status became a banner anchored to the modal's
+  // body, so a `status` grid area here would be a track nothing lands in.
+  assert.ok(!/"status status"/.test(css))
+  assert.ok(!/"status"\]\{grid-area/.test(css))
+  // The footer stays in flow. The banner is the ONE absolutely positioned
+  // thing in this sheet, and it is the status, never the footer: replayed
+  // verbatim, an absolute footer overlaps the times by 78px and blocks every
+  // slot tap on mobile.
+  for (const rule of css.split('}')) {
+    if (!rule.includes('position:absolute')) continue
+    assert.ok(rule.includes('"status"]'), `only the status may leave the flow: ${rule}`)
+  }
+
+  // The containment, measured rather than reasoned: a flexible track in an
+  // auto-height grid is sized to max-content, so `minmax(0,1fr)` alone let the
+  // times row reach 397px against the month's 305px and grew the modal from
+  // 438px to 601px. `height:0` takes the times out of track sizing so the
+  // month decides the row height; `min-height:100%` refills the area.
+  assert.match(css, /"times"\]\{grid-area:times;height:0;min-height:100%;align-content:start;/)
+  // `align-content:start` keeps the chips compact — a stretched grid inflated
+  // four chips to 113px against 42.7px on a busy day.
+  assert.match(css, /"times"\]\{[^}]*align-content:start/)
+
+  // The 1.25rem interior frame. Both columns now pad their bottom edge too, so
+  // they end level above the footer's rule.
+  assert.ok(css.includes(ROLE + '"month"]{grid-area:month;align-self:start;padding:1.25rem 0 1.25rem 1.25rem}'))
+  // The times no longer pad their TOP: the timezone caption above owns that
+  // edge of the frame, and padding both would put a whole frame between the
+  // caption and the first chip.
+  assert.match(css, /"times"\]\{[^}]*padding:0 1\.25rem 1\.25rem 0\}/)
+
+  // Zero row gap: the band's hairline and its own padding do the separating.
+  // A gap AND a rule would read as two dividers.
+  assert.match(css, /"shell"\]\{column-gap:2rem;row-gap:0;/)
+  assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer}'))
+})
+
+test('the authored step stops padding the calendar at every width', async () => {
+  // `.call-details_layout` is the wrapper the mount sits in, and the site pads
+  // it by `--_spacing---spacer--spacing-14` (32.3px measured at 1280, 15.4px
+  // at 375). With the interior frame doing that job on the elements
+  // themselves, that padding was a second frame outside the first: the
+  // footer's hairline stopped short of both modal edges, the banner could not
+  // run the panel's full width, and on a phone the two insets stacked.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const D = '[data-modal-target="popup-booking"]'
+
+  // Unconditional, so neither breakpoint can be left with a doubled inset.
+  assert.ok(css.split('@media')[0].includes(D + ' [data-paid-calendar-step]{padding:0;overflow:visible}'))
+  assert.ok(!css.split('@media (min-width:768px){')[1].includes('data-paid-calendar-step'))
+  // NEVER on the bare class. The dialog has four `.call-details_layout`
+  // wrappers — calendar, success, confirmed, payment-methods — and a rule on
+  // the class stripped the authored padding from all of them.
+  assert.ok(!/\.call-details_layout/.test(css), 'the class must not be styled')
+
+  // Specificity rather than `!important`, which this sheet forbids: the site's
+  // own declarations are flat `.call-details_layout` class selectors at
+  // (0,1,0), and the dialog attribute makes this (0,2,0).
+  assert.ok(!/\.call-details_layout[^}]*!important/.test(css))
+})
+
+test('only the calendar\'s own step wrapper loses its padding', async () => {
+  // The booking dialog has FOUR `.call-details_layout` wrappers — the calendar
+  // step, success, confirmed and payment-methods. A rule on the bare class
+  // stripped the authored padding from every one of them, which is how the
+  // success step ended up flush against the modal's edges. The engine marks
+  // the one ancestor it actually mounts into.
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking')
+  const calendarStep = new CalendarElement('div')
+  calendarStep.setAttribute('class', 'call-details_layout height-auto')
+  const otherStep = new CalendarElement('div')
+  otherStep.setAttribute('class', 'call-details_layout height-auto')
+  const mount = new CalendarElement('div')
+  mount.setAttribute('nylas-container', '')
+  calendarStep.appendChild(mount)
+  dialog.appendChild(calendarStep)
+  dialog.appendChild(otherStep)
+
+  await mountFooterFixture({ container: mount })
+  assert.equal(calendarStep.getAttribute('data-paid-calendar-step'), '', 'the calendar step is marked')
+  assert.equal(otherStep.getAttribute('data-paid-calendar-step'), null, 'the other steps are not')
+})
+
+test('the step wrapper is marked only on the booking surface', async () => {
+  // Off it there is no sheet to read the marker, and that surface has to stay
+  // as it shipped.
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const step = new CalendarElement('div')
+  step.setAttribute('class', 'call-details_layout')
+  const host = new CalendarElement('div')
+  host.setAttribute('booking-reschedule-calendar', '')
+  step.appendChild(host)
+  reschedule.appendChild(step)
+  await mountFooterFixture({ container: host })
+  assert.equal(step.getAttribute('data-paid-calendar-step'), null)
+})
+
+test('an authored footer row gets placement from the sheet and nothing else', async () => {
+  // The documented contract: an authored `data-booking-footer-class` row
+  // places its own children and paints itself. Appearance rules on the role
+  // selector reached authored rows at winning specificity and broke that.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const PLACEMENT = /^(grid-area|order)$/
+
+  for (const chunk of css.split('}')) {
+    const [selector, body] = chunk.split('{')
+    if (!selector || !body) continue
+    if (!/\[data-paid-calendar-element="footer"\]\s*$/.test(selector.trim())) continue
+    for (const declaration of body.split(';')) {
+      if (!declaration.trim()) continue
+      const property = declaration.split(':')[0].trim()
+      assert.ok(
+        PLACEMENT.test(property),
+        `an authored row would inherit this: ${selector.trim()}{${declaration.trim()}}`,
+      )
+    }
+  }
+
+  // And the appearance really is still applied, to the engine's own row.
+  assert.match(css, /\[data-paid-calendar-footer="fallback"\]\{[^}]*border-top/)
+  assert.match(css, /\[data-paid-calendar-footer="fallback"\]\{[^}]*position:sticky/)
+})
+
+test('a booking in flight takes the back control out of the pointer path', async () => {
+  // Disabling the inner button is not enough. The WRAP carries
+  // `data-modal-close`, and the modal embed resolves it with `closest()` from
+  // the click target, so the border around a disabled button still closed the
+  // dialog with the request open — losing the surface the confirmation was
+  // about to land on.
+  let release
+  const { document, backParts, back, confirmParts, footer } = await mountFooterFixture({
+    onConfirm: () => new Promise((resolve) => { release = resolve }),
+  })
+  const css = document.head.children[0].textContent
+  assert.ok(css.includes('[data-paid-calendar-element="back"][data-paid-calendar-busy]{pointer-events:none}'))
+
+  const slot = footer.parentElement.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+    .children[0]
+  slot.listeners.click()
+  assert.equal(back.getAttribute('data-paid-calendar-busy'), null)
+
+  const pending = confirmParts.button.listeners.click()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(back.getAttribute('data-paid-calendar-busy'), '', 'the wrap stops taking clicks')
+  assert.equal(backParts.button.disabled, true)
+  // The theme swaps too, so it READS disabled rather than just refusing.
+  assert.equal(back.getAttribute('data-button-theme'), 'disabled')
+
+  release()
+  await pending
+  assert.equal(back.getAttribute('data-paid-calendar-busy'), null, 'and it comes back')
+  assert.equal(backParts.button.disabled, false)
+  assert.equal(back.getAttribute('data-button-theme'), 'black')
+})
+
+test('a status message scrolls itself into view', async () => {
+  // The banner is absolute against the modal's body, which is also what
+  // scrolls on a phone — so it paints at the top of the CONTENT, not the top
+  // of what the visitor can see. Measured from the bottom of a busy day's
+  // scroll: a failure message rendered 487px above the viewport and nothing
+  // changed on screen.
+  const scrollport = new CalendarElement('div')
+  scrollport.scrollHeight = 1245
+  scrollport.clientHeight = 726
+  scrollport.scrollTop = 519
+
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking')
+  const mount = new CalendarElement('div')
+  mount.setAttribute('nylas-container', '')
+  scrollport.appendChild(mount)
+  dialog.appendChild(scrollport)
+
+  const { confirmParts, footer } = await mountFooterFixture({
+    container: mount,
+    onConfirm: async () => { throw new Error('booking refused') },
+  })
+  const slot = footer.parentElement.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+    .children[0]
+  slot.listeners.click()
+  assert.equal(
+    scrollport.scrollTop, 519,
+    'clearing the status must NOT scroll — that would yank a visitor browsing slots',
+  )
+
+  await confirmParts.button.listeners.click()
+  assert.equal(scrollport.scrollTop, 0, 'a failure brings its banner into view')
+})
+
+test('empty availability scrolls its status banner into view', async () => {
+  const scrollport = new CalendarElement('div')
+  scrollport.scrollHeight = 1245
+  scrollport.clientHeight = 726
+  scrollport.scrollTop = 519
+
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking')
+  const mount = new CalendarElement('div')
+  mount.setAttribute('nylas-container', '')
+  scrollport.appendChild(mount)
+  dialog.appendChild(scrollport)
+
+  await mountFooterFixture({ container: mount, slots: [] })
+  assert.equal(scrollport.scrollTop, 0)
+})
+
+test('a status message never scrolls a box outside the booking dialog', async () => {
+  // The desktop shape: nothing inside the dialog overflows, because the times
+  // list scrolls inside its own grid cell precisely so the panel never grows.
+  // The first scroller above the banner is then the page itself, and scrolling
+  // that would yank the hire profile behind the open modal to the top while
+  // the banner was already fully in view.
+  const page = new CalendarElement('html')
+  page.scrollHeight = 4820
+  page.clientHeight = 900
+  page.scrollTop = 1640
+
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking')
+  const mount = new CalendarElement('div')
+  mount.setAttribute('nylas-container', '')
+  dialog.appendChild(mount)
+  page.appendChild(dialog)
+
+  await mountFooterFixture({ container: mount, slots: [] })
+  assert.equal(page.scrollTop, 1640, 'the page behind the modal must not move')
+})
+
+test('the stacked footer floats, and only because the shell is a flex column', async () => {
+  // On a phone the whole panel scrolls inside the modal's body, so the buttons
+  // would otherwise sit below the fold on a busy day. Sticky pins them to the
+  // bottom of that scrollport while keeping them IN FLOW, which is what
+  // reserves their slot at the end and stops the last chips landing under
+  // them — the "space at the bottom" in Jerico's note, structural rather than
+  // a guessed offset.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
+
+  assert.ok(mobileBlock.includes('"footer"]{order:4}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-footer="fallback"]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+
+  /* The flex column is load-bearing, not a refactor. A GRID item's containing
+     block is its own grid area, so a footer on the last row has zero room to
+     travel and sticky does nothing whatsoever; a flex item's containing block
+     is the whole shell. Measured at 400 on a busy day: 1245px of shell inside
+     a 726px scrollport, so a grid would have thrown away 519px of travel.
+     Do not "simplify" this back to grid rows. */
+  assert.ok(mobileBlock.includes('"shell"]{display:flex;flex-direction:column}'))
+  assert.ok(!mobileBlock.includes('grid-template-areas'), 'a grid here kills the sticky')
+  assert.ok(!/"footer"\]\{[^}]*grid-area/.test(mobileBlock))
+
+  // An opaque fill, because chips scroll underneath and would otherwise show
+  // through the gap between the two buttons.
+  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*background:#fff/)
+
+  // The hairline the desktop band carries, which Jerico asked for on the
+  // stacked footer too once he had seen it float — a floating surface wants an
+  // edge. It stays px, like every other border in this sheet.
+  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*border-top:1px solid #eee/)
+
+  // Desktop keeps the grid and the always-visible band: nothing sticks there,
+  // because the times scroll inside their own cell instead.
+  const desktopBlock = css.split('@media (min-width:768px){')[1]
+  assert.ok(!desktopBlock.includes('position:sticky'))
+  assert.match(desktopBlock, /grid-template-areas:"month timezone" "month times" "footer footer"/)
+})
+
+test('the timezone selector sits above the slots at both widths', async () => {
+  // The shared engine renders a note naming the clock the times are shown in,
+  // and appends it to the shell with no placement of its own. Left alone on
+  // desktop it auto-placed into an implicit row BELOW the footer band, at half
+  // the panel width and flush to the modal's left edge; on a phone it ran
+  // full-bleed while every neighbour was inset. Jerico placed it at the top of
+  // the times area, above the first row of chips, at both widths.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+
+  // Desktop: its own area at the top of the right column, with the month
+  // spanning down beside it so the panel does not grow by the caption.
+  const desktopBlock = css.split('@media (min-width:768px){')[1]
+  assert.ok(desktopBlock.includes(ROLE + '"timezone-control"]{grid-area:timezone;padding:1.25rem 1.25rem 1rem 0}'))
+  assert.match(desktopBlock, /grid-template-areas:"month timezone" "month times"/)
+
+  // Mobile: it has to be MOVED, not just padded. The engine appends it FIRST
+  // in the shell, ahead of the month (see the shell order pinned above), so
+  // document order alone would render it above the calendar; `order:2` drops
+  // it between the month and the chips. The inset is the frame every
+  // neighbour carries — and it must be the frame, not a bleed.
+  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
+  assert.ok(mobileBlock.includes(ROLE + '"timezone-control"]{order:2;padding:0 1.25rem 1rem}'))
+  // `order` only applies to flex items, so the column is load-bearing for this
+  // placement too, not only for the sticky footer.
+  assert.ok(mobileBlock.includes('"shell"]{display:flex;flex-direction:column}'))
+
+  // The control's internal label/select layout belongs to the sheet on the
+  // booking surface, because its former inline placement writes overrode the
+  // grid and flex placement rules above.
+  const beforeMedia = css.split('@media')[0]
+  assert.ok(beforeMedia.includes(ROLE + '"timezone-control"]{display:grid;gap:0.375rem}'))
+
+  // Everything else about its appearance stays the engine's. Those are inline
+  // declarations and inline outranks every rule here, so asking for them would
+  // be a rule that silently loses.
+  for (const rule of css.split('}')) {
+    if (!rule.includes('"timezone-control"]')) continue
+    assert.ok(!/(^|;|\{)\s*(color|margin|background)\s*:/.test(rule), rule)
+  }
+})
+
+test('the timezone control defers placement styles only on the booking surface', async () => {
+  const onSurface = await mountFooterFixture()
+  const control = onSurface.shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone-control')
+  assert.ok(control)
+  assert.deepEqual(Object.keys(control.style), [], 'the sheet owns its placement here')
+
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  host.setAttribute('booking-reschedule-calendar', '')
+  reschedule.appendChild(host)
+  const away = await mountFooterFixture({ container: host })
+  const awayControl = away.shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'timezone-control')
+  assert.ok(awayControl)
+  assert.deepEqual(
+    Object.keys(awayControl.style),
+    ['display', 'gap', 'justifySelf', 'width'],
+    'the dashboard keeps its inline control placement',
+  )
+  assert.equal(awayControl.style.width, 'min(100%, 320px)')
+})
+
+test('the timezone selector cannot come back inside the scrolling list', async () => {
+  // It is a sibling of the times, not a child, and the placement keeps it
+  // that way: the chips scroll under a caption that stays put, which is what a
+  // label for the whole list wants. A `grid-area:times` here would put it in
+  // the scroll box and send it off the top on the first wheel.
+  const { document, shell } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === name)
+  const control = role('timezone-control')
+  assert.ok(control, 'the engine renders the selector')
+  // The DOM groups it under the month, which is what gives the dashboard its
+  // left column. That wrapper is collapsed with `display:contents` here, so
+  // what the sheet places is a shell grid item beside the times.
+  assert.equal(control.parentElement, role('calendar-panel'))
+  assert.ok(
+    !role('times').querySelectorAll('[data-paid-calendar-element]').includes(control),
+    'a sibling of the times, never a child',
+  )
+  for (const rule of css.split('}')) {
+    if (!rule.includes('"timezone-control"]')) continue
+    assert.ok(!/grid-area:times\b/.test(rule), rule)
+  }
+})
+
+test('the day chips fill their cell, scoped so other date pickers do not', async () => {
+  // Jerico made this edit on the page's GLOBAL datepicker sheet. Shipped
+  // globally it would resize the contract form's date fields too, so it is
+  // re-scoped here. The page's own rule and its mobile 2.5rem override are both
+  // (0,1,2); under the dialog attribute this is (0,2,2) and wins at both widths
+  // without `!important`.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const D = '[data-modal-target="popup-booking"]'
+  assert.ok(css.includes(D + ' .ui-datepicker td a,' + D + ' .ui-datepicker td span{width:100%}'))
+  // Height is left to the page — only the width was his edit.
+  assert.ok(!/td a,[^{]*td span\{[^}]*height/.test(css))
+})
+
+test('the status line hides only when it has nothing to say', async () => {
+  // Jerico set a blanket `display:none` inline on it. The same element carries
+  // "No available times were found in the next 14 days.", the sending state and
+  // every booking error, so a blanket rule would silence all of them. `:empty`
+  // is the case he was actually looking at.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  assert.ok(css.includes('[data-paid-calendar-element="status"]:empty{display:none}'))
+  assert.ok(!/"status"\]\{[^}]*display:none/.test(css), 'never a blanket hide')
+  // `:empty` has to come out ahead of the base banner rule, and it does it on
+  // specificity rather than with `!important` — which the containment test
+  // forbids anyway.
+  const base = css.split('"status"]{')[1].split('}')[0]
+  assert.ok(base.includes('position:absolute'), 'the base rule is the banner one')
+})
+
+test('the status is a banner across the top of the modal body', async () => {
+  // Jerico's round 3, and a change of kind: the status stops being a line
+  // under the buttons and becomes a band over the top of the panel. Replaying
+  // his capture verbatim already lands it there — the static position of an
+  // absolutely positioned grid child is the grid container's content origin —
+  // so the offsets here only straighten what that leaves ragged. His band is
+  // 100% of a container it is not aligned to, which insets it 32px on the left
+  // and overhangs the right edge by the same 32px.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const D = '[data-modal-target="popup-booking"]'
+  const ROLE = D + ' [data-paid-calendar-element='
+
+  assert.ok(css.includes(
+    ROLE + '"status"]{position:absolute;top:0;left:0;right:0;z-index:2;'
+      + 'margin:0;padding:1rem;font-size:0.8125rem;background:#434B43;color:#fff}',
+  ))
+  // The modal's BODY is the containing block, so the band lands under the
+  // header bar and runs the panel's full width. `.modal_content` would put it
+  // over the header; the mount would inset it by the authored step's 2.5rem.
+  assert.ok(css.includes(D + ' .modal_content-layout{position:relative}'))
+  assert.ok(!css.includes('.modal_content{position:relative}'))
+  // Every one of those rules is inside the dialog scope, which is what keeps a
+  // `position:relative` off the dashboard's own modal body.
+  assert.ok(css.includes(D + ' .modal_content-layout'))
+})
+
+test('only a failed booking wears the red banner', async () => {
+  // His capture is `#DD5555` taken on the booking-failed state. The element
+  // carries two other strings — the empty-availability notice and "Sending
+  // your request..." — and neither is a failure, so they take the dark olive
+  // notification fill rather than an alarm colour. Jerico picked that pair in
+  // round 4, after `#eee` on `#1f211d` read as a panel at banner size.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+
+  assert.ok(css.includes(
+    ROLE + '"status"][data-paid-calendar-status="error"]{background:#DD5555;color:#fff}',
+  ))
+  // Both neutral messages share one rule, so they cannot drift apart: the tone
+  // attribute only ever selects the red away from this default.
+  assert.ok(!/status="progress"/.test(css))
+  assert.ok(!/status="empty"/.test(css))
+  // Red is reachable ONLY through the error tone. A red in the base rule would
+  // paint the progress notice as a failure.
+  for (const rule of css.split('}')) {
+    if (!/DD5555/i.test(rule)) continue
+    assert.ok(rule.includes('[data-paid-calendar-status="error"]'), rule)
+  }
+})
+
+test('each status message is tagged with the tone that colours it', async () => {
+  // The tone is the only thing telling the three strings apart, so every write
+  // site has to set it and every clear has to drop it.
+  const failing = await mountFooterFixture({
+    onConfirm: async () => { throw new Error('booking refused') },
+  })
+  const times = failing.shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+
+  assert.equal(failing.status.textContent, '')
+  assert.equal(failing.status.getAttribute('data-paid-calendar-status'), null)
+
+  times.children[0].listeners.click()
+  assert.equal(failing.status.getAttribute('data-paid-calendar-status'), null, 'still nothing to say')
+
+  await failing.confirmParts.button.listeners.click()
+  assert.equal(failing.status.textContent, 'We could not book this call. Please try again.')
+  assert.equal(failing.status.getAttribute('data-paid-calendar-status'), 'error')
+
+  // Picking another slot clears the failure, tone and all — a stale red band
+  // over a fresh selection would be the modal contradicting itself.
+  times.children[0].listeners.click()
+  assert.equal(failing.status.textContent, '')
+  assert.equal(failing.status.getAttribute('data-paid-calendar-status'), null)
+
+  // In flight, and not red: this one is a progress notice.
+  let release
+  const pending = await mountFooterFixture({
+    onConfirm: () => new Promise((resolve) => { release = resolve }),
+  })
+  const pendingTimes = pending.shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+  pendingTimes.children[0].listeners.click()
+  const inFlight = pending.confirmParts.button.listeners.click()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(pending.status.textContent, 'Sending your request...')
+  assert.equal(pending.status.getAttribute('data-paid-calendar-status'), 'progress')
+  release()
+  await inFlight
+
+  // And the empty-availability notice, which is not a failure either.
+  const empty = await mountFooterFixture({ slots: [] })
+  assert.equal(empty.status.textContent, 'No available times were found in the next 14 days.')
+  assert.equal(empty.status.getAttribute('data-paid-calendar-status'), 'empty')
+})
+
+test('the banner leaves the status with no inline styles to outrank the sheet', async () => {
+  // An inline declaration beats any rule in the injected sheet whatever its
+  // specificity, so the grey line this element used to be written as would
+  // have quietly won the banner's own colour back.
+  const { status } = await mountFooterFixture()
+  assert.deepEqual(Object.keys(status.style), [])
+
+  // Off the booking surface there is no sheet, so the inline look is the only
+  // look there is and it stays exactly as it shipped — tone attribute included,
+  // which that surface has nothing to read.
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  host.setAttribute('booking-reschedule-calendar', '')
+  reschedule.appendChild(host)
+  const away = await mountFooterFixture({ container: host, slots: [] })
+  assert.equal(away.status.style.color, '#6f746d')
+  assert.equal(away.status.style.fontSize, '13px')
+  assert.equal(away.status.style.margin, '0')
+  assert.equal(away.status.textContent, 'No available times were found in the next 14 days.')
+  assert.equal(away.status.getAttribute('data-paid-calendar-status'), null)
+})
+
+test('the empty state holds itself open under the banner', async () => {
+  // Jerico's own min-height and his own reason: with the banner out of flow
+  // the empty-availability panel has only a button left to set its height, so
+  // it would collapse to that and the banner would cover it. The mount then
+  // has to push what it does have to the BOTTOM, or the footer sits under the
+  // band at exactly the width where the message wraps.
+  const { document } = await mountFooterFixture({ slots: [] })
+  const css = document.head.children[0].textContent
+  const D = '[data-modal-target="popup-booking"]'
+
+  assert.ok(css.includes(
+    D + ' [nylas-container][data-paid-calendar-state="ready"],'
+      + D + ' [nylas-container][data-paid-calendar-state="empty"]{min-height:28.125rem}',
+  ))
+  // NOT unconditional: `loading` and `error` render one line of text with no
+  // shell and no footer, and inherited a 450px void underneath it.
+  assert.ok(!/\[nylas-container\]\{min-height/.test(css))
+  assert.ok(css.includes(
+    D + ' [nylas-container][data-paid-calendar-state="empty"]'
+      + '{display:flex;flex-direction:column;justify-content:flex-end}',
+  ))
+  // Both live outside the media queries: the empty state can be reached at
+  // either width and collapses at both.
+  const beforeMedia = css.split('@media')[0]
+  assert.ok(beforeMedia.includes('min-height:28.125rem'))
+  assert.ok(beforeMedia.includes('justify-content:flex-end'))
+})
+
+test('a second mount reuses the stylesheet rather than stacking copies', async () => {
+  const container = bookingMount()
+  const first = await mountFooterFixture({ container })
+  assert.equal(first.document.head.children.length, 1)
+  // Each mount gets a fresh document stub, so re-running the injector against
+  // the SAME document is what has to be proven inert.
+  api.ensureBookingCalendarLayout(first.document)
+  api.ensureBookingCalendarLayout(first.document)
+  assert.equal(first.document.head.children.length, 1)
+})
+
+test('the layout injector is inert on a document that cannot host it', async () => {
+  // The dashboard controller and the unit fixtures both mount against reduced
+  // documents. A throw here would take the whole calendar down with it.
+  assert.doesNotThrow(() => api.ensureBookingCalendarLayout(undefined))
+  assert.doesNotThrow(() => api.ensureBookingCalendarLayout({}))
+  assert.doesNotThrow(() => api.ensureBookingCalendarLayout({
+    createElement() { return new CalendarElement('style') },
+    getElementById() { return null },
+  }))
+})
+
 test('back is disabled while a booking request is in flight', async () => {
   // Back closes the dialog. Live during the request, one stray click wipes the
   // surface the confirmation was about to land on while the booking still goes
-  // through server-side — a call the visitor never sees.
+  // through server-side — a call the visitor never sees. The disable lands on
+  // the inner button, which is the element that actually takes the click.
   let release
-  const { footer, back, confirm } = await mountFooterFixture({
+  const { footer, confirm, backParts, confirmParts } = await mountFooterFixture({
     onConfirm: () => new Promise((resolve) => { release = resolve }),
   })
   const slot = footer.parentElement.querySelectorAll('[data-paid-calendar-slot]')[0]
 
   slot.listeners.click()
-  assert.equal(confirm.disabled, false)
-  assert.equal(back.disabled, false)
+  assert.equal(confirmParts.button.disabled, false)
+  assert.equal(backParts.button.disabled, false)
 
-  const pending = confirm.listeners.click()
+  const pending = confirmParts.button.listeners.click()
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(confirm.disabled, true)
-  assert.equal(back.disabled, true, 'back must not close the dialog mid-request')
+  assert.equal(confirmParts.button.disabled, true)
+  assert.equal(confirm.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(backParts.button.disabled, true, 'back must not close the dialog mid-request')
 
   release()
   await pending
-  assert.equal(back.disabled, false, 'and it has to come back after the request')
+  assert.equal(backParts.button.disabled, false, 'and it has to come back after the request')
+  // The slot is still selected, so the confirm returns to live in both halves.
+  assert.equal(confirmParts.button.disabled, false)
+  assert.equal(confirm.getAttribute('data-button-theme'), 'black')
 })
 
 test('a synthesized booking close never lands on the rendered back control', async () => {
@@ -1058,9 +2057,7 @@ test('a stale Paid availability response preserves the newer shared surface', as
   const container = new CalendarElement('div')
   let resolveAvailability
   let current = true
-  global.document = {
-    createElement(tagName) { return new CalendarElement(tagName) },
-  }
+  global.document = calendarDocument()
   global.jQuery = undefined
   global.xanoAuthFetch = async () => new Promise((resolve) => {
     resolveAvailability = () => resolve(response({

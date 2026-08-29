@@ -2040,7 +2040,10 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
       '[data-booking-pass-through]{visibility:hidden!important}' +
       '[data-booking-pass-through] *{visibility:hidden!important}' +
       '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"])' +
-      ' [data-booking-back]{display:none!important}',
+      ' [data-booking-back]{display:none!important}' +
+      '[data-modal-target="popup-booking"]' +
+      ' [data-booking-back]:not([data-paid-calendar-element="back"])' +
+      '{display:none!important}',
   )
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
@@ -5207,6 +5210,15 @@ const PASS_THROUGH = 'data-booking-pass-through'
  * arrow carries the attributes ticket 07 specifies, so the fixture is the spec
  * rather than a convenient shape.
  */
+/**
+ * A booking dialog, optionally carrying the calendar footer's back control.
+ *
+ * `data-paid-calendar-element="back"` is what makes it that control rather
+ * than the dialog's old header one: the calendar engine stamps it on the wrap
+ * it builds, and the guard stylesheet now hides every `[data-booking-back]`
+ * that lacks it. A stand-in without the marker would model the header control
+ * and be hidden on every entry.
+ */
 function addBookingDialog(page, { withBackArrow = true } = {}) {
   const dialog = makeElement('dialog', { 'data-modal-target': 'popup-booking' })
   let back = null
@@ -5217,6 +5229,7 @@ function addBookingDialog(page, { withBackArrow = true } = {}) {
         'data-booking-back': '',
         'data-modal-close': '',
         'data-modal-trigger': 'popup-booking-main',
+        'data-paid-calendar-element': 'back',
       },
       ['clickable-text-link'],
     )
@@ -5291,6 +5304,17 @@ function backArrowShown(context, dialog, control) {
     'the rule that hides the arrow must be present',
   )
   assert.equal(control.style.display, undefined, 'display is the stylesheet\'s to set, not JS\'s')
+  // The second rule hides every back control the calendar engine did not
+  // build, whatever the entry. Applied here for the same reason as the first:
+  // this DOM has no CSS engine, so the check has to run the rules itself.
+  assert.ok(
+    guard.textContent.includes(
+      '[data-modal-target="popup-booking"]' +
+        ' [data-booking-back]:not([data-paid-calendar-element="back"]){display:none!important}',
+    ),
+    'the rule that hides the header control must be present',
+  )
+  if (control.getAttribute('data-paid-calendar-element') !== 'back') return false
   return dialog.getAttribute('data-booking-entry') === 'chooser'
 }
 
@@ -5524,6 +5548,7 @@ test('a back control rendered after the entry stamp is still stamped by the obse
     'data-booking-back': '',
     'data-modal-close': '',
     'data-modal-trigger': 'popup-booking-main',
+    'data-paid-calendar-element': 'back',
   })
   booking.appendChild(back)
   assert.equal(back.getAttribute('aria-hidden'), null, 'nothing has answered for it yet')
@@ -5533,6 +5558,44 @@ test('a back control rendered after the entry stamp is still stamped by the obse
   }
   assert.equal(backArrowShown(context, booking, back), true)
   assert.equal(back.getAttribute('aria-hidden'), 'false')
+})
+
+test('a back control in the dialog header is hidden even on a chooser entry', async () => {
+  // Jerico's round-3 call: the calendar's footer renders the real Back as the
+  // site's button component, so a second control in the nav is a duplicate.
+  // Both carry `data-booking-back`, which is why the rule cannot key on that
+  // attribute alone — only the footer's wrap is marked by the engine that
+  // builds it.
+  const page = makePage()
+  const { dialog: booking, back: footerBack } = addBookingDialog(page)
+  const headerBack = makeElement(
+    'a',
+    {
+      'data-booking-back': '',
+      'data-modal-close': '',
+      'data-modal-trigger': 'popup-booking-main',
+    },
+    ['clickable-text-link'],
+  )
+  booking.appendChild(headerBack)
+  page.bookingButton.click = () => { page.bookingDialog.open = true }
+  page.freeModalCta.click = () => { page.bookingDialog.open = false }
+  const context = readyFreeContext(page)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  page.freeModalCta.listeners.click[0](spyEvent().event)
+  assert.equal(booking.getAttribute('data-booking-entry'), 'chooser')
+
+  // The entry that shows the footer's control is exactly the entry that must
+  // still hide the header's.
+  assert.equal(backArrowShown(context, booking, footerBack), true)
+  assert.equal(footerBack.getAttribute('aria-hidden'), 'false')
+  assert.equal(backArrowShown(context, booking, headerBack), false)
+  assert.equal(headerBack.getAttribute('aria-hidden'), 'true')
+  // Display stays the stylesheet's, for the header control too.
+  assert.equal(headerBack.style.display, undefined)
 })
 
 test('the availability gate leaves the in-dialog back control alone', async () => {

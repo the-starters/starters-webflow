@@ -310,10 +310,128 @@ the calendar mounts into `[nylas-container]`, which every reset of the booking
 surface clears, so an authored element inside it would not survive the first
 open. The engine builds it only when the mount resolves inside the booking
 dialog, so the dashboard's reschedule calendar — the same engine, a different
-dialog — does not get one. Jerico authors the CSS classes, not the element:
-`data-booking-confirm-class`, `data-booking-back-class` and the optional
-`data-booking-footer-class` on `[nylas-container]` are applied verbatim, and a
-control with authored classes gets no inline styles at all.
+dialog — does not get one.
+
+Both footer controls are rendered as the **site's own button component** —
+`.button_main-wrap` > `.clickable_wrap` > `button.clickable_btn`, alongside
+`.button_main-element` > `.button_main-text` — carrying `data-button-theme` and
+`data-button-style` on the wrap. Back is the black secondary and reads "Back";
+the confirm is the black primary. That markup is the whole styling contract: the
+fill, text colour, border and hover come from the global
+`[data-button-theme][data-button-style]` rules, and the padding, uppercase, size
+and weight from `.button_main-element`. No size variant class is applied,
+because the Designer's default size is the absence of one.
+
+Because the component supersedes them, **`data-booking-confirm-class` and
+`data-booking-back-class` are ignored on this surface.** Leaving them authored
+is harmless — nothing reads them here and no warning is raised. The optional
+`data-booking-footer-class` keeps its full meaning: authored, its class is
+applied to the footer row verbatim and the engine places nothing; unauthored,
+the engine's own row is a full-width flex row (`display:flex;gap:12px;width:100%`
+inline) and the injected sheet decides how the two wraps sit in it — right-aligned
+at their natural width from 768px up, a full-width stack with the confirm on top
+below it. The engine writes no inline style on either control: their size comes
+from the sheet's rules on the row, and their appearance from the component alone.
+
+The markers and modal attributes sit on the **wrap**, not the inner button. That
+is the node the modal embed resolves — it reads `closest()` from the click
+target, and the click lands on the overlaid `.clickable_btn` — and it is the
+node this script hides and writes `aria-hidden` on, so the component disappears
+whole.
+
+Off the booking surface nothing changed: the reschedule calendar still gets a
+plain single-element confirm that reads `data-booking-confirm-class` and falls
+back to its own inline styles.
+
+The engine also injects one id-guarded `<style>` (`starters-booking-calendar-layout`)
+carrying what inline styles cannot: the two responsive layouts, the interior
+frame that spaces the calendar off the modal's edges at both widths, and the page's own
+datepicker CSS adjusted inside this dialog — the drop shadow dropped in favour
+of the ring and fill alone, and the weekday header row re-centred, since the
+page leaves those labels left-aligned against centred dates below its tablet
+breakpoint. On desktop the footer spans both grid columns on its own bottom
+row, so the buttons anchor to the bottom of the panel rather than to one
+column, and the shared engine's timezone control — a `<label>` wrapping a
+caption and a `<select>` — takes the top of the right column above the slots,
+with the month spanning down beside it so the control costs the panel no
+height. The sheet sets that control's spacing and its box: the wrapper's
+`display:grid` and the `0.375rem` between its caption and its select. The
+caption's and the select's own typography stay the engine's inline
+declarations, and the engine skips the wrapper's inline styles entirely on this
+surface so the sheet is not outranked. Stacked, `order` holds that control
+between the month and the first row of chips; the engine appends it under the
+month, ahead of the times, so document order already reads that way and its
+reading order matches its visual position at both widths. The engine's three
+responsive wrappers — `layout` around the two panels, `calendar-panel` around
+the month and the caption, `time-panel` around the chips — are skipped on this
+surface for the same outranking reason, and the sheet collapses them with
+`display:contents` so the sheet's own placement still reaches the elements
+inside them; off this surface they keep the inline columns they ship with. Every selector in that sheet is scoped under
+`[data-modal-target="popup-booking"]` and none uses `!important`; the contract
+form's datepickers and the dashboard's reschedule calendar share these class
+names and must stay pixel-identical. Every rule that PAINTS the footer — the hairline, the padding, the fill, the
+sticky, the alignment — keys on `data-paid-calendar-footer="fallback"`, written
+only on the engine's own row, so an authored `data-booking-footer-class` row
+still places its own children and paints itself. Only placement (`grid-area`,
+`order`) reaches every footer, and a test walks the emitted CSS to keep that
+split honest.
+
+Below 768px the footer is `position:sticky; bottom:0` with an opaque white
+fill, the desktop band's `1px #eee` hairline and a `1.25rem` frame on all four
+sides: the
+whole panel scrolls inside `.modal_content-layout` (the modal's body, and the
+only real scrollport here — measured, not assumed), and the buttons stay pinned
+to the bottom of it while remaining in flow, so the last slots still end above
+them. Two supporting rules make that work: the shell is a flex column at this
+width, since a grid item cannot travel outside its own grid area; and
+`.call-details_layout` gives up its `overflow-y:auto`, which made it a
+scrollport that never scrolls and swallowed the sticky. Desktop keeps the grid
+and its always-visible band — the times scroll inside their own cell there.
+
+**Lengths in that sheet are rem, and every remaining px is a border.** The rem
+values track the site's responsive root font size; borders stay px because a
+hairline is a device-pixel affordance and at the site's 12.93px root a
+`0.0625rem` border computes to 0.81px and renders inconsistently. The same
+convention now holds in `global-embeds/form-embeds/datepicker/datepicker.css`
+and `.../timepicker/timepicker.css`. Read those as a change rather than a
+rename: the root here is 12.93px at 1280 and 16.34px at 400, so a converted
+value is about 19% smaller on desktop than the pixel it replaced.
+
+The shell declares **no row gap**. The frame padding is the whole vertical
+rhythm: the month's bottom padding separates it from the times and the times'
+from the buttons, one `1.25rem` each. Desktop still says `row-gap:0` out loud,
+which is the initial value now but documents the footer band as the only
+separator.
+
+That sheet also **zeroes the authored step's own padding**
+(`.call-details_layout`, which the site pads by
+`--_spacing---spacer--spacing-14`) at every width, so the interior frame is the
+only inset between the modal's edges and the calendar. Without it the two
+stacked: the footer's hairline stopped short of both modal edges and the status
+banner could not run the panel's full width. It wins on specificity — the
+site's declarations are flat class selectors, and the dialog attribute puts this
+one rank above them — never with `!important`.
+
+That sheet also turns the calendar's status line into a **banner across the top
+of the modal's body**: absolutely positioned against `.modal_content-layout`, so
+it lands directly under the "Book a Call" header bar at the panel's full width
+and overlays the calendar rather than adding a row under the buttons. It is the
+only rule in the sheet that leaves the flow. Each message is tagged by the
+engine with `data-paid-calendar-status`, and the tone is what colours it:
+`error` (a booking that failed) is white on `#DD5555`; `progress` (the in-flight
+notice) and `empty` (no availability in the next 14 days) share a white-on-dark
+`#434B43`. With nothing to say the element is `:empty` and collapses; writing a
+message scrolls the modal's body back to the top, since the banner is painted
+at the top of the scrollable content and mid-scroll would otherwise land above
+what the visitor can see. Because the banner is out of flow, the mount carries
+a `28.125rem` min-height and the empty-availability state pushes its footer to the bottom — otherwise that panel
+would collapse to the height of one button and the banner would cover it. That
+min-height reaches only the `ready` and `empty` states, so the one-line
+`loading` and `error` states do not inherit a void under one sentence.
+
+None of this reaches the dashboard's reschedule calendar: no sheet is injected
+there, no tone attribute is written, and the status keeps the plain inline grey
+line it has always had.
 
 This script still owns *when* the control is on screen. The guard stylesheet
 keyed on `data-booking-entry` shows it only when the entry stamp reads `chooser`
@@ -325,6 +443,22 @@ absent control is still a silent no-op, which is what a page with no calendar
 mounted looks like. The control combines the close marker with a trigger naming
 `popup-booking-main` — the cross-modal hand-off pattern the modal embed's
 trigger precedence deliberately preserves — plus this marker attribute.
+
+A second guard rule hides **every `[data-booking-back]` the calendar engine did
+not build**, on every entry:
+
+```css
+[data-modal-target="popup-booking"]
+  [data-booking-back]:not([data-paid-calendar-element="back"]) { display: none !important }
+```
+
+The footer control is the Back now, so a second one in the dialog's header
+would be a duplicate of it. The two are told apart structurally rather than by
+`[data-booking-back]`, which both carry: only the wrap the engine builds is
+stamped `data-paid-calendar-element="back"`. `syncBookingBackControls()` writes
+`aria-hidden="true"` on the unmarked ones to match. Nothing in the published
+Designer authors such a control today, so this rule is inert on the live page
+and exists to keep an old or re-authored header arrow from doubling up.
 
 Because that trigger name is now also carried by a script-rendered control
 inside the dialog, every document-wide pass over

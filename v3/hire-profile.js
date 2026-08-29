@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.430
+ * @release v1.59.443
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -79,6 +79,14 @@
           // before the stamp lands — which matters more now that the control is
           // rendered by the calendar mount rather than authored.
           '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"]) [data-booking-back]{display:none!important}',
+          // And the one in the dialog's header goes for good. The calendar's
+          // footer renders the real Back as the site's button component, so a
+          // second control in the nav is a duplicate of it — Jerico asked for
+          // the top one to go. The two are told apart structurally, never by
+          // `[data-booking-back]` alone, which both of them carry: only the
+          // footer's wrap is stamped `data-paid-calendar-element="back"` by
+          // the calendar engine that builds it.
+          '[data-modal-target="popup-booking"] [data-booking-back]:not([data-paid-calendar-element="back"]){display:none!important}',
       ].join('');
       (document.head || document.documentElement).appendChild(style);
   }
@@ -763,8 +771,14 @@
   function syncBookingBackControls() {
       bookingDialogs().forEach(function (dialog) {
           const fromChooser = dialog.getAttribute('data-booking-entry') === 'chooser';
-          const hidden = fromChooser ? 'false' : 'true';
           dialog.querySelectorAll('[data-booking-back]').forEach(function (control) {
+              // A control the calendar engine did not build is the dialog's
+              // old header back, which the guard stylesheet now hides on every
+              // entry. Its accessible state has to say the same thing, or a
+              // screen reader is offered a control nobody can see.
+              const isFooterControl =
+                  control.getAttribute('data-paid-calendar-element') === 'back';
+              const hidden = (fromChooser && isFooterControl) ? 'false' : 'true';
               // Display is the guard stylesheet's job: its rule is keyed on the
               // same entry attribute and carries !important, so it decides this
               // either way and an inline write here could only ever agree with
