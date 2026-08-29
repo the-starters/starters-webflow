@@ -17,6 +17,8 @@ Load this GitHub-owned controller once in the V3 site head:
 
 The controller uses the existing native Memberstack `data-ms-price:add` controls.
 It does not create or replace Webflow form or checkout markup.
+It captures clicks on `window`, before Memberstack's `document` capture listener,
+so the authority row is committed first regardless of script load order.
 
 ## Runtime allowlists
 
