@@ -12,7 +12,7 @@
 Load this GitHub-owned controller once in the V3 site head:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/membership-checkout-authority.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.430/v3/membership-checkout-authority.js"></script>
 ```
 
 The controller uses the existing native Memberstack `data-ms-price:add` controls.
@@ -53,10 +53,11 @@ Before Memberstack opens Stripe checkout, the controller:
 4. The registrar registers one `membership_checkout_intent`.
 5. Opens the original native Memberstack checkout only after Xano accepts the intent.
 
-An authentication, secure event identity, or registration failure blocks
-checkout. It does not fall back to V2. After the controller clears its pending
-state, the member can retry. A failed registration keeps the same event identity
-for that route and price; an accepted registration clears it.
+An authentication, secure event identity, intent storage, or registration
+failure blocks checkout. It does not fall back to V2. After the controller
+clears its pending state, the member can retry. Failed and accepted registrations
+reuse the same pending event identity and original route for that price until
+the two-hour intent expires.
 
 The published POST trade endpoint owns Memberstack session verification. The
 Memberstack token stays out of URLs and travels only in its JSON request body.

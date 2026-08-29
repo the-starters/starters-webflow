@@ -79,28 +79,37 @@
 
   function checkoutIdentity(route, priceId) {
     var key = storageKey(priceId)
+    var existing = null
     try {
-      var existing = JSON.parse(clean(globalObject.sessionStorage.getItem(key)) || 'null')
-      var existingEventId = clean(existing && existing.eventId).toLowerCase()
-      var existingRoute = normalizedRoute(existing && existing.sourceRoute)
-      var existingExpiresAt = Number(existing && existing.expiresAt)
-      if (
-        /^evt_[a-z0-9-]{8,116}$/.test(existingEventId) &&
-        validSourceRoute(existingRoute) &&
-        existingExpiresAt > Date.now()
-      ) {
-        return { eventId: existingEventId, sourceRoute: existingRoute }
-      }
-      var created = {
-        eventId: randomEventId(),
-        sourceRoute: route,
-        expiresAt: Date.now() + INTENT_TTL_MS,
-      }
-      globalObject.sessionStorage.setItem(key, JSON.stringify(created))
-      return { eventId: created.eventId, sourceRoute: created.sourceRoute }
+      existing = JSON.parse(clean(globalObject.sessionStorage.getItem(key)) || 'null')
     } catch (_error) {
-      return { eventId: randomEventId(), sourceRoute: route }
+      existing = null
     }
+    var existingEventId = clean(existing && existing.eventId).toLowerCase()
+    var existingRoute = normalizedRoute(existing && existing.sourceRoute)
+    var existingExpiresAt = Number(existing && existing.expiresAt)
+    if (
+      /^evt_[a-z0-9-]{8,116}$/.test(existingEventId) &&
+      validSourceRoute(existingRoute) &&
+      existingExpiresAt > Date.now()
+    ) {
+      return { eventId: existingEventId, sourceRoute: existingRoute }
+    }
+    var created = {
+      eventId: randomEventId(),
+      sourceRoute: route,
+      expiresAt: Date.now() + INTENT_TTL_MS,
+    }
+    try {
+      var serialized = JSON.stringify(created)
+      globalObject.sessionStorage.setItem(key, serialized)
+      if (globalObject.sessionStorage.getItem(key) !== serialized) {
+        throw new Error('Checkout identity was not persisted')
+      }
+    } catch (_error) {
+      throw new Error('Secure checkout identity storage is unavailable')
+    }
+    return { eventId: created.eventId, sourceRoute: created.sourceRoute }
   }
 
   function setControlState(target, state, message) {

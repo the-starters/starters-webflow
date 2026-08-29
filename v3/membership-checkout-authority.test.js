@@ -35,17 +35,18 @@ function boot(options = {}) {
   const requests = []
   const listeners = []
   const storage = new Map()
+  const sessionStorage = options.sessionStorage || {
+    getItem: (key) => storage.get(key) || null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: (key) => storage.delete(key),
+  }
   const window = {
     location: {
       hostname: options.hostname || 'thestarters.com',
       pathname: options.pathname || '/quiz-results',
     },
     crypto: { randomUUID: () => '12345678-1234-1234-1234-123456789abc' },
-    sessionStorage: {
-      getItem: (key) => storage.get(key) || null,
-      setItem: (key, value) => storage.set(key, value),
-      removeItem: (key) => storage.delete(key),
-    },
+    sessionStorage,
     document: {
       addEventListener(name, listener, capture) {
         listeners.push({ name, listener, capture })
@@ -338,6 +339,41 @@ test('a route change reuses the original immutable pending route and event', asy
   const second = JSON.parse(state.requests[3].init.body)
   assert.deepEqual(second, first)
   assert.equal(second.source_route, '/all-starters')
+})
+
+test('fails closed when checkout identity storage is unavailable', async () => {
+  const state = boot({
+    sessionStorage: {
+      getItem: () => null,
+      setItem: () => {},
+    },
+  })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  await state.listeners[0].listener(clickEvent(control))
+
+  assert.equal(state.requests.length, 0)
+  assert.equal(control.clicks, 0)
+  assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
+  assert.match(control.getAttribute('title'), /storage is unavailable/)
+})
+
+test('replaces malformed stored identity before checkout', async () => {
+  const state = boot()
+  state.storage.set(
+    'ts:v3:membership-checkout-intent:prc_premium-monthly--fn1ae0qjj',
+    '{malformed',
+  )
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  await state.listeners[0].listener(clickEvent(control))
+
+  assert.equal(control.clicks, 1)
+  assert.equal(state.requests.length, 2)
+  assert.equal(
+    JSON.parse(state.requests[1].init.body).source_event_id,
+    'evt_12345678-1234-1234-1234-123456789abc',
+  )
 })
 
 test('clears the pending state when secure event identity generation fails', async () => {
