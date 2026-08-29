@@ -10,6 +10,9 @@
  * This guard closes that gap: install it once sitewide before page controllers
  * and it will
  *
+ *   - replace the retired `/memberstack/search-freelancers` destination with
+ *     `/all-starters` on approved V3 hosts before waiting for Memberstack,
+ *     preserving the query and fragment,
  *   - send logged-out visitors to /login?next=<current path+query>, or to the
  *     per-page destination in LOGGED_OUT_DESTINATIONS where a funnel page wants
  *     the homepage instead of a login form,
@@ -28,7 +31,8 @@
  *     leaving logged-out visitors completely alone,
  *   - leave an authenticated-but-unmapped or cross-role-conflicted member on
  *     the page with an explicit error state instead of silently redirecting,
- *   - do nothing on a page it does not recognise (public/unlisted route).
+ *   - do nothing on any other page it does not recognise (public/unlisted
+ *     route).
  *
  * The plan-ID → role map and guarded page roles derive from the stable access
  * matrix used by v3/auth-route.js and documented in v3/ACCESS-MATRIX.md.
