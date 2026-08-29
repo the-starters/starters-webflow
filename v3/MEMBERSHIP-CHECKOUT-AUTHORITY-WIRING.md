@@ -12,7 +12,7 @@
 Load this GitHub-owned controller once in the V3 site head:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.430/v3/membership-checkout-authority.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/membership-checkout-authority.js"></script>
 ```
 
 The controller uses the existing native Memberstack `data-ms-price:add` controls.
