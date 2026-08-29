@@ -2115,6 +2115,14 @@ and every payment control also stay hidden. There is no hard 24-hour cutoff on
 cancel or reschedule; late-change copy can warn the participant but must never
 block the action.
 
+`dashboard-call-actions.js` owns the details dialog's authored Back and Close
+controls on both dashboards. Populate starts on the base panel with Back hidden;
+moving to another panel shows Back, and Back returns to base and clears the
+action error. Close clicks the authored `[booking-popup-info-close]` or
+`[data-modal-close]` control so the shared modal close flow and refresh listener
+run, with the native dialog `close()` method used only as a fallback. These two
+navigation actions remain available regardless of booking state.
+
 The Starter pending card exposes only the Designer-authored Accept lifecycle
 control while the canonical response window remains open. The details dialog
 exposes both Accept and Decline under their separate eligibility contracts.
@@ -2135,9 +2143,10 @@ contracts.
 
 ### Dashboard booking action contract
 
-`dashboard-call-actions.js` owns the supported decline, cancel, and Free-call
-reschedule commands. Decline is available only to the Starter on a canonical
-pending row. Cancel is available to either participant only on a canonical Free
+`dashboard-call-actions.js` owns the details-dialog navigation plus the
+supported decline, cancel, and Free-call reschedule commands. Decline is
+available only to the Starter on a canonical pending row. Cancel is available
+to either participant only on a canonical Free
 confirmed or rescheduled row whose start is in the future. Xano
 `booking/cancel/v3` rejects Paid cancellation until the paid-cancel follow-up
 ships, so an explicitly Paid row hides Cancel and shows `Paid call cancellation

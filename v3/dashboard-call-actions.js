@@ -491,7 +491,42 @@
       content.style.display = active ? 'flex' : 'none'
       if (active) found = true
     })
+    // The authored back control returns to the base panel, so it is only
+    // meaningful away from it. Hiding it there removes the doubled close icon
+    // Kaeser reported on the Brand dialog.
+    modal
+      .querySelectorAll(
+        '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]',
+      )
+      .forEach(function (control) {
+        const visible = target !== 'base'
+        control.hidden = !visible
+        control.style.display = visible ? '' : 'none'
+      })
     return found
+  }
+
+  /**
+   * Closes the details dialog through the authored close control so the
+   * native modal system runs its own close flow; falls back to the dialog
+   * API when no authored control exists.
+   */
+  function closeDetailModal(modal) {
+    if (!modal) return false
+    const control =
+      typeof modal.querySelector === 'function' &&
+      modal.querySelector('[booking-popup-info-close], [data-modal-close]')
+    if (control && typeof control.click === 'function') {
+      control.click()
+      return true
+    }
+    if (typeof modal.close === 'function') {
+      try {
+        modal.close()
+      } catch (_error) {}
+      return true
+    }
+    return false
   }
 
   function reasonValue(modal, kind) {
@@ -530,6 +565,11 @@
     if (action === 'reschedule-calendar') return { kind: 'reschedule-propose', step: 'calendar' }
     if (action === 'confirm-reschedule') return { kind: 'reschedule-confirm', step: 'respond' }
     if (action === 'reschedule-decline') return { kind: 'reschedule-decline', step: 'respond' }
+    // Modal chrome: the authored back and close controls. The legacy inline
+    // delegation used to own these; this module owns them now so they work on
+    // both dashboards and stop bubbling into legacy handlers.
+    if (action === 'switch-base') return { kind: 'navigate', step: 'base' }
+    if (action === 'switch-close') return { kind: 'navigate', step: 'close' }
     return null
   }
 
@@ -544,6 +584,8 @@
     'reschedule-calendar',
     'confirm-reschedule',
     'reschedule-decline',
+    'switch-base',
+    'switch-close',
   ]
     .map(function (action) {
       return (
@@ -944,6 +986,26 @@
         if (event.preventDefault) event.preventDefault()
         if (event.stopImmediatePropagation) event.stopImmediatePropagation()
         else if (event.stopPropagation) event.stopPropagation()
+        const modal =
+          button.closest &&
+          (button.closest(
+            '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
+          ) ||
+            (document.querySelector &&
+              document.querySelector(
+                '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
+              )))
+        if (step.kind === 'navigate') {
+          // Modal chrome needs no booking gate: back returns to the base
+          // panel, close dismisses the dialog.
+          if (step.step === 'base') {
+            showActionError(modal, '')
+            switchPopupContent(modal, 'base')
+          } else {
+            closeDetailModal(modal)
+          }
+          return
+        }
         const booking = settings.getBooking(button)
         if (!canAct(step.kind, settings.role, booking)) {
           // Never fail silently: a blocked click with no trace reads as a dead
@@ -957,15 +1019,6 @@
           return
         }
         const config = KINDS[step.kind]
-        const modal =
-          button.closest &&
-          (button.closest(
-            '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
-          ) ||
-            (document.querySelector &&
-              document.querySelector(
-                '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
-              )))
         if (step.step === 'open') {
           if (step.kind === 'reschedule-propose') {
             ensureRescheduleViews(document, modal)
@@ -1081,6 +1134,7 @@
     declineBooking,
     declinePayload,
     declineStorageKey,
+    closeDetailModal,
     declineSucceeded,
     showActionError,
     switchPopupContent,
