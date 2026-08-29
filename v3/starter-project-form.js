@@ -142,6 +142,7 @@
       profile: null,
       profileLoaded: false,
       services: [],
+      retainerApplicable: false,
       selected: null,
       partyCopyTargets: null,
       key: '',
@@ -221,6 +222,19 @@
     )
   }
 
+  function responseRetainerApplicable(response) {
+    if (!response || typeof response !== 'object') return false
+    var enabled = Object.prototype.hasOwnProperty.call(response, 'retainer_enabled')
+      ? response.retainer_enabled
+      : response.Retainer_Enabled
+    var rate = Object.prototype.hasOwnProperty.call(response, 'retainer_rate')
+      ? response.retainer_rate
+      : response.Retainer_Rate
+    var enabledValue = enabled === true || clean(enabled).toLowerCase() === 'true'
+    var numericRate = Number(clean(rate).replace(/[$,]/g, ''))
+    return enabledValue && Number.isFinite(numericRate) && numericRate > 0
+  }
+
   function serviceSlot(key) {
     var match = /^service[\s_-]*([123])$/i.exec(clean(key))
     return match ? Number(match[1]) : 0
@@ -255,6 +269,14 @@
     return serviceSlot(entry.label) > 0 || serviceSlot(entry.value) > 0
   }
 
+  function retainerServiceName(value) {
+    return clean(value).toLowerCase() === 'monthly retainer'
+  }
+
+  function retainerServiceOption(entry) {
+    return retainerServiceName(entry && entry.value) || retainerServiceName(entry && entry.label)
+  }
+
   function authoredServiceOptions(select) {
     if (!select.__starterProjectServiceOptions) {
       select.__starterProjectServiceOptions = Array.prototype.map.call(select.options, function (option) {
@@ -269,16 +291,23 @@
 
   // Service 1/2/3 are Webflow authoring placeholders, never valid project
   // services. Remove them even when the canonical profile has no services or
-  // the profile request fails. Valid authored options remain available.
-  function renderServices(form, services) {
+  // the profile request fails. Monthly retainer is also authored, but it is
+  // available only when the canonical Starter profile enables a priced
+  // retainer. All other valid authored options remain available.
+  function renderServices(form, services, retainerApplicable) {
     var select = field(form, SERVICE_SELECT_SELECTOR)
     if (!select || !select.options || !select.ownerDocument || !select.ownerDocument.createElement) return false
     var authored = authoredServiceOptions(select)
     var names = normalizeServices(services)
-    var target = authored.filter(function (entry) { return !genericServiceSlot(entry) })
+    var target = authored.filter(function (entry) {
+      if (genericServiceSlot(entry)) return false
+      if (retainerServiceOption(entry)) return retainerApplicable === true
+      return true
+    })
     var seen = {}
     target.forEach(function (entry) { seen[entry.value.toLowerCase()] = true })
     names.forEach(function (name) {
+      if (retainerServiceName(name)) return
       var key = name.toLowerCase()
       if (seen[key]) return
       seen[key] = true
@@ -447,8 +476,9 @@
     current.profile = null
     current.profileLoaded = false
     current.services = []
+    current.retainerApplicable = false
     renderProfile(form, normalizeProfile(null))
-    renderServices(form, [])
+    renderServices(form, [], false)
   }
 
   function loadProfile(form, globalObject, forceRefresh) {
@@ -467,8 +497,9 @@
         if (generation !== current.generation || profileGeneration !== current.profileGeneration) return null
         current.profile = normalizeProfile(response)
         current.services = responseServices(response)
+        current.retainerApplicable = responseRetainerApplicable(response)
         current.profileLoaded = true
-        renderServices(form, current.services)
+        renderServices(form, current.services, current.retainerApplicable)
         return current.profile
       })
       .catch(function () {
@@ -476,6 +507,7 @@
         current.profile = null
         current.profileLoaded = false
         current.services = []
+        current.retainerApplicable = false
         return null
       })
       .finally(function () {
@@ -1131,6 +1163,7 @@
     normalizeProfile: normalizeProfile,
     normalizeServices: normalizeServices,
     responseServices: responseServices,
+    responseRetainerApplicable: responseRetainerApplicable,
     renderProfile: renderProfile,
     renderServices: renderServices,
     renderCounterparty: renderCounterparty,

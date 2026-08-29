@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.429
+ * @release v1.59.430
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -20,7 +20,8 @@
  *  - Side-by-side canonical Xano Service cards. Webflow owns the visible
  *    template and form; this file adds role-aware interaction attributes and
  *    reconciles only adapter-owned native Service options.
- *  - Freelance/Retainer rate cards, cloned from the section's Default card.
+ *  - Freelance rate card cloned from the section's Default card, plus the
+ *    canonical Xano Retainer card rendered through its authored wf-xano wrapper.
  *  - Small page utilities that shipped in the same footer (rate formatting,
  *    rating average, dropdowns, anchor scroll, mobile TOC, view-all).
  *
@@ -1548,7 +1549,9 @@
      Existing CMS cards remain as the side-by-side comparison path. Call
      projections stay closed for anonymous viewers and use canonical discovery
      for brands. Starter members keep the live-derived owner toggles above. */
+  let canonicalRetainerState = 'pending';
   installXanoServiceCardsAdapter();
+  installXanoRetainerCardAdapter();
 
   waitForMember(async function () {
       var isBrand = isBrandMember(MEMBER);
@@ -1740,11 +1743,124 @@
       });
   }
 
+  /* XANO RETAINER CARD
+     The Designer owns a separate `starter-retainer` wrapper because Retainer
+     is a one-per-profile commercial format, not one row in the custom Services
+     list. Endpoint #5899 is the canonical public read and returns one item only
+     when Retainer_Enabled is true and Retainer_Rate is positive.
+
+     The first published wrapper pointed at the shared taxonomy endpoint while
+     its Retainer branch was still being prepared. Reconfigure that one named
+     instance through wf-xano's public destroy/init API so the unrelated #5860
+     Work History draft remains untouched. Once the canonical request resolves,
+     remove the Algolia-derived runtime fallback even for an empty result. Keep
+     the fallback only when the canonical request has not resolved or errors. */
+  function installXanoRetainerCardAdapter() {
+      window.WfXano = window.WfXano || [];
+      if (typeof window.WfXano.push !== 'function') return;
+
+      window.WfXano.push(function (wfx) {
+          if (!wfx || typeof wfx.get !== 'function') return;
+          let instance = wfx.get('starter-retainer');
+          if (!instance || !instance.root) return;
+
+          const root = instance.root;
+          const canonicalSource = 'KZf7nFnk:profile/starter/retainer/v3';
+          if (root.getAttribute('wf-xano-source') !== canonicalSource &&
+              typeof wfx.destroy === 'function' && typeof wfx.init === 'function') {
+              wfx.destroy(root);
+              root.setAttribute('wf-xano-source', canonicalSource);
+              root.removeAttribute('wf-xano-param-kind');
+              root.setAttribute('data-retainer-source-upgraded', 'true');
+              wfx.init(root);
+              instance = wfx.get('starter-retainer');
+          }
+
+          if (!instance || typeof instance.on !== 'function' || !instance.root) return;
+
+          function applyResult(result) {
+              canonicalRetainerState = 'resolved';
+              adaptXanoRetainerCard(instance, result);
+              Promise.resolve(memberReady).then(function () {
+                  wireXanoRetainerCardRole();
+              }).catch(function (error) {
+                  console.warn('Xano retainer:', error);
+              });
+          }
+
+          let receivedResult = false;
+          instance.on('results', function (result) {
+              receivedResult = true;
+              applyResult(result);
+          });
+
+          if (!receivedResult && typeof instance.getState === 'function') {
+              const state = instance.getState();
+              if (state && state.status === 'success' && state.data) {
+                  applyResult(state.data);
+              }
+          }
+      });
+  }
+
+  function removeRuntimeRetainerCards() {
+      qsa('#services [data-runtime-rate-card="retainer"]').forEach(function (card) {
+          card.remove();
+      });
+  }
+
+  function adaptXanoRetainerCard(instance, result) {
+      removeRuntimeRetainerCards();
+      const resultItems = result && Array.isArray(result.items) ? result.items : [];
+      const itemsById = new Map();
+      resultItems.forEach(function (item) {
+          const id = item && item.id != null ? String(item.id) : '';
+          if (id) itemsById.set(id, item);
+      });
+
+      const cards = Array.from(qsa('[wf-xano-item]', instance.root)).filter(function (card) {
+          const owner = card.closest('[wf-xano-element="wrapper"]');
+          return owner === instance.root && !!card.closest('#services');
+      });
+
+      cards.forEach(function (card) {
+          const item = itemsById.get(String(card.getAttribute('data-wf-xano-id') || ''));
+          if (!item) return;
+          const title = qs('[data-service-card-element="title"]', card);
+          const description = qs('[data-service-card-element="description"]', card);
+          if (title) title.textContent = String(item.name || 'Ongoing Advisory Retainer');
+          if (description) description.textContent = String(item.description || '');
+
+          card.setAttribute('data-service-card', 'component');
+          card.setAttribute('data-service-card-state', 'Default');
+          card.setAttribute('data-rate-card', 'retainer');
+          card.setAttribute('data-signup-trigger-element', 'service');
+          card.setAttribute('data-signup-trigger-value', 'Retainer');
+          card.setAttribute('data-xano-retainer-card', 'starter-retainer');
+          ['has-connection', 'no-connection', 'booking-popup-open', 'data-type',
+              'data-modal-trigger', 'data-sp-fill', 'data-sp-fill-category', 'data-sp-fill-value']
+              .forEach(function (attribute) { card.removeAttribute(attribute); });
+          card.style.cursor = '';
+      });
+
+      refreshEmptySectionNav();
+  }
+
+  function wireXanoRetainerCardRole() {
+      if (!MEMBER.id) {
+          markServiceCardsClickable();
+      } else if (isBrandMember(MEMBER) && !isProfileOwner(MEMBER)) {
+          wireProjectServiceCards();
+      }
+
+      refreshEmptySectionNav();
+  }
+
   /* RATE SERVICE CARDS (all viewers)
-     The Services section ships only call cards; the Freelance/Retainer
-     rates exist only in the hero tout. Build native-looking rate cards
-     from the public search record until the Designer adds CMS-bound
-     cards (headless APIs cannot author designed components). */
+     Build the Freelance card from the public search record because its rate
+     exists only in the hero tout. Also build the Retainer fallback while the
+     authored canonical wrapper is unresolved or errors. A resolved canonical
+     result removes that fallback, including when it is empty. */
   (async function () {
       try {
           const record = await getPublicStarterRecord();
@@ -1781,7 +1897,7 @@
       if (rate > 0) {
           cards.push({ title: 'Freelance', unit: '/hour', unitPosition: 'below', price: rate });
       }
-      if (record['retainer-enabled'] && retainerRate > 0) {
+      if (canonicalRetainerState !== 'resolved' && record['retainer-enabled'] && retainerRate > 0) {
           cards.push({ title: 'Retainer', unit: 'from', unitPosition: 'above', price: retainerRate });
       }
 
@@ -1808,6 +1924,7 @@
           });
           el.setAttribute('data-signup-trigger-value', card.title);
           el.setAttribute('data-rate-card', card.title.toLowerCase());
+          el.setAttribute('data-runtime-rate-card', card.title.toLowerCase());
 
           const tooltip = el.querySelector('[data-service-card-element="tooltip"]');
           if (tooltip) tooltip.remove();
@@ -1907,15 +2024,10 @@
 
           // Freelance and Retainer are commercial formats, not CMS services,
           // so each maps onto the authored option that matches its format.
-          // Retainer has its own native option and prefers it; Freelance work
-          // stays as a last resort for the retainer because that option is
-          // gated by element-visibility="Retainer Enabled" and could be
-          // withdrawn, and an approximate service beats no contract at all.
-          // Every CMS service otherwise requires an exact native option match
-          // and fails closed.
+          // Retainer requires its exact native option. Every CMS service also
+          // requires an exact native option match and fails closed.
           if (rateType === 'retainer') {
               candidates.push('Monthly retainer');
-              candidates.push('Freelance work');
           } else if (rateType === 'freelance') {
               candidates.push('Freelance work');
           }

@@ -235,24 +235,20 @@
           uploadIntent.state = 'complete';
           uploadIntent.result = wf_photo_data;
 
-          // Memberstack avatar sync is cosmetic. A failure here must not turn an already
-          // committed Xano photo into a failed Build Profile submission or retry the upload.
-          try {
-            const fileSmaller = await urlToFile(wf_photo_data['starter_image_small'], uploadIntent.file.name);
-            if (currentUploadIntent !== uploadIntent) return wf_photo_data;
-            const updImgInfo = await window.$memberstackDom.updateMemberProfileImage({ profileImage: fileSmaller });
-            if (currentUploadIntent !== uploadIntent) return wf_photo_data;
-            console.log('Smaller image for Memberstack profile:', updImgInfo?.data?.profileImage);
-
-            requestAnimationFrame(() => {
-              if (currentUploadIntent !== uploadIntent) return;
-              qsa('[nav-profile-image]').forEach(img => {
-                img.src = img.srcset = updImgInfo?.data?.profileImage || wf_photo_data['starter_image'];
-              });
+          // The Memberstack avatar is written SERVER-side by Xano #1390, which stores the
+          // durable Xano vault URL. This block used to re-upload the image through
+          // updateMemberProfileImage, which made Memberstack re-host it on its own S3 and
+          // clobber the server's write moments later. Those S3 objects 403 as soon as the
+          // member replaces the photo, and TalkJS - whose avatar reads member.profileImage
+          // and is refreshed only when that member next opens a messages page - then holds a
+          // dead URL indefinitely. Verified 2026-08-29 on starter row 1063.
+          // Only the on-page navbar avatar is updated here, straight from the canonical URL.
+          requestAnimationFrame(() => {
+            if (currentUploadIntent !== uploadIntent) return;
+            qsa('[nav-profile-image]').forEach(img => {
+              img.src = img.srcset = wf_photo_data['starter_image'];
             });
-          } catch (avatarError) {
-            console.warn('Memberstack profile image sync failed after canonical upload:', avatarError);
-          }
+          });
           return wf_photo_data;
         })();
 
@@ -284,22 +280,6 @@
         buildPhotoApi.hasPendingUpload = () => !!currentUploadIntent && currentUploadIntent.state !== 'complete';
         buildPhotoApi.markProfileSaved = () => { buildProfileSaved = true; };
         buildPhotoApi.commitPending = commitPreparedUpload;
-      }
-
-      async function urlToFile(url, fileName = 'profile-photo.jpg') {
-        const response = await fetch(url);
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch image');
-        }
-
-        const blob = await response.blob();
-        const mimeType = blob.type || 'image/jpeg';
-
-        return new File([blob], fileName, {
-          type: mimeType,
-          lastModified: Date.now(),
-        });
       }
 
       async function uploadImage(file, sourceMutationId) {
