@@ -50,9 +50,12 @@ function boot(options = {}) {
         options.randomUUID || (() => '12345678-1234-1234-1234-123456789abc'),
     },
     sessionStorage,
+    addEventListener(name, listener, capture) {
+      listeners.push({ target: 'window', name, listener, capture })
+    },
     document: {
       addEventListener(name, listener, capture) {
-        listeners.push({ name, listener, capture })
+        listeners.push({ target: 'document', name, listener, capture })
       },
     },
     setTimeout,
@@ -86,6 +89,35 @@ function boot(options = {}) {
   vm.runInNewContext(source, { window, WeakSet, Promise, JSON, encodeURIComponent, Error })
   return { window, requests, listeners, storage }
 }
+
+test('binds ahead of Memberstack document capture regardless of load order', async () => {
+  const state = boot()
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const event = clickEvent(control)
+  let nativeCheckoutOpened = false
+
+  state.listeners.push({
+    target: 'document',
+    name: 'click',
+    capture: true,
+    listener() {
+      nativeCheckoutOpened = true
+    },
+  })
+
+  assert.equal(state.listeners[0].target, 'window')
+  assert.equal(state.listeners[0].capture, true)
+  for (const binding of state.listeners) {
+    if (event.stopped) break
+    await binding.listener(event)
+  }
+
+  assert.equal(event.prevented, true)
+  assert.equal(event.stopped, true)
+  assert.equal(nativeCheckoutOpened, false)
+  assert.equal(state.requests.length, 2)
+  assert.equal(control.clicks, 1)
+})
 
 function clickEvent(element) {
   return {

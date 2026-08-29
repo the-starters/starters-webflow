@@ -249,7 +249,10 @@
   function boot() {
     var host = clean(globalObject.location && globalObject.location.hostname).toLowerCase()
     if (!ALLOWED_HOSTS[host]) return false
-    globalObject.document.addEventListener('click', handleCheckout, true)
+    // Memberstack also binds a capture listener on document. Bind one level
+    // earlier so the V3 authority row is committed before Memberstack can open
+    // Stripe checkout, regardless of script load order.
+    globalObject.addEventListener('click', handleCheckout, true)
     return true
   }
 
