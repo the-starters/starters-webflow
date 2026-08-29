@@ -1,7 +1,7 @@
 /**
  * V3 public starter profile — agency section.
  *
- * @release v1.59.424
+ * @release v1.59.428
  *
  * Designer owns the agency section's markup, styling, and placement. wf-xano
  * owns the fetch, the text binds, and every per-field show/hide decision. This
@@ -440,7 +440,7 @@
   }
 
   var api = {
-    release: 'v1.59.424',
+    release: 'v1.59.428',
     instanceKey: INSTANCE,
     profileSlug: profileSlug,
     configureSection: configureSection,
