@@ -856,47 +856,57 @@
     }
   }
 
-  function bookingField(modal, name) {
-    return modal && modal.querySelector('[booking-element="' + name + '"]')
+  /**
+   * The authored `cancel` and `cancelled` panels duplicate booking-element
+   * nodes from the `base` panel. Filling only the first match left the panel
+   * copies blank and hidden, which rendered the cancel flow's call details as
+   * empty fields (Kaeser QA F3, 2026-08-29). Every setter therefore fills and
+   * toggles ALL matches of a name together.
+   */
+  function bookingFields(modal, name) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return []
+    return Array.prototype.slice.call(
+      modal.querySelectorAll('[booking-element="' + name + '"]'),
+    )
   }
 
   function setBookingField(modal, name, value, visible) {
-    const field = bookingField(modal, name)
-    if (!field) return
-    const shouldShow = visible !== false && clean(value) !== ''
-    if (shouldShow) field.textContent = clean(value)
-    show(field, shouldShow)
-    const group = field.closest && field.closest('[booking-element-wrap]')
-    if (group) show(group, shouldShow)
+    bookingFields(modal, name).forEach(function (field) {
+      const shouldShow = visible !== false && clean(value) !== ''
+      if (shouldShow) field.textContent = clean(value)
+      show(field, shouldShow)
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      if (group) show(group, shouldShow)
+    })
   }
 
   function setBookingPrice(modal, value, visible) {
-    const field = bookingField(modal, 'price')
-    if (!field) return
-    const shouldShow = visible !== false && clean(value) !== ''
-    if (shouldShow) field.textContent = clean(value)
-    show(field, shouldShow)
-    const group = field.closest && field.closest('[booking-element-wrap]')
-    if (group) show(group, shouldShow)
+    bookingFields(modal, 'price').forEach(function (field) {
+      const shouldShow = visible !== false && clean(value) !== ''
+      if (shouldShow) field.textContent = clean(value)
+      show(field, shouldShow)
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      if (group) show(group, shouldShow)
 
-    // Webflow currently authors the legacy `/hr` unit without its own custom
-    // attribute. Anchor the repair to the canonical price hook and only touch
-    // an adjacent exact legacy unit. This preserves the Designer-owned markup
-    // while making the canonical per-call price unambiguous.
-    const parent = field.parentElement
-    const siblings = parent && parent.children
-      ? Array.prototype.slice.call(parent.children)
-      : []
-    const priceUnit = siblings.find(function (candidate) {
-      const unit = clean(candidate.textContent).toLowerCase()
-      return candidate !== field && (unit === '/hr' || unit === '/call')
+      // Webflow currently authors the legacy `/hr` unit without its own custom
+      // attribute. Anchor the repair to the canonical price hook and only touch
+      // an adjacent exact legacy unit. This preserves the Designer-owned markup
+      // while making the canonical per-call price unambiguous.
+      const parent = field.parentElement
+      const siblings = parent && parent.children
+        ? Array.prototype.slice.call(parent.children)
+        : []
+      const priceUnit = siblings.find(function (candidate) {
+        const unit = clean(candidate.textContent).toLowerCase()
+        return candidate !== field && (unit === '/hr' || unit === '/call')
+      })
+      if (priceUnit) {
+        priceUnit.textContent = '/Call'
+        show(priceUnit, shouldShow)
+      } else if (shouldShow) {
+        field.textContent = clean(value) + ' / Call'
+      }
     })
-    if (priceUnit) {
-      priceUnit.textContent = '/Call'
-      show(priceUnit, shouldShow)
-    } else if (shouldShow) {
-      field.textContent = clean(value) + ' / Call'
-    }
   }
 
   function hideDuplicateDetailCopy(modal) {
@@ -912,6 +922,39 @@
     })
   }
 
+  /**
+   * Renders or hides a muted one-line explanation under an authored action
+   * button that eligibility gating hides. Without it a gated action reads as
+   * a missing feature (Kaeser QA, 2026-08-29). The node is module-owned and
+   * marked `data-starters-action-hint`; authored markup is never edited.
+   */
+  function ensureActionHint(modal, anchor, name, message, visible) {
+    if (!modal || typeof modal.querySelector !== 'function') return
+    let hint = modal.querySelector('[data-starters-action-hint="' + name + '"]')
+    if (!visible) {
+      if (hint) show(hint, false)
+      return
+    }
+    if (!hint) {
+      const document = modal.ownerDocument || global.document
+      if (
+        !anchor ||
+        !document ||
+        typeof document.createElement !== 'function' ||
+        typeof anchor.insertAdjacentElement !== 'function'
+      ) return
+      hint = document.createElement('div')
+      hint.setAttribute('data-starters-action-hint', name)
+      hint.style.fontSize = '13px'
+      hint.style.lineHeight = '1.4'
+      hint.style.color = '#6b6f66'
+      hint.style.marginTop = '8px'
+      anchor.insertAdjacentElement('afterend', hint)
+    }
+    hint.textContent = message
+    show(hint, true)
+  }
+
   function configureDetailActions(modal, role, status, booking, now) {
     if (!modal || typeof modal.querySelectorAll !== 'function') return
     if (
@@ -922,6 +965,13 @@
         modal.ownerDocument || global.document,
         modal,
       )
+    }
+    const gates = {
+      rescheduleAnchor: null,
+      rescheduleShown: false,
+      respondShown: false,
+      cancelAnchor: null,
+      cancelShown: false,
     }
     modal
       .querySelectorAll(DETAIL_ACTION_SELECTOR)
@@ -962,6 +1012,17 @@
           validDashboardModule(global.StartersDashboardCallMedia) &&
           typeof global.StartersDashboardCallMedia.canReadMedia === 'function' &&
           global.StartersDashboardCallMedia.canReadMedia(booking, status)
+        if (action === 'reschedule') {
+          if (!gates.rescheduleAnchor) gates.rescheduleAnchor = button
+          if (proposeReschedule) gates.rescheduleShown = true
+        }
+        if (action === 'confirm-reschedule' && respondReschedule) {
+          gates.respondShown = true
+        }
+        if (action === 'switch-cancel' || action === 'cancel') {
+          if (!gates.cancelAnchor) gates.cancelAnchor = button
+          if (cancel) gates.cancelShown = true
+        }
         show(
           button,
           action === 'switch-close' ||
@@ -974,19 +1035,50 @@
             media,
         )
       })
+    const start = Number(booking && booking.start)
+    const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
+    const upcoming = Number.isFinite(start) && start > reference
+    const active = ['pending', 'confirmed', 'rescheduled'].includes(status)
+    ensureActionHint(
+      modal,
+      gates.rescheduleAnchor,
+      'reschedule',
+      'Rescheduling is available for confirmed Free calls.',
+      Boolean(gates.rescheduleAnchor) &&
+        active &&
+        upcoming &&
+        !gates.rescheduleShown &&
+        !gates.respondShown,
+    )
+    ensureActionHint(
+      modal,
+      gates.cancelAnchor,
+      'cancel',
+      'Paid call cancellation is not available yet.',
+      Boolean(gates.cancelAnchor) &&
+        paidBooking(booking) &&
+        ['confirmed', 'rescheduled'].includes(status) &&
+        upcoming &&
+        !gates.cancelShown,
+    )
+  }
+
+  function resetDetailActionState(modal) {
+    const actionsModule = global.StartersDashboardCallActions
+    if (!validDashboardModule(actionsModule)) return
+    if (typeof actionsModule.resetRescheduleState === 'function') {
+      actionsModule.resetRescheduleState(modal)
+    }
+    if (typeof actionsModule.showActionError === 'function') {
+      actionsModule.showActionError(modal, '')
+    }
   }
 
   function populateDetailModal(modal, booking, role, now) {
     if (!modal || !booking) return false
     const nextBookingId = clean(booking.booking_id || booking.id)
     const previousBookingId = clean(modal.getAttribute('data-booking-id'))
-    if (
-      previousBookingId !== nextBookingId &&
-      validDashboardModule(global.StartersDashboardCallActions) &&
-      typeof global.StartersDashboardCallActions.resetRescheduleState === 'function'
-    ) {
-      global.StartersDashboardCallActions.resetRescheduleState(modal)
-    }
+    if (previousBookingId !== nextBookingId) resetDetailActionState(modal)
     const status = bookingStatus(booking, now)
     const isPaid = paidBooking(booking)
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
@@ -1018,15 +1110,14 @@
     setBookingField(modal, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
 
-    const meetingLink = bookingField(modal, 'meeting-link')
     const showMeeting = status === 'confirmed' && clean(booking.meeting_link) !== ''
-    if (meetingLink) {
+    bookingFields(modal, 'meeting-link').forEach(function (meetingLink) {
       if ('href' in meetingLink) meetingLink.href = showMeeting ? clean(booking.meeting_link) : ''
       meetingLink.textContent = showMeeting ? clean(booking.meeting_link) : ''
       show(meetingLink, showMeeting)
       const group = meetingLink.closest && meetingLink.closest('[booking-element-wrap]')
       if (group) show(group, showMeeting)
-    }
+    })
 
     const base = modal.querySelector('[booking-popup-content="base"]') || modal
     const pendingMessages = Array.prototype.slice.call(
@@ -1067,12 +1158,7 @@
     if (!global.document || typeof global.document.querySelector !== 'function') return
     const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
     if (!modal) return
-    if (
-      validDashboardModule(global.StartersDashboardCallActions) &&
-      typeof global.StartersDashboardCallActions.resetRescheduleState === 'function'
-    ) {
-      global.StartersDashboardCallActions.resetRescheduleState(modal)
-    }
+    resetDetailActionState(modal)
     if (typeof modal.close === 'function') {
       try {
         modal.close()
@@ -1106,6 +1192,23 @@
         ? target.closest('[booking-action-btn="reschedule"], [booking-card-action-btn="reschedule"]')
         : null
       if (reschedule) {
+        // Hide-era guard (v1.59.309): stopping every delegated Reschedule click
+        // kept the empty legacy modal from opening. The reschedule chain now
+        // ships in dashboard-call-actions.js, whose capture listener registers
+        // AFTER this one, so an unconditional stop leaves the authored button
+        // dead. Hand the click to the actions module when it can own it, and
+        // keep swallowing when it cannot: module not loaded yet, booking
+        // unresolved, or booking ineligible.
+        const actionsModule = global.StartersDashboardCallActions
+        const eligible =
+          validDashboardModule(actionsModule) &&
+          typeof actionsModule.canProposeReschedule === 'function' &&
+          actionsModule.canProposeReschedule(
+            role,
+            bookingForActionTarget(refs, reschedule),
+            Date.now(),
+          )
+        if (eligible) return
         if (event.preventDefault) event.preventDefault()
         if (event.stopImmediatePropagation) event.stopImmediatePropagation()
         else if (event.stopPropagation) event.stopPropagation()

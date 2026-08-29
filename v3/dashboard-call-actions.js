@@ -114,6 +114,18 @@
     return value === false || value === 0 || clean(value).toLowerCase() === 'false'
   }
 
+  /**
+   * Lenient paid check matching dashboard-calls' paidBooking: a missing flag
+   * counts as Free. canCancel must not hide Cancel on Free rows that never
+   * stamped the flag, so it gates on this instead of the strict freeBooking.
+   */
+  function paidFlag(booking) {
+    const value = booking && (
+      booking.is_paid != null ? booking.is_paid : booking.paid_meeting
+    )
+    return value === true || value === 1 || clean(value).toLowerCase() === 'true'
+  }
+
   function canDecline(role, booking) {
     return (
       role === 'starter' &&
@@ -127,6 +139,10 @@
     const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
     return (
       (role === 'starter' || role === 'brand') &&
+      // booking/cancel/v3 (#1545) rejects Paid bookings until the paid-cancel
+      // fast follow ships; hide the button instead of offering an action the
+      // server always refuses with a 400.
+      !paidFlag(booking) &&
       ['confirmed', 'rescheduled'].includes(bookingStatus(booking)) &&
       actorMemberId(role, booking) !== '' &&
       Number.isFinite(start) &&
@@ -386,7 +402,10 @@
       return null
     })
     if (!response.ok || !actionSucceeded(kind, body, payload.booking_id)) {
-      throw new Error(config.failureMessage)
+      // Prefer the server's own message (for example the paid-cancel gate in
+      // booking/cancel/v3) so the modal can explain the refusal to the user.
+      const serverMessage = clean(body && (body.message || body.error))
+      throw new Error(serverMessage || config.failureMessage)
     }
     await clearActionAttemptKey(kind, booking, attemptScope, role, attemptKey)
     return body
@@ -843,11 +862,21 @@
       isCurrent,
       onConfirm: async function (slot) {
         if (!isCurrent()) return null
-        const result = await proposeReschedule(booking, role, reason, {
-          start: Number(slot && slot.start),
-          end: Number(slot && slot.end),
-        })
-        if (!result) throw new Error(KINDS['reschedule-propose'].failureMessage)
+        showActionError(modal, '')
+        let result
+        try {
+          result = await proposeReschedule(booking, role, reason, {
+            start: Number(slot && slot.start),
+            end: Number(slot && slot.end),
+          })
+          if (!result) throw new Error(KINDS['reschedule-propose'].failureMessage)
+        } catch (error) {
+          showActionError(
+            modal,
+            (error && error.message) || KINDS['reschedule-propose'].failureMessage,
+          )
+          throw error
+        }
         if (!isCurrent()) return result
         const reasonField = modal.querySelector('[booking-reschedule-reason]')
         if (reasonField) reasonField.value = ''
@@ -856,6 +885,43 @@
       },
     })
     return true
+  }
+
+  /**
+   * Shows (or clears, with an empty message) a module-owned error line inside
+   * the details modal. A failed command must never end as a console-only
+   * event: Kaeser's QA read those silent failures as dead buttons.
+   */
+  function showActionError(modal, message) {
+    if (!modal || typeof modal.querySelector !== 'function') return
+    const text = clean(message)
+    let note = modal.querySelector('[data-starters-action-error]')
+    if (!text) {
+      if (note) {
+        note.hidden = true
+        note.style.display = 'none'
+      }
+      return
+    }
+    if (!note) {
+      const document = modal.ownerDocument || global.document
+      if (
+        !document ||
+        typeof document.createElement !== 'function' ||
+        typeof modal.appendChild !== 'function'
+      ) return
+      note = document.createElement('div')
+      note.setAttribute('data-starters-action-error', '')
+      note.setAttribute('role', 'alert')
+      note.style.color = '#b3261e'
+      note.style.fontSize = '14px'
+      note.style.lineHeight = '1.4'
+      note.style.margin = '12px 24px'
+      modal.appendChild(note)
+    }
+    note.textContent = text
+    note.hidden = false
+    note.style.display = ''
   }
 
   function wire(options) {
@@ -875,11 +941,21 @@
         if (!button) return
         const step = actionForButton(button)
         if (!step) return
-        const booking = settings.getBooking(button)
-        if (!canAct(step.kind, settings.role, booking)) return
         if (event.preventDefault) event.preventDefault()
         if (event.stopImmediatePropagation) event.stopImmediatePropagation()
         else if (event.stopPropagation) event.stopPropagation()
+        const booking = settings.getBooking(button)
+        if (!canAct(step.kind, settings.role, booking)) {
+          // Never fail silently: a blocked click with no trace reads as a dead
+          // button. The gate snapshot names the reason without member PII.
+          console.warn('[dashboard-call-actions] ' + step.kind + ' blocked:', {
+            role: settings.role,
+            status: bookingStatus(booking),
+            paid: booking ? paidFlag(booking) : null,
+            identified: bookingIdentified(booking),
+          })
+          return
+        }
         const config = KINDS[step.kind]
         const modal =
           button.closest &&
@@ -927,6 +1003,7 @@
           button.__startersActionBusy = true
           button.setAttribute('aria-busy', 'true')
           button.setAttribute('aria-disabled', 'true')
+          showActionError(modal, '')
           try {
             const result = await respondReschedule(step.kind, booking, settings.role)
             if (!result) throw new Error(config.failureMessage)
@@ -938,6 +1015,7 @@
               '[dashboard-call-actions] ' + step.kind + ' failed closed:',
               error && error.message,
             )
+            showActionError(modal, (error && error.message) || config.failureMessage)
           } finally {
             button.__startersActionBusy = false
             button.setAttribute('aria-busy', 'false')
@@ -950,6 +1028,7 @@
         button.__startersActionBusy = true
         button.setAttribute('aria-busy', 'true')
         button.setAttribute('aria-disabled', 'true')
+        showActionError(modal, '')
         try {
           const result = await submitAction(
             step.kind,
@@ -967,6 +1046,7 @@
             '[dashboard-call-actions] ' + step.kind + ' failed closed:',
             error && error.message,
           )
+          showActionError(modal, (error && error.message) || config.failureMessage)
         } finally {
           button.__startersActionBusy = false
           button.setAttribute('aria-busy', 'false')
@@ -1002,6 +1082,7 @@
     declinePayload,
     declineStorageKey,
     declineSucceeded,
+    showActionError,
     switchPopupContent,
     validAttemptKey,
     wire,

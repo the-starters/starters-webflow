@@ -462,6 +462,136 @@ test('cancel eligibility is participant-only, booked, future, scoped, and identi
   assert.equal(api.canCancel('starter', { ...booking, data_environment: '' }), false)
   assert.equal(api.canCancel('starter', { ...booking, config_id: '' }), false)
   assert.equal(api.canCancel('brand', { ...booking, brand_data: {} }), false)
+  // booking/cancel/v3 rejects Paid bookings until the paid-cancel fast follow
+  // ships, so the button must stay hidden on them. A missing flag counts as
+  // Free so legacy rows keep their Cancel.
+  assert.equal(api.canCancel('starter', { ...booking, is_paid: true }), false)
+  assert.equal(api.canCancel('brand', { ...booking, paid_meeting: true }), false)
+  assert.equal(api.canCancel('starter', { ...booking, is_paid: false }), true)
+  assert.equal(api.canCancel('starter', { ...booking, paid_meeting: null }), true)
+})
+
+test('a refused cancel surfaces the server message instead of the generic failure', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000002'
+      },
+    }
+    global.xanoAuthFetch = async function () {
+      return {
+        ok: false,
+        json: async function () {
+          return {
+            code: 'ERROR_CODE_INPUT_ERROR',
+            message: 'Paid call cancellation is not available yet',
+          }
+        },
+      }
+    }
+    await assert.rejects(
+      api.cancelBooking(confirmedBooking(), 'Test cancel', 'brand'),
+      /Paid call cancellation is not available yet/,
+    )
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('showActionError renders a module-owned alert and clears it again', () => {
+  const created = []
+  const modal = {
+    nodes: [],
+    querySelector(selector) {
+      if (selector !== '[data-starters-action-error]') return null
+      return this.nodes[0] || null
+    },
+    appendChild(node) {
+      this.nodes.push(node)
+    },
+    ownerDocument: {
+      createElement() {
+        const node = {
+          hidden: false,
+          style: {},
+          textContent: '',
+          attributes: {},
+          setAttribute(name, value) {
+            this.attributes[name] = value
+          },
+        }
+        created.push(node)
+        return node
+      },
+    },
+  }
+  api.showActionError(modal, 'Paid call cancellation is not available yet')
+  assert.equal(created.length, 1)
+  assert.equal(created[0].textContent, 'Paid call cancellation is not available yet')
+  assert.equal(created[0].attributes.role, 'alert')
+  assert.equal(created[0].hidden, false)
+  api.showActionError(modal, '')
+  assert.equal(created[0].hidden, true)
+  assert.equal(created[0].style.display, 'none')
+  api.showActionError(modal, 'Second failure')
+  assert.equal(created.length, 1)
+  assert.equal(created[0].textContent, 'Second failure')
+  assert.equal(created[0].hidden, false)
+})
+
+test('a blocked legacy Free booking is reported as unpaid', async () => {
+  const originalWarn = console.warn
+  let clickHandler
+  let warning
+  let prevented = 0
+  let stopped = 0
+  try {
+    console.warn = function () {
+      warning = Array.from(arguments)
+    }
+    api.wire({
+      document: {
+        addEventListener(_name, handler) {
+          clickHandler = handler
+        },
+      },
+      getBooking() {
+        return pendingBooking()
+      },
+      role: 'starter',
+    })
+    const button = {
+      closest() {
+        return this
+      },
+      getAttribute(name) {
+        return name === 'booking-action-btn' ? 'cancel' : null
+      },
+    }
+    await clickHandler({
+      target: button,
+      preventDefault() {
+        prevented += 1
+      },
+      stopImmediatePropagation() {
+        stopped += 1
+      },
+    })
+    assert.equal(warning[1].status, 'pending')
+    assert.equal(warning[1].paid, false)
+    assert.equal(warning[1].identified, true)
+    assert.equal(prevented, 1)
+    assert.equal(stopped, 1)
+  } finally {
+    console.warn = originalWarn
+  }
 })
 
 test('cancel payload requires a reason and a bounded durable cancel key', () => {
@@ -825,6 +955,84 @@ test('reschedule calendar mounts stay scoped to the active modal booking', async
     assert.equal(requests.length, 1)
     assert.equal(requests[0].booking_id, 'booking-b')
     assert.equal(reasonField.value, '')
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('reschedule proposal failures replace stale alerts with the server message', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  let mount
+  let alert
+  const container = { textContent: '' }
+  const reasonField = { value: 'Need a later time' }
+  const modal = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-test-3' : null
+    },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      if (selector === '[booking-reschedule-reason]') return reasonField
+      if (selector === '[data-starters-action-error]') return alert || null
+      return null
+    },
+    appendChild(node) {
+      alert = node
+    },
+    ownerDocument: {
+      createElement() {
+        return {
+          hidden: false,
+          style: {},
+          textContent: '',
+          setAttribute() {},
+        }
+      },
+    },
+  }
+  try {
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar(options) {
+        mount = options
+      },
+    }
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000006'
+      },
+    }
+    global.xanoAuthFetch = async function () {
+      assert.equal(alert.hidden, true)
+      return {
+        ok: false,
+        async json() {
+          return { message: 'That time is no longer available.' }
+        },
+      }
+    }
+    api.showActionError(modal, 'Previous booking failed')
+    await api.mountRescheduleCalendar(
+      {},
+      modal,
+      rescheduleBooking(),
+      'starter',
+      reasonField.value,
+    )
+    const start = Date.now() + 2 * 60 * 60 * 1000
+    await assert.rejects(
+      mount.onConfirm({ start, end: start + 30 * 60 * 1000 }),
+      /That time is no longer available/,
+    )
+    assert.equal(alert.textContent, 'That time is no longer available.')
+    assert.equal(alert.hidden, false)
   } finally {
     global.StartersPaidCallBrandPayment = originalCalendar
     global.xanoAuthFetch = originalFetch

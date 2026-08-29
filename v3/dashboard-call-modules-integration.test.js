@@ -566,3 +566,220 @@ test('Details creates and exposes the module-rendered decline response action', 
     global.StartersDashboardCallActions = originalActions
   }
 })
+
+test('the authored Reschedule entry click reaches the actions module in real listener order', async () => {
+  // Regression: wireBookingDetails registers its capture swallow at boot,
+  // BEFORE the async actions module wires. The swallow must hand an eligible
+  // click through, and stopImmediatePropagation from the earlier listener
+  // must never be the reason the reschedule chain looks dead (Kaeser QA,
+  // 2026-08-29).
+  const originalDocument = global.document
+  const listeners = []
+  const panels = ['base', 'reschedule', 'reschedule-calendar'].map(function (name) {
+    return {
+      name,
+      hidden: name !== 'base',
+      style: { display: name === 'base' ? 'flex' : 'none' },
+      getAttribute(attr) {
+        return attr === 'booking-popup-content' ? this.name : null
+      },
+    }
+  })
+  const modal = {
+    querySelector(selector) {
+      // Pre-marked so ensureRescheduleViews takes its early-return path.
+      if (selector.indexOf('data-starters-reschedule-views') !== -1) return {}
+      if (selector.indexOf('data-starters-reschedule-respond') !== -1) return {}
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector.indexOf('booking-popup-content') !== -1 ? panels : []
+    },
+  }
+  const eligibleBooking = {
+    booking_id: 'booking-int-1',
+    config_id: 'config-int-1',
+    data_environment: 'test',
+    status: 'confirmed',
+    is_paid: false,
+    grant_id: 'grant-int-1',
+    duration: 30,
+    start: Date.now() + 60 * 60 * 1000,
+    starter_data: { memberstack_id: 'mem_sb_starter' },
+    brand_data: { memberstack_id: 'mem_sb_brand' },
+  }
+  let currentBooking = eligibleBooking
+  const rows = [eligibleBooking]
+  const card = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-int-1' : null
+    },
+  }
+  const rescheduleButton = {
+    getAttribute(name) {
+      return name === 'booking-action-btn' ? 'reschedule' : null
+    },
+    closest(selector) {
+      if (selector === '[data-booking-id]') return card
+      if (selector.indexOf('popup-booking-info') !== -1) return modal
+      if (selector.indexOf('reschedule') !== -1) return this
+      return null
+    },
+  }
+  function dispatch() {
+    let stopped = false
+    let prevented = 0
+    const event = {
+      target: rescheduleButton,
+      preventDefault() { prevented += 1 },
+      stopImmediatePropagation() { stopped = true },
+      stopPropagation() { stopped = true },
+    }
+    for (const listener of listeners) {
+      listener(event)
+      if (stopped) break
+    }
+    return { stopped, prevented }
+  }
+  try {
+    global.document = {
+      addEventListener(name, listener, capture) {
+        assert.equal(name, 'click')
+        assert.equal(capture, true)
+        listeners.push(listener)
+      },
+      querySelector() { return null },
+    }
+    let getBookingCalls = 0
+    // Real boot order: the dashboard swallow listener registers first…
+    dashboard.wireBookingDetails([{ rows }], 'starter')
+    // …then the async-loaded actions module wires second.
+    global.StartersDashboardCallActions.wire({
+      document: global.document,
+      role: 'starter',
+      restart() {},
+      getBooking() {
+        getBookingCalls += 1
+        return currentBooking
+      },
+    })
+    assert.equal(listeners.length, 2)
+
+    const eligible = dispatch()
+    assert.equal(getBookingCalls, 1)
+    assert.equal(eligible.stopped, true)
+    assert.equal(eligible.prevented, 1)
+    const reschedulePanel = panels.find((panel) => panel.name === 'reschedule')
+    const basePanel = panels.find((panel) => panel.name === 'base')
+    assert.equal(reschedulePanel.hidden, false)
+    assert.equal(basePanel.hidden, true)
+
+    // A Paid booking stays swallowed by the first listener and never reaches
+    // the actions module.
+    currentBooking = { ...eligibleBooking, is_paid: true }
+    rows[0] = currentBooking
+    reschedulePanel.hidden = true
+    basePanel.hidden = false
+    const before = getBookingCalls
+    const paid = dispatch()
+    assert.equal(paid.stopped, true)
+    assert.equal(getBookingCalls, before)
+    assert.equal(reschedulePanel.hidden, true)
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('gated Reschedule and paid Cancel render an explanation hint', () => {
+  const originalActions = global.StartersDashboardCallActions
+  function hintButton(action) {
+    const node = button(action)
+    node.inserted = []
+    node.insertAdjacentElement = function (position, element) {
+      assert.equal(position, 'afterend')
+      node.inserted.push(element)
+    }
+    return node
+  }
+  function hintModal(buttons) {
+    const hints = {}
+    return {
+      hints,
+      querySelectorAll() {
+        return buttons
+      },
+      querySelector(selector) {
+        const match = /data-starters-action-hint="([^"]+)"/.exec(selector)
+        return match ? hints[match[1]] || null : null
+      },
+      ownerDocument: {
+        createElement() {
+          return {
+            hidden: false,
+            style: {},
+            textContent: '',
+            attributes: {},
+            setAttribute(name, value) {
+              this.attributes[name] = value
+              if (name === 'data-starters-action-hint') hints[value] = this
+            },
+          }
+        },
+      },
+    }
+  }
+  try {
+    global.StartersDashboardCallActions = {
+      wire() {},
+      ensureRescheduleViews() { return true },
+      canDecline() { return false },
+      canCancel() { return false },
+      canProposeReschedule() { return false },
+      canRespondReschedule() { return false },
+    }
+    const reschedule = hintButton('reschedule')
+    const cancel = hintButton('switch-cancel')
+    const modal = hintModal([reschedule, cancel])
+    const paidBooking = {
+      booking_id: 'booking-hint-1',
+      status: 'confirmed',
+      is_paid: true,
+      start: Date.now() + 60 * 60 * 1000,
+    }
+    dashboard.configureDetailActions(modal, 'brand', 'confirmed', paidBooking, Date.now())
+    assert.equal(
+      modal.hints.reschedule.textContent,
+      'Rescheduling is available for confirmed Free calls.',
+    )
+    assert.equal(modal.hints.reschedule.hidden, false)
+    assert.equal(
+      modal.hints.cancel.textContent,
+      'Paid call cancellation is not available yet.',
+    )
+    assert.equal(modal.hints.cancel.hidden, false)
+
+    // When the actions become available the hints hide again.
+    global.StartersDashboardCallActions.canProposeReschedule = () => true
+    global.StartersDashboardCallActions.canCancel = () => true
+    const freeBooking = { ...paidBooking, is_paid: false }
+    dashboard.configureDetailActions(modal, 'brand', 'confirmed', freeBooking, Date.now())
+    assert.equal(modal.hints.reschedule.hidden, true)
+    assert.equal(modal.hints.cancel.hidden, true)
+
+    // A past or terminal booking renders no hint at all.
+    const freshModal = hintModal([hintButton('reschedule'), hintButton('switch-cancel')])
+    global.StartersDashboardCallActions.canProposeReschedule = () => false
+    global.StartersDashboardCallActions.canCancel = () => false
+    dashboard.configureDetailActions(
+      freshModal,
+      'brand',
+      'cancelled',
+      { ...paidBooking, status: 'cancelled' },
+      Date.now(),
+    )
+    assert.equal(freshModal.hints.reschedule, undefined)
+    assert.equal(freshModal.hints.cancel, undefined)
+  } finally {
+    global.StartersDashboardCallActions = originalActions
+  }
+})
