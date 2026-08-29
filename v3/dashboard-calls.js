@@ -1023,10 +1023,12 @@
           if (!gates.cancelAnchor) gates.cancelAnchor = button
           if (cancel) gates.cancelShown = true
         }
+        // switch-base is the back-to-base control; populate always lands on
+        // the base panel, so it starts hidden and the actions module shows it
+        // when a chain leaves base (fixes the doubled close icon on Brand).
         show(
           button,
           action === 'switch-close' ||
-            action === 'switch-base' ||
             accept ||
             decline ||
             cancel ||

@@ -1382,7 +1382,9 @@ test('Free Call details hide paid copy, duplicate copy, and unsupported actions'
   assert.equal(view.pendingOne.hidden, false)
   assert.equal(view.pendingDuplicate.hidden, true)
   assert.equal(view.actions[0].hidden, false)
-  assert.equal(view.actions[1].hidden, false)
+  // switch-base starts hidden on the base panel; the actions module shows it
+  // only after a chain leaves base.
+  assert.equal(view.actions[1].hidden, true)
   assert.equal(view.actions[2].hidden, true)
   assert.equal(view.actions[3].hidden, true)
   assert.equal(view.actions[4].hidden, false)
