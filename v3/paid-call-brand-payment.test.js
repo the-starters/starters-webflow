@@ -1028,6 +1028,40 @@ test('an authored class list is applied verbatim and blank values fall back', as
   assert.equal(fallback.footer.style.display, 'flex')
 })
 
+test('the shell row gap holds at every width, not only on desktop', async () => {
+  // Regression: this rule was first written inside the desktop media query,
+  // which left the mobile layout with no row gap at all and butted the times
+  // list straight against the buttons (measured 0px between them). It has to
+  // sit outside both queries.
+  const { document } = await mountFooterFixture()
+  const css = document.head.children[0].textContent
+  const rule = '[data-modal-target="popup-booking"] [data-paid-calendar-element="shell"]{row-gap:16px}'
+  assert.ok(css.includes(rule))
+  assert.ok(
+    css.indexOf(rule) < css.indexOf('@media'),
+    'the row gap must be declared before either media query, so it holds at every width',
+  )
+})
+
+test('the booking shell defers its gaps to the sheet, the dashboard does not', async () => {
+  // An inline declaration outranks a stylesheet rule whatever its specificity,
+  // so an inline `gap` shorthand on the booking shell would pin `column-gap`
+  // too and the sheet could not widen the month-to-times space without
+  // `!important`. Off the booking surface the inline shorthand stays exactly
+  // where it was.
+  const { shell } = await mountFooterFixture()
+  assert.deepEqual(Object.keys(shell.style), ['display', 'width'])
+  assert.equal(shell.style.gap, undefined, 'the sheet owns the booking shell gaps')
+
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  reschedule.appendChild(host)
+  const away = await mountFooterFixture({ container: host })
+  assert.deepEqual(Object.keys(away.shell.style), ['display', 'gap', 'width'])
+  assert.equal(away.shell.style.gap, '16px', 'the dashboard shell is untouched')
+})
+
 test('a calendar mounted outside the booking dialog is completely unchanged', async () => {
   // This engine also mounts the dashboard's reschedule calendar
   // (dashboard-call-actions.js -> mountRescheduleCalendar), inside
@@ -1250,7 +1284,14 @@ test('the desktop column pins the footer to the bottom and scrolls the times', a
   // times row reach 397px against the month's 305px and grew the modal from
   // 438px to 601px. `height:0` takes the times out of track sizing so the
   // month decides the column height; `min-height:100%` refills the area.
-  assert.ok(css.includes(ROLE + '"times"]{grid-area:times;height:0;min-height:100%;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}'))
+  assert.ok(css.includes(ROLE + '"times"]{grid-area:times;height:0;min-height:100%;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}'))
+  // `align-content:start` is what keeps the chips compact. The times box has a
+  // definite height, and a grid's default align-content is `stretch`, so a day
+  // with few slots inflated its rows to swallow the surplus — measured at
+  // 113px a chip against 42.7px on a busy day.
+  assert.ok(/"times"\]\{[^}]*align-content:start/.test(css))
+  // More air between the month and the times than between the stacked rows.
+  assert.ok(/"shell"\]\{[^}]*column-gap:2rem/.test(css))
   // The page hides every inner scrollbar globally, so the affordance is put
   // back at the same 3px the page uses for the Nylas timeslot list.
   assert.ok(css.includes(ROLE + '"times"]::-webkit-scrollbar{width:3px;display:block;background:transparent}'))
