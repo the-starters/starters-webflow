@@ -277,8 +277,10 @@ test('ignores non-allowlisted Memberstack prices', async () => {
 test('does not activate on non-checkout V3 routes', () => {
   for (const pathname of [
     '/brand-dashboard',
+    '/ALL-STARTERS',
     '/hire',
     '/hire/',
+    '/hire/JP-test',
     '/hire/jp-test/edit',
     '/hire/jp--test',
     '/hire/%2fbrand-dashboard',

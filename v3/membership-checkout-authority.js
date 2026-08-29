@@ -35,7 +35,7 @@
   }
 
   function normalizedRoute(value) {
-    var route = clean(value).toLowerCase()
+    var route = clean(value)
     if (route.length > 1) route = route.replace(/\/+$/, '')
     return route || '/'
   }

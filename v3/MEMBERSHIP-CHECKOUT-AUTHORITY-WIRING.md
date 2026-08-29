@@ -30,10 +30,11 @@ It listens on the V3 funnel routes `/` and `/quiz-results`, the public routes
 `/all-starters` and `/why-us`, and the single-segment CMS families `/hire`,
 `/categories`, `/subcategories`, `/companies`, `/competitors`, `/functions`,
 `/industries`, `/roles`, `/skills`, and `/tools`. Each CMS route requires one
-slug with only lowercase letters, numbers, and single hyphens. Nested or
-malformed paths fail closed. `/partners` and `/services` remain excluded because
-their sampled live items returned 404. The controller removes trailing slashes
-before it records the source path. It gates only these V3 Memberstack price IDs:
+slug with only lowercase letters, numbers, and single hyphens. All paths are
+case-sensitive. Nested or malformed paths fail closed. `/partners` and
+`/services` remain excluded because their sampled live items returned 404. The
+controller removes trailing slashes before it records the source path. It gates
+only these V3 Memberstack price IDs:
 
 - `prc_premium-monthly--fn1ae0qjj`
 - `prc_paid-annual-2o5f040u`
