@@ -980,6 +980,7 @@
           button.getAttribute('booking-action-btn') ||
           button.getAttribute('booking-card-action-btn'),
         )
+        if (action === 'switch-base') return
         const accept =
           action === 'switch-confirm' &&
           canConfirmBooking(role, booking, now)
@@ -1023,9 +1024,6 @@
           if (!gates.cancelAnchor) gates.cancelAnchor = button
           if (cancel) gates.cancelShown = true
         }
-        // switch-base is the back-to-base control; populate always lands on
-        // the base panel, so it starts hidden and the actions module shows it
-        // when a chain leaves base (fixes the doubled close icon on Brand).
         show(
           button,
           action === 'switch-close' ||
@@ -1096,9 +1094,17 @@
     modal.setAttribute('data-booking-status', status)
     modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
 
-    modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
-      show(content, content.getAttribute('booking-popup-content') === 'base')
-    })
+    const actionsModule = global.StartersDashboardCallActions
+    if (
+      validDashboardModule(actionsModule) &&
+      typeof actionsModule.switchPopupContent === 'function'
+    ) {
+      actionsModule.switchPopupContent(modal, 'base')
+    } else {
+      modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
+        show(content, content.getAttribute('booking-popup-content') === 'base')
+      })
+    }
     setBookingField(modal, 'paid-meeting', isPaid ? 'Paid Call' : 'Free Call', true)
     setBookingField(modal, 'status', statusLabel(status, role), true)
     setBookingField(modal, 'brand-name', booking.brand_data && booking.brand_data.name, true)
