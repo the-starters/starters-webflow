@@ -349,14 +349,20 @@ of the ring and fill alone, and the weekday header row re-centred, since the
 page leaves those labels left-aligned against centred dates below its tablet
 breakpoint. On desktop the footer spans both grid columns on its own bottom
 row, so the buttons anchor to the bottom of the panel rather than to one
-column, and the shared engine's timezone caption takes the top of the right
-column above the slots, with the month spanning down beside it so the caption
-costs the panel no height. The sheet sets that caption's spacing and its
-`0.75rem` size; its colour and margin stay the engine's inline declarations,
-and the engine skips only the inline font size on this surface so the sheet's
-size is not outranked. Stacked, that caption has to be MOVED rather than
-just padded: the engine appends it after the times, so document order alone
-renders it below the chips. Every selector in that sheet is scoped under
+column, and the shared engine's timezone control — a `<label>` wrapping a
+caption and a `<select>` — takes the top of the right column above the slots,
+with the month spanning down beside it so the control costs the panel no
+height. The sheet sets that control's spacing and its box: the wrapper's
+`display:grid` and the `0.375rem` between its caption and its select. The
+caption's and the select's own typography stay the engine's inline
+declarations, and the engine skips the wrapper's inline styles entirely on this
+surface so the sheet is not outranked. Stacked, that control has to be MOVED
+rather than just padded: the engine appends it first in the shell, ahead of the
+month, so document order alone would render it above the calendar, and `order`
+is what drops it between the month and the first row of chips. Its reading
+order therefore runs ahead of its visual position at both widths — a known
+issue whose fix is a one-line reorder in the engine's own append sequence, left
+as a follow-up. Every selector in that sheet is scoped under
 `[data-modal-target="popup-booking"]` and none uses `!important`; the contract
 form's datepickers and the dashboard's reschedule calendar share these class
 names and must stay pixel-identical. Every rule that PAINTS the footer — the hairline, the padding, the fill, the
@@ -410,10 +416,14 @@ only rule in the sheet that leaves the flow. Each message is tagged by the
 engine with `data-paid-calendar-status`, and the tone is what colours it:
 `error` (a booking that failed) is white on `#DD5555`; `progress` (the in-flight
 notice) and `empty` (no availability in the next 14 days) share a white-on-dark
-`#434B43`. With nothing to say the element is `:empty` and collapses. Because the
-banner is out of flow, the mount carries a `28.125rem` min-height and the
-empty-availability state pushes its footer to the bottom — otherwise that panel
-would collapse to the height of one button and the banner would cover it.
+`#434B43`. With nothing to say the element is `:empty` and collapses; writing a
+message scrolls the modal's body back to the top, since the banner is painted
+at the top of the scrollable content and mid-scroll would otherwise land above
+what the visitor can see. Because the banner is out of flow, the mount carries
+a `28.125rem` min-height and the empty-availability state pushes its footer to the bottom — otherwise that panel
+would collapse to the height of one button and the banner would cover it. That
+min-height reaches only the `ready` and `empty` states, so the one-line
+`loading` and `error` states do not inherit a void under one sentence.
 
 None of this reaches the dashboard's reschedule calendar: no sheet is injected
 there, no tone attribute is written, and the status keeps the plain inline grey

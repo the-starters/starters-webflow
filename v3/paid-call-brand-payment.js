@@ -889,16 +889,18 @@
          actually supposed to rest on. A flex item's containing block is the
          whole shell — 1245px inside a 726px scrollport at 400 on a busy day.
 
-         `order` is what puts the caption above the chips: the shared engine
-         appends it AFTER the times, so document order alone renders it below
-         them (measured at 400 before this rule: the note at y 670 against a
-         list ending at exactly 670). */
+         `order` is what puts the timezone control between the month and the
+         chips: the shared engine appends it FIRST in the shell, ahead of the
+         month, so document order alone would render it above the calendar. Its
+         reading order runs ahead of its visual position either way; correcting
+         that means reordering the engine's own appends, which is a follow-up
+         rather than a job for this sheet. */
       role + '"shell"]{display:flex;flex-direction:column}',
       role + '"month"]{order:1;padding:' + CALENDAR_FRAME + '}',
       /* The frame, which it would otherwise run full-bleed past while every
          neighbour is inset. Its top spacing is the month's bottom padding; the
-         `1rem` is the gap down to the first chip, the note's own `margin:0`
-         being inline and out of this sheet's reach. */
+         `1rem` is the gap down to the first chip, which has to come from this
+         padding because the control has no margin of its own. */
       role + '"timezone-control"]{order:2;padding:0 ' + CALENDAR_FRAME + ' ' + TIMEZONE_GAP + '}',
       role + '"times"]{order:3;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + '}',
       /* The floating footer. On a phone the whole panel scrolls — calendar,
@@ -999,15 +1001,16 @@
          rule. Padding is INSIDE the scroll container, so the bottom inset
          scrolls with the content. */
       role + '"times"]{grid-area:times;height:0;min-height:100%;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:0 ' + CALENDAR_FRAME + ' ' + CALENDAR_FRAME + ' 0}',
-      /* The caption, placed but NOT restyled. Its colour, size and margin are
-         inline declarations written by the shared engine, and inline beats any
-         rule here — spacing is all this sheet asks for, which is exactly what
-         padding can give without fighting them.
+      /* The timezone control's own area. The engine writes no inline styles on
+         its wrapper on this surface — inline beats any rule here — so the box
+         rule above and this padding are the whole of its layout; the caption
+         and the select inside it keep their inline typography, which this
+         sheet does not try to reach.
 
          It carries the frame's top and right edges, so it lines up with the
          times below it and with the month's top opposite. The bottom `1rem`
-         is the gap down to the first chip: the note's own `margin:0` is inline
-         and unreachable, so the space has to come from its padding, and half a
+         is the gap down to the first chip: the control has no margin of its
+         own, so the space has to come from its padding, and half a
          frame reads as a caption attached to the list rather than a row of its
          own.
 
@@ -1515,8 +1518,10 @@
        `column-gap` too and the sheet could not widen the space between the
        month and the times without `!important` — which nothing else here
        needs. Withholding the shorthand on this one surface is what keeps the
-       sheet authoritative and the no-`!important` rule intact. The sheet
-       restates the same 16px row gap, so the row rhythm is unchanged. */
+       sheet authoritative and the no-`!important` rule intact. The sheet does
+       not restate the 16px row gap: on this surface there is no row gap at
+       all, and the frame padding each stacked element carries is the whole
+       vertical rhythm. */
     /* On the booking surface the sheet owns `display` as well as both gaps.
        An inline declaration outranks every rule in it, and the two breakpoints
        need DIFFERENT formatting contexts: a grid on desktop, a flex column on

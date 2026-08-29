@@ -3410,20 +3410,28 @@ flowchart TD
    request button; the fallback row's own 12px flex gap supersedes it on that
    row.
 
-   The shared engine also renders a caption naming the clock the times are
-   shown in. It arrives with no placement of its own, so this sheet gives it
-   one: the top of the times area, directly above the first row of chips, at
-   both widths. On desktop that is its own grid area in the right column with
-   the month spanning down beside it, which is what keeps the panel exactly the
-   height it was without the caption — the times area gives up the caption's
-   height instead of the modal growing. Stacked, the caption is appended AFTER
-   the times, so naming the rows is what puts it back above them. It sits
-   outside the scrolling list, so it stays put while the chips scroll. Its
-   spacing and its `0.75rem` size are set here; its colour and margin stay
-   inline declarations on the engine's own element. Owning the size took a
-   change on that side too — an inline declaration outranks any rule in this
-   sheet, so the engine now skips the inline font size on the booking surface
-   and keeps it everywhere else, exactly as it already did for the status.
+   The shared engine also renders a timezone control — a `<label>` wrapping a
+   caption and the `<select>` that names the clock the times are shown in. It
+   arrives with no placement of its own, so this sheet gives it one: the top of
+   the times area, directly above the first row of chips, at both widths. On
+   desktop that is its own grid area in the right column with the month
+   spanning down beside it, which is what keeps the panel exactly the height it
+   was without the control — the times area gives up its height instead of the
+   modal growing. Stacked, the control has to be MOVED rather than just padded:
+   the engine appends it FIRST in the shell, ahead of the month, so document
+   order alone would render it above the calendar — `order` is what drops it
+   between the month and the first row of chips. That leaves the control's
+   reading order ahead of its visual position at both widths, a known issue:
+   the fix is a one-line reorder in the shared engine's own append sequence,
+   deliberately left as a follow-up rather than taken here. It sits outside the
+   scrolling list, so it stays put while the chips scroll. The sheet owns its
+   box as well as its spacing: the wrapper's own `display:grid` and the
+   `0.375rem` between its caption and its select. Owning those took a change
+   on the engine's side — an inline declaration outranks any rule in this
+   sheet, so the engine now writes no inline styles on that wrapper on the
+   booking surface and keeps them everywhere else, exactly as it already did
+   for the status. The caption and the select keep their own inline typography
+   on both surfaces.
 
    The calendar is two columns from 768px up — month on the left, times on the
    right — with the footer spanning BOTH columns on its own row underneath as a
@@ -3468,22 +3476,30 @@ flowchart TD
    `progress` (the in-flight notice) and `empty` (no availability in the next 14
    days) take a white-on-dark `#434B43`. It hides itself only while it is empty. The
    engine writes no inline styles on it there, since an inline declaration would
-   outrank the sheet's own colour. Because the banner is out of flow the mount
-   carries a `28.125rem` min-height and the empty-availability state pushes its
+   outrank the sheet's own colour. Writing a message also scrolls the modal's
+   body back to the top: the banner is painted at the top of the scrollable
+   content, so on a phone mid-scroll it would otherwise land far above anything
+   the visitor can see. Because the banner is out of flow the mount carries a
+   `28.125rem` min-height and the empty-availability state pushes its
    footer to the bottom of it; without both, that panel would collapse to the
-   height of one button and the banner would cover it.
+   height of one button and the banner would cover it. That min-height is
+   scoped to the two states that lay a calendar out (`ready` and `empty`), so
+   the one-line `loading` and `error` states — which the free-call controller
+   stamps on this same mount too — do not inherit a void under one sentence.
 
-   On the booking surface the shell writes only `display` and `width` inline and
-   leaves both gaps to the sheet, because an inline `gap` shorthand outranks any
-   stylesheet rule and would pin the column gap with it. The dashboard's shell
-   still writes `gap` inline, unchanged. Below 768px it
-   stays one column and the two buttons stack full width with the primary on
+   On the booking surface the shell writes only `width` inline and leaves its
+   `display` and both gaps to the sheet, because an inline declaration outranks
+   any stylesheet rule: a `gap` shorthand would pin the column gap with it, and
+   an inline `display` would stop the mobile block swapping the grid for the
+   flex column the sticky footer needs. The dashboard's shell still writes
+   `display` and `gap` inline, unchanged. Below 768px it stays one column and
+   the two buttons stack full width with the primary on
    top, and the frame comes with them: stacked, there is no column gap to hand
    the inner edges to, so the month is framed on all four sides and the times
    and the footer repeat the horizontal frame while opening their top edge. The
-   footer floats: on a phone the whole panel scrolls — calendar, caption and
-   chips together — inside the modal's body, and the buttons stay pinned to the
-   bottom of it so they are reachable without scrolling to the end. They stay
+   footer floats: on a phone the whole panel scrolls — calendar, timezone
+   control and chips together — inside the modal's body, and the buttons stay
+   pinned to the bottom of it so they are reachable without scrolling to the end. They stay
    IN FLOW while doing it, so their slot at the end is still reserved and the
    last row of slots ends above them rather than under them. That took two
    things beyond the sticky itself: the panel is a flex column at this width,
