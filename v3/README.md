@@ -3494,8 +3494,9 @@ flowchart TD
    content, so on a phone mid-scroll it would otherwise land far above anything
    the visitor can see. Because the banner is out of flow the mount carries a
    `28.125rem` min-height across all four states it ever wears — `ready`,
-   `empty`, `loading` and `error` — so the banner can never cover a collapsed
-   panel. Full contract:
+   `empty`, `loading` and `error` — and the empty-availability state pushes its
+   footer to the bottom of it, so the banner never covers a collapsed panel.
+   Full contract:
    [the status banner and the four-state min-height](HIRE-PROFILE-WIRING.md#the-status-banner-and-the-four-state-min-height).
 
    On the booking surface the shell writes only `width` inline and leaves its
