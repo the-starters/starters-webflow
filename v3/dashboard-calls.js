@@ -1,7 +1,7 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
- * @release v1.59.402
+ * @release v1.59.451
  *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
@@ -37,6 +37,7 @@
     'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/'
   const CONFIRM_ATTEMPT_STORAGE_PREFIX = 'starters:dashboard-confirm:v1:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
+  const MEMBER_RETRY_ATTEMPTS = 2
   const REQUEST_EXPIRATION_TICK_MS = 10000
   const REQUEST_EXPIRATION_POLL_MS = 30000
   const REQUEST_EXPIRATION_MAX_POLLS = 3
@@ -922,6 +923,119 @@
     })
   }
 
+  const DETAIL_COMPOSE_PANELS = [
+    'cancel-reason',
+    'decline-reason',
+    'reschedule',
+    'reschedule-calendar',
+  ]
+
+  function detailCounterpart(role, booking) {
+    return role === 'starter'
+      ? booking && booking.brand_data
+      : booking && booking.starter_data
+  }
+
+  function detailSupplementRows(booking, role, timezone) {
+    const counterpart = detailCounterpart(role, booking)
+    return [
+      {
+        field: role === 'starter' ? 'brand-name' : 'starter-name',
+        label: role === 'starter' ? 'Brand' : 'Starter',
+        value: clean(counterpart && counterpart.name),
+      },
+      { field: 'start-date', label: 'Date and time', value: formatDate(booking && booking.start, timezone) },
+      { field: 'duration', label: 'Duration', value: formatDuration(booking && booking.duration) },
+      { field: 'context', label: 'Call', value: clean(booking && booking.call_context) },
+      { field: 'reschedule-reason', label: 'Reschedule reason', value: clean(booking && booking.rescheduled_reason) },
+      { field: 'cancel-reason', label: 'Cancellation reason', value: clean(booking && booking.cancelled_reason) },
+    ].filter(function (row) {
+      return row.value !== ''
+    })
+  }
+
+  /**
+   * Adds only the call information that each authored modal panel is missing.
+   * Webflow's terminal and reason panels do not all contain the same booking
+   * hooks, so filling every existing hook still left those views incomplete.
+   * The supplement is module-owned and idempotent; Designer-owned fields stay
+   * authoritative wherever they exist. Compose steps are skipped: a summary and
+   * a navigating Message link below a reason form or the slot picker is noise
+   * that can also discard the participant's in-progress input.
+   */
+  function ensureDetailSupplements(modal, booking, role, timezone) {
+    if (!modal || !booking || typeof modal.querySelectorAll !== 'function') return 0
+    const document = modal.ownerDocument || global.document
+    if (!document || typeof document.createElement !== 'function') return 0
+    const authored = Array.prototype.slice.call(
+      modal.querySelectorAll('[booking-popup-content]'),
+    )
+    const panels = authored.filter(function (panel) {
+      return (
+        DETAIL_COMPOSE_PANELS.indexOf(
+          panel && panel.getAttribute ? panel.getAttribute('booking-popup-content') : '',
+        ) === -1
+      )
+    })
+    if (!authored.length) panels.push(modal)
+    const rows = detailSupplementRows(booking, role, timezone)
+    const counterpart = detailCounterpart(role, booking)
+    const counterpartId = clean(counterpart && counterpart.memberstack_id)
+    let rendered = 0
+
+    panels.forEach(function (panel) {
+      if (!panel || typeof panel.querySelector !== 'function') return
+      let supplement = panel.querySelector('[data-starters-call-summary]')
+      if (!supplement) {
+        supplement = document.createElement('div')
+        supplement.setAttribute('data-starters-call-summary', '')
+        supplement.style.display = 'flex'
+        supplement.style.flexDirection = 'column'
+        supplement.style.gap = '8px'
+        supplement.style.width = '100%'
+        supplement.style.marginTop = '12px'
+        panel.appendChild(supplement)
+      }
+      supplement.textContent = ''
+
+      rows.forEach(function (row) {
+        if (panel.querySelector('[booking-element="' + row.field + '"]')) return
+        const line = document.createElement('div')
+        line.setAttribute('data-starters-call-summary-row', row.field)
+        line.style.display = 'grid'
+        line.style.gridTemplateColumns = 'minmax(110px, auto) 1fr'
+        line.style.gap = '12px'
+        line.style.fontSize = '14px'
+        line.style.lineHeight = '1.4'
+        const label = document.createElement('strong')
+        label.textContent = row.label
+        const value = document.createElement('span')
+        value.textContent = row.value
+        line.appendChild(label)
+        line.appendChild(value)
+        supplement.appendChild(line)
+        rendered += 1
+      })
+
+      if (counterpartId) {
+        const message = document.createElement('a')
+        message.setAttribute('data-starters-call-message', '')
+        message.href = '/messages?with=' + encodeURIComponent(counterpartId)
+        message.textContent = role === 'starter' ? 'Message Brand' : 'Message Starter'
+        message.style.alignSelf = 'flex-start'
+        message.style.marginTop = '4px'
+        message.style.fontWeight = '600'
+        message.style.textDecoration = 'underline'
+        supplement.appendChild(message)
+        rendered += 1
+      }
+      const populated = Boolean(supplement.childNodes && supplement.childNodes.length)
+      show(supplement, populated)
+      if (populated) supplement.style.display = 'flex'
+    })
+    return rendered
+  }
+
   /**
    * Renders or hides a muted one-line explanation under an authored action
    * button that eligibility gating hides. Without it a gated action reads as
@@ -1137,8 +1251,9 @@
     modal.querySelectorAll('[reschedule-blocked-info]').forEach(function (info) {
       show(info, false)
     })
-    hideDuplicateDetailCopy(modal)
     configureDetailActions(modal, role, status, booking, now)
+    ensureDetailSupplements(modal, booking, role, timezone)
+    hideDuplicateDetailCopy(modal)
     return true
   }
 
@@ -1182,6 +1297,10 @@
       show(field, false)
       const group = field.closest && field.closest('[booking-element-wrap]')
       if (group) show(group, false)
+    })
+    modal.querySelectorAll('[data-starters-call-summary]').forEach(function (supplement) {
+      supplement.textContent = ''
+      show(supplement, false)
     })
     modal
       .querySelectorAll(
@@ -1751,10 +1870,28 @@
       if (useSharedMember && (!current || !(current.data || current).id)) {
         current = await memberstack.getCurrentMember()
       }
+      // Memberstack can briefly return an empty member while its client
+      // refreshes the session. Retry before replacing a successful mutation
+      // state with an auth failure. A genuinely missing session still fails
+      // closed after the bounded retries.
+      for (
+        let attempt = 0;
+        attempt < MEMBER_RETRY_ATTEMPTS && (!current || !(current.data || current).id);
+        attempt += 1
+      ) {
+        await new Promise(function (resolve) {
+          global.setTimeout(resolve, 200 * (attempt + 1))
+        })
+        current = await memberstack.getCurrentMember()
+      }
       if (generation !== currentGeneration()) return
       const member = current && (current.data || current)
       const memberId = clean(member && member.id)
-      if (!memberId) throw new Error('Authenticated member unavailable')
+      if (!memberId) {
+        const missing = new Error('Authenticated member unavailable')
+        missing.memberMissing = true
+        throw missing
+      }
       bindBrandHero(member)
       const rows = (await fetchBookings(memberId)).filter(function (booking) {
         return memberOwnsBooking(booking, memberId, role)
@@ -1776,10 +1913,12 @@
       return true
     } catch (error) {
       if (generation !== currentGeneration()) return
-      if (preserveExisting) {
+      const memberMissing = Boolean(error && error.memberMissing)
+      if (preserveExisting && !memberMissing) {
         console.error('[dashboard-calls] background refresh failed:', error && error.message)
         return false
       }
+      if (preserveExisting) resetIdentityState(refs, role)
       clearBrandHero(role)
       refs.forEach(renderFailure)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
@@ -1822,11 +1961,12 @@
     }
     wireBrandProfileRepaint(memberstack, currentGeneration)
     let restartCount = 0
-    const restart = function () {
+    const restart = function (options) {
       sessionGeneration += 1
       const useSharedMember = restartCount === 0
       restartCount += 1
-      resetIdentityState(refs, role)
+      const preserveExisting = Boolean(options && options.preserveExisting)
+      if (!preserveExisting) resetIdentityState(refs, role)
       return refreshSession(
         memberstack,
         refs,
@@ -1834,7 +1974,11 @@
         sessionGeneration,
         currentGeneration,
         useSharedMember,
+        { preserveExisting },
       )
+    }
+    const refreshAfterMutation = function () {
+      return restart({ preserveExisting: true })
     }
     const refreshExpiredRequests = function () {
       const generation = sessionGeneration
@@ -1851,7 +1995,7 @@
     const moduleOptions = {
       document: global.document,
       role,
-      restart,
+      restart: refreshAfterMutation,
       getBooking: function (target) {
         return bookingForActionTarget(refs, target)
       },
@@ -1861,7 +2005,7 @@
       },
     }
     wireDashboardCallModules(moduleOptions)
-    wireBookingActions(refs, role, restart)
+    wireBookingActions(refs, role, refreshAfterMutation)
     startRequestExpirationTicker(refs, role, refreshExpiredRequests)
     if (typeof memberstack.onAuthChange === 'function') {
       memberstack.onAuthChange(function () {
@@ -1892,6 +2036,8 @@
     resetDetailModal,
     configureActionButtons,
     configureDetailActions,
+    detailSupplementRows,
+    ensureDetailSupplements,
     confirmAttemptStorageKey,
     storedConfirmAttemptKey,
     createConfirmAttemptKey,

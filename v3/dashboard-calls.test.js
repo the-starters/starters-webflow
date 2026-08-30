@@ -980,6 +980,171 @@ test('background expiration refresh preserves the rendered request after a trans
   }
 })
 
+test('session refresh tolerates a bounded transient empty Memberstack member', async () => {
+  const originalDocument = global.document
+  const originalFetch = global.xanoAuthFetch
+  const originalSetTimeout = global.setTimeout
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: [],
+    rendered: 0,
+    list: element(),
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  let reads = 0
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    global.setTimeout = (callback) => {
+      callback()
+      return 1
+    }
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => [] })
+    const memberstack = {
+      async getCurrentMember() {
+        reads += 1
+        return reads < 3 ? null : { id: 'starter-1' }
+      },
+    }
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), true)
+    assert.equal(reads, 3)
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  } finally {
+    global.document = originalDocument
+    global.xanoAuthFetch = originalFetch
+    global.setTimeout = originalSetTimeout
+  }
+})
+
+test('a post-mutation refresh still fails closed once the member stays missing', async () => {
+  const originalDocument = global.document
+  const originalFetch = global.xanoAuthFetch
+  const originalSetTimeout = global.setTimeout
+  const originalError = console.error
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const empty = element()
+  const list = element()
+  list.innerHTML = 'rendered call'
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: [{ booking_id: 'booking-1' }],
+    rendered: 1,
+    list,
+    template: element(),
+    loader: element(),
+    empty,
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  let reads = 0
+  const delays = []
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    console.error = () => {}
+    global.setTimeout = (callback, delay) => {
+      delays.push(delay)
+      callback()
+      return 1
+    }
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => [] })
+    const memberstack = {
+      async getCurrentMember() {
+        reads += 1
+        return null
+      },
+    }
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), false)
+    assert.equal(reads, 3)
+    assert.deepEqual(delays, [200, 400])
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'error')
+    assert.equal(refs.section.getAttribute('data-bookings-state'), 'error')
+    assert.equal(empty.hidden, false)
+    assert.equal(list.hidden, true)
+    assert.deepEqual(refs.rows, [])
+    assert.equal(refs.rendered, 0)
+    assert.equal(list.innerHTML, '')
+  } finally {
+    global.document = originalDocument
+    global.xanoAuthFetch = originalFetch
+    global.setTimeout = originalSetTimeout
+    console.error = originalError
+  }
+})
+
+test('a background refresh that only loses the canonical read keeps the rendered list', async () => {
+  const originalDocument = global.document
+  const originalFetch = global.xanoAuthFetch
+  const originalError = console.error
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const list = element()
+  list.innerHTML = 'rendered call'
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: [{ booking_id: 'booking-1' }],
+    rendered: 1,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element({ 'data-bookings-state': 'ready' }),
+  }
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    console.error = () => {}
+    global.xanoAuthFetch = async () => ({ ok: false, json: async () => null })
+
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'starter-1' }) },
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), false)
+    assert.equal(list.innerHTML, 'rendered call')
+    assert.equal(refs.rows.length, 1)
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+    assert.equal(refs.section.getAttribute('data-bookings-state'), 'ready')
+  } finally {
+    global.document = originalDocument
+    global.xanoAuthFetch = originalFetch
+    console.error = originalError
+  }
+})
+
 test('a background expiration refresh keeps every Load More page rendered', async () => {
   const originalDocument = global.document
   const originalLocation = global.location
@@ -1432,6 +1597,128 @@ test('details fill every authored panel copy of a booking field', () => {
   api.populateDetailModal(view.modal, booking, 'starter', 2_000)
   assert.equal(view.fields.context.hidden, true)
   assert.equal(view.panelCopies.context.hidden, true)
+})
+
+test('missing panel details and role-correct Message actions are supplied without duplicates', () => {
+  function domElement(tag, attributes = {}) {
+    const node = {
+      tagName: tag,
+      attributes: { ...attributes },
+      children: [],
+      hidden: false,
+      style: {},
+      appendChild(child) {
+        this.children.push(child)
+        child.parentNode = this
+        return child
+      },
+      getAttribute(name) {
+        return Object.prototype.hasOwnProperty.call(this.attributes, name)
+          ? this.attributes[name]
+          : null
+      },
+      setAttribute(name, value) {
+        this.attributes[name] = String(value)
+      },
+      removeAttribute(name) {
+        delete this.attributes[name]
+      },
+      querySelector(selector) {
+        return this.querySelectorAll(selector)[0] || null
+      },
+      querySelectorAll(selector) {
+        const match = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
+        if (!match) return []
+        const results = []
+        const visit = (candidate) => {
+          const actual = candidate.getAttribute && candidate.getAttribute(match[1])
+          if (actual != null && (match[2] == null || actual === match[2])) {
+            results.push(candidate)
+          }
+          candidate.children.forEach(visit)
+        }
+        this.children.forEach(visit)
+        return results
+      },
+    }
+    let ownText = ''
+    Object.defineProperty(node, 'textContent', {
+      get() { return ownText },
+      set(value) {
+        ownText = String(value)
+        if (ownText === '') node.children = []
+      },
+    })
+    Object.defineProperty(node, 'childNodes', { get() { return node.children } })
+    return node
+  }
+
+  const document = { createElement: (tag) => domElement(tag) }
+  const modal = domElement('dialog')
+  modal.ownerDocument = document
+  const base = domElement('div', { 'booking-popup-content': 'base' })
+  base.appendChild(domElement('span', { 'booking-element': 'start-date' }))
+  const cancelled = domElement('div', { 'booking-popup-content': 'cancelled' })
+  const composePanels = [
+    'cancel-reason',
+    'decline-reason',
+    'reschedule',
+    'reschedule-calendar',
+  ].map((name) => domElement('div', { 'booking-popup-content': name }))
+  modal.appendChild(base)
+  modal.appendChild(cancelled)
+  composePanels.forEach((panel) => modal.appendChild(panel))
+  const booking = {
+    start: 10_000,
+    duration: 30,
+    call_context: 'Discuss launch',
+    cancelled_reason: 'Schedule changed',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+
+  assert.ok(api.ensureDetailSupplements(modal, booking, 'starter', 'UTC') > 0)
+  assert.equal(base.querySelector('[data-starters-call-summary-row="start-date"]'), null)
+  assert.ok(cancelled.querySelector('[data-starters-call-summary-row="start-date"]'))
+  assert.equal(
+    cancelled.querySelector('[data-starters-call-summary-row="cancel-reason"]')
+      .children[1].textContent,
+    'Schedule changed',
+  )
+  const starterMessage = cancelled.querySelector('[data-starters-call-message]')
+  assert.equal(starterMessage.textContent, 'Message Brand')
+  assert.equal(starterMessage.href, '/messages?with=mem_brand')
+
+  const supplement = cancelled.querySelector('[data-starters-call-summary]')
+  assert.equal(supplement.hidden, false)
+  assert.equal(supplement.style.display, 'flex')
+
+  // Compose steps keep their form controls unaccompanied.
+  composePanels.forEach((panel) => {
+    assert.equal(panel.querySelector('[data-starters-call-summary]'), null)
+    assert.equal(panel.querySelector('[data-starters-call-message]'), null)
+  })
+
+  api.ensureDetailSupplements(modal, booking, 'brand', 'UTC')
+  assert.equal(cancelled.querySelectorAll('[data-starters-call-summary]').length, 1)
+  const brandMessage = cancelled.querySelector('[data-starters-call-message]')
+  assert.equal(brandMessage.textContent, 'Message Starter')
+  assert.equal(brandMessage.href, '/messages?with=mem_starter')
+
+  // An identity reset leaves no counterpart ID behind in the modal.
+  const originalDocument = global.document
+  const originalActions = global.StartersDashboardCallActions
+  try {
+    global.StartersDashboardCallActions = undefined
+    global.document = { querySelector: () => modal }
+    api.resetDetailModal()
+    assert.equal(modal.querySelector('[data-starters-call-message]'), null)
+    assert.equal(modal.querySelectorAll('[data-starters-call-summary-row]').length, 0)
+    assert.equal(cancelled.querySelector('[data-starters-call-summary]').hidden, true)
+  } finally {
+    global.document = originalDocument
+    global.StartersDashboardCallActions = originalActions
+  }
 })
 
 test('confirmed Paid Call details show per-call price and hide every unsupported payment control', () => {
