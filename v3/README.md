@@ -2046,6 +2046,16 @@ participant identity fails closed. An auth change immediately clears rendered
 identity data and booking rows; a response started under the prior session can
 never repaint the page.
 
+Memberstack can briefly hand back an empty member while its client refreshes the
+session, so an empty read is retried on a bounded budget of three total member
+reads with a 200ms then 400ms backoff before the identity is treated as missing.
+A refresh that follows a successful cancel, decline, confirm, or reschedule
+keeps the rendered list and the success panel in place when the canonical read
+itself fails, and logs instead. A member that is still absent after the bounded
+retries is not a transient failure: on every refresh path, including the
+post-mutation and expiry-tick refreshes, it clears the rendered identity and
+booking rows and then fails the dashboard closed.
+
 Webflow owns all call-section markup. Each section must provide:
 
 - `[bookings-section="calls"]` and, on Starter, optionally
@@ -2089,6 +2099,24 @@ copy. Paid calls show the canonical price as a per-call amount, replacing only
 the adjacent exact Designer-authored legacy `/hr` unit; when that unit is
 absent, the price field carries the `/ Call` suffix without generating markup.
 Only the base content state and one applicable pending message can be visible.
+
+Not every authored panel repeats every booking hook, so each displayed panel
+also receives a module-owned `data-starters-call-summary` block appended after
+the authored content. It lists only the fields that panel has no
+`[booking-element]` hook for — counterpart name, date and time, duration, call
+context, reschedule reason, and cancellation reason — as
+`data-starters-call-summary-row` lines keyed by that field name, so a
+Designer-owned field always stays authoritative and is never duplicated. The
+block ends with a role-correct `data-starters-call-message` link
+(`Message Brand` for the Starter, `Message Starter` for the Brand) pointing at
+`/messages?with=<counterpart memberstack_id>`; the link is omitted when the
+counterpart has no canonical Memberstack ID. The block is created once per
+panel, rebuilt on every populate, and cleared when the modal is reset, so no
+previous member's ID survives an identity change. Compose steps are excluded —
+`cancel-reason`, `decline-reason`, `reschedule`, and `reschedule-calendar` never
+receive it, because a summary and a navigating Message link below a reason form
+or the slot picker would discard in-progress input.
+
 Confirmed calls can show their canonical meeting link; cancelled and archived
 calls cannot. Every authored payment or booking action stays hidden except
 Close, Back, the Starter's
@@ -2247,8 +2275,9 @@ booking-and-deadline pair, no more than one every thirty seconds, and never
 while another is in flight. That background refresh reuses the same identity
 and endpoint contract, skips repainting a section whose canonical rows are
 unchanged, restores the extra pages each section's load-more control had
-already revealed, and on failure logs and leaves the rendered list in place
-instead of failing the whole dashboard closed.
+already revealed, and on a canonical read failure logs and leaves the rendered
+list in place instead of failing the whole dashboard closed. A missing member is
+the one exception and still fails closed.
 
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and

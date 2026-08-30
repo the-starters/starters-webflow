@@ -1032,6 +1032,119 @@ test('session refresh tolerates a bounded transient empty Memberstack member', a
   }
 })
 
+test('a post-mutation refresh still fails closed once the member stays missing', async () => {
+  const originalDocument = global.document
+  const originalFetch = global.xanoAuthFetch
+  const originalSetTimeout = global.setTimeout
+  const originalError = console.error
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const empty = element()
+  const list = element()
+  list.innerHTML = 'rendered call'
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: [{ booking_id: 'booking-1' }],
+    rendered: 1,
+    list,
+    template: element(),
+    loader: element(),
+    empty,
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  let reads = 0
+  const delays = []
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    console.error = () => {}
+    global.setTimeout = (callback, delay) => {
+      delays.push(delay)
+      callback()
+      return 1
+    }
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => [] })
+    const memberstack = {
+      async getCurrentMember() {
+        reads += 1
+        return null
+      },
+    }
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), false)
+    assert.equal(reads, 3)
+    assert.deepEqual(delays, [200, 400])
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'error')
+    assert.equal(refs.section.getAttribute('data-bookings-state'), 'error')
+    assert.equal(empty.hidden, false)
+    assert.equal(list.hidden, true)
+    assert.deepEqual(refs.rows, [])
+    assert.equal(refs.rendered, 0)
+    assert.equal(list.innerHTML, '')
+  } finally {
+    global.document = originalDocument
+    global.xanoAuthFetch = originalFetch
+    global.setTimeout = originalSetTimeout
+    console.error = originalError
+  }
+})
+
+test('a background refresh that only loses the canonical read keeps the rendered list', async () => {
+  const originalDocument = global.document
+  const originalFetch = global.xanoAuthFetch
+  const originalError = console.error
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const list = element()
+  list.innerHTML = 'rendered call'
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: [{ booking_id: 'booking-1' }],
+    rendered: 1,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element({ 'data-bookings-state': 'ready' }),
+  }
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    console.error = () => {}
+    global.xanoAuthFetch = async () => ({ ok: false, json: async () => null })
+
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'starter-1' }) },
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      false,
+      { preserveExisting: true },
+    ), false)
+    assert.equal(list.innerHTML, 'rendered call')
+    assert.equal(refs.rows.length, 1)
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+    assert.equal(refs.section.getAttribute('data-bookings-state'), 'ready')
+  } finally {
+    global.document = originalDocument
+    global.xanoAuthFetch = originalFetch
+    console.error = originalError
+  }
+})
+
 test('a background expiration refresh keeps every Load More page rendered', async () => {
   const originalDocument = global.document
   const originalLocation = global.location
@@ -1507,6 +1620,9 @@ test('missing panel details and role-correct Message actions are supplied withou
       setAttribute(name, value) {
         this.attributes[name] = String(value)
       },
+      removeAttribute(name) {
+        delete this.attributes[name]
+      },
       querySelector(selector) {
         return this.querySelectorAll(selector)[0] || null
       },
@@ -1543,8 +1659,15 @@ test('missing panel details and role-correct Message actions are supplied withou
   const base = domElement('div', { 'booking-popup-content': 'base' })
   base.appendChild(domElement('span', { 'booking-element': 'start-date' }))
   const cancelled = domElement('div', { 'booking-popup-content': 'cancelled' })
+  const composePanels = [
+    'cancel-reason',
+    'decline-reason',
+    'reschedule',
+    'reschedule-calendar',
+  ].map((name) => domElement('div', { 'booking-popup-content': name }))
   modal.appendChild(base)
   modal.appendChild(cancelled)
+  composePanels.forEach((panel) => modal.appendChild(panel))
   const booking = {
     start: 10_000,
     duration: 30,
@@ -1566,11 +1689,36 @@ test('missing panel details and role-correct Message actions are supplied withou
   assert.equal(starterMessage.textContent, 'Message Brand')
   assert.equal(starterMessage.href, '/messages?with=mem_brand')
 
+  const supplement = cancelled.querySelector('[data-starters-call-summary]')
+  assert.equal(supplement.hidden, false)
+  assert.equal(supplement.style.display, 'flex')
+
+  // Compose steps keep their form controls unaccompanied.
+  composePanels.forEach((panel) => {
+    assert.equal(panel.querySelector('[data-starters-call-summary]'), null)
+    assert.equal(panel.querySelector('[data-starters-call-message]'), null)
+  })
+
   api.ensureDetailSupplements(modal, booking, 'brand', 'UTC')
   assert.equal(cancelled.querySelectorAll('[data-starters-call-summary]').length, 1)
   const brandMessage = cancelled.querySelector('[data-starters-call-message]')
   assert.equal(brandMessage.textContent, 'Message Starter')
   assert.equal(brandMessage.href, '/messages?with=mem_starter')
+
+  // An identity reset leaves no counterpart ID behind in the modal.
+  const originalDocument = global.document
+  const originalActions = global.StartersDashboardCallActions
+  try {
+    global.StartersDashboardCallActions = undefined
+    global.document = { querySelector: () => modal }
+    api.resetDetailModal()
+    assert.equal(modal.querySelector('[data-starters-call-message]'), null)
+    assert.equal(modal.querySelectorAll('[data-starters-call-summary-row]').length, 0)
+    assert.equal(cancelled.querySelector('[data-starters-call-summary]').hidden, true)
+  } finally {
+    global.document = originalDocument
+    global.StartersDashboardCallActions = originalActions
+  }
 })
 
 test('confirmed Paid Call details show per-call price and hide every unsupported payment control', () => {

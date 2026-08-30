@@ -1,7 +1,7 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
- * @release v1.59.402
+ * @release v1.59.451
  *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
@@ -37,6 +37,7 @@
     'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/'
   const CONFIRM_ATTEMPT_STORAGE_PREFIX = 'starters:dashboard-confirm:v1:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
+  const MEMBER_RETRY_ATTEMPTS = 2
   const REQUEST_EXPIRATION_TICK_MS = 10000
   const REQUEST_EXPIRATION_POLL_MS = 30000
   const REQUEST_EXPIRATION_MAX_POLLS = 3
@@ -922,6 +923,13 @@
     })
   }
 
+  const DETAIL_COMPOSE_PANELS = [
+    'cancel-reason',
+    'decline-reason',
+    'reschedule',
+    'reschedule-calendar',
+  ]
+
   function detailCounterpart(role, booking) {
     return role === 'starter'
       ? booking && booking.brand_data
@@ -951,16 +959,25 @@
    * Webflow's terminal and reason panels do not all contain the same booking
    * hooks, so filling every existing hook still left those views incomplete.
    * The supplement is module-owned and idempotent; Designer-owned fields stay
-   * authoritative wherever they exist.
+   * authoritative wherever they exist. Compose steps are skipped: a summary and
+   * a navigating Message link below a reason form or the slot picker is noise
+   * that can also discard the participant's in-progress input.
    */
   function ensureDetailSupplements(modal, booking, role, timezone) {
     if (!modal || !booking || typeof modal.querySelectorAll !== 'function') return 0
     const document = modal.ownerDocument || global.document
     if (!document || typeof document.createElement !== 'function') return 0
-    const panels = Array.prototype.slice.call(
+    const authored = Array.prototype.slice.call(
       modal.querySelectorAll('[booking-popup-content]'),
     )
-    if (!panels.length) panels.push(modal)
+    const panels = authored.filter(function (panel) {
+      return (
+        DETAIL_COMPOSE_PANELS.indexOf(
+          panel && panel.getAttribute ? panel.getAttribute('booking-popup-content') : '',
+        ) === -1
+      )
+    })
+    if (!authored.length) panels.push(modal)
     const rows = detailSupplementRows(booking, role, timezone)
     const counterpart = detailCounterpart(role, booking)
     const counterpartId = clean(counterpart && counterpart.memberstack_id)
@@ -1012,7 +1029,9 @@
         supplement.appendChild(message)
         rendered += 1
       }
-      show(supplement, Boolean(supplement.childNodes && supplement.childNodes.length))
+      const populated = Boolean(supplement.childNodes && supplement.childNodes.length)
+      show(supplement, populated)
+      if (populated) supplement.style.display = 'flex'
     })
     return rendered
   }
@@ -1278,6 +1297,10 @@
       show(field, false)
       const group = field.closest && field.closest('[booking-element-wrap]')
       if (group) show(group, false)
+    })
+    modal.querySelectorAll('[data-starters-call-summary]').forEach(function (supplement) {
+      supplement.textContent = ''
+      show(supplement, false)
     })
     modal
       .querySelectorAll(
@@ -1844,7 +1867,7 @@
         useSharedMember && global.memberReady && typeof global.memberReady.then === 'function'
           ? await global.memberReady
           : await memberstack.getCurrentMember()
-      if (!current || !(current.data || current).id) {
+      if (useSharedMember && (!current || !(current.data || current).id)) {
         current = await memberstack.getCurrentMember()
       }
       // Memberstack can briefly return an empty member while its client
@@ -1853,7 +1876,7 @@
       // closed after the bounded retries.
       for (
         let attempt = 0;
-        attempt < 2 && (!current || !(current.data || current).id);
+        attempt < MEMBER_RETRY_ATTEMPTS && (!current || !(current.data || current).id);
         attempt += 1
       ) {
         await new Promise(function (resolve) {
@@ -1864,7 +1887,11 @@
       if (generation !== currentGeneration()) return
       const member = current && (current.data || current)
       const memberId = clean(member && member.id)
-      if (!memberId) throw new Error('Authenticated member unavailable')
+      if (!memberId) {
+        const missing = new Error('Authenticated member unavailable')
+        missing.memberMissing = true
+        throw missing
+      }
       bindBrandHero(member)
       const rows = (await fetchBookings(memberId)).filter(function (booking) {
         return memberOwnsBooking(booking, memberId, role)
@@ -1886,10 +1913,12 @@
       return true
     } catch (error) {
       if (generation !== currentGeneration()) return
-      if (preserveExisting) {
+      const memberMissing = Boolean(error && error.memberMissing)
+      if (preserveExisting && !memberMissing) {
         console.error('[dashboard-calls] background refresh failed:', error && error.message)
         return false
       }
+      if (preserveExisting) resetIdentityState(refs, role)
       clearBrandHero(role)
       refs.forEach(renderFailure)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
