@@ -2104,13 +2104,17 @@ Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
 `data-starters-call-summary` block appended after the authored content; a modal
 that authors no such panel receives one block on the modal itself. The block
-lists only the fields that panel has no `[booking-element]` hook for and that
-the canonical row has a value for — counterpart name, date and time, duration,
-call context, reschedule reason, and cancellation reason — as
-`data-starters-call-summary-row` lines keyed by that field name, so a
-Designer-owned field always stays authoritative and is never duplicated. The
-block ends with a role-correct `data-starters-call-message` link
-(`Message Brand` for the Starter, `Message Starter` for the Brand) pointing at
+lists only the fields that panel has no usable `[booking-element]` hook for and
+that the canonical row has a value for — counterpart name, date and time,
+duration, call context, reschedule reason, and cancellation reason — as
+`data-starters-call-summary-row` lines keyed by that field name. A hook counts
+as usable only while it renders: a hook that is itself hidden, or that sits
+inside a hidden `[booking-element-wrap]` group, is treated as absent, so the
+module renders its own visible row instead of leaving the value unreadable. A
+Designer-owned field therefore stays authoritative — and is never duplicated on
+screen — for as long as it and its wrapper render. The block ends with a
+role-correct `data-starters-call-message` link (`Message Brand` for the
+Starter, `Message Starter` for the Brand) pointing at
 `/messages?with=<counterpart memberstack_id>`; the link is omitted when the
 counterpart has no canonical Memberstack ID. The block is created once per
 panel, rebuilt on every populate, and cleared when the modal is reset, so no
