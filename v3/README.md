@@ -2108,11 +2108,18 @@ lists only the fields that panel has no usable `[booking-element]` hook for and
 that the canonical row has a value for — counterpart name, date and time,
 duration, call context, reschedule reason, and cancellation reason — as
 `data-starters-call-summary-row` lines keyed by that field name. A hook counts
-as usable only while it renders: a hook that is itself hidden, or that sits
-inside a hidden `[booking-element-wrap]` group, is treated as absent, so the
-module renders its own visible row instead of leaving the value unreadable. A
-Designer-owned field therefore stays authoritative — and is never duplicated on
-screen — for as long as it and its wrapper render. The block ends with a
+as usable only while it renders: a hook that is itself hidden, that sits inside
+a hidden `[booking-element-wrap]` group, or that generates no box of its own
+inside a panel that does generate one, is treated as absent, so the module
+renders its own visible row instead of leaving the value unreadable. Geometry is
+read only for a panel that is itself rendered, because a panel inside a closed
+dialog generates no box and neither does anything it contains; there every hook
+keeps its authored display contract. Since the binding runs before Webflow opens
+the dialog, the block is rebuilt one animation frame later against the now-open
+panel, and that second pass is skipped when the modal has been reset or rebound
+to another call in the meantime. A Designer-owned field therefore stays
+authoritative — and is never duplicated on screen — for as long as it and its
+wrapper render. The block ends with a
 role-correct `data-starters-call-message` link (`Message Brand` for the
 Starter, `Message Starter` for the Brand) pointing at
 `/messages?with=<counterpart memberstack_id>`; the link is omitted when the

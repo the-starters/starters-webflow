@@ -954,14 +954,28 @@
     })
   }
 
+  /**
+   * Counts the boxes a node currently generates, or `null` when the host cannot
+   * answer. A node inside a `display: none` ancestor generates none, so this is
+   * the only probe that can tell a rendered panel from one whose whole dialog is
+   * still closed — a hidden ancestor never changes a descendant's computed
+   * `display`.
+   * @param {HTMLElement|null} node Node to measure.
+   * @returns {number|null} Box count, or `null` when geometry is unavailable.
+   */
+  function renderedBoxCount(node) {
+    if (!node || typeof node.getClientRects !== 'function') return null
+    try {
+      const rects = node.getClientRects()
+      return rects && typeof rects.length === 'number' ? rects.length : null
+    } catch (_error) {
+      return null
+    }
+  }
+
   function panelHasUsableField(panel, name) {
     if (!panel || typeof panel.querySelectorAll !== 'function') return false
-    let panelRendered = !panel.hidden
-    if (panelRendered && typeof global.getComputedStyle === 'function') {
-      try {
-        panelRendered = global.getComputedStyle(panel).display !== 'none'
-      } catch (_error) {}
-    }
+    const panelRendered = renderedBoxCount(panel) > 0
     return Array.prototype.slice.call(
       panel.querySelectorAll('[booking-element="' + name + '"]'),
     ).some(function (field) {
@@ -977,11 +991,7 @@
           if (group && global.getComputedStyle(group).display === 'none') return false
         } catch (_error) {}
       }
-      if (
-        panelRendered &&
-        typeof field.getClientRects === 'function' &&
-        field.getClientRects().length === 0
-      ) return false
+      if (panelRendered && renderedBoxCount(field) === 0) return false
       return true
     })
   }
@@ -1073,6 +1083,41 @@
       if (populated) supplement.style.display = 'flex'
     })
     return rendered
+  }
+
+  /**
+   * Re-runs the supplement once the detail dialog has actually been laid out.
+   *
+   * The View Details binding runs in the capture phase, before Webflow opens
+   * the dialog, so at that moment nothing inside it generates a box and no
+   * authored hook can be measured. Sampling geometry only in that pass would
+   * never observe the live panel, which is where a hook can render with no box
+   * of its own and no `[booking-element-wrap]` to key off. One animation frame
+   * later the dialog is open, the base panel has boxes, and the same idempotent
+   * pass either keeps the authored hook authoritative or renders the
+   * module-owned row in its place.
+   *
+   * The frame callback re-reads `data-booking-id` so a modal that was closed,
+   * reset, or rebound to another call in the meantime is left alone.
+   * @param {HTMLElement|null} modal Detail modal being populated.
+   * @param {object} booking Canonical row bound to the modal.
+   * @param {string} role Signed-in member's role.
+   * @param {string} [timezone] Display timezone.
+   * @returns {boolean} Whether a recompute was scheduled.
+   */
+  function scheduleDetailSupplements(modal, booking, role, timezone) {
+    if (!modal || !booking || typeof modal.getAttribute !== 'function') return false
+    if (typeof global.requestAnimationFrame !== 'function') return false
+    const bookingId = clean(modal.getAttribute('data-booking-id'))
+    try {
+      global.requestAnimationFrame(function () {
+        if (clean(modal.getAttribute('data-booking-id')) !== bookingId) return
+        ensureDetailSupplements(modal, booking, role, timezone)
+      })
+    } catch (_error) {
+      return false
+    }
+    return true
   }
 
   /**
@@ -1292,6 +1337,7 @@
     })
     configureDetailActions(modal, role, status, booking, now)
     ensureDetailSupplements(modal, booking, role, timezone)
+    scheduleDetailSupplements(modal, booking, role, timezone)
     hideDuplicateDetailCopy(modal)
     return true
   }
@@ -2077,6 +2123,7 @@
     configureDetailActions,
     detailSupplementRows,
     ensureDetailSupplements,
+    scheduleDetailSupplements,
     panelHasUsableField,
     confirmAttemptStorageKey,
     storedConfirmAttemptKey,
