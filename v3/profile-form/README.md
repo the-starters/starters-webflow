@@ -15,8 +15,9 @@ each captured live body.
 Five candidates no longer reconstruct to their published bodies. `canonical-profile-loader.js`
 carries company logo hydration, `draft-state.js` carries the member-bound hydration fix,
 `submit-writer.js` carries the profile-save and pending-photo commit gate, `shared-foundation.js`
-requires an explicit taxonomy option selection instead of auto-adding a typed exact name on fill or
-blur, and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on
+adds a taxonomy value only through an explicit option click or an Enter press on a highlighted
+option, so typing an exact option name never selects it on fill, on a comma, or on blur,
+and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on
 every input and change, including when the member clears the field. Their transformations are recorded as
 `whitespace_plus_idempotency_guard_plus_behavior_change` and name immutable published-body captures.
 Tests still pin each candidate length and SHA-256, prove the published length, body hash, and

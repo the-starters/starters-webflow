@@ -466,8 +466,12 @@ onDomReady(function () {
 		const phoneInput = stepField(1, '#phone');
 		let canonicalPhoneValue = String(window.activeProfile?.data?.step_1?.phone || '');
 		let phoneWasEdited = false;
-		phoneInput?.addEventListener('input', () => {
-			phoneWasEdited = true;
+		// intl-tel-input rewrites the value directly on a country pick and fires
+		// `countrychange` instead of `input`, so both signals mark the field edited.
+		['input', 'countrychange'].forEach((eventName) => {
+			phoneInput?.addEventListener(eventName, () => {
+				phoneWasEdited = true;
+			});
 		});
 		waitProfileData(() => {
 			canonicalPhoneValue = String(window.activeProfile?.data?.step_1?.phone || '');

@@ -393,6 +393,47 @@ test('typing an exact option name and blurring never selects a taxonomy option',
   assert.equal(harness.input.value, '')
 })
 
+test('typing an exact option name followed by a comma never selects a taxonomy option', () => {
+  const harness = boot({ options: OPTIONS })
+
+  harness.type('Figma,')
+
+  assert.deepEqual(harness.selectedTagNames(), [])
+  assert.equal(harness.inputValue.value, '')
+  assert.equal(harness.inputRequired.value, '')
+
+  harness.type('Figma, ')
+  harness.type('Figma, Sketch,')
+
+  assert.deepEqual(harness.selectedTagNames(), [])
+  assert.equal(harness.inputValue.value, '')
+})
+
+test('a comma after an exact option name leaves nothing selected once the field blurs', () => {
+  const harness = boot({ options: OPTIONS })
+
+  harness.type('Figma,')
+  harness.input.dispatchEvent('blur')
+  harness.flushTimers()
+
+  assert.deepEqual(harness.selectedTagNames(), [])
+  assert.equal(harness.inputValue.value, '')
+  assert.equal(harness.input.value, '')
+})
+
+test('a comma cannot append a second taxonomy option beside an explicit selection', () => {
+  const harness = boot({ options: OPTIONS })
+
+  harness.input.dispatchEvent('focus')
+  harness.renderedOption('Figma').dispatchEvent('click')
+  assert.equal(harness.inputValue.value, '1')
+
+  harness.type('Figma, Sketch,')
+
+  assert.deepEqual(harness.selectedTagNames(), ['Figma'])
+  assert.equal(harness.inputValue.value, '1')
+})
+
 test('typing an exact option name and blurring never selects a single-select taxonomy option', () => {
   const harness = boot({ options: OPTIONS, isMulti: false })
 

@@ -611,6 +611,18 @@ async function testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouch
   assert.equal(edited.Phone, '+639180000000')
 }
 
+// intl-tel-input rewrites the value on a country pick and fires `countrychange`
+// rather than `input`, so that gesture must count as a member edit too.
+async function testPhoneCountryChangeCountsAsAMemberEdit() {
+  const environment = saved({ canonicalPhone: '0917' })
+  environment.window.intlTelInput.getInstance = () => ({ getNumber: () => '+14155550000' })
+
+  await environment.fields.phone.dispatchEvent({ type: 'countrychange' })
+
+  const payload = await submittedStepPayload(environment)
+  assert.equal(payload.Phone, '+14155550000')
+}
+
 async function testEnabledOptionalRatesNeverSilentlyPersistZero() {
   const enabledBlankPayload = await submittedStepPayload(saved({
     stepIndex: 6,
@@ -1167,6 +1179,7 @@ Promise.all([
   testEveryOwnedSectionOpensSuccessModal(),
   testOptionalRatesPreserveCanonicalZeroSentinel(),
   testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
+  testPhoneCountryChangeCountsAsAMemberEdit(),
   testEnabledOptionalRatesNeverSilentlyPersistZero(),
   testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
   testReviewerStepUsesCanonicalBuildProfileShape(),

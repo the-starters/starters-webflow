@@ -36,7 +36,7 @@
     }
   },
   "candidateAssets": {
-    "sourceCommit": "9e520631220d1d111efb2ad0901138fafef58522",
+    "sourceCommit": "working-tree@00e1af3972952cdbc0d8e3783ccd40d29c0bc871",
     "hashMethod": "Full Git blob bytes hashed as SHA-256; these are release candidates, not authenticated Webflow captures",
     "files": {
       "profile-photo.js": { "path": "v3/build-profile/profile-photo.js", "bytes": 14854, "sha256": "b7593bf81d47c0d59a12125e7ad561a61e8ff1b14649f064e4ede9765cf7e558" },

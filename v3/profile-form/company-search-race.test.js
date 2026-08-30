@@ -47,6 +47,7 @@ function boot() {
   const timers = new Map()
   let nextTimerId = 1
   const domReady = []
+  const documentClicks = []
 
   const context = {
     JSON,
@@ -58,6 +59,7 @@ function boot() {
     document: {
       addEventListener(type, listener) {
         if (type === 'DOMContentLoaded') domReady.push(listener)
+        if (type === 'click') documentClicks.push(listener)
       },
       createElement() {
         dropdown = element()
@@ -112,8 +114,22 @@ function boot() {
       input.fire('focus')
       await settle()
     },
+    // searchGroup.contains() is false for this stub target, so this is an outside click.
+    async clickOutside() {
+      for (const listener of documentClicks) listener({ type: 'click', target: element() })
+      await settle()
+    },
     async resolveSearch(query, results) {
       const pending = pendingFetches.find((entry) => entry.query === query)
+      assert.ok(pending, `no in-flight company search for "${query}"`)
+      pendingFetches.splice(pendingFetches.indexOf(pending), 1)
+      pending.resolve({ ok: true, json: async () => results })
+      await settle()
+    },
+    // Two requests can be in flight for the same text: the abandoned one and the live one.
+    async resolveLatestSearch(query, results) {
+      const matching = pendingFetches.filter((entry) => entry.query === query)
+      const pending = matching[matching.length - 1]
       assert.ok(pending, `no in-flight company search for "${query}"`)
       pendingFetches.splice(pendingFetches.indexOf(pending), 1)
       pending.resolve({ ok: true, json: async () => results })
@@ -212,4 +228,79 @@ test('retyping an abandoned query runs a fresh search instead of reopening an em
   await harness.resolveSearch('acme corp', ACME)
   assert.match(harness.dropdown.innerHTML, /Acme Corp/)
   assert.equal(harness.isOpen(), true)
+})
+
+test('refocusing after dismissing a still-pending search never strands a Searching message', async () => {
+  const harness = await boot()
+
+  await harness.search('acme corp')
+  await harness.clickOutside()
+  assert.equal(harness.isOpen(), false)
+
+  await harness.search('acme corp')
+
+  assert.deepEqual(harness.fetchedQueries, ['acme corp', 'acme corp'])
+  assert.match(harness.dropdown.innerHTML, /Searching\.\.\./)
+
+  await harness.resolveLatestSearch('acme corp', ACME)
+  assert.match(harness.dropdown.innerHTML, /Acme Corp/)
+  assert.equal(harness.isOpen(), true)
+})
+
+test('a dismissed search that resolves after the retype leaves the retype results standing', async () => {
+  const harness = await boot()
+
+  await harness.search('acme corp')
+  await harness.clickOutside()
+  await harness.search('acme corp')
+
+  await harness.resolveSearch('acme corp', [{ name: 'Stale Corp', domain: 'stale.example', logo_url: '' }])
+  await harness.resolveSearch('acme corp', ACME)
+
+  assert.match(harness.dropdown.innerHTML, /Acme Corp/)
+  assert.doesNotMatch(harness.dropdown.innerHTML, /Stale Corp/)
+  assert.equal(harness.isOpen(), true)
+})
+
+test('refocusing while a search is genuinely still in flight does not duplicate the request', async () => {
+  const harness = await boot()
+
+  await harness.search('acme corp')
+  await harness.search('acme corp')
+
+  assert.deepEqual(harness.fetchedQueries, ['acme corp'])
+  assert.equal(harness.isOpen(), true)
+  assert.match(harness.dropdown.innerHTML, /Searching\.\.\./)
+
+  await harness.resolveSearch('acme corp', ACME)
+  assert.match(harness.dropdown.innerHTML, /Acme Corp/)
+})
+
+test('reopening rendered results for unchanged text does not refetch', async () => {
+  const harness = await boot()
+
+  await harness.search('acme corp')
+  await harness.resolveSearch('acme corp', ACME)
+  await harness.clickOutside()
+  assert.equal(harness.isOpen(), false)
+
+  await harness.search('acme corp')
+
+  assert.deepEqual(harness.fetchedQueries, ['acme corp'])
+  assert.equal(harness.isOpen(), true)
+  assert.match(harness.dropdown.innerHTML, /Acme Corp/)
+})
+
+test('a failed search retries on refocus instead of stranding the error message', async () => {
+  const harness = await boot()
+
+  await harness.search('acme corp')
+  await harness.failSearch('acme corp')
+  assert.match(harness.dropdown.innerHTML, /Search unavailable/)
+
+  await harness.search('acme corp')
+
+  assert.deepEqual(harness.fetchedQueries, ['acme corp', 'acme corp'])
+  await harness.resolveSearch('acme corp', ACME)
+  assert.match(harness.dropdown.innerHTML, /Acme Corp/)
 })

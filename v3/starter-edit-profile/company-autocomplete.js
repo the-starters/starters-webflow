@@ -81,7 +81,8 @@
     searchGroup.appendChild(dropdown);
 
     let timer;
-    let lastQuery = '';
+    let renderedQuery = '';
+    let pendingQuery = '';
     let selectingCompany = false;
     let searchSequence = 0;
 
@@ -137,6 +138,7 @@
 
     function closeDropdown() {
       searchSequence += 1;
+      pendingQuery = '';
       dropdown.style.display = 'none';
     }
 
@@ -159,7 +161,9 @@
       openDropdown();
     }
 
-    function renderResults(results) {
+    function renderResults(results, query) {
+      renderedQuery = query;
+
       if (!results.length) {
         const typedCompany = input.value.trim();
 
@@ -212,12 +216,6 @@
       openDropdown();
     }
 
-    // A discarded response leaves no rendered results for its query, so the
-    // `q === lastQuery` shortcut must not later reopen that empty dropdown.
-    function discardAbandonedSearch(q) {
-      if (lastQuery === q) lastQuery = '';
-    }
-
     async function searchCompanies(query) {
       const q = query.trim();
 
@@ -228,12 +226,14 @@
         return;
       }
 
-      if (q === lastQuery) {
+      // Reopen without refetching only when this exact text already has results on
+      // screen, or a live request of its own still pending.
+      if (q === renderedQuery || q === pendingQuery) {
         openDropdown();
         return;
       }
 
-      lastQuery = q;
+      pendingQuery = q;
       renderMessage('Searching...');
       const sequence = ++searchSequence;
       const slowMessageTimer = setTimeout(function () {
@@ -244,17 +244,14 @@
         const response = await fetch(`${SEARCH_ENDPOINT}?q=${encodeURIComponent(q)}`);
         if (!response.ok) throw new Error(`Company search failed (${response.status})`);
         const results = await response.json();
-        if (sequence !== searchSequence) {
-          discardAbandonedSearch(q);
-          return;
-        }
+        if (sequence !== searchSequence) return;
 
-        renderResults(Array.isArray(results) ? results : []);
+        renderResults(Array.isArray(results) ? results : [], q);
       } catch (error) {
         if (sequence === searchSequence) renderMessage('Search unavailable');
-        else discardAbandonedSearch(q);
       } finally {
         clearTimeout(slowMessageTimer);
+        if (sequence === searchSequence) pendingQuery = '';
       }
     }
 
@@ -395,7 +392,7 @@
 
       } else {
         input.value = selectedName;
-        lastQuery = selectedName;
+        renderedQuery = selectedName;
         storeSingleSelection(selectedName, selectedDomain, selectedLogoUrl);
         closeDropdown();
       }

@@ -645,23 +645,6 @@
       }
 
       function handleInputChange() {
-        const inputValue = $input.val();
-
-        const inputValues = inputValue.split(',').map((v) => v.trim());
-
-        if (inputValue.endsWith(',') || inputValue.endsWith(', ')) {
-          inputValues.pop();
-
-          const newValidOptions = inputValues
-            .map((value) => options.find((option) => option.name === value))
-            .filter(Boolean)
-            .filter((option) => !selectedOptions.some((selected) => selected.id === option.id));
-
-          newValidOptions.forEach(addTag);
-
-          updateInput();
-        }
-
         filterOptions();
       }
 
