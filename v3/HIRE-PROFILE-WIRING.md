@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-29
+Last updated: 2026-08-30
 Status: Call projections and Free Call behavior are GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
@@ -328,7 +328,7 @@ is harmless — nothing reads them here and no warning is raised. The optional
 `data-booking-footer-class` still applies its class to the footer row verbatim,
 but **it no longer opts the row out of the engine's frame** — see the footer
 frame contract below. Unauthored, the engine's own row is a full-width flex row
-(`display:flex;gap:12px;width:100%` inline). Either way the injected sheet
+(`display:flex;gap:0.5rem;width:100%` inline). Either way the injected sheet
 decides how the two wraps sit in it — right-aligned at their natural width from
 768px up, a full-width stack with the confirm on top below it. The engine writes
 no inline style on either control: their size comes from the sheet's rules on
@@ -372,9 +372,9 @@ names and must stay pixel-identical.
 
 #### The footer frame contract (reversed August 2026)
 
-On the booking surface the engine ALWAYS paints the footer's frame — the
-`1px #eee` hairline, the even `1.25rem` padding, the white fill, the mobile
-sticky and the alignment. Those rules key on
+On the booking surface the engine ALWAYS paints the footer's frame — the even
+`1.25rem` padding, the white fill, the mobile sticky and the alignment. There
+is no hairline at either width any more. Those rules key on
 `[data-paid-calendar-element="footer"][data-paid-calendar-footer]`, which
 matches both stamped values; the attribute is doubled for specificity, taking
 them to (0,3,0) so they outrank the authored `.call-sched_button-group`
@@ -390,8 +390,8 @@ single `data-paid-calendar-footer` value. Everything stays scoped under
 at all.
 
 Below 768px the footer is `position:sticky; bottom:0` with an opaque white
-fill, the desktop band's `1px #eee` hairline and a `1.25rem` frame on all four
-sides: the
+fill — no hairline, the fill is the only divider — and a `1.25rem` frame on all
+four sides: the
 whole panel scrolls inside `.modal_content-layout` (the modal's body, and the
 only real scrollport here — measured, not assumed), and the buttons stay pinned
 to the bottom of it while remaining in flow, so the last slots still end above
@@ -401,12 +401,12 @@ width, since a grid item cannot travel outside its own grid area; and
 scrollport that never scrolls and swallowed the sticky. Desktop keeps the grid
 and its always-visible band — the times scroll inside their own cell there.
 
-Every footer row is given an inline `column-gap:16px` between Back and the
-request button; on the fallback row its own `gap:12px` shorthand supersedes
-that. The stacked pair is spaced by a `0.75rem` **`row-gap`** in that same
-mobile rule, because a column gap places nothing once the row is a column. The
-fallback row is unaffected there too: its inline `gap:12px` sets a row gap of
-the same size and outranks any sheet rule.
+Every footer row is given an inline `column-gap:0.5rem` between Back and the
+request button; on the fallback row its own `gap:0.5rem` shorthand supersedes
+that at the same length. The stacked pair is spaced by a `0.5rem` **`row-gap`**
+in that same mobile rule, because a column gap places nothing once the row is a
+column. The fallback row is unaffected there too: its inline `gap:0.5rem`
+shorthand sets both axes to the same length and outranks any sheet rule.
 
 **Lengths in that sheet are rem, and every remaining px is a border, except the
 transparent `2px` outline used only as a forced-colors/High-Contrast focus
@@ -428,10 +428,9 @@ That sheet also **zeroes the authored step's own padding**
 (`.call-details_layout`, which the site pads by
 `--_spacing---spacer--spacing-14`) at every width, so the interior frame is the
 only inset between the modal's edges and the calendar. Without it the two
-stacked: the footer's hairline stopped short of both modal edges and the status
-banner could not run the panel's full width. It wins on specificity — the
-site's declarations are flat class selectors, and the dialog attribute puts this
-one rank above them — never with `!important`.
+stacked: the status banner could not run the panel's full width. It wins on
+specificity — the site's declarations are flat class selectors, and the dialog
+attribute puts this one rank above them — never with `!important`.
 
 #### The status banner and the four-state min-height
 
@@ -447,7 +446,7 @@ notice) and `empty` (no availability in the next 14 days) share a white-on-dark
 message scrolls the modal's body back to the top, since the banner is painted
 at the top of the scrollable content and mid-scroll would otherwise land above
 what the visitor can see. Because the banner is out of flow, the mount carries
-a `28.125rem` min-height and the empty-availability state pushes its footer to the bottom — otherwise that panel
+a `20rem` min-height and the empty-availability state pushes its footer to the bottom — otherwise that panel
 would collapse to the height of one button and the banner would cover it. That
 min-height reaches all four states the mount wears — `ready`, `empty`,
 `loading` and `error`, the last two stamped by the free-call controller on this

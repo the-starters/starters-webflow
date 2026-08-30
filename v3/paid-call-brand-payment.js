@@ -1,7 +1,7 @@
 /**
  * V3 paid-call Brand payment client.
  *
- * @release v1.59.447
+ * @release v1.59.449
  *
  * Xano derives the Brand and payment environment from the authenticated
  * session. A selection attempt owns one bounded idempotency key: retries reuse
@@ -615,7 +615,8 @@
      last thing in the mount. */
   const CALENDAR_FRAME = '1.25rem'
   /* The slot chips' two states. Resting is `#eee` — the same grey as the month
-     picker's fill and the footer's hairline, so the three read as one surface.
+     picker's fill and the timezone select's hairline, so the three read as one
+     surface.
      It is written from JavaScript rather than the sheet because the chips are
      built here and their state flips on click; every place that writes the
      resting colour must use this constant, including the deselect reset, or a
@@ -624,14 +625,13 @@
   const SLOT_SELECTED_BACKGROUND = '#1f211d'
   /* The engine's muted text grey — the timezone caption and the status line. */
   const ENGINE_MUTED_INK = '#6f746d'
-  /* The rule above the buttons. There is no row gap on desktop any more: the
-     footer is its own band, and a hairline plus its own padding is what
-     separates it from the panel. A gap AND a rule would read as two dividers. */
+  /* The footer band draws no rule any more. The timezone select's closed face
+     is the one thing left wearing this hairline. */
   const CALENDAR_FOOTER_RULE = '1px solid #eee'
   /* Row gap for the stacked mobile footer: the engine's inline `column-gap`
-     places nothing in a column. Same 12px as the fallback row's inline `gap`,
-     which outranks this rule. */
-  const FOOTER_STACK_GAP = '0.75rem'
+     places nothing in a column. Same 0.5rem as the fallback row's inline
+     `gap`, which outranks this rule. */
+  const FOOTER_STACK_GAP = '0.5rem'
   /* ---- the status banner ----
      Jerico's round-3 tuning, and a change of kind rather than degree: the
      status stops being a line of text under the buttons and becomes a band
@@ -646,7 +646,7 @@
      colour by it.
 
      The neutral pair is Jerico's round-4 pick. It was `#eee` on `#1f211d`
-     first, matching the picker fill and the footer hairline; at banner size
+     first, matching the picker fill and the chips' resting grey; at banner size
      that read as a panel rather than a notice, so both neutral messages now
      wear the same weight as the failure and differ only in hue. */
   const STATUS_ERROR_BACKGROUND = '#DD5555'
@@ -670,8 +670,8 @@
      directly above the slot chips at both widths, and a grey box on top of a
      field of grey boxes reads as the first chip — an option to pick rather
      than a control to open. White separates the two while the `#eee` border
-     keeps it in the family: it is the same hairline as the footer band and the
-     same grey as the picker's ring. Their original was white too; what changes
+     keeps it in the family: it is the same grey as the picker's ring and the
+     chips' resting fill. Their original was white too; what changes
      is the off-palette `#d7d9d2` border for the modal's own `#eee`. */
   const TIMEZONE_SELECT_BACKGROUND = '#fff'
   const TIMEZONE_SELECT_BORDER = CALENDAR_FOOTER_RULE
@@ -726,10 +726,10 @@
      absolute error wouldn't be weird looking". With the banner out of flow
      there is nothing holding the panel open on the empty-availability path —
      the mount would collapse to the height of one button and the banner would
-     cover it. Rem, so it tracks the site's responsive root font size (363px at
-     1280, 433px at 375); the calendar state is taller than that at both
-     widths, so this only ever shows on the empty path. */
-  const CALENDAR_MIN_HEIGHT = '28.125rem'
+     cover it. Rem, so it tracks the site's responsive root font size; the
+     calendar state is taller than that at both widths, so this only ever shows
+     on the empty path. */
+  const CALENDAR_MIN_HEIGHT = '20rem'
 
   function ensureBookingCalendarLayout(document) {
     if (
@@ -844,7 +844,7 @@
          own size are not fighting the UA stylesheet's. */
       role + '"timezone"]{'
         + 'appearance:none;-webkit-appearance:none;'
-        + 'font:inherit;font-size:1rem;font-weight:500;'
+        + 'font:inherit;font-size:0.9375rem;font-weight:400;'
         + 'width:100%;min-height:' + TIMEZONE_SELECT_MIN_HEIGHT + ';cursor:pointer;'
         + 'color:' + SLOT_SELECTED_BACKGROUND + ';'
         + 'background-color:' + TIMEZONE_SELECT_BACKGROUND + ';'
@@ -915,9 +915,8 @@
          `--_spacing---spacer--spacing-14` (32.3px measured at 1280, 15.4px at
          375). With the interior frame below doing that job on the elements
          themselves at every width, this was a second frame outside the first:
-         the footer's hairline stopped short of both modal edges, the status
-         banner could not run the panel's full width, and on a phone the two
-         insets stacked.
+         the status banner could not run the panel's full width, and on a phone
+         the two insets stacked.
 
          Specificity, not `!important` (which this sheet forbids): the site's
          two declarations are the flat `.call-details_layout` and a
@@ -1019,17 +1018,13 @@
          "space needed at the bottom" in Jerico's note, and it is structural
          rather than a guessed offset.
 
-         The background and the hairline are what make it read as a surface
-         rather than as floating text: chips scroll underneath, and without the
-         fill they show through the gap between the two buttons. White, because
-         that is the modal's own fill; the hairline is the same one the desktop
-         band carries, and Jerico asked for both once he had seen the footer
-         float. It stays in px — a hairline is a device-pixel affordance, per
-         the unit convention this sheet follows. */
+         The white fill is the only divider, and what makes the bar read as a
+         surface rather than as floating text: chips scroll underneath and
+         would otherwise show through the gap between the two buttons. */
       /* Placement and appearance both reach every footer, authored or not.
          See the footer class contract at the top of this file. */
       role + '"footer"]{order:4}',
-      footerRow + '{position:sticky;bottom:0;background:#fff;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + '}',
+      footerRow + '{position:sticky;bottom:0;background:#fff;padding:' + CALENDAR_FRAME + '}',
       // Stacked, full width, primary first. `order` rather than
       // `column-reverse` so the empty state — which has only the back
       // control — is unaffected either way.
@@ -1048,8 +1043,7 @@
       // rows on the right. Rem, so it tracks the site's responsive root font
       // size rather than pinning a pixel width.
       'column-gap:2rem;',
-      // Zero, not small: the footer band's hairline and padding do the
-      // separating now. See CALENDAR_FOOTER_RULE.
+      // Zero, not small: the footer band's own padding does the separating now.
       'row-gap:0;',
       'grid-template-columns:minmax(0,1fr) minmax(0,1fr);',
       /* The footer spans BOTH columns on its own row at the bottom, so the
@@ -1129,9 +1123,8 @@
       role + '"times"]::-webkit-scrollbar{width:' + SCROLLBAR_WIDTH + ';display:block;background:transparent}',
       role + '"times"]::-webkit-scrollbar-thumb{background-color:var(--colors--black-olive-40);border-radius:' + SCROLLBAR_WIDTH + '}',
       role + '"times"]::-webkit-scrollbar-track{background-color:var(--colors--silver)}',
-      /* The footer as its own band: a hairline across the full width, its own
-         padding inside it, and the buttons pushed to the right at their
-         natural width.
+      /* The footer as its own band: the full width, its own padding inside it,
+         and the buttons pushed to the right at their natural width.
 
          Right-aligned rather than sharing the row: that is what Jerico's
          screenshot shows, it is what his note "the button group flex" asks
@@ -1148,7 +1141,7 @@
       // note on the mobile rules above.
       role + '"footer"]{grid-area:footer}',
       // `display:flex` for the same reason as the mobile rule above.
-      footerRow + '{display:flex;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
+      footerRow + '{display:flex;padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
       '}',
     ].join('')
     const host = document.head || document.documentElement
@@ -1572,7 +1565,7 @@
       )
       // The column gap for every row. Inline, so it outranks an authored
       // class's; the fallback row's own `gap` below supersedes it there.
-      footer.style.columnGap = '16px'
+      footer.style.columnGap = '0.5rem'
       // Still stamped for both flavours, but the sheet's appearance rules key
       // on the bare attribute and reach either row.
       footer.setAttribute(
@@ -1594,7 +1587,7 @@
            here would pin them at both sizes. The sheet owns them. */
         applyStyles(footer, {
           display: 'flex',
-          gap: '12px',
+          gap: '0.5rem',
           width: '100%',
         })
       }

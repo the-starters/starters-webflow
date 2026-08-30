@@ -3401,17 +3401,17 @@ flowchart TD
    `data-booking-back-class` are **ignored on the booking surface**, and are
    harmless if left authored. The optional `data-booking-footer-class` is still
    applied to the footer row verbatim; unauthored, the row is a full-width flex
-   row (`display:flex;gap:12px;width:100%`) whose contents the injected sheet
+   row (`display:flex;gap:0.5rem;width:100%`) whose contents the injected sheet
    arranges — pushed to the right at their natural width from 768px up, stacked
    full width with the confirm on top below it. Flex rather than fixed columns
    is also what lets the confirm fill the whole row on a direct entry where the
    back control is hidden.
 
    **On the booking surface the engine always paints the footer's frame** — the
-   `1px #eee` hairline, the even `1.25rem` padding, the white fill and the
-   mobile sticky. An authored class may still add what the engine does not
-   declare; it can no longer remove the frame. Full contract, including the
-   specificity split and the gap rules:
+   even `1.25rem` padding, the white fill and the mobile sticky. There is no
+   hairline at either width any more. An authored class may still add what the
+   engine does not declare; it can no longer remove the frame. Full contract,
+   including the specificity split and the gap rules:
    [the footer frame contract](HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
 
    The shared engine also renders a timezone control — a `<label>` wrapping a
@@ -3431,7 +3431,7 @@ flowchart TD
    box as well as its spacing: the wrapper's own `display:grid` and the
    `0.375rem` between its caption and its select. On this surface the sheet
    also owns the select's **closed face**: it removes the OS chrome with
-   `appearance:none`, then supplies the modal's `1rem`/500 type, white fill,
+   `appearance:none`, then supplies its `0.9375rem`/400 type, white fill,
    `1px #eee` hairline, `0.375rem` radius, `2.625rem` minimum-height floor,
    rem padding, matching chevron, and the timepicker's `:focus-visible` ring.
    Its transparent `2px` outline is a forced-colors/High-Contrast focus hook.
@@ -3446,11 +3446,11 @@ flowchart TD
 
    The calendar is two columns from 768px up — month on the left, times on the
    right — with the footer spanning BOTH columns on its own row underneath as a
-   band: a `1px #eee` rule across the full width, `1.25rem` of padding, and the
-   buttons pushed to the right at their natural width, the way the modal's own
-   authored `.call-sched_button-group` lays buttons out. There is no row gap;
-   the band's rule and padding do the separating. The times take the leftover
-   height in their column and scroll inside themselves, so a day with many slots
+   band: `1.25rem` of padding across the full width, and the buttons pushed to
+   the right at their natural width, the way the modal's own authored
+   `.call-sched_button-group` lays buttons out. There is no row gap; the band's
+   padding does the separating. The times take the leftover height in their
+   column and scroll inside themselves, so a day with many slots
    cannot grow the modal, and the slot chips keep their natural height whatever
    the day looks like. A `1.25rem` interior frame runs around the two columns
    and they sit `2rem` apart. The month's day cells fill their column rather
@@ -3459,11 +3459,10 @@ flowchart TD
    That frame is the **only** inset between the modal's edges and the calendar,
    at either width: the same sheet zeroes the padding the site puts on the
    authored step around the mount (`.call-details_layout`,
-   `--_spacing---spacer--spacing-14`). Left in, the two stacked — the footer's
-   hairline stopped short of both modal edges, the status banner could not run
-   the panel's full width, and on a phone every element was inset twice. It
-   wins on specificity, since the site's declarations are flat class selectors
-   and the dialog attribute puts this one rank above them.
+   `--_spacing---spacer--spacing-14`). Left in, the two stacked — the status
+   banner could not run the panel's full width, and on a phone every element
+   was inset twice. It wins on specificity, since the site's declarations are
+   flat class selectors and the dialog attribute puts this one rank above them.
 
    Every length in that sheet is a **rem**, so it tracks the site's responsive
    root font size; the only pixels left are border widths, plus the transparent
@@ -3493,10 +3492,10 @@ flowchart TD
    body back to the top: the banner is painted at the top of the scrollable
    content, so on a phone mid-scroll it would otherwise land far above anything
    the visitor can see. Because the banner is out of flow the mount carries a
-   `28.125rem` min-height across all four states it ever wears — `ready`,
-   `empty`, `loading` and `error` — and the empty-availability state pushes its
-   footer to the bottom of it, so the banner never covers a collapsed panel.
-   Full contract:
+   `20rem` min-height across all four states it ever wears — `ready`, `empty`,
+   `loading` and `error` — and the empty-availability state pushes its footer to
+   the bottom of it, so the banner never covers a collapsed panel. Full
+   contract:
    [the status banner and the four-state min-height](HIRE-PROFILE-WIRING.md#the-status-banner-and-the-four-state-min-height).
 
    On the booking surface the shell writes only `width` inline and leaves its
@@ -3528,8 +3527,8 @@ flowchart TD
    the footer was sticking to that instead of to the body. The footer's bottom
    padding is what holds the empty-availability state off the modal's bottom
    edge, at both widths — that spacing used to sit on the mount,
-   and would double against this. The floating footer carries the same
-   `1px #eee` hairline as the desktop band and a full `1.25rem` frame on all
+   and would double against this. The floating footer carries no hairline —
+   its white fill is the only divider — and a full `1.25rem` frame on all
    four sides, its top edge included — that edge is where the chips pass
    behind it, so nothing above can space it. The same
    sheet restyles the month
