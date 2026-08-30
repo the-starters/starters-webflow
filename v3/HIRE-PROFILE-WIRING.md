@@ -370,51 +370,22 @@ inside them; off this surface they keep the inline columns they ship with. Every
 form's datepickers and the dashboard's reschedule calendar share these class
 names and must stay pixel-identical.
 
-**The footer frame contract (reversed August 2026).** The engine now ALWAYS
-paints the booking footer's frame — the hairline, the padding, the fill, the
-sticky and the alignment. Every one of those rules keys on
+**The footer frame contract (reversed August 2026).** On the booking surface
+the engine ALWAYS paints the footer's frame — the hairline, the padding, the
+fill, the sticky and the alignment. Those rules key on
 `[data-paid-calendar-element="footer"][data-paid-calendar-footer]`, which
-matches both stamped values (`fallback` and `authored`).
-
-This replaces the old split, where appearance keyed on
-`data-paid-calendar-footer="fallback"` so that an authored
-`data-booking-footer-class` row "placed its own children and painted itself".
-That promise was keyed to a value the live page never carries: production
-authors `call-sched_button-group` on this row, so the row was always stamped
-`authored` and none of the frame rendered there — no hairline, no even
-`1.25rem` frame, no white fill, and no sticky on a phone, with the class's own
-asymmetric padding in their place.
-
-The doubled attribute is deliberate, and it is specificity rather than
-selection: the role attribute alone matches both rows but only reaches
-(0,2,0), while `.call-sched_button-group` is (0,1,0) in the site's own head
-stylesheet and was winning `padding`, `flex-flow`, `justify-content` and
-`align-items`. Repeating the attribute takes the rules to (0,3,0), which
-outranks the class without `!important`.
-
-The frame carries its own **`display:flex`** at both widths. Everything that
-arranges the two actions — `justify-content` and `align-items` on desktop, the
-column, the stretch, the row gap and the confirm's `order` below the breakpoint
-— is a flex-container property, and the engine writes an inline `display` on
-its own fallback row only. Without it the arrangement would depend on whatever
-formatting context the authored class happens to use, and a `display:block` or
-`display:grid` class would silently leave the two wraps in DOM order (Back
-above Confirm) with no gap while the band, the padding and the sticky still
-painted around them.
-
-An authored class may still ADD anything the engine does not declare — its
-typography, a background image, its column gap above the breakpoint — but it
-cannot take the frame away. Below the breakpoint the engine owns the row
-spacing (see the `0.75rem` `row-gap` further down); the column gap is still
-the class's there, since a column has none to place. Placement
-(`grid-area`, `order`) still keys on the role attribute alone, and a test walks
-the emitted CSS to keep that split honest: appearance must never sit on the
-bare role selector, and no appearance rule may pin itself to a single
-`data-paid-calendar-footer` value.
-
-All of it stays scoped under `[data-modal-target="popup-booking"]`, so the
-dashboard's reschedule calendar — which never gets this sheet — is untouched,
-and an authored row there still paints itself exactly as before.
+matches both stamped values; the attribute is doubled for specificity, taking
+them to (0,3,0) so they outrank the authored `.call-sched_button-group`
+(0,1,0) without `!important`. They declare their own `display:flex`, because
+everything that arranges the two actions is a flex-container property and only
+the engine's fallback row carries an inline `display`. An authored class may
+still add what the engine does not declare, but it can no longer take the frame
+away. Placement (`grid-area`, `order`) still keys on the role attribute alone,
+and a test walks the emitted CSS to keep that split honest: appearance must
+never sit on the bare role selector, and no appearance rule may pin itself to a
+single `data-paid-calendar-footer` value. Everything stays scoped under
+`[data-modal-target="popup-booking"]`, and off that surface no footer is built
+at all.
 
 Below 768px the footer is `position:sticky; bottom:0` with an opaque white
 fill, the desktop band's `1px #eee` hairline and a `1.25rem` frame on all four
@@ -429,12 +400,9 @@ scrollport that never scrolls and swallowed the sticky. Desktop keeps the grid
 and its always-visible band — the times scroll inside their own cell there.
 
 The stacked pair is spaced by a `0.75rem` **`row-gap`** in that same mobile
-rule. The engine's inline `column-gap:16px` is the only spacing it writes on an
-authored row and it contributes nothing once the row is a column, so without
-this the two buttons would touch wherever the authored class declares no row
-gap of its own. It is `row-gap` rather than a `gap` shorthand, and the engine's
-own fallback row is unaffected either way: its inline `gap:12px` sets a row gap
-of the same size and outranks any sheet rule.
+rule, because the engine's inline `column-gap:16px` places nothing once the row
+is a column. The fallback row is unaffected: its inline `gap:12px` sets a row
+gap of the same size and outranks any sheet rule.
 
 **Lengths in that sheet are rem, and every remaining px is a border, except the
 transparent `2px` outline used only as a forced-colors/High-Contrast focus
@@ -476,13 +444,10 @@ what the visitor can see. Because the banner is out of flow, the mount carries
 a `28.125rem` min-height and the empty-availability state pushes its footer to the bottom — otherwise that panel
 would collapse to the height of one button and the banner would cover it. That
 min-height reaches all four states the mount wears — `ready`, `empty`,
-`loading` and `error`. An earlier round scoped it to the first two so that a
-one-line message would not inherit a void; with the step wrapper's padding
-zeroed by the sheet, that left the pre-mount states with no height source and
-the dialog opened as a ~72px strip on every open after the first. Both states
-now also carry the `1.25rem` interior frame and centre their message on BOTH
-axes (`justify-content`, `align-items`, `text-align`), which is what answers
-the void objection without giving the floor back up.
+`loading` and `error`. Scoping it to the first two left the pre-mount states
+with no height source, since the sheet zeroes the step wrapper's padding, and
+the dialog opened as a ~72px strip. Those two also carry the `1.25rem` interior
+frame and centre their message on both axes.
 
 None of this reaches the dashboard's reschedule calendar: no sheet is injected
 there, no tone attribute is written, and the status keeps the plain inline grey

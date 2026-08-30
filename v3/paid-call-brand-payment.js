@@ -525,42 +525,14 @@
      there. Both are harmless if left authored: nothing reads them on that
      surface, and no warning is raised.
 
-     `data-booking-footer-class` still applies its class verbatim on every
-     surface, and the engine still stamps `data-paid-calendar-footer` with
-     `authored` or `fallback` to say which row this is.
-
-     WHAT IT NO LONGER DOES IS OPT OUT OF THE FRAME. This reverses the split
-     this file used to document, deliberately and on Jerico's call. The old
-     contract was "an authored row places its own children and paints itself",
-     so everything that paints a footer — the hairline, the padding, the fill,
-     the sticky, the alignment — keyed on `="fallback"`. Live production
-     authors `call-sched_button-group` on that row, which means the band was
-     keyed to a value the real page never carries and NONE of it rendered
-     there: the footer had the class's own asymmetric padding, no hairline, no
-     white fill and no sticky, and on a phone the chips scrolled under bare
-     floating buttons.
-
-     The contract now: THE ENGINE ALWAYS PAINTS THE BOOKING FOOTER'S FRAME.
-     Placement (`grid-area`, `order`) keys on the role attribute; appearance
-     keys on `[data-paid-calendar-element="footer"][data-paid-calendar-footer]`,
-     which matches both stamped values at (0,3,0) and so outranks an authored
-     (0,1,0) class without `!important`. An authored class may still ADD
-     anything the engine does not declare — its typography, a background
-     image, its column gap above the breakpoint — but it can no longer take
-     the frame away.
-
-     The frame carries its own `display:flex` at both widths. Everything that
-     ARRANGES the two actions is a flex-container property, and the engine
-     writes an inline `display` on its own fallback row only, so without this
-     the arrangement would depend on whatever formatting context the authored
-     class happens to use — and a `block` or `grid` one would silently drop
-     the stack, the alignment, the row gap and the confirm's `order`. Below
-     the breakpoint that also means the engine, not the class, owns the ROW
-     gap; the column gap there is still the class's, since a column has none.
-
-     Only inside the booking dialog. Off that surface the sheet is never
-     injected, so the dashboard's reschedule calendar is untouched and an
-     authored row there still paints itself exactly as before.
+     `data-booking-footer-class` still applies its class verbatim and the row
+     is still stamped `data-paid-calendar-footer`, but it no longer opts the
+     row out of the frame. On the booking surface appearance keys on
+     `[data-paid-calendar-element="footer"][data-paid-calendar-footer]` at
+     (0,3,0), which outranks the authored (0,1,0) class without `!important`;
+     placement (`grid-area`, `order`) still keys on the role attribute alone.
+     Those rules declare their own `display:flex`, since only the fallback row
+     carries an inline one.
 
      OFF the booking surface — the dashboard's reschedule calendar mounts this
      same engine — nothing changed at all: no footer, no back control, and a
@@ -656,13 +628,9 @@
      footer is its own band, and a hairline plus its own padding is what
      separates it from the panel. A gap AND a rule would read as two dividers. */
   const CALENDAR_FOOTER_RULE = '1px solid #eee'
-  /* The space between the two stacked buttons below the mobile breakpoint. The
-     engine's fallback row writes an inline `gap:12px`, which sets a row gap
-     with it; an authored row gets only the inline `column-gap`, which
-     contributes nothing once the sheet turns the row into a column. So the
-     sheet declares the row gap for both, at the fallback's 12px in the rem
-     the rest of these lengths use. The fallback's inline shorthand outranks
-     it, so that row is unchanged and the two stacks match. */
+  /* Row gap for the stacked mobile footer: the engine's inline `column-gap`
+     places nothing in a column. Same 12px as the fallback row's inline `gap`,
+     which outranks this rule. */
   const FOOTER_STACK_GAP = '0.75rem'
   /* ---- the status banner ----
      Jerico's round-3 tuning, and a change of kind rather than degree: the
@@ -772,19 +740,9 @@
     if (document.getElementById(CALENDAR_LAYOUT_STYLE_ID)) return
     const dialog = BOOKING_SURFACE_SELECTOR
     const role = dialog + ' [data-paid-calendar-element='
-    /* EVERY footer row in the booking dialog, authored or not. The engine
-       stamps `data-paid-calendar-footer` on both kinds — the value still says
-       which is which, and the placement rules still read it — so the bare
-       attribute is the one thing they have in common.
-
-       The extra attribute is doing specificity work, not selection work:
-       `[data-paid-calendar-element="footer"]` alone already matches both rows,
-       but at (0,2,0) it ties with nothing and loses to nothing — while the
-       authored class this has to beat, `.call-sched_button-group`, is (0,1,0)
-       in the site's own head stylesheet and was winning padding, flex-flow,
-       justify-content and align-items outright. Doubling the attribute takes
-       this to (0,3,0), which outranks the class without `!important` — the
-       same doubling trick the datepicker card rule uses further up. */
+    /* Every footer row, authored or not. The attribute is doubled for
+       specificity, not selection: (0,3,0) beats the authored
+       `.call-sched_button-group` (0,1,0) without `!important`. */
     const footerRow = role + '"footer"][data-paid-calendar-footer]'
     const style = document.createElement('style')
     style.setAttribute('id', CALENDAR_LAYOUT_STYLE_ID)
@@ -925,44 +883,19 @@
       /* Jerico's inline min-height, moved to the sheet. See CALENDAR_MIN_HEIGHT
          — with the banner out of flow, the empty-availability panel has only a
          button left in it to set its height. */
-      /* All four states the mount ever wears, and the two pre-mount ones are
-         here deliberately after a round without them.
-
-         The earlier round restricted this to `ready` and `empty` because
-         `loading` and `error` — a single line of text, with no shell and no
-         footer — inherited "a 450px void under one sentence". Restricting it
-         traded that void for a worse frame: with the step's authored padding
-         zeroed by the rule further down, the mount had NO height source of its
-         own, so the panel collapsed to the 21px line box of its one sentence
-         and the dialog opened as a ~72px strip. Measured on the real page, on
-         every open after the first — the first open still shows the authored
-         padding only because the sheet has not been injected yet.
-
-         Both halves are fixed together rather than by choosing between them:
-         the floor comes back for all four states so the panel does not jump
-         from a strip to a calendar when availability lands, and the rule
-         below centres the sentence in the height it opens, so the reserved
-         space reads as a panel waiting rather than as a void under a line of
-         text. The free-call controller mounts into this same container and
-         stamps the same two strings, so it is repaired by the same rules. */
+      /* All four states, including the two pre-mount ones: the step wrapper's
+         padding is zeroed further down, so scoped to `ready`/`empty` this left
+         `loading`/`error` with no height source and the dialog opened as a
+         ~72px strip. The rule below centres their one sentence in it. */
       dialog + ' [nylas-container][data-paid-calendar-state="ready"],'
         + dialog + ' [nylas-container][data-paid-calendar-state="empty"],'
         + dialog + ' [nylas-container][data-paid-calendar-state="loading"],'
         + dialog + ' [nylas-container][data-paid-calendar-state="error"]'
         + '{min-height:' + CALENDAR_MIN_HEIGHT + '}',
-      /* The frame the pre-mount states never had. `ready` and `empty` get
-         their breathing room from the interior frame further down — every
-         stacked element pads itself — but `loading` and `error` have no shell
-         and no footer to carry one, and the step wrapper they used to inherit
-         32px from is zeroed by the rule below. So the mount pads itself, at
-         the same CALENDAR_FRAME the month, the times and the footer use, and
-         the sentence stops sitting flush against the modal's edges.
-
-         Centred on both axes, per Jerico. The message in both states is
-         written with `textContent`, so the mount's only child is an anonymous
-         text node — it becomes a single anonymous flex item here;
-         `align-items` centres it on the inline axis and `text-align` keeps a
-         message that wraps centred line by line. */
+      /* These two states have no shell and no footer to carry the interior
+         frame, so the mount pads itself. Their message is written with
+         `textContent`, so it centres as one anonymous flex item — `text-align`
+         is what keeps a wrapped message centred line by line. */
       dialog + ' [nylas-container][data-paid-calendar-state="loading"],'
         + dialog + ' [nylas-container][data-paid-calendar-state="error"]'
         + '{padding:' + CALENDAR_FRAME + ';display:flex;flex-direction:column;'
@@ -1093,29 +1026,16 @@
          band carries, and Jerico asked for both once he had seen the footer
          float. It stays in px — a hairline is a device-pixel affordance, per
          the unit convention this sheet follows. */
-      /* PLACEMENT and APPEARANCE both reach every footer now. The engine used
-         to paint its own row only, on the promise that an authored
-         `data-booking-footer-class` row paints itself; live production authors
-         `call-sched_button-group` on it, so in practice the band, the frame,
-         the fill and the sticky never rendered at all. Jerico's call: the
-         engine always paints the booking footer's frame, and an authored class
-         adds to it rather than replacing it. See the contract note up top. */
+      /* Placement and appearance both reach every footer, authored or not.
+         See the footer class contract at the top of this file. */
       role + '"footer"]{order:4}',
       footerRow + '{position:sticky;bottom:0;background:#fff;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + '}',
       // Stacked, full width, primary first. `order` rather than
       // `column-reverse` so the empty state — which has only the back
       // control — is unaffected either way.
-      // `flex-direction` here also overrides the authored class's `flex-flow:
-      // wrap`, which would otherwise hold the row at its initial `row`.
-      // `row-gap` is what the engine's inline `column-gap` cannot give a
-      // column: see FOOTER_STACK_GAP.
-      // `display:flex` because every other declaration here is a flex-container
-      // property and the engine writes an inline `display` on its OWN row only.
-      // On an authored row the formatting context would otherwise be whatever
-      // the class happens to use, and a `block` or `grid` one makes the whole
-      // arrangement — the stack, the stretch, the gap and the confirm's
-      // `order` — inert, leaving Back above Confirm in DOM order. The frame
-      // the engine promises has to carry its own formatting context.
+      // `flex-direction` also overrides the authored class's `flex-flow:wrap`.
+      // `display:flex` because the rest of this rule is flex-container-only and
+      // only the fallback row carries an inline `display`.
       footerRow + '{display:flex;flex-direction:column;align-items:stretch;row-gap:'
         + FOOTER_STACK_GAP + '}',
       footerRow + ' [data-paid-calendar-element="confirm"]{order:-1}',
@@ -1227,9 +1147,7 @@
       // Placement and the band's own look, both for every footer. See the
       // note on the mobile rules above.
       role + '"footer"]{grid-area:footer}',
-      // `display:flex` for the same reason as the mobile block: `justify-content`
-      // and `align-items` only place anything if the row is a flex container,
-      // and only the engine's own row is guaranteed one inline.
+      // `display:flex` for the same reason as the mobile rule above.
       footerRow + '{display:flex;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
       '}',
     ].join('')
@@ -1652,17 +1570,11 @@
         footer,
         authoredClassList(container, FOOTER_CLASS_ATTRIBUTE),
       )
-      // Keep the two actions visually distinct on every booking surface. This
-      // is layout placement, so it applies to every row without changing either
-      // button's Designer-owned appearance. The engine's own fallback row below
-      // declares a flex `gap`, which supersedes this on that row; on an authored
-      // row this inline value is the spacing, since it also outranks the class's.
+      // The column gap for every row. Inline, so it outranks an authored
+      // class's; the fallback row's own `gap` below supersedes it there.
       footer.style.columnGap = '16px'
-      /* Which row this is. Both values are still stamped and the distinction is
-         still real — the fallback row gets the inline flex box below and an
-         authored row gets its class's — but the sheet's appearance rules now
-         key on the bare ATTRIBUTE and so reach either one. See the contract
-         note at the top of this file: the engine always paints the frame. */
+      // Still stamped for both flavours, but the sheet's appearance rules key
+      // on the bare attribute and reach either row.
       footer.setAttribute(
         'data-paid-calendar-footer',
         footerIsAuthored ? 'authored' : 'fallback',
