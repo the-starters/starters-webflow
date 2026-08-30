@@ -3422,9 +3422,17 @@ flowchart TD
    stays scoped under `[data-modal-target="popup-booking"]`, so the dashboard's
    reschedule calendar is unaffected.
 
+   That frame includes `display:flex` at both widths. Everything that arranges
+   the two actions is a flex-container property and the engine writes an inline
+   `display` on its own fallback row only, so without it an authored
+   `display:block` or `display:grid` class would leave the two wraps in DOM
+   order — Back above Confirm — with the band still painted around them.
+
    Every footer row is also given a 16px column gap between Back and the
    request button; the fallback row's own 12px flex gap supersedes it on that
-   row.
+   row. Below 768px the row is a column, where a column gap places nothing, so
+   the sheet declares a `0.75rem` row gap for both flavours — the same 12px the
+   fallback's inline shorthand already carried.
 
    The shared engine also renders a timezone control — a `<label>` wrapping a
    caption and the `<select>` that names the clock the times are shown in. It

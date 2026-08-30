@@ -545,8 +545,18 @@
      keys on `[data-paid-calendar-element="footer"][data-paid-calendar-footer]`,
      which matches both stamped values at (0,3,0) and so outranks an authored
      (0,1,0) class without `!important`. An authored class may still ADD
-     anything the engine does not declare — its gap, its typography, a
-     background image — but it can no longer take the frame away.
+     anything the engine does not declare — its typography, a background
+     image, its column gap above the breakpoint — but it can no longer take
+     the frame away.
+
+     The frame carries its own `display:flex` at both widths. Everything that
+     ARRANGES the two actions is a flex-container property, and the engine
+     writes an inline `display` on its own fallback row only, so without this
+     the arrangement would depend on whatever formatting context the authored
+     class happens to use — and a `block` or `grid` one would silently drop
+     the stack, the alignment, the row gap and the confirm's `order`. Below
+     the breakpoint that also means the engine, not the class, owns the ROW
+     gap; the column gap there is still the class's, since a column has none.
 
      Only inside the booking dialog. Off that surface the sheet is never
      injected, so the dashboard's reschedule calendar is untouched and an
@@ -1099,7 +1109,14 @@
       // wrap`, which would otherwise hold the row at its initial `row`.
       // `row-gap` is what the engine's inline `column-gap` cannot give a
       // column: see FOOTER_STACK_GAP.
-      footerRow + '{flex-direction:column;align-items:stretch;row-gap:'
+      // `display:flex` because every other declaration here is a flex-container
+      // property and the engine writes an inline `display` on its OWN row only.
+      // On an authored row the formatting context would otherwise be whatever
+      // the class happens to use, and a `block` or `grid` one makes the whole
+      // arrangement — the stack, the stretch, the gap and the confirm's
+      // `order` — inert, leaving Back above Confirm in DOM order. The frame
+      // the engine promises has to carry its own formatting context.
+      footerRow + '{display:flex;flex-direction:column;align-items:stretch;row-gap:'
         + FOOTER_STACK_GAP + '}',
       footerRow + ' [data-paid-calendar-element="confirm"]{order:-1}',
       '}',
@@ -1210,7 +1227,10 @@
       // Placement and the band's own look, both for every footer. See the
       // note on the mobile rules above.
       role + '"footer"]{grid-area:footer}',
-      footerRow + '{border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
+      // `display:flex` for the same reason as the mobile block: `justify-content`
+      // and `align-items` only place anything if the row is a flex container,
+      // and only the engine's own row is guaranteed one inline.
+      footerRow + '{display:flex;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
       '}',
     ].join('')
     const host = document.head || document.documentElement

@@ -392,8 +392,21 @@ stylesheet and was winning `padding`, `flex-flow`, `justify-content` and
 `align-items`. Repeating the attribute takes the rules to (0,3,0), which
 outranks the class without `!important`.
 
+The frame carries its own **`display:flex`** at both widths. Everything that
+arranges the two actions — `justify-content` and `align-items` on desktop, the
+column, the stretch, the row gap and the confirm's `order` below the breakpoint
+— is a flex-container property, and the engine writes an inline `display` on
+its own fallback row only. Without it the arrangement would depend on whatever
+formatting context the authored class happens to use, and a `display:block` or
+`display:grid` class would silently leave the two wraps in DOM order (Back
+above Confirm) with no gap while the band, the padding and the sticky still
+painted around them.
+
 An authored class may still ADD anything the engine does not declare — its
-gap, its typography — but it cannot take the frame away. Placement
+typography, a background image, its column gap above the breakpoint — but it
+cannot take the frame away. Below the breakpoint the engine owns the row
+spacing (see the `0.75rem` `row-gap` further down); the column gap is still
+the class's there, since a column has none to place. Placement
 (`grid-area`, `order`) still keys on the role attribute alone, and a test walks
 the emitted CSS to keep that split honest: appearance must never sit on the
 bare role selector, and no appearance rule may pin itself to a single

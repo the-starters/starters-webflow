@@ -1234,7 +1234,7 @@ test('the footer row is right-aligned on desktop and stacked on mobile', async (
   const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
 
   assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer}'))
-  assert.ok(css.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+  assert.ok(css.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{display:flex;border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
   // Nothing inline can fight it.
   assert.deepEqual(Object.keys(back.style), [])
   assert.deepEqual(Object.keys(confirm.style), [])
@@ -1242,7 +1242,7 @@ test('the footer row is right-aligned on desktop and stacked on mobile', async (
 
   // Mobile still stacks full width, primary first.
   const mobile = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
-  assert.ok(mobile.includes('{flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
+  assert.ok(mobile.includes('{display:flex;flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
   assert.ok(mobile.includes('{order:-1}'))
 
   // An authored row still gets no inline styles from the engine beyond the
@@ -1382,7 +1382,7 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
   assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
-  assert.ok(desktopBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{border-top:1px solid #eee;padding:1.25rem'))
+  assert.ok(desktopBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{display:flex;border-top:1px solid #eee;padding:1.25rem'))
 
   // No mount PADDING on any state that lays a calendar out. The mount does
   // carry rules — the banner's min-height and the empty state's column — so
@@ -1450,7 +1450,7 @@ test('the footer stacks primary-first below the site mobile breakpoint', async (
   const ROW = '[data-modal-target="popup-booking"] [data-paid-calendar-element="footer"][data-paid-calendar-footer]'
 
   assert.ok(css.includes('@media (max-width:767.98px){'))
-  assert.ok(css.includes(ROW + '{flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
+  assert.ok(css.includes(ROW + '{display:flex;flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
   // Primary on top, matching the profile's own vertical CTA rail.
   assert.ok(css.includes(ROW + ' [data-paid-calendar-element="confirm"]{order:-1}'))
 
@@ -1665,11 +1665,38 @@ test('every footer row gets the frame, authored class or not', async () => {
   // The desktop band, the mobile sticky band and the mobile column.
   assert.equal(appearanceRules, 3)
 
+  // Nothing the engine uses to ARRANGE the two actions may depend on the
+  // authored class's formatting context. The engine writes an inline
+  // `display` on its own fallback row only, so any rule that reaches an
+  // authored row with a flex-container property has to establish the flex
+  // container itself in the same rule — otherwise a `display:block` or
+  // `display:grid` class leaves the declaration inert, the band still painted
+  // and the two wraps in DOM order with Back above Confirm.
+  const CONTAINER_ONLY = /(^|;)\s*(justify-content|align-items|flex-direction|row-gap|column-gap)\s*:/
+  let arrangementRules = 0
+  for (const chunk of css.split('}')) {
+    const [selector, body] = chunk.split('{')
+    if (!selector || !body) continue
+    if (!/\[data-paid-calendar-footer\]\s*$/.test(selector.trim())) continue
+    if (!CONTAINER_ONLY.test(body)) continue
+    arrangementRules += 1
+    assert.match(body, /(^|;)\s*display:flex(;|$)/,
+      `arrangement without its own flex container: ${selector.trim()}{${body.trim()}}`)
+  }
+  // The desktop band and the mobile column.
+  assert.equal(arrangementRules, 2)
+  // And the engine still writes no `display` of its own on an authored row,
+  // which is exactly why the rules above have to carry it.
+  const authored = bookingMount()
+  authored.setAttribute('data-booking-footer-class', 'call-sched_button-group')
+  const owned = await mountFooterFixture({ container: authored })
+  assert.equal(owned.footer.style.display, undefined)
+
   // The frame itself, spelled out, on the selector that reaches an authored row.
   const F = '[data-paid-calendar-element="footer"][data-paid-calendar-footer]'
-  assert.ok(css.includes(F + '{border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+  assert.ok(css.includes(F + '{display:flex;border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
   assert.ok(css.includes(F + '{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
-  assert.ok(css.includes(F + '{flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
+  assert.ok(css.includes(F + '{display:flex;flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
   assert.ok(css.includes(F + ' [data-paid-calendar-element="confirm"]{order:-1}'))
 
   // Still scoped to the booking dialog, so the dashboard's reschedule calendar
