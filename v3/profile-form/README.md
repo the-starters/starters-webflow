@@ -5,16 +5,19 @@ This directory owns browser logic shared by Build Profile and Starter Edit Profi
 
 ## Inline extraction candidate
 
-`shared-foundation.js` and `incremental-dropdowns.js` are behavior-preserving extractions from the
+`shared-foundation.js` and `incremental-dropdowns.js` are extractions from the
 authenticated published pages. Route-specific extracted controllers remain in `v3/build-profile/`
 and `v3/starter-edit-profile/`. Deliverable files normalize trailing whitespace and excess terminal
 newlines, and deferred controllers add one-time browser guards. The manifest records separate immutable
 live identities and candidate identities, plus the exact inverse transformation used to reconstruct
 each captured live body.
 
-Three candidates no longer reconstruct to their published bodies. `canonical-profile-loader.js`
-carries company logo hydration, `draft-state.js` carries the member-bound hydration fix, and
-`submit-writer.js` carries the profile-save and pending-photo commit gate. Their transformations are recorded as
+Five candidates no longer reconstruct to their published bodies. `canonical-profile-loader.js`
+carries company logo hydration, `draft-state.js` carries the member-bound hydration fix,
+`submit-writer.js` carries the profile-save and pending-photo commit gate, `shared-foundation.js`
+requires an explicit taxonomy option selection instead of auto-adding a typed exact name on fill or
+blur, and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on
+every input and change, including when the member clears the field. Their transformations are recorded as
 `whitespace_plus_idempotency_guard_plus_behavior_change` and name immutable published-body captures.
 Tests still pin each candidate length and SHA-256, prove the published length, body hash, and
 complete-embed hash from its capture, and fail if a declared change stops diverging from the published
@@ -53,8 +56,8 @@ profile-photo, Step 3 company, Step 4 portfolio, and later loaders stay unchange
 
 The extraction does not move the form into JavaScript. It does not change the separate Step 3 company
 owner or Step 4 portfolio owner. A future `wf-xano` conversion requires a separate declarative contract
-and must not be combined with this ownership cutover, which changes no behavior beyond the
-declared `draft-state.js` hydration fix and `submit-writer.js` photo gate recorded above.
+and must not be combined with this ownership cutover, which changes no behavior beyond the five
+declared candidate changes recorded above.
 
 ## Verification
 

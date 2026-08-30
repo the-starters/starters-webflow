@@ -303,16 +303,8 @@
             };
 
             field.addEventListener('blur', syncCaptureField);
-
-            field.addEventListener('input', () => {
-              syncCaptureField();
-              updateAddButtonState(wrapper, addButton, MAX);
-            });
-
-            field.addEventListener('change', () => {
-              syncCaptureField();
-              updateAddButtonState(wrapper, addButton, MAX);
-            });
+            field.addEventListener('input', syncCaptureField);
+            field.addEventListener('change', syncCaptureField);
           });
         }
 

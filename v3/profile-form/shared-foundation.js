@@ -632,19 +632,6 @@
       }
 
       function cleanInput() {
-        const inputValues = $input
-          .val()
-          .split(',')
-          .map((v) => v.trim())
-          .filter((v) => v);
-
-        const validOptions = inputValues
-          .map((value) => options.find((option) => option.name === value))
-          .filter(Boolean)
-          .filter((option, index, arr) => arr.findIndex((item) => item.id === option.id) === index);
-
-        selectedOptions = validOptions;
-
         $selectedWrapper.empty();
 
         selectedOptions.forEach((option) => {

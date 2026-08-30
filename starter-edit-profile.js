@@ -63,7 +63,7 @@ function replayProofMatches(scope, proof) {
 	return Boolean(
 		scope?.member?.id === proof.memberId &&
 		memberEmail(scope.member) === proof.email &&
-		normalizedEmail(qs('#email', stepElement(1))?.value) === proof.email
+		normalizedEmail(stepField(1, '#email')?.value) === proof.email
 	);
 }
 
@@ -275,6 +275,11 @@ function stepElement(stepIndex) {
 	return qs(`[data-form="step"][data-index="${stepIndex}"]`);
 }
 
+function stepField(stepIndex, selector) {
+	const step = stepElement(stepIndex);
+	return step ? qs(selector, step) : null;
+}
+
 const STEP_VALIDATION_CONTRACT = Object.freeze({
 	1: [
 		{ selector: '[name="first-name"]', kind: 'native' },
@@ -458,7 +463,7 @@ onDomReady(function () {
 		});
 
 		/* inputs */
-		const phoneInput = qs('#phone');
+		const phoneInput = stepField(1, '#phone');
 		let canonicalPhoneValue = String(window.activeProfile?.data?.step_1?.phone || '');
 		let phoneWasEdited = false;
 		phoneInput?.addEventListener('input', () => {
@@ -478,10 +483,12 @@ onDomReady(function () {
 
 			formatRateInputs();
 
-			window.intlTelInput(phoneInput, {
-				loadUtils: () =>
-					import("https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.1/dist/js/utils.js"),
-			});
+			if (phoneInput) {
+				window.intlTelInput(phoneInput, {
+					loadUtils: () =>
+						import("https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.1/dist/js/utils.js"),
+				});
+			}
 		});
 
 		/* METHODS */
@@ -918,14 +925,12 @@ onDomReady(function () {
 
 			// The published form contains hidden compatibility controls with duplicate
 			// names. The authored Personal Details controls own these two values.
-			if (globalFieldsWithinStep(1, '#email')) data.email = qs('#email', stepElement(1)).value;
-			if (globalFieldsWithinStep(1, '#phone')) data.phone = qs('#phone', stepElement(1)).value;
+			const authoredEmail = stepField(1, '#email');
+			const authoredPhone = stepField(1, '#phone');
+			if (authoredEmail) data.email = authoredEmail.value;
+			if (authoredPhone) data.phone = authoredPhone.value;
 
 			return data;
-		}
-
-		function globalFieldsWithinStep(stepIndex, selector) {
-			return Boolean(qs(selector, stepElement(stepIndex)));
 		}
 
 		function setSubmitLoading(button, isLoading) {

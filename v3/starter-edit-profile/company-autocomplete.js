@@ -136,6 +136,7 @@
     }
 
     function closeDropdown() {
+      searchSequence += 1;
       dropdown.style.display = 'none';
     }
 
@@ -211,6 +212,12 @@
       openDropdown();
     }
 
+    // A discarded response leaves no rendered results for its query, so the
+    // `q === lastQuery` shortcut must not later reopen that empty dropdown.
+    function discardAbandonedSearch(q) {
+      if (lastQuery === q) lastQuery = '';
+    }
+
     async function searchCompanies(query) {
       const q = query.trim();
 
@@ -237,11 +244,15 @@
         const response = await fetch(`${SEARCH_ENDPOINT}?q=${encodeURIComponent(q)}`);
         if (!response.ok) throw new Error(`Company search failed (${response.status})`);
         const results = await response.json();
-        if (sequence !== searchSequence) return;
+        if (sequence !== searchSequence) {
+          discardAbandonedSearch(q);
+          return;
+        }
 
         renderResults(Array.isArray(results) ? results : []);
       } catch (error) {
         if (sequence === searchSequence) renderMessage('Search unavailable');
+        else discardAbandonedSearch(q);
       } finally {
         clearTimeout(slowMessageTimer);
       }
