@@ -1030,7 +1030,7 @@ test('an authored footer class is applied verbatim and places its own children',
   // layout wearing the right class name. The shared action spacing is the one
   // exception, and it is placement between the two controls, not appearance.
   assert.deepEqual(Object.keys(footer.style), ['columnGap'])
-  assert.equal(footer.style.columnGap, '16px')
+  assert.equal(footer.style.columnGap, '0.5rem')
   assert.deepEqual(Object.keys(back.style), [], 'an authored row places its own children')
   assert.deepEqual(Object.keys(confirm.style), [])
 })
@@ -1041,9 +1041,16 @@ test('the unauthored footer row writes only what does not vary by breakpoint', a
   assert.equal(footer.getAttribute('class'), null)
   assert.equal(footer.style.display, 'flex')
   // The shared action spacing is written on every row; this row's own flex
-  // `gap` supersedes it here, which is what the visitor sees between the two.
-  assert.equal(footer.style.columnGap, '16px')
-  assert.equal(footer.style.gap, '12px')
+  // `gap` shorthand supersedes it here, so every inline gap declaration on the
+  // row has to carry the same length or the shorthand silently changes it.
+  assert.equal(footer.style.columnGap, '0.5rem')
+  assert.equal(footer.style.gap, '0.5rem')
+  assert.deepEqual(
+    Object.keys(footer.style)
+      .filter((name) => /gap/i.test(name))
+      .map((name) => footer.style[name]),
+    ['0.5rem', '0.5rem'],
+  )
   assert.equal(footer.style.width, '100%')
 
   // Alignment is NOT written here. The row is right-aligned natural-width
@@ -1234,7 +1241,7 @@ test('the footer row is right-aligned on desktop and stacked on mobile', async (
   const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
 
   assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer}'))
-  assert.ok(css.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{display:flex;border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+  assert.ok(css.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{display:flex;padding:1.25rem;justify-content:flex-end;align-items:center}'))
   // Nothing inline can fight it.
   assert.deepEqual(Object.keys(back.style), [])
   assert.deepEqual(Object.keys(confirm.style), [])
@@ -1242,7 +1249,7 @@ test('the footer row is right-aligned on desktop and stacked on mobile', async (
 
   // Mobile still stacks full width, primary first.
   const mobile = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
-  assert.ok(mobile.includes('{display:flex;flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
+  assert.ok(mobile.includes('{display:flex;flex-direction:column;align-items:stretch;row-gap:0.5rem}'))
   assert.ok(mobile.includes('{order:-1}'))
 
   // An authored row still gets no inline styles from the engine beyond the
@@ -1251,7 +1258,7 @@ test('the footer row is right-aligned on desktop and stacked on mobile', async (
   authoredFooter.setAttribute('data-booking-footer-class', 'call-sched_button-group')
   const owned = await mountFooterFixture({ container: authoredFooter })
   assert.deepEqual(Object.keys(owned.footer.style), ['columnGap'])
-  assert.equal(owned.footer.style.columnGap, '16px')
+  assert.equal(owned.footer.style.columnGap, '0.5rem')
   assert.deepEqual(Object.keys(owned.confirm.style), [])
   assert.deepEqual(Object.keys(owned.back.style), [])
 })
@@ -1330,8 +1337,8 @@ test('every length is rem; px is borders plus forced-colors outline', async () =
   assert.ok(css.includes('padding-left:0.25rem'), '4px weekday inset')
   assert.ok(css.includes('::-webkit-scrollbar{width:0.1875rem'), '3px scrollbar')
   assert.ok(css.includes('border-radius:0.1875rem'), '3px scrollbar thumb')
-  // The two px lengths that survive, named so each exemption is deliberate.
-  assert.ok(css.includes('border-top:1px solid #eee'), 'the footer hairline stays px')
+  // The hairline is gone, so the focus outline is the one px length left.
+  assert.ok(!css.includes('border-top:'), 'the footer hairline was removed on request')
   // The focus outline is exempt for the same reason a border is, and for one
   // more: it is transparent, drawn only so forced-colors mode has an outline to
   // repaint. Its width is never seen in a normal render, and in forced-colors
@@ -1379,10 +1386,10 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
   const css = document.head.children[0].textContent
   const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
   assert.ok(mobileBlock.includes('"footer"]{order:4}'))
-  assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;padding:1.25rem}'))
 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
-  assert.ok(desktopBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{display:flex;border-top:1px solid #eee;padding:1.25rem'))
+  assert.ok(desktopBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{display:flex;padding:1.25rem'))
 
   // No mount PADDING on any state that lays a calendar out. The mount does
   // carry rules — the banner's min-height and the empty state's column — so
@@ -1431,13 +1438,10 @@ test('the interior frame is the only inset at mobile too', async () => {
   // paints this frame now.
   assert.match(mobileBlock, /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*padding:1\.25rem\}/)
   assert.ok(mobileBlock.includes('"footer"]{order:4}'))
-  assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;padding:1.25rem}'))
 
-  // The stacked footer carries the same hairline as the desktop band. It was
-  // deliberately absent while the footer sat in flow — a row gap AND a rule
-  // read as two dividers — and Jerico added it once the footer began to float,
-  // where the edge is what separates it from the chips passing behind.
-  assert.match(mobileBlock, /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*border-top:1px solid #eee/)
+  // Borderless on request; the sticky bar's white fill is the only divider.
+  assert.ok(!/border-top/.test(mobileBlock))
 
   // Desktop is untouched by all of this — the two blocks cannot both match.
   const desktopBlock = css.split('@media (min-width:768px){')[1]
@@ -1450,17 +1454,17 @@ test('the footer stacks primary-first below the site mobile breakpoint', async (
   const ROW = '[data-modal-target="popup-booking"] [data-paid-calendar-element="footer"][data-paid-calendar-footer]'
 
   assert.ok(css.includes('@media (max-width:767.98px){'))
-  assert.ok(css.includes(ROW + '{display:flex;flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
+  assert.ok(css.includes(ROW + '{display:flex;flex-direction:column;align-items:stretch;row-gap:0.5rem}'))
   // Primary on top, matching the profile's own vertical CTA rail.
   assert.ok(css.includes(ROW + ' [data-paid-calendar-element="confirm"]{order:-1}'))
 
   // The stack's own spacing, which the engine's inline `column-gap` cannot
-  // give a column. The fallback row's inline `gap:12px` shorthand carries a
-  // row gap of its own and outranks this; an authored row has only its class,
-  // so without this rule its two buttons touch. Same 12px either way.
+  // give a column. The fallback row's inline `gap` shorthand carries a row gap
+  // of its own and outranks this; an authored row has only its class, so
+  // without this rule its two buttons touch. Same 0.5rem either way.
   assert.match(css.split('@media (max-width:767.98px){')[1].split('}@media')[0],
-    /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*row-gap:0\.75rem/)
-  assert.equal(footer.style.gap, '12px')
+    /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*row-gap:0\.5rem/)
+  assert.equal(footer.style.gap, '0.5rem')
 
   // Every stacking rule that reaches a footer keys on the doubled attribute,
   // so it reaches an authored row too and still outranks its class. Two rules
@@ -1496,7 +1500,7 @@ test('both footer flavours are still stamped and still distinguishable', async (
   // row. That matters more than it used to: the sheet now paints this row, and
   // an inline declaration here would outrank every rule in it.
   assert.deepEqual(Object.keys(footer.style), ['columnGap'])
-  assert.equal(footer.style.columnGap, '16px')
+  assert.equal(footer.style.columnGap, '0.5rem')
 })
 
 test('the desktop footer is a full-width band under both columns', async () => {
@@ -1543,8 +1547,7 @@ test('the desktop footer is a full-width band under both columns', async () => {
   // caption and the first chip.
   assert.match(css, /"times"\]\{[^}]*padding:0 1\.25rem 1\.25rem 0\}/)
 
-  // Zero row gap: the band's hairline and its own padding do the separating.
-  // A gap AND a rule would read as two dividers.
+  // Zero row gap: the band's own padding does the separating.
   assert.match(css, /"shell"\]\{column-gap:2rem;row-gap:0;/)
   assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer}'))
 })
@@ -1694,9 +1697,9 @@ test('every footer row gets the frame, authored class or not', async () => {
 
   // The frame itself, spelled out, on the selector that reaches an authored row.
   const F = '[data-paid-calendar-element="footer"][data-paid-calendar-footer]'
-  assert.ok(css.includes(F + '{display:flex;border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
-  assert.ok(css.includes(F + '{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
-  assert.ok(css.includes(F + '{display:flex;flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
+  assert.ok(css.includes(F + '{display:flex;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+  assert.ok(css.includes(F + '{position:sticky;bottom:0;background:#fff;padding:1.25rem}'))
+  assert.ok(css.includes(F + '{display:flex;flex-direction:column;align-items:stretch;row-gap:0.5rem}'))
   assert.ok(css.includes(F + ' [data-paid-calendar-element="confirm"]{order:-1}'))
 
   // Still scoped to the booking dialog, so the dashboard's reschedule calendar
@@ -1830,7 +1833,7 @@ test('the stacked footer floats, and only because the shell is a flex column', a
   const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
 
   assert.ok(mobileBlock.includes('"footer"]{order:4}'))
-  assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;padding:1.25rem}'))
 
   /* The flex column is load-bearing, not a refactor. A GRID item's containing
      block is its own grid area, so a footer on the last row has zero room to
@@ -1846,10 +1849,8 @@ test('the stacked footer floats, and only because the shell is a flex column', a
   // through the gap between the two buttons.
   assert.match(mobileBlock, /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*background:#fff/)
 
-  // The hairline the desktop band carries, which Jerico asked for on the
-  // stacked footer too once he had seen it float — a floating surface wants an
-  // edge. It stays px, like every other border in this sheet.
-  assert.match(mobileBlock, /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*border-top:1px solid #eee/)
+  // Borderless on request, both widths.
+  assert.ok(!/border-top/.test(mobileBlock))
 
   // Desktop keeps the grid and the always-visible band: nothing sticks there,
   // because the times scroll inside their own cell instead.
@@ -2212,7 +2213,7 @@ test('the empty state holds itself open under the banner', async () => {
     D + ' [nylas-container][data-paid-calendar-state="ready"],'
       + D + ' [nylas-container][data-paid-calendar-state="empty"],'
       + D + ' [nylas-container][data-paid-calendar-state="loading"],'
-      + D + ' [nylas-container][data-paid-calendar-state="error"]{min-height:28.125rem}',
+      + D + ' [nylas-container][data-paid-calendar-state="error"]{min-height:20rem}',
   ))
   // Still keyed on the state attribute rather than applied to the bare mount.
   // An unconditional rule would reach the mount before it has a state at all —
@@ -2225,7 +2226,7 @@ test('the empty state holds itself open under the banner', async () => {
   // Both live outside the media queries: the empty state can be reached at
   // either width and collapses at both.
   const beforeMedia = css.split('@media')[0]
-  assert.ok(beforeMedia.includes('min-height:28.125rem'))
+  assert.ok(beforeMedia.includes('min-height:20rem'))
   assert.ok(beforeMedia.includes('justify-content:flex-end'))
 })
 
