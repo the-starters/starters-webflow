@@ -1301,12 +1301,14 @@ test('every length is rem; px is borders plus forced-colors outline', async () =
 
   // Media query breakpoints are px by definition — they are viewport widths,
   // not lengths in the layout — so they are excluded before the sweep.
-  const declarations = css.replace(/@media[^{]*\{/g, '')
+  const declarations = css
+    .replace(/@media[^{]*\{/g, '')
+    .replace('outline:2px solid transparent', '')
   for (const match of declarations.matchAll(/[\w-]+\s*:[^;{}]*?\d*\.?\d+px/g)) {
     assert.match(
       match[0],
-      /^(border(-top|-right|-bottom|-left)?(-width)?|outline(-width)?)\s*:/,
-      `every px length must be a border or the forced-colors outline: ${match[0].trim()}`,
+      /^border(-top|-right|-bottom|-left)?(-width)?\s*:/,
+      `every px length must be a border: ${match[0].trim()}`,
     )
   }
 
