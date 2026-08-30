@@ -177,7 +177,19 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   controls clear their visible value when their toggle turns off. A blank rate
   whose control is still live is sent unchanged, so an empty required rate keeps
   failing instead of silently persisting a zero rate. Non-blank rate values are
-  never rewritten.
+  never rewritten. Only the member switching a Retainer, Paid Call, or Free Call
+  toggle off clears that service's now-hidden description and rate. Hydrating the
+  stored profile runs the same show/hide and required-attribute pass without
+  clearing, so a stored Free Call or retainer description survives every reload
+  instead of being blanked into the next save.
+  The Phone field is preserved byte-for-byte when the member does not touch it:
+  the controller records the canonical `step_1.phone` value as the profile
+  hydrates and submits it unchanged, and re-reads the value from `intl-tel-input`
+  only after an `input` or a `countrychange` event on the field, or when there was
+  no canonical value to preserve. `intl-tel-input` rewrites the
+  value directly on a country pick without firing `input`, which is why both
+  events count as an edit, and it can otherwise reinterpret a short stored
+  national number into a different canonical form on a save that never touched it.
   The site-wide Webflow Head Code still initializes
   `MEMBER`, `memberReady`, and the matching helper aliases before deferred page
   scripts. Load `intl-tel-input`, Quill, then this deferred `@latest` asset.

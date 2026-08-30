@@ -117,22 +117,22 @@
   },
   "candidateAssets": {
     "v3/profile-form/shared-foundation.js": {
-	  "candidateCharacters": 22892,
-	  "candidateSha256": "7af566f3bd01f172416d0be37d5b669e9e80848049e980653b237d60d047a214",
+      "candidateCharacters": 22892,
+      "candidateSha256": "7af566f3bd01f172416d0be37d5b669e9e80848049e980653b237d60d047a214",
       "transformation": {
-		"kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
-		"liveCaptureAsset": "v3/profile-form/shared-foundation-published.capture.txt",
+        "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
+        "liveCaptureAsset": "v3/profile-form/shared-foundation-published.capture.txt",
         "restoreTrailingWhitespace": { "3": "  ", "81": " ", "239": "      " },
         "terminalNewlinesRemoved": 0
       }
     },
     "v3/profile-form/incremental-dropdowns.js": {
-	  "candidateCharacters": 14107,
-	  "candidateSha256": "f239896721ec2048d138af0d8874596509710ca5ac039d016f15dcdcffa15faf",
+      "candidateCharacters": 14107,
+      "candidateSha256": "f239896721ec2048d138af0d8874596509710ca5ac039d016f15dcdcffa15faf",
       "transformation": {
-		"kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
+        "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "incrementalDropdowns",
-		"liveCaptureAsset": "v3/profile-form/incremental-dropdowns-published.capture.txt",
+        "liveCaptureAsset": "v3/profile-form/incremental-dropdowns-published.capture.txt",
         "restoreTrailingWhitespace": {},
         "terminalNewlinesRemoved": 0
       }

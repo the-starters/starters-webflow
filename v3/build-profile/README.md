@@ -72,6 +72,13 @@ The controller accepts only JPG/JPEG, PNG, and WebP files. Each file may be no
 larger than 4 MB (4 × 1024 × 1024 bytes). It rejects unsupported formats and
 larger files before it creates an upload intent or starts an upload.
 
+The authored upload surface opens the file chooser whether or not Webflow rendered
+it as a native `<label>`. When it is any other element, the controller marks it
+`role="button"`, gives it a `tabindex` when the markup supplies none, and forwards a
+mouse click or an `Enter`/`Space` keypress to the hidden file input. A native
+`<label>` keeps the browser's own behavior and gets no forwarding, so the chooser can
+never be opened twice by one activation.
+
 `profile-photo.js` creates a secure opaque `source_mutation_id` for each file
 selection or drop. On Full Profile and Consult, selection prepares the upload but
 does not send it. The submit writer first saves the authored profile payload and
@@ -171,6 +178,11 @@ keeps the existing normalized profile payload, availability fields, and paid-cal
 fields, and adds only the profile-save and pending-photo commit gate described in
 [Profile-photo upload contract](#profile-photo-upload-contract). The separate
 outcome observer still does not change its request or payload.
+
+The extracted shared foundation and incremental-dropdown candidates are declared
+behavior-change candidates too, so the first two bullets above describe the *live*
+inline blocks only. What each candidate changes is recorded once, in
+[Inline extraction candidate](../profile-form/README.md#inline-extraction-candidate).
 
 This exclusion is a release boundary, not proof that the remaining inline code is acceptable long term.
 
