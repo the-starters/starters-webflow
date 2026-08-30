@@ -1,7 +1,7 @@
 /**
  * V3 paid-call Brand payment client.
  *
- * @release v1.59.447
+ * @release v1.59.448
  *
  * Xano derives the Brand and payment environment from the authenticated
  * session. A selection attempt owns one bounded idempotency key: retries reuse
@@ -631,7 +631,7 @@
   /* Row gap for the stacked mobile footer: the engine's inline `column-gap`
      places nothing in a column. Same 12px as the fallback row's inline `gap`,
      which outranks this rule. */
-  const FOOTER_STACK_GAP = '0.75rem'
+  const FOOTER_STACK_GAP = '0.5rem'
   /* ---- the status banner ----
      Jerico's round-3 tuning, and a change of kind rather than degree: the
      status stops being a line of text under the buttons and becomes a band
@@ -729,7 +729,7 @@
      cover it. Rem, so it tracks the site's responsive root font size (363px at
      1280, 433px at 375); the calendar state is taller than that at both
      widths, so this only ever shows on the empty path. */
-  const CALENDAR_MIN_HEIGHT = '28.125rem'
+  const CALENDAR_MIN_HEIGHT = '20rem'
 
   function ensureBookingCalendarLayout(document) {
     if (
@@ -1029,7 +1029,7 @@
       /* Placement and appearance both reach every footer, authored or not.
          See the footer class contract at the top of this file. */
       role + '"footer"]{order:4}',
-      footerRow + '{position:sticky;bottom:0;background:#fff;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + '}',
+      footerRow + '{position:sticky;bottom:0;background:#fff;padding:' + CALENDAR_FRAME + '}',
       // Stacked, full width, primary first. `order` rather than
       // `column-reverse` so the empty state — which has only the back
       // control — is unaffected either way.
@@ -1148,7 +1148,7 @@
       // note on the mobile rules above.
       role + '"footer"]{grid-area:footer}',
       // `display:flex` for the same reason as the mobile rule above.
-      footerRow + '{display:flex;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
+      footerRow + '{display:flex;padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
       '}',
     ].join('')
     const host = document.head || document.documentElement
@@ -1572,7 +1572,7 @@
       )
       // The column gap for every row. Inline, so it outranks an authored
       // class's; the fallback row's own `gap` below supersedes it there.
-      footer.style.columnGap = '16px'
+      footer.style.columnGap = '0.5rem'
       // Still stamped for both flavours, but the sheet's appearance rules key
       // on the bare attribute and reach either row.
       footer.setAttribute(
