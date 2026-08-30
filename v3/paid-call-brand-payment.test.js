@@ -1041,9 +1041,16 @@ test('the unauthored footer row writes only what does not vary by breakpoint', a
   assert.equal(footer.getAttribute('class'), null)
   assert.equal(footer.style.display, 'flex')
   // The shared action spacing is written on every row; this row's own flex
-  // `gap` supersedes it here, which is what the visitor sees between the two.
+  // `gap` shorthand supersedes it here, so every inline gap declaration on the
+  // row has to carry the same length or the shorthand silently changes it.
   assert.equal(footer.style.columnGap, '0.5rem')
-  assert.equal(footer.style.gap, '12px')
+  assert.equal(footer.style.gap, '0.5rem')
+  assert.deepEqual(
+    Object.keys(footer.style)
+      .filter((name) => /gap/i.test(name))
+      .map((name) => footer.style[name]),
+    ['0.5rem', '0.5rem'],
+  )
   assert.equal(footer.style.width, '100%')
 
   // Alignment is NOT written here. The row is right-aligned natural-width
@@ -1330,7 +1337,7 @@ test('every length is rem; px is borders plus forced-colors outline', async () =
   assert.ok(css.includes('padding-left:0.25rem'), '4px weekday inset')
   assert.ok(css.includes('::-webkit-scrollbar{width:0.1875rem'), '3px scrollbar')
   assert.ok(css.includes('border-radius:0.1875rem'), '3px scrollbar thumb')
-  // The two px lengths that survive, named so each exemption is deliberate.
+  // The hairline is gone, so the focus outline is the one px length left.
   assert.ok(!css.includes('border-top:'), 'the footer hairline was removed on request')
   // The focus outline is exempt for the same reason a border is, and for one
   // more: it is transparent, drawn only so forced-colors mode has an outline to
@@ -1433,7 +1440,6 @@ test('the interior frame is the only inset at mobile too', async () => {
   assert.ok(mobileBlock.includes('"footer"]{order:4}'))
   assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;padding:1.25rem}'))
 
-  // The stacked footer carries the same hairline as the desktop band. It was
   // Borderless on request; the sticky bar's white fill is the only divider.
   assert.ok(!/border-top/.test(mobileBlock))
 
@@ -1453,12 +1459,12 @@ test('the footer stacks primary-first below the site mobile breakpoint', async (
   assert.ok(css.includes(ROW + ' [data-paid-calendar-element="confirm"]{order:-1}'))
 
   // The stack's own spacing, which the engine's inline `column-gap` cannot
-  // give a column. The fallback row's inline `gap:12px` shorthand carries a
-  // row gap of its own and outranks this; an authored row has only its class,
-  // so without this rule its two buttons touch. Same 12px either way.
+  // give a column. The fallback row's inline `gap` shorthand carries a row gap
+  // of its own and outranks this; an authored row has only its class, so
+  // without this rule its two buttons touch. Same 0.5rem either way.
   assert.match(css.split('@media (max-width:767.98px){')[1].split('}@media')[0],
     /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*row-gap:0\.5rem/)
-  assert.equal(footer.style.gap, '12px')
+  assert.equal(footer.style.gap, '0.5rem')
 
   // Every stacking rule that reaches a footer keys on the doubled attribute,
   // so it reaches an authored row too and still outranks its class. Two rules
@@ -1541,8 +1547,7 @@ test('the desktop footer is a full-width band under both columns', async () => {
   // caption and the first chip.
   assert.match(css, /"times"\]\{[^}]*padding:0 1\.25rem 1\.25rem 0\}/)
 
-  // Zero row gap: the band's hairline and its own padding do the separating.
-  // A gap AND a rule would read as two dividers.
+  // Zero row gap: the band's own padding does the separating.
   assert.match(css, /"shell"\]\{column-gap:2rem;row-gap:0;/)
   assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer}'))
 })

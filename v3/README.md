@@ -3401,15 +3401,15 @@ flowchart TD
    `data-booking-back-class` are **ignored on the booking surface**, and are
    harmless if left authored. The optional `data-booking-footer-class` is still
    applied to the footer row verbatim; unauthored, the row is a full-width flex
-   row (`display:flex;gap:12px;width:100%`) whose contents the injected sheet
+   row (`display:flex;gap:0.5rem;width:100%`) whose contents the injected sheet
    arranges — pushed to the right at their natural width from 768px up, stacked
    full width with the confirm on top below it. Flex rather than fixed columns
    is also what lets the confirm fill the whole row on a direct entry where the
    back control is hidden.
 
    **On the booking surface the engine always paints the footer's frame** — the
-   `1px #eee` hairline, the even `1.25rem` padding, the white fill and the
-   mobile sticky. Those rules key on
+   even `1.25rem` padding, the white fill and the mobile sticky. There is no
+   hairline at either width any more. Those rules key on
    `[data-paid-calendar-element="footer"][data-paid-calendar-footer]`, which
    matches both stamped values at (0,3,0) and so outranks the authored class's
    (0,1,0) without `!important`; they carry their own `display:flex`, since
@@ -3420,10 +3420,11 @@ flowchart TD
    `[data-modal-target="popup-booking"]`, so the dashboard's reschedule
    calendar is unaffected.
 
-   Every footer row is also given a 16px column gap between Back and the
-   request button; the fallback row's own 12px flex gap supersedes it on that
-   row. Below 768px the row is a column, where a column gap places nothing, so
-   the sheet declares a `0.75rem` row gap for both flavours.
+   Every footer row is also given a `0.5rem` column gap between Back and the
+   request button; the fallback row's own `0.5rem` flex gap supersedes it on
+   that row. Below 768px the row is a column, where a column gap places
+   nothing, so the sheet declares a `0.5rem` row gap for both flavours — the
+   same length in either orientation.
 
    The shared engine also renders a timezone control — a `<label>` wrapping a
    caption and the `<select>` that names the clock the times are shown in. It
@@ -3504,7 +3505,7 @@ flowchart TD
    body back to the top: the banner is painted at the top of the scrollable
    content, so on a phone mid-scroll it would otherwise land far above anything
    the visitor can see. Because the banner is out of flow the mount carries a
-   `28.125rem` min-height and the empty-availability state pushes its
+   `20rem` min-height and the empty-availability state pushes its
    footer to the bottom of it; without both, that panel would collapse to the
    height of one button and the banner would cover it. That min-height reaches
    all four states the mount ever wears — `ready`, `empty`, `loading` and
@@ -3543,8 +3544,8 @@ flowchart TD
    the footer was sticking to that instead of to the body. The footer's bottom
    padding is what holds the empty-availability state off the modal's bottom
    edge, at both widths — that spacing used to sit on the mount,
-   and would double against this. The floating footer carries the same
-   `1px #eee` hairline as the desktop band and a full `1.25rem` frame on all
+   and would double against this. The floating footer carries no hairline —
+   its white fill is the only divider — and a full `1.25rem` frame on all
    four sides, its top edge included — that edge is where the chips pass
    behind it, so nothing above can space it. The same
    sheet restyles the month
