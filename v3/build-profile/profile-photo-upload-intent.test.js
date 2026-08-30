@@ -35,7 +35,7 @@ function element() {
   const listeners = new Map();
   const classes = new Set();
   const attributes = new Map();
-  return {
+  const target = {
     style: {},
     classList: {
       add(name) { classes.add(name); },
@@ -58,6 +58,11 @@ function element() {
     contains() { return false; },
     querySelector() { return null; },
   };
+  target.click = () => {
+    target.clickCount = (target.clickCount || 0) + 1;
+    target.dispatchEvent({ type: 'click', target, preventDefault() {} });
+  };
+  return target;
 }
 
 function createHarness({
@@ -68,6 +73,7 @@ function createHarness({
   storedPhotoUrl = '',
 } = {}) {
   const label = element();
+  label.tagName = 'DIV';
   const wrap = element();
   const uploadError = element();
   uploadError.classList.add('upload-error');
@@ -272,6 +278,10 @@ async function run() {
     resizeCount,
     TestEvent,
   } = createHarness();
+  label.dispatchEvent(new TestEvent('click', { target: label }));
+  assert.equal(input.clickCount, 1);
+  label.dispatchEvent(new TestEvent('keydown', { key: 'Enter', target: label }));
+  assert.equal(input.clickCount, 2);
   const firstFile = {
     name: 'photo.jpg',
     type: 'image/jpeg',

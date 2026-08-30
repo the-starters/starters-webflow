@@ -63,7 +63,7 @@ function replayProofMatches(scope, proof) {
 	return Boolean(
 		scope?.member?.id === proof.memberId &&
 		memberEmail(scope.member) === proof.email &&
-		normalizedEmail(qs('[name="email"]', stepElement(1))?.value) === proof.email
+		normalizedEmail(qs('#email', stepElement(1))?.value) === proof.email
 	);
 }
 
@@ -279,8 +279,8 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 	1: [
 		{ selector: '[name="first-name"]', kind: 'native' },
 		{ selector: '[name="last-name"]', kind: 'native' },
-		{ selector: '[name="email"]', kind: 'native' },
-		{ selector: '[name="phone"]', kind: 'native' },
+		{ selector: '#email', kind: 'native' },
+		{ selector: '#phone', kind: 'native' },
 		{ selector: '[name="country"]', kind: 'nativeConditional' },
 		{ selector: '[name="state"]', kind: 'nativeConditional' },
 		{ selector: '[name="city"]', kind: 'nativeConditional' },
@@ -459,6 +459,15 @@ onDomReady(function () {
 
 		/* inputs */
 		const phoneInput = qs('#phone');
+		let canonicalPhoneValue = String(window.activeProfile?.data?.step_1?.phone || '');
+		let phoneWasEdited = false;
+		phoneInput?.addEventListener('input', () => {
+			phoneWasEdited = true;
+		});
+		waitProfileData(() => {
+			canonicalPhoneValue = String(window.activeProfile?.data?.step_1?.phone || '');
+			phoneWasEdited = false;
+		});
 
 		/* Phone Mask */
 		waitForMember(() => {
@@ -704,9 +713,12 @@ onDomReady(function () {
 				};
 			}
 
-			// Phone
-			if (payload.Phone) {
-				payload.Phone = window.intlTelInput?.getInstance(qs('input[name="phone"]'))?.getNumber() || payload.Phone || '';
+			// Preserve the canonical phone byte-for-byte when the user did not edit it.
+			// intl-tel-input can otherwise reinterpret short national test values.
+			if (Object.prototype.hasOwnProperty.call(payload, 'Phone')) {
+				payload.Phone = !phoneWasEdited && canonicalPhoneValue
+					? canonicalPhoneValue
+					: window.intlTelInput?.getInstance(phoneInput)?.getNumber() || payload.Phone || '';
 			}
 
 			// payload.member_id = MEMBER.id;
@@ -904,7 +916,16 @@ onDomReady(function () {
 				}
 			});
 
+			// The published form contains hidden compatibility controls with duplicate
+			// names. The authored Personal Details controls own these two values.
+			if (globalFieldsWithinStep(1, '#email')) data.email = qs('#email', stepElement(1)).value;
+			if (globalFieldsWithinStep(1, '#phone')) data.phone = qs('#phone', stepElement(1)).value;
+
 			return data;
+		}
+
+		function globalFieldsWithinStep(stepIndex, selector) {
+			return Boolean(qs(selector, stepElement(stepIndex)));
 		}
 
 		function setSubmitLoading(button, isLoading) {
@@ -1588,55 +1609,55 @@ onDomReady(() => {
 		});
 
 		retainerRadios.forEach((radio) => {
-			radio.addEventListener('change', retainerToggle);
+			radio.addEventListener('change', () => retainerToggle(true));
 		});
 
 		paidCallRadios.forEach((radio) => {
-			radio.addEventListener('change', paidCallToggle);
+			radio.addEventListener('change', () => paidCallToggle(true));
 		});
 
 		freeCallRadios.forEach((radio) => {
-			radio.addEventListener('change', freeCallToggle);
+			radio.addEventListener('change', () => freeCallToggle(true));
 		});
 
-		function retainerToggle() {
+		function retainerToggle(clearDisabledValues = false) {
 			console.log("retainerToggle");
 
 			const checkedMonthlyRadio = qs('input[name="offer-monthly-retainers"]:checked');
 			const isMonthlyYes = checkedMonthlyRadio?.value === 'yes';
 			retainerDesc.style.display = isMonthlyYes ? '' : 'none';
 			retainerRate.style.display = isMonthlyYes ? '' : 'none';
-			toggleInputs(retainerDesc, isMonthlyYes);
-			toggleInputs(retainerRate, isMonthlyYes);
+			toggleInputs(retainerDesc, isMonthlyYes, clearDisabledValues);
+			toggleInputs(retainerRate, isMonthlyYes, clearDisabledValues);
 		};
 
-		function paidCallToggle() {
+		function paidCallToggle(clearDisabledValues = false) {
 			console.log("paidCallToggle");
 
 			const checkedPaidCallRadio = qs('input[name="paid-consulting-calls"]:checked');
 			const isCallRateYes = checkedPaidCallRadio?.value === 'yes';
 			paidCallGroups.forEach((group) => {
 				group.style.display = isCallRateYes ? '' : 'none';
-				toggleInputs(group, isCallRateYes);
+				toggleInputs(group, isCallRateYes, clearDisabledValues);
 			});
 		};
 
-		function freeCallToggle() {
+		function freeCallToggle(clearDisabledValues = false) {
 			console.log("freeCallToggle");
 
 			const checkedFreeCallRadio = qs('input[name="free-consulting-calls"]:checked');
 			const isFreeCallYes = checkedFreeCallRadio?.value === 'yes';
 			freeCallGroups.forEach((group) => {
 				group.style.display = isFreeCallYes ? '' : 'none';
-				toggleInputs(group, isFreeCallYes);
+				toggleInputs(group, isFreeCallYes, clearDisabledValues);
 			});
 		};
 
-		function toggleInputs(wrap, state = null) {
+		function toggleInputs(wrap, state = null, clearDisabledValues = false) {
 			if (!wrap || state === null) return;
 			qsa("input, textarea", wrap).forEach((el) => {
 				// clear values when toggle
-				if (!state) el.value = '';
+				if (!state && clearDisabledValues) el.value = '';
 
 				// toggle required attribute
 				if (wrap.hasAttribute('data-required')) {

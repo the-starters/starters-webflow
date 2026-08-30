@@ -83,6 +83,7 @@
     let timer;
     let lastQuery = '';
     let selectingCompany = false;
+    let searchSequence = 0;
 
     function storeSingleSelection(name, domain, logoUrl) {
       input.dataset.selectedCompanyName = name || '';
@@ -227,14 +228,22 @@
 
       lastQuery = q;
       renderMessage('Searching...');
+      const sequence = ++searchSequence;
+      const slowMessageTimer = setTimeout(function () {
+        if (sequence === searchSequence) renderMessage('Still searching company sources...');
+      }, 4000);
 
       try {
         const response = await fetch(`${SEARCH_ENDPOINT}?q=${encodeURIComponent(q)}`);
+        if (!response.ok) throw new Error(`Company search failed (${response.status})`);
         const results = await response.json();
+        if (sequence !== searchSequence) return;
 
         renderResults(Array.isArray(results) ? results : []);
       } catch (error) {
-        renderMessage('Search unavailable');
+        if (sequence === searchSequence) renderMessage('Search unavailable');
+      } finally {
+        clearTimeout(slowMessageTimer);
       }
     }
 
