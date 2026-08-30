@@ -1758,6 +1758,107 @@ test('an authored field inside a CSS-hidden wrapper still receives a visible sup
   }
 })
 
+test('a hook with no rendered geometry is not authoritative in the active panel', () => {
+  const originalGetComputedStyle = global.getComputedStyle
+  const field = {
+    hidden: false,
+    style: {},
+    closest() { return null },
+    getClientRects() { return [] },
+  }
+  let panelBoxes = [{ width: 320, height: 200 }]
+  const panel = {
+    hidden: false,
+    getClientRects() { return panelBoxes },
+    querySelectorAll(selector) {
+      return selector === '[booking-element="brand-name"]' ? [field] : []
+    },
+  }
+  try {
+    global.getComputedStyle = (node) => ({ display: node === panel ? 'flex' : 'inline' })
+    assert.equal(api.panelHasUsableField(panel, 'brand-name'), false)
+
+    // A panel inside a closed dialog generates no box of its own, so geometry
+    // says nothing about its hooks and the authored display contract rules.
+    panelBoxes = []
+    assert.equal(api.panelHasUsableField(panel, 'brand-name'), true)
+  } finally {
+    global.getComputedStyle = originalGetComputedStyle
+  }
+})
+
+function geometryDetailModal() {
+  const document = { createElement: (tag) => domElement(tag) }
+  const modal = domElement('dialog', { 'popup-booking-info': '' })
+  modal.ownerDocument = document
+  const base = domElement('div', { 'booking-popup-content': 'base' })
+  const hooks = {
+    'brand-name': domElement('span', { 'booking-element': 'brand-name' }),
+    'start-date': domElement('span', { 'booking-element': 'start-date' }),
+    duration: domElement('span', { 'booking-element': 'duration' }),
+  }
+  Object.keys(hooks).forEach((name) => base.appendChild(hooks[name]))
+  modal.appendChild(base)
+  // Mirrors the live dialog: nothing inside a closed `dialog` generates a box,
+  // and once it opens the counterpart name hook still renders none of its own.
+  const state = { open: false, boxless: [hooks['brand-name']] }
+  const box = [{ width: 120, height: 18 }]
+  ;[modal, base].concat(Object.keys(hooks).map((name) => hooks[name])).forEach((node) => {
+    node.getClientRects = () =>
+      state.open && state.boxless.indexOf(node) === -1 ? box : []
+  })
+  return { base, hooks, modal, state }
+}
+
+test('a detail modal populated before its dialog opens keeps every authored hook authoritative', () => {
+  const originalActions = global.StartersDashboardCallActions
+  const originalGetComputedStyle = global.getComputedStyle
+  const originalFrame = global.requestAnimationFrame
+  const frames = []
+  const view = geometryDetailModal()
+  const booking = {
+    booking_id: 'geometry-one',
+    status: 'confirmed',
+    start: 4_000_000_000_000,
+    duration: 30,
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+  try {
+    global.StartersDashboardCallActions = undefined
+    global.getComputedStyle = () => ({ display: 'block' })
+    global.requestAnimationFrame = (callback) => frames.push(callback)
+
+    // The View Details binding runs while the dialog is still closed.
+    assert.equal(api.populateDetailModal(view.modal, booking, 'starter'), true)
+    assert.equal(view.base.querySelectorAll('[data-starters-call-summary-row]').length, 0)
+    assert.equal(view.hooks['brand-name'].textContent, 'Northwind')
+    assert.equal(frames.length, 1)
+
+    // Once the dialog is open, only the box-less hook loses authority.
+    view.state.open = true
+    frames[0]()
+    const row = view.base.querySelector('[data-starters-call-summary-row="brand-name"]')
+    assert.ok(row, 'a geometry-hidden hook must yield a module-owned row')
+    assert.equal(row.children[1].textContent, 'Northwind')
+    assert.equal(view.base.querySelectorAll('[data-starters-call-summary-row]').length, 1)
+
+    // A frame landing after the modal was rebound to another call is ignored.
+    view.state.boxless = [view.hooks['start-date']]
+    view.modal.setAttribute('data-booking-id', 'geometry-two')
+    frames[0]()
+    assert.ok(view.base.querySelector('[data-starters-call-summary-row="brand-name"]'))
+    assert.equal(
+      view.base.querySelector('[data-starters-call-summary-row="start-date"]'),
+      null,
+    )
+  } finally {
+    global.StartersDashboardCallActions = originalActions
+    global.getComputedStyle = originalGetComputedStyle
+    global.requestAnimationFrame = originalFrame
+  }
+})
+
 test('a hook inside a CSS-hidden wrapper yields a supplement row while a visible one stays authoritative', () => {
   function buildModal() {
     const document = { createElement: (tag) => domElement(tag) }
