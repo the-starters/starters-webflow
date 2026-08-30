@@ -646,6 +646,14 @@
      footer is its own band, and a hairline plus its own padding is what
      separates it from the panel. A gap AND a rule would read as two dividers. */
   const CALENDAR_FOOTER_RULE = '1px solid #eee'
+  /* The space between the two stacked buttons below the mobile breakpoint. The
+     engine's fallback row writes an inline `gap:12px`, which sets a row gap
+     with it; an authored row gets only the inline `column-gap`, which
+     contributes nothing once the sheet turns the row into a column. So the
+     sheet declares the row gap for both, at the fallback's 12px in the rem
+     the rest of these lengths use. The fallback's inline shorthand outranks
+     it, so that row is unchanged and the two stacks match. */
+  const FOOTER_STACK_GAP = '0.75rem'
   /* ---- the status banner ----
      Jerico's round-3 tuning, and a change of kind rather than degree: the
      status stops being a line of text under the buttons and becomes a band
@@ -1089,7 +1097,10 @@
       // control — is unaffected either way.
       // `flex-direction` here also overrides the authored class's `flex-flow:
       // wrap`, which would otherwise hold the row at its initial `row`.
-      footerRow + '{flex-direction:column;align-items:stretch}',
+      // `row-gap` is what the engine's inline `column-gap` cannot give a
+      // column: see FOOTER_STACK_GAP.
+      footerRow + '{flex-direction:column;align-items:stretch;row-gap:'
+        + FOOTER_STACK_GAP + '}',
       footerRow + ' [data-paid-calendar-element="confirm"]{order:-1}',
       '}',
 

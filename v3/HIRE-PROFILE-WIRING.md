@@ -415,6 +415,14 @@ width, since a grid item cannot travel outside its own grid area; and
 scrollport that never scrolls and swallowed the sticky. Desktop keeps the grid
 and its always-visible band — the times scroll inside their own cell there.
 
+The stacked pair is spaced by a `0.75rem` **`row-gap`** in that same mobile
+rule. The engine's inline `column-gap:16px` is the only spacing it writes on an
+authored row and it contributes nothing once the row is a column, so without
+this the two buttons would touch wherever the authored class declares no row
+gap of its own. It is `row-gap` rather than a `gap` shorthand, and the engine's
+own fallback row is unaffected either way: its inline `gap:12px` sets a row gap
+of the same size and outranks any sheet rule.
+
 **Lengths in that sheet are rem, and every remaining px is a border, except the
 transparent `2px` outline used only as a forced-colors/High-Contrast focus
 hook.** The rem values track the site's responsive root font size; borders stay
@@ -454,8 +462,14 @@ at the top of the scrollable content and mid-scroll would otherwise land above
 what the visitor can see. Because the banner is out of flow, the mount carries
 a `28.125rem` min-height and the empty-availability state pushes its footer to the bottom — otherwise that panel
 would collapse to the height of one button and the banner would cover it. That
-min-height reaches only the `ready` and `empty` states, so the one-line
-`loading` and `error` states do not inherit a void under one sentence.
+min-height reaches all four states the mount wears — `ready`, `empty`,
+`loading` and `error`. An earlier round scoped it to the first two so that a
+one-line message would not inherit a void; with the step wrapper's padding
+zeroed by the sheet, that left the pre-mount states with no height source and
+the dialog opened as a ~72px strip on every open after the first. Both states
+now also carry the `1.25rem` interior frame and centre their message on BOTH
+axes (`justify-content`, `align-items`, `text-align`), which is what answers
+the void objection without giving the floor back up.
 
 None of this reaches the dashboard's reschedule calendar: no sheet is injected
 there, no tone attribute is written, and the status keeps the plain inline grey

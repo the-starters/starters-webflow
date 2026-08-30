@@ -3507,10 +3507,19 @@ flowchart TD
    the visitor can see. Because the banner is out of flow the mount carries a
    `28.125rem` min-height and the empty-availability state pushes its
    footer to the bottom of it; without both, that panel would collapse to the
-   height of one button and the banner would cover it. That min-height is
-   scoped to the two states that lay a calendar out (`ready` and `empty`), so
-   the one-line `loading` and `error` states — which the free-call controller
-   stamps on this same mount too — do not inherit a void under one sentence.
+   height of one button and the banner would cover it. That min-height reaches
+   all four states the mount ever wears — `ready`, `empty`, `loading` and
+   `error`, the last two stamped by the free-call controller on this same mount
+   as well. An earlier round scoped it to the two that lay a calendar out, on
+   the objection that a one-line message should not inherit a void; that traded
+   the void for a worse frame, because the sheet zeroes the step wrapper's
+   padding and the pre-mount states then had no height source at all, so the
+   dialog opened as a ~72px strip on every open after the first. Both halves
+   are answered together: the floor is back for all four, and `loading` and
+   `error` additionally carry the same `1.25rem` interior frame the month, the
+   times and the footer use, with their message centred on BOTH axes
+   (`justify-content`, `align-items` and `text-align`) — so the reserved space
+   reads as a panel waiting rather than as a void under a line of text.
 
    On the booking surface the shell writes only `width` inline and leaves its
    `display` and both gaps to the sheet, because an inline declaration outranks

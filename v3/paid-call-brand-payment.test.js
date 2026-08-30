@@ -1110,7 +1110,18 @@ test('the shell declares no row gap, at either width', async () => {
   const beforeMedia = css.split('@media')[0]
   assert.ok(!beforeMedia.includes('row-gap'), 'no unconditional row gap')
   const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
-  assert.ok(!mobileBlock.includes('row-gap'), 'and none added back for mobile')
+  // One row gap is allowed on mobile and it is not this one: the footer's own,
+  // between its two stacked BUTTONS. Different box, different axis of doubling
+  // — the frame padding it would double against is the footer's horizontal
+  // one. Every other rule in the block still has to be gapless.
+  for (const rule of mobileBlock.split('}')) {
+    if (!rule.includes('row-gap')) continue
+    assert.match(
+      rule.slice(0, rule.lastIndexOf('{')),
+      /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]$/,
+      `row gap added back for mobile: ${rule}`,
+    )
+  }
   // Desktop still says zero out loud. It is the initial value now, but it is
   // the declaration that documents the footer band as the only separator.
   assert.match(css.split('@media (min-width:768px){')[1], /"shell"\]\{column-gap:2rem;row-gap:0;/)
@@ -1231,7 +1242,7 @@ test('the footer row is right-aligned on desktop and stacked on mobile', async (
 
   // Mobile still stacks full width, primary first.
   const mobile = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
-  assert.ok(mobile.includes('{flex-direction:column;align-items:stretch}'))
+  assert.ok(mobile.includes('{flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
   assert.ok(mobile.includes('{order:-1}'))
 
   // An authored row still gets no inline styles from the engine beyond the
@@ -1382,17 +1393,25 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
   // DOUBLES against the footer's own, and those two states have no footer and
   // no shell to double against. They are the only states where the mount is
   // the sole thing that can carry a frame, so there it must.
+  //
+  // The exemption is per SELECTOR, not per rule: a rule that merely mentions
+  // the two — the min-height floor lists all four states in one selector list
+  // — still has to answer for `ready` and `empty`, which do have a footer to
+  // double against.
   const framed = /data-paid-calendar-state="(loading|error)"/
   let checked = 0
   for (const rule of css.split('}')) {
     if (!rule.includes('[nylas-container]')) continue
-    if (framed.test(rule)) continue
+    const selectors = rule.slice(0, rule.lastIndexOf('{')).split(',')
+    if (selectors.every((selector) => framed.test(selector))) continue
     checked += 1
     assert.ok(!/padding/.test(rule), `no mount padding: ${rule}`)
   }
-  // The loop still has mount rules to judge — an exemption that swallowed all
-  // of them would pass this test while asserting nothing.
-  assert.ok(checked > 0)
+  // The loop still has mount rules to judge — an exemption that swallowed any
+  // of them would pass this test while asserting less. Two rules reach a
+  // calendar-laying state: the four-state min-height floor and the empty
+  // state's column.
+  assert.ok(checked >= 2, `mount rules checked: ${checked}`)
 })
 
 test('the interior frame is the only inset at mobile too', async () => {
@@ -1431,9 +1450,17 @@ test('the footer stacks primary-first below the site mobile breakpoint', async (
   const ROW = '[data-modal-target="popup-booking"] [data-paid-calendar-element="footer"][data-paid-calendar-footer]'
 
   assert.ok(css.includes('@media (max-width:767.98px){'))
-  assert.ok(css.includes(ROW + '{flex-direction:column;align-items:stretch}'))
+  assert.ok(css.includes(ROW + '{flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
   // Primary on top, matching the profile's own vertical CTA rail.
   assert.ok(css.includes(ROW + ' [data-paid-calendar-element="confirm"]{order:-1}'))
+
+  // The stack's own spacing, which the engine's inline `column-gap` cannot
+  // give a column. The fallback row's inline `gap:12px` shorthand carries a
+  // row gap of its own and outranks this; an authored row has only its class,
+  // so without this rule its two buttons touch. Same 12px either way.
+  assert.match(css.split('@media (max-width:767.98px){')[1].split('}@media')[0],
+    /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*row-gap:0\.75rem/)
+  assert.equal(footer.style.gap, '12px')
 
   // Every stacking rule that reaches a footer keys on the doubled attribute,
   // so it reaches an authored row too and still outranks its class. Two rules
@@ -1642,7 +1669,7 @@ test('every footer row gets the frame, authored class or not', async () => {
   const F = '[data-paid-calendar-element="footer"][data-paid-calendar-footer]'
   assert.ok(css.includes(F + '{border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
   assert.ok(css.includes(F + '{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
-  assert.ok(css.includes(F + '{flex-direction:column;align-items:stretch}'))
+  assert.ok(css.includes(F + '{flex-direction:column;align-items:stretch;row-gap:0.75rem}'))
   assert.ok(css.includes(F + ' [data-paid-calendar-element="confirm"]{order:-1}'))
 
   // Still scoped to the booking dialog, so the dashboard's reschedule calendar
