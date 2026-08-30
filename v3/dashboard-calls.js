@@ -1,7 +1,7 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
- * @release v1.59.452
+ * @release v1.59.453
  *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
@@ -956,6 +956,12 @@
 
   function panelHasUsableField(panel, name) {
     if (!panel || typeof panel.querySelectorAll !== 'function') return false
+    let panelRendered = !panel.hidden
+    if (panelRendered && typeof global.getComputedStyle === 'function') {
+      try {
+        panelRendered = global.getComputedStyle(panel).display !== 'none'
+      } catch (_error) {}
+    }
     return Array.prototype.slice.call(
       panel.querySelectorAll('[booking-element="' + name + '"]'),
     ).some(function (field) {
@@ -971,6 +977,11 @@
           if (group && global.getComputedStyle(group).display === 'none') return false
         } catch (_error) {}
       }
+      if (
+        panelRendered &&
+        typeof field.getClientRects === 'function' &&
+        field.getClientRects().length === 0
+      ) return false
       return true
     })
   }

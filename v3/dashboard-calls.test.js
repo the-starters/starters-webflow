@@ -1758,6 +1758,33 @@ test('an authored field inside a CSS-hidden wrapper still receives a visible sup
   }
 })
 
+test('a hook with no rendered geometry is not authoritative in the active panel', () => {
+  const originalGetComputedStyle = global.getComputedStyle
+  const field = {
+    hidden: false,
+    style: {},
+    closest() { return null },
+    getClientRects() { return [] },
+  }
+  const panel = {
+    hidden: false,
+    querySelectorAll(selector) {
+      return selector === '[booking-element="brand-name"]' ? [field] : []
+    },
+  }
+  try {
+    global.getComputedStyle = (node) => ({ display: node === panel ? 'flex' : 'inline' })
+    assert.equal(api.panelHasUsableField(panel, 'brand-name'), false)
+
+    // Geometry is not meaningful while the whole panel is hidden. Its own
+    // authored display contract remains authoritative until the panel opens.
+    panel.hidden = true
+    assert.equal(api.panelHasUsableField(panel, 'brand-name'), true)
+  } finally {
+    global.getComputedStyle = originalGetComputedStyle
+  }
+})
+
 test('a hook inside a CSS-hidden wrapper yields a supplement row while a visible one stays authoritative', () => {
   function buildModal() {
     const document = { createElement: (tag) => domElement(tag) }
