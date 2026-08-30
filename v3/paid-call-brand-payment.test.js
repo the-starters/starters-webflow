@@ -2189,7 +2189,8 @@ test('the loading and error states get a frame instead of a bare strip', async (
   assert.ok(css.includes(
     D + ' [nylas-container][data-paid-calendar-state="loading"],'
       + D + ' [nylas-container][data-paid-calendar-state="error"]'
-      + '{padding:1.25rem;display:flex;flex-direction:column;justify-content:center}',
+      + '{padding:1.25rem;display:flex;flex-direction:column;'
+      + 'justify-content:center;align-items:center;text-align:center}',
   ))
   // The same CALENDAR_FRAME the month, the times and the footer pad with, so
   // the waiting panel is inset by the amount the calendar state settles into

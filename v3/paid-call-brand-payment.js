@@ -940,14 +940,15 @@
          the same CALENDAR_FRAME the month, the times and the footer use, and
          the sentence stops sitting flush against the modal's edges.
 
-         Centred, not top-aligned, for the reason in the min-height comment
-         above. The message in both states is written with `textContent`, so
-         the mount's only child is an anonymous text node — it becomes a single
-         anonymous flex item here, stays left-aligned on the inline axis, and
-         only its block-axis placement changes. */
+         Centred on both axes, per Jerico. The message in both states is
+         written with `textContent`, so the mount's only child is an anonymous
+         text node — it becomes a single anonymous flex item here;
+         `align-items` centres it on the inline axis and `text-align` keeps a
+         message that wraps centred line by line. */
       dialog + ' [nylas-container][data-paid-calendar-state="loading"],'
         + dialog + ' [nylas-container][data-paid-calendar-state="error"]'
-        + '{padding:' + CALENDAR_FRAME + ';display:flex;flex-direction:column;justify-content:center}',
+        + '{padding:' + CALENDAR_FRAME + ';display:flex;flex-direction:column;'
+        + 'justify-content:center;align-items:center;text-align:center}',
       /* And the other half of that: something has to fill the height the
          min-height opens up. On the empty path the mount's only in-flow child
          is the footer, and left at the top it sits UNDER the banner. Pushed to
