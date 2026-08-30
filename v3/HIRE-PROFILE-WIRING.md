@@ -370,9 +370,11 @@ inside them; off this surface they keep the inline columns they ship with. Every
 form's datepickers and the dashboard's reschedule calendar share these class
 names and must stay pixel-identical.
 
-**The footer frame contract (reversed August 2026).** On the booking surface
-the engine ALWAYS paints the footer's frame — the hairline, the padding, the
-fill, the sticky and the alignment. Those rules key on
+#### The footer frame contract (reversed August 2026)
+
+On the booking surface the engine ALWAYS paints the footer's frame — the
+`1px #eee` hairline, the even `1.25rem` padding, the white fill, the mobile
+sticky and the alignment. Those rules key on
 `[data-paid-calendar-element="footer"][data-paid-calendar-footer]`, which
 matches both stamped values; the attribute is doubled for specificity, taking
 them to (0,3,0) so they outrank the authored `.call-sched_button-group`
@@ -399,10 +401,12 @@ width, since a grid item cannot travel outside its own grid area; and
 scrollport that never scrolls and swallowed the sticky. Desktop keeps the grid
 and its always-visible band — the times scroll inside their own cell there.
 
-The stacked pair is spaced by a `0.75rem` **`row-gap`** in that same mobile
-rule, because the engine's inline `column-gap:16px` places nothing once the row
-is a column. The fallback row is unaffected: its inline `gap:12px` sets a row
-gap of the same size and outranks any sheet rule.
+Every footer row is given an inline `column-gap:16px` between Back and the
+request button; on the fallback row its own `gap:12px` shorthand supersedes
+that. The stacked pair is spaced by a `0.75rem` **`row-gap`** in that same
+mobile rule, because a column gap places nothing once the row is a column. The
+fallback row is unaffected there too: its inline `gap:12px` sets a row gap of
+the same size and outranks any sheet rule.
 
 **Lengths in that sheet are rem, and every remaining px is a border, except the
 transparent `2px` outline used only as a forced-colors/High-Contrast focus
@@ -429,6 +433,8 @@ banner could not run the panel's full width. It wins on specificity — the
 site's declarations are flat class selectors, and the dialog attribute puts this
 one rank above them — never with `!important`.
 
+#### The status banner and the four-state min-height
+
 That sheet also turns the calendar's status line into a **banner across the top
 of the modal's body**: absolutely positioned against `.modal_content-layout`, so
 it lands directly under the "Book a Call" header bar at the panel's full width
@@ -444,7 +450,8 @@ what the visitor can see. Because the banner is out of flow, the mount carries
 a `28.125rem` min-height and the empty-availability state pushes its footer to the bottom — otherwise that panel
 would collapse to the height of one button and the banner would cover it. That
 min-height reaches all four states the mount wears — `ready`, `empty`,
-`loading` and `error`. Scoping it to the first two left the pre-mount states
+`loading` and `error`, the last two stamped by the free-call controller on this
+same mount as well. Scoping it to the first two left the pre-mount states
 with no height source, since the sheet zeroes the step wrapper's padding, and
 the dialog opened as a ~72px strip. Those two also carry the `1.25rem` interior
 frame and centre their message on both axes.
