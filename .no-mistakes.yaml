@@ -2,9 +2,12 @@
 # codex sits at its usage limit in this workspace and "available" here means
 # it spawns, so codex-first burned one failed attempt at the start of every
 # fix round before falling through to claude (observed through 2026-08-30).
+# `no-mistakes doctor` reporting an agent runnable only proves it spawns, not
+# that it survives a step.
 # NOTE: this list selects on AVAILABILITY, not on crash recovery. If the
 # selected agent dies or returns no output during a step, the run fails
-# instead of switching agents.
+# instead of switching agents. Claude returned no output in two consecutive
+# Starter Profile reviews on 2026-08-24.
 agent: [claude]
 
 ignore_patterns:

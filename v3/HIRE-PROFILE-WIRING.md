@@ -386,11 +386,12 @@ width, since a grid item cannot travel outside its own grid area; and
 scrollport that never scrolls and swallowed the sticky. Desktop keeps the grid
 and its always-visible band — the times scroll inside their own cell there.
 
-**Lengths in that sheet are rem, and every remaining px is a border.** The rem
-values track the site's responsive root font size; borders stay px because a
-hairline is a device-pixel affordance and at the site's 12.93px root a
-`0.0625rem` border computes to 0.81px and renders inconsistently. The same
-convention now holds in `global-embeds/form-embeds/datepicker/datepicker.css`
+**Lengths in that sheet are rem, and every remaining px is a border, except the
+transparent `2px` outline used only as a forced-colors/High-Contrast focus
+hook.** The rem values track the site's responsive root font size; borders stay
+px because a hairline is a device-pixel affordance and at the site's 12.93px
+root a `0.0625rem` border computes to 0.81px and renders inconsistently. The
+same convention now holds in `global-embeds/form-embeds/datepicker/datepicker.css`
 and `.../timepicker/timepicker.css`. Read those as a change rather than a
 rename: the root here is 12.93px at 1280 and 16.34px at 400, so a converted
 value is about 19% smaller on desktop than the pixel it replaced.

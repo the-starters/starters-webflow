@@ -622,6 +622,8 @@
      select-then-deselect leaves one chip a different grey from its neighbours. */
   const BOOKING_SLOT_RESTING_BACKGROUND = '#eee'
   const SLOT_SELECTED_BACKGROUND = '#1f211d'
+  /* The engine's muted text grey — the timezone caption and the status line. */
+  const ENGINE_MUTED_INK = '#6f746d'
   /* The rule above the buttons. There is no row gap on desktop any more: the
      footer is its own band, and a hairline plus its own padding is what
      separates it from the panel. A gap AND a rule would read as two dividers. */
@@ -670,29 +672,43 @@
   const TIMEZONE_SELECT_BACKGROUND = '#fff'
   const TIMEZONE_SELECT_BORDER = CALENDAR_FOOTER_RULE
   const TIMEZONE_SELECT_RADIUS = '0.375rem'
+  /* The floor the suppressed inline styles used to carry (42px). Padding and
+     line-height alone leave the control shorter than the chips beside it, and
+     nothing else in this rule holds it open — so the height came across with
+     the rest of the closed face rather than being dropped with the inline
+     writes. Rem, like every other length in this sheet. */
+  const TIMEZONE_SELECT_MIN_HEIGHT = '2.625rem'
   const TIMEZONE_CAPTION_SIZE = '0.75rem'
   /* The chevron, drawn to match the month picker's own nav arrows: the same
      2px stroke in the same `#1e211e`. It has to be a background image rather
      than a pseudo-element — a select is a replaced element and does not render
      `::after` reliably across engines. The `#` is percent-encoded because a
-     raw one would start the URL's fragment. */
+     raw one would start the URL's fragment.
+
+     `stroke-linejoin='round'` is not cosmetic here. The default join is a
+     miter, and a 2-unit stroke on this 90-degree vertex projects the point to
+     y≈6.41 — past the bottom of a 6-unit viewBox, so the tip of the chevron
+     was being clipped off. Rounding the join keeps the whole mark inside the
+     box without widening it or changing the stroke. */
   const TIMEZONE_SELECT_CHEVRON =
-    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%231e211e' stroke-width='2'/%3E%3C/svg%3E\")"
+    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%231e211e' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E\")"
   /* The site's own select-focus treatment, lifted from the timepicker embed
      (`.ui-timepicker-div select:focus`) rather than invented here. */
   const TIMEZONE_FOCUS_BORDER = '#20221f'
   const TIMEZONE_FOCUS_RING = '0 0 0 0.1875rem rgba(32, 34, 31, 0.1)'
-  /* ---- lengths are rem, borders are px ----
+  /* ---- lengths are rem; borders and the forced-colors outline are px ----
      Jerico's round-5 call: every length in this sheet is a rem so it tracks the
      site's responsive root font size, the way the frame and the banner's
      padding already did.
 
-     Borders are the one exception, and it is deliberate rather than an
+     Borders are the usual exception, and it is deliberate rather than an
      oversight. A hairline is a device-pixel affordance, not part of the type
      scale: this site's root is 12.93px at 1280, so `0.0625rem` computes to
-     0.81px and renders as an inconsistent, sometimes invisible line. The same
-     rule is applied to the datepicker sheet's own 1px and 2px borders, so
-     "lengths in rem, borders in px" holds across both files.
+     0.81px and renders as an inconsistent, sometimes invisible line. The one
+     other exception is the transparent 2px outline used only as a
+     forced-colors/High-Contrast focus hook. The same border rule is applied to
+     the datepicker sheet's own 1px and 2px borders, so "lengths in rem,
+     borders in px, plus the forced-colors outline" holds across both files.
 
      Note what a rem IS on this site before reading these as no-ops: the root
      font size is responsive — 12.93px at 1280, 16.34px at 400 — so these
@@ -812,15 +828,20 @@
       role + '"back"][data-paid-calendar-busy]{pointer-events:none}',
       role + '"timezone-control"]{display:grid;gap:0.375rem}',
       /* The caption above the control, at the size the static caption it
-         replaced used to carry. Its colour stays the engine's `#6f746d`. */
-      role + '"timezone-control"] span{font-size:' + TIMEZONE_CAPTION_SIZE + ';color:#6f746d}',
+         replaced used to carry. Its colour stays the engine's muted grey.
+
+         Keyed on the caption's own role rather than on `… "timezone-control"]
+         span`, so the rule names the element it means. The descendant-of-a-tag
+         version reached ANY span the control ever wraps — a future icon or a
+         screen-reader hint would have inherited the caption's type. */
+      role + '"timezone-caption"]{font-size:' + TIMEZONE_CAPTION_SIZE + ';color:' + ENGINE_MUTED_INK + '}',
       /* The closed face. `appearance` twice because Safari still wants the
          prefixed one; `font:inherit` first so the site's face and the sheet's
          own size are not fighting the UA stylesheet's. */
       role + '"timezone"]{'
         + 'appearance:none;-webkit-appearance:none;'
         + 'font:inherit;font-size:1rem;font-weight:500;'
-        + 'width:100%;cursor:pointer;'
+        + 'width:100%;min-height:' + TIMEZONE_SELECT_MIN_HEIGHT + ';cursor:pointer;'
         + 'color:' + SLOT_SELECTED_BACKGROUND + ';'
         + 'background-color:' + TIMEZONE_SELECT_BACKGROUND + ';'
         + 'background-image:' + TIMEZONE_SELECT_CHEVRON + ';'
@@ -830,9 +851,16 @@
         + 'border-radius:' + TIMEZONE_SELECT_RADIUS + ';'
         + 'padding:0.625rem 2.25rem 0.625rem 0.75rem}',
       /* Focus-visible rather than focus, so a mouse click does not paint a
-         ring the visitor did not ask for while a keyboard tab still does. */
+         ring the visitor did not ask for while a keyboard tab still does.
+
+         A TRANSPARENT outline, not `outline:0`. In forced-colors mode the OS
+         palette replaces the border colour and strips the box-shadow outright,
+         so `outline:0` left a keyboard user with no focus indicator at all;
+         a transparent outline is repainted as a visible one there while
+         staying invisible everywhere else. Same trick the password-toggle
+         embed uses. */
       role + '"timezone"]:focus-visible{'
-        + 'outline:0;border-color:' + TIMEZONE_FOCUS_BORDER + ';'
+        + 'outline:2px solid transparent;border-color:' + TIMEZONE_FOCUS_BORDER + ';'
         + 'box-shadow:' + TIMEZONE_FOCUS_RING + '}',
       /* The shell's own display, which the engine used to write inline. It is
          a grid at every width by default and the mobile block swaps it for a
@@ -1348,8 +1376,9 @@
        no sheet to take over. */
     const label = global.document.createElement('span')
     if (!onBookingSurface) {
-      applyStyles(label, { color: '#6f746d', fontSize: '13px' })
+      applyStyles(label, { color: ENGINE_MUTED_INK, fontSize: '13px' })
     }
+    label.setAttribute('data-paid-calendar-element', 'timezone-caption')
     label.textContent = 'Timezone'
 
     const select = global.document.createElement('select')
@@ -1432,7 +1461,7 @@
        rule in that sheet — including the colour that tells a failed booking
        apart from a progress notice. */
     if (!onBookingSurface) {
-      applyStyles(status, { color: '#6f746d', fontSize: '13px', margin: '0' })
+      applyStyles(status, { color: ENGINE_MUTED_INK, fontSize: '13px', margin: '0' })
     }
 
     /**

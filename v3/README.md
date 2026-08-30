@@ -3430,10 +3430,11 @@ flowchart TD
    `0.375rem` between its caption and its select. On this surface the sheet
    also owns the select's **closed face**: it removes the OS chrome with
    `appearance:none`, then supplies the modal's `1rem`/500 type, white fill,
-   `1px #eee` hairline, `0.375rem` radius, rem padding, matching chevron, and
-   the timepicker's `:focus-visible` ring. The caption is the engine's grey at
-   `0.75rem`. The opened option list remains OS-rendered; it is not a custom
-   dropdown.
+   `1px #eee` hairline, `0.375rem` radius, `2.625rem` minimum-height floor,
+   rem padding, matching chevron, and the timepicker's `:focus-visible` ring.
+   Its transparent `2px` outline is a forced-colors/High-Contrast focus hook.
+   The caption is the engine's grey at `0.75rem`. The opened option list
+   remains OS-rendered; it is not a custom dropdown.
 
    Owning that booking-modal treatment means the engine writes no inline
    styles on the wrapper, caption, or select there: inline declarations would
@@ -3463,9 +3464,11 @@ flowchart TD
    and the dialog attribute puts this one rank above them.
 
    Every length in that sheet is a **rem**, so it tracks the site's responsive
-   root font size; the only pixels left are border widths, which stay px
-   because a hairline is a device-pixel affordance and at the site's 12.93px
-   root a `0.0625rem` border computes to 0.81px and renders inconsistently.
+   root font size; the only pixels left are border widths, plus the transparent
+   `2px` outline that exists only as a forced-colors/High-Contrast focus hook.
+   Borders stay px because a hairline is a device-pixel affordance and at the
+   site's 12.93px root a `0.0625rem` border computes to 0.81px and renders
+   inconsistently.
    `global-embeds/form-embeds/datepicker/datepicker.css` and its timepicker
    twin follow the same convention. Those are paste-in mirrors of Webflow
    `<style>` embeds and are site-wide, so a re-paste is what makes them live.
