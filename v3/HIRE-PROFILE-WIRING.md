@@ -425,10 +425,9 @@ That sheet also **zeroes the authored step's own padding**
 (`.call-details_layout`, which the site pads by
 `--_spacing---spacer--spacing-14`) at every width, so the interior frame is the
 only inset between the modal's edges and the calendar. Without it the two
-stacked: the footer's hairline stopped short of both modal edges and the status
-banner could not run the panel's full width. It wins on specificity — the
-site's declarations are flat class selectors, and the dialog attribute puts this
-one rank above them — never with `!important`.
+stacked: the status banner could not run the panel's full width. It wins on
+specificity — the site's declarations are flat class selectors, and the dialog
+attribute puts this one rank above them — never with `!important`.
 
 That sheet also turns the calendar's status line into a **banner across the top
 of the modal's body**: absolutely positioned against `.modal_content-layout`, so

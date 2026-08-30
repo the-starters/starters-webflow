@@ -3458,11 +3458,11 @@ flowchart TD
 
    The calendar is two columns from 768px up — month on the left, times on the
    right — with the footer spanning BOTH columns on its own row underneath as a
-   band: a `1px #eee` rule across the full width, `1.25rem` of padding, and the
-   buttons pushed to the right at their natural width, the way the modal's own
-   authored `.call-sched_button-group` lays buttons out. There is no row gap;
-   the band's rule and padding do the separating. The times take the leftover
-   height in their column and scroll inside themselves, so a day with many slots
+   band: `1.25rem` of padding across the full width, and the buttons pushed to
+   the right at their natural width, the way the modal's own authored
+   `.call-sched_button-group` lays buttons out. There is no row gap; the band's
+   padding does the separating. The times take the leftover height in their
+   column and scroll inside themselves, so a day with many slots
    cannot grow the modal, and the slot chips keep their natural height whatever
    the day looks like. A `1.25rem` interior frame runs around the two columns
    and they sit `2rem` apart. The month's day cells fill their column rather
@@ -3471,11 +3471,10 @@ flowchart TD
    That frame is the **only** inset between the modal's edges and the calendar,
    at either width: the same sheet zeroes the padding the site puts on the
    authored step around the mount (`.call-details_layout`,
-   `--_spacing---spacer--spacing-14`). Left in, the two stacked — the footer's
-   hairline stopped short of both modal edges, the status banner could not run
-   the panel's full width, and on a phone every element was inset twice. It
-   wins on specificity, since the site's declarations are flat class selectors
-   and the dialog attribute puts this one rank above them.
+   `--_spacing---spacer--spacing-14`). Left in, the two stacked — the status
+   banner could not run the panel's full width, and on a phone every element
+   was inset twice. It wins on specificity, since the site's declarations are
+   flat class selectors and the dialog attribute puts this one rank above them.
 
    Every length in that sheet is a **rem**, so it tracks the site's responsive
    root font size; the only pixels left are border widths, plus the transparent

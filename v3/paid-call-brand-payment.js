@@ -646,7 +646,7 @@
      colour by it.
 
      The neutral pair is Jerico's round-4 pick. It was `#eee` on `#1f211d`
-     first, matching the picker fill and the footer hairline; at banner size
+     first, matching the picker fill and the chips' resting grey; at banner size
      that read as a panel rather than a notice, so both neutral messages now
      wear the same weight as the failure and differ only in hue. */
   const STATUS_ERROR_BACKGROUND = '#DD5555'
@@ -915,9 +915,8 @@
          `--_spacing---spacer--spacing-14` (32.3px measured at 1280, 15.4px at
          375). With the interior frame below doing that job on the elements
          themselves at every width, this was a second frame outside the first:
-         the footer's hairline stopped short of both modal edges, the status
-         banner could not run the panel's full width, and on a phone the two
-         insets stacked.
+         the status banner could not run the panel's full width, and on a phone
+         the two insets stacked.
 
          Specificity, not `!important` (which this sheet forbids): the site's
          two declarations are the flat `.call-details_layout` and a
