@@ -1,7 +1,7 @@
 /**
  * V3 paid-call Brand payment client.
  *
- * @release v1.59.443
+ * @release v1.59.446
  *
  * Xano derives the Brand and payment environment from the authenticated
  * session. A selection attempt owns one bounded idempotency key: retries reuse
@@ -653,6 +653,35 @@
      read as a row of its own; this is Jerico's round-8 value, up from the
      0.5rem the placement round shipped. */
   const TIMEZONE_GAP = '1rem'
+  /* ---- the timezone control's closed face ----
+     A native select renders as an OS control, which is what Jerico objected
+     to. `appearance:none` drops that chrome and the rest of these rebuild it
+     in the modal's own language. Only the CLOSED face: the open list is drawn
+     by the operating system and cannot be styled, which is the constraint he
+     accepted rather than a custom dropdown being built.
+
+     WHITE with a hairline, not the chips' `#eee` fill. The control sits
+     directly above the slot chips at both widths, and a grey box on top of a
+     field of grey boxes reads as the first chip — an option to pick rather
+     than a control to open. White separates the two while the `#eee` border
+     keeps it in the family: it is the same hairline as the footer band and the
+     same grey as the picker's ring. Their original was white too; what changes
+     is the off-palette `#d7d9d2` border for the modal's own `#eee`. */
+  const TIMEZONE_SELECT_BACKGROUND = '#fff'
+  const TIMEZONE_SELECT_BORDER = CALENDAR_FOOTER_RULE
+  const TIMEZONE_SELECT_RADIUS = '0.375rem'
+  const TIMEZONE_CAPTION_SIZE = '0.75rem'
+  /* The chevron, drawn to match the month picker's own nav arrows: the same
+     2px stroke in the same `#1e211e`. It has to be a background image rather
+     than a pseudo-element — a select is a replaced element and does not render
+     `::after` reliably across engines. The `#` is percent-encoded because a
+     raw one would start the URL's fragment. */
+  const TIMEZONE_SELECT_CHEVRON =
+    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%231e211e' stroke-width='2'/%3E%3C/svg%3E\")"
+  /* The site's own select-focus treatment, lifted from the timepicker embed
+     (`.ui-timepicker-div select:focus`) rather than invented here. */
+  const TIMEZONE_FOCUS_BORDER = '#20221f'
+  const TIMEZONE_FOCUS_RING = '0 0 0 0.1875rem rgba(32, 34, 31, 0.1)'
   /* ---- lengths are rem, borders are px ----
      Jerico's round-5 call: every length in this sheet is a rem so it tracks the
      site's responsive root font size, the way the frame and the banner's
@@ -782,6 +811,29 @@
          about to land on. The engine stamps this while it waits. */
       role + '"back"][data-paid-calendar-busy]{pointer-events:none}',
       role + '"timezone-control"]{display:grid;gap:0.375rem}',
+      /* The caption above the control, at the size the static caption it
+         replaced used to carry. Its colour stays the engine's `#6f746d`. */
+      role + '"timezone-control"] span{font-size:' + TIMEZONE_CAPTION_SIZE + ';color:#6f746d}',
+      /* The closed face. `appearance` twice because Safari still wants the
+         prefixed one; `font:inherit` first so the site's face and the sheet's
+         own size are not fighting the UA stylesheet's. */
+      role + '"timezone"]{'
+        + 'appearance:none;-webkit-appearance:none;'
+        + 'font:inherit;font-size:1rem;font-weight:500;'
+        + 'width:100%;cursor:pointer;'
+        + 'color:' + SLOT_SELECTED_BACKGROUND + ';'
+        + 'background-color:' + TIMEZONE_SELECT_BACKGROUND + ';'
+        + 'background-image:' + TIMEZONE_SELECT_CHEVRON + ';'
+        + 'background-repeat:no-repeat;'
+        + 'background-position:right 0.75rem center;'
+        + 'border:' + TIMEZONE_SELECT_BORDER + ';'
+        + 'border-radius:' + TIMEZONE_SELECT_RADIUS + ';'
+        + 'padding:0.625rem 2.25rem 0.625rem 0.75rem}',
+      /* Focus-visible rather than focus, so a mouse click does not paint a
+         ring the visitor did not ask for while a keyboard tab still does. */
+      role + '"timezone"]:focus-visible{'
+        + 'outline:0;border-color:' + TIMEZONE_FOCUS_BORDER + ';'
+        + 'box-shadow:' + TIMEZONE_FOCUS_RING + '}',
       /* The shell's own display, which the engine used to write inline. It is
          a grid at every width by default and the mobile block swaps it for a
          flex column; see the sticky footer rule there. */
@@ -1013,8 +1065,8 @@
       /* The timezone control's own area. The engine writes no inline styles on
          its wrapper on this surface — inline beats any rule here — so the box
          rule above and this padding are the whole of its layout; the caption
-         and the select inside it keep their inline typography, which this
-         sheet does not try to reach.
+         and select inside it are styled by the sheet's booking-only closed-face
+         rules above.
 
          It carries the frame's top and right edges, so it lines up with the
          times below it and with the month's top opposite. The bottom `1rem`
@@ -1288,23 +1340,32 @@
     }
     wrapper.setAttribute('data-paid-calendar-element', 'timezone-control')
 
-    const label = applyStyles(global.document.createElement('span'), {
-      color: '#6f746d',
-      fontSize: '13px',
-    })
+    /* The caption and the control itself follow the wrapper's lead: on the
+       booking surface the injected sheet owns their look, because an inline
+       declaration outranks every rule in it and the OS-default select Jerico
+       objected to is exactly what those inline pixels produce. Every other
+       surface keeps them untouched — the dashboard's reschedule calendar has
+       no sheet to take over. */
+    const label = global.document.createElement('span')
+    if (!onBookingSurface) {
+      applyStyles(label, { color: '#6f746d', fontSize: '13px' })
+    }
     label.textContent = 'Timezone'
 
-    const select = applyStyles(global.document.createElement('select'), {
-      width: '100%',
-      minHeight: '42px',
-      padding: '8px 36px 8px 12px',
-      border: '1px solid #d7d9d2',
-      borderRadius: '6px',
-      background: '#ffffff',
-      color: '#1f211d',
-      fontSize: '14px',
-      cursor: 'pointer',
-    })
+    const select = global.document.createElement('select')
+    if (!onBookingSurface) {
+      applyStyles(select, {
+        width: '100%',
+        minHeight: '42px',
+        padding: '8px 36px 8px 12px',
+        border: '1px solid #d7d9d2',
+        borderRadius: '6px',
+        background: '#ffffff',
+        color: '#1f211d',
+        fontSize: '14px',
+        cursor: 'pointer',
+      })
+    }
     select.setAttribute('data-paid-calendar-element', 'timezone')
     select.setAttribute('aria-label', 'Timezone')
     supportedTimezones(initialTimezone, settings.timezones).forEach(function (timezone) {

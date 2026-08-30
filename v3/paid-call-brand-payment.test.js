@@ -735,6 +735,99 @@ function calendarDocument() {
   }
 }
 
+function calendarCssRules(source, viewportWidth, rules = []) {
+  let cursor = 0
+  while (cursor < source.length) {
+    const opening = source.indexOf('{', cursor)
+    if (opening === -1) break
+    const prelude = source.slice(cursor, opening).trim()
+    let depth = 1
+    let closing = opening + 1
+    while (closing < source.length && depth) {
+      if (source[closing] === '{') depth += 1
+      if (source[closing] === '}') depth -= 1
+      closing += 1
+    }
+    const body = source.slice(opening + 1, closing - 1)
+    if (/^@media\b/.test(prelude)) {
+      const min = /min-width:\s*([\d.]+)px/.exec(prelude)
+      const max = /max-width:\s*([\d.]+)px/.exec(prelude)
+      if (
+        (!min || viewportWidth >= Number(min[1])) &&
+        (!max || viewportWidth <= Number(max[1]))
+      ) calendarCssRules(body, viewportWidth, rules)
+    } else if (prelude && !prelude.startsWith('@')) {
+      rules.push({ selector: prelude, body })
+    }
+    cursor = closing
+  }
+  return rules
+}
+
+function calendarSelectorSpecificity(selector) {
+  const attributes = (selector.match(/\[[^\]]+\]/g) || []).length
+  const classes = (selector.match(/\.[\w-]+/g) || []).length
+  const pseudoClasses = (selector.match(/:[\w-]+/g) || []).length
+  const tags = (selector.replace(/\[[^\]]+\]|\.[\w-]+|:[\w-]+/g, '').match(/\b[a-z][\w-]*\b/gi) || []).length
+  return attributes + classes + pseudoClasses + tags / 1000
+}
+
+function calendarCompoundMatches(element, compound, focusVisible) {
+  if (!element) return false
+  const expectsFocusVisible = compound.includes(':focus-visible')
+  if (expectsFocusVisible && !focusVisible) return false
+  const simple = compound.replace(/:[\w-]+/g, '')
+  const tag = /^([a-z][\w-]*)/i.exec(simple)
+  if (tag && String(element.tagName).toLowerCase() !== tag[1].toLowerCase()) return false
+  for (const attribute of simple.matchAll(/\[([\w-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\]]+)))?\]/g)) {
+    const actual = element.getAttribute(attribute[1])
+    const expected = attribute[2] ?? attribute[3] ?? attribute[4]
+    if (actual === null || (expected !== undefined && actual !== expected)) return false
+  }
+  return true
+}
+
+function calendarSelectorMatches(element, selector, focusVisible) {
+  const compounds = selector.trim().split(/\s+/)
+  let candidate = element
+  for (let index = compounds.length - 1; index >= 0; index -= 1) {
+    if (!calendarCompoundMatches(candidate, compounds[index], focusVisible)) {
+      if (index === compounds.length - 1) return false
+      while ((candidate = candidate.parentElement) && !calendarCompoundMatches(candidate, compounds[index], focusVisible)) {}
+      if (!candidate) return false
+    }
+    candidate = candidate.parentElement
+  }
+  return true
+}
+
+function calendarAppliedStyle(document, element, options = {}) {
+  const viewportWidth = options.viewportWidth || 1024
+  const focusVisible = Boolean(options.focusVisible)
+  const declarations = new Map()
+  for (const [property, value] of Object.entries(element.style)) {
+    declarations.set(property.replace(/[A-Z]/g, (letter) => '-' + letter.toLowerCase()), { value, specificity: Infinity, order: Infinity })
+  }
+  calendarCssRules(document.head.children[0].textContent, viewportWidth).forEach((rule, order) => {
+    const selectors = rule.selector.split(',').map((selector) => selector.trim())
+    const specificity = Math.max(...selectors
+      .filter((selector) => calendarSelectorMatches(element, selector, focusVisible))
+      .map(calendarSelectorSpecificity))
+    if (!Number.isFinite(specificity)) return
+    rule.body.split(';').forEach((declaration) => {
+      const colon = declaration.indexOf(':')
+      if (colon === -1) return
+      const property = declaration.slice(0, colon).trim()
+      const value = declaration.slice(colon + 1).trim()
+      const current = declarations.get(property)
+      if (!current || specificity > current.specificity || (specificity === current.specificity && order >= current.order)) {
+        declarations.set(property, { value, specificity, order })
+      }
+    })
+  })
+  return Object.fromEntries([...declarations].map(([property, declaration]) => [property, declaration.value]))
+}
+
 /**
  * The parts of one site button component. Reading them positionally is
  * deliberate: the order IS the contract, because the click overlay has to come
@@ -1719,40 +1812,114 @@ test('the timezone selector sits above the slots at both widths', async () => {
   // the panel width and flush to the modal's left edge; on a phone it ran
   // full-bleed while every neighbour was inset. Jerico placed it at the top of
   // the times area, above the first row of chips, at both widths.
-  const { document } = await mountFooterFixture()
-  const css = document.head.children[0].textContent
-  const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
+  const { document, shell } = await mountFooterFixture()
+  const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((node) => node.getAttribute('data-paid-calendar-element') === name)
+  const control = role('timezone-control')
+  const desktop = calendarAppliedStyle(document, control)
+  const mobile = calendarAppliedStyle(document, control, { viewportWidth: 400 })
+  const mobileShell = calendarAppliedStyle(document, shell, { viewportWidth: 400 })
 
   // Desktop: its own area at the top of the right column, with the month
   // spanning down beside it so the panel does not grow by the caption.
-  const desktopBlock = css.split('@media (min-width:768px){')[1]
-  assert.ok(desktopBlock.includes(ROLE + '"timezone-control"]{grid-area:timezone;padding:1.25rem 1.25rem 1rem 0}'))
-  assert.match(desktopBlock, /grid-template-areas:"month timezone" "month times"/)
+  assert.equal(desktop['grid-area'], 'timezone')
+  assert.equal(desktop.padding, '1.25rem 1.25rem 1rem 0')
 
   // Mobile: it has to be MOVED, not just padded. The engine appends it FIRST
   // in the shell, ahead of the month (see the shell order pinned above), so
   // document order alone would render it above the calendar; `order:2` drops
   // it between the month and the chips. The inset is the frame every
   // neighbour carries — and it must be the frame, not a bleed.
-  const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
-  assert.ok(mobileBlock.includes(ROLE + '"timezone-control"]{order:2;padding:0 1.25rem 1rem}'))
+  assert.equal(mobile.order, '2')
+  assert.equal(mobile.padding, '0 1.25rem 1rem')
   // `order` only applies to flex items, so the column is load-bearing for this
   // placement too, not only for the sticky footer.
-  assert.ok(mobileBlock.includes('"shell"]{display:flex;flex-direction:column}'))
+  assert.equal(mobileShell.display, 'flex')
+  assert.equal(mobileShell['flex-direction'], 'column')
 
   // The control's internal label/select layout belongs to the sheet on the
   // booking surface, because its former inline placement writes overrode the
   // grid and flex placement rules above.
-  const beforeMedia = css.split('@media')[0]
-  assert.ok(beforeMedia.includes(ROLE + '"timezone-control"]{display:grid;gap:0.375rem}'))
+  assert.equal(desktop.display, 'grid')
+  assert.equal(desktop.gap, '0.375rem')
+})
 
-  // Everything else about its appearance stays the engine's. Those are inline
-  // declarations and inline outranks every rule here, so asking for them would
-  // be a rule that silently loses.
-  for (const rule of css.split('}')) {
-    if (!rule.includes('"timezone-control"]')) continue
-    assert.ok(!/(^|;|\{)\s*(color|margin|background)\s*:/.test(rule), rule)
-  }
+test('the timezone select wears the modal\'s design, not the OS default', async () => {
+  // Jerico: "keep our UI design". A native select renders as an OS control,
+  // and `appearance:none` plus the rules below rebuild the CLOSED face in the
+  // modal's own language. The OPEN list is drawn by the operating system and
+  // cannot be styled — an accepted constraint, not an omission.
+  const { document, shell } = await mountFooterFixture()
+  const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((node) => node.getAttribute('data-paid-calendar-element') === name)
+  const control = role('timezone-control')
+  const select = role('timezone')
+  const caption = control.children.find((child) => child !== select)
+  const face = calendarAppliedStyle(document, select)
+
+  // Both spellings: Safari still wants the prefixed one.
+  assert.equal(face.appearance, 'none')
+  assert.equal(face['-webkit-appearance'], 'none')
+  // The site's face and the sheet's own scale, not the UA stylesheet's.
+  assert.equal(face.font, 'inherit')
+  assert.equal(face['font-size'], '1rem')
+  assert.equal(face['font-weight'], '500')
+  // White with the modal's own hairline, NOT the chips' #eee fill: the control
+  // sits directly above a field of grey chips and a grey box there reads as
+  // the first chip rather than as a control to open.
+  assert.equal(face['background-color'], '#fff')
+  assert.equal(face.border, '1px solid #eee')
+  assert.equal(face['border-radius'], '0.375rem')
+  // A chevron of our own, since `appearance:none` removes the OS one.
+  assert.match(face['background-image'], /^url\("data:image\/svg\+xml/)
+  assert.match(face['background-image'], /stroke='%231e211e'/, 'the month picker nav arrows\' colour')
+  assert.equal(face['background-repeat'], 'no-repeat')
+  assert.equal(face['background-position'], 'right 0.75rem center')
+  // Room for it on the right, and rem padding like everything else here.
+  assert.equal(face.padding, '0.625rem 2.25rem 0.625rem 0.75rem')
+
+  // Focus-visible, so a mouse click does not paint a ring nobody asked for.
+  // The treatment is the site's own, lifted from the timepicker embed.
+  const focus = calendarAppliedStyle(document, select, { focusVisible: true })
+  assert.equal(focus['border-color'], '#20221f')
+  assert.equal(focus['box-shadow'], '0 0 0 0.1875rem rgba(32, 34, 31, 0.1)')
+
+  // The caption keeps the engine's grey at the size the old static caption had.
+  const captionStyle = calendarAppliedStyle(document, caption)
+  assert.equal(captionStyle['font-size'], '0.75rem')
+  assert.equal(captionStyle.color, '#6f746d')
+})
+
+test('the timezone control keeps its inline look off the booking surface', async () => {
+  // The dashboard's reschedule calendar has no sheet to take the look over, so
+  // every inline declaration the engine used to write is still written there.
+  const reschedule = new CalendarElement('dialog')
+  reschedule.setAttribute('data-modal-target', 'popup-booking-info')
+  const host = new CalendarElement('div')
+  host.setAttribute('booking-reschedule-calendar', '')
+  reschedule.appendChild(host)
+  const away = await mountFooterFixture({ container: host })
+
+  const findRole = (root, role) => root.querySelectorAll('[data-paid-calendar-element]')
+    .find((node) => node.getAttribute('data-paid-calendar-element') === role)
+  const control = findRole(away.shell, 'timezone-control')
+  assert.ok(control, 'the control still renders there')
+  const select = findRole(control, 'timezone')
+  const caption = control.children.find((child) => child !== select)
+  assert.equal(select.style.border, '1px solid #d7d9d2')
+  assert.equal(select.style.fontSize, '14px')
+  assert.equal(select.style.minHeight, '42px')
+  assert.equal(select.style.background, '#ffffff')
+  assert.equal(caption.style.color, '#6f746d')
+  assert.equal(caption.style.fontSize, '13px')
+
+  // And on the booking surface it writes none of them.
+  const { shell } = await mountFooterFixture()
+  const onSurface = findRole(shell, 'timezone-control')
+  const onSurfaceSelect = findRole(onSurface, 'timezone')
+  const onSurfaceCaption = onSurface.children.find((child) => child !== onSurfaceSelect)
+  assert.deepEqual(Object.keys(onSurfaceSelect.style), [])
+  assert.deepEqual(Object.keys(onSurfaceCaption.style), [])
 })
 
 test('the timezone control defers placement styles only on the booking surface', async () => {

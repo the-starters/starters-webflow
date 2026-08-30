@@ -3427,12 +3427,19 @@ flowchart TD
    engine. It sits outside the
    scrolling list, so it stays put while the chips scroll. The sheet owns its
    box as well as its spacing: the wrapper's own `display:grid` and the
-   `0.375rem` between its caption and its select. Owning those took a change
-   on the engine's side — an inline declaration outranks any rule in this
-   sheet, so the engine now writes no inline styles on that wrapper on the
-   booking surface and keeps them everywhere else, exactly as it already did
-   for the status. The caption and the select keep their own inline typography
-   on both surfaces.
+   `0.375rem` between its caption and its select. On this surface the sheet
+   also owns the select's **closed face**: it removes the OS chrome with
+   `appearance:none`, then supplies the modal's `1rem`/500 type, white fill,
+   `1px #eee` hairline, `0.375rem` radius, rem padding, matching chevron, and
+   the timepicker's `:focus-visible` ring. The caption is the engine's grey at
+   `0.75rem`. The opened option list remains OS-rendered; it is not a custom
+   dropdown.
+
+   Owning that booking-modal treatment means the engine writes no inline
+   styles on the wrapper, caption, or select there: inline declarations would
+   outrank the injected sheet. Other mounts, including the dashboard's
+   reschedule calendar, retain the original inline placement and appearance
+   because no sheet is injected for them.
 
    The calendar is two columns from 768px up — month on the left, times on the
    right — with the footer spanning BOTH columns on its own row underneath as a
