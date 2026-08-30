@@ -84,6 +84,7 @@ function boot({
 
   const domReady = []
   const profileDataCallbacks = []
+  let hydrationCallbackRuns = 0
   const context = {
     Date,
     Event: class Event {
@@ -145,9 +146,14 @@ function boot({
     },
     groups: { retainerDesc, retainerRate, paidCallGroup, freeCallGroup },
     // The controller defers its first toggle pass until canonical profile data lands.
+    // Callbacks are replayed, not drained, so a second call really is a second pass.
     hydrate() {
-      for (const callback of profileDataCallbacks.splice(0)) callback(context.activeProfile)
+      const callbacks = [...profileDataCallbacks]
+      assert.ok(callbacks.length > 0, 'controller registered no profile-data callbacks')
+      hydrationCallbackRuns += callbacks.length
+      for (const callback of callbacks) callback(context.activeProfile)
     },
+    hydrationCallbackRuns: () => hydrationCallbackRuns,
     chooseRetainers(value) { retainerRadios.find((option) => option.value === value).change(retainerRadios) },
     choosePaidCalls(value) { paidCallRadios.find((option) => option.value === value).change(paidCallRadios) },
     chooseFreeCalls(value) { freeCallRadios.find((option) => option.value === value).change(freeCallRadios) },
@@ -218,8 +224,16 @@ test('a second hydration pass after a reload still preserves declined descriptio
   const harness = boot({ retainers: 'no', paidCalls: 'no', freeCalls: 'no' })
 
   harness.hydrate()
+  const firstPassRuns = harness.hydrationCallbackRuns()
+  assert.ok(firstPassRuns > 0)
+
+  harness.fields.retainerDescription.value = 'Edited between hydration passes'
   harness.hydrate()
 
-  assert.equal(harness.fields.retainerDescription.value, 'Ongoing advisory retainer')
+  assert.equal(harness.hydrationCallbackRuns(), firstPassRuns * 2)
+  assert.equal(harness.fields.retainerDescription.value, 'Edited between hydration passes')
   assert.equal(harness.fields.freeCallDescription.value, 'A free intro call')
+  assert.equal(harness.fields.paidCallDescription.value, 'A paid deep dive')
+  assert.equal(harness.groups.retainerDesc.style.display, 'none')
+  assert.equal(harness.fields.retainerDescription.required, false)
 })

@@ -304,3 +304,57 @@ test('a failed search retries on refocus instead of stranding the error message'
   await harness.resolveSearch('acme corp', ACME)
   assert.match(harness.dropdown.innerHTML, /Acme Corp/)
 })
+
+test('a failed narrower search never strands its error over a previously rendered query', async () => {
+  const harness = await boot()
+
+  await harness.search('goo')
+  await harness.resolveSearch('goo', [{ name: 'Goo Inc', domain: 'goo.example', logo_url: '' }])
+  assert.match(harness.dropdown.innerHTML, /Goo Inc/)
+
+  await harness.search('goog')
+  await harness.failSearch('goog')
+  assert.match(harness.dropdown.innerHTML, /Search unavailable/)
+
+  await harness.search('goo')
+
+  assert.deepEqual(harness.fetchedQueries, ['goo', 'goog', 'goo'])
+  await harness.resolveLatestSearch('goo', [{ name: 'Goo Inc', domain: 'goo.example', logo_url: '' }])
+  assert.match(harness.dropdown.innerHTML, /Goo Inc/)
+  assert.doesNotMatch(harness.dropdown.innerHTML, /Search unavailable/)
+})
+
+test('backspacing to a rendered query while a narrower search is pending refetches the visible text', async () => {
+  const harness = await boot()
+
+  await harness.search('goo')
+  await harness.resolveSearch('goo', [{ name: 'Goo Inc', domain: 'goo.example', logo_url: '' }])
+
+  await harness.search('goog')
+  assert.match(harness.dropdown.innerHTML, /Searching\.\.\./)
+
+  await harness.search('goo')
+  assert.deepEqual(harness.fetchedQueries, ['goo', 'goog', 'goo'])
+
+  await harness.resolveSearch('goog', [{ name: 'Google', domain: 'google.com', logo_url: '' }])
+  assert.doesNotMatch(harness.dropdown.innerHTML, /Google/)
+
+  await harness.resolveLatestSearch('goo', [{ name: 'Goo Inc', domain: 'goo.example', logo_url: '' }])
+  assert.match(harness.dropdown.innerHTML, /Goo Inc/)
+  assert.equal(harness.isOpen(), true)
+})
+
+test('the slow-search message does not become a cached result for its own query', async () => {
+  const harness = await boot()
+
+  await harness.search('acme corp')
+  harness.runSlowSearchTimers()
+  assert.match(harness.dropdown.innerHTML, /Still searching company sources/)
+
+  await harness.clickOutside()
+  await harness.search('acme corp')
+
+  assert.deepEqual(harness.fetchedQueries, ['acme corp', 'acme corp'])
+  await harness.resolveLatestSearch('acme corp', ACME)
+  assert.match(harness.dropdown.innerHTML, /Acme Corp/)
+})

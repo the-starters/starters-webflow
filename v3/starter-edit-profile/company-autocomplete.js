@@ -154,20 +154,25 @@
       });
     }
 
-    function renderMessage(text) {
-      dropdown.innerHTML = `
-                    <div class="company-search-message">${escapeHtml(text)}</div>
-                `;
+    // Every dropdown write declares the query its content stands for, so a message
+    // can never leave a stale query behind for the reopen shortcut.
+    function renderDropdown(html, query) {
+      renderedQuery = query;
+      dropdown.innerHTML = html;
       openDropdown();
     }
 
-    function renderResults(results, query) {
-      renderedQuery = query;
+    function renderMessage(text) {
+      renderDropdown(`
+                    <div class="company-search-message">${escapeHtml(text)}</div>
+                `, '');
+    }
 
+    function renderResults(results, query) {
       if (!results.length) {
         const typedCompany = input.value.trim();
 
-        dropdown.innerHTML = `
+        renderDropdown(`
           <button class="company-search-item ${isCompanyAdded({ name: typedCompany }) ? "is-added" : ""}" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="">
               <img class="company-search-logo" src="${PLACEHOLDER_LOGO_URL}" alt="">
               <span class="company-search-text">
@@ -184,13 +189,11 @@
                   </svg>
               </span>
           </button>
-      `;
-
-        openDropdown();
+      `, query);
         return;
       }
 
-      dropdown.innerHTML = results
+      renderDropdown(results
         .map(function (item) {
           return `
             <button class="company-search-item ${isCompanyAdded(item) ? "is-added" : ""}" type="button" data-name="${escapeHtml(item.name)}" data-domain="${escapeHtml(item.domain)}" data-logo-url="${escapeHtml(item.logo_url || '')}">
@@ -211,9 +214,7 @@
             </button>
         `;
         })
-        .join('');
-
-      openDropdown();
+        .join(''), query);
     }
 
     async function searchCompanies(query) {
