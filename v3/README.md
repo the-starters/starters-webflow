@@ -3399,18 +3399,31 @@ flowchart TD
 
    Because the component supersedes them, `data-booking-confirm-class` and
    `data-booking-back-class` are **ignored on the booking surface**, and are
-   harmless if left authored. The optional `data-booking-footer-class` keeps its
-   meaning everywhere: authored, it is applied to the footer row verbatim and
-   the engine places nothing; unauthored, the row is a full-width flex row
-   (`display:flex;gap:12px;width:100%`) whose contents the injected sheet
+   harmless if left authored. The optional `data-booking-footer-class` is still
+   applied to the footer row verbatim; unauthored, the row is a full-width flex
+   row (`display:flex;gap:12px;width:100%`) whose contents the injected sheet
    arranges — pushed to the right at their natural width from 768px up, stacked
    full width with the confirm on top below it. Flex rather than fixed columns
    is also what lets the confirm fill the whole row on a direct entry where the
-   back control is hidden. The injected sheet keeps the authored promise:
-   placement rules reach every footer, but everything that paints or arranges
-   one keys on the engine's own row and cannot reach an authored one. Every footer row is also given a 16px column gap between Back and the
+   back control is hidden.
+
+   **On the booking surface the engine always paints the footer's frame** — the
+   `1px #eee` hairline, the even `1.25rem` padding, the white fill and the
+   mobile sticky. Those rules key on
+   `[data-paid-calendar-element="footer"][data-paid-calendar-footer]`, which
+   matches both stamped values at (0,3,0) and so outranks the authored class's
+   (0,1,0) without `!important`; they carry their own `display:flex`, since
+   only the engine's fallback row gets an inline one. An authored class may
+   still add what the engine does not declare; it can no longer remove the
+   frame. Placement (`grid-area`, `order`) still keys on the role attribute
+   alone, and everything stays scoped under
+   `[data-modal-target="popup-booking"]`, so the dashboard's reschedule
+   calendar is unaffected.
+
+   Every footer row is also given a 16px column gap between Back and the
    request button; the fallback row's own 12px flex gap supersedes it on that
-   row.
+   row. Below 768px the row is a column, where a column gap places nothing, so
+   the sheet declares a `0.75rem` row gap for both flavours.
 
    The shared engine also renders a timezone control — a `<label>` wrapping a
    caption and the `<select>` that names the clock the times are shown in. It
@@ -3493,10 +3506,13 @@ flowchart TD
    the visitor can see. Because the banner is out of flow the mount carries a
    `28.125rem` min-height and the empty-availability state pushes its
    footer to the bottom of it; without both, that panel would collapse to the
-   height of one button and the banner would cover it. That min-height is
-   scoped to the two states that lay a calendar out (`ready` and `empty`), so
-   the one-line `loading` and `error` states — which the free-call controller
-   stamps on this same mount too — do not inherit a void under one sentence.
+   height of one button and the banner would cover it. That min-height reaches
+   all four states the mount ever wears — `ready`, `empty`, `loading` and
+   `error`, the last two stamped by the free-call controller on this same mount
+   as well. Scoping it to the two that lay a calendar out left the pre-mount
+   states with no height source, since the sheet zeroes the step wrapper's
+   padding, and the dialog opened as a ~72px strip. Those two also carry the
+   `1.25rem` interior frame and centre their message on both axes.
 
    On the booking surface the shell writes only `width` inline and leaves its
    `display` and both gaps to the sheet, because an inline declaration outranks

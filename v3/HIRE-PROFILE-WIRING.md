@@ -325,13 +325,14 @@ because the Designer's default size is the absence of one.
 Because the component supersedes them, **`data-booking-confirm-class` and
 `data-booking-back-class` are ignored on this surface.** Leaving them authored
 is harmless — nothing reads them here and no warning is raised. The optional
-`data-booking-footer-class` keeps its full meaning: authored, its class is
-applied to the footer row verbatim and the engine places nothing; unauthored,
-the engine's own row is a full-width flex row (`display:flex;gap:12px;width:100%`
-inline) and the injected sheet decides how the two wraps sit in it — right-aligned
-at their natural width from 768px up, a full-width stack with the confirm on top
-below it. The engine writes no inline style on either control: their size comes
-from the sheet's rules on the row, and their appearance from the component alone.
+`data-booking-footer-class` still applies its class to the footer row verbatim,
+but **it no longer opts the row out of the engine's frame** — see the footer
+frame contract below. Unauthored, the engine's own row is a full-width flex row
+(`display:flex;gap:12px;width:100%` inline). Either way the injected sheet
+decides how the two wraps sit in it — right-aligned at their natural width from
+768px up, a full-width stack with the confirm on top below it. The engine writes
+no inline style on either control: their size comes from the sheet's rules on
+the row, and their appearance from the component alone.
 
 The markers and modal attributes sit on the **wrap**, not the inner button. That
 is the node the modal embed resolves — it reads `closest()` from the click
@@ -367,12 +368,24 @@ surface for the same outranking reason, and the sheet collapses them with
 inside them; off this surface they keep the inline columns they ship with. Every selector in that sheet is scoped under
 `[data-modal-target="popup-booking"]` and none uses `!important`; the contract
 form's datepickers and the dashboard's reschedule calendar share these class
-names and must stay pixel-identical. Every rule that PAINTS the footer — the hairline, the padding, the fill, the
-sticky, the alignment — keys on `data-paid-calendar-footer="fallback"`, written
-only on the engine's own row, so an authored `data-booking-footer-class` row
-still places its own children and paints itself. Only placement (`grid-area`,
-`order`) reaches every footer, and a test walks the emitted CSS to keep that
-split honest.
+names and must stay pixel-identical.
+
+**The footer frame contract (reversed August 2026).** On the booking surface
+the engine ALWAYS paints the footer's frame — the hairline, the padding, the
+fill, the sticky and the alignment. Those rules key on
+`[data-paid-calendar-element="footer"][data-paid-calendar-footer]`, which
+matches both stamped values; the attribute is doubled for specificity, taking
+them to (0,3,0) so they outrank the authored `.call-sched_button-group`
+(0,1,0) without `!important`. They declare their own `display:flex`, because
+everything that arranges the two actions is a flex-container property and only
+the engine's fallback row carries an inline `display`. An authored class may
+still add what the engine does not declare, but it can no longer take the frame
+away. Placement (`grid-area`, `order`) still keys on the role attribute alone,
+and a test walks the emitted CSS to keep that split honest: appearance must
+never sit on the bare role selector, and no appearance rule may pin itself to a
+single `data-paid-calendar-footer` value. Everything stays scoped under
+`[data-modal-target="popup-booking"]`, and off that surface no footer is built
+at all.
 
 Below 768px the footer is `position:sticky; bottom:0` with an opaque white
 fill, the desktop band's `1px #eee` hairline and a `1.25rem` frame on all four
@@ -385,6 +398,11 @@ width, since a grid item cannot travel outside its own grid area; and
 `.call-details_layout` gives up its `overflow-y:auto`, which made it a
 scrollport that never scrolls and swallowed the sticky. Desktop keeps the grid
 and its always-visible band — the times scroll inside their own cell there.
+
+The stacked pair is spaced by a `0.75rem` **`row-gap`** in that same mobile
+rule, because the engine's inline `column-gap:16px` places nothing once the row
+is a column. The fallback row is unaffected: its inline `gap:12px` sets a row
+gap of the same size and outranks any sheet rule.
 
 **Lengths in that sheet are rem, and every remaining px is a border, except the
 transparent `2px` outline used only as a forced-colors/High-Contrast focus
@@ -425,8 +443,11 @@ at the top of the scrollable content and mid-scroll would otherwise land above
 what the visitor can see. Because the banner is out of flow, the mount carries
 a `28.125rem` min-height and the empty-availability state pushes its footer to the bottom — otherwise that panel
 would collapse to the height of one button and the banner would cover it. That
-min-height reaches only the `ready` and `empty` states, so the one-line
-`loading` and `error` states do not inherit a void under one sentence.
+min-height reaches all four states the mount wears — `ready`, `empty`,
+`loading` and `error`. Scoping it to the first two left the pre-mount states
+with no height source, since the sheet zeroes the step wrapper's padding, and
+the dialog opened as a ~72px strip. Those two also carry the `1.25rem` interior
+frame and centre their message on both axes.
 
 None of this reaches the dashboard's reschedule calendar: no sheet is injected
 there, no tone attribute is written, and the status keeps the plain inline grey
