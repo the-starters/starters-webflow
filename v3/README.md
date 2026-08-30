@@ -3443,7 +3443,7 @@ flowchart TD
    box as well as its spacing: the wrapper's own `display:grid` and the
    `0.375rem` between its caption and its select. On this surface the sheet
    also owns the select's **closed face**: it removes the OS chrome with
-   `appearance:none`, then supplies the modal's `1rem`/500 type, white fill,
+   `appearance:none`, then supplies its `0.9375rem`/400 type, white fill,
    `1px #eee` hairline, `0.375rem` radius, `2.625rem` minimum-height floor,
    rem padding, matching chevron, and the timepicker's `:focus-visible` ring.
    Its transparent `2px` outline is a forced-colors/High-Contrast focus hook.

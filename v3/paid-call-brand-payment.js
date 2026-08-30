@@ -1,7 +1,7 @@
 /**
  * V3 paid-call Brand payment client.
  *
- * @release v1.59.448
+ * @release v1.59.449
  *
  * Xano derives the Brand and payment environment from the authenticated
  * session. A selection attempt owns one bounded idempotency key: retries reuse
@@ -844,7 +844,7 @@
          own size are not fighting the UA stylesheet's. */
       role + '"timezone"]{'
         + 'appearance:none;-webkit-appearance:none;'
-        + 'font:inherit;font-size:1rem;font-weight:500;'
+        + 'font:inherit;font-size:0.9375rem;font-weight:400;'
         + 'width:100%;min-height:' + TIMEZONE_SELECT_MIN_HEIGHT + ';cursor:pointer;'
         + 'color:' + SLOT_SELECTED_BACKGROUND + ';'
         + 'background-color:' + TIMEZONE_SELECT_BACKGROUND + ';'
