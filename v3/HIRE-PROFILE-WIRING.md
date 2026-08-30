@@ -279,10 +279,11 @@ the generic chooser does not remain visible. A migrated profile with no
 authored main trigger opens `popup-booking-main` through the Lumos modal
 registry before activating the ready CTA. If neither entry path can open the
 authored dialog, the shortcut fails closed. A missing,
-hidden, unavailable, or uninstalled matching CTA fails closed. Generic Book Call
-buttons retain `data-modal-trigger="popup-booking-main"` and continue to open the
-Free/Paid chooser. The direct service click does not itself perform booking,
-payment, or Stripe-readiness work.
+hidden, unavailable, or uninstalled matching CTA fails closed. On the
+authenticated Brand path, generic Book Call buttons retain
+`data-modal-trigger="popup-booking-main"` and continue to open the Free/Paid
+chooser; the logged-out rule above is the one exception. The direct service
+click does not itself perform booking, payment, or Stripe-readiness work.
 
 The controller repeats this idempotent shortcut binding after canonical call
 discovery and observes later child insertions. Element identity, not the copied
