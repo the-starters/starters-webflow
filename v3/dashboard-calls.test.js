@@ -1721,6 +1721,32 @@ test('missing panel details and role-correct Message actions are supplied withou
   }
 })
 
+test('an authored field inside a CSS-hidden wrapper still receives a visible supplement', () => {
+  const originalGetComputedStyle = global.getComputedStyle
+  const group = { hidden: false, style: {} }
+  const field = {
+    hidden: false,
+    style: {},
+    closest(selector) {
+      return selector === '[booking-element-wrap]' ? group : null
+    },
+  }
+  const panel = {
+    querySelectorAll(selector) {
+      return selector === '[booking-element="start-date"]' ? [field] : []
+    },
+  }
+  try {
+    global.getComputedStyle = (node) => ({ display: node === group ? 'none' : 'block' })
+    assert.equal(api.panelHasUsableField(panel, 'start-date'), false)
+
+    global.getComputedStyle = () => ({ display: 'block' })
+    assert.equal(api.panelHasUsableField(panel, 'start-date'), true)
+  } finally {
+    global.getComputedStyle = originalGetComputedStyle
+  }
+})
+
 test('confirmed Paid Call details show per-call price and hide every unsupported payment control', () => {
   const view = detailModalHarness()
   const booking = {

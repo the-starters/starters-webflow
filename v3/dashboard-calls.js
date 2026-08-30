@@ -1,7 +1,7 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
- * @release v1.59.451
+ * @release v1.59.452
  *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
@@ -954,6 +954,27 @@
     })
   }
 
+  function panelHasUsableField(panel, name) {
+    if (!panel || typeof panel.querySelectorAll !== 'function') return false
+    return Array.prototype.slice.call(
+      panel.querySelectorAll('[booking-element="' + name + '"]'),
+    ).some(function (field) {
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      if (
+        field.hidden ||
+        (field.style && field.style.display === 'none') ||
+        (group && (group.hidden || (group.style && group.style.display === 'none')))
+      ) return false
+      if (typeof global.getComputedStyle === 'function') {
+        try {
+          if (global.getComputedStyle(field).display === 'none') return false
+          if (group && global.getComputedStyle(group).display === 'none') return false
+        } catch (_error) {}
+      }
+      return true
+    })
+  }
+
   /**
    * Adds only the call information that each authored modal panel is missing.
    * Webflow's terminal and reason panels do not all contain the same booking
@@ -999,7 +1020,7 @@
       supplement.textContent = ''
 
       rows.forEach(function (row) {
-        if (panel.querySelector('[booking-element="' + row.field + '"]')) return
+        if (panelHasUsableField(panel, row.field)) return
         const line = document.createElement('div')
         line.setAttribute('data-starters-call-summary-row', row.field)
         line.style.display = 'grid'
@@ -2038,6 +2059,7 @@
     configureDetailActions,
     detailSupplementRows,
     ensureDetailSupplements,
+    panelHasUsableField,
     confirmAttemptStorageKey,
     storedConfirmAttemptKey,
     createConfirmAttemptKey,
