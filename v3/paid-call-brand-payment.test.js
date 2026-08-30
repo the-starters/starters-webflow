@@ -1289,12 +1289,13 @@ test('the layout stylesheet is scoped to the booking dialog, every rule', async 
   assert.ok(!css.includes('!important'))
 })
 
-test('every length in the sheet is a rem, and every px is a border', async () => {
+test('every length is rem; px is borders plus forced-colors outline', async () => {
   // Jerico's round-5 call, and the convention this file and the datepicker
   // sheet both follow: lengths in rem so they track the site's responsive root
   // font size, borders in px because a hairline is a device-pixel affordance
   // (at the 12.93px root a 0.0625rem border computes to 0.81px and renders
-  // inconsistently or not at all).
+  // inconsistently or not at all), with one transparent 2px outline used only
+  // as the forced-colors/High-Contrast focus hook.
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
 
@@ -1305,7 +1306,7 @@ test('every length in the sheet is a rem, and every px is a border', async () =>
     assert.match(
       match[0],
       /^(border(-top|-right|-bottom|-left)?(-width)?|outline(-width)?)\s*:/,
-      `every px length must be a border or an outline: ${match[0].trim()}`,
+      `every px length must be a border or the forced-colors outline: ${match[0].trim()}`,
     )
   }
 

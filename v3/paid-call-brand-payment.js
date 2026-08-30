@@ -696,17 +696,19 @@
      (`.ui-timepicker-div select:focus`) rather than invented here. */
   const TIMEZONE_FOCUS_BORDER = '#20221f'
   const TIMEZONE_FOCUS_RING = '0 0 0 0.1875rem rgba(32, 34, 31, 0.1)'
-  /* ---- lengths are rem, borders are px ----
+  /* ---- lengths are rem; borders and the forced-colors outline are px ----
      Jerico's round-5 call: every length in this sheet is a rem so it tracks the
      site's responsive root font size, the way the frame and the banner's
      padding already did.
 
-     Borders are the one exception, and it is deliberate rather than an
+     Borders are the usual exception, and it is deliberate rather than an
      oversight. A hairline is a device-pixel affordance, not part of the type
      scale: this site's root is 12.93px at 1280, so `0.0625rem` computes to
-     0.81px and renders as an inconsistent, sometimes invisible line. The same
-     rule is applied to the datepicker sheet's own 1px and 2px borders, so
-     "lengths in rem, borders in px" holds across both files.
+     0.81px and renders as an inconsistent, sometimes invisible line. The one
+     other exception is the transparent 2px outline used only as a
+     forced-colors/High-Contrast focus hook. The same border rule is applied to
+     the datepicker sheet's own 1px and 2px borders, so "lengths in rem,
+     borders in px, plus the forced-colors outline" holds across both files.
 
      Note what a rem IS on this site before reading these as no-ops: the root
      font size is responsive — 12.93px at 1280, 16.34px at 400 — so these
