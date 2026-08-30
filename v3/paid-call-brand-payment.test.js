@@ -1921,8 +1921,8 @@ test('the timezone select wears the modal\'s design, not the OS default', async 
   assert.match(face, /-webkit-appearance:none/)
   // The site's face and the sheet's own scale, not the UA stylesheet's.
   assert.match(face, /font:inherit/)
-  assert.match(face, /font-size:1rem/)
-  assert.match(face, /font-weight:500/)
+  assert.match(face, /font-size:0\.9375rem/)
+  assert.match(face, /font-weight:400/)
   // The floor the suppressed inline styles used to carry, in rem. Without it
   // the control is shorter than the chips it sits above, because nothing else
   // in this rule holds it open.
