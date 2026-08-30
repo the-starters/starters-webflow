@@ -3440,22 +3440,10 @@ flowchart TD
 
    **On the booking surface the engine always paints the footer's frame** — the
    even `1.25rem` padding, the white fill and the mobile sticky. There is no
-   hairline at either width any more. Those rules key on
-   `[data-paid-calendar-element="footer"][data-paid-calendar-footer]`, which
-   matches both stamped values at (0,3,0) and so outranks the authored class's
-   (0,1,0) without `!important`; they carry their own `display:flex`, since
-   only the engine's fallback row gets an inline one. An authored class may
-   still add what the engine does not declare; it can no longer remove the
-   frame. Placement (`grid-area`, `order`) still keys on the role attribute
-   alone, and everything stays scoped under
-   `[data-modal-target="popup-booking"]`, so the dashboard's reschedule
-   calendar is unaffected.
-
-   Every footer row is also given a `0.5rem` column gap between Back and the
-   request button; the fallback row's own `0.5rem` flex gap supersedes it on
-   that row. Below 768px the row is a column, where a column gap places
-   nothing, so the sheet declares a `0.5rem` row gap for both flavours — the
-   same length in either orientation.
+   hairline at either width any more. An authored class may still add what the
+   engine does not declare; it can no longer remove the frame. Full contract,
+   including the specificity split and the gap rules:
+   [the footer frame contract](HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
 
    The shared engine also renders a timezone control — a `<label>` wrapping a
    caption and the `<select>` that names the clock the times are shown in. It
@@ -3535,15 +3523,11 @@ flowchart TD
    body back to the top: the banner is painted at the top of the scrollable
    content, so on a phone mid-scroll it would otherwise land far above anything
    the visitor can see. Because the banner is out of flow the mount carries a
-   `20rem` min-height and the empty-availability state pushes its
-   footer to the bottom of it; without both, that panel would collapse to the
-   height of one button and the banner would cover it. That min-height reaches
-   all four states the mount ever wears — `ready`, `empty`, `loading` and
-   `error`, the last two stamped by the free-call controller on this same mount
-   as well. Scoping it to the two that lay a calendar out left the pre-mount
-   states with no height source, since the sheet zeroes the step wrapper's
-   padding, and the dialog opened as a ~72px strip. Those two also carry the
-   `1.25rem` interior frame and centre their message on both axes.
+   `20rem` min-height across all four states it ever wears — `ready`, `empty`,
+   `loading` and `error` — and the empty-availability state pushes its footer to
+   the bottom of it, so the banner never covers a collapsed panel. Full
+   contract:
+   [the status banner and the four-state min-height](HIRE-PROFILE-WIRING.md#the-status-banner-and-the-four-state-min-height).
 
    On the booking surface the shell writes only `width` inline and leaves its
    `display` and both gaps to the sheet, because an inline declaration outranks
