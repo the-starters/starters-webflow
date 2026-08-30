@@ -849,6 +849,39 @@ profile is not an owner and gets the unchanged non-brand behaviour, byte for
 byte. The reveal itself is untouched for every viewer — the paint is layered on
 top of it and changes only what the revealed surfaces say.
 
+### The owner gets no Book Call, Hire or Message action
+
+A starter reading their own `/hire/<slug>` sees the rates read-only: the page is
+a preview of what a brand is shown, not a surface they can act on.
+
+Book Call needs no extra rule — only the brand's canonical discovery ever calls
+`setBookingButtonAvailable(true)`, so for the owner the wrapper stays
+`display: none` with `aria-hidden="true"`, every
+`[data-modal-trigger="popup-booking-main"]` keeps
+`data-booking-trigger-unavailable` and `aria-disabled="true"`, and the dialog
+keeps `data-booking-surface-unavailable`.
+
+The authored Hire and Message CTAs have no such gate — they are plain Designer
+entry points — so `hire-profile.js` hides them on the same ownership check as
+the paint. Every `[data-signup-trigger-element="hire"]` and
+`[data-signup-trigger-element="message"]` gets `display: none`, `hidden`, and
+`aria-hidden="true"`, and loses its `data-modal-trigger` so a stylesheet
+regression cannot leave a live opener behind. A talent viewing **someone
+else's** profile, a Brand, and a logged-out visitor all keep both CTAs
+untouched, so the anonymous signup-attribution flow is unaffected.
+
+[`messages-profile.js`](messages-profile.js) also hides its own trigger for a
+self-view, but only after route-guard resolves a role **and** the CMS identity
+attributes on the trigger parse. The rule here needs neither — both Memberstack
+ids are already on the page — so the owner stays covered when that module is
+absent or its Designer bindings are incomplete. Both writers make the same
+hide, so running both is idempotent.
+
+Covered by `owner actions: the owner gets no Book Call, Hire or Message
+action`, `owner actions: a talent on someone else's profile keeps Hire and
+Message`, and `owner actions: a logged-out visitor keeps the Hire and Message
+signup CTAs` in [`hire-profile.test.js`](hire-profile.test.js).
+
 ### Where the owner's canonical values come from
 
 The owner cannot read the brand path's source. `getConfigs` goes through

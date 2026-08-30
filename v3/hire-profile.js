@@ -1514,6 +1514,42 @@
       }
   }
 
+  /* ---- owner-path actions ----
+     The owner's own /hire page is a preview of what a brand is shown, not a
+     surface they can act on. Book Call is already closed to them: nothing
+     outside the brand's canonical discovery ever calls
+     setBookingButtonAvailable(true), so the trigger keeps the structural
+     fail-closed hide it starts with. The authored Hire and Message CTAs have
+     no such gate — they are plain Designer entry points — so a starter could
+     open a contact surface pointed at themselves.
+
+     Gated on ownership, not on role, exactly like paintOwnerCallSurfaces: a
+     talent viewing SOMEONE ELSE's profile keeps every action untouched.
+
+     messages-profile.js hides its own trigger for a self-view too, but only
+     after route-guard resolves a role AND the CMS identity attributes on the
+     trigger parse. This gate needs neither — the two Memberstack ids are
+     already on the page — so the owner stays covered when that module is
+     absent or its Designer bindings are incomplete. Both writers make the
+     same hide, so running both is idempotent. */
+  const OWNER_HIDDEN_ACTIONS = ['hire', 'message'];
+
+  function hideOwnerContactActions() {
+      if (!isProfileOwner(MEMBER)) return;
+
+      OWNER_HIDDEN_ACTIONS.forEach(function (element) {
+          qsa('[data-signup-trigger-element="' + element + '"]').forEach(function (action) {
+              action.style.display = 'none';
+              action.setAttribute('hidden', 'hidden');
+              action.setAttribute('aria-hidden', 'true');
+              // A hidden trigger the modal delegate can still match is one
+              // stylesheet regression away from opening, so the binding goes
+              // with the hide rather than relying on display alone.
+              action.removeAttribute('data-modal-trigger');
+          });
+      });
+  }
+
   // Park the beside-services calendar experiment. The live Hire experience
   // keeps the generic two-step modal: Book Call -> Free/Paid -> calendar.
   // Type-specific Services cards reuse the installed matching CTA and go
@@ -1536,6 +1572,11 @@
   })());
   // Declared before the parse-time IIFEs below so getPublicStarterRecord can run at parse time.
   let publicStarterRecordPromise = null;
+
+  /* OWNER ACTIONS (viewer-specific, but independent of the booking controller:
+     the owner must lose these CTAs even on a page where the booking block
+     stands down). */
+  waitForMember(hideOwnerContactActions);
 
   waitForMember(async function () {
       if (!MEMBER.id) return;

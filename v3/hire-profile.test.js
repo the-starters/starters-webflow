@@ -5123,6 +5123,130 @@ test('owner paint: a signed-in Brand still uses canonical discovery, not the set
   assert.deepEqual(calls.map((c) => c.configId).sort(), ['cfg_free', 'cfg_paid'])
 })
 
+/* -------------------- owner-path contact actions --------------------------- */
+
+/**
+ * The authored Hire and Message CTAs, exactly as the hire template ships them:
+ * a Lumos modal trigger carrying the signup-attribution element tag. They are
+ * plain Designer entry points with no availability gate of their own, which is
+ * why the owner needs one.
+ */
+function addContactActions(page) {
+  const hire = makeElement('div', {
+    'data-modal-trigger': 'signup-modal',
+    'data-signup-trigger-element': 'hire',
+  })
+  const message = makeElement('div', {
+    'data-modal-trigger': 'messages-profile-modal',
+    'data-signup-trigger-element': 'message',
+    'messages-profile-message': 'mem_canary',
+  })
+  page.root.appendChild(hire)
+  page.root.appendChild(message)
+  return { hire, message }
+}
+
+/** What a viewer can actually do with one of those CTAs. */
+function actionState(element) {
+  return {
+    display: element.style.display,
+    hidden: element.getAttribute('hidden'),
+    ariaHidden: element.getAttribute('aria-hidden'),
+    modalTrigger: element.getAttribute('data-modal-trigger'),
+  }
+}
+
+test('owner actions: the owner gets no Book Call, Hire or Message action', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const actions = addContactActions(page)
+
+  const context = ownerContext(page, ownerController())
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // Hire and Message are hidden outright and cannot open their modals.
+  assert.deepEqual(actionState(actions.hire), {
+    display: 'none',
+    hidden: 'hidden',
+    ariaHidden: 'true',
+    modalTrigger: null,
+  })
+  assert.deepEqual(actionState(actions.message), {
+    display: 'none',
+    hidden: 'hidden',
+    ariaHidden: 'true',
+    modalTrigger: null,
+  })
+  // The third action in the same sentence of the contract: Book Call stays
+  // structurally closed for the owner, since only the brand path opens it.
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+  assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
+})
+
+test('owner actions: the owner still sees their rates, read only', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  addContactActions(page)
+  const paidPrice = addPaidPriceSurface(page)
+
+  const context = ownerContext(page, ownerController())
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // Hiding the actions must not take the rate paint with it.
+  assert.equal(paidPrice.textContent, '250')
+})
+
+test('owner actions: a talent on someone else\'s profile keeps Hire and Message', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const actions = addContactActions(page)
+
+  const context = ownerContext(page, ownerController(), { member: OTHER_TALENT_MEMBER })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(actionState(actions.hire), {
+    display: undefined,
+    hidden: null,
+    ariaHidden: null,
+    modalTrigger: 'signup-modal',
+  })
+  assert.deepEqual(actionState(actions.message), {
+    display: undefined,
+    hidden: null,
+    ariaHidden: null,
+    modalTrigger: 'messages-profile-modal',
+  })
+})
+
+test('owner actions: a logged-out visitor keeps the Hire and Message signup CTAs', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const actions = addContactActions(page)
+
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: {},
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(actions.hire.getAttribute('data-modal-trigger'), 'signup-modal')
+  assert.equal(actions.hire.getAttribute('hidden'), null)
+  assert.equal(actions.message.getAttribute('data-modal-trigger'), 'messages-profile-modal')
+  assert.equal(actions.message.getAttribute('hidden'), null)
+})
+
 /* -------------------- WAVE-1 owner-path paint: admission gates ------------- */
 
 /**
