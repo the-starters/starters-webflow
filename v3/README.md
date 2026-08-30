@@ -2100,11 +2100,13 @@ the adjacent exact Designer-authored legacy `/hr` unit; when that unit is
 absent, the price field carries the `/ Call` suffix without generating markup.
 Only the base content state and one applicable pending message can be visible.
 
-Not every authored panel repeats every booking hook, so each displayed panel
-also receives a module-owned `data-starters-call-summary` block appended after
-the authored content. It lists only the fields that panel has no
-`[booking-element]` hook for — counterpart name, date and time, duration, call
-context, reschedule reason, and cancellation reason — as
+Not every authored panel repeats every booking hook, so each authored
+`[booking-popup-content]` panel also receives a module-owned
+`data-starters-call-summary` block appended after the authored content; a modal
+that authors no such panel receives one block on the modal itself. The block
+lists only the fields that panel has no `[booking-element]` hook for and that
+the canonical row has a value for — counterpart name, date and time, duration,
+call context, reschedule reason, and cancellation reason — as
 `data-starters-call-summary-row` lines keyed by that field name, so a
 Designer-owned field always stays authoritative and is never duplicated. The
 block ends with a role-correct `data-starters-call-message` link
