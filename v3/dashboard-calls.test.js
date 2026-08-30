@@ -69,6 +69,70 @@ function element(attributes = {}) {
   }
 }
 
+function domElement(tag, attributes = {}) {
+  const node = {
+    tagName: tag,
+    attributes: { ...attributes },
+    children: [],
+    hidden: false,
+    style: {},
+    appendChild(child) {
+      this.children.push(child)
+      child.parentNode = this
+      return child
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name)
+        ? this.attributes[name]
+        : null
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value)
+    },
+    removeAttribute(name) {
+      delete this.attributes[name]
+    },
+    querySelector(selector) {
+      return this.querySelectorAll(selector)[0] || null
+    },
+    querySelectorAll(selector) {
+      const match = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
+      if (!match) return []
+      const results = []
+      const visit = (candidate) => {
+        const actual = candidate.getAttribute && candidate.getAttribute(match[1])
+        if (actual != null && (match[2] == null || actual === match[2])) {
+          results.push(candidate)
+        }
+        candidate.children.forEach(visit)
+      }
+      this.children.forEach(visit)
+      return results
+    },
+    closest(selector) {
+      const match = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
+      if (!match) return null
+      let candidate = this
+      while (candidate) {
+        const actual = candidate.getAttribute && candidate.getAttribute(match[1])
+        if (actual != null && (match[2] == null || actual === match[2])) return candidate
+        candidate = candidate.parentNode
+      }
+      return null
+    },
+  }
+  let ownText = ''
+  Object.defineProperty(node, 'textContent', {
+    get() { return ownText },
+    set(value) {
+      ownText = String(value)
+      if (ownText === '') node.children = []
+    },
+  })
+  Object.defineProperty(node, 'childNodes', { get() { return node.children } })
+  return node
+}
+
 function memoryStorage() {
   const values = new Map()
   return {
@@ -1600,59 +1664,6 @@ test('details fill every authored panel copy of a booking field', () => {
 })
 
 test('missing panel details and role-correct Message actions are supplied without duplicates', () => {
-  function domElement(tag, attributes = {}) {
-    const node = {
-      tagName: tag,
-      attributes: { ...attributes },
-      children: [],
-      hidden: false,
-      style: {},
-      appendChild(child) {
-        this.children.push(child)
-        child.parentNode = this
-        return child
-      },
-      getAttribute(name) {
-        return Object.prototype.hasOwnProperty.call(this.attributes, name)
-          ? this.attributes[name]
-          : null
-      },
-      setAttribute(name, value) {
-        this.attributes[name] = String(value)
-      },
-      removeAttribute(name) {
-        delete this.attributes[name]
-      },
-      querySelector(selector) {
-        return this.querySelectorAll(selector)[0] || null
-      },
-      querySelectorAll(selector) {
-        const match = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
-        if (!match) return []
-        const results = []
-        const visit = (candidate) => {
-          const actual = candidate.getAttribute && candidate.getAttribute(match[1])
-          if (actual != null && (match[2] == null || actual === match[2])) {
-            results.push(candidate)
-          }
-          candidate.children.forEach(visit)
-        }
-        this.children.forEach(visit)
-        return results
-      },
-    }
-    let ownText = ''
-    Object.defineProperty(node, 'textContent', {
-      get() { return ownText },
-      set(value) {
-        ownText = String(value)
-        if (ownText === '') node.children = []
-      },
-    })
-    Object.defineProperty(node, 'childNodes', { get() { return node.children } })
-    return node
-  }
-
   const document = { createElement: (tag) => domElement(tag) }
   const modal = domElement('dialog')
   modal.ownerDocument = document
@@ -1742,6 +1753,58 @@ test('an authored field inside a CSS-hidden wrapper still receives a visible sup
 
     global.getComputedStyle = () => ({ display: 'block' })
     assert.equal(api.panelHasUsableField(panel, 'start-date'), true)
+  } finally {
+    global.getComputedStyle = originalGetComputedStyle
+  }
+})
+
+test('a hook inside a CSS-hidden wrapper yields a supplement row while a visible one stays authoritative', () => {
+  function buildModal() {
+    const document = { createElement: (tag) => domElement(tag) }
+    const modal = domElement('dialog')
+    modal.ownerDocument = document
+    const base = domElement('div', { 'booking-popup-content': 'base' })
+    const wrap = domElement('div', { 'booking-element-wrap': '' })
+    wrap.appendChild(domElement('span', { 'booking-element': 'start-date' }))
+    base.appendChild(wrap)
+    base.appendChild(domElement('span', { 'booking-element': 'duration' }))
+    modal.appendChild(base)
+    return { modal, base, wrap }
+  }
+
+  const booking = {
+    start: 10_000,
+    duration: 30,
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+  const expected = api
+    .detailSupplementRows(booking, 'starter', 'UTC')
+    .find((row) => row.field === 'start-date')
+  assert.ok(expected && expected.value)
+
+  const originalGetComputedStyle = global.getComputedStyle
+  try {
+    const hidden = buildModal()
+    global.getComputedStyle = (node) => ({
+      display: node === hidden.wrap ? 'none' : 'block',
+    })
+    api.ensureDetailSupplements(hidden.modal, booking, 'starter', 'UTC')
+    const row = hidden.base.querySelector('[data-starters-call-summary-row="start-date"]')
+    assert.ok(row, 'a hook inside a hidden wrapper must not suppress the module-owned row')
+    assert.equal(row.children[1].textContent, expected.value)
+    assert.equal(
+      hidden.base.querySelector('[data-starters-call-summary-row="duration"]'),
+      null,
+    )
+
+    const shown = buildModal()
+    global.getComputedStyle = () => ({ display: 'block' })
+    api.ensureDetailSupplements(shown.modal, booking, 'starter', 'UTC')
+    assert.equal(
+      shown.base.querySelector('[data-starters-call-summary-row="start-date"]'),
+      null,
+    )
   } finally {
     global.getComputedStyle = originalGetComputedStyle
   }

@@ -1006,6 +1006,13 @@
 
     panels.forEach(function (panel) {
       if (!panel || typeof panel.querySelector !== 'function') return
+      const authoritative = rows
+        .filter(function (row) {
+          return panelHasUsableField(panel, row.field)
+        })
+        .map(function (row) {
+          return row.field
+        })
       let supplement = panel.querySelector('[data-starters-call-summary]')
       if (!supplement) {
         supplement = document.createElement('div')
@@ -1020,7 +1027,7 @@
       supplement.textContent = ''
 
       rows.forEach(function (row) {
-        if (panelHasUsableField(panel, row.field)) return
+        if (authoritative.indexOf(row.field) !== -1) return
         const line = document.createElement('div')
         line.setAttribute('data-starters-call-summary-row', row.field)
         line.style.display = 'grid'
