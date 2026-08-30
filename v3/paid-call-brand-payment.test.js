@@ -1372,13 +1372,26 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
   assert.ok(desktopBlock.includes('[data-paid-calendar-footer="fallback"]{border-top:1px solid #eee;padding:1.25rem'))
 
-  // No mount PADDING anywhere. The mount does carry rules — the banner's
-  // min-height and the empty state's column — so this asks about the
-  // declaration rather than about the selector.
+  // No mount PADDING on any state that lays a calendar out. The mount does
+  // carry rules — the banner's min-height and the empty state's column — so
+  // this asks about the declaration rather than about the selector.
+  //
+  // `loading` and `error` are exempt, and the exemption is the point of the
+  // rule rather than a hole in it: this guard exists because mount padding
+  // DOUBLES against the footer's own, and those two states have no footer and
+  // no shell to double against. They are the only states where the mount is
+  // the sole thing that can carry a frame, so there it must.
+  const framed = /data-paid-calendar-state="(loading|error)"/
+  let checked = 0
   for (const rule of css.split('}')) {
     if (!rule.includes('[nylas-container]')) continue
+    if (framed.test(rule)) continue
+    checked += 1
     assert.ok(!/padding/.test(rule), `no mount padding: ${rule}`)
   }
+  // The loop still has mount rules to judge — an exemption that swallowed all
+  // of them would pass this test while asserting nothing.
+  assert.ok(checked > 0)
 })
 
 test('the interior frame is the only inset at mobile too', async () => {
@@ -2086,10 +2099,13 @@ test('the empty state holds itself open under the banner', async () => {
 
   assert.ok(css.includes(
     D + ' [nylas-container][data-paid-calendar-state="ready"],'
-      + D + ' [nylas-container][data-paid-calendar-state="empty"]{min-height:28.125rem}',
+      + D + ' [nylas-container][data-paid-calendar-state="empty"],'
+      + D + ' [nylas-container][data-paid-calendar-state="loading"],'
+      + D + ' [nylas-container][data-paid-calendar-state="error"]{min-height:28.125rem}',
   ))
-  // NOT unconditional: `loading` and `error` render one line of text with no
-  // shell and no footer, and inherited a 450px void underneath it.
+  // Still keyed on the state attribute rather than applied to the bare mount.
+  // An unconditional rule would reach the mount before it has a state at all —
+  // including the reset path, which strips the attribute outright.
   assert.ok(!/\[nylas-container\]\{min-height/.test(css))
   assert.ok(css.includes(
     D + ' [nylas-container][data-paid-calendar-state="empty"]'
@@ -2100,6 +2116,49 @@ test('the empty state holds itself open under the banner', async () => {
   const beforeMedia = css.split('@media')[0]
   assert.ok(beforeMedia.includes('min-height:28.125rem'))
   assert.ok(beforeMedia.includes('justify-content:flex-end'))
+})
+
+test('the loading and error states get a frame instead of a bare strip', async () => {
+  // The two pre-mount states have no shell and no footer, so nothing inside
+  // them carries the interior frame the calendar states pad themselves with —
+  // and the step wrapper they used to inherit the authored 32px from is zeroed
+  // by this same sheet. Measured on the real page before this rule: the mount
+  // was 21px tall with 0 padding on every open after the first, so the dialog
+  // opened as a ~72px strip with the sentence flush against its edges.
+  const { document } = await mountFooterFixture({ slots: [] })
+  const css = document.head.children[0].textContent
+  const D = '[data-modal-target="popup-booking"]'
+
+  assert.ok(css.includes(
+    D + ' [nylas-container][data-paid-calendar-state="loading"],'
+      + D + ' [nylas-container][data-paid-calendar-state="error"]'
+      + '{padding:1.25rem;display:flex;flex-direction:column;justify-content:center}',
+  ))
+  // The same CALENDAR_FRAME the month, the times and the footer pad with, so
+  // the waiting panel is inset by the amount the calendar state settles into
+  // rather than by a value of its own.
+  assert.match(css, /data-paid-calendar-state="error"\]\{padding:1\.25rem/)
+
+  // Centred on the block axis, which is what makes the restored floor read as
+  // a panel waiting rather than as the void under one sentence that got the
+  // floor taken away in the first place.
+  assert.ok(/state="error"\]\{[^}]*justify-content:center/.test(css))
+  // And NOT the empty state's bottom alignment, which exists to keep that
+  // state's footer out from under the banner. These two states have no footer.
+  assert.ok(!/state="error"\]\{[^}]*flex-end/.test(css))
+
+  // Outside the media queries: both states are reachable at either width.
+  const beforeMedia = css.split('@media')[0]
+  assert.ok(beforeMedia.includes('data-paid-calendar-state="loading"]'))
+  assert.ok(beforeMedia.includes('justify-content:center'))
+
+  // The frame is keyed on the mount's own state, never on the step wrapper the
+  // sheet deliberately zeroes — restoring padding there would put it back on
+  // all four `.call-details_layout` steps in the dialog.
+  assert.ok(css.includes(D + ' [data-paid-calendar-step]{padding:0;overflow:visible}'))
+
+  // No `!important` anywhere, as the rest of this sheet promises.
+  assert.ok(!css.includes('!important'))
 })
 
 test('a second mount reuses the stylesheet rather than stacking copies', async () => {

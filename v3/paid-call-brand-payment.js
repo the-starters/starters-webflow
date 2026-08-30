@@ -879,14 +879,47 @@
       /* Jerico's inline min-height, moved to the sheet. See CALENDAR_MIN_HEIGHT
          — with the banner out of flow, the empty-availability panel has only a
          button left in it to set its height. */
-      /* Only the two states that actually lay a calendar out. It used to be
-         unconditional, and the `loading` and `error` states — a single line of
-         text, with no shell and no footer — inherited a 450px void under one
-         sentence. The free-call controller mounts into this same container and
-         stamps the same states, so it inherited the void too. */
+      /* All four states the mount ever wears, and the two pre-mount ones are
+         here deliberately after a round without them.
+
+         The earlier round restricted this to `ready` and `empty` because
+         `loading` and `error` — a single line of text, with no shell and no
+         footer — inherited "a 450px void under one sentence". Restricting it
+         traded that void for a worse frame: with the step's authored padding
+         zeroed by the rule further down, the mount had NO height source of its
+         own, so the panel collapsed to the 21px line box of its one sentence
+         and the dialog opened as a ~72px strip. Measured on the real page, on
+         every open after the first — the first open still shows the authored
+         padding only because the sheet has not been injected yet.
+
+         Both halves are fixed together rather than by choosing between them:
+         the floor comes back for all four states so the panel does not jump
+         from a strip to a calendar when availability lands, and the rule
+         below centres the sentence in the height it opens, so the reserved
+         space reads as a panel waiting rather than as a void under a line of
+         text. The free-call controller mounts into this same container and
+         stamps the same two strings, so it is repaired by the same rules. */
       dialog + ' [nylas-container][data-paid-calendar-state="ready"],'
-        + dialog + ' [nylas-container][data-paid-calendar-state="empty"]'
+        + dialog + ' [nylas-container][data-paid-calendar-state="empty"],'
+        + dialog + ' [nylas-container][data-paid-calendar-state="loading"],'
+        + dialog + ' [nylas-container][data-paid-calendar-state="error"]'
         + '{min-height:' + CALENDAR_MIN_HEIGHT + '}',
+      /* The frame the pre-mount states never had. `ready` and `empty` get
+         their breathing room from the interior frame further down — every
+         stacked element pads itself — but `loading` and `error` have no shell
+         and no footer to carry one, and the step wrapper they used to inherit
+         32px from is zeroed by the rule below. So the mount pads itself, at
+         the same CALENDAR_FRAME the month, the times and the footer use, and
+         the sentence stops sitting flush against the modal's edges.
+
+         Centred, not top-aligned, for the reason in the min-height comment
+         above. The message in both states is written with `textContent`, so
+         the mount's only child is an anonymous text node — it becomes a single
+         anonymous flex item here, stays left-aligned on the inline axis, and
+         only its block-axis placement changes. */
+      dialog + ' [nylas-container][data-paid-calendar-state="loading"],'
+        + dialog + ' [nylas-container][data-paid-calendar-state="error"]'
+        + '{padding:' + CALENDAR_FRAME + ';display:flex;flex-direction:column;justify-content:center}',
       /* And the other half of that: something has to fill the height the
          min-height opens up. On the empty path the mount's only in-flow child
          is the footer, and left at the top it sits UNDER the banner. Pushed to
