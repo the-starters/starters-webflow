@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.446
+ * @release v1.59.448
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -13,10 +13,13 @@
  *  - The starter Xano id carrier used to key the public Algolia record lookup.
  *    Experiences and Clients are outside this file: Webflow CMS renders them
  *    natively for all viewers after the Phase 2 cutover.
- *  - Booking wiring, which stays behind the Memberstack member gate.
- *  - Services call-card visibility. Anonymous viewers stay closed. Signed-in
- *    brands use canonical booking discovery and successful controller installs.
- *    Starter members keep the live-derived owner toggles.
+ *  - Booking wiring, which stays behind the Memberstack Brand gate; logged-out
+ *    Book Call entry points are signup-only and never open the chooser.
+ *  - Services call-card visibility. Anonymous viewers see only Free/Paid touts
+ *    enabled by the canonical public projection; Book Call routes to signup and
+ *    the booking chooser stays closed. Signed-in brands use canonical booking
+ *    discovery and successful controller installs. Starter members keep the
+ *    live-derived owner toggles.
  *  - Side-by-side canonical Xano Service cards. Webflow owns the visible
  *    template and form; this file adds role-aware interaction attributes and
  *    reconciles only adapter-owned native Service options.
@@ -560,6 +563,35 @@
           } else {
               dialog.setAttribute('data-booking-surface-unavailable', '');
           }
+      });
+  }
+
+  /**
+   * Shows the authored Book Call conversion CTAs to a confirmed logged-out
+   * visitor without exposing any booking surface.
+   *
+   * `signup-attribution.js` owns the capture-phase click and opens the signup
+   * modal from `data-signup-trigger-element="book-call"`. Removing the Lumos
+   * modal trigger here is the fail-closed half of that contract: if the signup
+   * controller is missing or cannot confirm the viewer, the CTA opens nothing
+   * rather than an unconfigured Free/Paid chooser.
+   */
+  function setLoggedOutBookingButtonAvailable() {
+      const selector =
+          '[data-modal-trigger="popup-booking-main"]' +
+          '[data-signup-trigger-element="book-call"]' +
+          ':not([data-booking-back])';
+
+      document.querySelectorAll(selector).forEach(function (trigger) {
+          trigger.setAttribute('data-logged-out-book-call', '');
+          trigger.removeAttribute('data-modal-trigger');
+          trigger.removeAttribute('data-booking-trigger-unavailable');
+          trigger.removeAttribute('aria-disabled');
+
+          const wrapper = trigger.closest('[booking-button-wrapper]');
+          if (!wrapper) return;
+          wrapper.style.display = 'flex';
+          wrapper.setAttribute('aria-hidden', 'false');
       });
   }
 
@@ -1560,9 +1592,12 @@
   });
 
   /* PUBLIC-RECORD CMS SERVICES (anonymous + brand viewers)
-     Existing CMS cards remain as the side-by-side comparison path. Call
-     projections stay closed for anonymous viewers and use canonical discovery
-     for brands. Starter members keep the live-derived owner toggles above. */
+     Existing CMS cards remain as the side-by-side comparison path. The public
+     Free/Paid booleans are canonical compatibility projections maintained by
+     the call-settings writers; anonymous viewers use them only to reveal
+     signup CTAs and inert tout cards. Brands still use authenticated canonical
+     discovery before any booking surface opens. Starter members keep the
+     live-derived owner toggles above. */
   let canonicalRetainerState = 'pending';
   installXanoServiceCardsAdapter();
   installXanoRetainerCardAdapter();
@@ -1575,7 +1610,13 @@
           const record = await getPublicStarterRecord();
           if (!record) return;
 
-          if (!MEMBER.id) markServiceCardsClickable();
+          if (!MEMBER.id) {
+              const publicCalls = syncLoggedOutCallSurfaces(record);
+              if (publicCalls.free || publicCalls.paid) {
+                  setLoggedOutBookingButtonAvailable();
+              }
+              markServiceCardsClickable();
+          }
           if (isBrand) {
               wireProjectServiceCards();
               window.setTimeout(wireProjectServiceCards, 0);
@@ -1603,6 +1644,35 @@
       } catch (error) {
           /* cosmetic only */
       }
+  }
+
+  function syncLoggedOutCallSurfaces(record) {
+      const availability = {
+          free: !!(record && record['free-consulting-calls-t-f'] === true),
+          paid: !!(record && record['paid-consulting-calls-t-f'] === true),
+      };
+
+      ['free', 'paid'].forEach(function (type) {
+          qsa('[has-connection="' + type + '"]').forEach(function (surface) {
+              if (surface.hasAttribute('hidden') || surface.hasAttribute('data-runtime-call-template')) {
+                  return;
+              }
+
+              if (!availability[type]) {
+                  surface.setAttribute('data-canonical-call-unavailable', '');
+                  surface.setAttribute('aria-hidden', 'true');
+                  surface.style.display = 'none';
+                  return;
+              }
+
+              surface.setAttribute('data-logged-out-call-tout', type);
+              surface.removeAttribute('data-canonical-call-unavailable');
+              surface.removeAttribute('aria-hidden');
+              surface.style.display = 'block';
+          });
+      });
+
+      return availability;
   }
 
   function markServiceCardsClickable() {

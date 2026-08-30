@@ -76,7 +76,7 @@ remain deferred (`paid-call-brand-payment.js`,
 | --- | --- | --- |
 | Notable Experience | everyone, incl. logged out | native Webflow CMS / Work Histories |
 | Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
-| Call projections (hero, sticky header, Services, and chooser) | owner: live connection state · anonymous: closed · brand: accepted canonical configuration plus successful controller install | this file / authenticated Xano, Nylas, and Stripe |
+| Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: accepted canonical configuration plus successful controller install | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
 | Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
 | Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, and Talent or owner cards stay inert | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
 | Freelance rate card | everyone | this file / Algolia record, cloned from the section's Default card |
@@ -188,15 +188,18 @@ Services section on 2026-08-16, for every viewer, after the index migration.
 ## Verification
 
 Use profiles whose current production Xano readback proves one valid Free-only
-configuration and one valid Free-plus-Paid configuration. Do not select a
-canary from legacy Webflow or Algolia call flags.
+configuration and one valid Free-plus-Paid configuration. For anonymous QA,
+also prove the writer-maintained Xano, Webflow, and Algolia public projections
+are aligned before selecting the canary.
 
-1. Anonymous: every hero, sticky-header, Services, and chooser call projection
-   stays hidden, even when the public search record carries legacy Free or Paid
-   call flags. Native CMS Experiences and Clients remain present, and no
-   profile-data Xano request runs.
-2. Anonymous click on any visible non-call service card opens the signup modal
-   in place.
+1. Anonymous: Free and Paid call tout cards appear only when their canonical
+   public compatibility projections are true. Generic Book Call CTAs appear
+   when either call type is on. The Free/Paid chooser stays structurally closed,
+   and no authenticated booking discovery runs.
+2. Anonymous click on a visible call tout, Book Call CTA, or non-call service
+   card opens the signup modal in place. Logged-out Book Call CTAs have no
+   `data-modal-trigger`, so a missing signup controller cannot open the booking
+   chooser by mistake.
    That is driven by `v3/signup-attribution.js` off `data-signup-trigger-*`, so
    the cloned rate cards must keep those attributes (values `Freelance` /
    `Retainer`) and must **not** carry `data-modal-trigger`, `booking-popup-open`,
@@ -225,19 +228,22 @@ authenticated authored calendar. Paid uses the booking flow owned by
 [`README.md`](README.md#brand-paid-call-payment-method-client) inside the same
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
 production route map. Every authored
-`[data-modal-trigger="popup-booking-main"]` stays hidden with
-`data-booking-trigger-unavailable` and `aria-disabled="true"`, and the Book Call
-wrapper stays hidden with `aria-hidden="true"`, until canonical discovery
-produces a Free option that the GitHub Free controller can own or a Paid option
-that the V3 controller accepts. This includes triggers outside the wrapper, so
-no entry point can open an empty chooser while discovery is closed.
+`[data-modal-trigger="popup-booking-main"]` starts hidden with
+`data-booking-trigger-unavailable` and `aria-disabled="true"`. A confirmed
+logged-out viewer gets only CTAs carrying
+`data-signup-trigger-element="book-call"`, and those CTAs lose their Lumos modal
+trigger before they are shown. A Brand keeps the booking triggers hidden until
+canonical discovery produces a Free option that the GitHub Free controller can
+own or a Paid option that the V3 controller accepts. Triggers outside these two
+approved paths stay closed, so no entry point can open an empty chooser.
 The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
 `data-booking-surface-unavailable` until that same discovery succeeds.
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
 
-Every authored Free and Paid projection starts hidden. Anonymous viewers cannot
-reveal one from the public search record. For a signed-in Brand,
+Every authored Free and Paid projection starts hidden. Anonymous viewers may
+reveal only inert tout cards from the writer-maintained public compatibility
+booleans. For a signed-in Brand,
 `hire-profile.js` reveals all matching `[has-connection="free"]` or
 `[has-connection="paid"]` surfaces only after the exact canonical option passes
 the client filter and its controller installs successfully. Hidden runtime call
@@ -959,10 +965,10 @@ fault. Card rendering is verified on production.
 
 Both the canonical rate repaint and the next-slot paint are only observable to a
 **logged-in** viewer — a Brand on the canonical path, or the profile's own
-starter on the owner path: `hire-profile.js` returns before booking discovery
-when there is no `MEMBER.id`, so every `[has-connection]` call card stays
-`display:none` for an anonymous viewer and neither writer ever runs. An anonymous
-prod or staging check that comes back clean has therefore not exercised them.
+starter on the owner path. Anonymous tout cards use the public compatibility
+projection and keep their authored CMS display text; neither authenticated
+writer runs. An anonymous check therefore proves signup display and routing,
+not canonical rate or next-slot painting.
 
 The other half of the squeeze: sandbox members exist only on staging, and the
 staging index holds no production starters, so there is no venue where a member
