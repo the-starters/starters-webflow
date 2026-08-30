@@ -442,7 +442,9 @@ only rule in the sheet that leaves the flow. Each message is tagged by the
 engine with `data-paid-calendar-status`, and the tone is what colours it:
 `error` (a booking that failed) is white on `#DD5555`; `progress` (the in-flight
 notice) and `empty` (no availability in the next 14 days) share a white-on-dark
-`#434B43`. With nothing to say the element is `:empty` and collapses; writing a
+`#434B43`. The engine writes no inline styles on it here, since an inline
+declaration would outrank the sheet's own colour. With nothing to say the
+element is `:empty` and collapses; writing a
 message scrolls the modal's body back to the top, since the banner is painted
 at the top of the scrollable content and mid-scroll would otherwise land above
 what the visitor can see. Because the banner is out of flow, the mount carries
@@ -458,6 +460,8 @@ frame and centre their message on both axes.
 None of this reaches the dashboard's reschedule calendar: no sheet is injected
 there, no tone attribute is written, and the status keeps the plain inline grey
 line it has always had.
+
+#### When the back control is on screen
 
 This script still owns *when* the control is on screen. The guard stylesheet
 keyed on `data-booking-entry` shows it only when the entry stamp reads `chooser`
