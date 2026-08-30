@@ -193,9 +193,10 @@ also prove the writer-maintained Xano, Webflow, and Algolia public projections
 are aligned before selecting the canary.
 
 1. Anonymous: Free and Paid call tout cards appear only when their canonical
-   public compatibility projections are true. Generic Book Call CTAs appear
-   when either call type is on. The Free/Paid chooser stays structurally closed,
-   and no authenticated booking discovery runs.
+   public compatibility projections are true, and each revealed tout carries no
+   "Next Available" row at all. Generic Book Call CTAs appear when either call
+   type is on. The Free/Paid chooser stays structurally closed, and no
+   authenticated booking discovery runs.
 2. Anonymous click on a visible call tout, Book Call CTA, or non-call service
    card opens the signup modal in place. Logged-out Book Call CTAs have no
    `data-modal-trigger`, so a missing signup controller cannot open the booking
@@ -242,8 +243,22 @@ Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
 
 Every authored Free and Paid projection starts hidden. Anonymous viewers may
-reveal only inert tout cards from the writer-maintained public compatibility
-booleans. For a signed-in Brand,
+reveal only tout cards from the writer-maintained public compatibility booleans.
+Those touts are not structurally inert: `wireCallServiceCardsToDirectEntry` has
+already stamped them `data-call-service-direct="ready"` and bound its
+capture-phase listener, which calls `preventDefault()` and
+`stopImmediatePropagation()`. Two invariants make a tout click reach signup
+rather than being swallowed, and both are load-bearing:
+
+- `signup-attribution.js` binds its handler on `document`, so document-level
+  capture always runs before the card's own element-level capture.
+- `primeBookingModalOptions([])` has stripped `data-config` from every chooser
+  CTA, so `findReadyCallTypeCta` returns null and `openReadyCallType` returns
+  false before it opens anything.
+
+Both are covered by executable tests (`a logged-out call tout click opens no
+booking surface at all` in `hire-profile.test.js`, and the logged-out Book Call
+case in `signup-attribution.test.js`). For a signed-in Brand,
 `hire-profile.js` reveals all matching `[has-connection="free"]` or
 `[has-connection="paid"]` surfaces only after the exact canonical option passes
 the client filter and its controller installs successfully. Hidden runtime call
@@ -681,6 +696,11 @@ keeps the authored row on the **fault** paths only (see "The owner never reads
 no-slots copy for every viewer, owner included, so a placeholder time never
 survives an answer the page can trust.
 
+The logged-out viewer is outside this writer entirely — no painter runs without
+`MEMBER.id` — so the tout removes the row rather than leaving a hook no writer
+owns. "Never leaving a sentinel" therefore holds on every path: painted where a
+lookup is possible, absent where it is not.
+
 A successful availability answer that cannot be **formatted** is `error`, never
 `empty`. That case is version skew — an older controller exporting
 `getNearestSlot` but no formatter — and labelling it "No available slots" would
@@ -966,8 +986,13 @@ fault. Card rendering is verified on production.
 Both the canonical rate repaint and the next-slot paint are only observable to a
 **logged-in** viewer — a Brand on the canonical path, or the profile's own
 starter on the owner path. Anonymous tout cards use the public compatibility
-projection and keep their authored CMS display text; neither authenticated
-writer runs. An anonymous check therefore proves signup display and routing,
+projection and keep their authored CMS rate text; neither authenticated writer
+runs. Because no writer can reach a next slot for that viewer, the tout drops
+its `.service-card_content-wrapper` booking row entirely — the same treatment
+the rate-card clones get, through the same `stripCallBookingRow` writer — so the
+`00:00pm on 00/00` sentinel cannot stand on a public page, and a visitor who has
+not signed up yet is not told "No available slots" about a calendar the page
+never queried. An anonymous check therefore proves signup display and routing,
 not canonical rate or next-slot painting.
 
 The other half of the squeeze: sandbox members exist only on staging, and the

@@ -2012,6 +2012,85 @@ test('a logged-out viewer sees Book Call as signup-only while booking stays clos
   assert.equal(freeCard.getAttribute('data-signup-trigger-value'), 'Free Call')
 })
 
+test('a logged-out call tout click opens no booking surface at all', async () => {
+  const page = makePage()
+  let freeCtaClicks = 0
+  let bookingButtonClicks = 0
+  let registryOpens = 0
+  page.freeModalCta.click = () => { freeCtaClicks += 1 }
+  page.bookingButton.click = () => { bookingButtonClicks += 1 }
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': false,
+    },
+  })
+  context.lumos = {
+    modal: {
+      list: {
+        'popup-booking-main': {
+          el: page.bookingDialog,
+          open: () => { registryOpens += 1 },
+        },
+      },
+    },
+  }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.equal(freeCard.getAttribute('data-logged-out-call-tout'), 'free')
+  // The card is a revealed [data-service-card="component"], so the direct-entry
+  // listener is bound on it. Invoking that listener is the whole risk: it must
+  // find nothing installed and open nothing, leaving the click to
+  // signup-attribution.js's document-level capture handler.
+  assert.equal(freeCard.listeners.click.length, 1)
+  freeCard.listeners.click[0]({
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  })
+  await settle()
+
+  assert.equal(freeCtaClicks, 0, 'the Free chooser CTA must never be clicked')
+  assert.equal(bookingButtonClicks, 0, 'the chooser shell must never be opened by trigger')
+  assert.equal(registryOpens, 0, 'the chooser shell must never be opened by registry')
+  assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
+  assert.equal(page.freeModalOption.getAttribute('data-booking-unavailable'), '')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), null)
+  // signup-attribution.js keys off these; stripping them would silently make
+  // the tout dead rather than a signup entry point.
+  assert.equal(freeCard.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(freeCard.getAttribute('data-signup-trigger-value'), 'Free Call')
+})
+
+test('a logged-out call tout drops the unpaintable Next Available row', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': false,
+    },
+  })
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.ok(
+    freeCard.querySelector('[next-available-slot]'),
+    'the authored card must start with the Designer slot row',
+  )
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // No painter runs without MEMBER.id, so a surviving row would show the
+  // Designer sentinel forever on a public page.
+  assert.equal(freeCard.style.display, 'block')
+  assert.equal(freeCard.querySelector('.service-card_content-wrapper'), null)
+  assert.equal(freeCard.querySelector('[next-available-slot]'), null)
+})
+
 test('a Starter viewing their own hire page gets no Book Call action', async () => {
   const page = makePage()
   const context = makeContext({

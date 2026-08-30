@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.448
+ * @release v1.59.449
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -595,16 +595,17 @@
       });
   }
 
-  function syncCanonicalCallSurfaces(configs) {
-      const records = Array.isArray(configs) ? configs : [];
+  /**
+   * The single writer for call-surface visibility. Both the authenticated
+   * canonical path and the logged-out public-projection path route through
+   * here, so the fail-closed hide has exactly one implementation and a fix to
+   * it cannot land on one viewer state while missing the other. `onReveal`
+   * carries the per-viewer extras; the three visibility writes are shared.
+   *
+   * Returns whether any surface's visibility state actually changed.
+   */
+  function applyCallSurfaceAvailability(availability, onReveal) {
       let changed = false;
-      // Same shared predicate as the painters and the chooser lookup, so one
-      // record set cannot be read as free by one of them and as nothing by
-      // another.
-      const availability = {
-          free: !!recordForType(records, 'free'),
-          paid: !!recordForType(records, 'paid'),
-      };
 
       ['free', 'paid'].forEach(function (type) {
           document.querySelectorAll('[has-connection="' + type + '"]').forEach(function (surface) {
@@ -619,6 +620,7 @@
                   surface.removeAttribute('data-canonical-call-unavailable');
                   surface.removeAttribute('aria-hidden');
                   surface.style.display = 'block';
+                  if (onReveal) onReveal(surface, type);
               } else {
                   changed = changed ||
                       !surface.hasAttribute('data-canonical-call-unavailable') ||
@@ -631,6 +633,29 @@
           });
       });
       return changed;
+  }
+
+  /**
+   * A card that carries no bookable state must not carry the "Next Available"
+   * booking row: nothing paints it for that viewer, so the row would show the
+   * Designer's `00:00pm on 00/00` sentinel forever. The rate-card clones and
+   * the logged-out touts are the two such cards, and they share this writer so
+   * the sentinel cannot survive on one of them after a fix to the other.
+   */
+  function stripCallBookingRow(card) {
+      const bookingRow = card.querySelector('.service-card_content-wrapper');
+      if (bookingRow) bookingRow.remove();
+  }
+
+  function syncCanonicalCallSurfaces(configs) {
+      const records = Array.isArray(configs) ? configs : [];
+      // Same shared predicate as the painters and the chooser lookup, so one
+      // record set cannot be read as free by one of them and as nothing by
+      // another.
+      return applyCallSurfaceAvailability({
+          free: !!recordForType(records, 'free'),
+          paid: !!recordForType(records, 'paid'),
+      });
   }
 
   function findReadyCallTypeCta(type) {
@@ -1646,30 +1671,21 @@
       }
   }
 
+  /**
+   * A logged-out tout is a signup surface, not a booking surface: no viewer
+   * state here can look availability up, so the card sheds its "Next Available"
+   * row rather than standing a Designer sentinel — or an accusatory
+   * "No available slots" — in front of a visitor who has not signed up yet.
+   */
   function syncLoggedOutCallSurfaces(record) {
       const availability = {
           free: !!(record && record['free-consulting-calls-t-f'] === true),
           paid: !!(record && record['paid-consulting-calls-t-f'] === true),
       };
 
-      ['free', 'paid'].forEach(function (type) {
-          qsa('[has-connection="' + type + '"]').forEach(function (surface) {
-              if (surface.hasAttribute('hidden') || surface.hasAttribute('data-runtime-call-template')) {
-                  return;
-              }
-
-              if (!availability[type]) {
-                  surface.setAttribute('data-canonical-call-unavailable', '');
-                  surface.setAttribute('aria-hidden', 'true');
-                  surface.style.display = 'none';
-                  return;
-              }
-
-              surface.setAttribute('data-logged-out-call-tout', type);
-              surface.removeAttribute('data-canonical-call-unavailable');
-              surface.removeAttribute('aria-hidden');
-              surface.style.display = 'block';
-          });
+      applyCallSurfaceAvailability(availability, function (surface, type) {
+          surface.setAttribute('data-logged-out-call-tout', type);
+          stripCallBookingRow(surface);
       });
 
       return availability;
@@ -2014,8 +2030,7 @@
           if (tooltip) tooltip.remove();
 
           // The call card carries a "Next Available" booking row; rate cards must not.
-          const bookingContent = el.querySelector('.service-card_content-wrapper');
-          if (bookingContent) bookingContent.remove();
+          stripCallBookingRow(el);
 
           const titleEl = el.querySelector('[data-service-card-element="title"]');
           if (titleEl) titleEl.textContent = card.title;
