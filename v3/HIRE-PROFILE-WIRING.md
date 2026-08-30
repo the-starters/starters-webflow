@@ -325,13 +325,14 @@ because the Designer's default size is the absence of one.
 Because the component supersedes them, **`data-booking-confirm-class` and
 `data-booking-back-class` are ignored on this surface.** Leaving them authored
 is harmless — nothing reads them here and no warning is raised. The optional
-`data-booking-footer-class` keeps its full meaning: authored, its class is
-applied to the footer row verbatim and the engine places nothing; unauthored,
-the engine's own row is a full-width flex row (`display:flex;gap:12px;width:100%`
-inline) and the injected sheet decides how the two wraps sit in it — right-aligned
-at their natural width from 768px up, a full-width stack with the confirm on top
-below it. The engine writes no inline style on either control: their size comes
-from the sheet's rules on the row, and their appearance from the component alone.
+`data-booking-footer-class` still applies its class to the footer row verbatim,
+but **it no longer opts the row out of the engine's frame** — see the footer
+frame contract below. Unauthored, the engine's own row is a full-width flex row
+(`display:flex;gap:12px;width:100%` inline). Either way the injected sheet
+decides how the two wraps sit in it — right-aligned at their natural width from
+768px up, a full-width stack with the confirm on top below it. The engine writes
+no inline style on either control: their size comes from the sheet's rules on
+the row, and their appearance from the component alone.
 
 The markers and modal attributes sit on the **wrap**, not the inner button. That
 is the node the modal embed resolves — it reads `closest()` from the click
@@ -367,12 +368,40 @@ surface for the same outranking reason, and the sheet collapses them with
 inside them; off this surface they keep the inline columns they ship with. Every selector in that sheet is scoped under
 `[data-modal-target="popup-booking"]` and none uses `!important`; the contract
 form's datepickers and the dashboard's reschedule calendar share these class
-names and must stay pixel-identical. Every rule that PAINTS the footer — the hairline, the padding, the fill, the
-sticky, the alignment — keys on `data-paid-calendar-footer="fallback"`, written
-only on the engine's own row, so an authored `data-booking-footer-class` row
-still places its own children and paints itself. Only placement (`grid-area`,
-`order`) reaches every footer, and a test walks the emitted CSS to keep that
-split honest.
+names and must stay pixel-identical.
+
+**The footer frame contract (reversed August 2026).** The engine now ALWAYS
+paints the booking footer's frame — the hairline, the padding, the fill, the
+sticky and the alignment. Every one of those rules keys on
+`[data-paid-calendar-element="footer"][data-paid-calendar-footer]`, which
+matches both stamped values (`fallback` and `authored`).
+
+This replaces the old split, where appearance keyed on
+`data-paid-calendar-footer="fallback"` so that an authored
+`data-booking-footer-class` row "placed its own children and painted itself".
+That promise was keyed to a value the live page never carries: production
+authors `call-sched_button-group` on this row, so the row was always stamped
+`authored` and none of the frame rendered there — no hairline, no even
+`1.25rem` frame, no white fill, and no sticky on a phone, with the class's own
+asymmetric padding in their place.
+
+The doubled attribute is deliberate, and it is specificity rather than
+selection: the role attribute alone matches both rows but only reaches
+(0,2,0), while `.call-sched_button-group` is (0,1,0) in the site's own head
+stylesheet and was winning `padding`, `flex-flow`, `justify-content` and
+`align-items`. Repeating the attribute takes the rules to (0,3,0), which
+outranks the class without `!important`.
+
+An authored class may still ADD anything the engine does not declare — its
+gap, its typography — but it cannot take the frame away. Placement
+(`grid-area`, `order`) still keys on the role attribute alone, and a test walks
+the emitted CSS to keep that split honest: appearance must never sit on the
+bare role selector, and no appearance rule may pin itself to a single
+`data-paid-calendar-footer` value.
+
+All of it stays scoped under `[data-modal-target="popup-booking"]`, so the
+dashboard's reschedule calendar — which never gets this sheet — is untouched,
+and an authored row there still paints itself exactly as before.
 
 Below 768px the footer is `position:sticky; bottom:0` with an opaque white
 fill, the desktop band's `1px #eee` hairline and a `1.25rem` frame on all four

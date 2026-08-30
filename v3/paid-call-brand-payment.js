@@ -525,14 +525,32 @@
      there. Both are harmless if left authored: nothing reads them on that
      surface, and no warning is raised.
 
-     `data-booking-footer-class` keeps its full meaning on every surface. When it
-     is authored the row's class is applied verbatim and the engine places
-     nothing; when it is not, the engine's own fallback row is used. The
-     injected sheet honours that split: PLACEMENT rules (`grid-area`, `order`)
-     key on the role attribute and reach every footer, while everything that
-     paints one — the hairline, the padding, the fill, the sticky, the
-     alignment — keys on `data-paid-calendar-footer="fallback"` and cannot
-     reach an authored row.
+     `data-booking-footer-class` still applies its class verbatim on every
+     surface, and the engine still stamps `data-paid-calendar-footer` with
+     `authored` or `fallback` to say which row this is.
+
+     WHAT IT NO LONGER DOES IS OPT OUT OF THE FRAME. This reverses the split
+     this file used to document, deliberately and on Jerico's call. The old
+     contract was "an authored row places its own children and paints itself",
+     so everything that paints a footer — the hairline, the padding, the fill,
+     the sticky, the alignment — keyed on `="fallback"`. Live production
+     authors `call-sched_button-group` on that row, which means the band was
+     keyed to a value the real page never carries and NONE of it rendered
+     there: the footer had the class's own asymmetric padding, no hairline, no
+     white fill and no sticky, and on a phone the chips scrolled under bare
+     floating buttons.
+
+     The contract now: THE ENGINE ALWAYS PAINTS THE BOOKING FOOTER'S FRAME.
+     Placement (`grid-area`, `order`) keys on the role attribute; appearance
+     keys on `[data-paid-calendar-element="footer"][data-paid-calendar-footer]`,
+     which matches both stamped values at (0,3,0) and so outranks an authored
+     (0,1,0) class without `!important`. An authored class may still ADD
+     anything the engine does not declare — its gap, its typography, a
+     background image — but it can no longer take the frame away.
+
+     Only inside the booking dialog. Off that surface the sheet is never
+     injected, so the dashboard's reschedule calendar is untouched and an
+     authored row there still paints itself exactly as before.
 
      OFF the booking surface — the dashboard's reschedule calendar mounts this
      same engine — nothing changed at all: no footer, no back control, and a
@@ -736,10 +754,20 @@
     if (document.getElementById(CALENDAR_LAYOUT_STYLE_ID)) return
     const dialog = BOOKING_SURFACE_SELECTOR
     const role = dialog + ' [data-paid-calendar-element='
-    // The engine's own footer row. An authored `data-booking-footer-class`
-    // row places its own children by contract, so the stacking rules below
-    // must not reach it.
-    const ownRow = dialog + ' [data-paid-calendar-footer="fallback"]'
+    /* EVERY footer row in the booking dialog, authored or not. The engine
+       stamps `data-paid-calendar-footer` on both kinds — the value still says
+       which is which, and the placement rules still read it — so the bare
+       attribute is the one thing they have in common.
+
+       The extra attribute is doing specificity work, not selection work:
+       `[data-paid-calendar-element="footer"]` alone already matches both rows,
+       but at (0,2,0) it ties with nothing and loses to nothing — while the
+       authored class this has to beat, `.call-sched_button-group`, is (0,1,0)
+       in the site's own head stylesheet and was winning padding, flex-flow,
+       justify-content and align-items outright. Doubling the attribute takes
+       this to (0,3,0), which outranks the class without `!important` — the
+       same doubling trick the datepicker card rule uses further up. */
+    const footerRow = role + '"footer"][data-paid-calendar-footer]'
     const style = document.createElement('style')
     style.setAttribute('id', CALENDAR_LAYOUT_STYLE_ID)
     style.textContent = [
@@ -1046,18 +1074,22 @@
          band carries, and Jerico asked for both once he had seen the footer
          float. It stays in px — a hairline is a device-pixel affordance, per
          the unit convention this sheet follows. */
-      /* PLACEMENT on the role selector, which every footer answers to;
-         APPEARANCE on the engine's own row only. An authored
-         `data-booking-footer-class` row places its own children and paints
-         itself — the contract this file documents — and appearance rules on
-         the role selector broke that promise at winning specificity. */
+      /* PLACEMENT and APPEARANCE both reach every footer now. The engine used
+         to paint its own row only, on the promise that an authored
+         `data-booking-footer-class` row paints itself; live production authors
+         `call-sched_button-group` on it, so in practice the band, the frame,
+         the fill and the sticky never rendered at all. Jerico's call: the
+         engine always paints the booking footer's frame, and an authored class
+         adds to it rather than replacing it. See the contract note up top. */
       role + '"footer"]{order:4}',
-      ownRow + '{position:sticky;bottom:0;background:#fff;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + '}',
+      footerRow + '{position:sticky;bottom:0;background:#fff;border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + '}',
       // Stacked, full width, primary first. `order` rather than
       // `column-reverse` so the empty state — which has only the back
       // control — is unaffected either way.
-      ownRow + '{flex-direction:column;align-items:stretch}',
-      ownRow + ' [data-paid-calendar-element="confirm"]{order:-1}',
+      // `flex-direction` here also overrides the authored class's `flex-flow:
+      // wrap`, which would otherwise hold the row at its initial `row`.
+      footerRow + '{flex-direction:column;align-items:stretch}',
+      footerRow + ' [data-paid-calendar-element="confirm"]{order:-1}',
       '}',
 
       // ---- from the site's tablet breakpoint up ----
@@ -1163,10 +1195,10 @@
          `align-items:center` rather than `stretch`, because with no flex-grow
          the two buttons are sized by their own content and a stretch would only
          matter if their heights differed. */
-      // Placement for every footer; the band's own look for the engine's row
-      // alone. See the mobile split above.
+      // Placement and the band's own look, both for every footer. See the
+      // note on the mobile rules above.
       role + '"footer"]{grid-area:footer}',
-      ownRow + '{border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
+      footerRow + '{border-top:' + CALENDAR_FOOTER_RULE + ';padding:' + CALENDAR_FRAME + ';justify-content:flex-end;align-items:center}',
       '}',
     ].join('')
     const host = document.head || document.documentElement
@@ -1591,11 +1623,14 @@
       // Keep the two actions visually distinct on every booking surface. This
       // is layout placement, so it applies to every row without changing either
       // button's Designer-owned appearance. The engine's own fallback row below
-      // declares a flex `gap`, which supersedes this on that row; an authored
-      // row places its own children and this is the only spacing it gets.
+      // declares a flex `gap`, which supersedes this on that row; on an authored
+      // row this inline value is the spacing, since it also outranks the class's.
       footer.style.columnGap = '16px'
-      // Which row this is, so the injected stylesheet's stacking rules can
-      // reach the engine's own row without ever touching an authored one.
+      /* Which row this is. Both values are still stamped and the distinction is
+         still real — the fallback row gets the inline flex box below and an
+         authored row gets its class's — but the sheet's appearance rules now
+         key on the bare ATTRIBUTE and so reach either one. See the contract
+         note at the top of this file: the engine always paints the frame. */
       footer.setAttribute(
         'data-paid-calendar-footer',
         footerIsAuthored ? 'authored' : 'fallback',

@@ -1223,7 +1223,7 @@ test('the footer row is right-aligned on desktop and stacked on mobile', async (
   const ROLE = '[data-modal-target="popup-booking"] [data-paid-calendar-element='
 
   assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer}'))
-  assert.ok(css.includes('[data-paid-calendar-footer="fallback"]{border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+  assert.ok(css.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
   // Nothing inline can fight it.
   assert.deepEqual(Object.keys(back.style), [])
   assert.deepEqual(Object.keys(confirm.style), [])
@@ -1234,7 +1234,8 @@ test('the footer row is right-aligned on desktop and stacked on mobile', async (
   assert.ok(mobile.includes('{flex-direction:column;align-items:stretch}'))
   assert.ok(mobile.includes('{order:-1}'))
 
-  // An authored row places its own children: the engine writes nothing.
+  // An authored row still gets no inline styles from the engine beyond the
+  // shared action spacing. The sheet paints its frame; the DOM stays its own.
   const authoredFooter = bookingMount()
   authoredFooter.setAttribute('data-booking-footer-class', 'call-sched_button-group')
   const owned = await mountFooterFixture({ container: authoredFooter })
@@ -1367,10 +1368,10 @@ test('the empty state keeps its bottom breathing room at both widths', async () 
   const css = document.head.children[0].textContent
   const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
   assert.ok(mobileBlock.includes('"footer"]{order:4}'))
-  assert.ok(mobileBlock.includes('[data-paid-calendar-footer="fallback"]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
 
   const desktopBlock = css.split('@media (min-width:768px){')[1]
-  assert.ok(desktopBlock.includes('[data-paid-calendar-footer="fallback"]{border-top:1px solid #eee;padding:1.25rem'))
+  assert.ok(desktopBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{border-top:1px solid #eee;padding:1.25rem'))
 
   // No mount PADDING on any state that lays a calendar out. The mount does
   // carry rules — the banner's min-height and the empty state's column — so
@@ -1406,18 +1407,18 @@ test('the interior frame is the only inset at mobile too', async () => {
   assert.ok(mobileBlock.includes('"month"]{order:1;padding:1.25rem}'))
   assert.ok(mobileBlock.includes('"times"]{order:3;padding:0 1.25rem 1.25rem}'))
   // The floating footer is framed on all four sides, not three: its top edge
-  // is where the chips pass behind it, so nothing above can space it. It is a
-  // fallback-row rule, because padding is appearance and an authored row
-  // paints itself.
-  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*padding:1\.25rem\}/)
+  // is where the chips pass behind it, so nothing above can space it. Keyed on
+  // the bare attribute, so an authored row is framed too — the engine always
+  // paints this frame now.
+  assert.match(mobileBlock, /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*padding:1\.25rem\}/)
   assert.ok(mobileBlock.includes('"footer"]{order:4}'))
-  assert.ok(mobileBlock.includes('[data-paid-calendar-footer="fallback"]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
 
   // The stacked footer carries the same hairline as the desktop band. It was
   // deliberately absent while the footer sat in flow — a row gap AND a rule
   // read as two dividers — and Jerico added it once the footer began to float,
   // where the edge is what separates it from the chips passing behind.
-  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*border-top:1px solid #eee/)
+  assert.match(mobileBlock, /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*border-top:1px solid #eee/)
 
   // Desktop is untouched by all of this — the two blocks cannot both match.
   const desktopBlock = css.split('@media (min-width:768px){')[1]
@@ -1427,35 +1428,46 @@ test('the interior frame is the only inset at mobile too', async () => {
 test('the footer stacks primary-first below the site mobile breakpoint', async () => {
   const { document, footer } = await mountFooterFixture()
   const css = document.head.children[0].textContent
-  const ROW = '[data-modal-target="popup-booking"] [data-paid-calendar-footer="fallback"]'
+  const ROW = '[data-modal-target="popup-booking"] [data-paid-calendar-element="footer"][data-paid-calendar-footer]'
 
   assert.ok(css.includes('@media (max-width:767.98px){'))
   assert.ok(css.includes(ROW + '{flex-direction:column;align-items:stretch}'))
   // Primary on top, matching the profile's own vertical CTA rail.
   assert.ok(css.includes(ROW + ' [data-paid-calendar-element="confirm"]{order:-1}'))
 
-  // Every stacking rule that reaches a footer keys on the engine's own row,
-  // never on an authored one — an authored footer places its own children by
-  // contract. Two rules are exempt and both are named here: the mount's column
-  // stacks the empty state's contents, and the shell's stacks the panel
-  // itself. Neither reaches into a footer.
+  // Every stacking rule that reaches a footer keys on the doubled attribute,
+  // so it reaches an authored row too and still outranks its class. Two rules
+  // are exempt and both are named here: the mount's column stacks the empty
+  // state's contents, and the shell's stacks the panel itself. Neither reaches
+  // into a footer.
   assert.equal(footer.getAttribute('data-paid-calendar-footer'), 'fallback')
   for (const line of css.split('}')) {
     if (!line.includes('flex-direction:column') && !line.includes('order:-1')) continue
     if (line.includes('[nylas-container]')) continue
     if (line.includes('"shell"]')) continue
-    assert.ok(line.includes('[data-paid-calendar-footer="fallback"]'), line)
+    assert.ok(line.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]'), line)
   }
 })
 
-test('an authored footer row is labelled as such and dodges the stacking rules', async () => {
+test('both footer flavours are still stamped and still distinguishable', async () => {
+  // Re-keying the sheet onto the bare attribute did not collapse the
+  // distinction between the two rows, it only stopped the FRAME depending on
+  // it. The value still says which row this is, and the DOM each one gets is
+  // still different — that part of the contract is unchanged.
+  const fallback = await mountFooterFixture()
+  assert.equal(fallback.footer.getAttribute('data-paid-calendar-footer'), 'fallback')
+  // The engine's own row still brings its inline flex box.
+  assert.equal(fallback.footer.style.display, 'flex')
+  assert.equal(fallback.footer.style.width, '100%')
+
   const container = bookingMount()
   container.setAttribute('data-booking-footer-class', 'call-sched_button-group')
   const { footer } = await mountFooterFixture({ container })
   assert.equal(footer.getAttribute('data-paid-calendar-footer'), 'authored')
   assert.equal(footer.getAttribute('class'), 'call-sched_button-group')
-  // The shared action spacing is the only thing written on an authored row,
-  // and it is placement between the two controls rather than appearance.
+  // The shared action spacing is still the only thing written on an authored
+  // row. That matters more than it used to: the sheet now paints this row, and
+  // an inline declaration here would outrank every rule in it.
   assert.deepEqual(Object.keys(footer.style), ['columnGap'])
   assert.equal(footer.style.columnGap, '16px')
 })
@@ -1573,14 +1585,25 @@ test('the step wrapper is marked only on the booking surface', async () => {
   assert.equal(step.getAttribute('data-paid-calendar-step'), null)
 })
 
-test('an authored footer row gets placement from the sheet and nothing else', async () => {
-  // The documented contract: an authored `data-booking-footer-class` row
-  // places its own children and paints itself. Appearance rules on the role
-  // selector reached authored rows at winning specificity and broke that.
+test('every footer row gets the frame, authored class or not', async () => {
+  /* The contract this enforces was REVERSED on purpose. It used to be "an
+     authored `data-booking-footer-class` row places its own children and
+     paints itself", so appearance keyed on `="fallback"`. Live production
+     authors `call-sched_button-group` on that row, so the band was keyed to a
+     value the real page never carries and none of it rendered there.
+
+     Now: the engine always paints the booking footer's frame, and an authored
+     class may only ADD to it. */
   const { document } = await mountFooterFixture()
   const css = document.head.children[0].textContent
   const PLACEMENT = /^(grid-area|order)$/
 
+  // Appearance must never key on the BARE role selector. Not because an
+  // authored row should escape it any more, but because that selector is
+  // (0,2,0) and the authored class it has to beat is (0,1,0) in the site's own
+  // head sheet — the doubled attribute is what buys the extra specificity, so
+  // a declaration that drifts back onto the bare selector would silently stop
+  // winning on the one page that matters.
   for (const chunk of css.split('}')) {
     const [selector, body] = chunk.split('{')
     if (!selector || !body) continue
@@ -1590,15 +1613,49 @@ test('an authored footer row gets placement from the sheet and nothing else', as
       const property = declaration.split(':')[0].trim()
       assert.ok(
         PLACEMENT.test(property),
-        `an authored row would inherit this: ${selector.trim()}{${declaration.trim()}}`,
+        `appearance on the low-specificity selector: ${selector.trim()}{${declaration.trim()}}`,
       )
     }
   }
 
-  // And the appearance really is still applied, to the engine's own row.
-  assert.match(css, /\[data-paid-calendar-footer="fallback"\]\{[^}]*border-top/)
-  assert.match(css, /\[data-paid-calendar-footer="fallback"\]\{[^}]*position:sticky/)
+  // Every appearance rule now keys on the bare ATTRIBUTE, which matches both
+  // `fallback` and `authored`. None may pin a single value.
+  const APPEARANCE = /(border-top|position:sticky|padding|background|justify-content|align-items|flex-direction)/
+  let appearanceRules = 0
+  for (const chunk of css.split('}')) {
+    const [selector, body] = chunk.split('{')
+    if (!selector || !body) continue
+    if (!selector.includes('data-paid-calendar-footer')) continue
+    if (!APPEARANCE.test(body)) continue
+    appearanceRules += 1
+    assert.ok(
+      !/data-paid-calendar-footer="/.test(selector),
+      `frame pinned to one footer flavour: ${selector.trim()}{${body.trim()}}`,
+    )
+    // And it carries the doubled attribute that beats the authored class.
+    assert.match(selector, /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]/)
+  }
+  // The desktop band, the mobile sticky band and the mobile column.
+  assert.equal(appearanceRules, 3)
+
+  // The frame itself, spelled out, on the selector that reaches an authored row.
+  const F = '[data-paid-calendar-element="footer"][data-paid-calendar-footer]'
+  assert.ok(css.includes(F + '{border-top:1px solid #eee;padding:1.25rem;justify-content:flex-end;align-items:center}'))
+  assert.ok(css.includes(F + '{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+  assert.ok(css.includes(F + '{flex-direction:column;align-items:stretch}'))
+  assert.ok(css.includes(F + ' [data-paid-calendar-element="confirm"]{order:-1}'))
+
+  // Still scoped to the booking dialog, so the dashboard's reschedule calendar
+  // — which has no injected sheet at all — keeps the look it shipped with.
+  for (const chunk of css.split('}')) {
+    const [selector] = chunk.split('{')
+    if (!selector || !selector.includes('data-paid-calendar-footer')) continue
+    assert.ok(selector.trim().startsWith('[data-modal-target="popup-booking"]'))
+  }
+
+  assert.ok(!css.includes('!important'))
 })
+
 
 test('a booking in flight takes the back control out of the pointer path', async () => {
   // Disabling the inner button is not enough. The WRAP carries
@@ -1719,7 +1776,7 @@ test('the stacked footer floats, and only because the shell is a flex column', a
   const mobileBlock = css.split('@media (max-width:767.98px){')[1].split('}@media')[0]
 
   assert.ok(mobileBlock.includes('"footer"]{order:4}'))
-  assert.ok(mobileBlock.includes('[data-paid-calendar-footer="fallback"]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
+  assert.ok(mobileBlock.includes('[data-paid-calendar-element="footer"][data-paid-calendar-footer]{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:1.25rem}'))
 
   /* The flex column is load-bearing, not a refactor. A GRID item's containing
      block is its own grid area, so a footer on the last row has zero room to
@@ -1733,12 +1790,12 @@ test('the stacked footer floats, and only because the shell is a flex column', a
 
   // An opaque fill, because chips scroll underneath and would otherwise show
   // through the gap between the two buttons.
-  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*background:#fff/)
+  assert.match(mobileBlock, /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*background:#fff/)
 
   // The hairline the desktop band carries, which Jerico asked for on the
   // stacked footer too once he had seen it float — a floating surface wants an
   // edge. It stays px, like every other border in this sheet.
-  assert.match(mobileBlock, /\[data-paid-calendar-footer="fallback"\]\{[^}]*border-top:1px solid #eee/)
+  assert.match(mobileBlock, /\[data-paid-calendar-element="footer"\]\[data-paid-calendar-footer\]\{[^}]*border-top:1px solid #eee/)
 
   // Desktop keeps the grid and the always-visible band: nothing sticks there,
   // because the times scroll inside their own cell instead.

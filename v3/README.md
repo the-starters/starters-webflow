@@ -3399,16 +3399,30 @@ flowchart TD
 
    Because the component supersedes them, `data-booking-confirm-class` and
    `data-booking-back-class` are **ignored on the booking surface**, and are
-   harmless if left authored. The optional `data-booking-footer-class` keeps its
-   meaning everywhere: authored, it is applied to the footer row verbatim and
-   the engine places nothing; unauthored, the row is a full-width flex row
-   (`display:flex;gap:12px;width:100%`) whose contents the injected sheet
+   harmless if left authored. The optional `data-booking-footer-class` is still
+   applied to the footer row verbatim; unauthored, the row is a full-width flex
+   row (`display:flex;gap:12px;width:100%`) whose contents the injected sheet
    arranges — pushed to the right at their natural width from 768px up, stacked
    full width with the confirm on top below it. Flex rather than fixed columns
    is also what lets the confirm fill the whole row on a direct entry where the
-   back control is hidden. The injected sheet keeps the authored promise:
-   placement rules reach every footer, but everything that paints or arranges
-   one keys on the engine's own row and cannot reach an authored one. Every footer row is also given a 16px column gap between Back and the
+   back control is hidden.
+
+   **On the booking surface the engine always paints the footer's frame** — the
+   `1px #eee` hairline, the even `1.25rem` padding, the white fill and the
+   mobile sticky. This reverses an earlier contract in which an authored
+   `data-booking-footer-class` row painted itself: appearance keyed on
+   `data-paid-calendar-footer="fallback"`, and since production authors
+   `call-sched_button-group` on that row it was always stamped `authored`, so
+   the frame never rendered on the live page at all. Those rules now key on
+   `[data-paid-calendar-element="footer"][data-paid-calendar-footer]`, which
+   matches both stamped values at (0,3,0) and so outranks the authored class's
+   (0,1,0) without `!important`. An authored class may still add what the
+   engine does not declare; it can no longer remove the frame. Placement
+   (`grid-area`, `order`) still keys on the role attribute alone. Everything
+   stays scoped under `[data-modal-target="popup-booking"]`, so the dashboard's
+   reschedule calendar is unaffected.
+
+   Every footer row is also given a 16px column gap between Back and the
    request button; the fallback row's own 12px flex gap supersedes it on that
    row.
 
