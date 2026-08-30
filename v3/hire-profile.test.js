@@ -445,7 +445,10 @@ function makePage({
   const bookingButtonWrapper = makeElement('div', { 'booking-button-wrapper': '' })
   bookingButtonWrapper.style.display = 'none'
   bookingButtonWrapper.setAttribute('aria-hidden', 'true')
-  const bookingButton = makeElement('button', { 'data-modal-trigger': 'popup-booking-main' })
+  const bookingButton = makeElement('button', {
+    'data-modal-trigger': 'popup-booking-main',
+    'data-signup-trigger-element': 'book-call',
+  })
   bookingButtonWrapper.appendChild(bookingButton)
   if (includeBookingButton) root.appendChild(bookingButtonWrapper)
 
@@ -1973,6 +1976,150 @@ test('logged-out free-call clicks keep signup attribution and never initialize i
   assert.equal(schedulerCalls, 0)
 })
 
+test('a logged-out viewer sees Book Call as signup-only while booking stays closed', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': false,
+    },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
+  assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), 'book-call')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
+  assert.equal(
+    page.bookingDialog.getAttribute('data-booking-surface-unavailable'),
+    '',
+    'the Free/Paid chooser must remain structurally closed',
+  )
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.equal(freeCard.style.display, 'block')
+  assert.equal(freeCard.getAttribute('data-canonical-call-unavailable'), null)
+  assert.equal(freeCard.getAttribute('data-logged-out-call-tout'), 'free')
+  assert.equal(freeCard.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(freeCard.getAttribute('data-signup-trigger-value'), 'Free Call')
+})
+
+test('a logged-out call tout click opens no booking surface at all', async () => {
+  const page = makePage()
+  let freeCtaClicks = 0
+  let bookingButtonClicks = 0
+  let registryOpens = 0
+  page.freeModalCta.click = () => { freeCtaClicks += 1 }
+  page.bookingButton.click = () => { bookingButtonClicks += 1 }
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': false,
+    },
+  })
+  context.lumos = {
+    modal: {
+      list: {
+        'popup-booking-main': {
+          el: page.bookingDialog,
+          open: () => { registryOpens += 1 },
+        },
+      },
+    },
+  }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.equal(freeCard.getAttribute('data-logged-out-call-tout'), 'free')
+  // The card is a revealed [data-service-card="component"], so the direct-entry
+  // listener is bound on it. Invoking that listener is the whole risk: it must
+  // find nothing installed and open nothing, leaving the click to
+  // signup-attribution.js's document-level capture handler.
+  assert.equal(freeCard.listeners.click.length, 1)
+  freeCard.listeners.click[0]({
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  })
+  await settle()
+
+  assert.equal(freeCtaClicks, 0, 'the Free chooser CTA must never be clicked')
+  assert.equal(bookingButtonClicks, 0, 'the chooser shell must never be opened by trigger')
+  assert.equal(registryOpens, 0, 'the chooser shell must never be opened by registry')
+  assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
+  assert.equal(page.freeModalOption.getAttribute('data-booking-unavailable'), '')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), null)
+  // signup-attribution.js keys off these; stripping them would silently make
+  // the tout dead rather than a signup entry point.
+  assert.equal(freeCard.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(freeCard.getAttribute('data-signup-trigger-value'), 'Free Call')
+})
+
+test('a logged-out call tout drops the unpaintable Next Available row', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': false,
+    },
+  })
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.ok(
+    freeCard.querySelector('[next-available-slot]'),
+    'the authored card must start with the Designer slot row',
+  )
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // No painter runs without MEMBER.id, so a surviving row would show the
+  // Designer sentinel forever on a public page.
+  assert.equal(freeCard.style.display, 'block')
+  assert.equal(freeCard.querySelector('.service-card_content-wrapper'), null)
+  assert.equal(freeCard.querySelector('[next-available-slot]'), null)
+})
+
+test('a Starter viewing their own hire page gets no Book Call action', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': true,
+    },
+    member: {
+      id: 'mem_canary',
+      auth: { email: 'owner@example.com' },
+      customFields: { 'free-user': 'Owner', 'last-name': 'Member' },
+      planConnections: [
+        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' },
+      ],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_owner' }),
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+})
+
 test('signed-in Brand keeps Free Call in the existing modal and the inline panel stays parked', async () => {
   const page = makePage()
   const bookingCalls = []
@@ -2087,7 +2234,7 @@ test('a signed-in Brand hides call projections while canonical discovery is pend
   await settle()
 })
 
-test('an anonymous viewer cannot reveal call projections from stale public flags', async () => {
+test('an anonymous viewer sees only the call touts enabled by canonical public projections', async () => {
   const page = makePage()
   const paidSurface = makeElement('div', { 'has-connection': 'paid' })
   page.root.appendChild(paidSurface)
@@ -2102,19 +2249,46 @@ test('an anonymous viewer cannot reveal call projections from stale public flags
   vm.runInContext(source, context)
 
   const freeSurface = page.servicesList.querySelector('[has-connection="free"]')
-  for (const surface of [freeSurface, paidSurface]) {
-    assert.equal(surface.getAttribute('data-canonical-call-unavailable'), '')
-    assert.equal(surface.getAttribute('aria-hidden'), 'true')
-    assert.equal(surface.style.display, 'none')
-  }
-
   await settle()
 
   for (const surface of [freeSurface, paidSurface]) {
+    assert.equal(surface.getAttribute('data-canonical-call-unavailable'), null)
+    assert.equal(surface.getAttribute('aria-hidden'), null)
+    assert.equal(surface.style.display, 'block')
+  }
+  assert.equal(freeSurface.getAttribute('data-logged-out-call-tout'), 'free')
+  assert.equal(paidSurface.getAttribute('data-logged-out-call-tout'), 'paid')
+})
+
+test('an anonymous viewer sees no call tout or Book Call when both public projections are off', async () => {
+  const page = makePage()
+  const paidSurface = makeElement('div', {
+    'data-service-card': 'component',
+    'has-connection': 'paid',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'Paid Consulting Call',
+  })
+  page.root.appendChild(paidSurface)
+  const context = makeContext({
+    page,
+    record: {
+      'free-consulting-calls-t-f': false,
+      'paid-consulting-calls-t-f': false,
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  for (const surface of [page.servicesList.querySelector('[has-connection="free"]'), paidSurface]) {
     assert.equal(surface.getAttribute('data-canonical-call-unavailable'), '')
     assert.equal(surface.getAttribute('aria-hidden'), 'true')
     assert.equal(surface.style.display, 'none')
+    assert.equal(surface.getAttribute('data-logged-out-call-tout'), null)
   }
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), 'popup-booking-main')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
 })
 
 test('a chooser trigger outside booking-button-wrapper stays hidden until discovery succeeds', async () => {
@@ -4947,6 +5121,130 @@ test('owner paint: a signed-in Brand still uses canonical discovery, not the set
 
   assert.equal(requests.length, 0, 'a brand never reaches the owner settings path')
   assert.deepEqual(calls.map((c) => c.configId).sort(), ['cfg_free', 'cfg_paid'])
+})
+
+/* -------------------- owner-path contact actions --------------------------- */
+
+/**
+ * The authored Hire and Message CTAs, exactly as the hire template ships them:
+ * a Lumos modal trigger carrying the signup-attribution element tag. They are
+ * plain Designer entry points with no availability gate of their own, which is
+ * why the owner needs one.
+ */
+function addContactActions(page) {
+  const hire = makeElement('div', {
+    'data-modal-trigger': 'signup-modal',
+    'data-signup-trigger-element': 'hire',
+  })
+  const message = makeElement('div', {
+    'data-modal-trigger': 'messages-profile-modal',
+    'data-signup-trigger-element': 'message',
+    'messages-profile-message': 'mem_canary',
+  })
+  page.root.appendChild(hire)
+  page.root.appendChild(message)
+  return { hire, message }
+}
+
+/** What a viewer can actually do with one of those CTAs. */
+function actionState(element) {
+  return {
+    display: element.style.display,
+    hidden: element.getAttribute('hidden'),
+    ariaHidden: element.getAttribute('aria-hidden'),
+    modalTrigger: element.getAttribute('data-modal-trigger'),
+  }
+}
+
+test('owner actions: the owner gets no Book Call, Hire or Message action', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const actions = addContactActions(page)
+
+  const context = ownerContext(page, ownerController())
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // Hire and Message are hidden outright and cannot open their modals.
+  assert.deepEqual(actionState(actions.hire), {
+    display: 'none',
+    hidden: 'hidden',
+    ariaHidden: 'true',
+    modalTrigger: null,
+  })
+  assert.deepEqual(actionState(actions.message), {
+    display: 'none',
+    hidden: 'hidden',
+    ariaHidden: 'true',
+    modalTrigger: null,
+  })
+  // The third action in the same sentence of the contract: Book Call stays
+  // structurally closed for the owner, since only the brand path opens it.
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+  assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
+})
+
+test('owner actions: the owner still sees their rates, read only', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  addContactActions(page)
+  const paidPrice = addPaidPriceSurface(page)
+
+  const context = ownerContext(page, ownerController())
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  // Hiding the actions must not take the rate paint with it.
+  assert.equal(paidPrice.textContent, '250')
+})
+
+test('owner actions: a talent on someone else\'s profile keeps Hire and Message', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const actions = addContactActions(page)
+
+  const context = ownerContext(page, ownerController(), { member: OTHER_TALENT_MEMBER })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(actionState(actions.hire), {
+    display: undefined,
+    hidden: null,
+    ariaHidden: null,
+    modalTrigger: 'signup-modal',
+  })
+  assert.deepEqual(actionState(actions.message), {
+    display: undefined,
+    hidden: null,
+    ariaHidden: null,
+    modalTrigger: 'messages-profile-modal',
+  })
+})
+
+test('owner actions: a logged-out visitor keeps the Hire and Message signup CTAs', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const actions = addContactActions(page)
+
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' },
+    member: {},
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(actions.hire.getAttribute('data-modal-trigger'), 'signup-modal')
+  assert.equal(actions.hire.getAttribute('hidden'), null)
+  assert.equal(actions.message.getAttribute('data-modal-trigger'), 'messages-profile-modal')
+  assert.equal(actions.message.getAttribute('hidden'), null)
 })
 
 /* -------------------- WAVE-1 owner-path paint: admission gates ------------- */

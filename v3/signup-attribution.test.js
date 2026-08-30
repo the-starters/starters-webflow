@@ -3013,12 +3013,15 @@ test('a logged-out Hire click stores hire and opens the signup modal', async () 
     assert.equal(harness.openedSignup.length, 1)
 })
 
-test('Message and Book Call clicks store their enum values', async () => {
+test('logged-out Message and Book Call clicks store their enum values and open signup', async () => {
     for (const element of ['message', 'book-call']) {
         const harness = boot(hirePage)
         await harness.settle()
-        harness.clickTrigger({ element })
+        const event = harness.clickTrigger({ element })
         assert.equal(harness.api.getParams().signup_trigger, element, element)
+        assert.equal(event.defaultPrevented, true, element)
+        assert.equal(event.propagationStopped, true, element)
+        assert.equal(harness.openedSignup.length, 1, element)
     }
 })
 

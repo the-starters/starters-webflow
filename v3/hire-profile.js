@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.446
+ * @release v1.59.449
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -13,10 +13,13 @@
  *  - The starter Xano id carrier used to key the public Algolia record lookup.
  *    Experiences and Clients are outside this file: Webflow CMS renders them
  *    natively for all viewers after the Phase 2 cutover.
- *  - Booking wiring, which stays behind the Memberstack member gate.
- *  - Services call-card visibility. Anonymous viewers stay closed. Signed-in
- *    brands use canonical booking discovery and successful controller installs.
- *    Starter members keep the live-derived owner toggles.
+ *  - Booking wiring, which stays behind the Memberstack Brand gate; logged-out
+ *    Book Call entry points are signup-only and never open the chooser.
+ *  - Services call-card visibility. Anonymous viewers see only Free/Paid touts
+ *    enabled by the canonical public projection; Book Call routes to signup and
+ *    the booking chooser stays closed. Signed-in brands use canonical booking
+ *    discovery and successful controller installs. Starter members keep the
+ *    live-derived owner toggles.
  *  - Side-by-side canonical Xano Service cards. Webflow owns the visible
  *    template and form; this file adds role-aware interaction attributes and
  *    reconciles only adapter-owned native Service options.
@@ -563,16 +566,46 @@
       });
   }
 
-  function syncCanonicalCallSurfaces(configs) {
-      const records = Array.isArray(configs) ? configs : [];
+  /**
+   * Shows the authored Book Call conversion CTAs to a confirmed logged-out
+   * visitor without exposing any booking surface.
+   *
+   * `signup-attribution.js` owns the capture-phase click and opens the signup
+   * modal from `data-signup-trigger-element="book-call"`. Removing the Lumos
+   * modal trigger here is the fail-closed half of that contract: if the signup
+   * controller is missing or cannot confirm the viewer, the CTA opens nothing
+   * rather than an unconfigured Free/Paid chooser.
+   */
+  function setLoggedOutBookingButtonAvailable() {
+      const selector =
+          '[data-modal-trigger="popup-booking-main"]' +
+          '[data-signup-trigger-element="book-call"]' +
+          ':not([data-booking-back])';
+
+      document.querySelectorAll(selector).forEach(function (trigger) {
+          trigger.setAttribute('data-logged-out-book-call', '');
+          trigger.removeAttribute('data-modal-trigger');
+          trigger.removeAttribute('data-booking-trigger-unavailable');
+          trigger.removeAttribute('aria-disabled');
+
+          const wrapper = trigger.closest('[booking-button-wrapper]');
+          if (!wrapper) return;
+          wrapper.style.display = 'flex';
+          wrapper.setAttribute('aria-hidden', 'false');
+      });
+  }
+
+  /**
+   * The single writer for call-surface visibility. Both the authenticated
+   * canonical path and the logged-out public-projection path route through
+   * here, so the fail-closed hide has exactly one implementation and a fix to
+   * it cannot land on one viewer state while missing the other. `onReveal`
+   * carries the per-viewer extras; the three visibility writes are shared.
+   *
+   * Returns whether any surface's visibility state actually changed.
+   */
+  function applyCallSurfaceAvailability(availability, onReveal) {
       let changed = false;
-      // Same shared predicate as the painters and the chooser lookup, so one
-      // record set cannot be read as free by one of them and as nothing by
-      // another.
-      const availability = {
-          free: !!recordForType(records, 'free'),
-          paid: !!recordForType(records, 'paid'),
-      };
 
       ['free', 'paid'].forEach(function (type) {
           document.querySelectorAll('[has-connection="' + type + '"]').forEach(function (surface) {
@@ -587,6 +620,7 @@
                   surface.removeAttribute('data-canonical-call-unavailable');
                   surface.removeAttribute('aria-hidden');
                   surface.style.display = 'block';
+                  if (onReveal) onReveal(surface, type);
               } else {
                   changed = changed ||
                       !surface.hasAttribute('data-canonical-call-unavailable') ||
@@ -599,6 +633,29 @@
           });
       });
       return changed;
+  }
+
+  /**
+   * A card that carries no bookable state must not carry the "Next Available"
+   * booking row: nothing paints it for that viewer, so the row would show the
+   * Designer's `00:00pm on 00/00` sentinel forever. The rate-card clones and
+   * the logged-out touts are the two such cards, and they share this writer so
+   * the sentinel cannot survive on one of them after a fix to the other.
+   */
+  function stripCallBookingRow(card) {
+      const bookingRow = card.querySelector('.service-card_content-wrapper');
+      if (bookingRow) bookingRow.remove();
+  }
+
+  function syncCanonicalCallSurfaces(configs) {
+      const records = Array.isArray(configs) ? configs : [];
+      // Same shared predicate as the painters and the chooser lookup, so one
+      // record set cannot be read as free by one of them and as nothing by
+      // another.
+      return applyCallSurfaceAvailability({
+          free: !!recordForType(records, 'free'),
+          paid: !!recordForType(records, 'paid'),
+      });
   }
 
   function findReadyCallTypeCta(type) {
@@ -1457,6 +1514,42 @@
       }
   }
 
+  /* ---- owner-path actions ----
+     The owner's own /hire page is a preview of what a brand is shown, not a
+     surface they can act on. Book Call is already closed to them: nothing
+     outside the brand's canonical discovery ever calls
+     setBookingButtonAvailable(true), so the trigger keeps the structural
+     fail-closed hide it starts with. The authored Hire and Message CTAs have
+     no such gate — they are plain Designer entry points — so a starter could
+     open a contact surface pointed at themselves.
+
+     Gated on ownership, not on role, exactly like paintOwnerCallSurfaces: a
+     talent viewing SOMEONE ELSE's profile keeps every action untouched.
+
+     messages-profile.js hides its own trigger for a self-view too, but only
+     after route-guard resolves a role AND the CMS identity attributes on the
+     trigger parse. This gate needs neither — the two Memberstack ids are
+     already on the page — so the owner stays covered when that module is
+     absent or its Designer bindings are incomplete. Both writers make the
+     same hide, so running both is idempotent. */
+  const OWNER_HIDDEN_ACTIONS = ['hire', 'message'];
+
+  function hideOwnerContactActions() {
+      if (!isProfileOwner(MEMBER)) return;
+
+      OWNER_HIDDEN_ACTIONS.forEach(function (element) {
+          qsa('[data-signup-trigger-element="' + element + '"]').forEach(function (action) {
+              action.style.display = 'none';
+              action.setAttribute('hidden', 'hidden');
+              action.setAttribute('aria-hidden', 'true');
+              // A hidden trigger the modal delegate can still match is one
+              // stylesheet regression away from opening, so the binding goes
+              // with the hide rather than relying on display alone.
+              action.removeAttribute('data-modal-trigger');
+          });
+      });
+  }
+
   // Park the beside-services calendar experiment. The live Hire experience
   // keeps the generic two-step modal: Book Call -> Free/Paid -> calendar.
   // Type-specific Services cards reuse the installed matching CTA and go
@@ -1479,6 +1572,11 @@
   })());
   // Declared before the parse-time IIFEs below so getPublicStarterRecord can run at parse time.
   let publicStarterRecordPromise = null;
+
+  /* OWNER ACTIONS (viewer-specific, but independent of the booking controller:
+     the owner must lose these CTAs even on a page where the booking block
+     stands down). */
+  waitForMember(hideOwnerContactActions);
 
   waitForMember(async function () {
       if (!MEMBER.id) return;
@@ -1560,9 +1658,12 @@
   });
 
   /* PUBLIC-RECORD CMS SERVICES (anonymous + brand viewers)
-     Existing CMS cards remain as the side-by-side comparison path. Call
-     projections stay closed for anonymous viewers and use canonical discovery
-     for brands. Starter members keep the live-derived owner toggles above. */
+     Existing CMS cards remain as the side-by-side comparison path. The public
+     Free/Paid booleans are canonical compatibility projections maintained by
+     the call-settings writers; anonymous viewers use them only to reveal
+     signup CTAs and inert tout cards. Brands still use authenticated canonical
+     discovery before any booking surface opens. Starter members keep the
+     live-derived owner toggles above. */
   let canonicalRetainerState = 'pending';
   installXanoServiceCardsAdapter();
   installXanoRetainerCardAdapter();
@@ -1575,7 +1676,13 @@
           const record = await getPublicStarterRecord();
           if (!record) return;
 
-          if (!MEMBER.id) markServiceCardsClickable();
+          if (!MEMBER.id) {
+              const publicCalls = syncLoggedOutCallSurfaces(record);
+              if (publicCalls.free || publicCalls.paid) {
+                  setLoggedOutBookingButtonAvailable();
+              }
+              markServiceCardsClickable();
+          }
           if (isBrand) {
               wireProjectServiceCards();
               window.setTimeout(wireProjectServiceCards, 0);
@@ -1603,6 +1710,26 @@
       } catch (error) {
           /* cosmetic only */
       }
+  }
+
+  /**
+   * A logged-out tout is a signup surface, not a booking surface: no viewer
+   * state here can look availability up, so the card sheds its "Next Available"
+   * row rather than standing a Designer sentinel — or an accusatory
+   * "No available slots" — in front of a visitor who has not signed up yet.
+   */
+  function syncLoggedOutCallSurfaces(record) {
+      const availability = {
+          free: !!(record && record['free-consulting-calls-t-f'] === true),
+          paid: !!(record && record['paid-consulting-calls-t-f'] === true),
+      };
+
+      applyCallSurfaceAvailability(availability, function (surface, type) {
+          surface.setAttribute('data-logged-out-call-tout', type);
+          stripCallBookingRow(surface);
+      });
+
+      return availability;
   }
 
   function markServiceCardsClickable() {
@@ -1944,8 +2071,7 @@
           if (tooltip) tooltip.remove();
 
           // The call card carries a "Next Available" booking row; rate cards must not.
-          const bookingContent = el.querySelector('.service-card_content-wrapper');
-          if (bookingContent) bookingContent.remove();
+          stripCallBookingRow(el);
 
           const titleEl = el.querySelector('[data-service-card-element="title"]');
           if (titleEl) titleEl.textContent = card.title;
