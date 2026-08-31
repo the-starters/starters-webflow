@@ -2458,8 +2458,8 @@
             await resumePendingPaidBooking()
             if (attemptGeneration !== paymentUiGeneration) return
             statusText.textContent = 'Card saved.'
-            const close = document.querySelector('[popup-stripe-card-close]')
-            if (close) close.click()
+            const close = paymentCloseControls()[0]
+            if (close && typeof close.click === 'function') close.click()
           } catch (error) {
             if (attemptGeneration !== paymentUiGeneration) return
             errorText.textContent = error.message || 'Card setup failed'
