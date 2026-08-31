@@ -2388,8 +2388,9 @@
       const next = String(select.value || '').trim() || effectivePreviewTimezone()
       if (next === effectivePreviewTimezone()) return
       selectedPreviewTimezone = next
-      selectedPreviewDateKey = null
-      selectedPreviewSlotStart = null
+      selectedPreviewDateKey = selectedPreviewSlotStart
+        ? slotDateKey(selectedPreviewSlotStart)
+        : null
       const context = previewTimezoneContext
       if (context) renderSlotsList(context.wrapper, context.slots)
     })
@@ -2929,7 +2930,7 @@
       grantCalendarId = (starterRecord && starterRecord.nylas_calendar_id) || null
 
       timezone = await resolveTimezone(starterRecord, false)
-      selectedPreviewTimezone = timezone
+      selectedPreviewTimezone = timezone || browserTimezone()
 
       if (oauthCallback) {
         await consumeOAuthCallback()

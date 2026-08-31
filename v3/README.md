@@ -2764,8 +2764,10 @@ single source every preview date and time is formatted in, so the label can
 never name a clock the slots are not shown in. The control is built once and
 reused across renders, so changing it — or picking another date or slot — never
 rebuilds its option list or drops keyboard focus. Changing it regroups and
-reformats the slots already in memory. It does not persist the timezone, update
-availability, fetch slots again, or create a booking. Only a record that declares what the card states enters the preview:
+reformats the slots already in memory, keeping any selected slot on the same UTC
+instant and re-expressing it in the new zone's date and time. It does not
+persist the timezone, update availability, fetch slots again, or create a
+booking. Only a record that declares what the card states enters the preview:
 an explicit `is_paid` boolean and the host's own
 `data_environment` when the record carries one; Paid additionally requires the
 canonical 60-minute duration, `active: true`, a price of at least $1, a
