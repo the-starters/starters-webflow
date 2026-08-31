@@ -1552,10 +1552,9 @@
   // clicking connect/reconnect/disconnect doesn't flash the "disconnected"
   // label before the request even resolves.
   //
-  // `connect-label-group` holds one disconnected/connected pair per manager:
-  // each `[data-availability-element="connect-label"]` carries `[data-type]`
-  // (`false` / `true`) and `[data-manager]` (`platform` / `calendar`), so the
-  // Platform and Google rows each state their own status at the same time.
+  // The `connect-label-group` markup contract (one `[data-type]` false/true
+  // pair per `[data-manager]`, plus the prior three-label shape this still
+  // accepts) is owned by v3/README.md#booking-stage-availability-section.
   //
   // Visibility is decided per label, never group-wide, so a group part-way
   // through the Designer migration still renders every pair it does have: a
