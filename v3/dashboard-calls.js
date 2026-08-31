@@ -1078,6 +1078,9 @@
         rendered += 1
       })
 
+      // The group is only attached when it holds a row: a panel whose every
+      // field is Designer-owned would otherwise show an empty bordered box.
+      // The trailing row drops its divider so the group's own border closes it.
       if (rowGroup.childNodes && rowGroup.childNodes.length) {
         const lastRow = rowGroup.childNodes[rowGroup.childNodes.length - 1]
         if (lastRow && lastRow.style) lastRow.style.borderBottom = '0'
