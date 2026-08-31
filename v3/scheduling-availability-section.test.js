@@ -7,7 +7,7 @@ const SOURCE = fs.readFileSync(require.resolve('./scheduling-availability-sectio
 const WRITER_SOURCE = fs.readFileSync(require.resolve('./scheduling-availability-writer.js'), 'utf8')
 const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 const DAY_VARIANT_DEFAULT = 'w-variant-89402c65-e26d-c236-91e7-76e9135a2d42'
-const DAY_VARIANT_SELECTED = 'w-variant-ebea452c-a047-af3f-dd6c-3062ee4c048c'
+const DAY_VARIANT_SELECTED = 'w-variant-30a4a9ed-8474-d414-9314-498a5fe53866'
 
 /* ------------------------------------------------------------------ */
 /* Minimal DOM (same shape as scheduling-availability-writer.test.js)  */
@@ -788,9 +788,12 @@ test('applyDayBadges selects only the given days and clears the rest', async () 
   const classesOf = (i) => Array.from(daysWrapper.children[i]._classes)
   assert.ok(classesOf(1).includes(DAY_VARIANT_SELECTED))
   assert.ok(classesOf(3).includes(DAY_VARIANT_SELECTED))
+  assert.equal(daysWrapper.children[1].getAttribute('data-wf--labelv2--style-theme'), 'lime')
+  assert.equal(daysWrapper.children[3].getAttribute('data-wf--labelv2--style-theme'), 'lime')
   ;[0, 2, 4, 5, 6].forEach((i) => {
     assert.ok(classesOf(i).includes(DAY_VARIANT_DEFAULT))
     assert.ok(!classesOf(i).includes(DAY_VARIANT_SELECTED))
+    assert.equal(daysWrapper.children[i].getAttribute('data-wf--labelv2--style-theme'), 'silver')
   })
 })
 
@@ -804,6 +807,7 @@ test('applyDayBadges reverts to the default variant when no days are selected', 
   const daysWrapper = card.children[1].children[1]
   for (let i = 0; i < 7; i++) {
     assert.ok(Array.from(daysWrapper.children[i]._classes).includes(DAY_VARIANT_DEFAULT))
+    assert.equal(daysWrapper.children[i].getAttribute('data-wf--labelv2--style-theme'), 'silver')
   }
 })
 
