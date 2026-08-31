@@ -919,7 +919,8 @@
     })
   }
 
-  function hideDuplicateDetailCopy(modal) {
+  function hideDuplicateDetailCopy(modal, isPaid) {
+    if (isPaid) return
     if (!modal || typeof modal.querySelectorAll !== 'function') return
     modal.querySelectorAll('[booking-element-wrap]').forEach(function (group) {
       if (group.querySelector && group.querySelector('[booking-element]')) return
@@ -1359,25 +1360,55 @@
   }
 
   /**
+   * Raw statuses bookingStatus folds into `cancelled` that the Designer can
+   * author their own panel for. Each resolves to that panel when it exists and
+   * falls back to the shared `cancelled` panel when it does not, so an expired
+   * request never reads as one a counterpart cancelled where the Designer has
+   * separated the two.
+   */
+  const TERMINAL_PANEL_BY_RAW_STATUS = {
+    declined: 'declined',
+    expired: 'expired',
+  }
+
+  /**
    * Panel the details modal opens on. Terminal bookings open their authored
-   * terminal panel (`cancelled`, `declined`, `completed`) so the Designer view
-   * renders instead of a module-composed base view; `base` stays the acting
-   * view for live calls and the fallback for any panel the Designer has not
-   * authored. Declined uses the raw status because bookingStatus folds it into
-   * `cancelled`.
+   * terminal panel (`cancelled`, `declined`, `expired`, `completed`) so the
+   * Designer view renders instead of a module-composed base view; `base` stays
+   * the acting view for live calls and the fallback for any panel the Designer
+   * has not authored.
    */
   function detailOpenPanel(modal, booking, status) {
     const raw = clean(booking && booking.status).toLowerCase()
     let candidate = ''
     if (status === 'cancelled') {
+      const authoredRawPanel = TERMINAL_PANEL_BY_RAW_STATUS[raw]
       candidate =
-        raw === 'declined' && authoredDetailPanel(modal, 'declined')
-          ? 'declined'
+        authoredRawPanel && authoredDetailPanel(modal, authoredRawPanel)
+          ? authoredRawPanel
           : 'cancelled'
     } else if (status === 'completed') {
       candidate = 'completed'
     }
     return authoredDetailPanel(modal, candidate) ? candidate : 'base'
+  }
+
+  /**
+   * The authored back control returns to the base panel, so it is meaningful
+   * only after a chain has navigated away from it. A modal that opens directly
+   * on a terminal panel has nowhere to return to, so the control stays hidden
+   * until the member navigates, keeping the doubled close icon off the opening
+   * view.
+   */
+  function hideDetailBackControl(modal) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return
+    modal
+      .querySelectorAll(
+        '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]',
+      )
+      .forEach(function (control) {
+        show(control, false)
+      })
   }
 
   function populateDetailModal(modal, booking, role, now) {
@@ -1415,12 +1446,14 @@
         show(content, content.getAttribute('booking-popup-content') === openPanel)
       })
     }
-    if (
-      openPanel !== 'base' &&
-      validDashboardModule(actionsModule) &&
-      typeof actionsModule.fillCounterpartPlaceholders === 'function'
-    ) {
-      actionsModule.fillCounterpartPlaceholders(modal, openPanel, role, booking)
+    if (openPanel !== 'base') {
+      hideDetailBackControl(modal)
+      if (
+        validDashboardModule(actionsModule) &&
+        typeof actionsModule.fillCounterpartPlaceholders === 'function'
+      ) {
+        actionsModule.fillCounterpartPlaceholders(modal, openPanel, role, booking)
+      }
     }
     setBookingField(modal, 'paid-meeting', isPaid ? 'Paid Call' : 'Free Call', true)
     setBookingField(modal, 'status', statusLabel(status, role), true)
@@ -1473,7 +1506,7 @@
     configureDetailActions(modal, role, status, booking, now)
     ensureDetailSupplements(modal, booking, role, timezone)
     scheduleDetailSupplements(modal, booking, role, timezone)
-    hideDuplicateDetailCopy(modal)
+    hideDuplicateDetailCopy(modal, isPaid)
     return true
   }
 

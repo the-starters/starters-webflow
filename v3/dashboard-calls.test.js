@@ -1584,6 +1584,7 @@ function detailModalHarness() {
 
   return {
     actions,
+    back,
     base,
     blocked,
     cancelledPanel,
@@ -3693,4 +3694,70 @@ test('details open the authored cancelled panel for a cancelled booking', () => 
   assert.equal(view.cancelledPanel.hidden, false)
   assert.equal(view.base.hidden, true)
   assert.equal(view.confirmation.hidden, true)
+})
+
+test('a cancelled booking with its own authored panel opens on that panel', () => {
+  const panels = { cancelled: true, declined: true, expired: true }
+  const modal = {
+    querySelector(selector) {
+      const match = selector.match(/^\[booking-popup-content="(.+)"\]$/)
+      return match && panels[match[1]] ? {} : null
+    },
+  }
+  assert.equal(api.detailOpenPanel(modal, { status: 'expired' }, 'cancelled'), 'expired')
+  assert.equal(api.detailOpenPanel(modal, { status: 'declined' }, 'cancelled'), 'declined')
+  assert.equal(api.detailOpenPanel(modal, { status: 'canceled' }, 'cancelled'), 'cancelled')
+})
+
+test('paid call details keep the authored charge and refund copy', (context) => {
+  const originalActions = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
+  context.after(function () {
+    global.StartersDashboardCallActions = originalActions
+  })
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'paid-cancelled',
+    status: 'cancelled',
+    start: 10_000,
+    duration: 30,
+    is_paid: true,
+    price: 120,
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+
+  assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 2_000), true)
+  assert.equal(view.duplicatePayment.hidden, false)
+
+  booking.is_paid = false
+  booking.price = 0
+  assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 2_000), true)
+  assert.equal(view.duplicatePayment.hidden, true)
+})
+
+test('opening on a terminal panel hides the authored back control', (context) => {
+  const originalActions = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
+  context.after(function () {
+    global.StartersDashboardCallActions = originalActions
+  })
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'terminal-back',
+    status: 'cancelled',
+    start: 10_000,
+    duration: 30,
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+
+  assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 2_000), true)
+  assert.equal(view.cancelledPanel.hidden, false)
+  assert.equal(view.back.hidden, true)
+  assert.equal(view.back.style.display, 'none')
+
+  // Navigating away from base inside the open modal still exposes the control.
+  global.StartersDashboardCallActions.switchPopupContent(view.modal, 'cancelled')
+  assert.equal(view.back.hidden, false)
 })
