@@ -2785,7 +2785,11 @@ Designer API cannot attach custom attributes to directly — until thin wrapper
 `<div data-availability-action="…">`s are added around them, the script falls
 back to the button's ordinal position inside its known wrapper and logs one
 console warning per action. Prefer adding the wrapper attributes over relying
-on the fallback long-term.
+on the fallback long-term. Their visibility follows the provider state: with
+no manager, both connect actions show; with Platform active, only Connect
+Google shows; with Google active, Connect Platform and Disconnect Google show.
+This keeps one matching action available for each provider status and permits
+a direct Google-to-Platform switch through the existing provider-first flow.
 
 OAuth-callback ownership: on any page carrying this section's root, this
 module is the sole consumer of the Nylas `?code&state` / `?success&grant_id`

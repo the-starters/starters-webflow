@@ -1183,6 +1183,8 @@ test('boots directly into connected state when the starter already has a grant/c
   await settle()
 
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.notEqual(dom.connectBtnWrapper.children[0].style.display, 'none') // can switch to platform
+  assert.equal(dom.connectBtnWrapper.children[1].style.display, 'none') // already on Google
   assert.equal(dom.connectBtnWrapper.children[2].style.display, '') // disconnect-google visible
 })
 

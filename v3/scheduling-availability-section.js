@@ -1601,18 +1601,17 @@
     if (group.children[1]) group.children[1].style.display = connected ? '' : 'none'
   }
 
-  // Platform can't be disconnected outright — only switched away from by
-  // connecting Google. So: not-on-platform shows "Connect Platform"; not-on-
-  // Google shows "Connect Google"; only on-Google shows "Disconnect Google" —
-  // connect-platform is redundant there since disconnect-google already
-  // reverts to platform on its own.
+  // Only one manager is active at a time. Keep the inactive provider's
+  // connect action visible so each disconnected label has its matching
+  // action: Google-connected members can switch straight back to Platform,
+  // while members with no manager can choose either provider.
   function applyConnectButtonVisibility() {
     const wrapper = qs(elSel('connect-btn-wrapper'))
     if (!wrapper) return
     const manager = availability && availability.manager
     const onGoogle = manager === 'calendar'
     const rules = [
-      ['connect-platform', manager !== 'platform' && !onGoogle],
+      ['connect-platform', manager !== 'platform'],
       ['open-connect-google', !onGoogle],
       ['open-disconnect-google', onGoogle],
     ]
