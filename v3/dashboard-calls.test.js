@@ -69,6 +69,13 @@ function element(attributes = {}) {
   }
 }
 
+function matchesAttributeSelector(node, selector) {
+  const match = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
+  if (!match) return false
+  const actual = node.getAttribute && node.getAttribute(match[1])
+  return actual != null && (match[2] == null || actual === match[2])
+}
+
 function domElement(tag, attributes = {}) {
   const node = {
     tagName: tag,
@@ -96,12 +103,12 @@ function domElement(tag, attributes = {}) {
       return this.querySelectorAll(selector)[0] || null
     },
     querySelectorAll(selector) {
-      const match = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
-      if (!match) return []
+      // Selector lists matter: the controller asks one panel for any of the
+      // four authored Message controls in a single query.
+      const parts = selector.split(',').map((part) => part.trim()).filter(Boolean)
       const results = []
       const visit = (candidate) => {
-        const actual = candidate.getAttribute && candidate.getAttribute(match[1])
-        if (actual != null && (match[2] == null || actual === match[2])) {
+        if (parts.some((part) => matchesAttributeSelector(candidate, part))) {
           results.push(candidate)
         }
         candidate.children.forEach(visit)
@@ -110,12 +117,9 @@ function domElement(tag, attributes = {}) {
       return results
     },
     closest(selector) {
-      const match = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
-      if (!match) return null
       let candidate = this
       while (candidate) {
-        const actual = candidate.getAttribute && candidate.getAttribute(match[1])
-        if (actual != null && (match[2] == null || actual === match[2])) return candidate
+        if (matchesAttributeSelector(candidate, selector)) return candidate
         candidate = candidate.parentNode
       }
       return null
@@ -1484,7 +1488,7 @@ function detailModalHarness() {
     group.querySelector = (selector) => selector === '[booking-element]' ? field : null
     field.closest = (selector) => selector === '[booking-element-wrap]' ? group : null
     if (name === 'meeting-link') field.href = 'stale'
-    if (name === 'brand-message-link') field.href = '/messages'
+    if (name.endsWith('-message-link')) field.href = '/messages'
     groups.push(group)
     return field
   }
@@ -1503,6 +1507,7 @@ function detailModalHarness() {
     'cancel-reason',
     'meeting-link',
     'brand-message-link',
+    'starter-message-link',
   ].forEach((name) => {
     const field = fieldNode(name)
     fields[name] = field
@@ -3421,26 +3426,177 @@ test('bookingMessageHref builds the counterpart deep link per role', () => {
   assert.equal(api.bookingMessageHref('starter', null), '')
 })
 
-test('details populate restores the authored Messages tab link', () => {
-  const view = detailModalHarness()
-  const link = view.fields['brand-message-link']
-  // resetDetailModal clears authored booking-element nodes; the next populate
-  // must restore the link's text, destination, and visibility.
-  link.textContent = ''
-  link.hidden = true
+test('details populate restores only the counterpart Messages tab link', () => {
   const booking = {
     booking_id: 'free-msg',
     status: 'confirmed',
     start: 10_000,
     duration: 30,
     brand_data: { name: 'Brand', timezone: 'UTC', memberstack_id: 'mem_b1' },
-    starter_data: { name: 'Starter', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC', memberstack_id: 'mem_s1' },
+  }
+  // resetDetailModal clears authored booking-element nodes; the next populate
+  // must restore the counterpart link's text, destination, and visibility, and
+  // must leave the signed-in member's own identity row without a thread link.
+  function reset(view) {
+    ;['brand-message-link', 'starter-message-link'].forEach((name) => {
+      view.fields[name].textContent = ''
+      view.fields[name].href = ''
+      view.fields[name].hidden = true
+    })
   }
 
-  assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 2_000), true)
-  assert.equal(link.href, '/messages?with=mem_b1')
-  assert.equal(link.textContent, 'Messages tab')
-  assert.equal(link.hidden, false)
+  const starterView = detailModalHarness()
+  reset(starterView)
+  assert.equal(
+    api.populateDetailModal(starterView.modal, booking, 'starter', 2_000),
+    true,
+  )
+  assert.equal(starterView.fields['brand-message-link'].href, '/messages?with=mem_b1')
+  assert.equal(starterView.fields['brand-message-link'].textContent, 'Messages tab')
+  assert.equal(starterView.fields['brand-message-link'].hidden, false)
+  assert.equal(starterView.fields['starter-message-link'].href, '')
+  assert.equal(starterView.fields['starter-message-link'].textContent, '')
+  assert.equal(starterView.fields['starter-message-link'].hidden, true)
+
+  const brandView = detailModalHarness()
+  reset(brandView)
+  assert.equal(api.populateDetailModal(brandView.modal, booking, 'brand', 2_000), true)
+  assert.equal(brandView.fields['starter-message-link'].href, '/messages?with=mem_s1')
+  assert.equal(brandView.fields['starter-message-link'].textContent, 'Messages tab')
+  assert.equal(brandView.fields['starter-message-link'].hidden, false)
+  assert.equal(brandView.fields['brand-message-link'].href, '')
+  assert.equal(brandView.fields['brand-message-link'].hidden, true)
+
+  // An unknown counterpart id still leaves the authored link a live
+  // destination, since the copy sends the member to the Messages tab.
+  const anonymous = detailModalHarness()
+  reset(anonymous)
+  api.populateDetailModal(
+    anonymous.modal,
+    { ...booking, brand_data: { name: 'Brand', timezone: 'UTC' } },
+    'starter',
+    2_000,
+  )
+  assert.equal(anonymous.fields['brand-message-link'].href, '/messages')
+  assert.equal(anonymous.fields['brand-message-link'].hidden, false)
+})
+
+test('an authored Message control suppresses the module-owned one only where it renders', () => {
+  const document = { createElement: (tag) => domElement(tag) }
+  const modal = domElement('dialog')
+  modal.ownerDocument = document
+  const base = domElement('div', { 'booking-popup-content': 'base' })
+  const authored = domElement('a', { 'booking-element': 'brand-message-link' })
+  base.appendChild(authored)
+  const cancelled = domElement('div', { 'booking-popup-content': 'cancelled' })
+  modal.appendChild(base)
+  modal.appendChild(cancelled)
+  const box = [{ width: 120, height: 44 }]
+  const boxless = { authored: false }
+  base.getClientRects = () => box
+  cancelled.getClientRects = () => box
+  authored.getClientRects = () => (boxless.authored ? [] : box)
+  const booking = {
+    start: 10_000,
+    duration: 30,
+    cancelled_reason: 'Schedule changed',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+
+  api.ensureDetailSupplements(modal, booking, 'starter', 'UTC')
+  assert.equal(
+    base.querySelector('[data-starters-call-message]'),
+    null,
+    'the panel that renders an authored Message control keeps it authoritative',
+  )
+  const cancelledMessage = cancelled.querySelector('[data-starters-call-message]')
+  assert.ok(
+    cancelledMessage,
+    'a panel with no authored Message control still gets the module-owned one',
+  )
+  assert.equal(cancelledMessage.href, '/messages?with=mem_brand')
+
+  // A hidden authored control is not authoritative.
+  authored.hidden = true
+  api.ensureDetailSupplements(modal, booking, 'starter', 'UTC')
+  assert.ok(base.querySelector('[data-starters-call-message]'))
+
+  // Neither is one that generates no box inside a rendered panel.
+  authored.hidden = false
+  boxless.authored = true
+  api.ensureDetailSupplements(modal, booking, 'starter', 'UTC')
+  assert.ok(base.querySelector('[data-starters-call-message]'))
+
+  boxless.authored = false
+  api.ensureDetailSupplements(modal, booking, 'starter', 'UTC')
+  assert.equal(base.querySelector('[data-starters-call-message]'), null)
+})
+
+test('delegated Message clicks route to the counterpart thread', () => {
+  let clickListener
+  const originalDocument = global.document
+  const originalLocation = global.location
+  try {
+    global.document = {
+      addEventListener(name, listener, capture) {
+        assert.equal(name, 'click')
+        assert.equal(capture, true)
+        clickListener = listener
+      },
+    }
+    const visited = []
+    global.location = { assign: (href) => visited.push(href) }
+    const booking = {
+      booking_id: 'booking-msg',
+      status: 'confirmed',
+      brand_data: { memberstack_id: 'mem_b1' },
+    }
+    const card = {
+      getAttribute: (name) => (name === 'data-booking-id' ? 'booking-msg' : null),
+    }
+    const control = (carrier) => ({
+      closest: (selector) => (selector === '[data-booking-id]' ? carrier : null),
+    })
+    const clickOn = (button) => {
+      const counts = { prevented: 0, stopped: 0 }
+      clickListener({
+        target: {
+          closest: (selector) => (selector.includes('message') ? button : null),
+        },
+        preventDefault() { counts.prevented += 1 },
+        stopImmediatePropagation() { counts.stopped += 1 },
+      })
+      return counts
+    }
+    api.wireBookingMessages([{ rows: [booking] }], 'starter')
+
+    assert.deepEqual(clickOn(control(card)), { prevented: 1, stopped: 1 })
+    assert.deepEqual(visited, ['/messages?with=mem_b1'])
+
+    // A click on anything else is left alone.
+    assert.deepEqual(clickOn(null), { prevented: 0, stopped: 0 })
+    assert.equal(visited.length, 1)
+
+    // An unresolved booking bails before swallowing the click.
+    assert.deepEqual(clickOn(control(null)), { prevented: 0, stopped: 0 })
+    assert.equal(visited.length, 1)
+
+    // So does a counterpart with no canonical Memberstack ID.
+    delete booking.brand_data.memberstack_id
+    assert.deepEqual(clickOn(control(card)), { prevented: 0, stopped: 0 })
+    assert.equal(visited.length, 1)
+
+    // With no navigable host the authored control keeps its own behaviour.
+    booking.brand_data.memberstack_id = 'mem_b1'
+    global.location = {}
+    assert.deepEqual(clickOn(control(card)), { prevented: 0, stopped: 0 })
+    assert.equal(visited.length, 1)
+  } finally {
+    global.document = originalDocument
+    global.location = originalLocation
+  }
 })
 
 test('modal Message button shows only with a known counterpart id', () => {
