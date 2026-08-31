@@ -452,6 +452,36 @@
     return selectors[name] ? qs(selectors[name], uiScope || root) : null
   }
 
+  function setAccessibleName(target, label) {
+    if (!target) return
+    const nativeControl = target.matches && target.matches('button, input, select, textarea, a')
+      ? target
+      : qs('button, input, select, textarea, a', target)
+    const control = nativeControl || target
+    if (String(control.getAttribute('aria-label') || '').trim()) return
+    control.setAttribute('aria-label', label)
+  }
+
+  function ensureAccessibilityLabels() {
+    setAccessibleName(action('open'), 'Edit paid call settings')
+    setAccessibleName(action('close'), 'Cancel paid call settings')
+    setAccessibleName(action('save'), 'Update paid call settings')
+    setAccessibleName(action('disable'), 'Turn off paid calls')
+    setAccessibleName(field('enabled'), 'Yes, enable paid calls')
+    setAccessibleName(disabledField(), 'No, keep paid calls off')
+    setAccessibleName(field('title'), 'Paid call description')
+    setAccessibleName(field('price'), 'Paid call rate per hour')
+    setAccessibleName(field('duration'), 'Paid call duration')
+
+    const status =
+      qs('[data-call-settings-output="status"]', uiScope || root) ||
+      qs('[data-paid-call-element="status"]', root)
+    if (status) {
+      if (!String(status.getAttribute('role') || '').trim()) status.setAttribute('role', 'status')
+      if (!String(status.getAttribute('aria-live') || '').trim()) status.setAttribute('aria-live', 'polite')
+    }
+  }
+
   function setMessage(message) {
     const target =
       qs('[data-call-settings-output="status"]', uiScope || root) ||
@@ -1286,6 +1316,7 @@
     if (bound) return
     bound = true
     normalizeCardRadioGroup()
+    ensureAccessibilityLabels()
     const form =
       qs('[data-call-settings-element="form"]', root) ||
       qs('[data-paid-call-element="form"]', root) ||

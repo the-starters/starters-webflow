@@ -23,6 +23,32 @@ test('the Paid error visibility rule outranks Webflow hide utilities', async () 
   assert.equal(computedStyle(result.document, result.dom.nativeError).display, 'block')
 })
 
+test('names every Paid card control and exposes status updates to assistive technology', async () => {
+  const result = load({ cardMode: true, initial: canonical({ services: [] }) })
+  await settle()
+
+  assert.equal(result.dom.open.getAttribute('aria-label'), 'Edit paid call settings')
+  assert.equal(result.dom.close.getAttribute('aria-label'), 'Cancel paid call settings')
+  assert.equal(result.dom.save.getAttribute('aria-label'), 'Update paid call settings')
+  assert.equal(result.dom.enabled.getAttribute('aria-label'), 'Yes, enable paid calls')
+  assert.equal(result.dom.disabled.getAttribute('aria-label'), 'No, keep paid calls off')
+  assert.equal(result.dom.title.getAttribute('aria-label'), 'Paid call description')
+  assert.equal(result.dom.price.getAttribute('aria-label'), 'Paid call rate per hour')
+  assert.equal(result.dom.statusOutput.getAttribute('role'), 'status')
+  assert.equal(result.dom.statusOutput.getAttribute('aria-live'), 'polite')
+})
+
+test('preserves authored accessible names', async () => {
+  const result = load({ cardMode: true, initial: canonical({ services: [] }), beforeLoad(dom) {
+    dom.open.setAttribute('aria-label', 'Authored edit label')
+    dom.price.setAttribute('aria-label', 'Authored price label')
+  } })
+  await settle()
+
+  assert.equal(result.dom.open.getAttribute('aria-label'), 'Authored edit label')
+  assert.equal(result.dom.price.getAttribute('aria-label'), 'Authored price label')
+})
+
 function deferred() {
   let resolve
   const promise = new Promise((done) => { resolve = done })
@@ -348,6 +374,7 @@ function load(options = {}) {
     options.authoredPills === true,
     options.pillLabels || {},
   )
+  if (typeof options.beforeLoad === 'function') options.beforeLoad(dom)
   const delayedSiblings = options.rootFirst === true && dom.card
     ? dom.card.children.filter((item) => item !== dom.formWrapper)
     : []

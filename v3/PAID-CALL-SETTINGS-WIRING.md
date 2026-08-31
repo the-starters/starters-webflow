@@ -197,6 +197,10 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   No, pressing Update again, and every canonical render or cleared-state reset clear it first. A
   rejected rate therefore never keeps the form invalid afterwards, and turning paid calls off with
   No plus Update stays reachable even though the disable path never reads the rate.
+- The controller gives the native Edit, Cancel, Update, enable, disable, description, rate, and
+  duration controls stable accessible names when Designer did not author one. It never replaces an
+  existing `aria-label`. The status output uses `role="status"` and `aria-live="polite"` so canonical
+  state changes are announced without moving focus.
 - While a mutation is in flight, the authored Update control gets
   `data-call-settings-busy="true"`, `data-opp-loading="true"`, and `aria-busy="true"`. When the
   control contains an authored `[data-button-spinner]` or `[loading-spinner]`, the controller shows
@@ -247,6 +251,7 @@ fail-closed writes, and the authored price tile fallback — canonical precedenc
 single-leaf and split `$` + number selection, the continued-amount guard that leaves a
 tile with a trailing cents fragment alone, imported V2 suggestion validation and explicit
 confirmation, `Not set` empty states, scoped Off-state emphasis, and Free-sibling isolation — plus
+stable accessible control names, preservation of authored labels, and polite status announcements — plus
 the authored status-pill resolution and its drifted-copy diagnostic, the
 `w--redirected-checked` radio sync, and the field validation lifecycle, including that a
 rejected rate never blocks a later turn-off, plus the shared native-submit/Update write lock and
