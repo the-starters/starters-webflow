@@ -2829,10 +2829,14 @@ After confirmation, the provider-first flow deletes the Google-backed grant
 and creates a virtual Nylas grant. The result is Platform Connected and Google
 Disconnected.
 
-If the replacement virtual calendar fails after the Google grant is already
-deleted, the module drops the local grant id/email/calendar id and persists
-`manager: null` before surfacing the error, so the error UI stops offering
-"Disconnect Google" and a retry never re-deletes a grant that no longer exists.
+Disconnect Google is the only flow that deletes a live Google grant. If its
+replacement virtual calendar fails after that deletion, it drops the local
+grant id/email/calendar id and persists `manager: null` before surfacing the
+error, so the error UI stops offering "Disconnect Google" and a retry never
+re-deletes a grant that no longer exists. Connect Platform drops its local copy
+of a half-built grant as soon as the canonical delete succeeds, so a failure in
+the rebuild that follows cannot leave it re-deleting a grant Xano has already
+removed either.
 
 OAuth-callback ownership: on any page carrying this section's root, this
 module is the sole consumer of the Nylas `?code&state` / `?success&grant_id`
