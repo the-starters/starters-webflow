@@ -7854,6 +7854,61 @@ test('brand first-mover completion defers the review until the Starter confirms'
   assert.match(dom.label.textContent, /Review unlocks once both sides confirm/)
 })
 
+test('starter end-project modal requests completion without review fields', async () => {
+  const dom = endProjectDom()
+  let actionBody = null
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'active',
+            lifecycle_version: 4,
+            brand_name: 'Test Brand',
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({
+          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 5 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, talentMember, '/starter-dashboard'),
+  )
+  bridge.window.prompt = () => {
+    throw new Error('prompt must not run when the Starter modal markup exists')
+  }
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
+  assert.equal(dom.reviewGroup.style.display, 'none')
+  assert.equal(dom.reasonWrap.style.display, '')
+
+  bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
+  assert.equal(dom.submitText.textContent, 'Mark Work Complete')
+  assert.equal(dom.reviewGroup.style.display, 'none')
+  assert.equal(dom.reasonWrap.style.display, 'none')
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => actionBody !== null))
+  assert.equal(actionBody.action, 'complete')
+  assert.equal(actionBody.expected_version, 4)
+  assert.equal(actionBody.reason, '')
+})
+
 test('early-end mode requires a reason and sends it as the terminate reason', async () => {
   const dom = endProjectDom({ reason: '' })
   let actionBody = null
