@@ -2079,6 +2079,13 @@ Webflow owns all call-section markup. Each section must provide:
   The controller only shows and writes them; it never generates the markup, so
   a template without them renders unchanged.
 
+Any authored node the Designer hides in its base style can carry a
+`[display-flex]` marker naming the display a shower must restore; revealing such
+a node writes `display: flex` inline instead of clearing the inline style back
+to the hidden authored rule. The call-details tables are authored that way, so
+without honoring the marker they read as absent and the module composes
+replacement rows over Designer content that would have rendered.
+
 The script clones the authored item template in pages of six, deduplicates by
 canonical booking ID, and sorts newest first. Starter pending rows appear under
 requests and all other rows under calls; Brand keeps pending and accepted rows
@@ -2095,10 +2102,21 @@ row to the authored fields. When the base, cancel, and cancelled panels repeat
 a `[booking-element]` name, every copy receives the same value and visibility.
 `is_paid` is authoritative when present, with `paid_meeting` retained as the
 compatibility fallback. Free calls never show price, payment, charge, or refund
-copy. Paid calls show the canonical price as a per-call amount, replacing only
-the adjacent exact Designer-authored legacy `/hr` unit; when that unit is
-absent, the price field carries the `/ Call` suffix without generating markup.
-Only the base content state and one applicable pending message can be visible.
+copy: the Designer's static charge and refund sentences are suppressed only on a
+free call, because on a paid one — including a cancelled paid one, where the
+refund sentence is the accurate outcome — that authored copy stays
+authoritative. Paid calls show the canonical price as a per-call amount,
+replacing only the adjacent exact Designer-authored legacy `/hr` unit; when that
+unit is absent, the price field carries the `/ Call` suffix without generating
+markup. One content state and one applicable pending message can be visible.
+`base` is the acting view for live calls and the fallback everywhere else, but a
+terminal booking opens on its authored terminal panel so the Designer view is
+what the member reads instead of a module-composed base view: `completed` where
+authored, and for a cancelled booking the panel matching its raw status —
+`declined` or `expired` when the Designer separates them, otherwise the shared
+`cancelled` panel. Because that panel is the opening view rather than one the
+member navigated to, the authored `switch-base` back control stays hidden until
+a chain leaves the panel, keeping the doubled close icon off the entry view.
 
 Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
@@ -2177,12 +2195,13 @@ cancel or reschedule; late-change copy can warn the participant but must never
 block the action.
 
 `dashboard-call-actions.js` owns the details dialog's authored Back and Close
-controls on both dashboards. Populate starts on the base panel with Back hidden;
-moving to another panel shows Back, and Back returns to base and clears the
-action error. Close clicks the authored `[booking-popup-info-close]` or
-`[data-modal-close]` control so the shared modal close flow and refresh listener
-run, with the native dialog `close()` method used only as a fallback. These two
-navigation actions remain available regardless of booking state.
+controls on both dashboards. Populate starts with Back hidden on whichever panel
+it opens, base or the authored terminal panel described above; moving to another
+panel shows Back, and Back returns to base and clears the action error. Close
+clicks the authored `[booking-popup-info-close]` or `[data-modal-close]` control
+so the shared modal close flow and refresh listener run, with the native dialog
+`close()` method used only as a fallback. These two navigation actions remain
+available regardless of booking state.
 
 The Starter pending card exposes only the Designer-authored Accept lifecycle
 control while the canonical response window remains open. The details dialog
