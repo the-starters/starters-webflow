@@ -1156,7 +1156,7 @@ test('the booking shell defers its display and gaps to the sheet, the dashboard 
   assert.equal(away.shell.style.gap, '16px', 'the dashboard shell is untouched')
 })
 
-test('a calendar mounted outside the booking dialog is completely unchanged', async () => {
+test('a calendar mounted outside the booking dialog keeps its control contract', async () => {
   // This engine also mounts the dashboard's reschedule calendar
   // (dashboard-call-actions.js -> mountRescheduleCalendar), inside
   // `popup-booking-info`. There is no Free/Paid chooser to hand off to there,
@@ -1183,9 +1183,7 @@ test('a calendar mounted outside the booking dialog is completely unchanged', as
   assert.equal(away.confirm.children.length, 0)
   assert.equal(away.confirm.disabled, true)
   assert.equal(away.confirm.getAttribute('data-button-theme'), null)
-  // Index 1: the month, timezone note and time slots all sit inside the
-  // responsive layout wrapper, so the shell is layout -> confirm -> status.
-  assert.equal(away.shell.children.indexOf(away.confirm), 1)
+  assert.equal(away.shell.children.indexOf(away.confirm), 3)
   assert.equal(away.confirm.style.background, '#1f211d')
   assert.equal(away.confirm.style.color, '#ffffff')
   assert.equal(away.confirm.style.gridColumn, undefined, 'no row means no placement write')
@@ -4455,4 +4453,42 @@ test('timezoneLabel names the zone with a DST-correct offset and fails soft', ()
   assert.equal(api.timezoneLabel('', july), '')
   // An invalid zone still returns the zone name instead of throwing.
   assert.equal(api.timezoneLabel('Not/A_Zone', july), 'Not/A_Zone')
+})
+
+test('the dashboard mount makes every wide-grid area a shell child', async () => {
+  const dialog = new CalendarElement('dialog')
+  dialog.setAttribute('data-modal-target', 'popup-booking-info')
+  const container = new CalendarElement('div')
+  container.setAttribute('booking-reschedule-calendar', '')
+  dialog.appendChild(container)
+
+  const { shell } = await mountFooterFixture({ container })
+  const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((node) => node.getAttribute('data-paid-calendar-element') === name) || null
+  const gridItems = ['month', 'timezone-control', 'times', 'confirm'].map(role)
+
+  assert.ok(gridItems.every(Boolean))
+  assert.ok(gridItems.every((node) => node.parentElement === shell))
+  assert.deepEqual(
+    shell.children.map((node) => node.getAttribute('data-paid-calendar-element')),
+    ['month', 'timezone-control', 'times', 'confirm', 'status'],
+  )
+  assert.equal(role('footer'), null)
+})
+
+test('the dashboard layout injector is idempotent and inert on a bare document', () => {
+  let injected = 0
+  const doc = {
+    existing: null,
+    getElementById() { return doc.existing },
+    createElement() { return new CalendarElement('style') },
+    head: {
+      appendChild(node) { injected += 1; doc.existing = node },
+    },
+  }
+  api.ensureDashboardCalendarLayout(doc)
+  api.ensureDashboardCalendarLayout(doc)
+  assert.equal(injected, 1)
+  assert.doesNotThrow(() => api.ensureDashboardCalendarLayout(undefined))
+  assert.doesNotThrow(() => api.ensureDashboardCalendarLayout({}))
 })

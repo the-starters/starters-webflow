@@ -954,6 +954,29 @@
     if (reason) reason.value = ''
     const calendar = modal.querySelector('[booking-reschedule-calendar]')
     if (calendar) calendar.textContent = ''
+    // A reset can land mid-load (the member closed the modal or switched
+    // bookings), so the loader must not be left covering the next open.
+    showCalendarLoader(modal, false)
+    return true
+  }
+
+  /**
+   * Shows or hides the authored calendar loader. The site's `.loader_wrap` is
+   * authored `display:none`, so a reveal has to name the display it wants;
+   * `flex` is what that class is built around. Returns whether an authored
+   * loader exists, which is what tells the caller a text fallback is needed.
+   * @param {HTMLElement|null} modal Detail modal being populated.
+   * @param {boolean} visible Whether the loader should show.
+   * @returns {boolean} Whether an authored loader was found.
+   */
+  function showCalendarLoader(modal, visible) {
+    const loader =
+      modal &&
+      typeof modal.querySelector === 'function' &&
+      modal.querySelector('[booking-calendar-loader]')
+    if (!loader) return false
+    loader.hidden = !visible
+    if (loader.style) loader.style.display = visible ? 'flex' : 'none'
     return true
   }
 
@@ -970,15 +993,21 @@
         modal.querySelector('[booking-reschedule-calendar]') === container
       )
     }
-    container.textContent = 'Loading available times...'
+    /* The loader covers BOTH waits, not just the script fetch: the engine
+       clears the container and only then requests availability, so the slow
+       half of this used to render as an empty panel. */
+    const authoredLoader = showCalendarLoader(modal, true)
+    if (!authoredLoader) container.textContent = 'Loading available times...'
     const calendarModule = await loadCalendarModule(document)
     if (!isCurrent()) return false
     if (!calendarModule) {
+      showCalendarLoader(modal, false)
       container.textContent = 'The calendar could not load. Please try again.'
       return false
     }
-    container.textContent = ''
-    await calendarModule.mountPaidCalendar({
+    if (!authoredLoader) container.textContent = ''
+    try {
+      await calendarModule.mountPaidCalendar({
       container,
       config: {
         config_id: clean(booking && booking.config_id),
@@ -1011,7 +1040,12 @@
         switchPopupContent(modal, KINDS['reschedule-propose'].successContent)
         restartAfterModalClose(document, modal, restart)
       },
-    })
+      })
+    } finally {
+      // The engine has painted (or failed) by here, so the loader comes down
+      // either way rather than covering a rendered calendar.
+      if (isCurrent()) showCalendarLoader(modal, false)
+    }
     return true
   }
 

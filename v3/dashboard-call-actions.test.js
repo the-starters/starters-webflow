@@ -1418,3 +1418,137 @@ test('closeDetailModal falls back to the dialog API without an authored control'
   assert.equal(closed, 1)
   assert.equal(api.closeDetailModal(null), false)
 })
+
+test('the authored loader covers the availability fetch, not just the script fetch', async () => {
+  // The engine clears the container and only THEN requests availability, so
+  // the slow half of the wait used to render as an empty panel. The loader has
+  // to still be up while the engine runs, and down once it returns.
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const container = { textContent: 'stale' }
+  const loader = { hidden: true, style: { display: 'none' } }
+  const reasonField = { value: 'Need a later time' }
+  const modal = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-loader' : null
+    },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      if (selector === '[booking-calendar-loader]') return loader
+      if (selector === '[booking-reschedule-reason]') return reasonField
+      return null
+    },
+    querySelectorAll() {
+      return []
+    },
+  }
+  const seen = []
+  try {
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar() {
+        // Sampled from inside the engine's own await, which is exactly the
+        // window that used to show nothing.
+        seen.push({ hidden: loader.hidden, display: loader.style.display })
+        return { slots: [] }
+      },
+    }
+    const booking = rescheduleBooking({ booking_id: 'booking-loader' })
+    const mounted = await api.mountRescheduleCalendar(
+      {}, modal, booking, 'starter', reasonField.value,
+    )
+
+    assert.equal(mounted, true)
+    // Up during the engine's work...
+    assert.deepEqual(seen, [{ hidden: false, display: 'flex' }])
+    // ...and down once it has painted.
+    assert.equal(loader.hidden, true)
+    assert.equal(loader.style.display, 'none')
+    // The authored loader replaces the text fallback rather than doubling it.
+    assert.equal(container.textContent, 'stale')
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+  }
+})
+
+test('a failed calendar load takes the loader down and explains itself', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const container = { textContent: '' }
+  const loader = { hidden: true, style: { display: 'none' } }
+  const modal = {
+    getAttribute() { return 'booking-fail' },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      if (selector === '[booking-calendar-loader]') return loader
+      return null
+    },
+    querySelectorAll() { return [] },
+  }
+  try {
+    // No engine on the global, and a document stub that cannot inject one.
+    global.StartersPaidCallBrandPayment = undefined
+    const booking = rescheduleBooking({ booking_id: 'booking-fail' })
+    const mounted = await api.mountRescheduleCalendar({}, modal, booking, 'starter', '')
+    assert.equal(mounted, false)
+    assert.equal(loader.hidden, true)
+    assert.equal(loader.style.display, 'none')
+    assert.match(container.textContent, /could not load/)
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+  }
+})
+
+test('resetting mid-load clears the loader so the next open is not covered', () => {
+  const loader = { hidden: false, style: { display: 'flex' } }
+  const modal = {
+    querySelector(selector) {
+      if (selector === '[booking-calendar-loader]') return loader
+      return null
+    },
+  }
+  assert.equal(api.resetRescheduleState(modal), true)
+  assert.equal(loader.hidden, true)
+  assert.equal(loader.style.display, 'none')
+})
+
+test('a stale mount cannot hide the loader owned by a newer mount', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const loader = { hidden: true, style: { display: 'none' } }
+  const containers = [{ textContent: '' }, { textContent: '' }]
+  let activeContainer = containers[0]
+  const modal = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-overlap' : null
+    },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return activeContainer
+      if (selector === '[booking-calendar-loader]') return loader
+      return null
+    },
+    querySelectorAll() { return [] },
+  }
+  const releases = []
+  try {
+    global.StartersPaidCallBrandPayment = {
+      mountPaidCalendar() {
+        return new Promise((resolve) => releases.push(resolve))
+      },
+    }
+    const booking = rescheduleBooking({ booking_id: 'booking-overlap' })
+    const first = api.mountRescheduleCalendar({}, modal, booking, 'starter', '')
+    await new Promise((resolve) => setImmediate(resolve))
+    activeContainer = containers[1]
+    const second = api.mountRescheduleCalendar({}, modal, booking, 'starter', '')
+    await new Promise((resolve) => setImmediate(resolve))
+
+    releases[0]({ slots: [] })
+    await first
+    assert.equal(loader.hidden, false)
+    assert.equal(loader.style.display, 'flex')
+
+    releases[1]({ slots: [] })
+    await second
+    assert.equal(loader.hidden, true)
+    assert.equal(loader.style.display, 'none')
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+  }
+})

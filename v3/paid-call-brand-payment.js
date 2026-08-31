@@ -534,11 +534,10 @@
      Those rules declare their own `display:flex`, since only the fallback row
      carries an inline one.
 
-     OFF the booking surface — the dashboard's reschedule calendar mounts this
-     same engine — nothing changed at all: no footer, no back control, and a
-     plain single-element confirm that still reads `data-booking-confirm-class`.
-     That surface has no design-system context to inherit and no guard
-     stylesheet, so it keeps the look it shipped with.
+     OFF the booking surface, the dashboard's reschedule calendar still has no
+     footer or back control. Its plain single-element confirm still reads
+     `data-booking-confirm-class`. The dashboard layout sheet only places that
+     control; it does not change this footer or appearance contract.
 
      Read order is container first, then the dialog the container sits in, so a
      page with several booking surfaces can style one of them differently
@@ -579,7 +578,8 @@
      containment story: the dashboard's reschedule calendar mounts this same
      engine into a different dialog, and the page has other jQuery-UI
      datepickers (the contract form's start and end dates) wearing the exact
-     same `.ui-datepicker` class. Scoping is what keeps both pixel-untouched.
+     same `.ui-datepicker` class. Scoping keeps their painted details
+     untouched; the dashboard gets only its separate, dialog-scoped grid.
 
      No `!important` anywhere. The page's datepicker rules are plain class
      selectors, so a descendant selector under the dialog attribute outranks
@@ -731,6 +731,59 @@
      on the empty path. */
   const CALENDAR_MIN_HEIGHT = '20rem'
 
+  /* ---- the dashboard reschedule calendar's two-column layout ----
+     The booking sheet above is scoped entirely under the profile's booking
+     dialog, deliberately: the dashboard mounts this same engine into the call
+     details dialog, and that containment is what keeps calendar CSS off the
+     page's other jQuery-UI datepickers. So the dashboard cannot simply borrow
+     it, and re-scoping that sheet would put every one of its rules — footer
+     band, status banner, component buttons — onto a surface that was built
+     without them.
+
+     This is the one thing the dashboard does want from it: the wide
+     arrangement, so the timezone select sits at the top of the right column
+     with the times directly beneath it instead of flowing under the month.
+     Only the grid lives here. Every painted detail stays authored, and the
+     narrow width keeps the engine's own stacked order. */
+  const DASHBOARD_SURFACE_SELECTOR = '[data-modal-target="popup-booking-info"]'
+  const DASHBOARD_LAYOUT_STYLE_ID = 'starters-dashboard-calendar-layout'
+
+  function ensureDashboardCalendarLayout(document) {
+    if (
+      !document ||
+      typeof document.getElementById !== 'function' ||
+      typeof document.createElement !== 'function'
+    ) return
+    if (document.getElementById(DASHBOARD_LAYOUT_STYLE_ID)) return
+    const role = DASHBOARD_SURFACE_SELECTOR + ' [data-paid-calendar-element='
+    const style = document.createElement('style')
+    style.setAttribute('id', DASHBOARD_LAYOUT_STYLE_ID)
+    style.textContent = [
+      '@media (min-width:768px){',
+      role + '"shell"]{',
+      // The engine leaves the shell a block off the booking surface, so the
+      // grid has to be declared here rather than only its template.
+      'display:grid;',
+      'column-gap:2rem;',
+      'grid-template-columns:minmax(0,1fr) minmax(0,1fr);',
+      /* The month spans rows 1 and 2 so the panel's height stays the month's
+         own. The timezone takes its share from inside the right column, which
+         means the caption costs the times list height rather than growing the
+         modal. The confirm control spans both columns on its own row. */
+      'grid-template-areas:"month timezone" "month times" "confirm confirm";',
+      'grid-template-rows:min-content minmax(0,1fr) min-content;',
+      'align-content:start}',
+      role + '"month"]{grid-area:month;align-self:start}',
+      role + '"timezone-control"]{grid-area:timezone}',
+      // Scrolls within its own row instead of stretching the dialog when a day
+      // carries more slots than the month is tall.
+      role + '"times"]{grid-area:times;align-content:start;overflow-y:auto;overscroll-behavior:contain}',
+      role + '"confirm"]{grid-area:confirm}',
+      '}',
+    ].join('')
+    ;(document.head || document.documentElement).appendChild(style)
+  }
+
   function ensureBookingCalendarLayout(document) {
     if (
       !document ||
@@ -875,10 +928,10 @@
          caption, the times and the footer itself — in the shell's grid areas on
          desktop and its flex column on a phone — and those rules only reach them
          while they are the shell's own children. `display:contents` restores
-         that without touching the DOM the engine builds, so the dashboard's
-         reschedule calendar keeps the nested columns it just gained, including
-         the caption grouped under the month. The engine writes no inline display
-         on any of the three here, so this rule is unopposed. */
+         that without changing the booking-surface DOM. The dashboard omits
+         these wrappers so its month, timezone, times, and confirm controls are
+         direct grid items. The engine writes no inline display on any of the
+         three wrappers here, so this rule is unopposed. */
       role + '"layout"],' + role + '"calendar-panel"],' + role + '"time-panel"]{display:contents}',
       /* Jerico's inline min-height, moved to the sheet. See CALENDAR_MIN_HEIGHT
          — with the banner out of flow, the empty-availability panel has only a
@@ -955,9 +1008,8 @@
          `1.25rem` each rather than a padding plus a gap.
 
          The shell writes no inline gap on this surface, so removing the rule
-         leaves row-gap at its initial value. The dashboard's shell still
-         writes `gap:16px` inline and has no sheet at all, so it is untouched
-         either way. */
+         leaves row-gap at its initial value. The dashboard uses a separate
+         wide-grid sheet, so this booking-only rule cannot affect it. */
 
       // ---- below the site's mobile breakpoint ----
       '@media (max-width:767.98px){',
@@ -1380,8 +1432,8 @@
        booking surface the injected sheet owns their look, because an inline
        declaration outranks every rule in it and the OS-default select Jerico
        objected to is exactly what those inline pixels produce. Every other
-       surface keeps them untouched — the dashboard's reschedule calendar has
-       no sheet to take over. */
+       surface keeps them untouched. The dashboard's small layout sheet places
+       the wrapper but does not take over the control's appearance. */
     const label = global.document.createElement('span')
     if (!onBookingSurface) {
       applyStyles(label, { color: ENGINE_MUTED_INK, fontSize: '13px' })
@@ -1445,6 +1497,7 @@
        dashboard's reschedule calendar takes none of it. */
     const bookingSurface = bookingSurfaceFor(container)
     const onBookingSurface = Boolean(bookingSurface)
+    if (!onBookingSurface) ensureDashboardCalendarLayout(global.document)
     if (onBookingSurface) {
       ensureBookingCalendarLayout(global.document)
       /* The authored step this calendar lives in, marked so the sheet can
@@ -1480,7 +1533,7 @@
      *
      * The tone is a booking-surface concern (it is what the injected sheet
      * keys on), so it is not written on the dashboard's reschedule calendar:
-     * that surface has no sheet to read it and has to stay as it shipped.
+     * that surface's layout-only sheet has no tone rules to read it.
      */
     function setStatus(text, tone) {
       status.textContent = text || ''
@@ -1914,12 +1967,18 @@
       }
     })
 
-    calendarPanel.appendChild(calendarHost)
-    calendarPanel.appendChild(timezoneControl.wrapper)
-    layout.appendChild(calendarPanel)
-    timePanel.appendChild(times)
-    layout.appendChild(timePanel)
-    shell.appendChild(layout)
+    if (onBookingSurface) {
+      calendarPanel.appendChild(calendarHost)
+      calendarPanel.appendChild(timezoneControl.wrapper)
+      layout.appendChild(calendarPanel)
+      timePanel.appendChild(times)
+      layout.appendChild(timePanel)
+      shell.appendChild(layout)
+    } else {
+      shell.appendChild(calendarHost)
+      shell.appendChild(timezoneControl.wrapper)
+      shell.appendChild(times)
+    }
     shell.appendChild(footer || confirm)
     shell.appendChild(status)
     container.appendChild(shell)
@@ -2643,6 +2702,7 @@
     authenticatedPost,
     authoredClassList,
     ensureBookingCalendarLayout,
+    ensureDashboardCalendarLayout,
     bookingPayload,
     bookingRequestFingerprint,
     canonicalPaidPrice,
