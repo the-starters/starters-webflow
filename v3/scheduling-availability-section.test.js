@@ -1964,6 +1964,71 @@ test('calendar-preview uses the existing jQuery UI library for a stylable month 
     )[0],
     false,
   )
+
+  const timezoneControl = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone-control"]',
+  )
+  const timezoneSelect = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone"]',
+  )
+  const calendarColumn = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-calendar-column"]',
+  )
+  assert.ok(timezoneControl)
+  assert.ok(timezoneSelect)
+  assert.equal(timezoneSelect.value, 'Asia/Manila')
+  assert.equal(calendarColumn.children.indexOf(timezoneControl) > calendarColumn.children.indexOf(calendar), true)
+})
+
+test('calendar-preview timezone selector converts slots without a write or another availability read', async () => {
+  const start = Math.floor(Date.UTC(2026, 8, 2, 4, 30) / 1000)
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-free',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: start }] },
+      }),
+    },
+  })
+  await settle()
+
+  const initialWrites = calls.filter((call) => call.method !== 'GET').length
+  const initialReads = calls.filter((call) => call.path === '/scheduler/get_availability/v3').length
+  let timezoneSelect = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone"]',
+  )
+  let times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(timezoneSelect.value, 'Asia/Manila')
+  assert.equal(times.children[0].textContent, '12:30 PM')
+
+  timezoneSelect.value = 'America/New_York'
+  timezoneSelect.dispatchEvent({ type: 'change', target: timezoneSelect })
+
+  timezoneSelect = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone"]',
+  )
+  times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(timezoneSelect.value, 'America/New_York')
+  assert.equal(times.children[0].textContent, '12:30 AM')
+  assert.equal(calls.filter((call) => call.method !== 'GET').length, initialWrites)
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    initialReads,
+  )
 })
 
 test('calendar-preview selects Free or Paid dates and times without creating a booking', async () => {

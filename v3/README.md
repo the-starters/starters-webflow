@@ -2755,8 +2755,13 @@ and Paid service returned for the starter's grant. Free shows its duration and
 `Free`; Paid shows its duration and canonical USD price. Selecting either
 service fetches that configuration's next upcoming Nylas scheduler slots
 (`scheduler/get_availability/v3`, GET) and renders the available dates and
-times, replacing its loader. Only a record that declares what the card states
-enters the preview: an explicit `is_paid` boolean and the host's own
+times, replacing its loader. A preview-only timezone selector sits below the
+month calendar and above the time slots. It starts in the Starter's canonical
+timezone and uses the same DST-aware IANA timezone labels as the Hire booking
+calendar. Changing it regroups and reformats the slots already in memory. It
+does not persist the timezone, update availability, fetch slots again, or create
+a booking. Only a record that declares what the card states enters the preview:
+an explicit `is_paid` boolean and the host's own
 `data_environment` when the record carries one; Paid additionally requires the
 canonical 60-minute duration, `active: true`, a price of at least $1, a
 declared currency of USD, the host's own `payment_environment` when declared,

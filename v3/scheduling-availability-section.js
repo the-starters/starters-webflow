@@ -116,6 +116,7 @@
   let selectedPreviewConfigId = null
   let selectedPreviewDateKey = null
   let selectedPreviewSlotStart = null
+  let selectedPreviewTimezone = null
   let previewRenderVersion = 0
   // Set by the per-item "open-item-remove" trigger, consumed by the
   // notification modal's "item-remove" confirm button.
@@ -2194,7 +2195,7 @@
         hour: '2-digit',
         minute: '2-digit',
         hour12: true,
-        timeZone: timezone || undefined,
+        timeZone: selectedPreviewTimezone || timezone || undefined,
       }).format(date)
     } catch (error) {
       return date.toString()
@@ -2208,7 +2209,7 @@
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
-        timeZone: timezone || undefined,
+        timeZone: selectedPreviewTimezone || timezone || undefined,
       }).formatToParts(date)
       const values = {}
       parts.forEach(function (part) {
@@ -2227,7 +2228,7 @@
         weekday: 'short',
         month: 'short',
         day: 'numeric',
-        timeZone: timezone || undefined,
+        timeZone: selectedPreviewTimezone || timezone || undefined,
       }).format(date)
     } catch (error) {
       return date.toDateString()
@@ -2241,7 +2242,7 @@
         hour: 'numeric',
         minute: '2-digit',
         hour12: true,
-        timeZone: timezone || undefined,
+        timeZone: selectedPreviewTimezone || timezone || undefined,
       }).format(date)
     } catch (error) {
       return date.toTimeString().slice(0, 5)
@@ -2259,6 +2260,122 @@
       String(date.getMonth() + 1).padStart(2, '0'),
       String(date.getDate()).padStart(2, '0'),
     ].join('-')
+  }
+
+  function timezoneLabel(timezoneName, referenceSeconds) {
+    const zone = String(timezoneName || '').trim()
+    if (!zone) return ''
+    const referenceMs = Number.isFinite(Number(referenceSeconds))
+      ? Number(referenceSeconds) * 1000
+      : Date.now()
+    let offset = ''
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: zone,
+        timeZoneName: 'short',
+      }).formatToParts(new Date(referenceMs))
+      const name = parts.find(function (part) {
+        return part.type === 'timeZoneName'
+      })
+      offset = String((name && name.value) || '').trim()
+    } catch (error) {
+      offset = ''
+    }
+    return offset && offset !== zone ? zone + ' (' + offset + ')' : zone
+  }
+
+  function supportedTimezones(initialTimezone) {
+    let values = []
+    if (typeof Intl.supportedValuesOf === 'function') {
+      try {
+        values = Intl.supportedValuesOf('timeZone')
+      } catch (error) {
+        values = []
+      }
+    }
+    if (!values.length) {
+      values = [
+        'UTC',
+        'Pacific/Honolulu',
+        'America/Anchorage',
+        'America/Los_Angeles',
+        'America/Denver',
+        'America/Chicago',
+        'America/New_York',
+        'America/Sao_Paulo',
+        'Europe/London',
+        'Europe/Paris',
+        'Europe/Berlin',
+        'Africa/Johannesburg',
+        'Asia/Dubai',
+        'Asia/Kolkata',
+        'Asia/Bangkok',
+        'Asia/Manila',
+        'Asia/Singapore',
+        'Asia/Hong_Kong',
+        'Asia/Tokyo',
+        'Australia/Perth',
+        'Australia/Sydney',
+        'Pacific/Auckland',
+      ]
+    }
+    const unique = Array.from(
+      new Set(
+        values
+          .map(function (value) {
+            return String(value || '').trim()
+          })
+          .filter(Boolean),
+      ),
+    )
+    if (initialTimezone && !unique.includes(initialTimezone)) unique.unshift(initialTimezone)
+    if (!unique.includes('UTC')) unique.unshift('UTC')
+    return unique
+  }
+
+  function renderPreviewTimezoneControl(container, slots, wrapper) {
+    const activeTimezone = selectedPreviewTimezone || timezone || 'UTC'
+    const control = applyStyles(document.createElement('label'), {
+      display: 'grid',
+      gap: '6px',
+      width: 'min(100%, 320px)',
+      marginTop: '12px',
+    })
+    control.setAttribute(EL, 'preview-timezone-control')
+
+    const caption = previewText('span', 'Timezone', {
+      color: '#6f746d',
+      fontSize: '12px',
+    })
+    const select = applyStyles(document.createElement('select'), {
+      width: '100%',
+      minHeight: '42px',
+      padding: '8px 36px 8px 12px',
+      border: '1px solid #d7d9d2',
+      borderRadius: '6px',
+      background: '#ffffff',
+      color: '#1f211d',
+      fontSize: '14px',
+      cursor: 'pointer',
+    })
+    select.setAttribute(EL, 'preview-timezone')
+    select.setAttribute('aria-label', 'Timezone')
+    supportedTimezones(activeTimezone).forEach(function (timezoneName) {
+      const option = document.createElement('option')
+      option.value = timezoneName
+      option.textContent = timezoneLabel(timezoneName, slots[0])
+      select.appendChild(option)
+    })
+    select.value = activeTimezone
+    select.addEventListener('change', function () {
+      selectedPreviewTimezone = select.value || activeTimezone
+      selectedPreviewDateKey = null
+      selectedPreviewSlotStart = null
+      renderSlotsList(wrapper, slots)
+    })
+    control.appendChild(caption)
+    control.appendChild(select)
+    container.appendChild(control)
   }
 
   function configStamp(value) {
@@ -2454,7 +2571,6 @@
       marginBottom: '10px',
     })
     heading.appendChild(previewText('strong', 'Next available times', { fontSize: '14px' }))
-    heading.appendChild(previewText('span', timezone || '', { color: '#6f746d', fontSize: '11px' }))
     calendar.appendChild(heading)
     shell.appendChild(calendar)
     mount.appendChild(shell)
@@ -2589,6 +2705,7 @@
       dates.appendChild(dateButton)
     })
     calendarColumn.appendChild(dates)
+    renderPreviewTimezoneControl(calendarColumn, slots, wrapper)
     pickerLayout.appendChild(calendarColumn)
 
     const timesColumn = applyStyles(document.createElement('div'), {
@@ -2727,6 +2844,7 @@
       selectedPreviewConfigId = null
       selectedPreviewDateKey = null
       selectedPreviewSlotStart = null
+      selectedPreviewTimezone = null
       previewRenderVersion = 0
       grantId = null
       grantEmail = null
@@ -2744,6 +2862,7 @@
       grantCalendarId = (starterRecord && starterRecord.nylas_calendar_id) || null
 
       timezone = await resolveTimezone(starterRecord, false)
+      selectedPreviewTimezone = timezone
 
       if (oauthCallback) {
         await consumeOAuthCallback()
