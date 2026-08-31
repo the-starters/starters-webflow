@@ -2201,6 +2201,23 @@ and every payment control also stay hidden. There is no hard 24-hour cutoff on
 cancel or reschedule; late-change copy can warn the participant but must never
 block the action.
 
+The authored reschedule-calendar panels can include a
+`[booking-calendar-loader]` wrapper. The controller shows it as flex while it
+loads both the calendar module and canonical availability, then hides it after
+the current mount paints or fails. Closing, resetting, or switching the modal
+also hides it. A stale overlapping mount cannot hide the loader owned by the
+current mount. Without this wrapper, the calendar mount shows the text fallback
+`Loading available times...` instead.
+
+From 768px up, the dashboard calendar uses a small sheet scoped only to
+`[data-modal-target="popup-booking-info"]`. The month occupies the left column.
+The timezone control sits at the top of the right column, with the times below
+it, and the plain confirm control spans the bottom row. At narrower widths the
+engine's document order stays in control: month, timezone, times, then confirm.
+This dashboard sheet does not include the `/hire` footer, status, button, or
+datepicker appearance rules. The full `/hire` surface contract remains in the
+[Hire Profile wiring reference](HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
+
 `dashboard-call-actions.js` owns the details dialog's authored Back and Close
 controls on both dashboards. Populate starts with Back hidden on whichever panel
 it opens, base or the authored terminal panel described above; moving to another
@@ -3530,13 +3547,12 @@ flowchart TD
 1. Read the next 14 days through authenticated
    `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
    the provider credential and private Scheduler session off the browser.
-2. Render the month calendar, timezone dropdown, time buttons and footer row
-   inside the authored `[nylas-container]` mount. In a wide mount, the month
-   calendar and left-aligned timezone dropdown form the left column, with the
-   dropdown below the calendar; the time buttons form the right column. The two
-   columns automatically stack to calendar, timezone, then time buttons when
-   the mount is narrow. The footer remains below the responsive layout. The
-   selected slot is advisory only.
+2. Render the month calendar, timezone dropdown, time buttons and confirmation
+   row inside the authored `[nylas-container]` mount. In a wide mount, the month
+   calendar spans the left column. The timezone dropdown sits at the top of the
+   right column, with the time buttons below it. The confirmation row spans both
+   columns. A narrow mount uses the document order: calendar, timezone, time
+   buttons, then confirmation. The selected slot is advisory only.
 
    The timezone dropdown defaults to the visitor's browser timezone.
    Changing it clears the selected slot, regroups slots by local date and
@@ -3605,9 +3621,9 @@ flowchart TD
 
    Owning that booking-modal treatment means the engine writes no inline
    styles on the wrapper, caption, or select there: inline declarations would
-   outrank the injected sheet. Other mounts, including the dashboard's
-   reschedule calendar, retain the original inline placement and appearance
-   because no sheet is injected for them.
+   outrank the injected sheet. The dashboard keeps the original inline
+   appearance. Its separate layout contract is owned by the
+   [dashboard call section](#dashboard-call-sections).
 
    The calendar is two columns from 768px up — month on the left, times on the
    right — with the footer spanning BOTH columns on its own row underneath as a
@@ -3667,15 +3683,14 @@ flowchart TD
    `display` and both gaps to the sheet, because an inline declaration outranks
    any stylesheet rule: a `gap` shorthand would pin the column gap with it, and
    an inline `display` would stop the mobile block swapping the grid for the
-   flex column the sticky footer needs. The engine's three responsive wrappers —
-   the `layout` box around the two panels, the `calendar-panel` box around the
-   month and the caption, and the `time-panel` box around the chips — are
-   skipped on this surface for the same reason, and the sheet collapses them
-   with `display:contents` so the month, the caption, the chips and the footer
-   are placed by the shell's own grid and flex column. The dashboard's shell
-   still writes `display` and `gap` inline, and its wrappers keep the inline
-   columns they ship with — the month with the caption under it on the left and
-   the chips on the right — unchanged. Below 768px it stays one column and
+   flex column the sticky footer needs. The engine keeps its three responsive
+   wrappers on this surface: the `layout` box around the two panels, the
+   `calendar-panel` box around the month and the caption, and the `time-panel`
+   box around the chips. The sheet collapses them with `display:contents` so the
+   month, the caption, the chips and the footer are placed by the shell's own
+   grid and flex column. The dashboard omits those wrappers so its month,
+   timezone, times, and confirm controls are direct children of its shell.
+   Below 768px it stays one column and
    the two buttons stack full width with the primary on
    top, and the frame comes with them: stacked, there is no column gap to hand
    the inner edges to, so the month is framed on all four sides and the times
@@ -3704,18 +3719,18 @@ flowchart TD
    a body `<style>` and which otherwise wins on source order.
 
    A media query cannot be an inline style, so this is one id-guarded `<style>`
-   injected into the head once per document. **Every rule is scoped under
-   `[data-modal-target="popup-booking"]`**, which is what keeps the contract
-   form's `.ui-datepicker` fields and the dashboard's reschedule calendar
-   untouched, and no rule uses `!important`.
+   injected into the head once per document. **Every rule in this booking
+   sheet is scoped under `[data-modal-target="popup-booking"]`**, which keeps
+   the contract form's `.ui-datepicker` fields and the dashboard's calendar
+   appearance untouched, and no rule uses `!important`.
 
-   Off the booking surface — the dashboard's reschedule calendar mounts this
-   same engine — nothing changed: no back control, no footer, no injected
-   stylesheet, no status tone attribute, a status line that keeps its inline
-   grey, and a plain single-element confirm that still reads
-   `data-booking-confirm-class` and otherwise keeps its inline fallback look.
-   Display and `aria-hidden` on the back control belong to `hire-profile.js`,
-   never to this file.
+   Off the booking surface, the dashboard's reschedule calendar mounts this
+   same engine without a back control or footer. It keeps the inline grey status
+   line, writes no status tone attribute, and uses a plain single-element
+   confirm that reads `data-booking-confirm-class`. Its separate, layout-only
+   sheet is documented in the [dashboard call section](#dashboard-call-sections).
+   Display and `aria-hidden` on the booking back control belong to
+   `hire-profile.js`, never to this file.
 3. When the Brand confirms a slot, read payment readiness. A canonical
    `bookable=true` result can continue directly to the booking command.
 4. If no ready payment method exists, retain that exact selected slot and open

@@ -362,9 +362,10 @@ target, and the click lands on the overlaid `.clickable_btn` — and it is the
 node this script hides and writes `aria-hidden` on, so the component disappears
 whole.
 
-Off the booking surface nothing changed: the reschedule calendar still gets a
-plain single-element confirm that reads `data-booking-confirm-class` and falls
-back to its own inline styles.
+Off the booking surface, the reschedule calendar still gets a plain
+single-element confirm that reads `data-booking-confirm-class` and falls back
+to its own inline styles. Its separate dashboard grid only places that control;
+it does not change the confirm's appearance contract.
 
 The engine also injects one id-guarded `<style>` (`starters-booking-calendar-layout`)
 carrying what inline styles cannot: the two responsive layouts, the interior
@@ -382,15 +383,16 @@ split are owned by the [paid-call client reference](README.md#brand-paid-call-pa
 Stacked, `order` holds that control
 between the month and the first row of chips; the engine appends it under the
 month, ahead of the times, so document order already reads that way and its
-reading order matches its visual position at both widths. The engine's three
-responsive wrappers — `layout` around the two panels, `calendar-panel` around
-the month and the caption, `time-panel` around the chips — are skipped on this
-surface for the same outranking reason, and the sheet collapses them with
-`display:contents` so the sheet's own placement still reaches the elements
-inside them; off this surface they keep the inline columns they ship with. Every selector in that sheet is scoped under
+reading order matches its visual position at both widths. The engine keeps its
+three responsive wrappers on this surface: `layout` around the two panels,
+`calendar-panel` around the month and the caption, and `time-panel` around the
+chips. The booking sheet collapses them with `display:contents` so its placement
+reaches the elements inside them. The dashboard omits these wrappers so its
+month, timezone, times, and confirm controls are direct grid items. Every
+selector in the booking sheet is scoped under
 `[data-modal-target="popup-booking"]` and none uses `!important`; the contract
-form's datepickers and the dashboard's reschedule calendar share these class
-names and must stay pixel-identical.
+form's datepickers and the dashboard's reschedule calendar keep their existing
+painted styles.
 
 #### The footer frame contract (reversed August 2026)
 
@@ -479,9 +481,9 @@ with no height source, since the sheet zeroes the step wrapper's padding, and
 the dialog opened as a ~72px strip. Those two also carry the `1.25rem` interior
 frame and centre their message on both axes.
 
-None of this reaches the dashboard's reschedule calendar: no sheet is injected
-there, no tone attribute is written, and the status keeps the plain inline grey
-line it has always had.
+None of this status treatment reaches the dashboard's reschedule calendar. Its
+separate sheet contains only the wide grid, no tone attribute is written, and
+the status keeps the plain inline grey line it has always had.
 
 #### When the back control is on screen
 

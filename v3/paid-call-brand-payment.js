@@ -534,11 +534,10 @@
      Those rules declare their own `display:flex`, since only the fallback row
      carries an inline one.
 
-     OFF the booking surface — the dashboard's reschedule calendar mounts this
-     same engine — nothing changed at all: no footer, no back control, and a
-     plain single-element confirm that still reads `data-booking-confirm-class`.
-     That surface has no design-system context to inherit and no guard
-     stylesheet, so it keeps the look it shipped with.
+     OFF the booking surface, the dashboard's reschedule calendar still has no
+     footer or back control. Its plain single-element confirm still reads
+     `data-booking-confirm-class`. The dashboard layout sheet only places that
+     control; it does not change this footer or appearance contract.
 
      Read order is container first, then the dialog the container sits in, so a
      page with several booking surfaces can style one of them differently
@@ -579,7 +578,8 @@
      containment story: the dashboard's reschedule calendar mounts this same
      engine into a different dialog, and the page has other jQuery-UI
      datepickers (the contract form's start and end dates) wearing the exact
-     same `.ui-datepicker` class. Scoping is what keeps both pixel-untouched.
+     same `.ui-datepicker` class. Scoping keeps their painted details
+     untouched; the dashboard gets only its separate, dialog-scoped grid.
 
      No `!important` anywhere. The page's datepicker rules are plain class
      selectors, so a descendant selector under the dialog attribute outranks
@@ -928,10 +928,10 @@
          caption, the times and the footer itself — in the shell's grid areas on
          desktop and its flex column on a phone — and those rules only reach them
          while they are the shell's own children. `display:contents` restores
-         that without touching the DOM the engine builds, so the dashboard's
-         reschedule calendar keeps the nested columns it just gained, including
-         the caption grouped under the month. The engine writes no inline display
-         on any of the three here, so this rule is unopposed. */
+         that without changing the booking-surface DOM. The dashboard omits
+         these wrappers so its month, timezone, times, and confirm controls are
+         direct grid items. The engine writes no inline display on any of the
+         three wrappers here, so this rule is unopposed. */
       role + '"layout"],' + role + '"calendar-panel"],' + role + '"time-panel"]{display:contents}',
       /* Jerico's inline min-height, moved to the sheet. See CALENDAR_MIN_HEIGHT
          — with the banner out of flow, the empty-availability panel has only a
@@ -1008,9 +1008,8 @@
          `1.25rem` each rather than a padding plus a gap.
 
          The shell writes no inline gap on this surface, so removing the rule
-         leaves row-gap at its initial value. The dashboard's shell still
-         writes `gap:16px` inline and has no sheet at all, so it is untouched
-         either way. */
+         leaves row-gap at its initial value. The dashboard uses a separate
+         wide-grid sheet, so this booking-only rule cannot affect it. */
 
       // ---- below the site's mobile breakpoint ----
       '@media (max-width:767.98px){',
@@ -1433,8 +1432,8 @@
        booking surface the injected sheet owns their look, because an inline
        declaration outranks every rule in it and the OS-default select Jerico
        objected to is exactly what those inline pixels produce. Every other
-       surface keeps them untouched — the dashboard's reschedule calendar has
-       no sheet to take over. */
+       surface keeps them untouched. The dashboard's small layout sheet places
+       the wrapper but does not take over the control's appearance. */
     const label = global.document.createElement('span')
     if (!onBookingSurface) {
       applyStyles(label, { color: ENGINE_MUTED_INK, fontSize: '13px' })
@@ -1534,7 +1533,7 @@
      *
      * The tone is a booking-surface concern (it is what the injected sheet
      * keys on), so it is not written on the dashboard's reschedule calendar:
-     * that surface has no sheet to read it and has to stay as it shipped.
+     * that surface's layout-only sheet has no tone rules to read it.
      */
     function setStatus(text, tone) {
       status.textContent = text || ''
