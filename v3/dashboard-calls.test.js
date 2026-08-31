@@ -1484,6 +1484,7 @@ function detailModalHarness() {
     group.querySelector = (selector) => selector === '[booking-element]' ? field : null
     field.closest = (selector) => selector === '[booking-element-wrap]' ? group : null
     if (name === 'meeting-link') field.href = 'stale'
+    if (name === 'brand-message-link') field.href = '/messages'
     groups.push(group)
     return field
   }
@@ -1501,6 +1502,7 @@ function detailModalHarness() {
     'reschedule-reason',
     'cancel-reason',
     'meeting-link',
+    'brand-message-link',
   ].forEach((name) => {
     const field = fieldNode(name)
     fields[name] = field
@@ -1540,6 +1542,7 @@ function detailModalHarness() {
   const createIntent = element({ 'payment-action-btn': 'create-intent' })
   const addPayment = element({ 'payment-action-btn': 'add-card' })
   const legacyPayment = element({ 'booking-pm-action': 'confirm' })
+  const message = element({ 'booking-action-btn': 'message' })
   const actions = [
     close,
     back,
@@ -1551,6 +1554,7 @@ function detailModalHarness() {
     createIntent,
     addPayment,
     legacyPayment,
+    message,
   ]
   const modal = element({ 'popup-booking-info': '' })
   modal.querySelector = (selector) => {
@@ -1578,6 +1582,7 @@ function detailModalHarness() {
     confirmation,
     duplicatePayment,
     fields,
+    message,
     modal,
     panelCopies,
     pendingDuplicate,
@@ -3401,4 +3406,78 @@ test('anchor adoption ignores missing, identical, and inert tiles', () => {
   assert.equal(api.adoptSectionAnchors(source, source), 0)
   assert.equal(api.adoptSectionAnchors({}, element()), 0)
   assert.equal(api.adoptSectionAnchors(source, {}), 0)
+})
+
+test('bookingMessageHref builds the counterpart deep link per role', () => {
+  assert.equal(
+    api.bookingMessageHref('starter', { brand_data: { memberstack_id: 'mem_b1' } }),
+    '/messages?with=mem_b1',
+  )
+  assert.equal(
+    api.bookingMessageHref('brand', { starter_data: { memberstack_id: 'mem_s1' } }),
+    '/messages?with=mem_s1',
+  )
+  assert.equal(api.bookingMessageHref('brand', { starter_data: {} }), '')
+  assert.equal(api.bookingMessageHref('starter', null), '')
+})
+
+test('details populate restores the authored Messages tab link', () => {
+  const view = detailModalHarness()
+  const link = view.fields['brand-message-link']
+  // resetDetailModal clears authored booking-element nodes; the next populate
+  // must restore the link's text, destination, and visibility.
+  link.textContent = ''
+  link.hidden = true
+  const booking = {
+    booking_id: 'free-msg',
+    status: 'confirmed',
+    start: 10_000,
+    duration: 30,
+    brand_data: { name: 'Brand', timezone: 'UTC', memberstack_id: 'mem_b1' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+
+  assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 2_000), true)
+  assert.equal(link.href, '/messages?with=mem_b1')
+  assert.equal(link.textContent, 'Messages tab')
+  assert.equal(link.hidden, false)
+})
+
+test('modal Message button shows only with a known counterpart id', () => {
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'free-msg-btn',
+    status: 'confirmed',
+    start: 10_000,
+    duration: 30,
+    brand_data: { name: 'Brand', timezone: 'UTC', memberstack_id: 'mem_b1' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+  api.populateDetailModal(view.modal, booking, 'starter', 2_000)
+  assert.equal(view.message.hidden, false)
+
+  const anonymous = detailModalHarness()
+  delete booking.brand_data.memberstack_id
+  api.populateDetailModal(anonymous.modal, booking, 'starter', 2_000)
+  assert.equal(anonymous.message.hidden, true)
+})
+
+test('card Message button shows only with a known counterpart id', () => {
+  const message = element({ 'booking-card-action-btn': 'message' })
+  const card = {
+    querySelectorAll() {
+      return [message]
+    },
+  }
+  api.configureActionButtons(card, 'brand', 'confirmed', {
+    status: 'confirmed',
+    starter_data: { memberstack_id: 'mem_s1' },
+  })
+  assert.equal(message.hidden, false)
+
+  api.configureActionButtons(card, 'brand', 'confirmed', {
+    status: 'confirmed',
+    starter_data: {},
+  })
+  assert.equal(message.hidden, true)
 })
