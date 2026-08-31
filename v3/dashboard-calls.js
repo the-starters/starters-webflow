@@ -1,7 +1,7 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
- * @release v1.59.453
+ * @release v1.59.455
  *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
@@ -1040,20 +1040,32 @@
         supplement.setAttribute('data-starters-call-summary', '')
         supplement.style.display = 'flex'
         supplement.style.flexDirection = 'column'
-        supplement.style.gap = '8px'
+        supplement.style.gap = '16px'
         supplement.style.width = '100%'
         supplement.style.marginTop = '12px'
         panel.appendChild(supplement)
       }
       supplement.textContent = ''
 
+      const rowGroup = document.createElement('div')
+      rowGroup.setAttribute('data-starters-call-summary-rows', '')
+      rowGroup.style.display = 'flex'
+      rowGroup.style.flexDirection = 'column'
+      rowGroup.style.width = '100%'
+      rowGroup.style.border = '1px solid #e2e2e2'
+      rowGroup.style.borderRadius = '2px'
+      rowGroup.style.overflow = 'hidden'
+
       rows.forEach(function (row) {
         if (authoritative.indexOf(row.field) !== -1) return
         const line = document.createElement('div')
         line.setAttribute('data-starters-call-summary-row', row.field)
         line.style.display = 'grid'
-        line.style.gridTemplateColumns = 'minmax(110px, auto) 1fr'
-        line.style.gap = '12px'
+        line.style.gridTemplateColumns = 'minmax(120px, 34%) 1fr'
+        line.style.gap = '16px'
+        line.style.padding = '14px 16px'
+        line.style.borderBottom = '1px solid #e2e2e2'
+        line.style.alignItems = 'center'
         line.style.fontSize = '14px'
         line.style.lineHeight = '1.4'
         const label = document.createElement('strong')
@@ -1062,20 +1074,38 @@
         value.textContent = row.value
         line.appendChild(label)
         line.appendChild(value)
-        supplement.appendChild(line)
+        rowGroup.appendChild(line)
         rendered += 1
       })
 
+      if (rowGroup.childNodes && rowGroup.childNodes.length) {
+        const lastRow = rowGroup.childNodes[rowGroup.childNodes.length - 1]
+        if (lastRow && lastRow.style) lastRow.style.borderBottom = '0'
+        supplement.appendChild(rowGroup)
+      }
+
       if (counterpartId) {
+        const actions = document.createElement('div')
+        actions.setAttribute('data-starters-call-summary-actions', '')
+        actions.style.display = 'flex'
+        actions.style.justifyContent = 'flex-end'
+        actions.style.width = '100%'
         const message = document.createElement('a')
         message.setAttribute('data-starters-call-message', '')
         message.href = '/messages?with=' + encodeURIComponent(counterpartId)
         message.textContent = role === 'starter' ? 'Message Brand' : 'Message Starter'
-        message.style.alignSelf = 'flex-start'
-        message.style.marginTop = '4px'
+        message.style.display = 'inline-flex'
+        message.style.alignItems = 'center'
+        message.style.justifyContent = 'center'
+        message.style.minHeight = '44px'
+        message.style.padding = '10px 20px'
+        message.style.borderRadius = '4px'
+        message.style.backgroundColor = '#1f231f'
+        message.style.color = '#ffffff'
         message.style.fontWeight = '600'
-        message.style.textDecoration = 'underline'
-        supplement.appendChild(message)
+        message.style.textDecoration = 'none'
+        actions.appendChild(message)
+        supplement.appendChild(actions)
         rendered += 1
       }
       const populated = Boolean(supplement.childNodes && supplement.childNodes.length)
