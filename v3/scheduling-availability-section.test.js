@@ -1340,6 +1340,74 @@ test('a stale/programmatic connect-platform click is ignored while a Google-back
   assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
 })
 
+test('a Nylas grant persisted without a calendar stays repairable through Connect Platform', async () => {
+  // Reproduces the half-built virtual grant: /grants/add_virtual/v3 persisted
+  // nylas_grant_id but /grants/create_virtual_calendar/v3 failed, so the
+  // reloaded member holds a grant that can serve neither availability nor
+  // bookings. Platform must read Disconnected and keep offering the rebuild.
+  const { dom, calls, window, state } = loadSection({
+    serverState: {
+      grantId: 'orphan-grant',
+      grantEmail: 'virtual@example.com',
+      calendarId: null,
+      availability: {
+        items: { general: { days: [1], start: '09:00', end: '17:00', defaultDays: [1] } },
+        manager: null,
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+  assert.equal(dom.labelGroup.children[0].style.display, '') // Platform disconnected
+  assert.equal(dom.labelGroup.children[1].style.display, 'none') // not "Connected"
+  assert.equal(dom.connectBtnWrapper.children[0].style.display, '') // connect-platform
+  assert.equal(dom.connectBtnWrapper.children[2].style.display, 'none') // no Google to disconnect
+
+  dom.connectBtnWrapper.children[0].click() // connect-platform rebuilds over it
+  await settle()
+
+  const deleteCall = calls.find((call) => call.path === '/grants/delete/v3')
+  assert.ok(deleteCall, 'expected the half-built grant to be deleted first')
+  assert.equal(deleteCall.body.in_grant_id, 'orphan-grant')
+  const paths = calls.map((call) => call.path)
+  assert.ok(
+    paths.indexOf('/grants/delete/v3') < paths.indexOf('/grants/create_virtual_account/v3'),
+  )
+  assert.equal(dom.notif.steps['virtual-connected'].style.display, '')
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(state.grantId, 'vgrant-1')
+  assert.equal(state.calendarId, 'vcal-1')
+  assert.equal(state.availability.manager, 'platform')
+  assert.equal(dom.labelGroup.children[1].style.display, '') // Platform connected
+  assert.equal(dom.connectBtnWrapper.children[0].style.display, 'none')
+})
+
+test('a half-built Google-backed grant keeps the confirmed disconnect path instead of Connect Platform', async () => {
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'google-grant',
+      grantEmail: 'g@example.com',
+      calendarId: null,
+      availability: {
+        items: { general: { days: [1], start: '09:00', end: '17:00', defaultDays: [1] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(dom.labelGroup.children[3].style.display, '') // Google connected
+  assert.equal(dom.connectBtnWrapper.children[0].style.display, 'none') // connect-platform
+  assert.equal(dom.connectBtnWrapper.children[2].style.display, '') // open-disconnect-google
+
+  dom.connectBtnWrapper.children[0].click()
+  await settle()
+
+  assert.equal(calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+})
+
 test('OAuth cancellation rebuilds platform scheduling and restores the saved paid service', async () => {
   const result = loadSection({
     search: '?error=access_denied&error_description=cancelled&state=member-a',

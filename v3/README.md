@@ -2766,20 +2766,25 @@ component-variant class swap (`w-variant-89402c65-…` default,
 `data-availability-element="connect-label"` carries `data-type="false"|"true"`
 (the disconnected / connected copy) and `data-manager="platform"|"calendar"`
 (which connection layer the label describes). `platform` means a canonical
-Nylas grant exists. `calendar` means that grant is backed by the member's
+Nylas grant that owns its calendar (`nylas_grant_id` *and*
+`nylas_calendar_id`). `calendar` means that grant is backed by the member's
 Google account (`availability.manager === "calendar"`). A Google connection
 therefore makes both Platform and Google connected. The canonical shape is one
 `false`/`true` pair per layer, so both rows state their independent status.
 
 Visibility is decided per label, never group-wide. A `platform` label tracks
-whether `nylas_grant_id` exists. A `calendar` label tracks whether that grant
-exists and `availability.manager === "calendar"`. An untagged
+whether the grant owns a calendar id: a grant persisted without one (the
+virtual account was added but `create_virtual_calendar` failed) can serve
+neither availability nor bookings, so it reads Disconnected rather than
+claiming a connection the member cannot use. A `calendar` label tracks whether
+a grant exists and `availability.manager === "calendar"`, so a Google-backed
+grant stays readable even in that half-built shape. An untagged
 `data-type="false"` label keeps the prior three-label markup's group-wide
-meaning and shows only when no Nylas grant exists. The earlier shape (one
+meaning and shows only when neither layer is connected. The earlier shape (one
 shared "Disconnected" plus the two `[data-type="true"][data-manager]`
 variants) still renders correctly. A `connect-label-group` containing no
-`connect-label` children falls back to ordinal position: child 0 = no Nylas
-grant, child 1 = Nylas grant present.
+`connect-label` children falls back to ordinal position: child 0 = no
+connection, child 1 = at least one connected layer.
 
 Tagged labels render only when canonical state is readable: connected,
 reconnect, or disconnected. An error hides them rather than making an
@@ -2803,13 +2808,21 @@ console warning per action. Prefer adding the wrapper attributes over relying
 on the fallback long-term.
 
 The three `connect-btn-wrapper` actions follow the two-layer state matrix. With
-no Nylas grant, Connect Platform and Connect Google show. With a virtual Nylas
+no connection, Connect Platform and Connect Google show. With a virtual Nylas
 grant, only Connect Google shows. With a Google-backed Nylas grant, only
-Disconnect Google shows. Connect Platform is never valid while any Nylas grant
-exists, and a stale or programmatic click is ignored.
+Disconnect Google shows. Connect Platform is never valid while either layer is
+connected, and a stale or programmatic click is ignored.
+
+A grant left behind without a calendar id is not a connection, so Connect
+Platform stays available there and rebuilds over it: the flow deletes the
+half-built grant through the canonical `/grants/delete/v3` route before
+creating the replacement virtual grant, which is the member's self-serve
+recovery from a `create_virtual_calendar` failure. A half-built grant that is
+still Google-backed keeps the confirmed Disconnect Google path instead, so no
+live provider grant is ever deleted without the confirm step.
 
 Every action that deletes a live Google grant confirms first. Connect Platform
-is available only with no grant, so it opens the
+never touches a live Google grant, so it opens the
 `notification-type="virtual-connect"` spinner and creates the virtual Nylas
 calendar. Disconnect Google opens `notification-type="disconnect-calendar"`.
 After confirmation, the provider-first flow deletes the Google-backed grant

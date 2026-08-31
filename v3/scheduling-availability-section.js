@@ -312,6 +312,29 @@
   /* Connection state (mirrors scheduling-availability-writer.js)        */
   /* ------------------------------------------------------------------ */
 
+  // The canonical grant only becomes a usable Platform layer once Nylas has
+  // also created its calendar. A grant persisted without one (the virtual
+  // account was added but `create_virtual_calendar` failed) is a half-built
+  // layer that cannot serve availability or bookings, so it is not a
+  // connection.
+  function platformLayerConnected() {
+    return Boolean(grantId && grantCalendarId)
+  }
+
+  // Google is an independent provider fact carried by whatever grant exists,
+  // so it stays readable even when that grant is still missing its calendar.
+  function googleLayerConnected() {
+    return Boolean(grantId) && Boolean(availability && availability.manager === 'calendar')
+  }
+
+  // Connecting Platform creates a fresh virtual grant, so it is only offered
+  // when neither layer is connected: a usable Platform layer has nothing to
+  // add, and a Google-backed grant must go through the confirmed Google
+  // disconnect instead of being deleted from under the member.
+  function platformConnectAvailable() {
+    return !platformLayerConnected() && !googleLayerConnected()
+  }
+
   function deriveCalendarConnectionState() {
     const hasGrant = Boolean(grantId)
     const hasCalendar = Boolean(grantCalendarId)
@@ -1131,9 +1154,10 @@
   async function activatePlatformManager() {
     // Platform means the canonical Nylas connection layer. A Google-backed
     // grant is already a Platform connection, so this action is only valid
-    // when no canonical grant exists. Google disconnect owns the separate
-    // provider -> virtual-calendar transition.
-    if (connectBusy || grantId) return
+    // while neither layer is connected. Google disconnect owns the separate
+    // provider -> virtual-calendar transition. A grant left behind without a
+    // calendar is not a connection, so rebuilding over it is still valid.
+    if (connectBusy || !platformConnectAvailable()) return
     connectBusy = true
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
@@ -1141,7 +1165,20 @@
     let transition = null
     try {
       memberId = await writeMemberId()
+      // clearGrant is a no-op without a grant id, so this only ever deletes a
+      // half-built grant that never became a connection. Once the canonical
+      // route reports it gone, the local copy must go too — otherwise a
+      // failure below leaves the module re-issuing clearGrant against a
+      // deleted grant on every retry.
+      const clearedGrant = Boolean(grantId)
       transition = await clearGrant(grantId, memberId)
+      if (clearedGrant) {
+        grantId = null
+        grantEmail = null
+        grantCalendarId = null
+        configs = []
+        availability.manager = null
+      }
       const virtual = await createTransitionVirtualCalendar(
         memberId,
         transition.oauthIntent,
@@ -1565,9 +1602,9 @@
   // accepts) is owned by v3/README.md#booking-stage-availability-section.
   //
   // Visibility is decided per label, never group-wide. Platform names the
-  // canonical Nylas connection layer (`grantId`). Google names the provider
-  // connected through that layer (`manager === 'calendar'`). A Google-backed
-  // grant therefore renders both connected variants.
+  // canonical Nylas connection layer (a grant that owns its calendar). Google
+  // names the provider connected through that layer (`manager === 'calendar'`).
+  // A Google-backed grant therefore renders both connected variants.
   //
   // Tagged labels only render when canonical state is readable: 'connected',
   // 'reconnect', or 'disconnected'. 'error' hides them instead of making a
@@ -1576,9 +1613,9 @@
     if (state === 'loading') return
     const connectionReadable = state === 'connected' || state === 'reconnect'
     const statusKnown = connectionReadable || state === 'disconnected'
-    const manager = availability && availability.manager
-    const hasNylasConnection = statusKnown && Boolean(grantId)
-    const hasGoogleConnection = hasNylasConnection && manager === 'calendar'
+    const hasNylasConnection = statusKnown && platformLayerConnected()
+    const hasGoogleConnection = statusKnown && googleLayerConnected()
+    const anyConnection = hasNylasConnection || hasGoogleConnection
     const labels = qsa(elSel('connect-label'))
     if (labels.length) {
       labels.forEach(function (label) {
@@ -1594,7 +1631,7 @@
           ? statusKnown && isConnectedVariant === managerConnected
           : isConnectedVariant
             ? managerConnected
-            : !hasNylasConnection
+            : !anyConnection
         label.style.display = visible ? '' : 'none'
       })
       return
@@ -1603,8 +1640,8 @@
     // plain 2-child group, ordinal position 0 = disconnected, 1 = connected.
     const group = qs(elSel('connect-label-group'))
     if (!group || !group.children) return
-    if (group.children[0]) group.children[0].style.display = hasNylasConnection ? 'none' : ''
-    if (group.children[1]) group.children[1].style.display = hasNylasConnection ? '' : 'none'
+    if (group.children[0]) group.children[0].style.display = anyConnection ? 'none' : ''
+    if (group.children[1]) group.children[1].style.display = anyConnection ? '' : 'none'
   }
 
   // Platform is the canonical Nylas connection layer. Google is an
@@ -1613,11 +1650,9 @@
   function applyConnectButtonVisibility() {
     const wrapper = qs(elSel('connect-btn-wrapper'))
     if (!wrapper) return
-    const manager = availability && availability.manager
-    const hasNylasConnection = Boolean(grantId)
-    const hasGoogleConnection = hasNylasConnection && manager === 'calendar'
+    const hasGoogleConnection = googleLayerConnected()
     const rules = [
-      ['connect-platform', !hasNylasConnection],
+      ['connect-platform', platformConnectAvailable()],
       ['open-connect-google', !hasGoogleConnection],
       ['open-disconnect-google', hasGoogleConnection],
     ]
@@ -1659,10 +1694,10 @@
     const wrapper = qs(elSel('connect-btn-wrapper'))
     bindActionGroup(wrapper, ['connect-platform', 'open-connect-google', 'open-disconnect-google'], function (action) {
       if (action === 'connect-platform') {
-        // Any canonical grant already means Platform is connected. Ignore a
-        // stale/programmatic click rather than misrouting it into Google's
+        // A connected layer already covers Platform. Ignore a stale or
+        // programmatic click rather than misrouting it into Google's
         // disconnect modal.
-        if (grantId) {
+        if (!platformConnectAvailable()) {
           applyConnectButtonVisibility()
           return
         }
