@@ -3770,9 +3770,25 @@
     }
   }
 
+  // A `required` control that is display:none still fails constraint validation,
+  // and the browser cannot focus it to report the error, so the form silently
+  // refuses to submit and the button appears dead. Mirror visibility onto the
+  // constraint and restore it when the group comes back.
   function setEndProjectVisible(element, visible) {
     if (!element) return
     element.style.display = visible ? '' : 'none'
+    const controls = element.matches && element.matches('input, select, textarea')
+      ? [element]
+      : $$('input, select, textarea', element)
+    controls.forEach((control) => {
+      if (visible) {
+        if (control.dataset.endProjectRequired === 'true') control.required = true
+        delete control.dataset.endProjectRequired
+      } else if (control.required) {
+        control.dataset.endProjectRequired = 'true'
+        control.required = false
+      }
+    })
   }
 
   function paintEndProjectModal(modal, view, starterName) {
