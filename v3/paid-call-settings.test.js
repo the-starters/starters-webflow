@@ -52,12 +52,16 @@ test('preserves authored accessible names', async () => {
   assert.equal(result.dom.enabled.getAttribute('aria-label'), null)
 })
 
-test('preserves authored button text', async () => {
-  const result = load({ initial: canonical({ services: [] }), beforeLoad(dom) {
-    dom.save.textContent = 'Save paid call settings'
+test('preserves authored Webflow action text', async () => {
+  const result = load({ cardMode: true, initial: canonical({ services: [] }), beforeLoad(dom) {
+    dom.open.textContent = 'Edit'
+    dom.close.textContent = 'Cancel'
+    dom.save.textContent = 'Update'
   } })
   await settle()
 
+  assert.equal(result.dom.open.getAttribute('aria-label'), null)
+  assert.equal(result.dom.close.getAttribute('aria-label'), null)
   assert.equal(result.dom.save.getAttribute('aria-label'), null)
 })
 

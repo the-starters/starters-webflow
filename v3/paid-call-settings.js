@@ -481,8 +481,8 @@
     }
     if (labels.some(function (item) { return String(item.textContent || '').trim() })) return
 
+    if (String(control.textContent || '').trim()) return
     const tagName = String(control.tagName || '').toLowerCase()
-    if ((tagName === 'button' || tagName === 'a') && String(control.textContent || '').trim()) return
     if (tagName === 'input') {
       const type = String(control.getAttribute('type') || '').toLowerCase()
       if (
