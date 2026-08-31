@@ -1,7 +1,7 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
- * @release v1.59.455
+ * @release v1.59.456
  *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
@@ -698,11 +698,13 @@
       const accept =
         action === 'switch-confirm' &&
         canConfirmBooking(role, booking || { status: status }, now)
-      // Details is read-only. Accept is the first V3-native mutation. Every
-      // other legacy control stays hidden until it has a populated current
-      // endpoint contract and tests. In particular, never open empty
-      // Reschedule UI.
-      show(button, details || accept)
+      const message =
+        action === 'message' && bookingMessageHref(role, booking) !== ''
+      // Details and Message are read-only. Accept is the first V3-native
+      // mutation. Every other legacy control stays hidden until it has a
+      // populated current endpoint contract and tests. In particular, never
+      // open empty Reschedule UI.
+      show(button, details || accept || message)
     })
   }
 
@@ -930,10 +932,26 @@
     'reschedule-calendar',
   ]
 
+  /** Every authored Message control, link or button, card or modal. */
+  const MESSAGE_CONTROL_SELECTOR =
+    '[booking-action-btn="message"], [booking-card-action-btn="message"], ' +
+    '[booking-element="brand-message-link"], [booking-element="starter-message-link"]'
+
   function detailCounterpart(role, booking) {
     return role === 'starter'
       ? booking && booking.brand_data
       : booking && booking.starter_data
+  }
+
+  /**
+   * Deep link to the Messages thread with the booking's counterpart. Empty
+   * when the counterpart's Memberstack id is unknown, so callers can gate
+   * message controls on a usable destination instead of a dead '#'.
+   */
+  function bookingMessageHref(role, booking) {
+    const counterpart = detailCounterpart(role, booking)
+    const counterpartId = clean(counterpart && counterpart.memberstack_id)
+    return counterpartId ? '/messages?with=' + encodeURIComponent(counterpartId) : ''
   }
 
   function detailSupplementRows(booking, role, timezone) {
@@ -973,12 +991,20 @@
     }
   }
 
-  function panelHasUsableField(panel, name) {
+  /**
+   * Whether `panel` itself contains a node matching `selector` that currently
+   * renders. Every Designer-first decision inside a panel — an authored field
+   * and an authored Message control alike — asks this question, so both use the
+   * same probe: an authored hook counts as authoritative only while it renders,
+   * and only for the panel it renders in.
+   * @param {HTMLElement|null} panel Panel to search.
+   * @param {string} selector Selector, scoped to the panel's subtree.
+   * @returns {boolean} Whether a rendering match exists.
+   */
+  function panelHasUsableMatch(panel, selector) {
     if (!panel || typeof panel.querySelectorAll !== 'function') return false
     const panelRendered = renderedBoxCount(panel) > 0
-    return Array.prototype.slice.call(
-      panel.querySelectorAll('[booking-element="' + name + '"]'),
-    ).some(function (field) {
+    return Array.prototype.slice.call(panel.querySelectorAll(selector)).some(function (field) {
       const group = field.closest && field.closest('[booking-element-wrap]')
       if (
         field.hidden ||
@@ -994,6 +1020,10 @@
       if (panelRendered && renderedBoxCount(field) === 0) return false
       return true
     })
+  }
+
+  function panelHasUsableField(panel, name) {
+    return panelHasUsableMatch(panel, '[booking-element="' + name + '"]')
   }
 
   /**
@@ -1087,7 +1117,11 @@
         supplement.appendChild(rowGroup)
       }
 
-      if (counterpartId) {
+      // An authored message control (link or button) is authoritative; the
+      // module-owned duplicate renders only in a panel where the Designer has
+      // none that renders.
+      const authoredMessage = panelHasUsableMatch(panel, MESSAGE_CONTROL_SELECTOR)
+      if (counterpartId && !authoredMessage) {
         const actions = document.createElement('div')
         actions.setAttribute('data-starters-call-summary-actions', '')
         actions.style.display = 'flex'
@@ -1244,6 +1278,8 @@
           validDashboardModule(global.StartersDashboardCallMedia) &&
           typeof global.StartersDashboardCallMedia.canReadMedia === 'function' &&
           global.StartersDashboardCallMedia.canReadMedia(booking, status)
+        const message =
+          action === 'message' && bookingMessageHref(role, booking) !== ''
         if (action === 'reschedule') {
           if (!gates.rescheduleAnchor) gates.rescheduleAnchor = button
           if (proposeReschedule) gates.rescheduleShown = true
@@ -1263,7 +1299,8 @@
             cancel ||
             proposeReschedule ||
             respondReschedule ||
-            media,
+            media ||
+            message,
         )
       })
     const start = Number(booking && booking.start)
@@ -1356,6 +1393,22 @@
       show(meetingLink, showMeeting)
       const group = meetingLink.closest && meetingLink.closest('[booking-element-wrap]')
       if (group) show(group, showMeeting)
+    })
+
+    // Authored "Messages tab" links are Designer-owned copy; resetDetailModal
+    // clears and hides every [booking-element], so each populate pass must
+    // restore their text, destination, and visibility. Only the counterpart's
+    // identity row carries a thread: the signed-in member's own row would link
+    // to a conversation with itself.
+    const messageHref = bookingMessageHref(role, booking)
+    const counterpartMessageLink =
+      role === 'starter' ? 'brand-message-link' : 'starter-message-link'
+    bookingFields(modal, counterpartMessageLink).forEach(function (link) {
+      if ('href' in link) link.href = messageHref || '/messages'
+      if (clean(link.textContent) === '') link.textContent = 'Messages tab'
+      show(link, true)
+      const group = link.closest && link.closest('[booking-element-wrap]')
+      if (group) show(group, true)
     })
 
     const base = modal.querySelector('[booking-popup-content="base"]') || modal
@@ -1935,6 +1988,32 @@
     }, true)
   }
 
+  /**
+   * Navigates authored Message controls (card or modal) to the Messages
+   * thread with the booking's counterpart. The buttons are Designer-owned;
+   * this delegate only resolves the booking under the click and routes.
+   */
+  function wireBookingMessages(refs, role) {
+    if (!global.document || !global.document.addEventListener) return
+    global.document.addEventListener('click', function (event) {
+      const target = event && event.target
+      const button = target && target.closest
+        ? target.closest('[booking-action-btn="message"], [booking-card-action-btn="message"]')
+        : null
+      if (!button) return
+      const booking = bookingForActionTarget(refs, button)
+      const href = bookingMessageHref(role, booking)
+      if (!href) return
+      // Nothing to route to without a navigable host: leave the authored
+      // control's own behaviour intact rather than swallowing the click.
+      if (!global.location || typeof global.location.assign !== 'function') return
+      if (event.preventDefault) event.preventDefault()
+      if (event.stopImmediatePropagation) event.stopImmediatePropagation()
+      else if (event.stopPropagation) event.stopPropagation()
+      global.location.assign(href)
+    }, true)
+  }
+
   function resetIdentityState(refs, role) {
     clearBrandHero(role)
     resetDetailModal()
@@ -2062,6 +2141,7 @@
       wireSection(section, role)
     })
     wireBookingDetails(refs, role)
+    wireBookingMessages(refs, role)
     hideAuthoredDuplicates()
     resetIdentityState(refs, role)
 
@@ -2188,6 +2268,8 @@
     validDashboardModule,
     wireDashboardCallModules,
     wireBookingActions,
+    wireBookingMessages,
+    bookingMessageHref,
     boot,
   }
   if (!isCommonJs) configureProjectWrappers()

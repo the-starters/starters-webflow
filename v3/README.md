@@ -2127,7 +2127,9 @@ right-aligned `data-starters-call-summary-actions` area containing a
 role-correct `data-starters-call-message` button (`Message Brand` for the
 Starter, `Message Starter` for the Brand) pointing at
 `/messages?with=<counterpart memberstack_id>`; the button is omitted when the
-counterpart has no canonical Memberstack ID. The block is created once per
+counterpart has no canonical Memberstack ID, and — by the same
+renders-to-be-authoritative rule the rows follow — omitted from any panel that
+itself renders an authored Message control. The block is created once per
 panel, rebuilt on every populate, and cleared when the modal is reset, so no
 previous member's ID survives an identity change. Compose steps are excluded
 — `cancel-reason`, `decline-reason`, `reschedule`, and `reschedule-calendar`
@@ -2135,13 +2137,26 @@ never receive it, because a summary and a navigating Message link below a
 reason form or the slot picker would discard in-progress input.
 
 Confirmed calls can show their canonical meeting link; cancelled and archived
-calls cannot. Every authored payment or booking action stays hidden except
-Close, Back, the Starter's
-eligible pending-call Accept and Decline actions, the participant Cancel chain
-for eligible Free booked calls, and owner-scoped recording access for eligible
-completed or archived calls. These migrated actions remain inside View Details;
-card-level decline, cancel, media, and other legacy controls stay hidden. The
-exact Cancel and reschedule eligibility and feedback rules live in the
+calls cannot. The authored Message controls navigate to the counterpart's
+thread. Only the counterpart's identity row carries a link — the Starter's
+dashboard restores `brand-message-link`, the Brand's restores
+`starter-message-link`, and the member's own row is left alone, because a link
+to a thread with oneself has no destination. Each restored link reads
+`Messages tab` and points at `/messages?with=<counterpart memberstack_id>`,
+falling back to `/messages` when the counterpart has no canonical Memberstack
+ID; both are needed because resetting the modal clears every
+`[booking-element]`. The `message` action buttons in the modal and on the cards
+are read-only navigation, so they are exempt from the legacy-control lockdown,
+but they show only when that canonical ID is known, and a capture-phase
+delegate routes their clicks to the same destination — a click it cannot
+resolve to a counterpart is left untouched rather than swallowed. Every other
+authored payment or booking action stays hidden except Close, Back, the
+Starter's eligible pending-call Accept and Decline actions, the participant
+Cancel chain for eligible Free booked calls, and owner-scoped recording access
+for eligible completed or archived calls. These migrated actions remain inside
+View Details; apart from that Message button, card-level decline, cancel,
+media, and other legacy controls stay hidden. The exact Cancel and reschedule
+eligibility and feedback rules live in the
 [dashboard booking action contract](#dashboard-booking-action-contract). The
 decline chain now also exposes its authored reason step
 (`switch-decline-reason`), so the reason dialog is reachable. Free-call
