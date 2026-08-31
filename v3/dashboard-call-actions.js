@@ -1,10 +1,11 @@
 /**
  * Canonical dashboard call lifecycle actions.
  *
- * Webflow owns the base modal plus the decline and cancel reason fields. This
- * module binds those elements, renders the missing reschedule views, and sends
- * only environment-safe commands with published V3 contracts: decline, cancel,
- * and propose-then-confirm reschedule for eligible Free calls.
+ * Webflow owns the base modal plus the authored decline, cancel, and reschedule
+ * reason fields. This module binds those elements, creates only missing
+ * supporting reschedule views, and sends environment-safe commands with
+ * published V3 contracts: decline, cancel, and propose-then-confirm reschedule
+ * for eligible Free calls.
  */
 ;(function (global) {
   'use strict'

@@ -2182,8 +2182,9 @@ decline chain now also exposes its authored reason step
 (`switch-decline-reason`), so the reason dialog is reachable. Free-call
 reschedule now follows a propose-then-confirm contract on the published
 environment-bound endpoints: the authored `reschedule` trigger opens the
-authored reason step and then the shared availability calendar. The controller
-keeps its Webflow structure, labels its existing `switch-base` and
+existing authored reason step, or a module fallback when that step is absent,
+and then the shared availability calendar. The controller keeps authored
+Webflow structure, labels its existing `switch-base` and
 `reschedule-calendar` controls `Back` and `Continue`, and replaces Webflow's
 default Div Block copy with the visible and accessible textarea label `Why do
 you need a new time?`. It loads
@@ -2256,10 +2257,14 @@ booking is ineligible, because the legacy empty `popup-booking-reschedule`
 dialog remains on `/starter-dashboard`.
 
 The native Webflow modal owns `[booking-decline-reason]`,
-`[booking-cancel-reason]`, and the base reschedule trigger. The module renders
-the missing reschedule reason, shared-calendar, and result views, plus the base
-"Accept new time" and "Keep current time" responses beside that trigger.
-It creates that response pair once per modal, marks both controls with
+`[booking-cancel-reason]`, and the base reschedule trigger. When it also owns the
+`reschedule` reason view, the module keeps that panel and its controls, normalizes
+their copy, does not create replacements for them, and creates only the missing
+shared-calendar and result views. A modal with no authored `reschedule` view
+receives the module fallback instead.
+The module also adds the base "Accept new time" and "Keep current time"
+responses beside the reschedule trigger. It creates that response pair once per
+modal, marks both controls with
 `data-starters-reschedule-respond`, and ensures they are still present whenever
 the details modal is populated. Decline, cancel, and reschedule proposal each
 require a non-empty reason. Decline posts `booking_id`, `config_id`, `reason`, and
