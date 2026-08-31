@@ -4456,3 +4456,70 @@ test('timezoneLabel names the zone with a DST-correct offset and fails soft', ()
   // An invalid zone still returns the zone name instead of throwing.
   assert.equal(api.timezoneLabel('Not/A_Zone', july), 'Not/A_Zone')
 })
+
+test('the dashboard calendar gets the wide grid scoped to its own dialog', () => {
+  // The booking sheet is scoped under the profile dialog on purpose, so the
+  // dashboard needs its own. What matters is the arrangement it declares:
+  // timezone at the top of the right column, times beneath it, month spanning
+  // both of those rows, footer across the width.
+  const doc = {
+    styles: [],
+    getElementById() { return null },
+    createElement() { return new CalendarElement('style') },
+    head: {
+      appendChild(node) { doc.styles.push(node) },
+    },
+  }
+  api.ensureDashboardCalendarLayout(doc)
+  assert.equal(doc.styles.length, 1)
+  const css = doc.styles[0].textContent
+
+  // Scoped to the call-details dialog, and to nothing else.
+  const scope = '[data-modal-target="popup-booking-info"]'
+  const selectors = css.match(/\[data-modal-target="[^"]+"\]/g) || []
+  assert.ok(selectors.length > 0)
+  assert.ok(selectors.every((found) => found === scope))
+
+  // The wide arrangement only, so the engine keeps its stacked order narrow.
+  assert.ok(css.includes('@media (min-width:768px)'))
+  assert.ok(css.includes('grid-template-areas:"month timezone" "month times" "footer footer"'))
+
+  // Each element claims the area its name promises. Parsed as pairs rather
+  // than matched as a blob, so a swapped assignment fails loudly.
+  const areas = {}
+  const rule = /\[data-paid-calendar-element="([a-z-]+)"\]\{([^}]*)\}/g
+  let match = rule.exec(css)
+  while (match) {
+    const area = /grid-area:([a-z]+)/.exec(match[2])
+    if (area) areas[match[1]] = area[1]
+    match = rule.exec(css)
+  }
+  assert.deepEqual(areas, {
+    month: 'month',
+    'timezone-control': 'timezone',
+    times: 'times',
+    footer: 'footer',
+  })
+
+  // The shell has to declare the grid itself: off the booking surface nothing
+  // else does, and a template on a block box is inert.
+  assert.ok(/\[data-paid-calendar-element="shell"\]\{[^}]*display:grid/.test(css))
+  assert.ok(!css.includes('!important'))
+})
+
+test('the dashboard layout injector is idempotent and inert on a bare document', () => {
+  let injected = 0
+  const doc = {
+    existing: null,
+    getElementById() { return doc.existing },
+    createElement() { return new CalendarElement('style') },
+    head: {
+      appendChild(node) { injected += 1; doc.existing = node },
+    },
+  }
+  api.ensureDashboardCalendarLayout(doc)
+  api.ensureDashboardCalendarLayout(doc)
+  assert.equal(injected, 1)
+  assert.doesNotThrow(() => api.ensureDashboardCalendarLayout(undefined))
+  assert.doesNotThrow(() => api.ensureDashboardCalendarLayout({}))
+})

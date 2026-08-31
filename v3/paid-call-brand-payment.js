@@ -731,6 +731,59 @@
      on the empty path. */
   const CALENDAR_MIN_HEIGHT = '20rem'
 
+  /* ---- the dashboard reschedule calendar's two-column layout ----
+     The booking sheet above is scoped entirely under the profile's booking
+     dialog, deliberately: the dashboard mounts this same engine into the call
+     details dialog, and that containment is what keeps calendar CSS off the
+     page's other jQuery-UI datepickers. So the dashboard cannot simply borrow
+     it, and re-scoping that sheet would put every one of its rules — footer
+     band, status banner, component buttons — onto a surface that was built
+     without them.
+
+     This is the one thing the dashboard does want from it: the wide
+     arrangement, so the timezone select sits at the top of the right column
+     with the times directly beneath it instead of flowing under the month.
+     Only the grid lives here. Every painted detail stays authored, and the
+     narrow width keeps the engine's own stacked order. */
+  const DASHBOARD_SURFACE_SELECTOR = '[data-modal-target="popup-booking-info"]'
+  const DASHBOARD_LAYOUT_STYLE_ID = 'starters-dashboard-calendar-layout'
+
+  function ensureDashboardCalendarLayout(document) {
+    if (
+      !document ||
+      typeof document.getElementById !== 'function' ||
+      typeof document.createElement !== 'function'
+    ) return
+    if (document.getElementById(DASHBOARD_LAYOUT_STYLE_ID)) return
+    const role = DASHBOARD_SURFACE_SELECTOR + ' [data-paid-calendar-element='
+    const style = document.createElement('style')
+    style.setAttribute('id', DASHBOARD_LAYOUT_STYLE_ID)
+    style.textContent = [
+      '@media (min-width:768px){',
+      role + '"shell"]{',
+      // The engine leaves the shell a block off the booking surface, so the
+      // grid has to be declared here rather than only its template.
+      'display:grid;',
+      'column-gap:2rem;',
+      'grid-template-columns:minmax(0,1fr) minmax(0,1fr);',
+      /* The month spans rows 1 and 2 so the panel's height stays the month's
+         own. The timezone takes its share from inside the right column, which
+         means the caption costs the times list height rather than growing the
+         modal. The footer spans both columns on its own row. */
+      'grid-template-areas:"month timezone" "month times" "footer footer";',
+      'grid-template-rows:min-content minmax(0,1fr) min-content;',
+      'align-content:start}',
+      role + '"month"]{grid-area:month;align-self:start}',
+      role + '"timezone-control"]{grid-area:timezone}',
+      // Scrolls within its own row instead of stretching the dialog when a day
+      // carries more slots than the month is tall.
+      role + '"times"]{grid-area:times;align-content:start;overflow-y:auto;overscroll-behavior:contain}',
+      role + '"footer"]{grid-area:footer}',
+      '}',
+    ].join('')
+    ;(document.head || document.documentElement).appendChild(style)
+  }
+
   function ensureBookingCalendarLayout(document) {
     if (
       !document ||
@@ -1445,6 +1498,7 @@
        dashboard's reschedule calendar takes none of it. */
     const bookingSurface = bookingSurfaceFor(container)
     const onBookingSurface = Boolean(bookingSurface)
+    if (!onBookingSurface) ensureDashboardCalendarLayout(global.document)
     if (onBookingSurface) {
       ensureBookingCalendarLayout(global.document)
       /* The authored step this calendar lives in, marked so the sheet can
@@ -2643,6 +2697,7 @@
     authenticatedPost,
     authoredClassList,
     ensureBookingCalendarLayout,
+    ensureDashboardCalendarLayout,
     bookingPayload,
     bookingRequestFingerprint,
     canonicalPaidPrice,
