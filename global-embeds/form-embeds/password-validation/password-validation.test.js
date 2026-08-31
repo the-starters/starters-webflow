@@ -87,6 +87,11 @@ class Element {
       .join('')
   }
 
+  set textContent(value) {
+    this.childNodes = []
+    this.append(String(value))
+  }
+
   setAttribute(name, value) {
     this._attrs.set(name, String(value))
   }
@@ -216,6 +221,7 @@ function mount(root, options = {}) {
   const location = { hostname: options.hostname || 'www.thestarters.com' }
   const window = { location }
   if (options.debug !== undefined) window.STARTERS_DEBUG = options.debug
+  if (options.fetch) window.fetch = options.fetch
   window.window = window
 
   const context = vm.createContext({
@@ -1876,4 +1882,306 @@ test('r4: every rule in RULES fails on an empty string', () => {
     assert.equal(iconState(app.rows[rule]), 'fail', rule + ' must not pass on an empty field')
     assert.equal(isGated(app.button), true, rule + ' must gate an empty field')
   })
+})
+
+// ===========================================================================
+// Round 5 — the CTA gate covers the whole form, and the overlay submits
+//
+// The live SIGN UP CTA is Memberstack's overlay: a .clickable_btn
+// (type="button") inside the [ms-code-submit-button] wrap, with the native
+// submit hidden. The gate must grey and disable that overlay too, must also
+// hold until terms and a plausible email are in (when the form has them), and
+// an ENABLED overlay click must reach the submit path Memberstack listens on.
+// Rejections after the click land on the form's own fail block.
+// ===========================================================================
+
+const VALID_PASSWORD = 'Passw0rd!'
+const SIGNUP_RULES = {
+  characters: 'true',
+  'character-count': '8',
+  special: 'true',
+  capitalization: 'true',
+  numbers: 'true',
+}
+
+/**
+ * The published /sign-up shape: marker + theme on the Button wrap, the
+ * overlay button inside it, email + terms alongside the password.
+ * @param {{email?: boolean, terms?: boolean, customCheckbox?: boolean, failBlock?: boolean, mount?: object}} [opts]
+ */
+function liveSetup(opts = {}) {
+  const { wrapper, rows } = buildWrapper(SIGNUP_RULES)
+  const input = h('input', { type: 'password', 'data-ms-member': 'password' })
+
+  const email = opts.email === false ? null : h('input', { type: 'email', 'data-ms-member': 'email' })
+
+  let terms = null
+  let termsVisual = null
+  let termsWrap = null
+  if (opts.terms !== false) {
+    terms = h('input', { type: 'checkbox', 'data-ms-member': 'terms-and-condition' })
+    terms.checked = false
+    if (opts.customCheckbox) {
+      termsVisual = h('div')
+      termsVisual.classList.add('w-checkbox-input')
+      termsWrap = h('label', {}, [termsVisual, terms])
+      termsWrap.classList.add('w-checkbox')
+    }
+  }
+
+  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
+  overlay.classList.add('clickable_btn')
+  const clickWrap = h('div', {}, [overlay])
+  clickWrap.classList.add('clickable_wrap')
+  const wrapBtn = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [clickWrap])
+  wrapBtn.classList.add('button_main-wrap')
+
+  const inForm = [input]
+  if (email) inForm.push(email)
+  inForm.push(wrapper)
+  if (terms) inForm.push(termsWrap || terms)
+  inForm.push(wrapBtn)
+  const form = h('form', { 'data-ms-form': 'signup', 'data-ms-redirect': '/brand-dashboard' }, inForm)
+
+  const submits = []
+  form.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submits.push(event)
+  })
+
+  const wFormKids = [form]
+  let fail = null
+  let failText = null
+  if (opts.failBlock !== false) {
+    failText = h('div', {}, ['Something went wrong'])
+    fail = h('div', {}, [failText])
+    fail.classList.add('w-form-fail')
+    wFormKids.push(fail)
+  }
+  const wForm = h('div', {}, wFormKids)
+  wForm.classList.add('w-form')
+
+  const root = h('body', {}, [wForm])
+  const app = mount(root, opts.mount || {})
+  return Object.assign(
+    { root, wrapper, rows, input, email, terms, termsVisual, overlay, wrapBtn, form, submits, fail, failText },
+    app,
+  )
+}
+
+const overlayGated = (f) =>
+  f.overlay.disabled === true &&
+  f.overlay.getAttribute('disabled') !== null &&
+  f.overlay.getAttribute('aria-disabled') === 'true' &&
+  f.wrapBtn.classList.contains('disabled') &&
+  f.wrapBtn.getAttribute('data-button-theme') === 'disabled' &&
+  f.wrapBtn.getAttribute('aria-disabled') === 'true'
+
+const overlayOpen = (f) =>
+  f.overlay.disabled !== true &&
+  f.overlay.getAttribute('disabled') === null &&
+  f.overlay.getAttribute('aria-disabled') === null &&
+  !f.wrapBtn.classList.contains('disabled') &&
+  f.wrapBtn.getAttribute('data-button-theme') === 'black' &&
+  f.wrapBtn.getAttribute('aria-disabled') === null
+
+function fillEmail(f, value) {
+  f.email.value = value
+  dispatch(f.email, 'input')
+}
+
+function checkTerms(f) {
+  f.terms.checked = true
+  dispatch(f.terms, 'change')
+}
+
+const flush = () => new Promise((resolve) => setImmediate(resolve))
+
+test('r5-1: a failing password greys the wrap AND natively disables the overlay', () => {
+  const f = liveSetup()
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  type(f, 'weakpass')
+  assert.equal(overlayGated(f), true, 'wrap themed disabled, overlay disabled for real')
+})
+
+test('r5-2: a passing password with the terms box unchecked stays grey', () => {
+  const f = liveSetup()
+  fillEmail(f, 'brand@example.com')
+  type(f, VALID_PASSWORD)
+  assert.equal(overlayGated(f), true, 'terms exists and is unchecked')
+})
+
+test('r5-3: a passing password with an empty or implausible email stays grey', () => {
+  const f = liveSetup()
+  checkTerms(f)
+  type(f, VALID_PASSWORD)
+  assert.equal(overlayGated(f), true, 'email empty')
+  ;['not-an-email', 'user@nodot', '@example.com', 'user @example.com'].forEach((value) => {
+    fillEmail(f, value)
+    assert.equal(overlayGated(f), true, JSON.stringify(value) + ' must not enable')
+  })
+})
+
+test('r5-4: password + email + terms all passing opens the overlay and restores the theme', () => {
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true)
+})
+
+test('r5-4: a Webflow custom checkbox counts through its visual state too', () => {
+  const f = liveSetup({ customCheckbox: true })
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  // the visual div flips before/instead of the native checked in some paths
+  f.termsVisual.classList.add('w--redirected-checked')
+  dispatch(f.terms, 'change')
+  assert.equal(overlayOpen(f), true)
+})
+
+test('r5-5: a form with no terms field enables on password + email alone', () => {
+  const f = liveSetup({ terms: false })
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  assert.equal(overlayOpen(f), true)
+})
+
+test('r5-5: a form with neither email nor terms keeps password-only gating', () => {
+  const f = liveSetup({ terms: false, email: false })
+  type(f, VALID_PASSWORD)
+  assert.equal(overlayOpen(f), true)
+})
+
+test('r5-6: an invalid form still blocks a dispatched submit ahead of the page', () => {
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  // terms still unchecked
+  const blocked = dispatch(f.form, 'submit')
+  assert.equal(blocked.defaultPrevented, true)
+  assert.equal(f.submits.length, 0, 'the bubble-phase handler never ran')
+})
+
+test('r5-7: an enabled overlay click is not prevented and runs requestSubmit once', () => {
+  const f = liveSetup()
+  let requested = 0
+  f.form.requestSubmit = () => {
+    requested += 1
+    dispatch(f.form, 'submit')
+  }
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+
+  const click = dispatch(f.overlay, 'click')
+  assert.equal(click.defaultPrevented, false, 'the type=button click is left alone')
+  assert.equal(requested, 1, 'the overlay bridged into the submit path')
+  assert.equal(f.submits.length, 1, 'and the submit reached the page (Memberstack) handler')
+})
+
+test('r5-7: a disabled-state overlay click submits nothing', () => {
+  const f = liveSetup()
+  let requested = 0
+  f.form.requestSubmit = () => {
+    requested += 1
+  }
+  type(f, 'weakpass')
+  dispatch(f.overlay, 'click')
+  assert.equal(requested, 0)
+  assert.equal(f.submits.length, 0)
+})
+
+test('r5-7: a native submitter under the marker is never double-submitted', () => {
+  // marker on the wrap around a real submit button — the pre-component shape
+  const button = h('button', { type: 'submit' }, ['SIGN UP'])
+  const wrapBtn = h('div', { 'ms-code-submit-button': '' }, [button])
+  const { wrapper } = buildWrapper({ numbers: 'true' })
+  const input = h('input', { type: 'password', 'data-ms-member': 'password' })
+  const form = h('form', {}, [input, wrapper, wrapBtn])
+  let requested = 0
+  form.requestSubmit = () => {
+    requested += 1
+  }
+  const submits = []
+  form.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submits.push(event)
+  })
+  mount(h('body', {}, [form]))
+
+  input.value = '1'
+  dispatch(input, 'input')
+  dispatch(button, 'click')
+  assert.equal(requested, 0, 'the browser owns a type=submit click')
+})
+
+// --- r5-8: rejections land on the form ------------------------------------
+
+const msFailure = (body) => ({
+  ok: false,
+  clone() {
+    return this
+  },
+  json: () => Promise.resolve(body),
+})
+
+/** arm the watcher the way a real pass does: a valid form and a submit */
+function armedSetup(fetchImpl) {
+  const f = liveSetup({ mount: { fetch: fetchImpl } })
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  dispatch(f.form, 'submit')
+  return f
+}
+
+test('r5-8: a Memberstack 4xx paints the fail block with the server message', async () => {
+  const responses = [msFailure({ message: 'That email is already registered.' })]
+  const f = armedSetup(() => Promise.resolve(responses.shift()))
+
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+
+  assert.equal(f.fail.style.display, 'block', 'the fail block is shown')
+  assert.equal(f.fail.getAttribute('role'), 'alert')
+  assert.equal(f.failText.textContent, 'That email is already registered.')
+})
+
+test('r5-8: a rejection with no usable message falls back to the house line', async () => {
+  const f = armedSetup(() => Promise.reject(new Error('network down')))
+
+  f.window.fetch('https://challenges.cloudflare.com/turnstile').catch(() => {})
+  await flush()
+
+  assert.equal(f.fail.style.display, 'block')
+  assert.equal(f.failText.textContent, "Couldn't create the account. Try again.")
+})
+
+test('r5-8: a success touches nothing and a re-submit clears the old message', async () => {
+  let response = msFailure({ message: 'Duplicate.' })
+  const f = armedSetup(() => Promise.resolve(response))
+
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+  assert.equal(f.fail.style.display, 'block', 'first attempt failed visibly')
+
+  // second attempt: arming hides the stale message, an ok response leaves it so
+  response = { ok: true }
+  dispatch(f.form, 'submit')
+  assert.equal(f.fail.style.display, 'none', 'arming clears the previous rejection')
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+  assert.equal(f.fail.style.display, 'none', 'success paints no error')
+})
+
+test('r5-8: unrelated requests never trip the watcher', async () => {
+  const f = armedSetup(() => Promise.resolve(msFailure({ message: 'nope' })))
+
+  f.window.fetch('https://x08a-5ko8-jj1r.n7c.xano.io/api/whatever')
+  await flush()
+
+  assert.equal(f.fail.style.display, 'none', 'still just armed-and-hidden, no error painted')
+  assert.equal(f.failText.textContent, 'Something went wrong', 'the authored copy is untouched')
 })

@@ -21,6 +21,29 @@
 //
 // Forms added after load: call window.startersPasswordValidation.rescan().
 //
+// The CTA gate covers the WHOLE form, not just the password: the button stays
+// grey until every active password rule passes, the terms checkbox
+// (input[data-ms-member="terms-and-condition"]) is checked when the form has
+// one, and the email (input[data-ms-member="email"]) looks like an email when
+// the form has one. Turnstile is deliberately not in this gate — it resolves
+// after the click, on Memberstack's side. Fields the form does not have gate
+// nothing, so login and reset flows keep their password-only behavior.
+//
+// The live CTA is Memberstack's overlay: a `.clickable_btn` (type="button")
+// inside the [ms-code-submit-button] wrap, with the native submit hidden. A
+// type="button" overlay never fires the native submit path on its own, so an
+// enabled click on a non-submitting control calls form.requestSubmit() — the
+// resulting submit event is what Memberstack's listener consumes. Disabling
+// covers the wrap AND every overlay control inside it (native `disabled` +
+// aria-disabled), so the visible button can never stay live while only the
+// hidden one is gated.
+//
+// Memberstack rejections after the click (duplicate email, 4xx/5xx, Turnstile,
+// network) used to be console-only. A submit that passes the gate arms a
+// watcher over window.fetch; a failing Memberstack/Turnstile request paints
+// the form's own Webflow fail block (.w-form-fail) as a role="alert",
+// preferring the server's message and falling back to a house line.
+//
 // On each checklist row inside the wrapper:
 //   starters-password-validation-rule="characters|special|capitalization|numbers"
 //   starters-password-validation-icon="valid" / "invalid"
@@ -197,6 +220,11 @@
   var ACTIONABLE_SELF = 'button,input[type="submit"],input[type="button"],a';
   var ACTIONABLE_INNER = 'button,input[type="submit"],a,.clickable_btn,.clickable_link';
   var NATIVE_CONTROL = 'button,input';
+  var OVERLAY_CONTROLS = '.clickable_btn,.clickable_link';
+
+  function isNativeControl(el) {
+    return !!(el && el.matches && el.matches(NATIVE_CONTROL));
+  }
 
   function resolveButton(root, form) {
     if (!root) return null;
@@ -204,6 +232,20 @@
     var actionable = root.matches && root.matches(ACTIONABLE_SELF)
       ? root
       : root.querySelector(ACTIONABLE_INNER) || root;
+
+    // Every activation control under the marked element gates together. The
+    // live Button component publishes overlay controls (.clickable_btn /
+    // .clickable_link) that can sit after other variants in the DOM, and the
+    // first querySelector hit above is not guaranteed to be the one the user
+    // clicks — disabling only it leaves a visible CTA live while the hidden
+    // native submit is the only thing gated.
+    var controls = [actionable];
+    if (root.querySelectorAll) {
+      var overlays = root.querySelectorAll(OVERLAY_CONTROLS);
+      for (var o = 0; o < overlays.length; o++) {
+        if (controls.indexOf(overlays[o]) === -1) controls.push(overlays[o]);
+      }
+    }
 
     // The theme lives on the element that carries it: the marked element, the
     // wrap around it, or the control inside it — searched in that order.
@@ -220,13 +262,19 @@
       if (!themeEl) themeEl = root.querySelector('[' + THEME_ATTR + ']');
     }
 
+    var native = false;
+    for (var n = 0; n < controls.length; n++) {
+      if (isNativeControl(controls[n])) native = true;
+    }
+
     return {
       root: root,
       actionable: actionable,
+      controls: controls,
       themeEl: themeEl,
       // Only a real control has a disabled property worth setting; writing one
       // onto a div or an anchor invents an attribute the browser ignores.
-      native: !!(actionable.matches && actionable.matches(NATIVE_CONTROL)),
+      native: native,
       theme: readAuthoredTheme(themeEl)
     };
   }
@@ -234,33 +282,213 @@
   function setDisabled(button, isDisabled) {
     if (!button) return;
     var themeEl = button.themeEl;
-    var actionable = button.actionable;
+    var controls = button.controls;
+    var i;
+    var el;
 
     if (isDisabled) {
       button.root.classList.add('disabled');
       if (themeEl) {
         themeEl.setAttribute(THEME_ATTR, DISABLED_THEME);
-        if (themeEl !== actionable) themeEl.setAttribute('aria-disabled', 'true');
+        if (controls.indexOf(themeEl) === -1) themeEl.setAttribute('aria-disabled', 'true');
       }
-      actionable.setAttribute('aria-disabled', 'true');
-      if (button.native) {
-        actionable.disabled = true;
-        actionable.setAttribute('disabled', 'disabled');
-        actionable.setAttribute('tabindex', '-1');
+      for (i = 0; i < controls.length; i++) {
+        el = controls[i];
+        el.setAttribute('aria-disabled', 'true');
+        if (isNativeControl(el)) {
+          el.disabled = true;
+          el.setAttribute('disabled', 'disabled');
+          el.setAttribute('tabindex', '-1');
+        }
       }
     } else {
       button.root.classList.remove('disabled');
       if (themeEl) {
         if (button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
-        if (themeEl !== actionable) themeEl.removeAttribute('aria-disabled');
+        if (controls.indexOf(themeEl) === -1) themeEl.removeAttribute('aria-disabled');
       }
-      actionable.removeAttribute('aria-disabled');
-      if (button.native) {
-        actionable.disabled = false;
-        actionable.removeAttribute('disabled');
-        actionable.removeAttribute('tabindex');
+      for (i = 0; i < controls.length; i++) {
+        el = controls[i];
+        el.removeAttribute('aria-disabled');
+        if (isNativeControl(el)) {
+          el.disabled = false;
+          el.removeAttribute('disabled');
+          el.removeAttribute('tabindex');
+        }
       }
     }
+  }
+
+  // --- whole-form gate ------------------------------------------------------
+  // A form without one of these fields is not gated on it: login and reset
+  // flows share this script and have no terms checkbox or email to check.
+
+  // "@" with something before it and a domain with a dot — the plausibility
+  // Memberstack itself would reject anyway, not RFC 5322.
+  var EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  function emailSatisfied(emailInput) {
+    if (!emailInput) return true;
+    return EMAIL_SHAPE.test(emailInput.value || '');
+  }
+
+  function termsSatisfied(termsInput) {
+    if (!termsInput) return true;
+    if (termsInput.checked) return true;
+    // Webflow custom checkboxes mirror their state onto a sibling visual div;
+    // trust either signal, the same way form-validation.js does.
+    var wrap = termsInput.closest ? termsInput.closest('.w-checkbox') : null;
+    var visual = wrap && wrap.querySelector ? wrap.querySelector('.w-checkbox-input') : null;
+    return !!(visual && visual.classList && visual.classList.contains('w--redirected-checked'));
+  }
+
+  // --- overlay submit -------------------------------------------------------
+  // An input[type=submit] or a button whose type is submit (or absent — the
+  // browser default inside a form) already submits on click; triggering again
+  // would double-submit.
+  function isNativeSubmitter(el) {
+    if (!el || !el.matches) return false;
+    if (el.matches('input[type="submit"]')) return true;
+    if (el.matches('button')) {
+      return (el.getAttribute('type') || 'submit').toLowerCase() === 'submit';
+    }
+    return false;
+  }
+
+  function triggerSubmit(form) {
+    if (typeof form.requestSubmit === 'function') {
+      form.requestSubmit();
+      return;
+    }
+    // Engines without requestSubmit: a cancelable synthetic submit reaches
+    // every listener, Memberstack's included. Native submission is
+    // deliberately absent — Memberstack prevents it on its own forms anyway,
+    // and no form this script wires submits anywhere natively.
+    if (typeof Event === 'function' && typeof form.dispatchEvent === 'function') {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    }
+  }
+
+  // The control the user actually activated, resolved against the button's
+  // known controls so a click on a nested icon lands on its overlay.
+  function clickedControl(event, button) {
+    var node = event && event.target;
+    while (node) {
+      if (button.controls.indexOf(node) !== -1) return node;
+      if (node === button.root) break;
+      node = node.parentElement;
+    }
+    return button.actionable;
+  }
+
+  // --- post-submit failure surface ------------------------------------------
+  // Memberstack owns the request; this script only watches for the loss so it
+  // lands on the form instead of the console. One submit in flight at a time
+  // is the real-world shape — arming a new one drops the previous watcher.
+  var FALLBACK_ERROR = "Couldn't create the account. Try again.";
+  var OUTCOME_URL = /memberstack|turnstile|challenges\.cloudflare/i;
+  var OUTCOME_TIMEOUT_MS = 20000;
+  var pendingOutcome = null;
+
+  function settlePendingOutcome() {
+    if (!pendingOutcome) return;
+    if (pendingOutcome.timer && typeof clearTimeout === 'function') clearTimeout(pendingOutcome.timer);
+    pendingOutcome = null;
+  }
+
+  // Wraps window.fetch exactly once, and only reacts while a watcher is armed
+  // AND the request is Memberstack's or Turnstile's; everything else passes
+  // through untouched. The response is read from a clone so Memberstack's own
+  // reader is not consumed.
+  function installOutcomeWatcher() {
+    if (window.__startersPasswordValidationFetch) return;
+    if (typeof window.fetch !== 'function') return;
+    window.__startersPasswordValidationFetch = true;
+    var originalFetch = window.fetch;
+    window.fetch = function (resource) {
+      var url = '';
+      try {
+        url = typeof resource === 'string' ? resource : String((resource && resource.url) || '');
+      } catch (e) { /* no-op */ }
+      var entry = pendingOutcome;
+      var result = originalFetch.apply(this, arguments);
+      if (!entry || !OUTCOME_URL.test(url) || !result || typeof result.then !== 'function') {
+        return result;
+      }
+      result.then(function (response) {
+        if (!response || response.ok) {
+          entry.settle();
+          return;
+        }
+        var fallback = function () { entry.fail(null); };
+        try {
+          response.clone().json().then(function (body) {
+            entry.fail((body && (body.message || (body.error && body.error.message))) || null);
+          }, fallback);
+        } catch (e) {
+          fallback();
+        }
+      }, function () {
+        entry.fail(null);
+      });
+      return result;
+    };
+  }
+
+  function armOutcome(surface) {
+    installOutcomeWatcher();
+    settlePendingOutcome();
+    var entry = {
+      settle: function () {
+        if (pendingOutcome === entry) settlePendingOutcome();
+      },
+      fail: function (message) {
+        if (pendingOutcome !== entry) return;
+        settlePendingOutcome();
+        surface.show(message);
+      }
+    };
+    if (typeof setTimeout === 'function') entry.timer = setTimeout(entry.settle, OUTCOME_TIMEOUT_MS);
+    pendingOutcome = entry;
+    // A fresh attempt clears the previous rejection's message.
+    surface.hide();
+  }
+
+  // The form's own Webflow fail block is the surface: it is Designer-styled,
+  // in the right place, and empty forms already ship one. Nothing is created
+  // when it is missing — that absence is a wiring mistake worth naming.
+  function failSurface(form) {
+    function block() {
+      var wrap = form.closest ? form.closest('.w-form') : null;
+      var el = wrap && wrap.querySelector ? wrap.querySelector('.w-form-fail') : null;
+      if (!el && form.parentElement && form.parentElement.querySelector) {
+        el = form.parentElement.querySelector('.w-form-fail');
+      }
+      return el || null;
+    }
+    return {
+      show: function (message) {
+        var el = block();
+        if (!el) {
+          devWarn(
+            'a rejected submit had nowhere to land — no .w-form-fail block ' +
+            'near this form, so the failure is console-only.',
+            form
+          );
+          return;
+        }
+        el.setAttribute('role', 'alert');
+        var target = (el.querySelector && el.querySelector('div')) || el;
+        try {
+          target.textContent = message || FALLBACK_ERROR;
+        } catch (e) { /* no-op */ }
+        el.style.display = 'block';
+      },
+      hide: function () {
+        var el = block();
+        if (el) el.style.display = 'none';
+      }
+    };
   }
 
   function activeRules(wrapper) {
@@ -421,6 +649,10 @@
       normalize(wrappers[w], active, rules);
     }
 
+    var emailInput = form.querySelector('input[data-ms-member="email"]');
+    var termsInput = form.querySelector('input[data-ms-member="terms-and-condition"]');
+    var surface = failSurface(form);
+
     // Returns the verdict rather than stashing it, so no caller can ever
     // adjudicate on a copy that has gone stale.
     function render() {
@@ -448,28 +680,68 @@
         }
       }
 
-      setDisabled(button, !allPass);
-      return allPass;
+      // The CTA opens only when the whole form is submittable — password
+      // rules, plus terms and a plausible email where the form has them. The
+      // checklist above still reads from the password alone.
+      var gate = allPass && emailSatisfied(emailInput) && termsSatisfied(termsInput);
+      setDisabled(button, !gate);
+      return gate;
     }
-
-    input.addEventListener('input', render);
 
     // Autofill and password-manager paths are inconsistent: some fire `input`,
     // some only `change`, some nothing until the field is left. Binding all
     // three covers every variant that emits anything, and the blur re-checks
     // the field afterwards. A purely programmatic write to input.value fires
     // no event at all — nothing can catch that at write time, which is why the
-    // submit handler recomputes rather than trusting the last render.
-    input.addEventListener('change', render);
-    input.addEventListener('focusout', render);
+    // submit handler recomputes rather than trusting the last render. The
+    // gate's other fields recompute on the same three events.
+    function bindField(field) {
+      if (!field) return;
+      field.addEventListener('input', render);
+      field.addEventListener('change', render);
+      field.addEventListener('focusout', render);
+    }
+    bindField(input);
+    bindField(emailInput);
+    bindField(termsInput);
 
     form.addEventListener('submit', function (event) {
       // Recompute FIRST, then adjudicate on what came back.
       if (!render()) {
         event.preventDefault();
         event.stopImmediatePropagation();
+        return;
+      }
+      // A submit that goes through is Memberstack's to win or lose; watch for
+      // the loss so it lands on the form instead of the console.
+      if (form.getAttribute && form.getAttribute('data-ms-form') !== null) {
+        armOutcome(surface);
       }
     }, true);
+
+    if (buttonRoot) {
+      // The click is a recompute point of its own, and the bridge for the
+      // live overlay: an enabled control that is not a native submitter
+      // (type="button", an anchor, a div wrap) never fires the submit path on
+      // its own, so its click runs the form's requestSubmit — the resulting
+      // submit event is what Memberstack consumes. An enabled native
+      // submitter is left entirely alone.
+      buttonRoot.addEventListener('click', function (event) {
+        var gate = render();
+        var control = clickedControl(event, button);
+        if (!gate) {
+          // A disabled native control never gets here; an anchor or a stale
+          // overlay still can, and must not navigate or submit.
+          if (event.preventDefault) event.preventDefault();
+          return;
+        }
+        if (isNativeSubmitter(control)) return;
+        if (control && control.matches && control.matches('a') && event.preventDefault) {
+          event.preventDefault();
+        }
+        triggerSubmit(form);
+      });
+    }
 
     // First paint: states every active rule, met or not.
     render();
