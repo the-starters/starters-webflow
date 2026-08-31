@@ -3445,6 +3445,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   function control() {
     const listeners = {}
     return {
+      clickCount: 0,
       disabled: false,
       listeners,
       addEventListener(name, listener) {
@@ -3452,6 +3453,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
         listeners[name].push(listener)
       },
       click() {
+        this.clickCount += 1
         ;(listeners.click || []).forEach(function (listener) {
           listener({ preventDefault() {}, stopImmediatePropagation() {} })
         })
@@ -3545,7 +3547,9 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
       if (selector.includes('[save-card-status]')) return statusText
       if (selector === '[popup-stripe-card]') return paymentModal
       if (selector === '[popup-stripe-card-open]') return openPayment
-      if (selector === '[popup-stripe-card-close]') return paymentClose
+      // The booking dialog is authored before the card dialog, so a global
+      // attribute lookup finds this unrelated backdrop first.
+      if (selector === '[popup-stripe-card-close]') return bookingBackdrop
       return null
     },
     querySelectorAll(selector) {
@@ -4278,11 +4282,6 @@ test('an older Paid singleton already installed is adopted with no extra close w
 // let a backdrop dismissal of the booking modal cancel a visitor's in-progress
 // card setup. Containment decides now, not the marker on its own.
 //
-// (The stubs keep `document.querySelector('[popup-stripe-card-close]')` — the
-// "Card saved" auto-close — resolving to the card dialog's own closer. On the
-// authored page that first match is really the booking dialog's backdrop,
-// because the booking dialog is written first; unrelated to this scoping and
-// left exactly as it is.)
 // --------------------------------------------------------------------------
 
 const SCOPING_SLOT = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
@@ -4322,6 +4321,21 @@ async function saveCard(fixture) {
   fixture.cardListeners.change({ complete: true })
   await fixture.save.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
 }
+
+test('saving a card closes its dialog without clicking the earlier booking backdrop', async () => {
+  const { counts, fixture } = makeCardSetupFixture()
+  try {
+    await openCardSetup(fixture)
+    await saveCard(fixture)
+
+    assert.equal(counts.booking, 1)
+    assert.equal(fixture.paymentClose.clickCount, 1, 'the card dialog must close after booking')
+    assert.equal(fixture.bookingBackdrop.clickCount, 0, 'the booking dialog must remain on success')
+    assert.equal(fixture.steps[1].style.display, 'flex', 'the paid-call success step must remain visible')
+  } finally {
+    fixture.restore()
+  }
+})
 
 test('dismissing the booking dialog by its backdrop leaves the card setup intact', async () => {
   const { counts, fixture } = makeCardSetupFixture()

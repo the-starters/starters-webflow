@@ -151,12 +151,14 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   and blocks known edit mutations on non-Live hosts. The authoritative photo
   upload and release-gate contract lives in
   [`v3/build-profile/README.md`](v3/build-profile/README.md#profile-photo-upload-contract)
-- `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior
+- `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior; it requires the canonical `saved` response contract, treats public projection as asynchronous, and routes Paid Call pricing to the dashboard settings writer
   migrated from the legacy Webflow footer. It keeps the existing Designer form
   and modal markup, opens the existing success or error modal through the Lumos
   API, and uses its hidden modal triggers only when that API is unavailable. It
-  shows success only after a confirmed 2xx Xano response and shows the error
-  state for rejected or failed profile updates. Each submit captures the
+  shows success after Xano explicitly returns `saved: true` and a Boolean
+  `projection_pending`, including when a later projection failure produces a
+  non-2xx response, and shows the error state when a response omits that
+  contract or the canonical save fails. Each submit captures the
   current Memberstack member, revalidates that same identity before the Xano
   PATCH, and binds the request URL to the captured member ID. It revalidates
   again before its Memberstack custom-field projection, so an account change

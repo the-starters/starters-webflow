@@ -130,9 +130,14 @@ values, member data, text, component props, styles, URLs, tokens, or Webflow
 element IDs. Contract drift must fail tests; do not silently refresh the fixture.
 
 Account-settings tabs, membership panels, pause/cancel UI, scheduling persistence,
-and paid/free-call business rules remain separate shared-component work. The page
-controller validates the authored required state but does not take ownership of
-those systems.
+and free-call business rules remain separate shared-component work. On step 6, the
+page controller disables and un-requires the legacy Paid Call toggle, description,
+and rate controls, omits their fields from the profile payload, and adds a link to
+`/starter-dashboard#calendar`. The dashboard Paid Call settings controller and its
+canonical Xano endpoints remain the only member-facing writer for that service; see
+the [Paid Call settings contract](../PAID-CALL-SETTINGS-WIRING.md). The root
+[Current Scripts](../../README.md#current-scripts) entry owns the profile endpoint's
+canonical-save and asynchronous-projection response contract.
 
 ## Release verification
 
@@ -154,7 +159,9 @@ workflow is tracked in [PROGRESS-CHECKLIST.md](PROGRESS-CHECKLIST.md).
    read the complete saved location back before publish.
 6. Publish staging only with approval. Test empty visible fields, empty mirrors,
    hydrated unchanged saves, full/consult branches, location transitions, reviewer
-   tuples, and computed pointer behavior.
+   tuples, the disabled legacy Paid Call controls and settings link, explicit save
+   responses with pending and complete projection states, and computed pointer
+   behavior.
 7. For the shared-foundation extraction, use only the atomic route page-Head-Code cutover in
    [`../profile-form/README.md`](../profile-form/README.md). Do not install one extracted loader at
    each former inline node. The six earlier provenance-locked controller replacements keep their
