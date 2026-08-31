@@ -734,32 +734,33 @@ test('project dashboard actions use the authenticated canonical endpoints', asyn
 
 test('project lifecycle intent covers cancellation, completion and early termination', async () => {
   const bridge = await loadBridge(async () => response({}))
-  const intent = bridge.window.Opp30.projectActionIntent
+  const rawIntent = bridge.window.Opp30.projectActionIntent
   const plain = (value) => value == null ? value : JSON.parse(JSON.stringify(value))
+  const intent = async (...args) => plain(await rawIntent(...args))
 
   assert.deepEqual(
-    plain(intent({ lifecycle_state: 'pending' }, () => true, () => '')),
+    await intent({ lifecycle_state: 'pending' }, () => true, () => ''),
     { action: 'cancel', reason: 'canceled_before_activation' },
   )
   assert.deepEqual(
-    plain(intent(
+    await intent(
       { status: 'pending', lifecycle_state: 'contract_sent' },
       () => true,
       () => 'COMPLETE',
-    )),
+    ),
     { action: 'cancel', reason: 'canceled_before_activation' },
   )
-  assert.equal(intent({ lifecycle_state: 'pending' }, () => false, () => ''), null)
+  assert.equal(await intent({ lifecycle_state: 'pending' }, () => false, () => ''), null)
   assert.deepEqual(
-    plain(intent({ lifecycle_state: 'active' }, () => true, () => 'COMPLETE')),
+    await intent({ lifecycle_state: 'active' }, () => true, () => 'COMPLETE'),
     { action: 'complete', reason: '' },
   )
   assert.deepEqual(
-    plain(intent({ lifecycle_state: 'active' }, () => true, () => 'Scope changed')),
+    await intent({ lifecycle_state: 'active' }, () => true, () => 'Scope changed'),
     { action: 'terminate', reason: 'Scope changed' },
   )
   assert.deepEqual(
-    plain(intent(
+    await intent(
       {
         lifecycle_state: 'completion_requested',
         brand_completion_requested_at: null,
@@ -768,11 +769,11 @@ test('project lifecycle intent covers cancellation, completion and early termina
       () => true,
       () => '',
       'brand',
-    )),
+    ),
     { action: 'complete', reason: '' },
   )
   assert.equal(
-    intent(
+    await intent(
       {
         lifecycle_state: 'completion_requested',
         brand_completion_requested_at: '2026-08-23T01:00:00Z',
@@ -785,7 +786,7 @@ test('project lifecycle intent covers cancellation, completion and early termina
     null,
   )
   assert.deepEqual(
-    plain(intent(
+    await intent(
       {
         lifecycle_state: 'termination_requested',
         end_reason: 'Scope changed',
@@ -795,11 +796,11 @@ test('project lifecycle intent covers cancellation, completion and early termina
       () => true,
       () => '',
       'starter',
-    )),
+    ),
     { action: 'terminate', reason: 'Scope changed' },
   )
   assert.equal(
-    intent(
+    await intent(
       {
         lifecycle_state: 'termination_requested',
         end_reason: 'Scope changed',
@@ -812,7 +813,7 @@ test('project lifecycle intent covers cancellation, completion and early termina
     ),
     null,
   )
-  assert.equal(intent({ lifecycle_state: 'completed' }, () => true, () => 'COMPLETE'), null)
+  assert.equal(await intent({ lifecycle_state: 'completed' }, () => true, () => 'COMPLETE'), null)
 })
 
 test('project lifecycle requests fail closed when the canonical timestamps are missing', async () => {
@@ -839,7 +840,7 @@ test('project lifecycle requests fail closed when the canonical timestamps are m
     },
   ]) {
     for (const role of ['brand', 'starter']) {
-      assert.equal(intent(project, confirmAction, () => 'COMPLETE', role), null)
+      assert.equal(await intent(project, confirmAction, () => 'COMPLETE', role), null)
       assert.deepEqual(actionState(project, role), {
         waitingOn: '',
         blocked: true,
@@ -855,7 +856,7 @@ test('project lifecycle requests fail closed when the canonical timestamps are m
     brand_completion_requested_at: '2026-08-23T01:00:00Z',
     starter_completion_requested_at: null,
   }
-  assert.equal(intent(canonical, confirmAction, () => 'COMPLETE', null), null)
+  assert.equal(await intent(canonical, confirmAction, () => 'COMPLETE', null), null)
   assert.deepEqual(actionState(canonical, null), {
     waitingOn: '',
     blocked: true,
@@ -865,7 +866,7 @@ test('project lifecycle requests fail closed when the canonical timestamps are m
 
   // The canonical row still resolves to a live counterparty action.
   assert.deepEqual(
-    JSON.parse(JSON.stringify(intent(canonical, confirmAction, () => '', 'starter'))),
+    JSON.parse(JSON.stringify(await intent(canonical, confirmAction, () => '', 'starter'))),
     { action: 'complete', reason: '' },
   )
   assert.deepEqual(actionState(canonical, 'starter'), {
@@ -2615,7 +2616,7 @@ test('invoice listeners teardown and rebind with Memberstack scope changes', asy
     { member: talentMember, pathname: '/starter-dashboard', routeGuard: true },
   )
   assert.ok(await waitFor(() => bridge.window.__opp30InvoicesWired === true))
-  assert.equal(bridge.documentListenerCount('submit'), 1)
+  assert.equal(bridge.documentListenerCount('submit'), 2)
 
   bridge.authChange(paidBrandMember)
   assert.equal(bridge.window.__opp30InvoicesWired, undefined)
@@ -2623,7 +2624,7 @@ test('invoice listeners teardown and rebind with Memberstack scope changes', asy
 
   bridge.authChange(secondTalentMember)
   assert.equal(bridge.window.__opp30InvoicesWired, true)
-  assert.equal(bridge.documentListenerCount('submit'), 1)
+  assert.equal(bridge.documentListenerCount('submit'), 2)
 
   bridge.authChange(null)
   assert.equal(bridge.window.__opp30InvoicesWired, undefined)
@@ -7676,4 +7677,285 @@ test('binding a live wrap force-hides a leftover nested Spinner', async () => {
   await loadBridge(async () => response({}), documentWith(form))
 
   assert.equal(spinner.style.display, 'none')
+})
+
+// The end-project modal replaces the native prompt/confirm intent capture.
+// These cases pin the two-sided handshake copy, the required early-end
+// reason, the review-timing rule, and the prompt fallback for pages that
+// were published before the modal markup shipped.
+function endProjectDom(overrides = {}) {
+  const end = el('a', { 'wf-xano-link': 'project-end', href: '#' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const title = el('p', { 'data-end-project-title': '' })
+  const subtitle = el('p', { 'data-end-project-subtitle': '' })
+  const rating = el('input', { name: 'Call-Rating' })
+  rating.value = overrides.rating == null ? '5' : overrides.rating
+  const feedback = el('textarea', { name: 'Feedback' })
+  feedback.value = overrides.feedback == null ? 'Excellent collaboration overall.' : overrides.feedback
+  const reviewGroup = el('div', { 'data-end-project-review': '' }, [rating, feedback])
+  const reason = el('textarea', { 'data-end-project-reason': '', name: 'End-Reason' })
+  reason.value = overrides.reason == null ? '' : overrides.reason
+  const reasonWrap = el('div', { 'data-end-project-reason-wrap': '' }, [reason])
+  const toggle = el('a', { 'data-end-project-mode-toggle': '', href: '#' })
+  const submitText = el('div', { class: 'button_main-text' })
+  const submit = el('button', { type: 'submit' }, [submitText])
+  const form = el('form', {}, [reviewGroup, reasonWrap, toggle, submit])
+  form.reset = () => {}
+  const done = el('div', { class: 'w-form-done' })
+  const fail = el('div', { class: 'w-form-fail' })
+  const modal = el(
+    'dialog',
+    { 'data-modal-target': 'end-project' },
+    [title, subtitle, form, done, fail],
+  )
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
+  return {
+    end, label, wrap, card, title, subtitle, rating, feedback, reviewGroup,
+    reason, reasonWrap, toggle, submit, submitText, form, done, fail, modal, root,
+  }
+}
+
+function endProjectBridgeOptions(dom, member, pathname) {
+  return {
+    member,
+    pathname,
+    querySelector: (selector) =>
+      selectorMatches(dom.root, selector) ? dom.root : dom.root.querySelector(selector),
+    querySelectorAll: (selector) =>
+      [dom.root, ...descendants(dom.root)].filter((node) => selectorMatches(node, selector)),
+    routeGuard: true,
+  }
+}
+
+test('brand end-project modal completes and submits the review in one pass', async () => {
+  const dom = endProjectDom()
+  let actionBody = null
+  let reviewBody = null
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completion_requested',
+            lifecycle_version: 4,
+            brand_completion_requested_at: null,
+            starter_completion_requested_at: '2026-08-30T01:00:00Z',
+            brand_termination_requested_at: null,
+            starter_termination_requested_at: null,
+            review_eligible: false,
+            has_review: false,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({
+          project: {
+            id: 675,
+            lifecycle_state: 'completed',
+            lifecycle_version: 5,
+            review_eligible: true,
+            has_review: false,
+            starter_name: 'JP Test',
+          },
+        })
+      }
+      if (url.includes('/brand/reviews/submit')) {
+        reviewBody = JSON.parse(init.body)
+        return response({ review_id: 42 })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  bridge.window.prompt = () => {
+    throw new Error('prompt must not run when the modal markup exists')
+  }
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'Confirm Completion'))
+  assert.match(dom.subtitle.textContent, /Starter marked this project complete/)
+  assert.equal(dom.reviewGroup.style.display, '')
+  assert.equal(dom.reasonWrap.style.display, 'none')
+  assert.equal(dom.toggle.style.display, 'none')
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => reviewBody !== null))
+  assert.equal(actionBody.action, 'complete')
+  assert.equal(actionBody.expected_version, 4)
+  assert.equal(reviewBody.project_id, 675)
+  assert.equal(reviewBody.rating, 5)
+  assert.equal(reviewBody.review_text, 'Excellent collaboration overall.')
+})
+
+test('brand first-mover completion defers the review until the Starter confirms', async () => {
+  const dom = endProjectDom()
+  let reviewCount = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'active',
+            lifecycle_version: 4,
+            review_eligible: false,
+            has_review: false,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        return response({
+          project: {
+            id: 675,
+            lifecycle_state: 'completion_requested',
+            lifecycle_version: 5,
+            review_eligible: false,
+            has_review: false,
+          },
+        })
+      }
+      if (url.includes('/brand/reviews/submit')) {
+        reviewCount += 1
+        return response({ review_id: 42 })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
+  assert.equal(dom.toggle.style.display, '')
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => dom.label.textContent !== 'End Project'))
+  assert.equal(reviewCount, 0)
+  assert.match(dom.label.textContent, /Review unlocks once both sides confirm/)
+})
+
+test('early-end mode requires a reason and sends it as the terminate reason', async () => {
+  const dom = endProjectDom({ reason: '' })
+  let actionBody = null
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'active',
+            lifecycle_version: 4,
+            review_eligible: false,
+            has_review: false,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({
+          project: { id: 675, lifecycle_state: 'termination_requested', lifecycle_version: 5 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
+  assert.equal(dom.reasonWrap.style.display, '')
+  assert.equal(dom.reviewGroup.style.display, 'none')
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  await new Promise(setImmediate)
+  assert.equal(actionBody, null)
+  assert.equal(dom.fail.style.display, 'block')
+
+  dom.reason.value = 'Scope changed'
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => actionBody !== null))
+  assert.equal(actionBody.action, 'terminate')
+  assert.equal(actionBody.reason, 'Scope changed')
+})
+
+test('end-project falls back to prompt when the modal markup is absent', async () => {
+  const dom = endProjectDom()
+  dom.modal.attributes.delete('data-modal-target')
+  let actionBody = null
+  let prompted = 0
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'active',
+            lifecycle_version: 4,
+            review_eligible: false,
+            has_review: false,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({
+          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 5 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  bridge.window.prompt = () => {
+    prompted += 1
+    return 'COMPLETE'
+  }
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+
+  assert.ok(await waitFor(() => actionBody !== null))
+  assert.equal(prompted, 1)
+  assert.equal(actionBody.action, 'complete')
 })
