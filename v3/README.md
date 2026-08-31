@@ -2127,7 +2127,9 @@ right-aligned `data-starters-call-summary-actions` area containing a
 role-correct `data-starters-call-message` button (`Message Brand` for the
 Starter, `Message Starter` for the Brand) pointing at
 `/messages?with=<counterpart memberstack_id>`; the button is omitted when the
-counterpart has no canonical Memberstack ID. The block is created once per
+counterpart has no canonical Memberstack ID, and — by the same
+renders-to-be-authoritative rule the rows follow — omitted from any panel that
+itself renders an authored Message control. The block is created once per
 panel, rebuilt on every populate, and cleared when the modal is reset, so no
 previous member's ID survives an identity change. Compose steps are excluded
 — `cancel-reason`, `decline-reason`, `reschedule`, and `reschedule-calendar`
@@ -2135,13 +2137,26 @@ never receive it, because a summary and a navigating Message link below a
 reason form or the slot picker would discard in-progress input.
 
 Confirmed calls can show their canonical meeting link; cancelled and archived
-calls cannot. Every authored payment or booking action stays hidden except
-Close, Back, the Starter's
-eligible pending-call Accept and Decline actions, the participant Cancel chain
-for eligible Free booked calls, and owner-scoped recording access for eligible
-completed or archived calls. These migrated actions remain inside View Details;
-card-level decline, cancel, media, and other legacy controls stay hidden. The
-exact Cancel and reschedule eligibility and feedback rules live in the
+calls cannot. The authored Message controls navigate to the counterpart's
+thread. Only the counterpart's identity row carries a link — the Starter's
+dashboard restores `brand-message-link`, the Brand's restores
+`starter-message-link`, and the member's own row is left alone, because a link
+to a thread with oneself has no destination. Each restored link reads
+`Messages tab` and points at `/messages?with=<counterpart memberstack_id>`,
+falling back to `/messages` when the counterpart has no canonical Memberstack
+ID; both are needed because resetting the modal clears every
+`[booking-element]`. The `message` action buttons in the modal and on the cards
+are read-only navigation, so they are exempt from the legacy-control lockdown,
+but they show only when that canonical ID is known, and a capture-phase
+delegate routes their clicks to the same destination — a click it cannot
+resolve to a counterpart is left untouched rather than swallowed. Every other
+authored payment or booking action stays hidden except Close, Back, the
+Starter's eligible pending-call Accept and Decline actions, the participant
+Cancel chain for eligible Free booked calls, and owner-scoped recording access
+for eligible completed or archived calls. These migrated actions remain inside
+View Details; apart from that Message button, card-level decline, cancel,
+media, and other legacy controls stay hidden. The exact Cancel and reschedule
+eligibility and feedback rules live in the
 [dashboard booking action contract](#dashboard-booking-action-contract). The
 decline chain now also exposes its authored reason step
 (`switch-decline-reason`), so the reason dialog is reachable. Free-call
@@ -2717,15 +2732,45 @@ composite clear contract in
 section does not add a second clear owner.
 
 Designer markup contract (`data-availability-element="<name>"` unless noted):
-`section` (root), `connect-wrapper`, `connect-info-wrapper`, `connect-btn-wrapper`
+`section` (root), `connect-wrapper`, `connect-label-group`, `connect-label`,
+`connect-info-wrapper`, `connect-btn-wrapper`
 (3 buttons, fixed order: platform / Google / disconnect Google),
-`main-wrapper` (hidden until any connection exists), `list`, `loading-settings`,
+`main-wrapper` (hidden until any connection exists), `list`, `loading-section`,
 `item-template` (`data-id=""`, cloned per item), `item-title`, `item-timezone`,
 `availability-form-wrapper` (closed by default), `availability-form`
 (`data-availability-id=""`), `slots-wrapper`, `loading-slots`. Day selection
 renders as 7 Labelv2 badges per item; selected/unselected is a Designer
 component-variant class swap (`w-variant-89402c65-…` default,
 `w-variant-ebea452c-…` selected), not a data attribute.
+
+`connect-label-group` holds the connection status labels. Each
+`data-availability-element="connect-label"` carries `data-type="false"|"true"`
+(the disconnected / connected copy) and `data-manager="platform"|"calendar"`
+(which provider the label describes). The canonical shape is one
+`false`/`true` pair per manager, so the Platform and Google rows each state
+their own accurate status at the same time.
+
+Visibility is decided per label, never group-wide. A `data-manager`-tagged
+label tracks only that manager: `data-type="true"` shows when the live
+`availability.manager` matches, `data-type="false"` shows when it does not. An
+untagged `data-type="false"` label keeps the prior three-label markup's
+group-wide meaning and shows only when nothing is connected at all. So the
+earlier shape (one shared "Disconnected" plus the two
+`[data-type="true"][data-manager]` variants) still renders correctly, and so
+does a group part-way through the migration — a leftover untagged
+"Disconnected" label never suppresses the pairs that are already tagged. A
+`connect-label-group` containing no `connect-label` children at all falls back
+to ordinal position: child 0 = disconnected, child 1 = connected.
+
+Because a `data-manager` label names one specific provider, it only renders in
+a state that establishes one: connected, reconnect, or disconnected. When the
+connection state is `error` — or anything this module does not recognize — the
+live manager is unknown, so every `data-manager` label is hidden rather than
+claiming a provider is disconnected beside the "Disconnect Google" button that
+same state still offers. An untagged `data-type="false"` label names no
+provider, so it keeps its group-wide meaning through an error. The `loading`
+state is different again: it leaves the labels exactly as last painted, since
+they were accurate until the in-flight request resolves.
 
 Outlook is not a supported provider. Runtime hides Designer controls marked
 `data-availability-action="open-connect-outlook"` or
