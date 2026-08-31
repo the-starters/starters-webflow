@@ -1562,9 +1562,18 @@
   // `[data-manager]`-tagged label tracks only that manager, while an untagged
   // `[data-type="false"]` label keeps the prior three-label markup's
   // group-wide meaning ("nothing is connected at all").
+  //
+  // A `[data-manager]`-tagged label makes a claim about one specific provider,
+  // so it only renders in a state that actually establishes one: 'connected' /
+  // 'reconnect' / 'disconnected'. 'error' (and any state this module doesn't
+  // recognize) means the live manager is unknown, so every tagged label is
+  // hidden rather than asserting a provider is disconnected next to a
+  // "Disconnect Google" button. That differs from 'loading', which leaves the
+  // last painted labels alone because they were still accurate a moment ago.
   function applyConnectLabels(state) {
     if (state === 'loading') return
     const connected = state === 'connected' || state === 'reconnect'
+    const statusKnown = connected || state === 'disconnected'
     const manager = availability && availability.manager
     const labels = qsa(elSel('connect-label'))
     if (labels.length) {
@@ -1572,10 +1581,10 @@
         const isConnectedVariant = label.getAttribute('data-type') === 'true'
         const labelManager = label.getAttribute('data-manager')
         const managerConnected = connected && labelManager === manager
-        const visible = isConnectedVariant
-          ? managerConnected
-          : labelManager
-            ? !managerConnected
+        const visible = labelManager
+          ? statusKnown && isConnectedVariant === managerConnected
+          : isConnectedVariant
+            ? managerConnected
             : !connected
         label.style.display = visible ? '' : 'none'
       })

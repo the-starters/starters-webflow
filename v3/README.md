@@ -2747,6 +2747,16 @@ does a group part-way through the migration — a leftover untagged
 `connect-label-group` containing no `connect-label` children at all falls back
 to ordinal position: child 0 = disconnected, child 1 = connected.
 
+Because a `data-manager` label names one specific provider, it only renders in
+a state that establishes one: connected, reconnect, or disconnected. When the
+connection state is `error` — or anything this module does not recognize — the
+live manager is unknown, so every `data-manager` label is hidden rather than
+claiming a provider is disconnected beside the "Disconnect Google" button that
+same state still offers. An untagged `data-type="false"` label names no
+provider, so it keeps its group-wide meaning through an error. The `loading`
+state is different again: it leaves the labels exactly as last painted, since
+they were accurate until the in-flight request resolves.
+
 Outlook is not a supported provider. Runtime hides Designer controls marked
 `data-availability-action="open-connect-outlook"` or
 `data-availability-action="open-disconnect-outlook"` and removes them from the

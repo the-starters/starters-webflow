@@ -1592,6 +1592,59 @@ test('legacy three-label connect-label markup survives an in-flight disconnect-g
   assert.equal(dom.labelGroup.children[2].style.display, 'none')
 })
 
+function loadSectionInErrorState(domOptions) {
+  // Boots as a Google-connected member, then fails the configuration read the
+  // boot sequence requires — init's catch publishes the 'error' state.
+  return loadSection({
+    dom: domOptions,
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/nylas_configurations/get_all/v3': () => ({ status: 500, body: { message: 'configuration reader down' } }),
+    },
+  })
+}
+
+test('the error state asserts nothing about either provider', async () => {
+  const { dom, document } = loadSectionInErrorState()
+  await settle()
+
+  assert.equal(document.documentElement.getAttribute('data-scheduling-calendar-state'), 'error')
+
+  // The live manager is unknown, so no pair may claim a provider is connected
+  // OR disconnected — especially not "Google: Disconnected" next to the
+  // "Disconnect Google" button this member still gets.
+  assert.equal(dom.labelGroup.children[0].style.display, 'none') // Platform disconnected
+  assert.equal(dom.labelGroup.children[1].style.display, 'none') // Platform connected
+  assert.equal(dom.labelGroup.children[2].style.display, 'none') // Google disconnected
+  assert.equal(dom.labelGroup.children[3].style.display, 'none') // Google connected
+
+  // The rest of the error UI and the action row are untouched.
+  assert.equal(document.documentElement.getAttribute('data-scheduling-availability-section'), 'error')
+  assert.equal(dom.connectWrapper.style.display, 'flex')
+  assert.equal(dom.loadingSection.style.display, 'none')
+  assert.equal(dom.connectBtnWrapper.children[2].style.display, '') // "Disconnect Google" still offered
+})
+
+test('the error state keeps the legacy group-wide label', async () => {
+  // The untagged [data-type="false"] label names no provider, so its prior
+  // meaning survives an error; only the per-manager variants drop out.
+  const { dom, document } = loadSectionInErrorState({ connectLabels: 'legacy' })
+  await settle()
+
+  assert.equal(document.documentElement.getAttribute('data-scheduling-calendar-state'), 'error')
+  assert.equal(dom.labelGroup.children[0].style.display, '') // "Disconnected"
+  assert.equal(dom.labelGroup.children[1].style.display, 'none') // platform variant
+  assert.equal(dom.labelGroup.children[2].style.display, 'none') // calendar variant
+})
+
 test('a part-migrated connect-label group still resolves every tagged pair', async () => {
   // One untagged legacy "Disconnected" label left in place alongside a fully
   // tagged calendar pair: the untagged label must not disable the pairs.
