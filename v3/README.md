@@ -2079,6 +2079,13 @@ Webflow owns all call-section markup. Each section must provide:
   The controller only shows and writes them; it never generates the markup, so
   a template without them renders unchanged.
 
+Any authored node the Designer hides in its base style can carry a
+`[display-flex]` marker naming the display a shower must restore; revealing such
+a node writes `display: flex` inline instead of clearing the inline style back
+to the hidden authored rule. The call-details tables are authored that way, so
+without honoring the marker they read as absent and the module composes
+replacement rows over Designer content that would have rendered.
+
 The script clones the authored item template in pages of six, deduplicates by
 canonical booking ID, and sorts newest first. Starter pending rows appear under
 requests and all other rows under calls; Brand keeps pending and accepted rows
@@ -2188,12 +2195,13 @@ cancel or reschedule; late-change copy can warn the participant but must never
 block the action.
 
 `dashboard-call-actions.js` owns the details dialog's authored Back and Close
-controls on both dashboards. Populate starts on the base panel with Back hidden;
-moving to another panel shows Back, and Back returns to base and clears the
-action error. Close clicks the authored `[booking-popup-info-close]` or
-`[data-modal-close]` control so the shared modal close flow and refresh listener
-run, with the native dialog `close()` method used only as a fallback. These two
-navigation actions remain available regardless of booking state.
+controls on both dashboards. Populate starts with Back hidden on whichever panel
+it opens, base or the authored terminal panel described above; moving to another
+panel shows Back, and Back returns to base and clears the action error. Close
+clicks the authored `[booking-popup-info-close]` or `[data-modal-close]` control
+so the shared modal close flow and refresh listener run, with the native dialog
+`close()` method used only as a fallback. These two navigation actions remain
+available regardless of booking state.
 
 The Starter pending card exposes only the Designer-authored Accept lifecycle
 control while the canonical response window remains open. The details dialog
