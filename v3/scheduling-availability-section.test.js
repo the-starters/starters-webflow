@@ -1214,6 +1214,19 @@ test('switching straight from Google to Platform clears the existing Google gran
   dom.connectBtnWrapper.children[0].click() // connect-platform, still clickable while on Google
   await settle()
 
+  // Deleting a live Google grant is irreversible, so the click only opens the
+  // shared confirm step — nothing may be deleted until the member confirms.
+  assert.equal(dom.notif.steps['disconnect-calendar'].style.display, '')
+  assert.equal(
+    calls.filter((c) => c.path === '/grants/delete/v3').length,
+    0,
+    'no provider mutation before the member confirms',
+  )
+
+  dom.notif.disconnectGoogleBtn.click() // confirm -> runs the platform switch
+  await settle()
+
+  assert.equal(dom.notif.steps['virtual-connected'].style.display, '')
   const deleteCall = calls.find((c) => c.path === '/grants/delete/v3')
   assert.ok(deleteCall, 'expected the existing Google grant to be deleted')
   assert.equal(deleteCall.body.in_grant_id, 'grant-1')
@@ -1397,6 +1410,7 @@ test('an active-booking disconnect rejection stops the Google-to-Platform switch
   await settle()
 
   dom.connectBtnWrapper.children[0].click()
+  dom.notif.disconnectGoogleBtn.click() // confirm the Google -> Platform switch
   await settle()
 
   assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
@@ -1437,6 +1451,7 @@ test('an ambiguous grant deletion immediately restores the paid service', async 
   await settle()
 
   result.dom.connectBtnWrapper.children[0].click()
+  result.dom.notif.disconnectGoogleBtn.click() // confirm the Google -> Platform switch
   await settle()
   await settle()
 
@@ -1484,6 +1499,7 @@ test('a failed calendar replacement retains paid intent and recovers it on reloa
   await settle()
 
   firstLoad.dom.connectBtnWrapper.children[0].click()
+  firstLoad.dom.notif.disconnectGoogleBtn.click() // confirm the Google -> Platform switch
   await settle()
 
   const retained = JSON.parse(
@@ -1503,6 +1519,51 @@ test('a failed calendar replacement retains paid intent and recovers it on reloa
   assert.equal(
     secondLoad.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'),
     false,
+  )
+})
+
+test('a Google -> Platform switch that fails after the grant is deleted drops the stale Google state', async () => {
+  // Reproduces the reported bug: /grants/delete/v3 succeeds (the Nylas grant
+  // is gone) but the replacement virtual calendar fails, and the module used
+  // to keep grantId/manager='calendar' locally — still offering "Disconnect
+  // Google" and re-deleting a grant id that no longer exists on every retry.
+  const { dom, calls, state, document } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/grants/create_virtual_account/v3': () => ({ status: 503, body: { message: 'try again' } }),
+    },
+  })
+  await settle()
+
+  dom.connectBtnWrapper.children[0].click() // connect-platform
+  dom.notif.disconnectGoogleBtn.click() // confirm the switch
+  await settle()
+
+  assert.equal(document.documentElement.getAttribute('data-scheduling-calendar-state'), 'error')
+  assert.equal(dom.notif.steps['request-error'].style.display, '')
+  // The grant is gone, so nothing may still claim Google is connected.
+  assert.equal(state.availability.manager, null, 'canonical manager was cleared')
+  assert.equal(dom.connectBtnWrapper.children[2].style.display, 'none') // no "Disconnect Google"
+  assert.notEqual(dom.connectBtnWrapper.children[0].style.display, 'none') // retry stays available
+
+  const deletesBeforeRetry = calls.filter((c) => c.path === '/grants/delete/v3').length
+  assert.equal(deletesBeforeRetry, 1)
+
+  dom.connectBtnWrapper.children[0].click() // retry
+  await settle()
+
+  assert.equal(
+    calls.filter((c) => c.path === '/grants/delete/v3').length,
+    deletesBeforeRetry,
+    'a retry must not re-delete the already-deleted grant',
   )
 })
 

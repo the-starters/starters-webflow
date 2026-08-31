@@ -124,6 +124,11 @@
   // Set by the per-item "open-item-remove" trigger, consumed by the
   // notification modal's "item-remove" confirm button.
   let pendingRemoveId = null
+  // Set by "connect-platform" when a live Google grant has to be deleted to
+  // make the switch, consumed by the notification modal's "disconnect-google"
+  // confirm button so it runs the platform switch instead of a plain
+  // disconnect.
+  let pendingPlatformSwitch = false
   const oauthCallback = captureOAuthCallback()
 
   /* ------------------------------------------------------------------ */
@@ -1141,12 +1146,31 @@
       // clickable while manager === 'calendar') must clear the existing
       // Google grant first — otherwise it's orphaned, still connected in
       // Nylas, while the local state moves on to platform.
+      // clearGrant is a no-op without a grant id, so this tracks whether a
+      // provider grant was actually deleted — the only case whose failure
+      // window needs canonical cleanup below.
+      const clearedGrant = Boolean(grantId)
       transition = await clearGrant(grantId, memberId)
+      if (clearedGrant) availability.manager = null
       const virtual = await createTransitionVirtualCalendar(
         memberId,
         transition.oauthIntent,
       )
-      if (virtual.status !== 200) throw new Error('Virtual calendar setup failed')
+      if (virtual.status !== 200) {
+        if (clearedGrant) {
+          // The Google grant is gone from Nylas/Xano, so the local copy of it
+          // must go too: leaving grantId/manager behind would keep rendering
+          // "Disconnect Google" and re-issue clearGrant against a deleted
+          // grant on every retry until the member reloads.
+          grantId = null
+          grantEmail = null
+          grantCalendarId = null
+          configs = []
+          publishCalendarConnectionError()
+          await updateAvail()
+        }
+        throw new Error('Virtual calendar setup failed')
+      }
       grantId = virtual.grant_id
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
@@ -1483,11 +1507,16 @@
             if (ok === false) showNotificationError(ERROR_TEXT_CONNECT_GOOGLE)
           })
         } else if (action === 'disconnect-google') {
+          // Both routes into this step delete the Google grant and land on the
+          // platform manager; only the copy and the error text differ.
+          const toPlatform = pendingPlatformSwitch
+          pendingPlatformSwitch = false
+          const runTransition = toPlatform ? activatePlatformManager : disconnectGoogleManager
           setNotificationBusy(target, true)
-          disconnectGoogleManager()
+          runTransition()
             .then(function (ok) {
-              if (ok) switchNotification('calendar-disconnected')
-              else showNotificationError(ERROR_TEXT_DISCONNECT_GOOGLE)
+              if (ok) switchNotification(toPlatform ? 'virtual-connected' : 'calendar-disconnected')
+              else showNotificationError(toPlatform ? ERROR_TEXT_CONNECT_PLATFORM : ERROR_TEXT_DISCONNECT_GOOGLE)
             })
             .finally(function () {
               setNotificationBusy(target, false)
@@ -1653,8 +1682,17 @@
     const wrapper = qs(elSel('connect-btn-wrapper'))
     bindActionGroup(wrapper, ['connect-platform', 'open-connect-google', 'open-disconnect-google'], function (action) {
       if (action === 'connect-platform') {
-        // No confirmation step for platform — open straight on the spinner
-        // and let the request itself decide success/error.
+        // Switching away from Google deletes the member's Nylas grant, which
+        // only a fresh OAuth consent can restore, so it confirms through the
+        // same step open-disconnect-google gates that work behind. With no
+        // manager there is nothing to lose: open straight on the spinner and
+        // let the request itself decide success/error.
+        if (availability && availability.manager === 'calendar') {
+          pendingPlatformSwitch = true
+          openNotification('disconnect-calendar')
+          return
+        }
+        pendingPlatformSwitch = false
         openNotification('virtual-connect')
         activatePlatformManager().then(function (ok) {
           if (ok === false) showNotificationError(ERROR_TEXT_CONNECT_PLATFORM)
@@ -1665,6 +1703,7 @@
         // Starting from disconnected skips straight to the informational step.
         openNotification(availability && availability.manager === 'platform' ? 'switch-calendar' : 'pre-oauth')
       } else if (action === 'open-disconnect-google') {
+        pendingPlatformSwitch = false
         openNotification('disconnect-calendar')
       }
     })
