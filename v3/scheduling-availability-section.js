@@ -44,11 +44,13 @@
 
   const EL = 'data-availability-element'
   const ACTION = 'data-availability-action'
-  // Confirmed against the live Designer component: default (unselected) vs.
-  // selected day-badge variant classes on the `Dashboard / Availability Item
-  // (Section)` component's day Labelv2 instances.
+  // Confirmed against the live Designer component: inactive days use the
+  // silver Labelv2 variant. Active days reuse the lime variant from the
+  // call-settings "ON" pill so both active states have the same visual tone.
   const DAY_VARIANT_DEFAULT = 'w-variant-89402c65-e26d-c236-91e7-76e9135a2d42'
-  const DAY_VARIANT_SELECTED = 'w-variant-ebea452c-a047-af3f-dd6c-3062ee4c048c'
+  const DAY_VARIANT_SELECTED = 'w-variant-30a4a9ed-8474-d414-9314-498a5fe53866'
+  const DAY_THEME_DEFAULT = 'silver'
+  const DAY_THEME_SELECTED = 'lime'
   const SLOTS_SEARCH_DAYS = 14
   const SLOTS_LIMIT = 8
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
@@ -1748,6 +1750,10 @@
       const selected = Array.isArray(days) && days.indexOf(i) > -1
       badge.classList.remove(selected ? DAY_VARIANT_DEFAULT : DAY_VARIANT_SELECTED)
       badge.classList.add(selected ? DAY_VARIANT_SELECTED : DAY_VARIANT_DEFAULT)
+      badge.setAttribute(
+        'data-wf--labelv2--style-theme',
+        selected ? DAY_THEME_SELECTED : DAY_THEME_DEFAULT,
+      )
     }
   }
 
