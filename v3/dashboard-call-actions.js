@@ -53,6 +53,25 @@
       successContent: 'reschedule-proposed',
       failureMessage: 'Canonical reschedule proposal failed',
     },
+    /* A Brand editing the time on its own PENDING request. There is no
+       handshake: the Starter has not accepted anything yet, so the booking
+       keeps `pending` and the Starter's normal accept then applies to the new
+       time. Separate from `reschedule-propose`, which is the confirmed-call
+       contract, because the server contracts differ — #5921 refuses a
+       confirmed booking and #5756 refuses a pending one. */
+    'reschedule-request': {
+      path: '/booking/reschedule/request/v3',
+      storagePrefix: 'starters:dashboard-reschedule-request:v1:',
+      attemptPrefix: 'dashboard-reschedule-request',
+      reasonField: 'rescheduled_reason',
+      reasonAttribute: 'booking-reschedule-reason',
+      responseKey: 'reschedule_request',
+      // The booking is deliberately still pending afterwards; a status change
+      // here would mean the handshake contract ran by mistake.
+      successStatus: 'pending',
+      successContent: 'reschedule-updated',
+      failureMessage: 'Canonical reschedule request failed',
+    },
     'reschedule-confirm': {
       path: '/booking/reschedule/confirm/v3',
       storagePrefix: 'starters:dashboard-reschedule-confirm:v1:',
@@ -170,6 +189,41 @@
     )
   }
 
+  /**
+   * Whether the signed-in member may restate the time on a PENDING request.
+   * Brand only, by product decision: it is the Brand's own request and the
+   * Starter has not answered it yet. Otherwise the same shape as
+   * canProposeReschedule, because #5921 reuses #5756's guards.
+   */
+  function canRequestReschedule(role, booking, now) {
+    const start = Number(booking && booking.start)
+    const duration = Number(booking && booking.duration)
+    const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
+    return (
+      role === 'brand' &&
+      freeBooking(booking) &&
+      bookingStatus(booking) === 'pending' &&
+      actorMemberId(role, booking) !== '' &&
+      clean(booking && booking.grant_id) !== '' &&
+      Number.isFinite(duration) &&
+      duration > 0 &&
+      Number.isFinite(start) &&
+      start > reference &&
+      bookingIdentified(booking)
+    )
+  }
+
+  /**
+   * Which reschedule contract this booking takes, or '' when neither applies.
+   * One authored Reschedule button serves both, so the kind is resolved from
+   * the booking at click time rather than from the markup.
+   */
+  function rescheduleKindFor(role, booking, now) {
+    if (canProposeReschedule(role, booking, now)) return 'reschedule-propose'
+    if (canRequestReschedule(role, booking, now)) return 'reschedule-request'
+    return ''
+  }
+
   function canRespondReschedule(role, booking) {
     const proposer = clean(booking && booking.rescheduled_by).toLowerCase()
     return (
@@ -187,6 +241,7 @@
     if (kind === 'decline') return canDecline(role, booking)
     if (kind === 'cancel') return canCancel(role, booking, now)
     if (kind === 'reschedule-propose') return canProposeReschedule(role, booking, now)
+    if (kind === 'reschedule-request') return canRequestReschedule(role, booking, now)
     if (kind === 'reschedule-confirm' || kind === 'reschedule-decline') {
       return canRespondReschedule(role, booking)
     }
@@ -412,17 +467,24 @@
     return body
   }
 
-  function proposeReschedule(booking, role, reason, slot, now) {
+  function proposeReschedule(booking, role, reason, slot, now, kind) {
     const start = Number(slot && slot.start)
     const end = Number(slot && slot.end)
     const timezone = clean(slot && slot.timezone)
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       return Promise.resolve(null)
     }
+    // Confirmed calls take the propose-then-confirm contract; a pending
+    // request takes the direct update. Resolved from the booking when the
+    // caller does not name one, so the single authored button serves both.
+    const resolved = clean(kind) || rescheduleKindFor(role, booking, now)
+    if (resolved !== 'reschedule-propose' && resolved !== 'reschedule-request') {
+      return Promise.resolve(null)
+    }
     const proposedSlot = { new_start: start, new_end: end }
     if (timezone) proposedSlot.timezone = timezone
     return submitAction(
-      'reschedule-propose',
+      resolved,
       role,
       booking,
       reason,
@@ -879,6 +941,24 @@
       host.appendChild(proposedPanel)
     }
 
+    /* The pending path's success view. Authored in the Brands View, which is
+       the only surface that can reach it, so this fallback exists purely so a
+       modal without the authored panel cannot switch to a target that is not
+       there and end up blank. */
+    if (!modal.querySelector('[booking-popup-content="reschedule-updated"]')) {
+      const updatedPanel = reschedulePanel(document, 'reschedule-updated')
+      updatedPanel.appendChild(panelText(document, 'h3', 'Request time updated'))
+      updatedPanel.appendChild(
+        panelText(
+          document,
+          'p',
+          'Your call request now shows the new time. The Starter has not accepted yet, and their acceptance will apply to this new time.',
+          true,
+        ),
+      )
+      host.appendChild(updatedPanel)
+    }
+
     if (!modal.querySelector('[booking-popup-content="reschedule-accepted"]')) {
       const acceptedPanel = reschedulePanel(document, 'reschedule-accepted')
       acceptedPanel.appendChild(panelText(document, 'h3', 'New time confirmed'))
@@ -1019,25 +1099,27 @@
       onConfirm: async function (slot) {
         if (!isCurrent()) return null
         showActionError(modal, '')
+        // The booking decides the contract, and with it the failure copy and
+        // the success view: a pending request lands on "time updated", not on
+        // "waiting for the other participant".
+        const kind = rescheduleKindFor(role, booking) || 'reschedule-propose'
+        const config = KINDS[kind]
         let result
         try {
           result = await proposeReschedule(booking, role, reason, {
             start: Number(slot && slot.start),
             end: Number(slot && slot.end),
             timezone: clean(slot && slot.timezone),
-          })
-          if (!result) throw new Error(KINDS['reschedule-propose'].failureMessage)
+          }, undefined, kind)
+          if (!result) throw new Error(config.failureMessage)
         } catch (error) {
-          showActionError(
-            modal,
-            (error && error.message) || KINDS['reschedule-propose'].failureMessage,
-          )
+          showActionError(modal, (error && error.message) || config.failureMessage)
           throw error
         }
         if (!isCurrent()) return result
         const reasonField = modal.querySelector('[booking-reschedule-reason]')
         if (reasonField) reasonField.value = ''
-        switchPopupContent(modal, KINDS['reschedule-propose'].successContent)
+        switchPopupContent(modal, config.successContent)
         restartAfterModalClose(document, modal, restart)
       },
       })
@@ -1101,7 +1183,7 @@
         const button =
           target && target.closest && target.closest(WIRE_SELECTOR)
         if (!button) return
-        const step = actionForButton(button)
+        let step = actionForButton(button)
         if (!step) return
         if (event.preventDefault) event.preventDefault()
         if (event.stopImmediatePropagation) event.stopImmediatePropagation()
@@ -1127,6 +1209,14 @@
           return
         }
         const booking = settings.getBooking(button)
+        /* One authored Reschedule button serves two contracts. The markup
+           cannot know which, so the booking decides here: a pending request
+           swaps the confirmed-call kind for the direct-update one before the
+           gate runs, otherwise the gate would reject its own button. */
+        if (step.kind === 'reschedule-propose') {
+          const resolved = rescheduleKindFor(settings.role, booking)
+          if (resolved) step = { kind: resolved, step: step.step }
+        }
         if (!canAct(step.kind, settings.role, booking)) {
           // Never fail silently: a blocked click with no trace reads as a dead
           // button. The gate snapshot names the reason without member PII.
@@ -1140,7 +1230,7 @@
         }
         const config = KINDS[step.kind]
         if (step.step === 'open') {
-          if (step.kind === 'reschedule-propose') {
+          if (step.kind === 'reschedule-propose' || step.kind === 'reschedule-request') {
             ensureRescheduleViews(document, modal)
             switchPopupContent(modal, 'reschedule')
             return
@@ -1153,7 +1243,7 @@
           return
         }
         if (step.step === 'calendar') {
-          const proposalReason = reasonValue(modal, 'reschedule-propose')
+          const proposalReason = reasonValue(modal, step.kind)
           if (!validateReason(proposalReason.field, proposalReason.value)) return
           switchPopupContent(modal, 'reschedule-calendar')
           mountRescheduleCalendar(
@@ -1237,6 +1327,8 @@
     counterpartName,
     fillCounterpartPlaceholders,
     canProposeReschedule,
+    canRequestReschedule,
+    rescheduleKindFor,
     canRespondReschedule,
     ensureRescheduleViews,
     normalizeRescheduleViewCopy,

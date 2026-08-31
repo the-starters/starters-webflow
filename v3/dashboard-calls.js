@@ -1,7 +1,7 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
- * @release v1.59.464
+ * @release v1.59.469
  *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
@@ -1294,11 +1294,13 @@
           validDashboardModule(global.StartersDashboardCallActions) &&
           typeof global.StartersDashboardCallActions.canCancel === 'function' &&
           global.StartersDashboardCallActions.canCancel(role, booking, now)
+        // Two contracts share this button: propose-then-confirm on a confirmed
+        // call, and a direct time update on a Brand's own pending request.
         const proposeReschedule =
           (action === 'reschedule' || action === 'reschedule-calendar') &&
           validDashboardModule(global.StartersDashboardCallActions) &&
-          typeof global.StartersDashboardCallActions.canProposeReschedule === 'function' &&
-          global.StartersDashboardCallActions.canProposeReschedule(role, booking, now)
+          typeof global.StartersDashboardCallActions.rescheduleKindFor === 'function' &&
+          global.StartersDashboardCallActions.rescheduleKindFor(role, booking, now) !== ''
         const respondReschedule =
           (action === 'confirm-reschedule' || action === 'reschedule-decline') &&
           validDashboardModule(global.StartersDashboardCallActions) &&
@@ -1342,7 +1344,9 @@
       modal,
       gates.rescheduleAnchor,
       'reschedule',
-      'Rescheduling is available for confirmed Free calls.',
+      // Brands can now also restate the time on their own pending request, so
+      // the old "confirmed only" wording would misdescribe the gate.
+      'Rescheduling is available for Free calls.',
       Boolean(gates.rescheduleAnchor) &&
         active &&
         upcoming &&

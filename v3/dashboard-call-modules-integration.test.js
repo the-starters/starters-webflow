@@ -770,6 +770,9 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
       canDecline() { return false },
       canCancel() { return false },
       canProposeReschedule() { return false },
+      // The gate reads the resolved kind now, because one button serves both
+      // the confirmed propose flow and the pending time update.
+      rescheduleKindFor() { return '' },
       canRespondReschedule() { return false },
     }
     const reschedule = hintButton('reschedule')
@@ -784,7 +787,7 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
     dashboard.configureDetailActions(modal, 'brand', 'confirmed', paidBooking, Date.now())
     assert.equal(
       modal.hints.reschedule.textContent,
-      'Rescheduling is available for confirmed Free calls.',
+      'Rescheduling is available for Free calls.',
     )
     assert.equal(modal.hints.reschedule.hidden, false)
     assert.equal(
@@ -794,7 +797,7 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
     assert.equal(modal.hints.cancel.hidden, false)
 
     // When the actions become available the hints hide again.
-    global.StartersDashboardCallActions.canProposeReschedule = () => true
+    global.StartersDashboardCallActions.rescheduleKindFor = () => 'reschedule-propose'
     global.StartersDashboardCallActions.canCancel = () => true
     const freeBooking = { ...paidBooking, is_paid: false }
     dashboard.configureDetailActions(modal, 'brand', 'confirmed', freeBooking, Date.now())
@@ -803,7 +806,7 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
 
     // A past or terminal booking renders no hint at all.
     const freshModal = hintModal([hintButton('reschedule'), hintButton('switch-cancel')])
-    global.StartersDashboardCallActions.canProposeReschedule = () => false
+    global.StartersDashboardCallActions.rescheduleKindFor = () => ''
     global.StartersDashboardCallActions.canCancel = () => false
     dashboard.configureDetailActions(
       freshModal,
