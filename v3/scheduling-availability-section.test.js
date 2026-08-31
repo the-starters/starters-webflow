@@ -53,7 +53,24 @@ class El {
   }
 
   set innerHTML(value) {
-    if (value === '') this.children = []
+    if (value !== '') return
+    for (const child of this.children) child._blurIfActiveInside()
+    this.children = []
+  }
+
+  _blurIfActiveInside() {
+    const doc = this.ownerDocument
+    if (!doc || !doc.activeElement) return
+    if (doc.activeElement === this) {
+      doc.activeElement = null
+      return
+    }
+    for (const el of this.walk()) {
+      if (el === doc.activeElement) {
+        doc.activeElement = null
+        return
+      }
+    }
   }
 
   setAttribute(name, value) {
@@ -90,19 +107,7 @@ class El {
     const index = this.parentElement.children.indexOf(this)
     if (index > -1) this.parentElement.children.splice(index, 1)
     this.parentElement = null
-    const doc = this.ownerDocument
-    if (doc && doc.activeElement) {
-      let blurs = doc.activeElement === this
-      if (!blurs) {
-        for (const el of this.walk()) {
-          if (el === doc.activeElement) {
-            blurs = true
-            break
-          }
-        }
-      }
-      if (blurs) doc.activeElement = null
-    }
+    this._blurIfActiveInside()
   }
 
   focus() {
@@ -2173,18 +2178,25 @@ test('calendar-preview reuses the timezone selector node and keeps its focus acr
   assert.equal(optionCount > 1, true)
 
   timezoneSelect.focus()
-  assert.equal(document.activeElement, timezoneSelect)
+  assert.ok(document.activeElement === timezoneSelect, 'select should be focusable')
 
   timezoneSelect.value = 'America/New_York'
   timezoneSelect.dispatchEvent({ type: 'change', target: timezoneSelect })
 
-  assert.equal(
-    dom.calendarPreview.querySelector('[data-availability-element="preview-timezone"]'),
-    timezoneSelect,
+  assert.ok(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-timezone"]') ===
+      timezoneSelect,
+    'timezone change should reuse the same select node',
   )
   assert.equal(timezoneSelect.children.length, optionCount)
-  assert.equal(timezoneSelect.children[0], firstOption)
-  assert.equal(document.activeElement, timezoneSelect)
+  assert.ok(
+    timezoneSelect.children[0] === firstOption,
+    'timezone change should reuse the same option nodes',
+  )
+  assert.ok(
+    document.activeElement === timezoneSelect,
+    'timezone change should leave focus on the select',
+  )
   assert.equal(
     dom.calendarPreview.querySelector('[data-availability-element="preview-times"]').children[0]
       .textContent,
@@ -2200,9 +2212,10 @@ test('calendar-preview reuses the timezone selector node and keeps its focus acr
     '[data-availability-element="preview-dates"]',
   )
   dateButtons.children[0].click()
-  assert.equal(
-    dom.calendarPreview.querySelector('[data-availability-element="preview-timezone"]'),
-    timezoneSelect,
+  assert.ok(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-timezone"]') ===
+      timezoneSelect,
+    'date selection should reuse the same select node',
   )
   assert.equal(timezoneSelect.children.length, optionCount)
 })
