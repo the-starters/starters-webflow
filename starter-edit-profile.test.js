@@ -406,7 +406,7 @@ async function testSuccess() {
   assert.equal(environment.button.style.pointerEvents, 'none')
   assert.equal(environment.button.style.opacity, '0.6')
 
-  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) })
   await submission
 
   assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
@@ -420,7 +420,7 @@ async function testLateLoadInitializesImmediately() {
   const environment = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }), { documentReadyState: 'complete' })
 
   await submit(environment)
@@ -433,7 +433,7 @@ async function testInitialSameMemberAuthNotificationDoesNotRejectSave() {
   let requests = 0
   const environment = createEnvironment(async () => {
     requests += 1
-    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+    return { ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) }
   }, { notifyCurrentMemberOnAuthSubscribe: true })
 
   await submit(environment)
@@ -446,7 +446,7 @@ async function testInitialEmptyAuthNotificationDoesNotRejectCurrentMemberSave() 
   let requests = 0
   const environment = createEnvironment(async () => {
     requests += 1
-    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+    return { ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) }
   }, { initialAuthNotification: null })
 
   await submit(environment)
@@ -501,7 +501,7 @@ async function testSecondSaveStillFailsClosedWhenMemberSwitchesMidRequest() {
   environment.window.MEMBER.customFields.phone = ''
 
   const firstSubmission = submit(environment)
-  firstResponse.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  firstResponse.resolve({ ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) })
   await firstSubmission
 
   assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
@@ -514,7 +514,7 @@ async function testSecondSaveStillFailsClosedWhenMemberSwitchesMidRequest() {
     auth: { email: 'other@example.com' },
     customFields: {},
   })
-  secondResponse.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  secondResponse.resolve({ ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) })
   await secondSubmission
 
   assert.deepEqual(environment.modalEvents, { success: 1, error: 1 })
@@ -525,7 +525,7 @@ async function testEarlyLoadInitializesCountersAfterParsing() {
   const environment = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }))
 
   assert.equal(environment.counterInput.classList.contains('initialized'), true)
@@ -577,12 +577,26 @@ async function testSuccessfulHttpWithoutCanonicalSaveConfirmationFailsClosed() {
   assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
 }
 
+async function testCanonicalSaveWithoutExplicitProjectionStateFailsClosed() {
+  for (const projection_pending of [undefined, null, 'pending']) {
+    const environment = createEnvironment(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ saved: true, projection_pending }),
+    }), { stepIndex: 6 })
+
+    await submit(environment)
+
+    assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  }
+}
+
 async function testEveryOwnedSectionOpensSuccessModal() {
   for (const stepIndex of [2, 5, 6, 7]) {
     const environment = createEnvironment(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ saved: true }),
+      json: async () => ({ saved: true, projection_pending: false }),
     }), { stepIndex })
 
     await submit(environment)
@@ -603,7 +617,7 @@ function saved(overrides) {
   return createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }), overrides)
 }
 
@@ -731,7 +745,7 @@ async function testReviewerStepUsesCanonicalBuildProfileShape() {
   const environment = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }), { stepIndex: 7 })
 
   await submit(environment)
@@ -760,7 +774,7 @@ async function testReviewerFieldIsOmittedWhenNativeStepIsAbsent() {
   const environment = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }))
 
   await submit(environment)
@@ -800,7 +814,7 @@ async function testHiddenTriggerFallback() {
   const successEnvironment = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }), { modalApi: false })
   await submit(successEnvironment)
 
@@ -845,7 +859,7 @@ async function testStalledDiagnosticsFailOpen() {
   let requests = 0
   const environment = createEnvironment(async () => {
     requests += 1
-    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+    return { ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) }
   }, {
     workflowDiagnosticsReady: new Promise(() => {}),
     setTimeoutImpl: (callback, ms) => ms === 2000 ? setImmediate(callback) : 1,
@@ -862,7 +876,7 @@ async function testAuthSwitchDuringDiagnosticsDoesNotWrite() {
   let requests = 0
   const environment = createEnvironment(async () => {
     requests += 1
-    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+    return { ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) }
   }, {
     workflowDiagnosticsReady: diagnosticsReady.promise,
     setTimeoutImpl: (callback, ms) => (ms === 2000 ? 1 : setImmediate(callback)),
@@ -896,7 +910,7 @@ async function testAuthSwitchAfterPatchDoesNotProjectToNewSession() {
     auth: { email: 'other@example.com' },
     customFields: {},
   })
-  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) })
   await submission
 
   assert.equal(environment.memberUpdates.length, 0)
@@ -913,7 +927,7 @@ async function testLogoutAndSameMemberReauthenticationInvalidatesSave() {
 
   environment.switchMember(null)
   environment.switchMember(originalMember)
-  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) })
   await submission
 
   assert.equal(environment.memberUpdates.length, 0)
@@ -987,7 +1001,7 @@ async function testProfileTypeSelectsOnlyItsOwnedMirrorBranch() {
   const consultValid = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }), {
     profileType: 'consult',
     fieldOverrides: { '#roles-required': { value: '' } },
@@ -1010,7 +1024,7 @@ async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(
     const consult = createEnvironment(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ saved: true }),
+      json: async () => ({ saved: true, projection_pending: false }),
     }), {
       stepIndex,
       profileType: 'consult',
@@ -1032,7 +1046,7 @@ async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(
   const consultRate = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }), {
     stepIndex: 6,
     profileType: 'consult',
@@ -1046,7 +1060,7 @@ async function testConditionalLocationRequirementTransitions() {
   const optionalState = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }))
   await submit(optionalState)
   assert.equal(optionalState.requests.length, 1)
@@ -1078,7 +1092,7 @@ async function testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots() 
   const empty = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }), {
     stepIndex: 7,
     fieldOverrides: { '[name="reviewer"]': { value: '' } },
@@ -1089,7 +1103,7 @@ async function testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots() 
   const absentOptionalSlots = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }), {
     stepIndex: 7,
     missingSelectors: ['[name="reviewer-2"]', '[name="reviewer-3"]'],
@@ -1116,7 +1130,7 @@ async function testPersonalDetailsValidationBoundary() {
   const environment = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }))
 
   assert.equal(
@@ -1188,7 +1202,7 @@ async function testInvalidReplayRequiresExactFreshMemberProofAfterCorrection() {
   const environment = createEnvironment(async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ saved: true }),
+    json: async () => ({ saved: true, projection_pending: false }),
   }))
   environment.window.MEMBER.auth.email = 'new@example.com'
   environment.fields['[name="first-name"]'].value = ''
@@ -1245,6 +1259,7 @@ Promise.all([
   testNon2xx(),
   testCanonicalSaveWithPendingProjectionNeverShowsWholeFormFailure(),
   testSuccessfulHttpWithoutCanonicalSaveConfirmationFailsClosed(),
+  testCanonicalSaveWithoutExplicitProjectionStateFailsClosed(),
   testEveryOwnedSectionOpensSuccessModal(),
   testOptionalRatesPreserveCanonicalZeroSentinel(),
   testStepSixNeverWritesPaidCallAuthority(),

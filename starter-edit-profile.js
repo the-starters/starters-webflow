@@ -831,13 +831,14 @@ onDomReady(function () {
 				responseStatus = response.status;
 				const result = await response.json().catch(() => null);
 				const canonicalSaved = result?.saved === true;
+				const hasProjectionState = typeof result?.projection_pending === 'boolean';
 				if (!response.ok && !canonicalSaved) {
 					failureCode = 'HTTP_ERROR';
 					throw new Error(result?.message || result?.error || `Profile update failed (${response.status})`);
 				}
-				if (!canonicalSaved) {
+				if (!canonicalSaved || !hasProjectionState) {
 					failureCode = 'SAVE_CONTRACT_ERROR';
-					throw new Error('Profile update did not confirm a canonical save.');
+					throw new Error('Profile update did not confirm the save contract.');
 				}
 
 				// update Member customFields, if even one of them was changed
