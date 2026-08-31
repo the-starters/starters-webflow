@@ -1722,6 +1722,17 @@ test('missing panel details and role-correct Message actions are supplied withou
   assert.equal(supplement.hidden, false)
   assert.equal(supplement.style.display, 'flex')
   assert.equal(supplement.style.gap, '16px')
+  // Every module-owned field — counterpart and duration included — sits inside
+  // the bordered row group, and the Message action is the only thing beside it.
+  assert.deepEqual(
+    Array.from(rowGroup.children).map((row) =>
+      row.getAttribute('data-starters-call-summary-row'),
+    ),
+    ['brand-name', 'start-date', 'duration', 'context', 'cancel-reason'],
+  )
+  assert.equal(supplement.children.length, 2)
+  assert.equal(supplement.children[0], rowGroup)
+  assert.equal(supplement.children[1], messageActions)
 
   // Compose steps keep their form controls unaccompanied.
   composePanels.forEach((panel) => {
