@@ -931,6 +931,75 @@ test('boots into disconnected state: connect + google visible, disconnect hidden
   assert.equal(dom.connectBtnWrapper.children[2].style.display, 'none') // disconnect-google
 })
 
+test('connection pills and actions follow the independent Nylas and Google state matrix', async () => {
+  const cases = [
+    {
+      name: 'no Nylas grant',
+      serverState: {},
+      labels: [true, false, true, false],
+      actions: [true, true, false],
+    },
+    {
+      name: 'virtual Nylas grant',
+      serverState: {
+        grantId: 'virtual-grant',
+        grantEmail: 'member-a',
+        calendarId: 'virtual-calendar',
+        availability: {
+          items: { general: { days: [1], start: '09:00', end: '17:00', defaultDays: [1] } },
+          manager: 'platform',
+        },
+      },
+      labels: [false, true, true, false],
+      actions: [false, true, false],
+    },
+    {
+      name: 'Google-backed Nylas grant',
+      serverState: {
+        grantId: 'google-grant',
+        grantEmail: 'g@example.com',
+        calendarId: 'google-calendar',
+        availability: {
+          items: { general: { days: [1], start: '09:00', end: '17:00', defaultDays: [1] } },
+          manager: 'calendar',
+        },
+      },
+      labels: [false, true, false, true],
+      actions: [false, false, true],
+    },
+    {
+      name: 'stale Google manager without a Nylas grant',
+      serverState: {
+        availability: {
+          items: { general: { days: [1], start: '09:00', end: '17:00', defaultDays: [1] } },
+          manager: 'calendar',
+        },
+      },
+      labels: [true, false, true, false],
+      actions: [true, true, false],
+    },
+  ]
+
+  for (const entry of cases) {
+    const { dom } = loadSection({ serverState: entry.serverState })
+    await settle()
+    entry.labels.forEach((visible, index) => {
+      assert.equal(
+        dom.labelGroup.children[index].style.display !== 'none',
+        visible,
+        entry.name + ' label ' + index,
+      )
+    })
+    entry.actions.forEach((visible, index) => {
+      assert.equal(
+        dom.connectBtnWrapper.children[index].style.display !== 'none',
+        visible,
+        entry.name + ' action ' + index,
+      )
+    })
+  }
+})
+
 test('the first load reveals connect-wrapper (flex) and hides loading-section regardless of connection state, but keeps main-wrapper hidden until a successful connect', async () => {
   const { dom } = loadSection()
 
@@ -1183,12 +1252,16 @@ test('boots directly into connected state when the starter already has a grant/c
   await settle()
 
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
-  assert.notEqual(dom.connectBtnWrapper.children[0].style.display, 'none') // can switch to platform
+  assert.equal(dom.labelGroup.children[0].style.display, 'none') // Platform disconnected
+  assert.equal(dom.labelGroup.children[1].style.display, '') // Platform connected through Nylas
+  assert.equal(dom.labelGroup.children[2].style.display, 'none') // Google disconnected
+  assert.equal(dom.labelGroup.children[3].style.display, '') // Google connected
+  assert.equal(dom.connectBtnWrapper.children[0].style.display, 'none') // Nylas is already connected
   assert.equal(dom.connectBtnWrapper.children[1].style.display, 'none') // already on Google
   assert.equal(dom.connectBtnWrapper.children[2].style.display, '') // disconnect-google visible
 })
 
-test('switching straight from Google to Platform clears the existing Google grant first', async () => {
+test('disconnecting Google preserves the Platform layer by replacing the Google grant with a virtual grant', async () => {
   const legacyClearCalls = []
   const { dom, calls } = loadSection({
     clearGrantData: async (...args) => legacyClearCalls.push(args),
@@ -1211,7 +1284,7 @@ test('switching straight from Google to Platform clears the existing Google gran
   })
   await settle()
 
-  dom.connectBtnWrapper.children[0].click() // connect-platform, still clickable while on Google
+  dom.connectBtnWrapper.children[2].click() // disconnect-google
   await settle()
 
   // Deleting a live Google grant is irreversible, so the click only opens the
@@ -1223,10 +1296,10 @@ test('switching straight from Google to Platform clears the existing Google gran
     'no provider mutation before the member confirms',
   )
 
-  dom.notif.disconnectGoogleBtn.click() // confirm -> runs the platform switch
+  dom.notif.disconnectGoogleBtn.click() // confirm -> replaces Google with the virtual Platform grant
   await settle()
 
-  assert.equal(dom.notif.steps['virtual-connected'].style.display, '')
+  assert.equal(dom.notif.steps['calendar-disconnected'].style.display, '')
   const deleteCall = calls.find((c) => c.path === '/grants/delete/v3')
   assert.ok(deleteCall, 'expected the existing Google grant to be deleted')
   assert.equal(deleteCall.body.in_grant_id, 'grant-1')
@@ -1242,6 +1315,29 @@ test('switching straight from Google to Platform clears the existing Google gran
   })
   const paths = calls.map((call) => call.path)
   assert.ok(paths.indexOf('/grants/delete/v3') < paths.indexOf('/starter/paid-call-settings/upsert/v3'))
+})
+
+test('a stale/programmatic connect-platform click is ignored while a Google-backed Nylas grant exists', async () => {
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(dom.connectBtnWrapper.children[0].style.display, 'none')
+  dom.connectBtnWrapper.children[0].click()
+  await settle()
+
+  assert.equal(dom.notif.steps['disconnect-calendar'].style.display, 'none')
+  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 0)
+  assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
 })
 
 test('OAuth cancellation rebuilds platform scheduling and restores the saved paid service', async () => {
@@ -1389,7 +1485,7 @@ test('OAuth cancellation recovery reuses canonical resources after partial succe
   )
 })
 
-test('an active-booking disconnect rejection stops the Google-to-Platform switch', async () => {
+test('an active-booking rejection stops Google disconnect before the virtual Platform replacement', async () => {
   const { dom, calls, window } = loadSection({
     serverState: {
       grantId: 'grant-1',
@@ -1409,8 +1505,8 @@ test('an active-booking disconnect rejection stops the Google-to-Platform switch
   })
   await settle()
 
-  dom.connectBtnWrapper.children[0].click()
-  dom.notif.disconnectGoogleBtn.click() // confirm the Google -> Platform switch
+  dom.connectBtnWrapper.children[2].click()
+  dom.notif.disconnectGoogleBtn.click() // confirm Google disconnect
   await settle()
 
   assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
@@ -1450,8 +1546,8 @@ test('an ambiguous grant deletion immediately restores the paid service', async 
   canonicalState = result.state
   await settle()
 
-  result.dom.connectBtnWrapper.children[0].click()
-  result.dom.notif.disconnectGoogleBtn.click() // confirm the Google -> Platform switch
+  result.dom.connectBtnWrapper.children[2].click()
+  result.dom.notif.disconnectGoogleBtn.click() // confirm Google disconnect
   await settle()
   await settle()
 
@@ -1498,8 +1594,8 @@ test('a failed calendar replacement retains paid intent and recovers it on reloa
   })
   await settle()
 
-  firstLoad.dom.connectBtnWrapper.children[0].click()
-  firstLoad.dom.notif.disconnectGoogleBtn.click() // confirm the Google -> Platform switch
+  firstLoad.dom.connectBtnWrapper.children[2].click()
+  firstLoad.dom.notif.disconnectGoogleBtn.click() // confirm Google disconnect
   await settle()
 
   const retained = JSON.parse(
@@ -1522,7 +1618,7 @@ test('a failed calendar replacement retains paid intent and recovers it on reloa
   )
 })
 
-test('a Google -> Platform switch that fails after the grant is deleted drops the stale Google state', async () => {
+test('a Google disconnect whose virtual replacement fails drops the stale Google state', async () => {
   // Reproduces the reported bug: /grants/delete/v3 succeeds (the Nylas grant
   // is gone) but the replacement virtual calendar fails, and the module used
   // to keep grantId/manager='calendar' locally — still offering "Disconnect
@@ -1543,8 +1639,8 @@ test('a Google -> Platform switch that fails after the grant is deleted drops th
   })
   await settle()
 
-  dom.connectBtnWrapper.children[0].click() // connect-platform
-  dom.notif.disconnectGoogleBtn.click() // confirm the switch
+  dom.connectBtnWrapper.children[2].click() // disconnect-google
+  dom.notif.disconnectGoogleBtn.click() // confirm disconnect
   await settle()
 
   assert.equal(document.documentElement.getAttribute('data-scheduling-calendar-state'), 'error')
@@ -1581,9 +1677,9 @@ test('connect-label-group and connect-info-wrapper do not flash mid-request on d
   })
   await settle()
 
-  // Sanity: boots into the connected-via-calendar look.
-  assert.equal(dom.labelGroup.children[0].style.display, '') // Platform disconnected
-  assert.equal(dom.labelGroup.children[1].style.display, 'none') // Platform connected
+  // A Google-backed Nylas grant makes both connection layers connected.
+  assert.equal(dom.labelGroup.children[0].style.display, 'none') // Platform disconnected
+  assert.equal(dom.labelGroup.children[1].style.display, '') // Platform connected
   assert.equal(dom.labelGroup.children[2].style.display, 'none') // Google disconnected
   assert.equal(dom.labelGroup.children[3].style.display, '') // Google connected
   assert.equal(dom.connectInfoWrapper.style.display, 'none')
@@ -1593,8 +1689,8 @@ test('connect-label-group and connect-info-wrapper do not flash mid-request on d
 
   // The request hasn't resolved yet — both pairs must still read
   // exactly as they did before the click, not flip to a "disconnected" look.
-  assert.equal(dom.labelGroup.children[0].style.display, '')
-  assert.equal(dom.labelGroup.children[1].style.display, 'none')
+  assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, '')
   assert.equal(dom.labelGroup.children[2].style.display, 'none')
   assert.equal(dom.labelGroup.children[3].style.display, '')
   assert.equal(dom.connectInfoWrapper.style.display, 'none')
@@ -1661,9 +1757,9 @@ test('legacy three-label connect-label markup survives an in-flight disconnect-g
   })
   await settle()
 
-  // Boots into the connected-via-calendar look.
+  // Both legacy connected labels show because Google is carried by Nylas.
   assert.equal(dom.labelGroup.children[0].style.display, 'none')
-  assert.equal(dom.labelGroup.children[1].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, '')
   assert.equal(dom.labelGroup.children[2].style.display, '')
 
   dom.connectBtnWrapper.children[2].click() // open-disconnect-google
@@ -1671,7 +1767,7 @@ test('legacy three-label connect-label markup survives an in-flight disconnect-g
 
   // Still mid-request: no flash back to the "Disconnected" label.
   assert.equal(dom.labelGroup.children[0].style.display, 'none')
-  assert.equal(dom.labelGroup.children[1].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, '')
   assert.equal(dom.labelGroup.children[2].style.display, '')
 
   await settle()

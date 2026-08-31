@@ -2765,31 +2765,27 @@ component-variant class swap (`w-variant-89402c65-…` default,
 `connect-label-group` holds the connection status labels. Each
 `data-availability-element="connect-label"` carries `data-type="false"|"true"`
 (the disconnected / connected copy) and `data-manager="platform"|"calendar"`
-(which provider the label describes). The canonical shape is one
-`false`/`true` pair per manager, so the Platform and Google rows each state
-their own accurate status at the same time.
+(which connection layer the label describes). `platform` means a canonical
+Nylas grant exists. `calendar` means that grant is backed by the member's
+Google account (`availability.manager === "calendar"`). A Google connection
+therefore makes both Platform and Google connected. The canonical shape is one
+`false`/`true` pair per layer, so both rows state their independent status.
 
-Visibility is decided per label, never group-wide. A `data-manager`-tagged
-label tracks only that manager: `data-type="true"` shows when the live
-`availability.manager` matches, `data-type="false"` shows when it does not. An
-untagged `data-type="false"` label keeps the prior three-label markup's
-group-wide meaning and shows only when nothing is connected at all. So the
-earlier shape (one shared "Disconnected" plus the two
-`[data-type="true"][data-manager]` variants) still renders correctly, and so
-does a group part-way through the migration — a leftover untagged
-"Disconnected" label never suppresses the pairs that are already tagged. A
-`connect-label-group` containing no `connect-label` children at all falls back
-to ordinal position: child 0 = disconnected, child 1 = connected.
+Visibility is decided per label, never group-wide. A `platform` label tracks
+whether `nylas_grant_id` exists. A `calendar` label tracks whether that grant
+exists and `availability.manager === "calendar"`. An untagged
+`data-type="false"` label keeps the prior three-label markup's group-wide
+meaning and shows only when no Nylas grant exists. The earlier shape (one
+shared "Disconnected" plus the two `[data-type="true"][data-manager]`
+variants) still renders correctly. A `connect-label-group` containing no
+`connect-label` children falls back to ordinal position: child 0 = no Nylas
+grant, child 1 = Nylas grant present.
 
-Because a `data-manager` label names one specific provider, it only renders in
-a state that establishes one: connected, reconnect, or disconnected. When the
-connection state is `error` — or anything this module does not recognize — the
-live manager is unknown, so every `data-manager` label is hidden rather than
-claiming a provider is disconnected beside the "Disconnect Google" button that
-same state still offers. An untagged `data-type="false"` label names no
-provider, so it keeps its group-wide meaning through an error. The `loading`
-state is different again: it leaves the labels exactly as last painted, since
-they were accurate until the in-flight request resolves.
+Tagged labels render only when canonical state is readable: connected,
+reconnect, or disconnected. An error hides them rather than making an
+unsupported connection claim. An untagged `data-type="false"` label keeps its
+group-wide meaning through an error. Loading leaves the last accurate labels
+unchanged until the request resolves.
 
 Outlook is not a supported provider. Runtime hides Designer controls marked
 `data-availability-action="open-connect-outlook"` or
@@ -2806,20 +2802,19 @@ back to the button's ordinal position inside its known wrapper and logs one
 console warning per action. Prefer adding the wrapper attributes over relying
 on the fallback long-term.
 
-The three `connect-btn-wrapper` actions are shown or hidden by provider state:
-with no manager, both connect actions show; with Platform active, only Connect
-Google shows; with Google active, Connect Platform and Disconnect Google show.
-This keeps one matching action available for each provider status and permits
-a Google-to-Platform switch through the existing provider-first flow.
+The three `connect-btn-wrapper` actions follow the two-layer state matrix. With
+no Nylas grant, Connect Platform and Connect Google show. With a virtual Nylas
+grant, only Connect Google shows. With a Google-backed Nylas grant, only
+Disconnect Google shows. Connect Platform is never valid while any Nylas grant
+exists, and a stale or programmatic click is ignored.
 
-Every action that deletes a live Google grant confirms first.
-`connect-platform` with no manager has no grant to lose, so it opens straight
-on the `notification-type="virtual-connect"` spinner; with Google active it
-deletes a live Nylas grant that only a fresh OAuth consent can restore, so it
-opens the same `notification-type="disconnect-calendar"` confirm step that
-`open-disconnect-google` uses. Confirming there runs the provider-first switch
-and lands on `virtual-connected` rather than `calendar-disconnected`, since the
-member asked to connect Platform rather than to disconnect Google.
+Every action that deletes a live Google grant confirms first. Connect Platform
+is available only with no grant, so it opens the
+`notification-type="virtual-connect"` spinner and creates the virtual Nylas
+calendar. Disconnect Google opens `notification-type="disconnect-calendar"`.
+After confirmation, the provider-first flow deletes the Google-backed grant
+and creates a virtual Nylas grant. The result is Platform Connected and Google
+Disconnected.
 
 If the replacement virtual calendar fails after the Google grant is already
 deleted, the module drops the local grant id/email/calendar id and persists
