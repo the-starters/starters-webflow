@@ -1153,6 +1153,128 @@ test('respond controls are rendered into the base view for the counterpart', () 
   )
 })
 
+test('authored reschedule controls and field label replace Webflow placeholder copy', () => {
+  const textNode = (value) => ({ nodeType: 3, nodeValue: value })
+  const backLabel = { textContent: 'This is some text inside of a div block.' }
+  const continueLabel = { textContent: 'This is some text inside of a div block.' }
+  const back = { querySelectorAll: () => [backLabel] }
+  const next = { querySelectorAll: () => [continueLabel] }
+  const reason = {
+    attributes: {},
+    placeholder: '',
+    setAttribute(name, value) {
+      this.attributes[name] = value
+    },
+  }
+  const fieldLabel = textNode('This is some text inside of a div block.')
+  function fakeElement(tag) {
+    return {
+      tagName: tag,
+      attributes: {},
+      children: [],
+      style: {},
+      setAttribute(name, value) {
+        this.attributes[name] = String(value)
+      },
+      removeAttribute(name) {
+        delete this.attributes[name]
+      },
+      getAttribute(name) {
+        return name in this.attributes ? this.attributes[name] : null
+      },
+      appendChild(child) {
+        child.parentNode = this
+        this.children.push(child)
+        return child
+      },
+      insertBefore(child) {
+        child.parentNode = this
+        this.children.push(child)
+        return child
+      },
+    }
+  }
+  const host = fakeElement('div')
+  const sibling = fakeElement('div')
+  host.appendChild(sibling)
+  const basePanel = fakeElement('div')
+  basePanel.setAttribute('booking-popup-content', 'base')
+  const actionGroup = fakeElement('div')
+  basePanel.appendChild(actionGroup)
+  const rescheduleTrigger = fakeElement('button')
+  rescheduleTrigger.setAttribute('booking-action-btn', 'reschedule')
+  rescheduleTrigger.closest = () => basePanel
+  actionGroup.appendChild(rescheduleTrigger)
+  const panel = {
+    childNodes: [fieldLabel],
+    querySelector(selector) {
+      return selector === '[booking-reschedule-reason]' ? reason : null
+    },
+    querySelectorAll(selector) {
+      if (selector.includes('switch-base')) return [back]
+      if (selector.includes('reschedule-calendar')) return [next]
+      return []
+    },
+  }
+  const modal = {
+    querySelector(selector) {
+      if (selector === '[booking-popup-content="reschedule"]') return panel
+      if (selector === '[booking-popup-content="cancel-reason"]') return sibling
+      if (selector === '[data-starters-reschedule-respond]') {
+        return actionGroup.children.find(
+          (child) => child.attributes['data-starters-reschedule-respond'] === '',
+        ) || null
+      }
+      const contentMatch = selector.match(/^\[booking-popup-content="([^"]+)"\]$/)
+      if (contentMatch) {
+        return host.children.find(
+          (child) => child.attributes['booking-popup-content'] === contentMatch[1],
+        ) || null
+      }
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector.includes('booking-action-btn="reschedule"')
+        ? [rescheduleTrigger]
+        : []
+    },
+  }
+
+  assert.equal(api.normalizeRescheduleViewCopy(modal), true)
+  assert.equal(backLabel.textContent, 'Back')
+  assert.equal(continueLabel.textContent, 'Continue')
+  assert.equal(fieldLabel.nodeValue, 'Why do you need a new time?')
+  assert.equal(reason.placeholder, 'Why do you need a new time?')
+  assert.equal(reason.attributes['aria-label'], 'Why do you need a new time?')
+  assert.equal(api.ensureRescheduleViews({ createElement: fakeElement }, modal), true)
+  assert.deepEqual(
+    host.children
+      .map((child) => child.attributes['booking-popup-content'])
+      .filter(Boolean)
+      .sort(),
+    [
+      'reschedule-accepted',
+      'reschedule-calendar',
+      'reschedule-declined',
+      'reschedule-proposed',
+    ],
+  )
+  const calendarPanel = modal.querySelector('[booking-popup-content="reschedule-calendar"]')
+  assert.equal(
+    calendarPanel.children.some(
+      (child) => child.attributes['booking-reschedule-calendar'] === '',
+    ),
+    true,
+  )
+  assert.deepEqual(
+    actionGroup.children
+      .map((child) => child.attributes['booking-action-btn'])
+      .filter((action) => action !== 'reschedule')
+      .sort(),
+    ['confirm-reschedule', 'reschedule-decline'],
+  )
+})
+
 test('the success panel text nodes render the current counterpart without changing other copy', () => {
   const firstBooking = {
     starter_data: { name: 'Sam Starter', memberstack_id: 'mem_sb_starter' },

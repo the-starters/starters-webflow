@@ -3623,7 +3623,8 @@ test('modal Message button shows only with a known counterpart id', () => {
 })
 
 test('card Message button shows only with a known counterpart id', () => {
-  const message = element({ 'booking-card-action-btn': 'message' })
+  const message = element({ 'booking-card-action-btn': 'message', href: '/messages' })
+  message.tagName = 'A'
   const card = {
     querySelectorAll() {
       return [message]
@@ -3634,12 +3635,29 @@ test('card Message button shows only with a known counterpart id', () => {
     starter_data: { memberstack_id: 'mem_s1' },
   })
   assert.equal(message.hidden, false)
+  assert.equal(message.getAttribute('href'), '/messages?with=mem_s1')
 
   api.configureActionButtons(card, 'brand', 'confirmed', {
     status: 'confirmed',
     starter_data: {},
   })
   assert.equal(message.hidden, true)
+  assert.equal(message.getAttribute('href'), null)
+})
+
+test('card Message writes the counterpart thread onto a nested authored link', () => {
+  const link = element({ href: '/messages' })
+  link.tagName = 'A'
+  const message = element({ 'booking-card-action-btn': 'message' })
+  message.querySelectorAll = (selector) => (selector === 'a' ? [link] : [])
+  const card = { querySelectorAll: () => [message] }
+
+  api.configureActionButtons(card, 'starter', 'pending', {
+    status: 'pending',
+    brand_data: { memberstack_id: 'mem_brand_party' },
+  })
+
+  assert.equal(link.getAttribute('href'), '/messages?with=mem_brand_party')
 })
 
 test('show honors the authored display-flex marker', () => {

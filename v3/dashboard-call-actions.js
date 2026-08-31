@@ -1,10 +1,11 @@
 /**
  * Canonical dashboard call lifecycle actions.
  *
- * Webflow owns the base modal plus the decline and cancel reason fields. This
- * module binds those elements, renders the missing reschedule views, and sends
- * only environment-safe commands with published V3 contracts: decline, cancel,
- * and propose-then-confirm reschedule for eligible Free calls.
+ * Webflow owns the base modal plus the authored decline, cancel, and reschedule
+ * reason fields. This module binds those elements, creates only missing
+ * supporting reschedule views, and sends environment-safe commands with
+ * published V3 contracts: decline, cancel, and propose-then-confirm reschedule
+ * for eligible Free calls.
  */
 ;(function (global) {
   'use strict'
@@ -718,6 +719,75 @@
     return button
   }
 
+  function setAuthoredActionLabel(control, label) {
+    if (!control) return false
+    const labels =
+      typeof control.querySelectorAll === 'function'
+        ? Array.prototype.slice.call(
+            control.querySelectorAll('.button_main-text, [button-text], [data-button-text]'),
+          )
+        : []
+    if (labels.length) {
+      labels.forEach(function (node) {
+        node.textContent = label
+      })
+    } else {
+      control.textContent = label
+    }
+    return true
+  }
+
+  function replaceAuthoredPlaceholder(root, replacement) {
+    let changed = 0
+    function visit(node) {
+      if (!node) return
+      if (node.nodeType === 3) {
+        if (clean(node.nodeValue) === 'This is some text inside of a div block.') {
+          node.nodeValue = replacement
+          changed += 1
+        }
+        return
+      }
+      Array.prototype.forEach.call(node.childNodes || [], visit)
+    }
+    visit(root)
+    return changed
+  }
+
+  /**
+   * Keeps the Designer-owned reschedule form and normalizes only its copy.
+   * Webflow's default Div Block text can otherwise ship as the field label,
+   * and cloned Button components keep that same placeholder in their labels.
+   */
+  function normalizeRescheduleViewCopy(modal) {
+    if (!modal || typeof modal.querySelector !== 'function') return false
+    const panel = modal.querySelector('[booking-popup-content="reschedule"]')
+    if (!panel || typeof panel.querySelectorAll !== 'function') return false
+    panel
+      .querySelectorAll(
+        '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]',
+      )
+      .forEach(function (control) {
+        setAuthoredActionLabel(control, 'Back')
+      })
+    panel
+      .querySelectorAll(
+        '[booking-action-btn="reschedule-calendar"], [booking-card-action-btn="reschedule-calendar"]',
+      )
+      .forEach(function (control) {
+        setAuthoredActionLabel(control, 'Continue')
+      })
+    const reason = panel.querySelector('[booking-reschedule-reason]')
+    if (reason) {
+      reason.placeholder = 'Why do you need a new time?'
+      if (typeof reason.setAttribute === 'function') {
+        reason.setAttribute('aria-label', 'Why do you need a new time?')
+      }
+    }
+    replaceAuthoredPlaceholder(panel, 'Why do you need a new time?')
+    return true
+  }
+
   function reschedulePanel(document, name, marker) {
     const panel = document.createElement('div')
     panel.setAttribute('booking-popup-content', name)
@@ -748,6 +818,7 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
+    const hasAuthoredRescheduleView = normalizeRescheduleViewCopy(modal)
     if (modal.querySelector('[data-starters-reschedule-views]')) {
       ensureRespondButtons(document, modal)
       return true
@@ -758,65 +829,76 @@
     const host = sibling && sibling.parentNode
     if (!host || typeof host.appendChild !== 'function') return false
 
-    const reasonPanel = reschedulePanel(document, 'reschedule', true)
-    reasonPanel.appendChild(panelText(document, 'h3', 'Propose a new time'))
-    reasonPanel.appendChild(
-      panelText(
-        document,
-        'p',
-        'Your call keeps its current time until the other participant confirms the new one. Changes close to the start time can be disruptive, so add a short note about why.',
-        true,
-      ),
-    )
-    const reason = document.createElement('textarea')
-    reason.setAttribute('booking-reschedule-reason', '')
-    reason.rows = 3
-    reason.placeholder = 'Why do you need a new time?'
-    reason.style.width = '100%'
-    reason.style.padding = '10px'
-    reason.style.border = '1px solid #d7d9d2'
-    reason.style.borderRadius = '6px'
-    reasonPanel.appendChild(reason)
-    reasonPanel.appendChild(
-      styledActionButton(document, modal, 'reschedule-calendar', 'Continue'),
-    )
-    host.appendChild(reasonPanel)
+    if (!hasAuthoredRescheduleView) {
+      const reasonPanel = reschedulePanel(document, 'reschedule', true)
+      reasonPanel.appendChild(panelText(document, 'h3', 'Propose a new time'))
+      reasonPanel.appendChild(
+        panelText(
+          document,
+          'p',
+          'Your call keeps its current time until the other participant confirms the new one. Changes close to the start time can be disruptive, so add a short note about why.',
+          true,
+        ),
+      )
+      const reason = document.createElement('textarea')
+      reason.setAttribute('booking-reschedule-reason', '')
+      reason.rows = 3
+      reason.placeholder = 'Why do you need a new time?'
+      reason.style.width = '100%'
+      reason.style.padding = '10px'
+      reason.style.border = '1px solid #d7d9d2'
+      reason.style.borderRadius = '6px'
+      reasonPanel.appendChild(reason)
+      reasonPanel.appendChild(
+        styledActionButton(document, modal, 'reschedule-calendar', 'Continue'),
+      )
+      host.appendChild(reasonPanel)
+    }
 
-    const calendarPanel = reschedulePanel(document, 'reschedule-calendar')
-    calendarPanel.appendChild(panelText(document, 'h3', 'Pick a new time'))
-    const calendarHost = document.createElement('div')
-    calendarHost.setAttribute('booking-reschedule-calendar', '')
-    calendarHost.style.width = '100%'
-    calendarPanel.appendChild(calendarHost)
-    host.appendChild(calendarPanel)
+    if (!modal.querySelector('[booking-popup-content="reschedule-calendar"]')) {
+      const calendarPanel = reschedulePanel(document, 'reschedule-calendar')
+      calendarPanel.appendChild(panelText(document, 'h3', 'Pick a new time'))
+      const calendarHost = document.createElement('div')
+      calendarHost.setAttribute('booking-reschedule-calendar', '')
+      calendarHost.style.width = '100%'
+      calendarPanel.appendChild(calendarHost)
+      host.appendChild(calendarPanel)
+    }
 
-    const proposedPanel = reschedulePanel(document, 'reschedule-proposed')
-    proposedPanel.appendChild(panelText(document, 'h3', 'Reschedule request sent'))
-    proposedPanel.appendChild(
-      panelText(
-        document,
-        'p',
-        'We will notify you when the other participant responds. The call keeps its current time until then.',
-        true,
-      ),
-    )
-    host.appendChild(proposedPanel)
+    if (!modal.querySelector('[booking-popup-content="reschedule-proposed"]')) {
+      const proposedPanel = reschedulePanel(document, 'reschedule-proposed')
+      proposedPanel.appendChild(panelText(document, 'h3', 'Reschedule request sent'))
+      proposedPanel.appendChild(
+        panelText(
+          document,
+          'p',
+          'We will notify you when the other participant responds. The call keeps its current time until then.',
+          true,
+        ),
+      )
+      host.appendChild(proposedPanel)
+    }
 
-    const acceptedPanel = reschedulePanel(document, 'reschedule-accepted')
-    acceptedPanel.appendChild(panelText(document, 'h3', 'New time confirmed'))
-    acceptedPanel.appendChild(
-      panelText(document, 'p', 'The call has been moved to the proposed time.', true),
-    )
-    host.appendChild(acceptedPanel)
+    if (!modal.querySelector('[booking-popup-content="reschedule-accepted"]')) {
+      const acceptedPanel = reschedulePanel(document, 'reschedule-accepted')
+      acceptedPanel.appendChild(panelText(document, 'h3', 'New time confirmed'))
+      acceptedPanel.appendChild(
+        panelText(document, 'p', 'The call has been moved to the proposed time.', true),
+      )
+      host.appendChild(acceptedPanel)
+    }
 
-    const declinedPanel = reschedulePanel(document, 'reschedule-declined')
-    declinedPanel.appendChild(panelText(document, 'h3', 'Proposal declined'))
-    declinedPanel.appendChild(
-      panelText(document, 'p', 'The call keeps its original time.', true),
-    )
-    host.appendChild(declinedPanel)
+    if (!modal.querySelector('[booking-popup-content="reschedule-declined"]')) {
+      const declinedPanel = reschedulePanel(document, 'reschedule-declined')
+      declinedPanel.appendChild(panelText(document, 'h3', 'Proposal declined'))
+      declinedPanel.appendChild(
+        panelText(document, 'p', 'The call keeps its original time.', true),
+      )
+      host.appendChild(declinedPanel)
+    }
 
     ensureRespondButtons(document, modal)
+    normalizeRescheduleViewCopy(modal)
     return true
   }
 
@@ -1123,6 +1205,7 @@
     canProposeReschedule,
     canRespondReschedule,
     ensureRescheduleViews,
+    normalizeRescheduleViewCopy,
     mountRescheduleCalendar,
     proposeReschedule,
     respondReschedule,
