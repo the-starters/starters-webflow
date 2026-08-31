@@ -1167,6 +1167,7 @@ test('authored reschedule controls and field label replace Webflow placeholder c
     },
   }
   const fieldLabel = textNode('This is some text inside of a div block.')
+  const sibling = { parentNode: { appendChild() {} } }
   const panel = {
     childNodes: [fieldLabel],
     querySelector(selector) {
@@ -1180,7 +1181,9 @@ test('authored reschedule controls and field label replace Webflow placeholder c
   }
   const modal = {
     querySelector(selector) {
-      return selector === '[booking-popup-content="reschedule"]' ? panel : null
+      if (selector === '[booking-popup-content="reschedule"]') return panel
+      if (selector === '[booking-popup-content="cancel-reason"]') return sibling
+      return null
     },
   }
 
@@ -1190,6 +1193,20 @@ test('authored reschedule controls and field label replace Webflow placeholder c
   assert.equal(fieldLabel.nodeValue, 'Why do you need a new time?')
   assert.equal(reason.placeholder, 'Why do you need a new time?')
   assert.equal(reason.attributes['aria-label'], 'Why do you need a new time?')
+  let created = 0
+  assert.equal(
+    api.ensureRescheduleViews(
+      {
+        createElement() {
+          created += 1
+          throw new Error('authored reschedule view must not create controls')
+        },
+      },
+      modal,
+    ),
+    true,
+  )
+  assert.equal(created, 0)
 })
 
 test('the success panel text nodes render the current counterpart without changing other copy', () => {

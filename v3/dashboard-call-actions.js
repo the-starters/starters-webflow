@@ -817,11 +817,12 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
-    normalizeRescheduleViewCopy(modal)
+    const hasAuthoredRescheduleView = normalizeRescheduleViewCopy(modal)
     if (modal.querySelector('[data-starters-reschedule-views]')) {
       ensureRespondButtons(document, modal)
       return true
     }
+    if (hasAuthoredRescheduleView) return true
     const sibling =
       modal.querySelector('[booking-popup-content="cancel-reason"]') ||
       modal.querySelector('[booking-popup-content="base"]')
