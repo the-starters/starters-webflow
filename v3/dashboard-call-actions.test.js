@@ -1167,7 +1167,44 @@ test('authored reschedule controls and field label replace Webflow placeholder c
     },
   }
   const fieldLabel = textNode('This is some text inside of a div block.')
-  const sibling = { parentNode: { appendChild() {} } }
+  function fakeElement(tag) {
+    return {
+      tagName: tag,
+      attributes: {},
+      children: [],
+      style: {},
+      setAttribute(name, value) {
+        this.attributes[name] = String(value)
+      },
+      removeAttribute(name) {
+        delete this.attributes[name]
+      },
+      getAttribute(name) {
+        return name in this.attributes ? this.attributes[name] : null
+      },
+      appendChild(child) {
+        child.parentNode = this
+        this.children.push(child)
+        return child
+      },
+      insertBefore(child) {
+        child.parentNode = this
+        this.children.push(child)
+        return child
+      },
+    }
+  }
+  const host = fakeElement('div')
+  const sibling = fakeElement('div')
+  host.appendChild(sibling)
+  const basePanel = fakeElement('div')
+  basePanel.setAttribute('booking-popup-content', 'base')
+  const actionGroup = fakeElement('div')
+  basePanel.appendChild(actionGroup)
+  const rescheduleTrigger = fakeElement('button')
+  rescheduleTrigger.setAttribute('booking-action-btn', 'reschedule')
+  rescheduleTrigger.closest = () => basePanel
+  actionGroup.appendChild(rescheduleTrigger)
   const panel = {
     childNodes: [fieldLabel],
     querySelector(selector) {
@@ -1183,7 +1220,23 @@ test('authored reschedule controls and field label replace Webflow placeholder c
     querySelector(selector) {
       if (selector === '[booking-popup-content="reschedule"]') return panel
       if (selector === '[booking-popup-content="cancel-reason"]') return sibling
+      if (selector === '[data-starters-reschedule-respond]') {
+        return actionGroup.children.find(
+          (child) => child.attributes['data-starters-reschedule-respond'] === '',
+        ) || null
+      }
+      const contentMatch = selector.match(/^\[booking-popup-content="([^"]+)"\]$/)
+      if (contentMatch) {
+        return host.children.find(
+          (child) => child.attributes['booking-popup-content'] === contentMatch[1],
+        ) || null
+      }
       return null
+    },
+    querySelectorAll(selector) {
+      return selector.includes('booking-action-btn="reschedule"')
+        ? [rescheduleTrigger]
+        : []
     },
   }
 
@@ -1193,20 +1246,33 @@ test('authored reschedule controls and field label replace Webflow placeholder c
   assert.equal(fieldLabel.nodeValue, 'Why do you need a new time?')
   assert.equal(reason.placeholder, 'Why do you need a new time?')
   assert.equal(reason.attributes['aria-label'], 'Why do you need a new time?')
-  let created = 0
+  assert.equal(api.ensureRescheduleViews({ createElement: fakeElement }, modal), true)
+  assert.deepEqual(
+    host.children
+      .map((child) => child.attributes['booking-popup-content'])
+      .filter(Boolean)
+      .sort(),
+    [
+      'reschedule-accepted',
+      'reschedule-calendar',
+      'reschedule-declined',
+      'reschedule-proposed',
+    ],
+  )
+  const calendarPanel = modal.querySelector('[booking-popup-content="reschedule-calendar"]')
   assert.equal(
-    api.ensureRescheduleViews(
-      {
-        createElement() {
-          created += 1
-          throw new Error('authored reschedule view must not create controls')
-        },
-      },
-      modal,
+    calendarPanel.children.some(
+      (child) => child.attributes['booking-reschedule-calendar'] === '',
     ),
     true,
   )
-  assert.equal(created, 0)
+  assert.deepEqual(
+    actionGroup.children
+      .map((child) => child.attributes['booking-action-btn'])
+      .filter((action) => action !== 'reschedule')
+      .sort(),
+    ['confirm-reschedule', 'reschedule-decline'],
+  )
 })
 
 test('the success panel text nodes render the current counterpart without changing other copy', () => {
