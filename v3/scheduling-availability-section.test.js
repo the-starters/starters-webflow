@@ -366,36 +366,45 @@ function buildSectionDom(options = {}) {
     class: 'button-group is-secondary',
     'data-availability-element': 'connect-label-group',
   })
-  // Mirrors the real Designer markup: one disconnected/connected pair per
-  // manager. Every label carries both [data-type] and [data-manager].
-  const disconnectedPlatformLabel = new El('div', {
-    'data-type': 'false',
-    'data-availability-element': 'connect-label',
-    'data-manager': 'platform',
-  })
-  disconnectedPlatformLabel.textContent = 'Platform: Disconnected'
-  const connectedPlatformLabel = new El('div', {
-    'data-type': 'true',
-    'data-availability-element': 'connect-label',
-    'data-manager': 'platform',
-  })
-  connectedPlatformLabel.textContent = 'Platform: Connected'
-  const disconnectedCalendarLabel = new El('div', {
-    'data-type': 'false',
-    'data-availability-element': 'connect-label',
-    'data-manager': 'calendar',
-  })
-  disconnectedCalendarLabel.textContent = 'Google: Disconnected'
-  const connectedCalendarLabel = new El('div', {
-    'data-type': 'true',
-    'data-availability-element': 'connect-label',
-    'data-manager': 'calendar',
-  })
-  connectedCalendarLabel.textContent = 'Google: Connected'
-  labelGroup.appendChild(disconnectedPlatformLabel)
-  labelGroup.appendChild(connectedPlatformLabel)
-  labelGroup.appendChild(disconnectedCalendarLabel)
-  labelGroup.appendChild(connectedCalendarLabel)
+  // Mirrors the real Designer markup. `connectLabels` picks which of the
+  // supported shapes to build:
+  //   'pairs'  (default) — one disconnected/connected pair per manager, every
+  //                        label carrying both [data-type] and [data-manager]
+  //   'legacy'           — the prior three-label shape: one shared untagged
+  //                        [data-type="false"] plus the two
+  //                        [data-type="true"][data-manager] variants
+  //   'mixed'            — a part-migrated group: the shared untagged
+  //                        [data-type="false"] still in place, with only the
+  //                        calendar pair's [data-type="false"] added
+  function connectLabel(type, manager, text) {
+    const attrs = { 'data-type': type, 'data-availability-element': 'connect-label' }
+    if (manager) attrs['data-manager'] = manager
+    const label = new El('div', attrs)
+    label.textContent = text
+    return label
+  }
+  const connectLabelShapes = {
+    pairs: () => [
+      connectLabel('false', 'platform', 'Platform: Disconnected'),
+      connectLabel('true', 'platform', 'Platform: Connected'),
+      connectLabel('false', 'calendar', 'Google: Disconnected'),
+      connectLabel('true', 'calendar', 'Google: Connected'),
+    ],
+    legacy: () => [
+      connectLabel('false', null, 'Disconnected'),
+      connectLabel('true', 'platform', 'Connected to platform'),
+      connectLabel('true', 'calendar', 'Connected to calendar'),
+    ],
+    mixed: () => [
+      connectLabel('false', null, 'Disconnected'),
+      connectLabel('true', 'platform', 'Platform: Connected'),
+      connectLabel('false', 'calendar', 'Google: Disconnected'),
+      connectLabel('true', 'calendar', 'Google: Connected'),
+    ],
+  }
+  const buildConnectLabels = connectLabelShapes[options.connectLabels || 'pairs']
+  if (!buildConnectLabels) throw new Error('unknown connectLabels shape ' + options.connectLabels)
+  buildConnectLabels().forEach((label) => labelGroup.appendChild(label))
 
   const connectInfoWrapper = new El('div', { 'data-availability-element': 'connect-info-wrapper' })
 
@@ -1527,6 +1536,81 @@ test('connect-label shows one state from each provider pair', async () => {
   assert.equal(dom.labelGroup.children[0].style.display, 'none')
   assert.equal(dom.labelGroup.children[1].style.display, '') // platform variant
   assert.equal(dom.labelGroup.children[2].style.display, '') // Google disconnected
+  assert.equal(dom.labelGroup.children[3].style.display, 'none')
+})
+
+test('legacy three-label connect-label markup keeps its group-wide semantics', async () => {
+  const { dom } = loadSection({ dom: { connectLabels: 'legacy' } })
+  await settle()
+
+  // Boots disconnected: only the shared untagged [data-type="false"] shows.
+  assert.equal(dom.labelGroup.children[0].style.display, '') // "Disconnected"
+  assert.equal(dom.labelGroup.children[1].style.display, 'none') // platform variant
+  assert.equal(dom.labelGroup.children[2].style.display, 'none') // calendar variant
+
+  dom.connectBtnWrapper.children[0].click() // connect-platform
+  await settle()
+
+  assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, '')
+  assert.equal(dom.labelGroup.children[2].style.display, 'none')
+})
+
+test('legacy three-label connect-label markup survives an in-flight disconnect-google', async () => {
+  const { dom } = loadSection({
+    dom: { connectLabels: 'legacy' },
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  // Boots into the connected-via-calendar look.
+  assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, 'none')
+  assert.equal(dom.labelGroup.children[2].style.display, '')
+
+  dom.connectBtnWrapper.children[2].click() // open-disconnect-google
+  dom.notif.disconnectGoogleBtn.click() // confirm -> publishes 'loading'
+
+  // Still mid-request: no flash back to the "Disconnected" label.
+  assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, 'none')
+  assert.equal(dom.labelGroup.children[2].style.display, '')
+
+  await settle()
+
+  // Disconnect reverts to the platform manager.
+  assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, '')
+  assert.equal(dom.labelGroup.children[2].style.display, 'none')
+})
+
+test('a part-migrated connect-label group still resolves every tagged pair', async () => {
+  // One untagged legacy "Disconnected" label left in place alongside a fully
+  // tagged calendar pair: the untagged label must not disable the pairs.
+  const { dom } = loadSection({ dom: { connectLabels: 'mixed' } })
+  await settle()
+
+  assert.equal(dom.labelGroup.children[0].style.display, '') // untagged "Disconnected"
+  assert.equal(dom.labelGroup.children[1].style.display, 'none') // Platform connected
+  assert.equal(dom.labelGroup.children[2].style.display, '') // Google disconnected
+  assert.equal(dom.labelGroup.children[3].style.display, 'none') // Google connected
+
+  dom.connectBtnWrapper.children[0].click() // connect-platform
+  await settle()
+
+  // Platform is connected, so the group-wide label goes away — but the Google
+  // pair must still report its own (disconnected) state rather than vanish.
+  assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, '')
+  assert.equal(dom.labelGroup.children[2].style.display, '')
   assert.equal(dom.labelGroup.children[3].style.display, 'none')
 })
 

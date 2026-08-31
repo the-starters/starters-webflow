@@ -1552,27 +1552,31 @@
   // clicking connect/reconnect/disconnect doesn't flash the "disconnected"
   // label before the request even resolves.
   //
-  // `connect-label-group` holds one disconnected/connected pair for each
-  // manager. Each label has `[data-manager]` (`platform` / `calendar`) and
-  // `[data-type]` (`false` / `true`). Show exactly one label from each pair so
-  // users can see both connection statuses at the same time.
+  // `connect-label-group` holds one disconnected/connected pair per manager:
+  // each `[data-availability-element="connect-label"]` carries `[data-type]`
+  // (`false` / `true`) and `[data-manager]` (`platform` / `calendar`), so the
+  // Platform and Google rows each state their own status at the same time.
+  //
+  // Visibility is decided per label, never group-wide, so a group part-way
+  // through the Designer migration still renders every pair it does have: a
+  // `[data-manager]`-tagged label tracks only that manager, while an untagged
+  // `[data-type="false"]` label keeps the prior three-label markup's
+  // group-wide meaning ("nothing is connected at all").
   function applyConnectLabels(state) {
     if (state === 'loading') return
     const connected = state === 'connected' || state === 'reconnect'
     const manager = availability && availability.manager
     const labels = qsa(elSel('connect-label'))
     if (labels.length) {
-      const hasManagerPairs = Array.from(labels).every(function (label) {
-        return Boolean(label.getAttribute('data-manager'))
-      })
       labels.forEach(function (label) {
         const isConnectedVariant = label.getAttribute('data-type') === 'true'
         const labelManager = label.getAttribute('data-manager')
         const managerConnected = connected && labelManager === manager
-        let visible = isConnectedVariant
-          ? connected && labelManager === manager
-          : !connected
-        if (hasManagerPairs) visible = isConnectedVariant === managerConnected
+        const visible = isConnectedVariant
+          ? managerConnected
+          : labelManager
+            ? !managerConnected
+            : !connected
         label.style.display = visible ? '' : 'none'
       })
       return

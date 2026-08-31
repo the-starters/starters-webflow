@@ -2717,7 +2717,8 @@ composite clear contract in
 section does not add a second clear owner.
 
 Designer markup contract (`data-availability-element="<name>"` unless noted):
-`section` (root), `connect-wrapper`, `connect-info-wrapper`, `connect-btn-wrapper`
+`section` (root), `connect-wrapper`, `connect-label-group`, `connect-label`,
+`connect-info-wrapper`, `connect-btn-wrapper`
 (3 buttons, fixed order: platform / Google / disconnect Google),
 `main-wrapper` (hidden until any connection exists), `list`, `loading-settings`,
 `item-template` (`data-id=""`, cloned per item), `item-title`, `item-timezone`,
@@ -2726,6 +2727,25 @@ Designer markup contract (`data-availability-element="<name>"` unless noted):
 renders as 7 Labelv2 badges per item; selected/unselected is a Designer
 component-variant class swap (`w-variant-89402c65-…` default,
 `w-variant-ebea452c-…` selected), not a data attribute.
+
+`connect-label-group` holds the connection status labels. Each
+`data-availability-element="connect-label"` carries `data-type="false"|"true"`
+(the disconnected / connected copy) and `data-manager="platform"|"calendar"`
+(which provider the label describes). The canonical shape is one
+`false`/`true` pair per manager, so the Platform and Google rows each state
+their own accurate status at the same time.
+
+Visibility is decided per label, never group-wide. A `data-manager`-tagged
+label tracks only that manager: `data-type="true"` shows when the live
+`availability.manager` matches, `data-type="false"` shows when it does not. An
+untagged `data-type="false"` label keeps the prior three-label markup's
+group-wide meaning and shows only when nothing is connected at all. So the
+earlier shape (one shared "Disconnected" plus the two
+`[data-type="true"][data-manager]` variants) still renders correctly, and so
+does a group part-way through the migration — a leftover untagged
+"Disconnected" label never suppresses the pairs that are already tagged. A
+`connect-label-group` containing no `connect-label` children at all falls back
+to ordinal position: child 0 = disconnected, child 1 = connected.
 
 Outlook is not a supported provider. Runtime hides Designer controls marked
 `data-availability-action="open-connect-outlook"` or
