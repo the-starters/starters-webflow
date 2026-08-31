@@ -53,7 +53,24 @@ class El {
   }
 
   set innerHTML(value) {
-    if (value === '') this.children = []
+    if (value !== '') return
+    for (const child of this.children) child._blurIfActiveInside()
+    this.children = []
+  }
+
+  _blurIfActiveInside() {
+    const doc = this.ownerDocument
+    if (!doc || !doc.activeElement) return
+    if (doc.activeElement === this) {
+      doc.activeElement = null
+      return
+    }
+    for (const el of this.walk()) {
+      if (el === doc.activeElement) {
+        doc.activeElement = null
+        return
+      }
+    }
   }
 
   setAttribute(name, value) {
@@ -90,6 +107,11 @@ class El {
     const index = this.parentElement.children.indexOf(this)
     if (index > -1) this.parentElement.children.splice(index, 1)
     this.parentElement = null
+    this._blurIfActiveInside()
+  }
+
+  focus() {
+    if (this.ownerDocument) this.ownerDocument.activeElement = this
   }
 
   cloneNode() {
@@ -640,7 +662,12 @@ function loadSection(options = {}) {
     readyState: 'complete',
     title: 'Starter dashboard',
     documentElement,
-    createElement: (tag) => new El(tag),
+    activeElement: null,
+    createElement: (tag) => {
+      const element = new El(tag)
+      element.ownerDocument = document
+      return element
+    },
     addEventListener() {},
     querySelector: (selector) => body.querySelector(selector),
     querySelectorAll: (selector) => body.querySelectorAll(selector),
@@ -709,7 +736,7 @@ function loadSection(options = {}) {
   vm.runInNewContext(SOURCE, {
     CustomEvent,
     URLSearchParams,
-    Intl,
+    Intl: options.intl || Intl,
     crypto: { randomUUID: () => 'uuid-fixed' },
     setTimeout: () => {},
     console: {
@@ -2117,6 +2144,311 @@ test('calendar-preview uses the existing jQuery UI library for a stylable month 
     )[0],
     false,
   )
+
+  const timezoneControl = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone-control"]',
+  )
+  const timezoneSelect = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone"]',
+  )
+  const calendarColumn = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-calendar-column"]',
+  )
+  assert.ok(timezoneControl)
+  assert.ok(timezoneSelect)
+  assert.equal(timezoneSelect.value, 'Asia/Manila')
+  assert.equal(calendarColumn.children.indexOf(timezoneControl) > calendarColumn.children.indexOf(calendar), true)
+})
+
+test('calendar-preview timezone selector converts slots without a write or another availability read', async () => {
+  const start = Math.floor(Date.UTC(2026, 8, 2, 4, 30) / 1000)
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-free',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: start }] },
+      }),
+    },
+  })
+  await settle()
+
+  const initialWrites = calls.filter((call) => call.method !== 'GET').length
+  const initialReads = calls.filter((call) => call.path === '/scheduler/get_availability/v3').length
+  let timezoneSelect = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone"]',
+  )
+  let times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(timezoneSelect.value, 'Asia/Manila')
+  assert.equal(times.children[0].textContent, '12:30 PM')
+
+  timezoneSelect.value = 'America/New_York'
+  timezoneSelect.dispatchEvent({ type: 'change', target: timezoneSelect })
+
+  timezoneSelect = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone"]',
+  )
+  times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(timezoneSelect.value, 'America/New_York')
+  assert.equal(times.children[0].textContent, '12:30 AM')
+  assert.equal(calls.filter((call) => call.method !== 'GET').length, initialWrites)
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    initialReads,
+  )
+})
+
+function intlWithLocalTimezone(zone) {
+  const stub = {
+    localZoneReads: 0,
+    supportedValuesOf:
+      typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf.bind(Intl) : undefined,
+    DateTimeFormat: function (locales, options) {
+      if (locales === undefined && options === undefined) {
+        stub.localZoneReads += 1
+        return { resolvedOptions: () => ({ timeZone: zone }) }
+      }
+      return new Intl.DateTimeFormat(locales, options)
+    },
+  }
+  return stub
+}
+
+const STARTER_WITHOUT_TIMEZONE = () => ({
+  status: 200,
+  body: {
+    id: 1,
+    availability: {
+      items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00' } },
+      manager: null,
+    },
+    nylas_grant_id: 'grant-1',
+    nylas_grant_email: 'g@example.com',
+    nylas_calendar_id: 'cal-1',
+  },
+})
+
+const FREE_ONLY_SERVER_STATE = {
+  grantId: 'grant-1',
+  grantEmail: 'g@example.com',
+  calendarId: 'cal-1',
+  configs: [
+    {
+      config_id: 'cfg-free',
+      title: 'Free Consultation Call',
+      duration: 30,
+      is_paid: false,
+      active: true,
+    },
+  ],
+}
+
+test('calendar-preview keeps the timezone selector visible when there are no upcoming slots', async () => {
+  const { dom } = loadSection({
+    serverState: FREE_ONLY_SERVER_STATE,
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({ status: 200, body: { time_slots: [] } }),
+    },
+  })
+  await settle()
+
+  const slotsList = dom.calendarPreview.querySelector(
+    '[data-availability-element="slots-list"]',
+  )
+  assert.equal(slotsList.children[0].textContent, 'No upcoming open slots found.')
+  const timezoneSelect = slotsList.querySelector(
+    '[data-availability-element="preview-timezone"]',
+  )
+  assert.ok(timezoneSelect)
+  assert.equal(timezoneSelect.value, 'Asia/Manila')
+})
+
+test('calendar-preview selector and slot times share one zone when the starter has no saved timezone', async () => {
+  const start = Math.floor(Date.UTC(2026, 8, 2, 4, 30) / 1000)
+  const { dom } = loadSection({
+    intl: intlWithLocalTimezone('America/Los_Angeles'),
+    serverState: FREE_ONLY_SERVER_STATE,
+    postRoutes: { '/starter/get_by_memberstack/v3': STARTER_WITHOUT_TIMEZONE },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: start }] },
+      }),
+    },
+  })
+  await settle()
+
+  const timezoneSelect = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone"]',
+  )
+  const times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(timezoneSelect.value, 'America/Los_Angeles')
+  assert.equal(times.children[0].textContent, '9:30 PM')
+  assert.equal(
+    times.children[0].textContent,
+    new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: timezoneSelect.value,
+    }).format(new Date(start * 1000)),
+  )
+})
+
+test('calendar-preview reuses the timezone selector node and keeps its focus across a change', async () => {
+  const start = Math.floor(Date.UTC(2026, 8, 2, 4, 30) / 1000)
+  const { dom, document, calls } = loadSection({
+    serverState: FREE_ONLY_SERVER_STATE,
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: start }] },
+      }),
+    },
+  })
+  await settle()
+
+  const timezoneSelect = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone"]',
+  )
+  const optionCount = timezoneSelect.children.length
+  const firstOption = timezoneSelect.children[0]
+  const initialReads = calls.filter((call) => call.path === '/scheduler/get_availability/v3').length
+  const initialWrites = calls.filter((call) => call.method !== 'GET').length
+  assert.equal(optionCount > 1, true)
+
+  timezoneSelect.focus()
+  assert.ok(document.activeElement === timezoneSelect, 'select should be focusable')
+
+  timezoneSelect.value = 'America/New_York'
+  timezoneSelect.dispatchEvent({ type: 'change', target: timezoneSelect })
+
+  assert.ok(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-timezone"]') ===
+      timezoneSelect,
+    'timezone change should reuse the same select node',
+  )
+  assert.equal(timezoneSelect.children.length, optionCount)
+  assert.ok(
+    timezoneSelect.children[0] === firstOption,
+    'timezone change should reuse the same option nodes',
+  )
+  assert.ok(
+    document.activeElement === timezoneSelect,
+    'timezone change should leave focus on the select',
+  )
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-times"]').children[0]
+      .textContent,
+    '12:30 AM',
+  )
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    initialReads,
+  )
+  assert.equal(calls.filter((call) => call.method !== 'GET').length, initialWrites)
+
+  const dateButtons = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-dates"]',
+  )
+  dateButtons.children[0].click()
+  assert.ok(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-timezone"]') ===
+      timezoneSelect,
+    'date selection should reuse the same select node',
+  )
+  assert.equal(timezoneSelect.children.length, optionCount)
+})
+
+test('calendar-preview keeps the selected slot and re-expresses it when the timezone changes', async () => {
+  const firstSlot = Math.floor(Date.UTC(2026, 8, 2, 4, 30) / 1000)
+  const secondSlot = Math.floor(Date.UTC(2026, 8, 4, 1, 0) / 1000)
+  const { dom, calls } = loadSection({
+    serverState: FREE_ONLY_SERVER_STATE,
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: firstSlot }, { start_time: secondSlot }] },
+      }),
+    },
+  })
+  await settle()
+
+  dom.calendarPreview.querySelector('[data-preview-date="2026-09-04"]').click()
+  dom.calendarPreview.querySelector(`[data-preview-slot-start="${secondSlot}"]`).click()
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-selection"]').textContent,
+    'Selected: Fri, Sep 04, 09:00 AM',
+  )
+
+  const initialReads = calls.filter((call) => call.path === '/scheduler/get_availability/v3').length
+  const initialWrites = calls.filter((call) => call.method !== 'GET').length
+  const timezoneSelect = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-timezone"]',
+  )
+  timezoneSelect.value = 'America/New_York'
+  timezoneSelect.dispatchEvent({ type: 'change', target: timezoneSelect })
+
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-selection"]').textContent,
+    'Selected: Thu, Sep 03, 09:00 PM',
+  )
+  const timesColumn = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-times-column"]',
+  )
+  assert.equal(timesColumn.children[0].textContent, 'Thu, Sep 3')
+  const selectedButton = dom.calendarPreview.querySelector(
+    `[data-preview-slot-start="${secondSlot}"]`,
+  )
+  assert.equal(selectedButton.getAttribute('aria-pressed'), 'true')
+  assert.equal(selectedButton.textContent, '9:00 PM')
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-preview-date="2026-09-03"]').getAttribute('aria-pressed'),
+    'true',
+  )
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    initialReads,
+  )
+  assert.equal(calls.filter((call) => call.method !== 'GET').length, initialWrites)
+})
+
+test('calendar-preview resolves the browser timezone fallback once, not per rendered slot', async () => {
+  const intl = intlWithLocalTimezone('America/Los_Angeles')
+  const slots = [0, 1, 2, 3, 4, 5].map((offset) => ({
+    start_time: Math.floor(Date.UTC(2026, 8, 2 + offset, 17, 0) / 1000),
+  }))
+  const { dom } = loadSection({
+    intl,
+    serverState: FREE_ONLY_SERVER_STATE,
+    postRoutes: { '/starter/get_by_memberstack/v3': STARTER_WITHOUT_TIMEZONE },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({ status: 200, body: { time_slots: slots } }),
+    },
+  })
+  await settle()
+
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-timezone"]').value,
+    'America/Los_Angeles',
+  )
+  assert.equal(intl.localZoneReads, 1)
+
+  dom.calendarPreview.querySelector('[data-preview-date="2026-09-04"]').click()
+  assert.equal(intl.localZoneReads, 1)
 })
 
 test('calendar-preview selects Free or Paid dates and times without creating a booking', async () => {
