@@ -2720,7 +2720,7 @@ Designer markup contract (`data-availability-element="<name>"` unless noted):
 `section` (root), `connect-wrapper`, `connect-label-group`, `connect-label`,
 `connect-info-wrapper`, `connect-btn-wrapper`
 (3 buttons, fixed order: platform / Google / disconnect Google),
-`main-wrapper` (hidden until any connection exists), `list`, `loading-settings`,
+`main-wrapper` (hidden until any connection exists), `list`, `loading-section`,
 `item-template` (`data-id=""`, cloned per item), `item-title`, `item-timezone`,
 `availability-form-wrapper` (closed by default), `availability-form`
 (`data-availability-id=""`), `slots-wrapper`, `loading-slots`. Day selection
