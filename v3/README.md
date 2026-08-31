@@ -2164,11 +2164,13 @@ to a thread with oneself has no destination. Each restored link reads
 falling back to `/messages` when the counterpart has no canonical Memberstack
 ID; both are needed because resetting the modal clears every
 `[booking-element]`. The `message` action buttons in the modal and on the cards
-are read-only navigation, so they are exempt from the legacy-control lockdown,
-but they show only when that canonical ID is known, and a capture-phase
-delegate routes their clicks to the same destination — a click it cannot
-resolve to a counterpart is left untouched rather than swallowed. Every other
-authored payment or booking action stays hidden except Close, Back, the
+are read-only navigation, so they are exempt from the legacy-control lockdown.
+Each authored card anchor receives the same counterpart deep link as the
+capture-phase delegate, so pointer, keyboard, copied-link, and native Webflow
+navigation all open the relevant one-to-one conversation. The controls show
+only when that canonical ID is known, and a click the delegate cannot resolve
+is left untouched rather than swallowed. Every other authored payment or
+booking action stays hidden except Close, Back, the
 Starter's eligible pending-call Accept and Decline actions, the participant
 Cancel chain for eligible Free booked calls, and owner-scoped recording access
 for eligible completed or archived calls. These migrated actions remain inside
@@ -2179,8 +2181,12 @@ eligibility and feedback rules live in the
 decline chain now also exposes its authored reason step
 (`switch-decline-reason`), so the reason dialog is reachable. Free-call
 reschedule now follows a propose-then-confirm contract on the published
-environment-bound endpoints: the authored `reschedule` trigger opens a
-module-rendered reason step and then the shared availability calendar. It loads
+environment-bound endpoints: the authored `reschedule` trigger opens the
+authored reason step and then the shared availability calendar. The controller
+keeps its Webflow structure, labels its existing `switch-base` and
+`reschedule-calendar` controls `Back` and `Continue`, and replaces Webflow's
+default Div Block copy with the visible and accessible textarea label `Why do
+you need a new time?`. It loads
 `paid-call-brand-payment.js` on demand and reuses the same slot picker as
 `/hire`. The proposal posts `booking/reschedule/propose/v3` with a required
 reason, the selected slot's unchanged timestamps, the selected IANA timezone,

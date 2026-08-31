@@ -1,7 +1,7 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
- * @release v1.59.458
+ * @release v1.59.463
  *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
@@ -705,8 +705,9 @@
       const accept =
         action === 'switch-confirm' &&
         canConfirmBooking(role, booking || { status: status }, now)
-      const message =
-        action === 'message' && bookingMessageHref(role, booking) !== ''
+      const messageHref = action === 'message' ? bookingMessageHref(role, booking) : ''
+      const message = action === 'message' && messageHref !== ''
+      if (action === 'message') setMessageControlDestination(button, messageHref)
       // Details and Message are read-only. Accept is the first V3-native
       // mutation. Every other legacy control stays hidden until it has a
       // populated current endpoint contract and tests. In particular, never
@@ -960,6 +961,28 @@
     const counterpart = detailCounterpart(role, booking)
     const counterpartId = clean(counterpart && counterpart.memberstack_id)
     return counterpartId ? '/messages?with=' + encodeURIComponent(counterpartId) : ''
+  }
+
+  /**
+   * Writes the canonical counterpart thread onto the authored card control.
+   * The capture delegate remains the navigation owner, but the real anchor
+   * must also carry the deep link so keyboard activation, copied links, and
+   * any Webflow interaction path all resolve to the same conversation.
+   */
+  function setMessageControlDestination(control, href) {
+    if (!control) return 0
+    const links = []
+    if (clean(control.tagName).toLowerCase() === 'a') links.push(control)
+    if (typeof control.querySelectorAll === 'function') {
+      control.querySelectorAll('a').forEach(function (link) {
+        if (!links.includes(link)) links.push(link)
+      })
+    }
+    links.forEach(function (link) {
+      if (href) link.setAttribute('href', href)
+      else link.removeAttribute('href')
+    })
+    return links.length
   }
 
   function detailSupplementRows(booking, role, timezone) {
@@ -2353,6 +2376,7 @@
     wireBookingActions,
     wireBookingMessages,
     bookingMessageHref,
+    setMessageControlDestination,
     boot,
   }
   if (!isCommonJs) configureProjectWrappers()
