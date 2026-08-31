@@ -2151,12 +2151,12 @@ but they show only when that canonical ID is known, and a capture-phase
 delegate routes their clicks to the same destination — a click it cannot
 resolve to a counterpart is left untouched rather than swallowed. Every other
 authored payment or booking action stays hidden except Close, Back, the
-Starter's
-eligible pending-call Accept and Decline actions, the participant Cancel chain
-for eligible Free booked calls, and owner-scoped recording access for eligible
-completed or archived calls. These migrated actions remain inside View Details;
-card-level decline, cancel, media, and other legacy controls stay hidden. The
-exact Cancel and reschedule eligibility and feedback rules live in the
+Starter's eligible pending-call Accept and Decline actions, the participant
+Cancel chain for eligible Free booked calls, and owner-scoped recording access
+for eligible completed or archived calls. These migrated actions remain inside
+View Details; apart from that Message button, card-level decline, cancel,
+media, and other legacy controls stay hidden. The exact Cancel and reschedule
+eligibility and feedback rules live in the
 [dashboard booking action contract](#dashboard-booking-action-contract). The
 decline chain now also exposes its authored reason step
 (`switch-decline-reason`), so the reason dialog is reachable. Free-call
