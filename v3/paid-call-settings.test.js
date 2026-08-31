@@ -40,13 +40,25 @@ test('names every Paid card control and exposes status updates to assistive tech
 
 test('preserves authored accessible names', async () => {
   const result = load({ cardMode: true, initial: canonical({ services: [] }), beforeLoad(dom) {
-    dom.open.setAttribute('aria-label', 'Authored edit label')
+    dom.open.setAttribute('aria-labelledby', 'paid-call-edit-label')
     dom.price.setAttribute('aria-label', 'Authored price label')
+    dom.enabled.parentElement.textContent = 'Authored enable label'
   } })
   await settle()
 
-  assert.equal(result.dom.open.getAttribute('aria-label'), 'Authored edit label')
+  assert.equal(result.dom.open.getAttribute('aria-labelledby'), 'paid-call-edit-label')
+  assert.equal(result.dom.open.getAttribute('aria-label'), null)
   assert.equal(result.dom.price.getAttribute('aria-label'), 'Authored price label')
+  assert.equal(result.dom.enabled.getAttribute('aria-label'), null)
+})
+
+test('preserves authored button text', async () => {
+  const result = load({ initial: canonical({ services: [] }), beforeLoad(dom) {
+    dom.save.textContent = 'Save paid call settings'
+  } })
+  await settle()
+
+  assert.equal(result.dom.save.getAttribute('aria-label'), null)
 })
 
 function deferred() {
@@ -972,6 +984,9 @@ test('Paid re-resolves the card when status pills and Edit arrive after the root
   assert.equal(result.dom.offOutput.style.display, '')
   assert.equal(result.dom.onOutput.getAttribute('data-call-settings-output'), 'on')
   assert.equal(result.dom.offOutput.getAttribute('data-call-settings-output'), 'off')
+  assert.equal(result.dom.open.getAttribute('aria-label'), 'Edit paid call settings')
+  assert.equal(result.dom.statusOutput.getAttribute('role'), 'status')
+  assert.equal(result.dom.statusOutput.getAttribute('aria-live'), 'polite')
 
   await result.dom.open.dispatch('click')
   assert.equal(result.dom.formWrapper.style.display, 'flex')

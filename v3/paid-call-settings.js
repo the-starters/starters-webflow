@@ -193,6 +193,7 @@
   function refreshUiScope() {
     if (!root || !cardMode) return
     uiScope = findCallCardScope(root)
+    ensureAccessibilityLabels()
     bindOpenAction()
     paintStatusPills()
   }
@@ -458,7 +459,38 @@
       ? target
       : qs('button, input, select, textarea, a', target)
     const control = nativeControl || target
-    if (String(control.getAttribute('aria-label') || '').trim()) return
+    const labelledBy = String(control.getAttribute('aria-labelledby') || '').trim()
+    const ariaLabel = String(control.getAttribute('aria-label') || '').trim()
+    const title = String(control.getAttribute('title') || '').trim()
+    if (labelledBy || ariaLabel || title) return
+
+    const labels = control.labels ? Array.prototype.slice.call(control.labels) : []
+    let ancestor = control.parentElement
+    while (ancestor) {
+      if (ancestor.matches && ancestor.matches('label')) {
+        labels.push(ancestor)
+        break
+      }
+      ancestor = ancestor.parentElement
+    }
+    const id = String(control.getAttribute('id') || '').trim()
+    if (id) {
+      Array.prototype.forEach.call(qsa('label[for]', document), function (item) {
+        if (item.getAttribute('for') === id) labels.push(item)
+      })
+    }
+    if (labels.some(function (item) { return String(item.textContent || '').trim() })) return
+
+    const tagName = String(control.tagName || '').toLowerCase()
+    if ((tagName === 'button' || tagName === 'a') && String(control.textContent || '').trim()) return
+    if (tagName === 'input') {
+      const type = String(control.getAttribute('type') || '').toLowerCase()
+      if (
+        ['button', 'submit', 'reset'].indexOf(type) !== -1 &&
+        String(control.value || control.getAttribute('value') || '').trim()
+      ) return
+      if (type === 'image' && String(control.getAttribute('alt') || '').trim()) return
+    }
     control.setAttribute('aria-label', label)
   }
 
