@@ -7700,14 +7700,47 @@ function endProjectDom(overrides = {}) {
   reason.value = overrides.reason == null ? '' : overrides.reason
   const reasonWrap = el('div', { 'data-end-project-reason-wrap': '' }, [reason])
   const toggle = el('a', { 'data-end-project-mode-toggle': '', href: '#' })
+  const legacySubmit = overrides.legacySubmit === true
   // Mirror the live Clickable Wrap: a bare `clickable_btn` overlay carries
   // type=submit while the visible caption sits in the enclosing wrap.
-  const submitText = el('div', { class: 'button_main-text' })
+  const submitText = el(legacySubmit ? 'span' : 'div', legacySubmit
+    ? {}
+    : { class: 'button_main-text' })
   submitText.textContent = 'End Project and Submit Review'
-  const submit = el('button', { type: 'submit', class: 'clickable_btn' })
-  const clickableWrap = el('div', { class: 'clickable_wrap' }, [submit])
-  const submitWrap = el('div', { class: 'button_main-wrap' }, [clickableWrap, submitText])
-  const form = el('form', {}, [reviewGroup, reasonWrap, toggle, submitWrap])
+  const submitIcon = legacySubmit ? el('svg') : null
+  const submit = el(
+    'button',
+    legacySubmit ? { type: 'submit' } : { type: 'submit', class: 'clickable_btn' },
+    legacySubmit ? [submitText, submitIcon] : [],
+  )
+  if (legacySubmit) {
+    let directText = ''
+    Object.defineProperty(submit, 'textContent', {
+      configurable: true,
+      get: () => submit.children.length
+        ? submit.children.map((child) => child.textContent || '').join('')
+        : directText,
+      set: (value) => {
+        directText = String(value)
+        submit.children.forEach((child) => {
+          child.parent = null
+          child.parentNode = null
+        })
+        submit.children.length = 0
+      },
+    })
+  }
+  const clickableWrap = legacySubmit
+    ? null
+    : el('div', { class: 'clickable_wrap' }, [submit])
+  const submitWrap = legacySubmit
+    ? null
+    : el('div', { class: 'button_main-wrap' }, [clickableWrap, submitText])
+  const form = el(
+    'form',
+    {},
+    [reviewGroup, reasonWrap, toggle, legacySubmit ? submit : submitWrap],
+  )
   form.reset = () => {}
   const done = el('div', { class: 'w-form-done' })
   const fail = el('div', { class: 'w-form-fail' })
@@ -7719,7 +7752,8 @@ function endProjectDom(overrides = {}) {
   const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
   return {
     end, label, wrap, card, title, subtitle, rating, feedback, reviewGroup,
-    reason, reasonWrap, toggle, submit, submitText, submitWrap, form, done, fail, modal, root,
+    reason, reasonWrap, toggle, submit, submitText, submitIcon, submitWrap,
+    form, done, fail, modal, root,
   }
 }
 
@@ -8127,4 +8161,33 @@ test('submit caption paints the wrap label, never the bare submit overlay', asyn
     'Cancel Project',
     'the bare submit overlay must not receive the caption or it renders over the real one',
   )
+})
+
+test('submit caption preserves legacy plain-button sibling content', async () => {
+  const dom = endProjectDom({ legacySubmit: true })
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'pending',
+            lifecycle_version: 4,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
+
+  assert.equal(dom.submitText.textContent, 'Cancel Project')
+  assert.ok(dom.submit.children.includes(dom.submitIcon))
 })
