@@ -1700,9 +1700,39 @@ test('missing panel details and role-correct Message actions are supplied withou
   assert.equal(starterMessage.textContent, 'Message Brand')
   assert.equal(starterMessage.href, '/messages?with=mem_brand')
 
+  const rowGroup = cancelled.querySelector('[data-starters-call-summary-rows]')
+  assert.ok(rowGroup)
+  assert.equal(rowGroup.style.border, '1px solid #e2e2e2')
+  assert.equal(rowGroup.style.overflow, 'hidden')
+  assert.ok(rowGroup.children.length > 1)
+  assert.equal(rowGroup.children[0].style.padding, '14px 16px')
+  assert.equal(rowGroup.children[0].style.borderBottom, '1px solid #e2e2e2')
+  assert.equal(rowGroup.children[rowGroup.children.length - 1].style.borderBottom, '0')
+
+  const messageActions = cancelled.querySelector('[data-starters-call-summary-actions]')
+  assert.ok(messageActions)
+  assert.equal(messageActions.style.justifyContent, 'flex-end')
+  assert.equal(starterMessage.parentNode, messageActions)
+  assert.equal(starterMessage.style.display, 'inline-flex')
+  assert.equal(starterMessage.style.backgroundColor, '#1f231f')
+  assert.equal(starterMessage.style.color, '#ffffff')
+  assert.equal(starterMessage.style.textDecoration, 'none')
+
   const supplement = cancelled.querySelector('[data-starters-call-summary]')
   assert.equal(supplement.hidden, false)
   assert.equal(supplement.style.display, 'flex')
+  assert.equal(supplement.style.gap, '16px')
+  // Every module-owned field — counterpart and duration included — sits inside
+  // the bordered row group, and the Message action is the only thing beside it.
+  assert.deepEqual(
+    Array.from(rowGroup.children).map((row) =>
+      row.getAttribute('data-starters-call-summary-row'),
+    ),
+    ['brand-name', 'start-date', 'duration', 'context', 'cancel-reason'],
+  )
+  assert.equal(supplement.children.length, 2)
+  assert.equal(supplement.children[0], rowGroup)
+  assert.equal(supplement.children[1], messageActions)
 
   // Compose steps keep their form controls unaccompanied.
   composePanels.forEach((panel) => {
@@ -1715,6 +1745,14 @@ test('missing panel details and role-correct Message actions are supplied withou
   const brandMessage = cancelled.querySelector('[data-starters-call-message]')
   assert.equal(brandMessage.textContent, 'Message Starter')
   assert.equal(brandMessage.href, '/messages?with=mem_starter')
+  assert.equal(
+    cancelled.querySelectorAll('[data-starters-call-summary-rows]').length,
+    1,
+  )
+  assert.equal(
+    cancelled.querySelectorAll('[data-starters-call-summary-actions]').length,
+    1,
+  )
 
   // An identity reset leaves no counterpart ID behind in the modal.
   const originalDocument = global.document

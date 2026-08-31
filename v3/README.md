@@ -2119,12 +2119,17 @@ the dialog, the block is rebuilt one animation frame later against the now-open
 panel, and that second pass is skipped when the modal has been reset or rebound
 to another call in the meantime. A Designer-owned field therefore stays
 authoritative — and is never duplicated on screen — for as long as it and its
-wrapper render. The block ends with a role-correct `data-starters-call-message`
-link (`Message Brand` for the Starter, `Message Starter` for the Brand)
-pointing at `/messages?with=<counterpart memberstack_id>`; the link is omitted
-when the counterpart has no canonical Memberstack ID. The block is created once
-per panel, rebuilt on every populate, and cleared when the modal is reset, so
-no previous member's ID survives an identity change. Compose steps are excluded
+wrapper render. The module-owned fields render inside one bordered
+`data-starters-call-summary-rows` group. Each field is a padded two-column row,
+so counterpart and duration use the same visual structure as the authored call
+details instead of appearing as loose text below them. The block ends with a
+right-aligned `data-starters-call-summary-actions` area containing a
+role-correct `data-starters-call-message` button (`Message Brand` for the
+Starter, `Message Starter` for the Brand) pointing at
+`/messages?with=<counterpart memberstack_id>`; the button is omitted when the
+counterpart has no canonical Memberstack ID. The block is created once per
+panel, rebuilt on every populate, and cleared when the modal is reset, so no
+previous member's ID survives an identity change. Compose steps are excluded
 — `cancel-reason`, `decline-reason`, `reschedule`, and `reschedule-calendar`
 never receive it, because a summary and a navigating Message link below a
 reason form or the slot picker would discard in-progress input.
