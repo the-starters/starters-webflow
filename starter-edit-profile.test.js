@@ -26,6 +26,7 @@ class Target {
     this.textContent = ''
     this.focusCount = 0
     this.reportValidityCount = 0
+    this.children = []
   }
 
   addEventListener(type, listener) {
@@ -43,6 +44,7 @@ class Target {
   hasAttribute(name) { return this.attributes.has(name) }
   focus() { this.focusCount += 1 }
   reportValidity() { this.reportValidityCount += 1; return this.checkValidity?.() ?? true }
+  appendChild(child) { this.children.push(child); child.parentElement = this; return child }
 }
 
 function createEnvironment(fetchImpl, {
@@ -115,6 +117,9 @@ function createEnvironment(fetchImpl, {
     6: {
       '[name="rate"]': createField('[name="rate"]', { value: '125', required: publishedRequired(6, 'rate') }),
       '#availability-required': createField('#availability-required', { value: '1' }),
+      '[name="paid-consulting-calls"]': createField('[name="paid-consulting-calls"]', { value: 'yes' }),
+      '[name="paid-call-description"]': createField('[name="paid-call-description"]', { value: 'Legacy description' }),
+      '[name="paid-call-rate"]': createField('[name="paid-call-rate"]', { value: '250' }),
     },
     7: {
       '[name="reviewer"]': createField('[name="reviewer"]', { value: JSON.stringify({ fname: 'Owned', lname: 'Reviewer', job: 'Founder', company: 'QA Company', email: 'owned-reviewer@example.com' }) }),
@@ -162,6 +167,13 @@ function createEnvironment(fetchImpl, {
   step.querySelectorAll = (selector) => {
     if (selector === 'input, select, textarea') return Object.values(stepFields)
     if (selector === '[data-input-capture][required]') return captureFields
+    if (selector === '[name="paid-consulting-calls"],[name="paid-call-description"],[name="paid-call-rate"]') {
+      return [
+        stepFields['[name="paid-consulting-calls"]'],
+        stepFields['[name="paid-call-description"]'],
+        stepFields['[name="paid-call-rate"]'],
+      ].filter(Boolean)
+    }
     return []
   }
   form.querySelector = () => null
@@ -215,6 +227,8 @@ function createEnvironment(fetchImpl, {
     addEventListener(type, listener) {
       if (type === 'DOMContentLoaded') domReady.push(listener)
     },
+    createElement() { return new Target() },
+    createTextNode(text) { return Object.assign(new Target(), { textContent: text }) },
     querySelector(selector) {
       if (selector === '[build-profile-form]') return form
       if (selector === "[data-modal-trigger='edit-form-success']") return successModal
@@ -344,6 +358,7 @@ function createEnvironment(fetchImpl, {
 
   return {
     button,
+    step,
     form,
     modalEvents,
     modalApiCalls,
@@ -532,6 +547,36 @@ async function testNon2xx() {
   assert.equal(environment.button.style.opacity, '')
 }
 
+async function testCanonicalSaveWithPendingProjectionNeverShowsWholeFormFailure() {
+  for (const status of [200, 500]) {
+    const environment = createEnvironment(async () => ({
+      ok: status === 200,
+      status,
+      json: async () => ({ saved: true, projection_pending: true, profile_id: 424 }),
+    }), { stepIndex: 6 })
+
+    await submit(environment)
+
+    assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+    assert.equal(
+      environment.successFeedback.textContent,
+      'Your profile was saved. Public profile changes can take a moment to appear.',
+    )
+  }
+}
+
+async function testSuccessfulHttpWithoutCanonicalSaveConfirmationFailsClosed() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ projection_pending: true }),
+  }), { stepIndex: 6 })
+
+  await submit(environment)
+
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+}
+
 async function testEveryOwnedSectionOpensSuccessModal() {
   for (const stepIndex of [2, 5, 6, 7]) {
     const environment = createEnvironment(async () => ({
@@ -566,28 +611,54 @@ async function testOptionalRatesPreserveCanonicalZeroSentinel() {
   const disabledPayload = await submittedStepPayload(saved({
     stepIndex: 6,
     additionalFormValues: [
-      ['paid-consulting-calls', 'no'],
       ['offer-monthly-retainers', 'no'],
-      ['paid-call-rate', ''],
       ['rate-retainer', '   '],
     ],
   }))
-  assert.equal(disabledPayload.Paid_Call_Enabled, false)
   assert.equal(disabledPayload.Retainer_Enabled, false)
-  assert.equal(disabledPayload.Paid_Call_Rate, 0)
   assert.equal(disabledPayload.Retainer_Rate, 0)
 
   const configuredPayload = await submittedStepPayload(saved({
     stepIndex: 6,
     additionalFormValues: [
-      ['paid-consulting-calls', 'yes'],
       ['offer-monthly-retainers', 'yes'],
-      ['paid-call-rate', '250.00'],
       ['rate-retainer', '500'],
     ],
   }))
-  assert.equal(configuredPayload.Paid_Call_Rate, '250.00')
   assert.equal(configuredPayload.Retainer_Rate, '500')
+}
+
+async function testStepSixNeverWritesPaidCallAuthority() {
+  const payload = await submittedStepPayload(saved({
+    stepIndex: 6,
+    additionalFormValues: [
+      ['paid-consulting-calls', 'yes'],
+      ['paid-call-description', 'Legacy profile form value'],
+      ['paid-call-rate', '250.00'],
+    ],
+  }))
+
+  assert.equal(Object.hasOwn(payload, 'Paid_Call_Enabled'), false)
+  assert.equal(Object.hasOwn(payload, 'Paid_Call_Description'), false)
+  assert.equal(Object.hasOwn(payload, 'Paid_Call_Rate'), false)
+}
+
+async function testStepSixDisablesLegacyPaidCallControlsAndLinksCanonicalSettings() {
+  const environment = saved({ stepIndex: 6 })
+  const controlSelectors = [
+    '[name="paid-consulting-calls"]',
+    '[name="paid-call-description"]',
+    '[name="paid-call-rate"]',
+  ]
+  controlSelectors.forEach((selector) => {
+    assert.equal(environment.fields[selector].disabled, true)
+    assert.equal(environment.fields[selector].required, false)
+    assert.equal(environment.fields[selector].getAttribute('aria-disabled'), 'true')
+  })
+  const notice = environment.step.children.find((child) => child.hasAttribute('data-paid-call-profile-notice'))
+  assert.ok(notice)
+  assert.equal(notice.children[0].href, '/starter-dashboard#calendar')
+  assert.equal(notice.children[0].textContent, 'Paid Call Settings')
 }
 
 async function testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone() {
@@ -627,15 +698,11 @@ async function testEnabledOptionalRatesNeverSilentlyPersistZero() {
   const enabledBlankPayload = await submittedStepPayload(saved({
     stepIndex: 6,
     additionalFormValues: [
-      ['paid-consulting-calls', 'yes'],
       ['offer-monthly-retainers', 'yes'],
-      ['paid-call-rate', ''],
       ['rate-retainer', '   '],
     ],
   }))
-  assert.equal(enabledBlankPayload.Paid_Call_Enabled, true)
   assert.equal(enabledBlankPayload.Retainer_Enabled, true)
-  assert.equal(enabledBlankPayload.Paid_Call_Rate, '')
   assert.equal(enabledBlankPayload.Retainer_Rate, '   ')
 }
 
@@ -1176,8 +1243,12 @@ Promise.all([
   testSecondSaveStillFailsClosedWhenMemberSwitchesMidRequest(),
   testEarlyLoadInitializesCountersAfterParsing(),
   testNon2xx(),
+  testCanonicalSaveWithPendingProjectionNeverShowsWholeFormFailure(),
+  testSuccessfulHttpWithoutCanonicalSaveConfirmationFailsClosed(),
   testEveryOwnedSectionOpensSuccessModal(),
   testOptionalRatesPreserveCanonicalZeroSentinel(),
+  testStepSixNeverWritesPaidCallAuthority(),
+  testStepSixDisablesLegacyPaidCallControlsAndLinksCanonicalSettings(),
   testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
   testPhoneCountryChangeCountsAsAMemberEdit(),
   testEnabledOptionalRatesNeverSilentlyPersistZero(),

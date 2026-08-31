@@ -5,7 +5,7 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
  *
- * @release v1.59.346
+ * @release v1.59.464
  */
 
 (() => {
@@ -20,6 +20,7 @@ const onDomReady = (callback) => {
 };
 const PROFILE_WORKFLOW = 'starter_profile_edit';
 const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v3';
+const PAID_CALL_SETTINGS_URL = '/starter-dashboard#calendar';
 const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
@@ -204,6 +205,41 @@ function recordProfileDiagnostic(receipt, fields) {
 function decorateProfileFeedback(modalName, receipt) {
 	// Diagnostics are console-only. The authored modal owns its message and markup.
 	return receipt;
+}
+
+function setProfileFeedbackMessage(modalName, message) {
+	const target = qs(`[data-modal-target="${modalName}"]`);
+	const messageElement = target ? qs('p', target) : null;
+	if (messageElement && message) messageElement.textContent = message;
+}
+
+function configureCanonicalPaidCallSettings() {
+	const step = qs('[data-form="step"][data-index="6"]');
+	if (!step) return;
+
+	const controls = qsa([
+		'[name="paid-consulting-calls"]',
+		'[name="paid-call-description"]',
+		'[name="paid-call-rate"]',
+	].join(','), step);
+	if (!controls.length) return;
+
+	controls.forEach((control) => {
+		control.disabled = true;
+		control.required = false;
+		control.setAttribute('aria-disabled', 'true');
+	});
+
+	if (qs('[data-paid-call-profile-notice]', step) || typeof document.createElement !== 'function') return;
+	const notice = document.createElement('p');
+	notice.setAttribute('data-paid-call-profile-notice', '');
+	notice.textContent = 'Paid Call pricing is managed in ';
+	const link = document.createElement('a');
+	link.href = PAID_CALL_SETTINGS_URL;
+	link.textContent = 'Paid Call Settings';
+	notice.appendChild(link);
+	notice.appendChild(document.createTextNode('.'));
+	step.appendChild(notice);
 }
 
 function openProfileFeedback(modalName, trigger) {
@@ -578,9 +614,6 @@ onDomReady(function () {
 				Open_to_Full_Time: 'full-time-placement',
 				Free_Call_Enabled: 'free-consulting-calls',
 				Free_Call_Description: 'free-call-description',
-				Paid_Call_Enabled: 'paid-consulting-calls',
-				Paid_Call_Description: 'paid-call-description',
-				Paid_Call_Rate: 'paid-call-rate',
 				Retainer_Enabled: 'offer-monthly-retainers',
 				Retainer_Description: 'description-retainer',
 				Retainer_Rate: 'rate-retainer',
@@ -797,9 +830,14 @@ onDomReady(function () {
 
 				responseStatus = response.status;
 				const result = await response.json().catch(() => null);
-				if (!response.ok) {
+				const canonicalSaved = result?.saved === true;
+				if (!response.ok && !canonicalSaved) {
 					failureCode = 'HTTP_ERROR';
 					throw new Error(result?.message || result?.error || `Profile update failed (${response.status})`);
+				}
+				if (!canonicalSaved) {
+					failureCode = 'SAVE_CONTRACT_ERROR';
+					throw new Error('Profile update did not confirm a canonical save.');
 				}
 
 				// update Member customFields, if even one of them was changed
@@ -832,7 +870,14 @@ onDomReady(function () {
 					duration_ms: Date.now() - startedAt,
 					request_started: true,
 					resource_id: result?.id || result?.profile_id || window.activeProfile?.id || '',
+					projection_pending: result?.projection_pending === true,
 				});
+				setProfileFeedbackMessage(
+					'edit-form-success',
+					result?.projection_pending === true
+						? 'Your profile was saved. Public profile changes can take a moment to appear.'
+						: 'Your profile was saved.',
+				);
 				decorateProfileFeedback('edit-form-success', diagnostic);
 				openProfileFeedback('edit-form-success', openSuccessModal);
 			} catch (error) {
@@ -862,7 +907,6 @@ onDomReady(function () {
 		// keeps failing instead of silently persisting a zero rate.
 		const OPTIONAL_CANONICAL_RATES = Object.freeze([
 			{ field: 'Hourly_Rate', isOptional: (payload, step) => qs('[name="rate"]', step)?.required === false },
-			{ field: 'Paid_Call_Rate', isOptional: (payload) => payload.Paid_Call_Enabled === false },
 			{ field: 'Retainer_Rate', isOptional: (payload) => payload.Retainer_Enabled === false },
 		]);
 
@@ -1678,5 +1722,7 @@ onDomReady(() => {
 				$(el).trigger("input");
 			});
 		}
+
+		configureCanonicalPaidCallSettings();
 	});
 })();

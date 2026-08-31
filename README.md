@@ -151,7 +151,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   and blocks known edit mutations on non-Live hosts. The authoritative photo
   upload and release-gate contract lives in
   [`v3/build-profile/README.md`](v3/build-profile/README.md#profile-photo-upload-contract)
-- `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior
+- `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior; it requires the canonical `saved` response contract, treats public projection as asynchronous, and routes Paid Call pricing to the dashboard settings writer
   migrated from the legacy Webflow footer. It keeps the existing Designer form
   and modal markup, opens the existing success or error modal through the Lumos
   API, and uses its hidden modal triggers only when that API is unavailable. It
