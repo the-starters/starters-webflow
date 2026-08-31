@@ -7700,9 +7700,47 @@ function endProjectDom(overrides = {}) {
   reason.value = overrides.reason == null ? '' : overrides.reason
   const reasonWrap = el('div', { 'data-end-project-reason-wrap': '' }, [reason])
   const toggle = el('a', { 'data-end-project-mode-toggle': '', href: '#' })
-  const submitText = el('div', { class: 'button_main-text' })
-  const submit = el('button', { type: 'submit' }, [submitText])
-  const form = el('form', {}, [reviewGroup, reasonWrap, toggle, submit])
+  const legacySubmit = overrides.legacySubmit === true
+  // Mirror the live Clickable Wrap: a bare `clickable_btn` overlay carries
+  // type=submit while the visible caption sits in the enclosing wrap.
+  const submitText = el(legacySubmit ? 'span' : 'div', legacySubmit
+    ? {}
+    : { class: 'button_main-text' })
+  submitText.textContent = 'End Project and Submit Review'
+  const submitIcon = legacySubmit ? el('svg') : null
+  const submit = el(
+    'button',
+    legacySubmit ? { type: 'submit' } : { type: 'submit', class: 'clickable_btn' },
+    legacySubmit ? [submitText, submitIcon] : [],
+  )
+  if (legacySubmit) {
+    let directText = ''
+    Object.defineProperty(submit, 'textContent', {
+      configurable: true,
+      get: () => submit.children.length
+        ? submit.children.map((child) => child.textContent || '').join('')
+        : directText,
+      set: (value) => {
+        directText = String(value)
+        submit.children.forEach((child) => {
+          child.parent = null
+          child.parentNode = null
+        })
+        submit.children.length = 0
+      },
+    })
+  }
+  const clickableWrap = legacySubmit
+    ? null
+    : el('div', { class: 'clickable_wrap' }, [submit])
+  const submitWrap = legacySubmit
+    ? null
+    : el('div', { class: 'button_main-wrap' }, [clickableWrap, submitText])
+  const form = el(
+    'form',
+    {},
+    [reviewGroup, reasonWrap, toggle, legacySubmit ? submit : submitWrap],
+  )
   form.reset = () => {}
   const done = el('div', { class: 'w-form-done' })
   const fail = el('div', { class: 'w-form-fail' })
@@ -7714,7 +7752,8 @@ function endProjectDom(overrides = {}) {
   const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
   return {
     end, label, wrap, card, title, subtitle, rating, feedback, reviewGroup,
-    reason, reasonWrap, toggle, submit, submitText, form, done, fail, modal, root,
+    reason, reasonWrap, toggle, submit, submitText, submitIcon, submitWrap,
+    form, done, fail, modal, root,
   }
 }
 
@@ -8011,4 +8050,144 @@ test('end-project falls back to prompt when the modal markup is absent', async (
   assert.ok(await waitFor(() => actionBody !== null))
   assert.equal(prompted, 1)
   assert.equal(actionBody.action, 'complete')
+})
+
+// A `required` control inside a display:none group still fails constraint
+// validation, and the browser cannot focus it to report the error, so the
+// real form silently refuses to submit. This reproduces the production
+// failure: hiding a group must also drop the constraint, and showing it
+// again must restore it.
+test('hiding a modal group clears required so the form can still submit', async () => {
+  const dom = endProjectDom()
+  dom.feedback.required = true
+  dom.reason.required = true
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'pending',
+            lifecycle_version: 4,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  // pending -> the cancel step hides both the review block and the reason group
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
+  assert.equal(dom.reviewGroup.style.display, 'none')
+  assert.equal(dom.reasonWrap.style.display, 'none')
+  assert.equal(
+    dom.feedback.required,
+    false,
+    'a hidden required control blocks submit with no visible error',
+  )
+  assert.equal(dom.reason.required, false)
+
+  // and the constraint must come back when the group is shown again
+  bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
+  await new Promise(setImmediate)
+  assert.equal(dom.reason.required, false, 'cancel step has no toggle, so nothing is restored yet')
+
+  bridge.window.dispatchEvent(
+    new bridge.window.CustomEvent('modal-close', { detail: { modal: dom.modal } }),
+  )
+  await new Promise(setImmediate)
+
+  // starter early-end shows the reason group, which must be required again
+  const starterDom = endProjectDom()
+  starterDom.reason.required = true
+  const starterBridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 4 }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(starterDom, talentMember, '/starter-dashboard'),
+  )
+  assert.ok(await waitFor(() => starterDom.end.getAttribute('data-project-action') === 'end'))
+  starterBridge.dispatchDocument('click', clickEvent(starterDom.end).event)
+  assert.ok(await waitFor(() => starterDom.title.textContent === 'End Project Early'))
+  assert.equal(starterDom.reasonWrap.style.display, '')
+  assert.equal(starterDom.reason.required, true, 'a visible required control keeps its constraint')
+})
+
+// The live Webflow button is a Clickable Wrap: a bare `clickable_btn` overlay
+// carries type=submit while the visible caption lives in the enclosing wrap.
+// Writing the caption into the overlay renders a second caption on top of the
+// real one, which is what shipped and looked like overlapping button text.
+test('submit caption paints the wrap label, never the bare submit overlay', async () => {
+  const dom = endProjectDom()
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'pending',
+            lifecycle_version: 4,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
+
+  assert.equal(dom.submitText.textContent, 'Cancel Project')
+  assert.notEqual(
+    dom.submit.textContent,
+    'Cancel Project',
+    'the bare submit overlay must not receive the caption or it renders over the real one',
+  )
+})
+
+test('submit caption preserves legacy plain-button sibling content', async () => {
+  const dom = endProjectDom({ legacySubmit: true })
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'pending',
+            lifecycle_version: 4,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
+
+  assert.equal(dom.submitText.textContent, 'Cancel Project')
+  assert.ok(dom.submit.children.includes(dom.submitIcon))
 })

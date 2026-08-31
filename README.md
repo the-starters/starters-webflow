@@ -1093,11 +1093,17 @@ work and ending it early. Use `[data-end-project-title]` and
 `[data-end-project-subtitle]` for the state-specific copy,
 `[data-end-project-reason-wrap]` around `[data-end-project-reason]` for the
 required early-end reason, and `[data-end-project-review]` around the Brand-only
-rating and public-review fields. Pending completion and termination requests
-paint confirmation-only states for the counterparty; pre-activation projects
-paint the existing cancel confirmation. If the separate modal markup is absent
-during a Designer/CDN rollout skew, the native prompt and confirm flow remains
-available so the lifecycle action is not stranded.
+rating and public-review fields. The controller removes native `required`
+constraints while either group is hidden and restores them when that group is
+shown, so only visible fields can block submission. Author the submit control as
+the standard Clickable Wrap: the empty `button.clickable_btn` remains the native
+submitter, while every `.button_main-text` in its `.button_main-wrap` receives
+the state-specific caption. A legacy plain button can instead keep its caption
+in a nested `div` or `span`. Pending completion and termination requests paint
+confirmation-only states for the counterparty; pre-activation projects paint the
+existing cancel confirmation. If the separate modal markup is absent during a
+Designer/CDN rollout skew, the native prompt and confirm flow remains available
+so the lifecycle action is not stranded.
 
 The requesting party never sees a second request. Requester identity comes from
 the canonical `brand_completion_requested_at`, `starter_completion_requested_at`,

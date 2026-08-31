@@ -3770,9 +3770,25 @@
     }
   }
 
+  // A `required` control that is display:none still fails constraint validation,
+  // and the browser cannot focus it to report the error, so the form silently
+  // refuses to submit and the button appears dead. Mirror visibility onto the
+  // constraint and restore it when the group comes back.
   function setEndProjectVisible(element, visible) {
     if (!element) return
     element.style.display = visible ? '' : 'none'
+    const controls = element.matches && element.matches('input, select, textarea')
+      ? [element]
+      : $$('input, select, textarea', element)
+    controls.forEach((control) => {
+      if (visible) {
+        if (control.dataset.endProjectRequired === 'true') control.required = true
+        delete control.dataset.endProjectRequired
+      } else if (control.required) {
+        control.dataset.endProjectRequired = 'true'
+        control.required = false
+      }
+    })
   }
 
   function paintEndProjectModal(modal, view, starterName) {
@@ -3784,11 +3800,19 @@
     setEndProjectVisible(parts.toggle, view.showToggle)
     if (parts.toggle && view.toggle) parts.toggle.textContent = view.toggle
     if (starterName) paintProjectReviewStarterName(modal, starterName)
+    // The Webflow button is a Clickable Wrap: a bare `clickable_btn` overlay
+    // carries type=submit while the visible caption lives in the enclosing
+    // wrap's `.button_main-text`. Writing into the overlay renders a second
+    // caption on top of the real one, so paint the wrap's label instead. The
+    // nested-label branch preserves the legacy plain-button fallback.
     const submit = parts.form ? $('[type="submit"]', parts.form) : null
     if (submit) {
+      const wrap = submit.closest ? submit.closest('.button_main-wrap') : null
+      const wrapLabels = wrap ? $$('.button_main-text', wrap) : []
       const label = $('div, span', submit)
-      if (submit.tagName === 'INPUT') submit.value = view.submit
+      if (wrapLabels.length) wrapLabels.forEach((label) => { label.textContent = view.submit })
       else if (label) label.textContent = view.submit
+      else if (submit.tagName === 'INPUT') submit.value = view.submit
       else submit.textContent = view.submit
     }
     return parts
