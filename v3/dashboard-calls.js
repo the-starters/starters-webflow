@@ -1609,12 +1609,12 @@
         const actionsModule = global.StartersDashboardCallActions
         const eligible =
           validDashboardModule(actionsModule) &&
-          typeof actionsModule.canProposeReschedule === 'function' &&
-          actionsModule.canProposeReschedule(
+          typeof actionsModule.rescheduleKindFor === 'function' &&
+          actionsModule.rescheduleKindFor(
             role,
             bookingForActionTarget(refs, reschedule),
             Date.now(),
-          )
+          ) !== ''
         if (eligible) return
         if (event.preventDefault) event.preventDefault()
         if (event.stopImmediatePropagation) event.stopImmediatePropagation()

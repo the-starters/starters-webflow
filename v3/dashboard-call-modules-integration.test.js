@@ -687,11 +687,11 @@ test('the authored Reschedule entry click reaches the actions module in real lis
     }
     let getBookingCalls = 0
     // Real boot order: the dashboard swallow listener registers first…
-    dashboard.wireBookingDetails([{ rows }], 'starter')
+    dashboard.wireBookingDetails([{ rows }], 'brand')
     // …then the async-loaded actions module wires second.
     global.StartersDashboardCallActions.wire({
       document: global.document,
-      role: 'starter',
+      role: 'brand',
       restart() {},
       getBooking() {
         getBookingCalls += 1
@@ -706,6 +706,18 @@ test('the authored Reschedule entry click reaches the actions module in real lis
     assert.equal(eligible.prevented, 1)
     const reschedulePanel = panels.find((panel) => panel.name === 'reschedule')
     const basePanel = panels.find((panel) => panel.name === 'base')
+    assert.equal(reschedulePanel.hidden, false)
+    assert.equal(basePanel.hidden, true)
+
+    currentBooking = { ...eligibleBooking, status: 'pending' }
+    rows[0] = currentBooking
+    reschedulePanel.hidden = true
+    basePanel.hidden = false
+    const pendingBefore = getBookingCalls
+    const pending = dispatch()
+    assert.equal(getBookingCalls, pendingBefore + 1)
+    assert.equal(pending.stopped, true)
+    assert.equal(pending.prevented, 1)
     assert.equal(reschedulePanel.hidden, false)
     assert.equal(basePanel.hidden, true)
 

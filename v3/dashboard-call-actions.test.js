@@ -1276,6 +1276,32 @@ test('authored reschedule controls and field label replace Webflow placeholder c
       .sort(),
     ['confirm-reschedule', 'reschedule-decline'],
   )
+
+  const fallbackHost = fakeElement('div')
+  const fallbackBase = fakeElement('div')
+  fallbackBase.setAttribute('booking-popup-content', 'base')
+  fallbackHost.appendChild(fallbackBase)
+  const fallbackModal = {
+    querySelector(selector) {
+      const contentMatch = selector.match(/^\[booking-popup-content="([^"]+)"\]$/)
+      if (contentMatch) {
+        return fallbackHost.children.find(
+          (child) => child.attributes['booking-popup-content'] === contentMatch[1],
+        ) || null
+      }
+      return null
+    },
+    querySelectorAll() {
+      return []
+    },
+  }
+  assert.equal(api.ensureRescheduleViews({ createElement: fakeElement }, fallbackModal), true)
+  const fallbackPanel = fallbackModal.querySelector('[booking-popup-content="reschedule"]')
+  assert.equal(fallbackPanel.children[0].textContent, 'Choose a new time')
+  assert.equal(
+    fallbackPanel.children[1].textContent,
+    'Select a new time and add a short note about why you need the change.',
+  )
 })
 
 test('the success panel text nodes render the current counterpart without changing other copy', () => {

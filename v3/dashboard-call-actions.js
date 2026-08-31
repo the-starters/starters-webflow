@@ -893,12 +893,12 @@
 
     if (!hasAuthoredRescheduleView) {
       const reasonPanel = reschedulePanel(document, 'reschedule', true)
-      reasonPanel.appendChild(panelText(document, 'h3', 'Propose a new time'))
+      reasonPanel.appendChild(panelText(document, 'h3', 'Choose a new time'))
       reasonPanel.appendChild(
         panelText(
           document,
           'p',
-          'Your call keeps its current time until the other participant confirms the new one. Changes close to the start time can be disruptive, so add a short note about why.',
+          'Select a new time and add a short note about why you need the change.',
           true,
         ),
       )
