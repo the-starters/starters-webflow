@@ -4,8 +4,8 @@
  * Webflow owns the base modal plus the authored decline, cancel, and reschedule
  * reason fields. This module binds those elements, creates only missing
  * supporting reschedule views, and sends environment-safe commands with
- * published V3 contracts: decline, cancel, and propose-then-confirm reschedule
- * for eligible Free calls.
+ * published V3 contracts: decline, cancel, direct pending-request time updates,
+ * and propose-then-confirm reschedule for eligible Free calls.
  */
 ;(function (global) {
   'use strict'
