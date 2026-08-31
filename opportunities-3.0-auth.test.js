@@ -7700,9 +7700,14 @@ function endProjectDom(overrides = {}) {
   reason.value = overrides.reason == null ? '' : overrides.reason
   const reasonWrap = el('div', { 'data-end-project-reason-wrap': '' }, [reason])
   const toggle = el('a', { 'data-end-project-mode-toggle': '', href: '#' })
+  // Mirror the live Clickable Wrap: a bare `clickable_btn` overlay carries
+  // type=submit while the visible caption sits in the enclosing wrap.
   const submitText = el('div', { class: 'button_main-text' })
-  const submit = el('button', { type: 'submit' }, [submitText])
-  const form = el('form', {}, [reviewGroup, reasonWrap, toggle, submit])
+  submitText.textContent = 'End Project and Submit Review'
+  const submit = el('button', { type: 'submit', class: 'clickable_btn' })
+  const clickableWrap = el('div', { class: 'clickable_wrap' }, [submit])
+  const submitWrap = el('div', { class: 'button_main-wrap' }, [clickableWrap, submitText])
+  const form = el('form', {}, [reviewGroup, reasonWrap, toggle, submitWrap])
   form.reset = () => {}
   const done = el('div', { class: 'w-form-done' })
   const fail = el('div', { class: 'w-form-fail' })
@@ -7714,7 +7719,7 @@ function endProjectDom(overrides = {}) {
   const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
   return {
     end, label, wrap, card, title, subtitle, rating, feedback, reviewGroup,
-    reason, reasonWrap, toggle, submit, submitText, form, done, fail, modal, root,
+    reason, reasonWrap, toggle, submit, submitText, submitWrap, form, done, fail, modal, root,
   }
 }
 
@@ -8085,4 +8090,41 @@ test('hiding a modal group clears required so the form can still submit', async 
   assert.ok(await waitFor(() => starterDom.title.textContent === 'End Project Early'))
   assert.equal(starterDom.reasonWrap.style.display, '')
   assert.equal(starterDom.reason.required, true, 'a visible required control keeps its constraint')
+})
+
+// The live Webflow button is a Clickable Wrap: a bare `clickable_btn` overlay
+// carries type=submit while the visible caption lives in the enclosing wrap.
+// Writing the caption into the overlay renders a second caption on top of the
+// real one, which is what shipped and looked like overlapping button text.
+test('submit caption paints the wrap label, never the bare submit overlay', async () => {
+  const dom = endProjectDom()
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'pending',
+            lifecycle_version: 4,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
+
+  assert.equal(dom.submitText.textContent, 'Cancel Project')
+  assert.notEqual(
+    dom.submit.textContent,
+    'Cancel Project',
+    'the bare submit overlay must not receive the caption or it renders over the real one',
+  )
 })

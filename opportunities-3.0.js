@@ -3800,11 +3800,16 @@
     setEndProjectVisible(parts.toggle, view.showToggle)
     if (parts.toggle && view.toggle) parts.toggle.textContent = view.toggle
     if (starterName) paintProjectReviewStarterName(modal, starterName)
+    // The Webflow button is a Clickable Wrap: a bare `clickable_btn` overlay
+    // carries type=submit while the visible caption lives in the enclosing
+    // wrap's `.button_main-text`. Writing into the overlay renders a second
+    // caption on top of the real one, so paint the wrap's label instead.
     const submit = parts.form ? $('[type="submit"]', parts.form) : null
     if (submit) {
-      const label = $('div, span', submit)
-      if (submit.tagName === 'INPUT') submit.value = view.submit
-      else if (label) label.textContent = view.submit
+      const wrap = submit.closest ? submit.closest('.button_main-wrap') : null
+      const wrapLabels = wrap ? $$('.button_main-text', wrap) : []
+      if (wrapLabels.length) wrapLabels.forEach((label) => { label.textContent = view.submit })
+      else if (submit.tagName === 'INPUT') submit.value = view.submit
       else submit.textContent = view.submit
     }
     return parts
