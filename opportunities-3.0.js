@@ -3950,7 +3950,7 @@
   async function submitEndProjectReview(intent, project) {
     const review = intent && intent.review
     if (!review) return ''
-    if (lifecycleState(project) !== 'completed' || !project.review_eligible) {
+    if (lifecycleState(project) !== 'completed') {
       return 'Completion requested. Review unlocks once both sides confirm.'
     }
     try {

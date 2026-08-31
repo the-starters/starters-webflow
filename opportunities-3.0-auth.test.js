@@ -7761,8 +7761,6 @@ test('brand end-project modal completes and submits the review in one pass', asy
             id: 675,
             lifecycle_state: 'completed',
             lifecycle_version: 5,
-            review_eligible: true,
-            has_review: false,
             starter_name: 'JP Test',
           },
         })
