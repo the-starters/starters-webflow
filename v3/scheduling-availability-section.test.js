@@ -366,24 +366,35 @@ function buildSectionDom(options = {}) {
     class: 'button-group is-secondary',
     'data-availability-element': 'connect-label-group',
   })
-  // Mirrors the real Designer markup: one [data-type="false"] label plus two
-  // [data-type="true"][data-manager] variants, one per manager.
-  const disconnectedLabel = new El('div', { 'data-type': 'false', 'data-availability-element': 'connect-label' })
-  disconnectedLabel.textContent = 'Disonnected'
+  // Mirrors the real Designer markup: one disconnected/connected pair per
+  // manager. Every label carries both [data-type] and [data-manager].
+  const disconnectedPlatformLabel = new El('div', {
+    'data-type': 'false',
+    'data-availability-element': 'connect-label',
+    'data-manager': 'platform',
+  })
+  disconnectedPlatformLabel.textContent = 'Platform: Disconnected'
   const connectedPlatformLabel = new El('div', {
     'data-type': 'true',
     'data-availability-element': 'connect-label',
     'data-manager': 'platform',
   })
-  connectedPlatformLabel.textContent = 'Connected to platform'
+  connectedPlatformLabel.textContent = 'Platform: Connected'
+  const disconnectedCalendarLabel = new El('div', {
+    'data-type': 'false',
+    'data-availability-element': 'connect-label',
+    'data-manager': 'calendar',
+  })
+  disconnectedCalendarLabel.textContent = 'Google: Disconnected'
   const connectedCalendarLabel = new El('div', {
     'data-type': 'true',
     'data-availability-element': 'connect-label',
     'data-manager': 'calendar',
   })
-  connectedCalendarLabel.textContent = 'Connected to calendar'
-  labelGroup.appendChild(disconnectedLabel)
+  connectedCalendarLabel.textContent = 'Google: Connected'
+  labelGroup.appendChild(disconnectedPlatformLabel)
   labelGroup.appendChild(connectedPlatformLabel)
+  labelGroup.appendChild(disconnectedCalendarLabel)
   labelGroup.appendChild(connectedCalendarLabel)
 
   const connectInfoWrapper = new El('div', { 'data-availability-element': 'connect-info-wrapper' })
@@ -1472,19 +1483,21 @@ test('connect-label-group and connect-info-wrapper do not flash mid-request on d
   await settle()
 
   // Sanity: boots into the connected-via-calendar look.
-  assert.equal(dom.labelGroup.children[0].style.display, 'none') // "Disconnected" hidden
-  assert.equal(dom.labelGroup.children[1].style.display, 'none') // "Connected to platform" hidden
-  assert.equal(dom.labelGroup.children[2].style.display, '') // "Connected to calendar" shown
+  assert.equal(dom.labelGroup.children[0].style.display, '') // Platform disconnected
+  assert.equal(dom.labelGroup.children[1].style.display, 'none') // Platform connected
+  assert.equal(dom.labelGroup.children[2].style.display, 'none') // Google disconnected
+  assert.equal(dom.labelGroup.children[3].style.display, '') // Google connected
   assert.equal(dom.connectInfoWrapper.style.display, 'none')
 
   dom.connectBtnWrapper.children[2].click() // open-disconnect-google -> opens the confirm modal, no request yet
   dom.notif.disconnectGoogleBtn.click() // confirm -> publishes 'loading' synchronously
 
-  // The request hasn't resolved yet — all three labels must still read
+  // The request hasn't resolved yet — both pairs must still read
   // exactly as they did before the click, not flip to a "disconnected" look.
-  assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.labelGroup.children[0].style.display, '')
   assert.equal(dom.labelGroup.children[1].style.display, 'none')
-  assert.equal(dom.labelGroup.children[2].style.display, '')
+  assert.equal(dom.labelGroup.children[2].style.display, 'none')
+  assert.equal(dom.labelGroup.children[3].style.display, '')
   assert.equal(dom.connectInfoWrapper.style.display, 'none')
 
   await settle()
@@ -1493,25 +1506,28 @@ test('connect-label-group and connect-info-wrapper do not flash mid-request on d
   // look (now the platform label) once the real response arrives.
   assert.equal(dom.labelGroup.children[0].style.display, 'none')
   assert.equal(dom.labelGroup.children[1].style.display, '')
-  assert.equal(dom.labelGroup.children[2].style.display, 'none')
+  assert.equal(dom.labelGroup.children[2].style.display, '')
+  assert.equal(dom.labelGroup.children[3].style.display, 'none')
   assert.equal(dom.connectInfoWrapper.style.display, 'none')
 })
 
-test('connect-label shows only the variant matching the live manager (platform vs. calendar)', async () => {
+test('connect-label shows one state from each provider pair', async () => {
   const { dom } = loadSection()
   await settle()
 
-  // Boots disconnected: only the [data-type="false"] label is visible.
+  // Boots disconnected: each pair shows its disconnected variant.
   assert.equal(dom.labelGroup.children[0].style.display, '')
   assert.equal(dom.labelGroup.children[1].style.display, 'none')
-  assert.equal(dom.labelGroup.children[2].style.display, 'none')
+  assert.equal(dom.labelGroup.children[2].style.display, '')
+  assert.equal(dom.labelGroup.children[3].style.display, 'none')
 
   dom.connectBtnWrapper.children[0].click() // connect-platform
   await settle()
 
   assert.equal(dom.labelGroup.children[0].style.display, 'none')
   assert.equal(dom.labelGroup.children[1].style.display, '') // platform variant
-  assert.equal(dom.labelGroup.children[2].style.display, 'none')
+  assert.equal(dom.labelGroup.children[2].style.display, '') // Google disconnected
+  assert.equal(dom.labelGroup.children[3].style.display, 'none')
 })
 
 /* ------------------------------------------------------------------ */

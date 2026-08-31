@@ -1552,22 +1552,27 @@
   // clicking connect/reconnect/disconnect doesn't flash the "disconnected"
   // label before the request even resolves.
   //
-  // `connect-label-group` holds three `[data-availability-element=
-  // "connect-label"]` instances: `[data-type="false"]` ("Disconnected") plus
-  // two `[data-type="true"][data-manager]` variants, one per manager
-  // ("platform" / "calendar") — only the one matching the live
-  // `availability.manager` is shown while connected.
+  // `connect-label-group` holds one disconnected/connected pair for each
+  // manager. Each label has `[data-manager]` (`platform` / `calendar`) and
+  // `[data-type]` (`false` / `true`). Show exactly one label from each pair so
+  // users can see both connection statuses at the same time.
   function applyConnectLabels(state) {
     if (state === 'loading') return
     const connected = state === 'connected' || state === 'reconnect'
     const manager = availability && availability.manager
     const labels = qsa(elSel('connect-label'))
     if (labels.length) {
+      const hasManagerPairs = Array.from(labels).every(function (label) {
+        return Boolean(label.getAttribute('data-manager'))
+      })
       labels.forEach(function (label) {
         const isConnectedVariant = label.getAttribute('data-type') === 'true'
-        const visible = isConnectedVariant
-          ? connected && label.getAttribute('data-manager') === manager
+        const labelManager = label.getAttribute('data-manager')
+        const managerConnected = connected && labelManager === manager
+        let visible = isConnectedVariant
+          ? connected && labelManager === manager
           : !connected
+        if (hasManagerPairs) visible = isConnectedVariant === managerConnected
         label.style.display = visible ? '' : 'none'
       })
       return
