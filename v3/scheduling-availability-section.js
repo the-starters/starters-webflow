@@ -117,6 +117,9 @@
   let selectedPreviewDateKey = null
   let selectedPreviewSlotStart = null
   let selectedPreviewTimezone = null
+  let previewTimezoneControl = null
+  let previewTimezoneSelect = null
+  let previewTimezoneContext = null
   let previewRenderVersion = 0
   // Set by the per-item "open-item-remove" trigger, consumed by the
   // notification modal's "item-remove" confirm button.
@@ -2185,6 +2188,18 @@
     }
   }
 
+  function browserTimezone() {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    } catch (error) {
+      return 'UTC'
+    }
+  }
+
+  function effectivePreviewTimezone() {
+    return selectedPreviewTimezone || timezone || browserTimezone()
+  }
+
   function formatSlotTime(startTimeSeconds) {
     const date = new Date(startTimeSeconds * 1000)
     try {
@@ -2195,7 +2210,7 @@
         hour: '2-digit',
         minute: '2-digit',
         hour12: true,
-        timeZone: selectedPreviewTimezone || timezone || undefined,
+        timeZone: effectivePreviewTimezone(),
       }).format(date)
     } catch (error) {
       return date.toString()
@@ -2209,7 +2224,7 @@
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
-        timeZone: selectedPreviewTimezone || timezone || undefined,
+        timeZone: effectivePreviewTimezone(),
       }).formatToParts(date)
       const values = {}
       parts.forEach(function (part) {
@@ -2228,7 +2243,7 @@
         weekday: 'short',
         month: 'short',
         day: 'numeric',
-        timeZone: selectedPreviewTimezone || timezone || undefined,
+        timeZone: effectivePreviewTimezone(),
       }).format(date)
     } catch (error) {
       return date.toDateString()
@@ -2242,7 +2257,7 @@
         hour: 'numeric',
         minute: '2-digit',
         hour12: true,
-        timeZone: selectedPreviewTimezone || timezone || undefined,
+        timeZone: effectivePreviewTimezone(),
       }).format(date)
     } catch (error) {
       return date.toTimeString().slice(0, 5)
@@ -2333,8 +2348,7 @@
     return unique
   }
 
-  function renderPreviewTimezoneControl(container, slots, wrapper) {
-    const activeTimezone = selectedPreviewTimezone || timezone || 'UTC'
+  function buildPreviewTimezoneControl() {
     const control = applyStyles(document.createElement('label'), {
       display: 'grid',
       gap: '6px',
@@ -2360,21 +2374,67 @@
     })
     select.setAttribute(EL, 'preview-timezone')
     select.setAttribute('aria-label', 'Timezone')
-    supportedTimezones(activeTimezone).forEach(function (timezoneName) {
+    const referenceSeconds =
+      previewTimezoneContext && previewTimezoneContext.slots
+        ? previewTimezoneContext.slots[0]
+        : undefined
+    supportedTimezones(effectivePreviewTimezone()).forEach(function (timezoneName) {
       const option = document.createElement('option')
       option.value = timezoneName
-      option.textContent = timezoneLabel(timezoneName, slots[0])
+      option.textContent = timezoneLabel(timezoneName, referenceSeconds)
       select.appendChild(option)
     })
-    select.value = activeTimezone
     select.addEventListener('change', function () {
-      selectedPreviewTimezone = select.value || activeTimezone
+      const next = String(select.value || '').trim() || effectivePreviewTimezone()
+      if (next === effectivePreviewTimezone()) return
+      selectedPreviewTimezone = next
       selectedPreviewDateKey = null
       selectedPreviewSlotStart = null
-      renderSlotsList(wrapper, slots)
+      const context = previewTimezoneContext
+      if (context) renderSlotsList(context.wrapper, context.slots)
     })
     control.appendChild(caption)
     control.appendChild(select)
+    previewTimezoneControl = control
+    previewTimezoneSelect = select
+    return control
+  }
+
+  function ensurePreviewTimezoneOption(zone) {
+    if (!previewTimezoneSelect || !zone) return
+    const options = previewTimezoneSelect.options || previewTimezoneSelect.children || []
+    for (let index = 0; index < options.length; index += 1) {
+      if (options[index] && options[index].value === zone) return
+    }
+    const option = document.createElement('option')
+    option.value = zone
+    option.textContent = timezoneLabel(zone)
+    previewTimezoneSelect.appendChild(option)
+  }
+
+  function detachPreviewTimezoneControl() {
+    const focused = Boolean(
+      previewTimezoneSelect &&
+        typeof document !== 'undefined' &&
+        document.activeElement === previewTimezoneSelect,
+    )
+    if (previewTimezoneControl && typeof previewTimezoneControl.remove === 'function') {
+      previewTimezoneControl.remove()
+    }
+    return focused
+  }
+
+  function restorePreviewTimezoneFocus(hadFocus) {
+    if (!hadFocus || !previewTimezoneSelect) return
+    if (typeof previewTimezoneSelect.focus === 'function') previewTimezoneSelect.focus()
+  }
+
+  function renderPreviewTimezoneControl(container, slots, wrapper) {
+    previewTimezoneContext = { wrapper: wrapper, slots: slots }
+    const control = previewTimezoneControl || buildPreviewTimezoneControl()
+    const activeTimezone = effectivePreviewTimezone()
+    ensurePreviewTimezoneOption(activeTimezone)
+    previewTimezoneSelect.value = activeTimezone
     container.appendChild(control)
   }
 
@@ -2632,12 +2692,15 @@
       list.setAttribute(EL, 'slots-list')
       wrapper.appendChild(list)
     }
+    const timezoneHadFocus = detachPreviewTimezoneControl()
     list.innerHTML = ''
     if (!slots.length) {
       const empty = document.createElement('div')
       empty.textContent = 'No upcoming open slots found.'
       applyStyles(empty, { color: '#6f746d', fontSize: '12px' })
       list.appendChild(empty)
+      renderPreviewTimezoneControl(list, slots, wrapper)
+      restorePreviewTimezoneFocus(timezoneHadFocus)
       return
     }
     const groupedSlots = {}
@@ -2758,6 +2821,7 @@
       selectedSummary.setAttribute(EL, 'preview-selection')
       list.appendChild(selectedSummary)
     }
+    restorePreviewTimezoneFocus(timezoneHadFocus)
   }
 
   async function renderSlotsPreview() {
@@ -2845,6 +2909,9 @@
       selectedPreviewDateKey = null
       selectedPreviewSlotStart = null
       selectedPreviewTimezone = null
+      previewTimezoneControl = null
+      previewTimezoneSelect = null
+      previewTimezoneContext = null
       previewRenderVersion = 0
       grantId = null
       grantEmail = null
