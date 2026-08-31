@@ -718,6 +718,75 @@
     return button
   }
 
+  function setAuthoredActionLabel(control, label) {
+    if (!control) return false
+    const labels =
+      typeof control.querySelectorAll === 'function'
+        ? Array.prototype.slice.call(
+            control.querySelectorAll('.button_main-text, [button-text], [data-button-text]'),
+          )
+        : []
+    if (labels.length) {
+      labels.forEach(function (node) {
+        node.textContent = label
+      })
+    } else {
+      control.textContent = label
+    }
+    return true
+  }
+
+  function replaceAuthoredPlaceholder(root, replacement) {
+    let changed = 0
+    function visit(node) {
+      if (!node) return
+      if (node.nodeType === 3) {
+        if (clean(node.nodeValue) === 'This is some text inside of a div block.') {
+          node.nodeValue = replacement
+          changed += 1
+        }
+        return
+      }
+      Array.prototype.forEach.call(node.childNodes || [], visit)
+    }
+    visit(root)
+    return changed
+  }
+
+  /**
+   * Keeps the Designer-owned reschedule form and normalizes only its copy.
+   * Webflow's default Div Block text can otherwise ship as the field label,
+   * and cloned Button components keep that same placeholder in their labels.
+   */
+  function normalizeRescheduleViewCopy(modal) {
+    if (!modal || typeof modal.querySelector !== 'function') return false
+    const panel = modal.querySelector('[booking-popup-content="reschedule"]')
+    if (!panel || typeof panel.querySelectorAll !== 'function') return false
+    panel
+      .querySelectorAll(
+        '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]',
+      )
+      .forEach(function (control) {
+        setAuthoredActionLabel(control, 'Back')
+      })
+    panel
+      .querySelectorAll(
+        '[booking-action-btn="reschedule-calendar"], [booking-card-action-btn="reschedule-calendar"]',
+      )
+      .forEach(function (control) {
+        setAuthoredActionLabel(control, 'Continue')
+      })
+    const reason = panel.querySelector('[booking-reschedule-reason]')
+    if (reason) {
+      reason.placeholder = 'Why do you need a new time?'
+      if (typeof reason.setAttribute === 'function') {
+        reason.setAttribute('aria-label', 'Why do you need a new time?')
+      }
+    }
+    replaceAuthoredPlaceholder(panel, 'Why do you need a new time?')
+    return true
+  }
+
   function reschedulePanel(document, name, marker) {
     const panel = document.createElement('div')
     panel.setAttribute('booking-popup-content', name)
@@ -748,6 +817,7 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
+    normalizeRescheduleViewCopy(modal)
     if (modal.querySelector('[data-starters-reschedule-views]')) {
       ensureRespondButtons(document, modal)
       return true
@@ -817,6 +887,7 @@
     host.appendChild(declinedPanel)
 
     ensureRespondButtons(document, modal)
+    normalizeRescheduleViewCopy(modal)
     return true
   }
 
@@ -1123,6 +1194,7 @@
     canProposeReschedule,
     canRespondReschedule,
     ensureRescheduleViews,
+    normalizeRescheduleViewCopy,
     mountRescheduleCalendar,
     proposeReschedule,
     respondReschedule,

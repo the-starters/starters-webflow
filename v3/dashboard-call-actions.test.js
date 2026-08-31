@@ -1153,6 +1153,45 @@ test('respond controls are rendered into the base view for the counterpart', () 
   )
 })
 
+test('authored reschedule controls and field label replace Webflow placeholder copy', () => {
+  const textNode = (value) => ({ nodeType: 3, nodeValue: value })
+  const backLabel = { textContent: 'This is some text inside of a div block.' }
+  const continueLabel = { textContent: 'This is some text inside of a div block.' }
+  const back = { querySelectorAll: () => [backLabel] }
+  const next = { querySelectorAll: () => [continueLabel] }
+  const reason = {
+    attributes: {},
+    placeholder: '',
+    setAttribute(name, value) {
+      this.attributes[name] = value
+    },
+  }
+  const fieldLabel = textNode('This is some text inside of a div block.')
+  const panel = {
+    childNodes: [fieldLabel],
+    querySelector(selector) {
+      return selector === '[booking-reschedule-reason]' ? reason : null
+    },
+    querySelectorAll(selector) {
+      if (selector.includes('switch-base')) return [back]
+      if (selector.includes('reschedule-calendar')) return [next]
+      return []
+    },
+  }
+  const modal = {
+    querySelector(selector) {
+      return selector === '[booking-popup-content="reschedule"]' ? panel : null
+    },
+  }
+
+  assert.equal(api.normalizeRescheduleViewCopy(modal), true)
+  assert.equal(backLabel.textContent, 'Back')
+  assert.equal(continueLabel.textContent, 'Continue')
+  assert.equal(fieldLabel.nodeValue, 'Why do you need a new time?')
+  assert.equal(reason.placeholder, 'Why do you need a new time?')
+  assert.equal(reason.attributes['aria-label'], 'Why do you need a new time?')
+})
+
 test('the success panel text nodes render the current counterpart without changing other copy', () => {
   const firstBooking = {
     starter_data: { name: 'Sam Starter', memberstack_id: 'mem_sb_starter' },
