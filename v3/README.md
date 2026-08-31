@@ -3747,13 +3747,17 @@ already confirmed before the booking command, and changing the method after
 booking would not change the booking's server-owned payment snapshot. The
 success copy says that the saved payment method will be used. It does not show
 the Designer placeholder last-four digits because the readiness DTO does not
-return card details.
+return card details. When a newly saved card resumes and completes the booking,
+the controller closes only the owning Stripe Card Element dialog. It does not
+activate the earlier booking backdrop, so the paid-call success step remains
+visible.
 
 Closing the main booking modal, its backdrop, or ESC invalidates the shared
 calendar generation and restores `schedule-step="default"`. It also clears the
 selected slot, guest fields, topic, context, calendar, errors, status text, and
-Stripe Card Element. Closing only the Stripe dialog clears its card/error state,
-retained slot, and Paid guest state without creating a booking. Direct
+Stripe Card Element. Closing only the Stripe dialog before canonical booking
+proof clears its card/error state, retained slot, and Paid guest state without
+creating a booking. Direct
 call-service routing and generic chooser behavior are owned by
 [`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
 
