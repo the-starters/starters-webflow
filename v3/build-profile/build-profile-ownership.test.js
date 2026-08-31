@@ -45,9 +45,9 @@ const EXPECTED_CAPTURE = {
   },
 }
 const EXPECTED_CANDIDATES = {
-  sourceCommit: '9e520631220d1d111efb2ad0901138fafef58522',
+  sourceCommit: 'working-tree@2551a8c43616949c750682094e5b6fb04e13e10d',
   files: {
-    'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 14120, sha256: 'c51b30e337060faf2ef3a7f9e131bbd7ba6eb807b1852e9c8e8d79d9bc367b33' },
+    'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 14854, sha256: 'b7593bf81d47c0d59a12125e7ad561a61e8ff1b14649f064e4ede9765cf7e558' },
     'portfolio-crud.js': { path: 'v3/build-profile/portfolio-crud.js', bytes: 38397, sha256: '67a4ae90325477bc931a35d015eeba536e90ad5ff90968dc6c0cccb06872576f' },
     'portfolio-list.js': { path: 'v3/build-profile/portfolio-list.js', bytes: 4036, sha256: '508b94b1f40f05dcc916c79c3cf0bec04f627f75bb607d93d02c02e0950fe11b' },
     'company-autocomplete.js': { path: 'v3/build-profile/company-autocomplete.js', bytes: 12910, sha256: '1c3a18801844b2ce18ea539b54ee11bd6b46716bd8a9d24858a7999a5a94e4ac' },

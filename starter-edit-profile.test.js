@@ -61,6 +61,7 @@ function createEnvironment(fetchImpl, {
   missingSelectors = [],
   requiredCaptureFields = [],
   additionalFormValues = [],
+  canonicalPhone = '',
 } = {}) {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
@@ -92,6 +93,8 @@ function createEnvironment(fetchImpl, {
       '[name="last-name"]': createField('[name="last-name"]', { value: 'Starter', required: publishedRequired(1, 'last-name') }),
       '[name="email"]': globalFields.email,
       '[name="phone"]': globalFields.phone,
+      '#email': globalFields.email,
+      '#phone': globalFields.phone,
       '[name="country"]': createField('[name="country"]', { value: 'US', required: false }),
       '[name="state"]': createField('[name="state"]', { value: '', required: false }),
       '[name="city"]': createField('[name="city"]', { value: '', required: false }),
@@ -249,7 +252,11 @@ function createEnvironment(fetchImpl, {
   }
   let memberReadIndex = 0
   const window = {
-    activeProfile: { type: profileType, type_id: profileType === 'consult' ? 2 : 1 },
+    activeProfile: {
+      type: profileType,
+      type_id: profileType === 'consult' ? 2 : 1,
+      data: { step_1: { phone: canonicalPhone } },
+    },
     MEMBER: currentMember,
     waitProfileData() {},
     waitForMember(callback) { callback(this.MEMBER) },
@@ -581,6 +588,39 @@ async function testOptionalRatesPreserveCanonicalZeroSentinel() {
   }))
   assert.equal(configuredPayload.Paid_Call_Rate, '250.00')
   assert.equal(configuredPayload.Retainer_Rate, '500')
+}
+
+async function testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone() {
+  const environment = saved({
+    canonicalPhone: '0917',
+    additionalFormValues: [
+      ['email', 'hidden@example.com'],
+      ['phone', '+639170000000'],
+    ],
+  })
+  environment.window.intlTelInput.getInstance = () => ({ getNumber: () => '+639170000000' })
+
+  const untouched = await submittedStepPayload(environment)
+  assert.equal(untouched.Email, 'new@example.com')
+  assert.equal(untouched.Phone, '0917')
+
+  const editedEnvironment = saved({ canonicalPhone: '0917' })
+  editedEnvironment.window.intlTelInput.getInstance = () => ({ getNumber: () => '+639180000000' })
+  await editedEnvironment.fields.phone.dispatchEvent({ type: 'input' })
+  const edited = await submittedStepPayload(editedEnvironment)
+  assert.equal(edited.Phone, '+639180000000')
+}
+
+// intl-tel-input rewrites the value on a country pick and fires `countrychange`
+// rather than `input`, so that gesture must count as a member edit too.
+async function testPhoneCountryChangeCountsAsAMemberEdit() {
+  const environment = saved({ canonicalPhone: '0917' })
+  environment.window.intlTelInput.getInstance = () => ({ getNumber: () => '+14155550000' })
+
+  await environment.fields.phone.dispatchEvent({ type: 'countrychange' })
+
+  const payload = await submittedStepPayload(environment)
+  assert.equal(payload.Phone, '+14155550000')
 }
 
 async function testEnabledOptionalRatesNeverSilentlyPersistZero() {
@@ -1138,6 +1178,8 @@ Promise.all([
   testNon2xx(),
   testEveryOwnedSectionOpensSuccessModal(),
   testOptionalRatesPreserveCanonicalZeroSentinel(),
+  testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
+  testPhoneCountryChangeCountsAsAMemberEdit(),
   testEnabledOptionalRatesNeverSilentlyPersistZero(),
   testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
   testReviewerStepUsesCanonicalBuildProfileShape(),

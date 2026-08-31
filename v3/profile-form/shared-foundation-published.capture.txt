@@ -1,6 +1,6 @@
 
   var activeProfile = createEmptyProfile();
-
+  
   /* GLOBAL METHODS */
   function isValidEmail(email) {
     return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email);
@@ -78,7 +78,7 @@
       return;
     }
 
-    const allowedEntities = new Set(['categories', 'industries', 'skills', 'tools']); // 'roles' & 'subcategories' are with category, it's separated, and working from webflow-collection
+    const allowedEntities = new Set(['categories', 'industries', 'skills', 'tools']); // 'roles' & 'subcategories' are with category, it's separated, and working from webflow-collection 
     const endpointBaseUrl = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/get_';
     const entityCache = new Map();
     const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -236,7 +236,7 @@
 
       // using for step-form validation
       const $input_required = $wrapper.find('[ms-code-select="input-required"]');
-
+      
       const MAX_SELECTIONS = $input.attr('ms-code-select-max') ? parseInt($input.attr('ms-code-select-max')) : 3;
       const MIN_SELECTIONS = $input.attr('ms-code-select-min') ? parseInt($input.attr('ms-code-select-min')) : '0';
       const $list = $wrapper.find('[ms-code-select="list"]');
@@ -632,6 +632,19 @@
       }
 
       function cleanInput() {
+        const inputValues = $input
+          .val()
+          .split(',')
+          .map((v) => v.trim())
+          .filter((v) => v);
+
+        const validOptions = inputValues
+          .map((value) => options.find((option) => option.name === value))
+          .filter(Boolean)
+          .filter((option, index, arr) => arr.findIndex((item) => item.id === option.id) === index);
+
+        selectedOptions = validOptions;
+
         $selectedWrapper.empty();
 
         selectedOptions.forEach((option) => {
@@ -645,6 +658,32 @@
       }
 
       function handleInputChange() {
+        const inputValue = $input.val();
+
+        const inputValues = inputValue.split(',').map((v) => v.trim());
+
+        if (inputValue.endsWith(',') || inputValue.endsWith(', ')) {
+          inputValues.pop();
+
+          const newValidOptions = inputValues
+            .map((value) => options.find((option) => option.name === value))
+            .filter(Boolean)
+            .filter((option) => !selectedOptions.some((selected) => selected.id === option.id));
+
+          newValidOptions.forEach(addTag);
+
+          updateInput();
+        } else {
+          const lastValue = inputValues[inputValues.length - 1];
+
+          const matchingOption = options.find((option) => option.name === lastValue);
+
+          if (matchingOption && !selectedOptions.some((selected) => selected.id === matchingOption.id)) {
+            addTag(matchingOption);
+            updateInput();
+          }
+        }
+
         filterOptions();
       }
 

@@ -1,6 +1,6 @@
 # 🧭 Starter Profile Reliability Progress Checklist
 
-Last updated: 2026-08-27
+Last updated: 2026-08-31
 
 This checklist tracks release-safe implementation evidence for the
 `/starter-edit-profile` reliability workflow. The workspace operator checklist
@@ -28,6 +28,25 @@ in [README.md](README.md) and in the root
 - [x] Preserve the instant-live Work Highlight update and shared-modal restoration
       contract owned by [README.md](README.md#in-place-loader-replacements).
 - [x] Preserve the [Work Highlight modal lifecycle](README.md#work-highlight-modal-lifecycle).
+- [x] Preserve an untouched canonical phone byte-for-byte, treating both `input` and
+      `countrychange` as a member edit. Contract: the root
+      [Current Scripts](../../README.md#current-scripts) entry for `starter-edit-profile.js`.
+- [x] Resolve Personal Details email and phone by their step-scoped `#email` and
+      `#phone` IDs so hidden duplicate-name controls cannot override the authored
+      values. Contract: [Validation and submit ownership](README.md#validation-and-submit-ownership).
+- [x] Clear a declined service's description and rate only when the member switches
+      that toggle off, so hydration preserves stored Free Call and retainer copy.
+- [x] Open the profile-photo chooser by mouse or keyboard when Webflow rendered the
+      upload surface as something other than a native `<label>`. Contract:
+      [Profile-photo upload contract](../build-profile/README.md#profile-photo-upload-contract).
+- [x] Require an explicit taxonomy selection instead of auto-adding a typed exact
+      match on fill, on a comma, or on blur, and keep the Custom Service hidden
+      capture JSON synchronized when a field is cleared. Contracts:
+      [Inline extraction candidate](../profile-form/README.md#inline-extraction-candidate).
+- [x] Give the Also Worked With search race-safe, non-stranding feedback. Contract:
+      [In-place loader replacements](README.md#in-place-loader-replacements).
+- [x] Make exactly one Work Highlight image authoritative as the cover and send it as
+      `cover_image_id`. Contract: [Work Highlight cover image](README.md#work-highlight-cover-image).
 
 ## 🧪 Automated evidence
 
@@ -44,12 +63,30 @@ in [README.md](README.md) and in the root
       still submits its new value.
 - [x] Portfolio update submissions use the instant-live copy until close, while
       create-only and delete-only submissions keep the shared generic copy.
+- [x] An untouched canonical phone submits unchanged while an `input` or a
+      `countrychange` submits the `intl-tel-input` value, and the authored contact
+      controls win over hidden duplicate-name controls in the submit payload.
+- [x] Hydration keeps a declined service's stored description across repeated passes,
+      still hides and un-requires its controls, and only a member toggle clears it.
+- [x] A non-`<label>` upload surface opens the chooser on a mouse click and on `Enter`.
+- [x] Typing an exact taxonomy option name never selects it, and clearing a Custom
+      Service field writes the cleared value into its hidden capture JSON.
+- [x] A slow Also Worked With search reports progress, an abandoned or superseded
+      response never writes over the dropdown, and a progress or error message is
+      never cached as a result for its query.
+- [x] The Work Highlight editor normalizes to exactly one cover from either source and
+      sends that stored image's ID as `cover_image_id`.
 
 Run this coverage with:
 
 ```sh
 node --test starter-edit-profile.test.js
+node --test starter-edit-profile-service-toggles.test.js
 node --test v3/profile-form/company-experience-date-hydration.test.js
+node --test v3/profile-form/company-search-race.test.js
+node --test v3/profile-form/taxonomy-explicit-selection.test.js
+node --test v3/profile-form/incremental-dropdowns-capture-sync.test.js
+node --test v3/build-profile/profile-photo-upload-intent.test.js
 node --test v3/starter-edit-profile/portfolio-pending-success.test.js
 node --test v3/starter-edit-profile/portfolio-modal-state.test.js
 ```
@@ -69,6 +106,13 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
       [authoritative success-copy contract](README.md#in-place-loader-replacements),
       confirm the edit is live immediately, and confirm the shared generic copy
       returns after close.
+- [ ] Retest the published Edit Profile flow against each contract above: an
+      untouched phone and a declined service's description survive a save and a
+      reload, the photo chooser opens by mouse and by keyboard, a typed taxonomy
+      name is not added without an explicit selection, a cleared Custom Service
+      field persists as cleared, a slow Also Worked With search reports progress and
+      never strands a message, and the chosen Work Highlight cover is the one the
+      live hire page shows. Restore any canary data afterwards.
 
 ## 🛑 Stop conditions
 

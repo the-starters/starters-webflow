@@ -279,6 +279,39 @@ test('closed-page pageshow cannot reset a quickly opened highlight', async () =>
   assert.equal(fixture.editVideos.children[0].children[0].src, 'https://example.com/video.mp4');
 });
 
+test('portfolio cover normalization keeps exactly the first stored cover', () => {
+  const context = loadLifecycle();
+  const original = [
+    { id: 1, is_cover: true },
+    { id: 2, is_cover: true },
+    { id: 3, is_cover: false },
+  ];
+
+  const normalized = context.normalizePortfolioCoverImages(original);
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(normalized.map(({ id, is_cover }) => ({ id, is_cover })))),
+    [
+      { id: 1, is_cover: true },
+      { id: 2, is_cover: false },
+      { id: 3, is_cover: false },
+    ],
+  );
+  assert.equal(original[1].is_cover, true);
+});
+
+test('stored cover selection is sent as the authoritative image id', () => {
+  const context = loadLifecycle();
+
+  assert.equal(context.getStoredPortfolioCoverId([
+    { id: 1, is_cover: false },
+    { id: 2, is_cover: true },
+  ]), 2);
+  assert.equal(context.getStoredPortfolioCoverId([
+    { id: 'new-1', is_cover: true, is_new: true },
+  ]), null);
+});
+
 test('document Escape preserves the active highlight and its media', async () => {
   const fixture = createControllerFixture();
   await fixture.boot();

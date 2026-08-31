@@ -1,7 +1,4 @@
 
-  var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
-  if (!profileFormControllers.incrementalDropdowns) {
-    profileFormControllers.incrementalDropdowns = true;
   document.addEventListener('DOMContentLoaded', () => {
     waitForMember(() => {
       if (!MEMBER.id) return;
@@ -290,7 +287,7 @@
           fields.forEach(field => {
             if (field.dataset.inputCapture != undefined) return;
 
-            const syncCaptureField = () => {
+            field.addEventListener('blur', () => {
               const name = field.dataset.name.replace(`${dropdown.dataset.entity.toLowerCase()}-`, '');
 
               data[name] = field.value;
@@ -300,11 +297,15 @@
 
               captureField.value = JSON.stringify(data);
               captureField.dispatchEvent(new Event('change', { bubbles: true }));
-            };
+            });
 
-            field.addEventListener('blur', syncCaptureField);
-            field.addEventListener('input', syncCaptureField);
-            field.addEventListener('change', syncCaptureField);
+            field.addEventListener('input', () => {
+              updateAddButtonState(wrapper, addButton, MAX);
+            });
+
+            field.addEventListener('change', () => {
+              updateAddButtonState(wrapper, addButton, MAX);
+            });
           });
         }
 
@@ -421,4 +422,3 @@
     });
 
   });
-  }

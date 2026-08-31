@@ -327,6 +327,23 @@
         input.value = '';
       });
 
+      // The Webflow upload surface can be a styled div instead of a native label.
+      // Forward an explicit click so the authored control always opens the chooser.
+      if (String(label.tagName || '').toUpperCase() !== 'LABEL') {
+        label.setAttribute('role', 'button');
+        if (!label.hasAttribute('tabindex')) label.setAttribute('tabindex', '0');
+        label.addEventListener('click', (event) => {
+          if (event.target === input) return;
+          event.preventDefault();
+          input.click();
+        });
+        label.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          input.click();
+        });
+      }
+
       wrap.addEventListener('click', (event) => {
         if (
           currentUploadIntent?.state === 'failed' &&

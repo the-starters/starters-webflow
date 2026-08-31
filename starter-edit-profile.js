@@ -63,7 +63,7 @@ function replayProofMatches(scope, proof) {
 	return Boolean(
 		scope?.member?.id === proof.memberId &&
 		memberEmail(scope.member) === proof.email &&
-		normalizedEmail(qs('[name="email"]', stepElement(1))?.value) === proof.email
+		normalizedEmail(stepField(1, '#email')?.value) === proof.email
 	);
 }
 
@@ -275,12 +275,17 @@ function stepElement(stepIndex) {
 	return qs(`[data-form="step"][data-index="${stepIndex}"]`);
 }
 
+function stepField(stepIndex, selector) {
+	const step = stepElement(stepIndex);
+	return step ? qs(selector, step) : null;
+}
+
 const STEP_VALIDATION_CONTRACT = Object.freeze({
 	1: [
 		{ selector: '[name="first-name"]', kind: 'native' },
 		{ selector: '[name="last-name"]', kind: 'native' },
-		{ selector: '[name="email"]', kind: 'native' },
-		{ selector: '[name="phone"]', kind: 'native' },
+		{ selector: '#email', kind: 'native' },
+		{ selector: '#phone', kind: 'native' },
 		{ selector: '[name="country"]', kind: 'nativeConditional' },
 		{ selector: '[name="state"]', kind: 'nativeConditional' },
 		{ selector: '[name="city"]', kind: 'nativeConditional' },
@@ -458,7 +463,20 @@ onDomReady(function () {
 		});
 
 		/* inputs */
-		const phoneInput = qs('#phone');
+		const phoneInput = stepField(1, '#phone');
+		let canonicalPhoneValue = String(window.activeProfile?.data?.step_1?.phone || '');
+		let phoneWasEdited = false;
+		// intl-tel-input rewrites the value directly on a country pick and fires
+		// `countrychange` instead of `input`, so both signals mark the field edited.
+		['input', 'countrychange'].forEach((eventName) => {
+			phoneInput?.addEventListener(eventName, () => {
+				phoneWasEdited = true;
+			});
+		});
+		waitProfileData(() => {
+			canonicalPhoneValue = String(window.activeProfile?.data?.step_1?.phone || '');
+			phoneWasEdited = false;
+		});
 
 		/* Phone Mask */
 		waitForMember(() => {
@@ -469,10 +487,12 @@ onDomReady(function () {
 
 			formatRateInputs();
 
-			window.intlTelInput(phoneInput, {
-				loadUtils: () =>
-					import("https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.1/dist/js/utils.js"),
-			});
+			if (phoneInput) {
+				window.intlTelInput(phoneInput, {
+					loadUtils: () =>
+						import("https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.1/dist/js/utils.js"),
+				});
+			}
 		});
 
 		/* METHODS */
@@ -704,9 +724,12 @@ onDomReady(function () {
 				};
 			}
 
-			// Phone
-			if (payload.Phone) {
-				payload.Phone = window.intlTelInput?.getInstance(qs('input[name="phone"]'))?.getNumber() || payload.Phone || '';
+			// Preserve the canonical phone byte-for-byte when the user did not edit it.
+			// intl-tel-input can otherwise reinterpret short national test values.
+			if (Object.prototype.hasOwnProperty.call(payload, 'Phone')) {
+				payload.Phone = !phoneWasEdited && canonicalPhoneValue
+					? canonicalPhoneValue
+					: window.intlTelInput?.getInstance(phoneInput)?.getNumber() || payload.Phone || '';
 			}
 
 			// payload.member_id = MEMBER.id;
@@ -903,6 +926,13 @@ onDomReady(function () {
 					data[key] = normalizedValue;
 				}
 			});
+
+			// The published form contains hidden compatibility controls with duplicate
+			// names. The authored Personal Details controls own these two values.
+			const authoredEmail = stepField(1, '#email');
+			const authoredPhone = stepField(1, '#phone');
+			if (authoredEmail) data.email = authoredEmail.value;
+			if (authoredPhone) data.phone = authoredPhone.value;
 
 			return data;
 		}
@@ -1588,55 +1618,55 @@ onDomReady(() => {
 		});
 
 		retainerRadios.forEach((radio) => {
-			radio.addEventListener('change', retainerToggle);
+			radio.addEventListener('change', () => retainerToggle(true));
 		});
 
 		paidCallRadios.forEach((radio) => {
-			radio.addEventListener('change', paidCallToggle);
+			radio.addEventListener('change', () => paidCallToggle(true));
 		});
 
 		freeCallRadios.forEach((radio) => {
-			radio.addEventListener('change', freeCallToggle);
+			radio.addEventListener('change', () => freeCallToggle(true));
 		});
 
-		function retainerToggle() {
+		function retainerToggle(clearDisabledValues = false) {
 			console.log("retainerToggle");
 
 			const checkedMonthlyRadio = qs('input[name="offer-monthly-retainers"]:checked');
 			const isMonthlyYes = checkedMonthlyRadio?.value === 'yes';
 			retainerDesc.style.display = isMonthlyYes ? '' : 'none';
 			retainerRate.style.display = isMonthlyYes ? '' : 'none';
-			toggleInputs(retainerDesc, isMonthlyYes);
-			toggleInputs(retainerRate, isMonthlyYes);
+			toggleInputs(retainerDesc, isMonthlyYes, clearDisabledValues);
+			toggleInputs(retainerRate, isMonthlyYes, clearDisabledValues);
 		};
 
-		function paidCallToggle() {
+		function paidCallToggle(clearDisabledValues = false) {
 			console.log("paidCallToggle");
 
 			const checkedPaidCallRadio = qs('input[name="paid-consulting-calls"]:checked');
 			const isCallRateYes = checkedPaidCallRadio?.value === 'yes';
 			paidCallGroups.forEach((group) => {
 				group.style.display = isCallRateYes ? '' : 'none';
-				toggleInputs(group, isCallRateYes);
+				toggleInputs(group, isCallRateYes, clearDisabledValues);
 			});
 		};
 
-		function freeCallToggle() {
+		function freeCallToggle(clearDisabledValues = false) {
 			console.log("freeCallToggle");
 
 			const checkedFreeCallRadio = qs('input[name="free-consulting-calls"]:checked');
 			const isFreeCallYes = checkedFreeCallRadio?.value === 'yes';
 			freeCallGroups.forEach((group) => {
 				group.style.display = isFreeCallYes ? '' : 'none';
-				toggleInputs(group, isFreeCallYes);
+				toggleInputs(group, isFreeCallYes, clearDisabledValues);
 			});
 		};
 
-		function toggleInputs(wrap, state = null) {
+		function toggleInputs(wrap, state = null, clearDisabledValues = false) {
 			if (!wrap || state === null) return;
 			qsa("input, textarea", wrap).forEach((el) => {
 				// clear values when toggle
-				if (!state) el.value = '';
+				if (!state && clearDisabledValues) el.value = '';
 
 				// toggle required attribute
 				if (wrap.hasAttribute('data-required')) {

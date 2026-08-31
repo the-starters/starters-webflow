@@ -117,20 +117,22 @@
   },
   "candidateAssets": {
     "v3/profile-form/shared-foundation.js": {
-      "candidateCharacters": 24209,
-      "candidateSha256": "fdbcc99b43b1f304f1062082f1e90730186200b8c467660349f6a3738d9913a8",
+      "candidateCharacters": 22892,
+      "candidateSha256": "7af566f3bd01f172416d0be37d5b669e9e80848049e980653b237d60d047a214",
       "transformation": {
-        "kind": "whitespace_only",
+        "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
+        "liveCaptureAsset": "v3/profile-form/shared-foundation-published.capture.txt",
         "restoreTrailingWhitespace": { "3": "  ", "81": " ", "239": "      " },
         "terminalNewlinesRemoved": 0
       }
     },
     "v3/profile-form/incremental-dropdowns.js": {
-      "candidateCharacters": 14185,
-      "candidateSha256": "29561e2bd4767535c3c8dada1af28523e0ddcdac2779bebcb2ddefcc9f2ab199",
+      "candidateCharacters": 14107,
+      "candidateSha256": "f239896721ec2048d138af0d8874596509710ca5ac039d016f15dcdcffa15faf",
       "transformation": {
-        "kind": "whitespace_plus_idempotency_guard",
+        "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "incrementalDropdowns",
+        "liveCaptureAsset": "v3/profile-form/incremental-dropdowns-published.capture.txt",
         "restoreTrailingWhitespace": {},
         "terminalNewlinesRemoved": 0
       }

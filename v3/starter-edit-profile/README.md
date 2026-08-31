@@ -26,6 +26,20 @@ succeeds, the portfolio controller replaces the shared generic message with
 when it closes. Keep the pending and rejected status-badge rendering until the
 legacy rows with those statuses have been backfilled.
 
+### Work Highlight cover image
+
+A Work Highlight has exactly one cover. Whenever the editor loads its images —
+from the stored record or from a pending local draft — the controller normalizes
+the set so a single image carries `is_cover`: the first stored cover wins, and
+when the record carries none the first image becomes the cover. Removing the
+cover promotes the first remaining image. An empty set is left alone.
+
+The update payload therefore names one authoritative cover. `cover_image_id` is
+the ID of the cover among the images Xano already stores, or `null` when the
+chosen cover is a not-yet-uploaded local image, and `thumbnail_url` is that
+cover's URL. Xano stays canonical for which image is the cover, and the live
+hire-page projection reads it from there.
+
 ### Work Highlight modal lifecycle
 
 While the edit modal is visible, it retains the selected Work Highlight and its
@@ -47,6 +61,19 @@ boundary until that component repair is published.
 the live bodies they were captured from. Their shared Build Profile contracts are owned
 by [Company selection logo persistence](../profile-form/README.md#company-selection-logo-persistence)
 and [Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
+
+`company-autocomplete.js` additionally owns the Also Worked With search feedback
+contract on this route only; the Build copy is unchanged. A search shows
+`Searching...` immediately and `Still searching company sources...` once it has run
+for four seconds, so a slow company source never looks frozen. Every search carries
+a sequence number that dismissing the dropdown also advances, so only the newest
+search may write results, an error, or a progress message — a late response for an
+abandoned or superseded query is discarded rather than reopening the dropdown or
+overwriting newer results. A non-`2xx` response is treated as a failure, not as
+results. Refocusing skips the network only when the typed text already has rendered
+results on screen or a request of its own still in flight; a progress or error
+message is never cached as a result, so retyping or refocusing after one retries the
+search instead of stranding the message.
 
 Loader pattern:
 
@@ -86,6 +113,15 @@ logically required by the page controller and map failure focus to an authored
 visible control. They must not prevent the controller click handler from recording
 a console-only validation receipt. Only the page controller's request-loading
 state may apply `pointer-events: none`, and only after validation succeeds.
+
+The published form also carries hidden compatibility controls that reuse the
+`email` and `phone` field names. The authored Personal Details controls own both
+values, so the controller resolves them by their unique `#email` and `#phone` IDs
+scoped to the step 1 element — for validation, for the change-email replay proof,
+and when collecting the submit payload, where the authored value is written over
+whatever a duplicate name contributed. Never widen those two lookups back to a
+`[name=…]` or document-wide query: a hidden duplicate would win by document order
+and submit a stale contact value the member cannot see.
 
 The sanitized structural contract lives in `published-form-contract.json`.
 `published-form-contract.js` normalizes official Webflow element-tree evidence

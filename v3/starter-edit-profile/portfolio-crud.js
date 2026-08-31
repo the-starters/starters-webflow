@@ -52,6 +52,24 @@ function createStarterEditPortfolioModalLifecycle(options) {
   });
 }
 
+function normalizePortfolioCoverImages(images) {
+  if (!Array.isArray(images) || !images.length) return [];
+  const normalized = images.map(function (image) { return { ...image }; });
+  let coverIndex = normalized.findIndex(function (image) { return Boolean(image.is_cover); });
+  if (coverIndex < 0) coverIndex = 0;
+  normalized.forEach(function (image, index) {
+    image.is_cover = index === coverIndex;
+  });
+  return normalized;
+}
+
+function getStoredPortfolioCoverId(images) {
+  const coverImage = (images || []).find(function (image) {
+    return image.is_cover && !image.is_new;
+  });
+  return coverImage ? Number(coverImage.id) : null;
+}
+
 async function commitStarterEditPortfolioDrafts(options) {
   for (const draft of options.createDrafts) {
     await options.commitCreateDraft(draft);
@@ -794,17 +812,17 @@ async function commitStarterEditPortfolioDrafts(options) {
         if (editTitleInp) editTitleInp.value = pendingDraft ? pendingDraft.title : portfolio.title || '';
         if (editDescInp) editDescInp.value = pendingDraft ? pendingDraft.description : portfolio.description || '';
         if (pendingDraft) {
-          existingImages = cloneEditDraftItems(pendingDraft.images || []);
+          existingImages = normalizePortfolioCoverImages(cloneEditDraftItems(pendingDraft.images || []));
           existingVideos = cloneEditDraftItems(pendingDraft.videos || []);
           deletedImageIds = (pendingDraft.deletedImageIds || []).slice();
           deletedVideoIds = (pendingDraft.deletedVideoIds || []).slice();
         } else {
-          existingImages = (await getPortfolioImages(portfolio.id)).map(function (imageItem) {
+          existingImages = normalizePortfolioCoverImages((await getPortfolioImages(portfolio.id)).map(function (imageItem) {
             return {
               ...imageItem,
               is_new: false,
             };
-          });
+          }));
           existingVideos = (await getPortfolioVideos(portfolio.id)).map(function (videoItem) {
             return {
               ...videoItem,
@@ -1056,6 +1074,7 @@ async function commitStarterEditPortfolioDrafts(options) {
           memberstack_id: MEMBER.id,
           title: draft.title,
           description: draft.description,
+          cover_image_id: getStoredPortfolioCoverId(draft.images),
           thumbnail_url: coverImageUrl,
         });
 

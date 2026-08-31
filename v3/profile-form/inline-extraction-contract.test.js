@@ -76,12 +76,14 @@ const EXPECTED_LIVE_CAPTURES = Object.freeze({
 
 const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
   'v3/profile-form/shared-foundation.js': Object.freeze({
-    characters: 24209, sha256: 'fdbcc99b43b1f304f1062082f1e90730186200b8c467660349f6a3738d9913a8',
+    characters: 22892, sha256: '7af566f3bd01f172416d0be37d5b669e9e80848049e980653b237d60d047a214',
+    liveCaptureAsset: 'v3/profile-form/shared-foundation-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 3: '  ', 81: ' ', 239: '      ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/profile-form/incremental-dropdowns.js': Object.freeze({
-    characters: 14185, sha256: '29561e2bd4767535c3c8dada1af28523e0ddcdac2779bebcb2ddefcc9f2ab199',
+    characters: 14107, sha256: 'f239896721ec2048d138af0d8874596509710ca5ac039d016f15dcdcffa15faf',
     guardKey: 'incrementalDropdowns',
+    liveCaptureAsset: 'v3/profile-form/incremental-dropdowns-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/starter-edit-profile/locations.js': Object.freeze({

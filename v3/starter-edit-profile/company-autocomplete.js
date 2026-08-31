@@ -81,8 +81,10 @@
     searchGroup.appendChild(dropdown);
 
     let timer;
-    let lastQuery = '';
+    let renderedQuery = '';
+    let pendingQuery = '';
     let selectingCompany = false;
+    let searchSequence = 0;
 
     function storeSingleSelection(name, domain, logoUrl) {
       input.dataset.selectedCompanyName = name || '';
@@ -135,6 +137,8 @@
     }
 
     function closeDropdown() {
+      searchSequence += 1;
+      pendingQuery = '';
       dropdown.style.display = 'none';
     }
 
@@ -150,18 +154,25 @@
       });
     }
 
-    function renderMessage(text) {
-      dropdown.innerHTML = `
-                    <div class="company-search-message">${escapeHtml(text)}</div>
-                `;
+    // Every dropdown write declares the query its content stands for, so a message
+    // can never leave a stale query behind for the reopen shortcut.
+    function renderDropdown(html, query) {
+      renderedQuery = query;
+      dropdown.innerHTML = html;
       openDropdown();
     }
 
-    function renderResults(results) {
+    function renderMessage(text) {
+      renderDropdown(`
+                    <div class="company-search-message">${escapeHtml(text)}</div>
+                `, '');
+    }
+
+    function renderResults(results, query) {
       if (!results.length) {
         const typedCompany = input.value.trim();
 
-        dropdown.innerHTML = `
+        renderDropdown(`
           <button class="company-search-item ${isCompanyAdded({ name: typedCompany }) ? "is-added" : ""}" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="">
               <img class="company-search-logo" src="${PLACEHOLDER_LOGO_URL}" alt="">
               <span class="company-search-text">
@@ -178,13 +189,11 @@
                   </svg>
               </span>
           </button>
-      `;
-
-        openDropdown();
+      `, query);
         return;
       }
 
-      dropdown.innerHTML = results
+      renderDropdown(results
         .map(function (item) {
           return `
             <button class="company-search-item ${isCompanyAdded(item) ? "is-added" : ""}" type="button" data-name="${escapeHtml(item.name)}" data-domain="${escapeHtml(item.domain)}" data-logo-url="${escapeHtml(item.logo_url || '')}">
@@ -205,9 +214,7 @@
             </button>
         `;
         })
-        .join('');
-
-      openDropdown();
+        .join(''), query);
     }
 
     async function searchCompanies(query) {
@@ -220,21 +227,32 @@
         return;
       }
 
-      if (q === lastQuery) {
+      // Reopen without refetching only when this exact text already has results on
+      // screen, or a live request of its own still pending.
+      if (q === renderedQuery || q === pendingQuery) {
         openDropdown();
         return;
       }
 
-      lastQuery = q;
+      pendingQuery = q;
       renderMessage('Searching...');
+      const sequence = ++searchSequence;
+      const slowMessageTimer = setTimeout(function () {
+        if (sequence === searchSequence) renderMessage('Still searching company sources...');
+      }, 4000);
 
       try {
         const response = await fetch(`${SEARCH_ENDPOINT}?q=${encodeURIComponent(q)}`);
+        if (!response.ok) throw new Error(`Company search failed (${response.status})`);
         const results = await response.json();
+        if (sequence !== searchSequence) return;
 
-        renderResults(Array.isArray(results) ? results : []);
+        renderResults(Array.isArray(results) ? results : [], q);
       } catch (error) {
-        renderMessage('Search unavailable');
+        if (sequence === searchSequence) renderMessage('Search unavailable');
+      } finally {
+        clearTimeout(slowMessageTimer);
+        if (sequence === searchSequence) pendingQuery = '';
       }
     }
 
@@ -375,7 +393,7 @@
 
       } else {
         input.value = selectedName;
-        lastQuery = selectedName;
+        renderedQuery = selectedName;
         storeSingleSelection(selectedName, selectedDomain, selectedLogoUrl);
         closeDropdown();
       }
