@@ -1532,6 +1532,7 @@ function detailModalHarness() {
 
   const base = element({ 'booking-popup-content': 'base' })
   const confirmation = element({ 'booking-popup-content': 'confirmed' })
+  const cancelledPanel = element({ 'booking-popup-content': 'cancelled' })
   const pendingOne = element({ 'pending-info-text': '' })
   const pendingDuplicate = element({ 'pending-info-text': '' })
   base.querySelectorAll = (selector) =>
@@ -1566,13 +1567,14 @@ function detailModalHarness() {
     const match = selector.match(/^\[booking-element="(.+)"\]$/)
     if (match) return fields[match[1]] || null
     if (selector === '[booking-popup-content="base"]') return base
+    if (selector === '[booking-popup-content="cancelled"]') return cancelledPanel
     return null
   }
   modal.querySelectorAll = (selector) => {
     const match = selector.match(/^\[booking-element="(.+)"\]$/)
     if (match) return fieldCopies[match[1]] || []
     return {
-      '[booking-popup-content]': [base, confirmation],
+      '[booking-popup-content]': [base, confirmation, cancelledPanel],
       '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]': [back],
       '[booking-element-wrap]': groups,
       '[booking-action-btn], [booking-card-action-btn], [payment-action-btn], [booking-pm-action], [data-btn-payment], [popup-stripe-card-open], [pm-use-this]': actions,
@@ -1584,6 +1586,7 @@ function detailModalHarness() {
     actions,
     base,
     blocked,
+    cancelledPanel,
     confirmation,
     duplicatePayment,
     fields,
@@ -3636,4 +3639,58 @@ test('card Message button shows only with a known counterpart id', () => {
     starter_data: {},
   })
   assert.equal(message.hidden, true)
+})
+
+test('show honors the authored display-flex marker', () => {
+  const details = element({ 'booking-card-action-btn': 'details', 'display-flex': '' })
+  const plain = element({ 'booking-card-action-btn': 'details' })
+  const card = {
+    querySelectorAll() {
+      return [details, plain]
+    },
+  }
+  api.configureActionButtons(card, 'starter', 'pending')
+  assert.equal(details.hidden, false)
+  assert.equal(details.style.display, 'flex')
+  assert.equal(plain.style.display, '')
+})
+
+test('detailOpenPanel routes terminal bookings to authored panels', () => {
+  const panels = { cancelled: true, declined: true }
+  const modal = {
+    querySelector(selector) {
+      const match = selector.match(/^\[booking-popup-content="(.+)"\]$/)
+      return match && panels[match[1]] ? {} : null
+    },
+  }
+  assert.equal(api.detailOpenPanel(modal, { status: 'cancelled' }, 'cancelled'), 'cancelled')
+  assert.equal(api.detailOpenPanel(modal, { status: 'declined' }, 'cancelled'), 'declined')
+  assert.equal(api.detailOpenPanel(modal, { status: 'expired' }, 'cancelled'), 'cancelled')
+  assert.equal(api.detailOpenPanel(modal, { status: 'confirmed' }, 'confirmed'), 'base')
+  // completed has no authored panel yet, so it stays on base
+  assert.equal(api.detailOpenPanel(modal, { status: 'confirmed' }, 'completed'), 'base')
+  const brandModal = {
+    querySelector(selector) {
+      return selector === '[booking-popup-content="cancelled"]' ? {} : null
+    },
+  }
+  // a view without a declined panel falls back to the cancelled panel
+  assert.equal(api.detailOpenPanel(brandModal, { status: 'declined' }, 'cancelled'), 'cancelled')
+})
+
+test('details open the authored cancelled panel for a cancelled booking', () => {
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'terminal-one',
+    status: 'cancelled',
+    start: 10_000,
+    duration: 30,
+    cancelled_reason: 'The request has expired',
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+  assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 2_000), true)
+  assert.equal(view.cancelledPanel.hidden, false)
+  assert.equal(view.base.hidden, true)
+  assert.equal(view.confirmation.hidden, true)
 })

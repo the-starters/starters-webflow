@@ -1,7 +1,7 @@
 /**
  * V3 dashboards — canonical call sections and Brand identity hero.
  *
- * @release v1.59.456
+ * @release v1.59.458
  *
  * The Webflow call cards remain Designer-owned. This controller authenticates
  * through scheduling-auth.js, reads only the signed-in member's canonical V3
@@ -369,7 +369,14 @@
   function show(element, visible) {
     if (!element) return
     element.hidden = !visible
-    element.style.display = visible ? '' : 'none'
+    // The Designer authors some hooks (the call-details tables) with a hidden
+    // base style plus a `display-flex` marker attribute naming the display a
+    // shower must set. Clearing the inline style there falls back to the
+    // hidden authored CSS, which made every such hook read as "not rendering"
+    // and pushed the module into generating replacement rows.
+    const flexWhenShown =
+      element.hasAttribute && element.hasAttribute('display-flex')
+    element.style.display = visible ? (flexWhenShown ? 'flex' : '') : 'none'
   }
 
   function text(root, selector, value) {
@@ -1342,6 +1349,37 @@
     }
   }
 
+  function authoredDetailPanel(modal, name) {
+    return (
+      Boolean(name) &&
+      Boolean(modal) &&
+      typeof modal.querySelector === 'function' &&
+      Boolean(modal.querySelector('[booking-popup-content="' + name + '"]'))
+    )
+  }
+
+  /**
+   * Panel the details modal opens on. Terminal bookings open their authored
+   * terminal panel (`cancelled`, `declined`, `completed`) so the Designer view
+   * renders instead of a module-composed base view; `base` stays the acting
+   * view for live calls and the fallback for any panel the Designer has not
+   * authored. Declined uses the raw status because bookingStatus folds it into
+   * `cancelled`.
+   */
+  function detailOpenPanel(modal, booking, status) {
+    const raw = clean(booking && booking.status).toLowerCase()
+    let candidate = ''
+    if (status === 'cancelled') {
+      candidate =
+        raw === 'declined' && authoredDetailPanel(modal, 'declined')
+          ? 'declined'
+          : 'cancelled'
+    } else if (status === 'completed') {
+      candidate = 'completed'
+    }
+    return authoredDetailPanel(modal, candidate) ? candidate : 'base'
+  }
+
   function populateDetailModal(modal, booking, role, now) {
     if (!modal || !booking) return false
     const nextBookingId = clean(booking.booking_id || booking.id)
@@ -1362,16 +1400,27 @@
     modal.setAttribute('data-booking-status', status)
     modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
 
+    // A terminal booking opens on its authored terminal panel so the Designer
+    // view stays authoritative; `base` remains the acting view for live calls
+    // and the fallback wherever a terminal panel is not authored.
+    const openPanel = detailOpenPanel(modal, booking, status)
     const actionsModule = global.StartersDashboardCallActions
     if (
       validDashboardModule(actionsModule) &&
       typeof actionsModule.switchPopupContent === 'function'
     ) {
-      actionsModule.switchPopupContent(modal, 'base')
+      actionsModule.switchPopupContent(modal, openPanel)
     } else {
       modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
-        show(content, content.getAttribute('booking-popup-content') === 'base')
+        show(content, content.getAttribute('booking-popup-content') === openPanel)
       })
+    }
+    if (
+      openPanel !== 'base' &&
+      validDashboardModule(actionsModule) &&
+      typeof actionsModule.fillCounterpartPlaceholders === 'function'
+    ) {
+      actionsModule.fillCounterpartPlaceholders(modal, openPanel, role, booking)
     }
     setBookingField(modal, 'paid-meeting', isPaid ? 'Paid Call' : 'Free Call', true)
     setBookingField(modal, 'status', statusLabel(status, role), true)
@@ -2230,6 +2279,7 @@
     paintStatusPill,
     paintActiveFilter,
     populateDetailModal,
+    detailOpenPanel,
     wireBookingDetails,
     resetDetailModal,
     configureActionButtons,
