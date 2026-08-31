@@ -1084,6 +1084,21 @@ can request completion or an early termination with a required reason, and a
 counterparty can confirm a pending completion or termination request. Terminal
 projects expose no lifecycle action.
 
+The lifecycle intent opens the separate Webflow-authored
+`data-modal-target="end-project"` dialog on both role dashboards. The Brand
+component opens active projects in completion-and-review mode; the Starter
+component opens them in early-end mode. An authored
+`[data-end-project-mode-toggle]` lets either role switch between completing the
+work and ending it early. Use `[data-end-project-title]` and
+`[data-end-project-subtitle]` for the state-specific copy,
+`[data-end-project-reason-wrap]` around `[data-end-project-reason]` for the
+required early-end reason, and `[data-end-project-review]` around the Brand-only
+rating and public-review fields. Pending completion and termination requests
+paint confirmation-only states for the counterparty; pre-activation projects
+paint the existing cancel confirmation. If the separate modal markup is absent
+during a Designer/CDN rollout skew, the native prompt and confirm flow remains
+available so the lifecycle action is not stranded.
+
 The requesting party never sees a second request. Requester identity comes from
 the canonical `brand_completion_requested_at`, `starter_completion_requested_at`,
 `brand_termination_requested_at`, and `starter_termination_requested_at` fields
@@ -1115,17 +1130,30 @@ idempotency key across retries. Private Feedback stays hidden because this flow
 does not send private Starter feedback. Starter sessions never receive review
 submission wiring.
 
-The modal is resolved from `window.lumos.modal.list['rate-starter-call'].el`,
-not the first matching dialog in document order. This matters while the Brand
-dashboard contains both the legacy rate-call dialog and the live End Project &
-Review dialog with the same target. The live dialog's `[Starter Name]` text is
-filled only from that card's canonical `starter_name` in the `#1600` project
-projection. A missing project, missing Starter name, or modal without an
-authored name placeholder blocks the open. If card clicks overlap, only the
-latest click may open the modal; an older canonical lookup that resolves later
-is discarded. Closing the dialog clears the painted name and pending project
-context. The submit adapter accepts the live `Feedback` field and the legacy
-`Public-Feedback` field during the authored surface transition.
+The standalone review modal is resolved from
+`window.lumos.modal.list['rate-starter-call'].el`, not the first matching dialog
+in document order. The End Project & Review workflow does not reuse that target;
+it prefers `window.lumos.modal.list['end-project'].el` from its separate Brand or
+Starter component and otherwise uses the last authored `end-project` target. The
+standalone workflow fills `[Starter Name]` only from that card's canonical
+`starter_name` in the `#1600` project projection. A missing project, missing
+Starter name, or standalone review modal without an authored name placeholder
+blocks that review-only open. If Review Starter card clicks overlap, only the
+latest click may open the standalone modal; an older canonical lookup that
+resolves later is discarded. Closing it clears the painted name and pending
+project context. Both review forms accept the live `Feedback` field and the
+legacy `Public-Feedback` field during the authored surface transition.
+
+The Brand end-project form shows its rating and public-review fields only when
+that intent includes a review. It validates the same 1–5 rating and 10–4,000
+character review contract before posting the project action. When the action
+response reaches canonical `lifecycle_state=completed`, the controller submits
+the review to `brand/reviews/submit` in the same pass. A first-mover completion
+that reaches `completion_requested` does not post the review; it reports that the
+review unlocks after both sides confirm and leaves the standing Review Starter
+action as the later entry point. A review failure after successful completion
+does not roll back the project and directs the Brand to retry through Review
+Starter.
 
 A completed-project review email may deep-link to
 `/brand-dashboard?review_project=<project id>#projects-section`. The controller

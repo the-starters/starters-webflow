@@ -2369,6 +2369,7 @@
   const PROJECT_INVOICE_TARGET_SELECTOR =
     '[wf-xano-element="nest-target"][wf-xano-field="invoices"]'
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
+  const PROJECT_END_MODAL_ID = 'end-project'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
   const PROJECT_REQUEST_PARTIES = ['brand', 'starter']
   const PROJECT_LIFECYCLE_UNAVAILABLE_LABEL = 'Status Unavailable'
@@ -2426,6 +2427,7 @@
   let activeReviewProject = null
   let activeCallReviewBooking = null
   let activeReviewModal = null
+  let activeEndProjectRequest = null
   let projectReviewOpenGeneration = 0
   let callReviewDeepLinkGeneration = -1
   let projectReviewDeepLinkGeneration = -1
@@ -3660,28 +3662,205 @@
     }
   }
 
-  function projectActionIntent(
-    project,
-    confirmAction = window.confirm,
-    promptAction = window.prompt,
-    role = projectWorkflowRole,
-  ) {
+  function endProjectModal() {
+    const entry = window.lumos && window.lumos.modal && window.lumos.modal.list
+      ? window.lumos.modal.list[PROJECT_END_MODAL_ID]
+      : null
+    const registered = entry && entry.el
+    if (
+      registered &&
+      registered.matches &&
+      registered.matches('[data-modal-target="' + PROJECT_END_MODAL_ID + '"]')
+    ) return registered
+    const modals = $$('[data-modal-target="' + PROJECT_END_MODAL_ID + '"]')
+    return modals.length ? modals[modals.length - 1] : null
+  }
+
+  function endProjectModalParts(modal) {
+    return {
+      form: $('form', modal),
+      title: $('[data-end-project-title]', modal),
+      subtitle: $('[data-end-project-subtitle]', modal),
+      reviewGroups: $$('[data-end-project-review]', modal),
+      reasonWrap: $('[data-end-project-reason-wrap]', modal),
+      reason: $('[data-end-project-reason]', modal),
+      toggle: $('[data-end-project-mode-toggle]', modal),
+      done: $('.w-form-done', modal),
+      fail: $('.w-form-fail', modal),
+    }
+  }
+
+  function endProjectStep(project, role) {
     const state = lifecycleState(project)
-    if (!state || PROJECT_TERMINAL_STATES.has(state)) return null
-    if (projectLifecycleActionState(project, role).blocked) return null
-    if (state === 'pending') {
+    if (state === 'pending') return 'cancel'
+    if (state === 'completion_requested') return 'confirm-complete'
+    if (state === 'termination_requested') return 'confirm-terminate'
+    return 'choose'
+  }
+
+  // The Xano handshake finalizes only when the counterparty already requested,
+  // and a review can be stored only once the project reaches `completed`. The
+  // view therefore advertises the review inputs solely on the pass that will
+  // finalize a completion for the brand.
+  function endProjectView(project, role, mode) {
+    const step = endProjectStep(project, role)
+    const counterparty = role === 'brand' ? 'Starter' : 'Brand'
+    if (step === 'cancel') {
+      return {
+        step,
+        action: 'cancel',
+        reason: 'canceled_before_activation',
+        title: 'Cancel Project',
+        subtitle: 'This project has not started yet. Cancel it before it begins?',
+        submit: 'Cancel Project',
+        showReason: false,
+        requireReason: false,
+        showReview: false,
+        showToggle: false,
+      }
+    }
+    if (step === 'confirm-complete') {
+      return {
+        step,
+        action: 'complete',
+        reason: '',
+        title: 'Confirm Completion',
+        subtitle: 'The ' + counterparty + ' marked this project complete. Confirm to close it.',
+        submit: role === 'brand' ? 'Confirm and Submit Review' : 'Confirm Completion',
+        showReason: false,
+        requireReason: false,
+        showReview: role === 'brand' && !project.has_review,
+        showToggle: false,
+      }
+    }
+    if (step === 'confirm-terminate') {
+      const requested = String(project.end_reason || '').trim()
+      return {
+        step,
+        action: 'terminate',
+        reason: requested,
+        title: 'Confirm Early End',
+        subtitle: requested
+          ? 'The ' + counterparty + ' asked to end this project early. Reason: ' + requested
+          : 'The ' + counterparty + ' asked to end this project early. Confirm to close it.',
+        submit: 'Confirm Early End',
+        showReason: false,
+        requireReason: false,
+        showReview: false,
+        showToggle: false,
+      }
+    }
+    const early = mode === 'terminate'
+    return {
+      step,
+      action: early ? 'terminate' : 'complete',
+      reason: '',
+      title: early ? 'End Project Early' : 'End Project & Review',
+      subtitle: early
+        ? 'The project closes after the ' + counterparty + ' confirms the early end.'
+        : 'The project closes after the ' + counterparty + ' confirms the completion.',
+      submit: early
+        ? 'End Project Early'
+        : role === 'brand' ? 'End Project and Submit Review' : 'Mark Work Complete',
+      showReason: early,
+      requireReason: early,
+      showReview: !early && role === 'brand' && !project.has_review,
+      showToggle: true,
+      toggle: early ? 'The work is finished instead' : 'End this project early instead',
+    }
+  }
+
+  function setEndProjectVisible(element, visible) {
+    if (!element) return
+    element.style.display = visible ? '' : 'none'
+  }
+
+  function paintEndProjectModal(modal, view, starterName) {
+    const parts = endProjectModalParts(modal)
+    if (parts.title) parts.title.textContent = view.title
+    if (parts.subtitle) parts.subtitle.textContent = view.subtitle
+    parts.reviewGroups.forEach((group) => setEndProjectVisible(group, view.showReview))
+    setEndProjectVisible(parts.reasonWrap, view.showReason)
+    setEndProjectVisible(parts.toggle, view.showToggle)
+    if (parts.toggle && view.toggle) parts.toggle.textContent = view.toggle
+    if (starterName) paintProjectReviewStarterName(modal, starterName)
+    const submit = parts.form ? $('[type="submit"]', parts.form) : null
+    if (submit) {
+      const label = $('div, span', submit)
+      if (submit.tagName === 'INPUT') submit.value = view.submit
+      else if (label) label.textContent = view.submit
+      else submit.textContent = view.submit
+    }
+    return parts
+  }
+
+  function closeEndProjectModal(modal) {
+    const entry = window.lumos && window.lumos.modal && window.lumos.modal.list
+      ? window.lumos.modal.list[PROJECT_END_MODAL_ID]
+      : null
+    if (entry && typeof entry.close === 'function') {
+      entry.close()
+      return
+    }
+    if (typeof modal.close === 'function') modal.close()
+    else modal.removeAttribute('open')
+    window.dispatchEvent(new CustomEvent('modal-close', { detail: { modal } }))
+  }
+
+  function resolveEndProjectRequest(value) {
+    const request = activeEndProjectRequest
+    if (!request) return
+    activeEndProjectRequest = null
+    request.resolve(value)
+  }
+
+  function openEndProjectIntent(project, role) {
+    const modal = endProjectModal()
+    if (!modal) return null
+    resolveEndProjectRequest(null)
+    const starterName = String(project && project.starter_name || '').trim()
+    let mode = role === 'brand' ? 'complete' : 'terminate'
+    let view = endProjectView(project, role, mode)
+    const parts = paintEndProjectModal(modal, view, starterName)
+    if (parts.form) {
+      parts.form.reset()
+      parts.form.style.display = ''
+    }
+    setEndProjectVisible(parts.done, false)
+    setEndProjectVisible(parts.fail, false)
+    return new Promise((resolve) => {
+      activeEndProjectRequest = {
+        modal,
+        project,
+        role,
+        resolve,
+        get view() { return view },
+        toggle() {
+          if (!view.showToggle) return
+          mode = mode === 'terminate' ? 'complete' : 'terminate'
+          view = endProjectView(project, role, mode)
+          paintEndProjectModal(modal, view, starterName)
+        },
+      }
+      showProjectModal(PROJECT_END_MODAL_ID, modal)
+    })
+  }
+
+  function endProjectPromptIntent(project, role, confirmAction, promptAction) {
+    const step = endProjectStep(project, role)
+    if (step === 'cancel') {
       return confirmAction('Cancel this project before it starts?')
         ? { action: 'cancel', reason: 'canceled_before_activation' }
         : null
     }
-    if (state === 'completion_requested') {
+    if (step === 'confirm-complete') {
       return confirmAction(
         'Confirm that the project is complete? The project closes after both sides confirm.',
       )
         ? { action: 'complete', reason: '' }
         : null
     }
-    if (state === 'termination_requested') {
+    if (step === 'confirm-terminate') {
       const reason = String(project.end_reason || '').trim()
       return confirmAction('Confirm ending this project early?')
         ? { action: 'terminate', reason }
@@ -3696,6 +3875,101 @@
     return /^complete$/i.test(value)
       ? { action: 'complete', reason: '' }
       : { action: 'terminate', reason: value }
+  }
+
+  // Returns a promise so the designed modal can resolve the intent. The
+  // prompt/confirm path stays reachable for pages published before the
+  // `end-project` markup shipped, so a rollout skew never strands the button.
+  async function projectActionIntent(
+    project,
+    confirmAction = window.confirm,
+    promptAction = window.prompt,
+    role = projectWorkflowRole,
+  ) {
+    const state = lifecycleState(project)
+    if (!state || PROJECT_TERMINAL_STATES.has(state)) return null
+    if (projectLifecycleActionState(project, role).blocked) return null
+    const modalIntent = openEndProjectIntent(project, role)
+    if (modalIntent) return modalIntent
+    return endProjectPromptIntent(project, role, confirmAction, promptAction)
+  }
+
+  function submitEndProjectIntent(event, modal) {
+    event.preventDefault()
+    event.stopPropagation()
+    const request = activeEndProjectRequest
+    if (!request || request.modal !== modal) return
+    const view = request.view
+    const form = event.target
+    let reason = view.reason
+    if (view.showReason) {
+      const input = $('[data-end-project-reason]', form) || $('[data-end-project-reason]', modal)
+      reason = String(input && input.value || '').trim()
+      if (!reason) {
+        reviewError(
+          modal,
+          'Give a reason for ending this project early.',
+          validationDiagnostic('project_end', 'reason', 'MISSING_REASON'),
+        )
+        return
+      }
+    }
+    const intent = { action: view.action, reason }
+    if (view.showReview) {
+      const ratingInput = $('input[name="Call-Rating"]:checked', form)
+      const reviewInput = $('[name="Public-Feedback"], [name="Feedback"]', form)
+      const rating = Number(ratingInput && ratingInput.value)
+      const reviewText = String(reviewInput && reviewInput.value || '').trim()
+      if (!(rating >= 1 && rating <= 5)) {
+        reviewError(
+          modal,
+          'Choose a rating from 1 to 5 stars.',
+          validationDiagnostic('project_end', 'review', 'INVALID_RATING'),
+        )
+        return
+      }
+      if (reviewText.length < 10 || reviewText.length > 4000) {
+        reviewError(
+          modal,
+          'Write between 10 and 4,000 characters.',
+          validationDiagnostic('project_end', 'review', 'INVALID_REVIEW_LENGTH'),
+        )
+        return
+      }
+      intent.review = { rating, reviewText, form }
+    }
+    // Resolve before closing: closing dispatches `modal-close`, whose listener
+    // cancels a still-pending request and would discard this intent.
+    resolveEndProjectRequest(intent)
+    closeEndProjectModal(modal)
+  }
+
+  // A review row exists only for a `completed` project, so a first-mover
+  // request that lands on `completion_requested` must defer to the standing
+  // review CTA rather than post a review the endpoint would reject.
+  async function submitEndProjectReview(intent, project) {
+    const review = intent && intent.review
+    if (!review) return ''
+    if (lifecycleState(project) !== 'completed') {
+      return 'Completion requested. Review unlocks once both sides confirm.'
+    }
+    try {
+      await API.brandReviewSubmit({
+        project_id: project.id || project.project_id,
+        rating: review.rating,
+        review_text: review.reviewText,
+        idempotency_key: reviewSubmissionKey(
+          review.form,
+          project,
+          review.rating,
+          review.reviewText,
+        ),
+      })
+      clearReviewSubmissionKey(review.form)
+      return 'Project completed and review submitted'
+    } catch (error) {
+      return 'Project completed. The review did not save, please try Review Starter.'
+    }
   }
 
   function projectMutationFeedback(project) {
@@ -3812,7 +4086,7 @@
         )
         return
       }
-      const intent = projectActionIntent(project)
+      const intent = await projectActionIntent(project)
       if (!intent) return
       if (intent.action === 'terminate' && !intent.reason) {
         showProjectLifecycleFeedback(projectId, 'A reason is required to end early', true)
@@ -3829,10 +4103,11 @@
       if (updated) projectWorkflowItems.set(Number(updated.id), updated)
       delete action.dataset.projectActionKey
       delete action.dataset.projectActionScope
+      const reviewOutcome = await submitEndProjectReview(intent, updated || project)
       await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'lifecycle')
       showProjectLifecycleFeedback(
         projectId,
-        projectMutationFeedback(updated || project),
+        reviewOutcome || projectMutationFeedback(updated || project),
         false,
         diagnosticForResponse(result),
       )
@@ -4227,6 +4502,7 @@
       projectWorkflowFeedbackElement.style.display = 'none'
       projectWorkflowFeedbackElement.removeAttribute('data-project-action-result')
     }
+    resolveEndProjectRequest(null)
     activeReviewProject = null
     activeCallReviewBooking = null
     activeReviewModal = null
@@ -4270,6 +4546,15 @@
         return
       }
       const target = event.target
+      const toggle = target && target.closest
+        ? target.closest('[data-end-project-mode-toggle]')
+        : null
+      if (toggle) {
+        event.preventDefault()
+        event.stopPropagation()
+        if (activeEndProjectRequest) activeEndProjectRequest.toggle()
+        return
+      }
       const action = target && target.closest
         ? target.closest(
             PROJECT_CONTRACT_SELECTOR + ', ' + PROJECT_END_SELECTOR + ', ' + PROJECT_REVIEW_SELECTOR +
@@ -4306,24 +4591,34 @@
     window.addEventListener('pageshow', binding.pageshow)
     window.addEventListener('focus', binding.focus)
     document.addEventListener('visibilitychange', binding.visibility)
-    if (role === 'brand') {
-      binding.submit = (event) => {
-        if (!projectWorkflowBindingCurrent(binding)) {
-          unwireProjectDashboardWorkflow()
-          return
-        }
-        const modal = event.target && event.target.closest
-          ? event.target.closest('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
-          : null
-        if (modal) submitProjectReview(event, modal)
+    binding.submit = (event) => {
+      if (!projectWorkflowBindingCurrent(binding)) {
+        unwireProjectDashboardWorkflow()
+        return
       }
-      document.addEventListener('submit', binding.submit, true)
-      binding.close = (event) => {
-        const modal = event && event.detail && event.detail.modal
-        if (modal && modal === activeReviewModal) clearProjectReviewContext(modal, true)
+      const form = event.target
+      if (!form || !form.closest) return
+      const endModal = form.closest('[data-modal-target="' + PROJECT_END_MODAL_ID + '"]')
+      if (endModal) {
+        submitEndProjectIntent(event, endModal)
+        return
       }
-      window.addEventListener('modal-close', binding.close)
+      if (binding.role !== 'brand') return
+      const modal = form.closest('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
+      if (modal) submitProjectReview(event, modal)
     }
+    document.addEventListener('submit', binding.submit, true)
+    binding.close = (event) => {
+      const modal = event && event.detail && event.detail.modal
+      if (!modal) return
+      if (activeEndProjectRequest && modal === activeEndProjectRequest.modal) {
+        resolveEndProjectRequest(null)
+      }
+      if (binding.role === 'brand' && modal === activeReviewModal) {
+        clearProjectReviewContext(modal, true)
+      }
+    }
+    window.addEventListener('modal-close', binding.close)
     projectWorkflowBinding = binding
   }
 
