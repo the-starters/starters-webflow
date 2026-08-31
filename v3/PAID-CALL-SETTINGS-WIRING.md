@@ -144,6 +144,7 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 
 ## Authority and behavior
 
+- Xano `nylas_configurations_v3` table `#104` is the canonical Paid Call authority.
 - Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`).
 - An active service in `services[]` is the confirmed V3 authority. It wins over any imported
   suggestion. A service rate is displayable only when it is USD and has an integer
