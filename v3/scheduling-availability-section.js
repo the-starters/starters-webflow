@@ -1552,22 +1552,39 @@
   // clicking connect/reconnect/disconnect doesn't flash the "disconnected"
   // label before the request even resolves.
   //
-  // `connect-label-group` holds three `[data-availability-element=
-  // "connect-label"]` instances: `[data-type="false"]` ("Disconnected") plus
-  // two `[data-type="true"][data-manager]` variants, one per manager
-  // ("platform" / "calendar") — only the one matching the live
-  // `availability.manager` is shown while connected.
+  // The `connect-label-group` markup contract (one `[data-type]` false/true
+  // pair per `[data-manager]`, plus the prior three-label shape this still
+  // accepts) is owned by v3/README.md#booking-stage-availability-section.
+  //
+  // Visibility is decided per label, never group-wide, so a group part-way
+  // through the Designer migration still renders every pair it does have: a
+  // `[data-manager]`-tagged label tracks only that manager, while an untagged
+  // `[data-type="false"]` label keeps the prior three-label markup's
+  // group-wide meaning ("nothing is connected at all").
+  //
+  // A `[data-manager]`-tagged label makes a claim about one specific provider,
+  // so it only renders in a state that actually establishes one: 'connected' /
+  // 'reconnect' / 'disconnected'. 'error' (and any state this module doesn't
+  // recognize) means the live manager is unknown, so every tagged label is
+  // hidden rather than asserting a provider is disconnected next to a
+  // "Disconnect Google" button. That differs from 'loading', which leaves the
+  // last painted labels alone because they were still accurate a moment ago.
   function applyConnectLabels(state) {
     if (state === 'loading') return
     const connected = state === 'connected' || state === 'reconnect'
+    const statusKnown = connected || state === 'disconnected'
     const manager = availability && availability.manager
     const labels = qsa(elSel('connect-label'))
     if (labels.length) {
       labels.forEach(function (label) {
         const isConnectedVariant = label.getAttribute('data-type') === 'true'
-        const visible = isConnectedVariant
-          ? connected && label.getAttribute('data-manager') === manager
-          : !connected
+        const labelManager = label.getAttribute('data-manager')
+        const managerConnected = connected && labelManager === manager
+        const visible = labelManager
+          ? statusKnown && isConnectedVariant === managerConnected
+          : isConnectedVariant
+            ? managerConnected
+            : !connected
         label.style.display = visible ? '' : 'none'
       })
       return
