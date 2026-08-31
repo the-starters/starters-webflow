@@ -2806,6 +2806,26 @@ back to the button's ordinal position inside its known wrapper and logs one
 console warning per action. Prefer adding the wrapper attributes over relying
 on the fallback long-term.
 
+The three `connect-btn-wrapper` actions are shown or hidden by provider state:
+with no manager, both connect actions show; with Platform active, only Connect
+Google shows; with Google active, Connect Platform and Disconnect Google show.
+This keeps one matching action available for each provider status and permits
+a Google-to-Platform switch through the existing provider-first flow.
+
+Every action that deletes a live Google grant confirms first.
+`connect-platform` with no manager has no grant to lose, so it opens straight
+on the `notification-type="virtual-connect"` spinner; with Google active it
+deletes a live Nylas grant that only a fresh OAuth consent can restore, so it
+opens the same `notification-type="disconnect-calendar"` confirm step that
+`open-disconnect-google` uses. Confirming there runs the provider-first switch
+and lands on `virtual-connected` rather than `calendar-disconnected`, since the
+member asked to connect Platform rather than to disconnect Google.
+
+If the replacement virtual calendar fails after the Google grant is already
+deleted, the module drops the local grant id/email/calendar id and persists
+`manager: null` before surfacing the error, so the error UI stops offering
+"Disconnect Google" and a retry never re-deletes a grant that no longer exists.
+
 OAuth-callback ownership: on any page carrying this section's root, this
 module is the sole consumer of the Nylas `?code&state` / `?success&grant_id`
 return. `scheduling-availability-writer.js` carries a matching guard — it
