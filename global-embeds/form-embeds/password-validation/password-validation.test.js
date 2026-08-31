@@ -147,6 +147,13 @@ class Element {
     this._listeners.set(type, list)
   }
 
+  /** minimal EventTarget.dispatchEvent: routes through the harness dispatcher */
+  dispatchEvent(evt) {
+    const result = dispatch(this, evt.type)
+    if (result.defaultPrevented && typeof evt.preventDefault === 'function') evt.preventDefault()
+    return !result.defaultPrevented
+  }
+
   /** how many listeners of `type` are bound here (idempotence probe) */
   listenerCount(type) {
     return (this._listeners.get(type) || []).length
@@ -224,10 +231,32 @@ function mount(root, options = {}) {
   if (options.fetch) window.fetch = options.fetch
   window.window = window
 
+  /** what `new Event(type, opts)` gives the script inside the VM */
+  class FakeEvent {
+    constructor(type, opts = {}) {
+      this.type = type
+      this.bubbles = !!opts.bubbles
+      this.cancelable = !!opts.cancelable
+      this.defaultPrevented = false
+    }
+    preventDefault() {
+      this.defaultPrevented = true
+    }
+  }
+
   const context = vm.createContext({
     window,
     document,
     location,
+    Event: FakeEvent,
+    // Real timers, unref'd so a pending watcher timeout never holds the
+    // test process open.
+    setTimeout: (fn, ms) => {
+      const t = setTimeout(fn, ms)
+      if (t.unref) t.unref()
+      return t
+    },
+    clearTimeout: (t) => clearTimeout(t),
     console: { warn: (...args) => warnings.push(args.map(String).join(' ')) },
   })
   vm.runInContext(source, context)
@@ -2064,12 +2093,12 @@ test('r5-6: an invalid form still blocks a dispatched submit ahead of the page',
   assert.equal(f.submits.length, 0, 'the bubble-phase handler never ran')
 })
 
-test('r5-7: an enabled overlay click is not prevented and runs requestSubmit once', () => {
+test('r5-7: an enabled overlay click is not prevented and dispatches one synthetic submit', () => {
   const f = liveSetup()
-  let requested = 0
+  // requestSubmit must never be the bridge: its default action is a REAL
+  // native submission (password into the query string on a method=get form)
   f.form.requestSubmit = () => {
-    requested += 1
-    dispatch(f.form, 'submit')
+    throw new Error('requestSubmit must not be called')
   }
   type(f, VALID_PASSWORD)
   fillEmail(f, 'brand@example.com')
@@ -2077,19 +2106,13 @@ test('r5-7: an enabled overlay click is not prevented and runs requestSubmit onc
 
   const click = dispatch(f.overlay, 'click')
   assert.equal(click.defaultPrevented, false, 'the type=button click is left alone')
-  assert.equal(requested, 1, 'the overlay bridged into the submit path')
-  assert.equal(f.submits.length, 1, 'and the submit reached the page (Memberstack) handler')
+  assert.equal(f.submits.length, 1, 'one synthetic submit reached the page (Memberstack) handler')
 })
 
 test('r5-7: a disabled-state overlay click submits nothing', () => {
   const f = liveSetup()
-  let requested = 0
-  f.form.requestSubmit = () => {
-    requested += 1
-  }
   type(f, 'weakpass')
   dispatch(f.overlay, 'click')
-  assert.equal(requested, 0)
   assert.equal(f.submits.length, 0)
 })
 
@@ -2100,10 +2123,6 @@ test('r5-7: a native submitter under the marker is never double-submitted', () =
   const { wrapper } = buildWrapper({ numbers: 'true' })
   const input = h('input', { type: 'password', 'data-ms-member': 'password' })
   const form = h('form', {}, [input, wrapper, wrapBtn])
-  let requested = 0
-  form.requestSubmit = () => {
-    requested += 1
-  }
   const submits = []
   form.addEventListener('submit', (event) => {
     event.preventDefault()
@@ -2114,7 +2133,7 @@ test('r5-7: a native submitter under the marker is never double-submitted', () =
   input.value = '1'
   dispatch(input, 'input')
   dispatch(button, 'click')
-  assert.equal(requested, 0, 'the browser owns a type=submit click')
+  assert.equal(submits.length, 0, 'no synthetic submit — the browser owns a type=submit click')
 })
 
 // --- r5-8: rejections land on the form ------------------------------------
@@ -2184,4 +2203,54 @@ test('r5-8: unrelated requests never trip the watcher', async () => {
 
   assert.equal(f.fail.style.display, 'none', 'still just armed-and-hidden, no error painted')
   assert.equal(f.failText.textContent, 'Something went wrong', 'the authored copy is untouched')
+})
+
+test('r5-8: an OK ancillary call does not swallow a later rejection', async () => {
+  const queue = [{ ok: true }, msFailure({ message: 'That email is already registered.' })]
+  const f = armedSetup(() => Promise.resolve(queue.shift()))
+
+  // token / Turnstile / ancillary call succeeds first…
+  f.window.fetch('https://client.memberstack.com/token')
+  await flush()
+  assert.equal(f.fail.style.display, 'none', 'a success never paints and never disarms')
+
+  // …then the real signup POST is rejected
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+  assert.equal(f.fail.style.display, 'block', 'the rejection still lands')
+  assert.equal(f.failText.textContent, 'That email is already registered.')
+})
+
+test('r5-8: a fetch called with a URL-like object is still watched', async () => {
+  const f = armedSetup(() => Promise.resolve(msFailure({ message: 'nope' })))
+
+  f.window.fetch({
+    toString() {
+      return 'https://client.memberstack.com/member'
+    },
+  })
+  await flush()
+
+  assert.equal(f.fail.style.display, 'block', 'String(resource) covers URL objects')
+  assert.equal(f.failText.textContent, 'nope')
+})
+
+test('r5-9: unchecking a custom terms checkbox regreys once the visual state settles', async () => {
+  const f = liveSetup({ customCheckbox: true })
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  f.terms.checked = true
+  f.termsVisual.classList.add('w--redirected-checked')
+  dispatch(f.terms, 'change')
+  assert.equal(overlayOpen(f), true, 'checked opens the gate')
+
+  // Uncheck: the native checked flips before our at-target listener runs, but
+  // Webflow's DELEGATED handler removes the visual class only afterwards — so
+  // the immediate render reads a stale class. The deferred render must not.
+  f.terms.checked = false
+  dispatch(f.terms, 'change')
+  f.termsVisual.classList.remove('w--redirected-checked')
+
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(overlayGated(f), true, 'the deferred render reads the settled state')
 })

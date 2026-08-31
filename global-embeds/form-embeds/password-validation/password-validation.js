@@ -32,8 +32,9 @@
 // The live CTA is Memberstack's overlay: a `.clickable_btn` (type="button")
 // inside the [ms-code-submit-button] wrap, with the native submit hidden. A
 // type="button" overlay never fires the native submit path on its own, so an
-// enabled click on a non-submitting control calls form.requestSubmit() — the
-// resulting submit event is what Memberstack's listener consumes. Disabling
+// enabled click on a non-submitting control dispatches a cancelable synthetic
+// submit event — what Memberstack's listener consumes — and never a native
+// submission (see triggerSubmit for why requestSubmit is unsafe). Disabling
 // covers the wrap AND every overlay control inside it (native `disabled` +
 // aria-disabled), so the visible button can never stay live while only the
 // hidden one is gated.
@@ -356,14 +357,13 @@
   }
 
   function triggerSubmit(form) {
-    if (typeof form.requestSubmit === 'function') {
-      form.requestSubmit();
-      return;
-    }
-    // Engines without requestSubmit: a cancelable synthetic submit reaches
-    // every listener, Memberstack's included. Native submission is
-    // deliberately absent — Memberstack prevents it on its own forms anyway,
-    // and no form this script wires submits anywhere natively.
+    // A cancelable synthetic submit reaches every listener, Memberstack's
+    // included — and nothing else. Never form.requestSubmit(): its default
+    // action is a REAL native submission, so if Memberstack's listener is
+    // missing (blocked script, slow load, script error) a Webflow form —
+    // method="get", no action — would navigate with the password in the
+    // query string. With no listener to act on the synthetic event the click
+    // stays inert, exactly the pre-overlay behavior.
     if (typeof Event === 'function' && typeof form.dispatchEvent === 'function') {
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     }
@@ -408,7 +408,11 @@
     window.fetch = function (resource) {
       var url = '';
       try {
-        url = typeof resource === 'string' ? resource : String((resource && resource.url) || '');
+        // Covers strings, Request objects (.url), and URL objects
+        // (String() -> href); a fetch this misses stays console-only.
+        url = typeof resource === 'string'
+          ? resource
+          : String((resource && resource.url) || resource || '');
       } catch (e) { /* no-op */ }
       var entry = pendingOutcome;
       var result = originalFetch.apply(this, arguments);
@@ -417,7 +421,11 @@
       }
       result.then(function (response) {
         if (!response || response.ok) {
-          entry.settle();
+          // A success does NOT disarm the watcher: a real signup attempt can
+          // issue several matching requests (token, Turnstile, ancillary
+          // calls), and the first OK must not swallow a later rejection —
+          // the duplicate-email 4xx is the whole point. The watcher ends on
+          // a failure, the next arming, or the timeout.
           return;
         }
         var fallback = function () { entry.fail(null); };
@@ -695,15 +703,23 @@
     // no event at all — nothing can catch that at write time, which is why the
     // submit handler recomputes rather than trusting the last render. The
     // gate's other fields recompute on the same three events.
-    function bindField(field) {
+    function bindField(field, handler) {
       if (!field) return;
-      field.addEventListener('input', render);
-      field.addEventListener('change', render);
-      field.addEventListener('focusout', render);
+      field.addEventListener('input', handler);
+      field.addEventListener('change', handler);
+      field.addEventListener('focusout', handler);
     }
-    bindField(input);
-    bindField(emailInput);
-    bindField(termsInput);
+    bindField(input, render);
+    bindField(emailInput, render);
+    // The terms listener fires at the target BEFORE Webflow's delegated
+    // document handler updates the custom checkbox's visual class, so a
+    // render in the same tick can read a stale w--redirected-checked (an
+    // uncheck would leave the CTA open). Render now for snap, then once more
+    // a tick later against the settled state.
+    bindField(termsInput, function () {
+      render();
+      if (typeof setTimeout === 'function') setTimeout(render, 0);
+    });
 
     form.addEventListener('submit', function (event) {
       // Recompute FIRST, then adjudicate on what came back.
