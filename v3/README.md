@@ -2785,17 +2785,19 @@ Designer API cannot attach custom attributes to directly — until thin wrapper
 `<div data-availability-action="…">`s are added around them, the script falls
 back to the button's ordinal position inside its known wrapper and logs one
 console warning per action. Prefer adding the wrapper attributes over relying
-on the fallback long-term. Their visibility follows the provider state: with
-no manager, both connect actions show; with Platform active, only Connect
+on the fallback long-term.
+
+The three `connect-btn-wrapper` actions are shown or hidden by provider state:
+with no manager, both connect actions show; with Platform active, only Connect
 Google shows; with Google active, Connect Platform and Disconnect Google show.
 This keeps one matching action available for each provider status and permits
 a Google-to-Platform switch through the existing provider-first flow.
 
-Both provider mutations are confirmed first. `connect-platform` with no
-manager has no grant to lose, so it opens straight on the
-`notification-type="virtual-connect"` spinner; with Google active it deletes a
-live Nylas grant that only a fresh OAuth consent can restore, so it opens the
-same `notification-type="disconnect-calendar"` confirm step that
+Every action that deletes a live Google grant confirms first.
+`connect-platform` with no manager has no grant to lose, so it opens straight
+on the `notification-type="virtual-connect"` spinner; with Google active it
+deletes a live Nylas grant that only a fresh OAuth consent can restore, so it
+opens the same `notification-type="disconnect-calendar"` confirm step that
 `open-disconnect-google` uses. Confirming there runs the provider-first switch
 and lands on `virtual-connected` rather than `calendar-disconnected`, since the
 member asked to connect Platform rather than to disconnect Google.
