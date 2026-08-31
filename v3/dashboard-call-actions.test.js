@@ -1508,3 +1508,47 @@ test('resetting mid-load clears the loader so the next open is not covered', () 
   assert.equal(loader.hidden, true)
   assert.equal(loader.style.display, 'none')
 })
+
+test('a stale mount cannot hide the loader owned by a newer mount', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const loader = { hidden: true, style: { display: 'none' } }
+  const containers = [{ textContent: '' }, { textContent: '' }]
+  let activeContainer = containers[0]
+  const modal = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'booking-overlap' : null
+    },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return activeContainer
+      if (selector === '[booking-calendar-loader]') return loader
+      return null
+    },
+    querySelectorAll() { return [] },
+  }
+  const releases = []
+  try {
+    global.StartersPaidCallBrandPayment = {
+      mountPaidCalendar() {
+        return new Promise((resolve) => releases.push(resolve))
+      },
+    }
+    const booking = rescheduleBooking({ booking_id: 'booking-overlap' })
+    const first = api.mountRescheduleCalendar({}, modal, booking, 'starter', '')
+    await new Promise((resolve) => setImmediate(resolve))
+    activeContainer = containers[1]
+    const second = api.mountRescheduleCalendar({}, modal, booking, 'starter', '')
+    await new Promise((resolve) => setImmediate(resolve))
+
+    releases[0]({ slots: [] })
+    await first
+    assert.equal(loader.hidden, false)
+    assert.equal(loader.style.display, 'flex')
+
+    releases[1]({ slots: [] })
+    await second
+    assert.equal(loader.hidden, true)
+    assert.equal(loader.style.display, 'none')
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+  }
+})

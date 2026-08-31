@@ -999,10 +999,7 @@
     const authoredLoader = showCalendarLoader(modal, true)
     if (!authoredLoader) container.textContent = 'Loading available times...'
     const calendarModule = await loadCalendarModule(document)
-    if (!isCurrent()) {
-      showCalendarLoader(modal, false)
-      return false
-    }
+    if (!isCurrent()) return false
     if (!calendarModule) {
       showCalendarLoader(modal, false)
       container.textContent = 'The calendar could not load. Please try again.'
@@ -1047,7 +1044,7 @@
     } finally {
       // The engine has painted (or failed) by here, so the loader comes down
       // either way rather than covering a rendered calendar.
-      showCalendarLoader(modal, false)
+      if (isCurrent()) showCalendarLoader(modal, false)
     }
     return true
   }

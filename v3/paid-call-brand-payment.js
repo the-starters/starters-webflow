@@ -769,8 +769,8 @@
       /* The month spans rows 1 and 2 so the panel's height stays the month's
          own. The timezone takes its share from inside the right column, which
          means the caption costs the times list height rather than growing the
-         modal. The footer spans both columns on its own row. */
-      'grid-template-areas:"month timezone" "month times" "footer footer";',
+         modal. The confirm control spans both columns on its own row. */
+      'grid-template-areas:"month timezone" "month times" "confirm confirm";',
       'grid-template-rows:min-content minmax(0,1fr) min-content;',
       'align-content:start}',
       role + '"month"]{grid-area:month;align-self:start}',
@@ -778,7 +778,7 @@
       // Scrolls within its own row instead of stretching the dialog when a day
       // carries more slots than the month is tall.
       role + '"times"]{grid-area:times;align-content:start;overflow-y:auto;overscroll-behavior:contain}',
-      role + '"footer"]{grid-area:footer}',
+      role + '"confirm"]{grid-area:confirm}',
       '}',
     ].join('')
     ;(document.head || document.documentElement).appendChild(style)
@@ -1968,12 +1968,18 @@
       }
     })
 
-    calendarPanel.appendChild(calendarHost)
-    calendarPanel.appendChild(timezoneControl.wrapper)
-    layout.appendChild(calendarPanel)
-    timePanel.appendChild(times)
-    layout.appendChild(timePanel)
-    shell.appendChild(layout)
+    if (onBookingSurface) {
+      calendarPanel.appendChild(calendarHost)
+      calendarPanel.appendChild(timezoneControl.wrapper)
+      layout.appendChild(calendarPanel)
+      timePanel.appendChild(times)
+      layout.appendChild(timePanel)
+      shell.appendChild(layout)
+    } else {
+      shell.appendChild(calendarHost)
+      shell.appendChild(timezoneControl.wrapper)
+      shell.appendChild(times)
+    }
     shell.appendChild(footer || confirm)
     shell.appendChild(status)
     container.appendChild(shell)
