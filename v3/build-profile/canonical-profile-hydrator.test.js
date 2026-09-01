@@ -65,8 +65,20 @@ test('maps the canonical profile into the native seven-step capture shape', () =
       'service-3': null,
     },
     Reviewers: {
-      'reviewer-1': { email: 'reviewer@example.test', 'first-name': 'Reviewer' },
-      'reviewer-2': {},
+      'reviewer-1': {
+        email: 'reviewer@example.test',
+        'first-name': 'Reviewer',
+        'last-name': 'One',
+        position: 'Director',
+        company: 'Example Co',
+      },
+      'reviewer-2': {
+        fname: 'Draft',
+        lname: 'Shape',
+        job: 'Lead',
+        company: 'Draft Co',
+        email: 'draft@example.test',
+      },
       'reviewer-3': {},
     },
   })
@@ -85,8 +97,19 @@ test('maps the canonical profile into the native seven-step capture shape', () =
   assert.deepEqual(JSON.parse(profile.data.step_6.service), { name: 'Audit', price: '100' })
   assert.deepEqual(JSON.parse(profile.data.step_7.reviewer), {
     email: 'reviewer@example.test',
-    'first-name': 'Reviewer',
+    fname: 'Reviewer',
+    lname: 'One',
+    job: 'Director',
+    company: 'Example Co',
   })
+  assert.deepEqual(JSON.parse(profile.data.step_7['reviewer-2']), {
+    fname: 'Draft',
+    lname: 'Shape',
+    job: 'Lead',
+    company: 'Draft Co',
+    email: 'draft@example.test',
+  })
+  assert.deepEqual(JSON.parse(profile.data.step_7['reviewer-3']), {})
 })
 
 test('uses canonical values only as fallbacks and preserves every active draft key', () => {
