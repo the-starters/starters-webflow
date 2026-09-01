@@ -1105,12 +1105,15 @@ hides them for early end. It also hides the reason field for early end. Add
 `project-element="project-name"` and
 `project-element="project-id"` (or the equivalent `data-end-project-bind`
 values) to display the active project's canonical title and numeric ID in both
-modes. The controller removes native `required` constraints while a group is
-hidden. It restores the reason constraint when that group is shown. The Brand
-completion review stays optional, so the controller also clears its native
-constraint when shown and uses JavaScript to reject a half-filled review. Author the submit
-control as the standard Clickable Wrap: the empty `button.clickable_btn` remains
-the native submitter, while every `.button_main-text` in its
+modes. When the Starter component places these bindings in its reused
+`[booking-element-wrap][display-flex]` rows, the controller reveals each
+populated row as flex after binding the identity. The controller removes native
+`required` constraints while a group is hidden. It restores the reason
+constraint when that group is shown. The Brand completion review stays
+optional, so the controller also clears its native constraint when shown and
+uses JavaScript to reject a half-filled review. Author the submit control as the
+standard Clickable Wrap: the empty `button.clickable_btn` remains the native
+submitter, while every `.button_main-text` in its
 `.button_main-wrap` receives the state-specific caption. A legacy plain button
 can instead keep its caption in a nested `div` or `span`. Pre-activation
 projects paint the cancel-note view and never show review fields. If the
