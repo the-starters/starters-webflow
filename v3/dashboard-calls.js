@@ -1389,18 +1389,20 @@
   /**
    * Raw statuses bookingStatus folds into `cancelled` that the Designer can
    * author their own panel for. Each resolves to that panel when it exists and
-   * falls back to the shared `cancelled` panel when it does not, so an expired
-   * request never reads as one a counterpart cancelled where the Designer has
-   * separated the two.
+   * falls back to the shared `cancelled` panel when it does not.
+   *
+   * `expired` is deliberately absent. Both expiry writers record an expired
+   * request as `cancelled` with `cancelled_by = "expired"`, never as a raw
+   * `expired` status, so an entry here could only point at a panel no booking
+   * is able to reach.
    */
   const TERMINAL_PANEL_BY_RAW_STATUS = {
     declined: 'declined',
-    expired: 'expired',
   }
 
   /**
    * Panel the details modal opens on. Terminal bookings open their authored
-   * terminal panel (`cancelled`, `declined`, `expired`, `completed`) so the
+   * terminal panel (`cancelled`, `declined`, `completed`) so the
    * Designer view renders instead of a module-composed base view; `base` stays
    * the acting view for live calls and the fallback for any panel the Designer
    * has not authored.

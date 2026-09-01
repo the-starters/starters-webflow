@@ -1051,6 +1051,29 @@
     return true
   }
 
+  /**
+   * Finds a control that sits inside the modal's own `base` panel. The same
+   * `booking-action-btn` value also appears on list cards and inside the step
+   * panels, so the base-panel test is what separates a control the member can
+   * act on from the opening view from every other copy of it.
+   * @param {HTMLElement|null} modal Detail modal being populated.
+   * @param {string} selector Control selector to search for.
+   * @returns {HTMLElement|null} The base-panel control, or null when absent.
+   */
+  function basePanelControl(modal, selector) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return null
+    const candidates = modal.querySelectorAll(selector)
+    for (let index = 0; index < candidates.length; index += 1) {
+      const panel = candidates[index].closest
+        ? candidates[index].closest('[booking-popup-content]')
+        : null
+      if (panel && panel.getAttribute('booking-popup-content') === 'base') {
+        return candidates[index]
+      }
+    }
+    return null
+  }
+
   function ensureRespondButtons(document, modal) {
     if (
       !document ||
@@ -1059,23 +1082,28 @@
       typeof document.createElement !== 'function'
     ) return false
     if (modal.querySelector('[data-starters-reschedule-respond]')) return true
-    // The authored confirm-reschedule button lives inside a legacy hidden
-    // panel, so the counterpart needs base-view respond controls instead. The
-    // authored base reschedule trigger anchors their placement and styling.
-    const anchor = (function () {
-      const candidates = modal.querySelectorAll(
-        '[booking-action-btn="reschedule"], [booking-action-btn="switch-cancel"]',
+    /* Both views now author the respond pair in the base panel, where the
+       member can reach it. Generating a second pair there left four controls
+       where two belong, because the authored and generated copies pass the
+       same gate. The authored pair wins whenever it is present. */
+    if (
+      basePanelControl(
+        modal,
+        '[booking-action-btn="confirm-reschedule"], [booking-card-action-btn="confirm-reschedule"]',
+      ) &&
+      basePanelControl(
+        modal,
+        '[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]',
       )
-      for (let index = 0; index < candidates.length; index += 1) {
-        const base = candidates[index].closest
-          ? candidates[index].closest('[booking-popup-content]')
-          : null
-        if (base && base.getAttribute('booking-popup-content') === 'base') {
-          return candidates[index]
-        }
-      }
-      return null
-    })()
+    ) return true
+    // On a page published while the authored confirm-reschedule still sat
+    // inside the legacy hidden panel, the counterpart cannot reach it, so the
+    // base view still needs generated respond controls. The authored base
+    // reschedule trigger anchors their placement and styling.
+    const anchor = basePanelControl(
+      modal,
+      '[booking-action-btn="reschedule"], [booking-action-btn="switch-cancel"]',
+    )
     if (!anchor || !anchor.parentNode) return false
     const accept = styledActionButton(
       document,
