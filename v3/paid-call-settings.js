@@ -770,10 +770,7 @@
       '[data-call-settings-busy="true"] [data-opp-element="loading-hide"],' +
       '[data-call-settings-busy="true"] [loading-hide]{' +
       'display:none!important}' +
-      '[data-call-settings-error-visible="true"].w-form-fail{display:block!important}' +
-      '[data-paid-call-card-state="off"] [data-service-card-element="price-card"],' +
-      '[data-paid-call-card-state="off"] [data-call-settings-output="price"]{' +
-      'opacity:.6;transition:opacity .2s ease}'
+      '[data-call-settings-error-visible="true"].w-form-fail{display:block!important}'
     document.head.appendChild(style)
   }
 

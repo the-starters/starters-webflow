@@ -100,9 +100,9 @@ available through the approved element-edit path; the canonical marker always wi
 tile is then never touched.
 
 When paid calls are off, the controller sets `data-paid-call-card-state="off"` on the Paid card
-scope. Its injected style reduces only `data-service-card-element="price-card"` and the canonical
-price output to `opacity: .6`. The card, Off pill, instructions, and Edit control stay at full
-emphasis and remain readable. Do not put the state attribute or reduced opacity on the whole card.
+scope. The authored `OFF` pill is the inactive-state cue. The controller does not reduce opacity or
+otherwise restyle the price tile, canonical price output, card, instructions, or Edit control, so
+their authored contrast stays unchanged. Do not put reduced opacity on the whole card or price tile.
 
 The fallback runs in the card and stable-contract wiring only; the
 `data-paid-call-element="settings"` panel renders a price through its canonical output alone.
@@ -251,8 +251,9 @@ binding, the stale-readiness save of an active service, the expired-session
 fail-closed writes, and the authored price tile fallback — canonical precedence,
 single-leaf and split `$` + number selection, the continued-amount guard that leaves a
 tile with a trailing cents fragment alone, imported V2 suggestion validation and explicit
-confirmation, `Not set` empty states, scoped Off-state emphasis, and Free-sibling isolation, stable
-accessible control names, preservation of authored labels, and polite status announcements — plus
+confirmation, `Not set` empty states, scoped Off-state style preservation, and Free-sibling
+isolation, stable accessible control names, preservation of authored labels, and polite status
+announcements — plus
 the authored status-pill resolution and its drifted-copy diagnostic, the
 `w--redirected-checked` radio sync, and the field validation lifecycle, including that a
 rejected rate never blocks a later turn-off, plus the shared native-submit/Update write lock and
@@ -308,9 +309,10 @@ The release owner runs them by hand, in this order, after the PR merges:
    service it must read the canonical Xano rate as `$1,500.00`-style USD in the amount
    element only, with any authored caption and unit untouched and no doubled currency
    symbol. With no confirmed or imported rate it must read `Not set`, never `$0.00` or the
-   Designer placeholder. In the Off state, confirm only the price and service content are muted;
-   the whole card, Off pill, instructions, and Edit control must stay fully readable. If the tile
-   does not change at all, its markup is neither of the two
+   Designer placeholder. In the Off state, confirm the whole card, price tile, status,
+   instructions, and Edit control stay fully opaque and readable, with only the authored Off
+   pill as the inactive-state cue and no opacity, filters, outlines, or new price-tile decoration.
+   If the tile does not change at all, its markup is neither of the two
    bound shapes — most often the amount is split across more than the `$` and number pair,
    such as a separate cents span — so report the real structure instead of widening the
    fallback by guess, and prefer adding `data-call-settings-output="price"` in Designer.
