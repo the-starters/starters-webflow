@@ -2305,14 +2305,14 @@ pending path's `reschedule-updated` result. A modal that lacks that panel receiv
 a module fallback, so the direct-update success cannot switch to a missing
 target. A modal with no authored `reschedule` view receives the module fallback
 instead.
-The module also adds the base "Accept new time" and "Keep current time"
-responses beside the reschedule trigger. It creates that response pair once per
-modal, marks both controls with
-`data-starters-reschedule-respond`, and ensures they are still present whenever
-the details modal is populated. Decline, cancel, and both reschedule commands
-require a non-empty reason. Decline posts `booking_id`, `config_id`, `reason`,
-and `idempotency_key` to `booking/decline/v3`; cancel uses `cancelled_reason` at
-`booking/cancel/v3`. Both reschedule commands post `rescheduled_reason`,
+The module uses the base "Accept new time" and "Keep current time" responses
+authored beside the reschedule trigger. If either control is missing from the
+base panel, it creates the fallback pair once per modal and marks both controls
+with `data-starters-reschedule-respond`. Decline, cancel, and both reschedule
+commands require a non-empty reason. Decline posts `booking_id`, `config_id`,
+`reason`, and `idempotency_key` to `booking/decline/v3`; cancel uses
+`cancelled_reason` at `booking/cancel/v3`. Both reschedule commands post
+`rescheduled_reason`,
 `new_start`, `new_end`, and `timezone` with those shared identifiers. A
 confirmed call posts to `booking/reschedule/propose/v3`; a pending Brand request
 posts to `booking/reschedule/request/v3`.
