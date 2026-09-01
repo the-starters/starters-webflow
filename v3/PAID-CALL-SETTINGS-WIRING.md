@@ -198,9 +198,10 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   rejected rate therefore never keeps the form invalid afterwards, and turning paid calls off with
   No plus Update stays reachable even though the disable path never reads the rate.
 - The controller gives the native Edit, Cancel, Update, enable, disable, description, rate, and
-  duration controls stable accessible names when Designer did not author one. It never replaces an
-  existing `aria-label`. The status output uses `role="status"` and `aria-live="polite"` so canonical
-  state changes are announced without moving focus.
+  duration controls stable accessible names when Designer did not author one. It preserves names
+  supplied by `aria-labelledby`, `aria-label`, `title`, an associated or ancestor label, visible
+  control text, or the relevant input value or alt text. The status output uses `role="status"` and
+  `aria-live="polite"` so canonical state changes are announced without moving focus.
 - While a mutation is in flight, the authored Update control gets
   `data-call-settings-busy="true"`, `data-opp-loading="true"`, and `aria-busy="true"`. When the
   control contains an authored `[data-button-spinner]` or `[loading-spinner]`, the controller shows
@@ -250,8 +251,8 @@ binding, the stale-readiness save of an active service, the expired-session
 fail-closed writes, and the authored price tile fallback — canonical precedence,
 single-leaf and split `$` + number selection, the continued-amount guard that leaves a
 tile with a trailing cents fragment alone, imported V2 suggestion validation and explicit
-confirmation, `Not set` empty states, scoped Off-state emphasis, and Free-sibling isolation — plus
-stable accessible control names, preservation of authored labels, and polite status announcements — plus
+confirmation, `Not set` empty states, scoped Off-state emphasis, and Free-sibling isolation, stable
+accessible control names, preservation of authored labels, and polite status announcements — plus
 the authored status-pill resolution and its drifted-copy diagnostic, the
 `w--redirected-checked` radio sync, and the field validation lifecycle, including that a
 rejected rate never blocks a later turn-off, plus the shared native-submit/Update write lock and
@@ -295,6 +296,9 @@ The release owner runs them by hand, in this order, after the PR merges:
    confirm the card keeps the current paint and refreshes the same canonical ON state, title, and
    rate. A real logout must instead leave the card signed out, and an account switch must show only
    the new member's canonical Paid configuration.
+   Confirm Edit, Cancel, Update, Yes, No, description, rate, and duration keep their authored
+   accessible names or receive the documented fallback names. Confirm the status output is a polite
+   live region and announces a canonical state change without moving focus.
 4. On the TEST fixture still stored at a duration other than `60`, pick Yes and click
    Update while calendar or Stripe readiness is stale, and confirm the write is accepted
    and canonical readback reports `data-paid-call-duration-current="60"`.
