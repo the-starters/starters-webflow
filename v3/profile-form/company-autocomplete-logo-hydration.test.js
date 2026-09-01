@@ -114,6 +114,8 @@ function createHarness(file, companies, { isMulti = true } = {}) {
           name: selection.name,
           domain: selection.domain,
           logoUrl: selection.logo_url,
+          companyEntityId: String(selection.company_entity_id || 0),
+          source: selection.source || '',
         },
         classList: { contains() { return false }, add() {} },
       }
@@ -167,12 +169,16 @@ for (const [label, file] of [
       name: 'QA Wolf',
       domain: 'qawolf.com',
       logo_url: 'https://img.logo.dev/qawolf.com',
+      company_entity_id: 73,
+      source: 'platform',
     })
 
     assert.equal(harness.input.value, 'QA Wolf')
     assert.equal(harness.input.dataset.selectedCompanyName, 'QA Wolf')
     assert.equal(harness.input.dataset.selectedCompanyDomain, 'qawolf.com')
     assert.equal(harness.input.dataset.selectedCompanyLogoUrl, 'https://img.logo.dev/qawolf.com')
+    assert.equal(harness.input.dataset.selectedCompanyEntityId, '73')
+    assert.equal(harness.input.dataset.selectedCompanySource, 'platform')
 
     await new Promise((resolve) => setTimeout(resolve, 5))
     harness.changeInput('QA Wolf renamed')
@@ -180,6 +186,8 @@ for (const [label, file] of [
     assert.equal(harness.input.dataset.selectedCompanyName, undefined)
     assert.equal(harness.input.dataset.selectedCompanyDomain, undefined)
     assert.equal(harness.input.dataset.selectedCompanyLogoUrl, undefined)
+    assert.equal(harness.input.dataset.selectedCompanyEntityId, undefined)
+    assert.equal(harness.input.dataset.selectedCompanySource, undefined)
   })
 }
 
@@ -321,6 +329,8 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     input.dataset.selectedCompanyName = 'QA Wolf'
     input.dataset.selectedCompanyDomain = 'qawolf.com'
     input.dataset.selectedCompanyLogoUrl = 'https://img.logo.dev/qawolf.com'
+    input.dataset.selectedCompanyEntityId = '73'
+    input.dataset.selectedCompanySource = 'platform'
   }
 
   return {
@@ -360,7 +370,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
       await saveEditButton.listeners.get('click')[0]({ preventDefault() {} })
       if (deferredWrites) await companySubmit.listeners.get('click')[0]({ preventDefault() {} })
     },
-    async openExistingCompany() {
+    async openExistingCompany(overrides = {}) {
       const card = element()
       card.dataset.id = 'company-7'
       card.dataset.company = JSON.stringify({
@@ -368,10 +378,13 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
         company_name: 'QA Wolf',
         company_domain: 'qawolf.com',
         company_logo_url: 'https://img.logo.dev/qawolf.com',
+        company_entity_id: 73,
+        company_source: 'platform',
         job_title: 'Lead Engineer',
         start_date: 'Jan 2025',
         end_date: 'Present',
         current_work: true,
+        ...overrides,
       })
       const editButton = element()
       await companyList.listeners.get('click')[0]({
@@ -449,6 +462,8 @@ for (const [label, file, deferredWrites] of [
       company_name: 'QA Wolf',
       company_domain: 'qawolf.com',
       company_logo_url: 'https://img.logo.dev/qawolf.com',
+      company_entity_id: 73,
+      company_source: 'platform',
     }
     const addHarness = createCrudHarness(file, { deferredWrites })
     await addHarness.start()
@@ -488,7 +503,58 @@ for (const [label, file, deferredWrites] of [
     delete harness.companyInput.dataset.selectedCompanyName
     delete harness.companyInput.dataset.selectedCompanyDomain
     delete harness.companyInput.dataset.selectedCompanyLogoUrl
+    delete harness.companyInput.dataset.selectedCompanyEntityId
+    delete harness.companyInput.dataset.selectedCompanySource
     await harness.submitAdd()
     assert.equal(harness.requests.some(({ options }) => ['POST', 'PATCH'].includes(options.method)), false)
+  })
+
+  test(`${label} accepts a selected canonical Company without a domain`, async () => {
+    const harness = createCrudHarness(file, { deferredWrites })
+    await harness.start()
+    harness.companyInput.dataset.selectedCompanyName = 'OpenStore'
+    harness.companyInput.dataset.selectedCompanyDomain = ''
+    harness.companyInput.dataset.selectedCompanyLogoUrl = 'https://logos.example/openstore.svg'
+    harness.companyInput.dataset.selectedCompanyEntityId = '1448'
+    harness.companyInput.dataset.selectedCompanySource = 'platform'
+    harness.companyInput.value = 'OpenStore'
+    await harness.submitAdd()
+
+    const request = harness.requests.find(({ options }) => options.method === 'POST')
+    const payload = JSON.parse(request.options.body)
+    assert.equal(payload.company_domain, '')
+    assert.equal(payload.company_entity_id, 1448)
+    assert.equal(payload.company_source, 'platform')
+  })
+
+  test(`${label} accepts an explicit custom Company and sends no placeholder logo`, async () => {
+    const harness = createCrudHarness(file, { deferredWrites })
+    await harness.start()
+    harness.companyInput.dataset.selectedCompanyName = 'My New Company'
+    harness.companyInput.dataset.selectedCompanyDomain = ''
+    harness.companyInput.dataset.selectedCompanyLogoUrl = ''
+    harness.companyInput.dataset.selectedCompanyEntityId = '0'
+    harness.companyInput.dataset.selectedCompanySource = 'custom'
+    harness.companyInput.value = 'My New Company'
+    await harness.submitAdd()
+
+    const request = harness.requests.find(({ options }) => options.method === 'POST')
+    const payload = JSON.parse(request.options.body)
+    assert.equal(payload.company_source, 'custom')
+    assert.equal(payload.company_logo_url, '')
+    assert.equal(payload.company_entity_id, 0)
+  })
+
+  test(`${label} keeps the placeholder as presentation only when editing`, async () => {
+    const harness = createCrudHarness(file, { deferredWrites })
+    await harness.start()
+    await harness.openExistingCompany({ company_logo_url: '', logo_url: '' })
+    assert.equal(harness.editCompanyInput.dataset.selectedCompanyLogoUrl, '')
+    await harness.submitEdit()
+
+    const request = harness.requests.find(({ options }) => options.method === 'PATCH')
+    const payload = JSON.parse(request.options.body)
+    assert.equal(payload.company_logo_url, '')
+    assert.doesNotMatch(payload.company_logo_url, /company-placeholder/)
   })
 }

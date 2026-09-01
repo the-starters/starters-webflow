@@ -37,13 +37,24 @@
     searchGroup.appendChild(dropdown);
 
     let timer;
-    let lastQuery = '';
+    let renderedQuery = '';
+    let pendingQuery = '';
     let selectingCompany = false;
+    let searchSequence = 0;
+    let activeSearchController = null;
 
-    function storeSingleSelection(name, domain, logoUrl) {
+    function cancelActiveSearch() {
+      if (activeSearchController) activeSearchController.abort();
+      activeSearchController = null;
+      pendingQuery = '';
+    }
+
+    function storeSingleSelection(name, domain, logoUrl, companyEntityId, source) {
       input.dataset.selectedCompanyName = name || '';
       input.dataset.selectedCompanyDomain = domain || '';
       input.dataset.selectedCompanyLogoUrl = logoUrl || '';
+      input.dataset.selectedCompanyEntityId = String(Number(companyEntityId) || 0);
+      input.dataset.selectedCompanySource = source || '';
     }
 
     function clearStaleSingleSelection() {
@@ -52,6 +63,8 @@
       delete input.dataset.selectedCompanyName;
       delete input.dataset.selectedCompanyDomain;
       delete input.dataset.selectedCompanyLogoUrl;
+      delete input.dataset.selectedCompanyEntityId;
+      delete input.dataset.selectedCompanySource;
     }
 
     let tagTemplate = null;
@@ -71,7 +84,7 @@
           for (const uniqueId of Object.keys(selectedCompanies)) {
             const company = selectedCompanies[uniqueId];
             if (company.name) {
-              renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '');
+              renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '', company.company_entity_id, company.source);
             }
           }
         }
@@ -85,7 +98,9 @@
         companies[tag.dataset.uniqueId] = {
           "name": qs("[also-worked-tag-name]", tag).textContent,
           "domain": qs("[also-worked-tag-domain]", tag).textContent,
-          "logo_url": tag.dataset.logoUrl || ""
+          "logo_url": tag.dataset.logoUrl || "",
+          "company_entity_id": Number(tag.dataset.companyEntityId) || 0,
+          "source": tag.dataset.companySource || ""
         }
       });
 
@@ -99,6 +114,8 @@
     }
 
     function closeDropdown() {
+      cancelActiveSearch();
+      searchSequence += 1;
       dropdown.style.display = 'none';
     }
 
@@ -114,44 +131,24 @@
       });
     }
 
-    function renderMessage(text) {
-      dropdown.innerHTML = `
-                    <div class="company-search-message">${escapeHtml(text)}</div>
-                `;
+    function renderDropdown(html, query) {
+      renderedQuery = query;
+      dropdown.innerHTML = html;
       openDropdown();
     }
 
-    function renderResults(results) {
-      if (!results.length) {
-        const typedCompany = input.value.trim();
+    function renderMessage(text) {
+      renderDropdown(`
+                    <div class="company-search-message">${escapeHtml(text)}</div>
+                `, '');
+    }
 
-        dropdown.innerHTML = `
-          <button class="company-search-item ${isCompanyAdded({ name: typedCompany }) ? "is-added" : ""}" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="">
-              <img class="company-search-logo" src="${PLACEHOLDER_LOGO_URL}" alt="">
-              <span class="company-search-text">
-                  <span class="company-search-name">${escapeHtml(typedCompany || 'Company not found')}</span>
-                  <span class="company-search-domain">Use custom company</span>
-              </span>
-              <span class="company-search-delete">
-                  <svg style="pointer-events: none;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true"
-                      role="img" class="iconify iconify--ic" width="100%" height="100%"
-                      preserveAspectRatio="xMidYMid meet" viewBox="0 0 24 24">
-                      <path fill="currentColor"
-                          d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z">
-                      </path>
-                  </svg>
-              </span>
-          </button>
-      `;
-
-        openDropdown();
-        return;
-      }
-
-      dropdown.innerHTML = results
+    function renderResults(results, query) {
+      const typedCompany = input.value.trim();
+      const resultItems = results
         .map(function (item) {
           return `
-            <button class="company-search-item ${isCompanyAdded(item) ? "is-added" : ""}" type="button" data-name="${escapeHtml(item.name)}" data-domain="${escapeHtml(item.domain)}" data-logo-url="${escapeHtml(item.logo_url || '')}">
+            <button class="company-search-item ${isCompanyAdded(item) ? "is-added" : ""}" type="button" data-name="${escapeHtml(item.name)}" data-domain="${escapeHtml(item.domain)}" data-logo-url="${escapeHtml(item.logo_url || '')}" data-company-entity-id="${Number(item.company_entity_id) || 0}" data-source="${escapeHtml(item.source || '')}">
                 <img class="company-search-logo" src="${escapeHtml(item.logo_url || PLACEHOLDER_LOGO_URL)}" alt="">
                 <span class="company-search-text">
                     <span class="company-search-name">${escapeHtml(item.name)}</span>
@@ -169,9 +166,19 @@
             </button>
         `;
         })
-        .join('');
+      if (!isMulti) {
+        resultItems.push(`
+          <button class="company-search-item" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="" data-company-entity-id="0" data-source="custom">
+              <img class="company-search-logo" src="${PLACEHOLDER_LOGO_URL}" alt="">
+              <span class="company-search-text">
+                  <span class="company-search-name">${escapeHtml(typedCompany)}</span>
+                  <span class="company-search-domain">Use custom company</span>
+              </span>
+          </button>
+        `);
+      }
 
-      openDropdown();
+      renderDropdown(resultItems.join(''), query);
     }
 
     async function searchCompanies(query) {
@@ -184,21 +191,33 @@
         return;
       }
 
-      if (q === lastQuery) {
+      if (q === renderedQuery || q === pendingQuery) {
         openDropdown();
         return;
       }
 
-      lastQuery = q;
+      pendingQuery = q;
       renderMessage('Searching...');
+      const sequence = ++searchSequence;
+      cancelActiveSearch();
+      pendingQuery = q;
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      activeSearchController = controller;
 
       try {
-        const response = await fetch(`${SEARCH_ENDPOINT}?q=${encodeURIComponent(q)}`);
+        const response = await fetch(`${SEARCH_ENDPOINT}?q=${encodeURIComponent(q)}`, controller ? { signal: controller.signal } : undefined);
+        if (!response.ok) throw new Error(`Company search failed (${response.status})`);
         const results = await response.json();
+        if (sequence !== searchSequence) return;
 
-        renderResults(Array.isArray(results) ? results : []);
+        renderResults(Array.isArray(results) ? results : [], q);
       } catch (error) {
-        renderMessage('Search unavailable');
+        if (error?.name !== 'AbortError' && sequence === searchSequence) renderMessage('Search unavailable');
+      } finally {
+        if (sequence === searchSequence) {
+          pendingQuery = '';
+          if (activeSearchController === controller) activeSearchController = null;
+        }
       }
     }
 
@@ -210,6 +229,8 @@
       if (selectingCompany) return;
 
       clearStaleSingleSelection();
+      cancelActiveSearch();
+      searchSequence += 1;
 
       clearTimeout(timer);
       timer = setTimeout(function () {
@@ -268,7 +289,7 @@
       }, 300);
     }
 
-    function renderNewTag(selectedName, selectedDomain, item, uniqueId, selectedLogoUrl = '') {
+    function renderNewTag(selectedName, selectedDomain, item, uniqueId, selectedLogoUrl = '', companyEntityId = 0, source = '') {
       if (!tagTemplate || !tagWrapper) return;
       if (!selectedName) return;
 
@@ -276,6 +297,8 @@
       newTag.classList.remove('is_template');
       newTag.dataset.uniqueId = uniqueId || crypto.randomUUID();
       newTag.dataset.logoUrl = selectedLogoUrl || item?.dataset?.logoUrl || '';
+      newTag.dataset.companyEntityId = String(Number(companyEntityId || item?.dataset?.companyEntityId) || 0);
+      newTag.dataset.companySource = source || item?.dataset?.source || '';
       qs('[also-worked-tag-name]', newTag).textContent = selectedName;
       qs('[also-worked-tag-domain]', newTag).textContent = selectedDomain;
       qs('[also-worked-tag-delete]', newTag).addEventListener('click', function () {
@@ -332,15 +355,17 @@
       const selectedName = item.dataset.name;
       const selectedDomain = item.dataset.domain || '';
       const selectedLogoUrl = item.dataset.logoUrl || '';
+      const selectedCompanyEntityId = Number(item.dataset.companyEntityId) || 0;
+      const selectedSource = item.dataset.source || '';
       const outOfCapacity = isMaxCompanies();
 
       if (isMulti && !outOfCapacity) {
-        renderNewTag(selectedName, selectedDomain, item, undefined, selectedLogoUrl);
+        renderNewTag(selectedName, selectedDomain, item, undefined, selectedLogoUrl, selectedCompanyEntityId, selectedSource);
 
       } else {
         input.value = selectedName;
-        lastQuery = selectedName;
-        storeSingleSelection(selectedName, selectedDomain, selectedLogoUrl);
+        renderedQuery = selectedName;
+        storeSingleSelection(selectedName, selectedDomain, selectedLogoUrl, selectedCompanyEntityId, selectedSource);
         closeDropdown();
       }
 

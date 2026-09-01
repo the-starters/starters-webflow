@@ -7,6 +7,7 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const SOURCE = path.join(__dirname, '../starter-edit-profile/company-autocomplete.js')
+const BUILD_SOURCE = path.join(__dirname, '../build-profile/company-autocomplete.js')
 const SLOW_SEARCH_DELAY_MS = 4000
 
 function element(overrides = {}) {
@@ -34,7 +35,7 @@ function element(overrides = {}) {
   return Object.assign(node, overrides)
 }
 
-function boot() {
+function boot(source = SOURCE) {
   const group = element()
   const searchGroup = element()
   const valueInput = element()
@@ -119,7 +120,7 @@ function boot() {
   context.window = context
   context.window.xanoAuthFetch = async () => ({ ok: true, json: async () => [] })
   vm.createContext(context)
-  new vm.Script(fs.readFileSync(SOURCE, 'utf8'), { filename: SOURCE }).runInContext(context)
+  new vm.Script(fs.readFileSync(source, 'utf8'), { filename: source }).runInContext(context)
   for (const listener of domReady) listener()
 
   const settle = () => new Promise((resolve) => setImmediate(resolve))
@@ -214,6 +215,36 @@ test('a superseded company search aborts the older network request', async () =>
   assert.deepEqual(harness.fetchedQueries, ['open', 'openstore'])
   assert.deepEqual(harness.abortedQueries, ['open'])
   assert.doesNotMatch(harness.dropdown.innerHTML, /Search unavailable/)
+})
+
+test('Build Profile also aborts an older company search and rejects its stale response', async () => {
+  const harness = await boot(BUILD_SOURCE)
+
+  await harness.search('open')
+  await harness.search('openstore')
+
+  assert.deepEqual(harness.fetchedQueries, ['open', 'openstore'])
+  assert.deepEqual(harness.abortedQueries, ['open'])
+  await harness.resolveSearch('openstore', [{
+    name: 'OpenStore',
+    domain: '',
+    logo_url: '',
+    company_entity_id: 1448,
+    source: 'platform',
+  }])
+  assert.match(harness.dropdown.innerHTML, /OpenStore/)
+  assert.match(harness.dropdown.innerHTML, /data-company-entity-id="1448"/)
+})
+
+test('provider matches still include an explicit custom-company choice', async () => {
+  const harness = await boot()
+
+  await harness.search('acme corp')
+  await harness.resolveSearch('acme corp', ACME)
+
+  assert.match(harness.dropdown.innerHTML, /Acme Corp/)
+  assert.match(harness.dropdown.innerHTML, /data-source="custom"/)
+  assert.match(harness.dropdown.innerHTML, /Use custom company/)
 })
 
 test('an abandoned search does not report failure over the dismissed dropdown', async () => {
