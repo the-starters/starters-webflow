@@ -2371,6 +2371,7 @@
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_END_MODAL_ID = 'end-project'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
+  const PROJECT_REVIEWABLE_STATES = new Set(['completed', 'terminated'])
   // Sent documents use recipient view/sign sessions. Completed documents use
   // a separate protected-PDF route and never mint a signing session.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
@@ -3660,8 +3661,8 @@
     return lifecycleState(project) === 'pending' ? 'cancel' : 'choose'
   }
 
-  // Ending finalizes on the first action, so a completion always reaches
-  // `completed` and the brand's review always saves in the same pass.
+  // Ending finalizes on the first action, so the project reaches a terminal
+  // state in one pass and the brand's optional review saves alongside it.
   function endProjectView(project, role, mode) {
     const step = endProjectStep(project)
     const counterparty = role === 'brand' ? 'Starter' : 'Brand'
@@ -3669,12 +3670,16 @@
       return {
         step,
         action: 'cancel',
-        reason: 'canceled_before_activation',
+        reason: '',
         title: 'Cancel Project',
-        subtitle: 'This project has not started yet. Cancel it before it begins?',
+        subtitle: 'This project has not started yet. Tell us what happened before cancelling.',
         submit: 'Cancel Project',
-        showReason: false,
-        requireReason: false,
+        // A cancellation captures an internal record of what happened for
+        // admin ops (JP, 2026-09-01). It is deliberately NOT a review: it never
+        // reaches core_reviews_v3, never shows on /hire, and never moves
+        // ranking points. The text rides along as the project's cancel reason.
+        showReason: true,
+        requireReason: true,
         showReview: false,
         showToggle: false,
       }
@@ -3695,7 +3700,7 @@
         submit: 'End Project Early',
         showReason: false,
         requireReason: false,
-        showReview: false,
+        showReview: role === 'brand' && !project.has_review,
         showToggle: false,
       }
     }
@@ -3713,7 +3718,7 @@
         : role === 'brand' ? 'End Project and Submit Review' : 'Mark Work Complete',
       showReason: early,
       requireReason: early,
-      showReview: !early && role === 'brand' && !project.has_review,
+      showReview: role === 'brand' && !project.has_review,
       showToggle: true,
       toggle: early ? 'The work is finished instead' : 'End this project early instead',
     }
@@ -3745,6 +3750,18 @@
     if (parts.title) parts.title.textContent = view.title
     if (parts.subtitle) parts.subtitle.textContent = view.subtitle
     parts.reviewGroups.forEach((group) => setEndProjectVisible(group, view.showReview))
+    // The review is optional, but the Webflow feedback field carries `required`.
+    // A visible required control would refuse an intentionally empty review the
+    // same way a hidden one refused every submit, so drop the native constraint
+    // and let the JS validation own the partly-filled case.
+    if (view.showReview) {
+      parts.reviewGroups.forEach((group) => {
+        $$('input, select, textarea', group).forEach((control) => {
+          control.required = false
+          delete control.dataset.endProjectRequired
+        })
+      })
+    }
     setEndProjectVisible(parts.reasonWrap, view.showReason)
     setEndProjectVisible(parts.toggle, view.showToggle)
     if (parts.toggle && view.toggle) parts.toggle.textContent = view.toggle
@@ -3822,9 +3839,12 @@
   function endProjectPromptIntent(project, confirmAction, promptAction) {
     const step = endProjectStep(project)
     if (step === 'cancel') {
-      return confirmAction('Cancel this project before it starts?')
-        ? { action: 'cancel', reason: 'canceled_before_activation' }
-        : null
+      const response = promptAction(
+        'Tell us what happened before cancelling this project. Leave blank to keep it active.',
+        '',
+      )
+      const reason = String(response || '').trim()
+      return reason ? { action: 'cancel', reason } : null
     }
     const pendingReason = lifecycleState(project) === 'termination_requested'
       ? String(project.end_reason || '').trim()
@@ -3875,7 +3895,9 @@
       if (!reason) {
         reviewError(
           modal,
-          'Give a reason for ending this project early.',
+          view.action === 'cancel'
+            ? 'Tell us what happened before cancelling this project.'
+            : 'Give a reason for ending this project early.',
           validationDiagnostic('project_end', 'reason', 'MISSING_REASON'),
         )
         return
@@ -3887,23 +3909,29 @@
       const reviewInput = $('[name="Public-Feedback"], [name="Feedback"]', form)
       const rating = Number(ratingInput && ratingInput.value)
       const reviewText = String(reviewInput && reviewInput.value || '').trim()
-      if (!(rating >= 1 && rating <= 5)) {
-        reviewError(
-          modal,
-          'Choose a rating from 1 to 5 stars.',
-          validationDiagnostic('project_end', 'review', 'INVALID_RATING'),
-        )
-        return
+      // The review is optional (JP, 2026-09-01): completing or ending early
+      // must succeed with nothing filled in. A partly filled review is a mistake
+      // rather than a choice, so validate both fields once either is touched.
+      const started = rating >= 1 || reviewText !== ''
+      if (started) {
+        if (!(rating >= 1 && rating <= 5)) {
+          reviewError(
+            modal,
+            'Choose a rating from 1 to 5 stars, or clear your feedback to skip the review.',
+            validationDiagnostic('project_end', 'review', 'INVALID_RATING'),
+          )
+          return
+        }
+        if (reviewText.length < 10 || reviewText.length > 4000) {
+          reviewError(
+            modal,
+            'Write between 10 and 4,000 characters, or clear the rating to skip the review.',
+            validationDiagnostic('project_end', 'review', 'INVALID_REVIEW_LENGTH'),
+          )
+          return
+        }
+        intent.review = { rating, reviewText, form }
       }
-      if (reviewText.length < 10 || reviewText.length > 4000) {
-        reviewError(
-          modal,
-          'Write between 10 and 4,000 characters.',
-          validationDiagnostic('project_end', 'review', 'INVALID_REVIEW_LENGTH'),
-        )
-        return
-      }
-      intent.review = { rating, reviewText, form }
     }
     // Resolve before closing: closing dispatches `modal-close`, whose listener
     // cancels a still-pending request and would discard this intent.
@@ -3911,13 +3939,13 @@
     closeEndProjectModal(modal)
   }
 
-  // A review row exists only for a `completed` project. A termination or an
-  // unexpected non-completed response must never receive a review.
+  // A review attaches only to a completed or terminated project. Anything else
+  // means the action did not finalize into a reviewable state.
   async function submitEndProjectReview(intent, project) {
     const review = intent && intent.review
     if (!review) return ''
-    if (lifecycleState(project) !== 'completed') {
-      return 'Project ended. The review was not submitted.'
+    if (!PROJECT_REVIEWABLE_STATES.has(lifecycleState(project))) {
+      return 'Project updated. The review was not submitted.'
     }
     try {
       await API.brandReviewSubmit({
@@ -3932,9 +3960,9 @@
         ),
       })
       clearReviewSubmissionKey(review.form)
-      return 'Project completed and review submitted'
+      return projectMutationFeedback(project) + ' and review submitted'
     } catch (error) {
-      return 'Project completed. The review did not save, please try Review Starter.'
+      return projectMutationFeedback(project) + '. The review did not save, please try Review Starter.'
     }
   }
 
