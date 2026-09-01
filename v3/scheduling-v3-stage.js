@@ -28,6 +28,7 @@
     'booking/decline': 'booking/decline/v3',
     'booking/reschedule': 'booking/reschedule/v3',
     'booking/reschedule/propose': 'booking/reschedule/propose/v3',
+    'booking/reschedule/request': 'booking/reschedule/request/v3',
     'booking/reschedule/confirm': 'booking/reschedule/confirm/v3',
     'booking/reschedule/decline': 'booking/reschedule/decline/v3',
     'booking_record/archive': 'booking_record/archive/v3',
