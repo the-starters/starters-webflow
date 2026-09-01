@@ -1111,6 +1111,7 @@ requesting party, or fail closed when a request timestamp is missing. A stranded
 termination reuses its recorded `end_reason` and does not show the reason input,
 because Xano #1679 rejects a terminate action whose reason differs from the one
 already on file.
+
 Immediately before every mutation, the controller refreshes the canonical project
 and requires a nonnegative `lifecycle_version`. It then posts `project_id`,
 `expected_version`, `action`, `reason`, and a retry-stable idempotency key to

@@ -7274,8 +7274,8 @@ test('binding a live wrap force-hides a leftover nested Spinner', async () => {
 })
 
 // The end-project modal replaces the native prompt/confirm intent capture.
-// These cases pin the two-sided handshake copy, the required early-end
-// reason, the review-timing rule, and the prompt fallback for pages that
+// These cases pin first-action finalization, the required early-end reason,
+// the review-timing rule, and the prompt fallback for pages that
 // were published before the modal markup shipped.
 function endProjectDom(overrides = {}) {
   const end = el('a', { 'wf-xano-link': 'project-end', href: '#' })
@@ -7832,6 +7832,8 @@ test('a project stranded in termination_requested reuses its recorded reason', a
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
   assert.match(dom.subtitle.textContent, /Reason already on file: Test Project End/)
+  assert.equal(dom.reasonWrap.style.display, 'none')
+  assert.equal(dom.toggle.style.display, 'none')
 
   bridge.dispatchDocument('submit', {
     target: dom.form,
@@ -7841,4 +7843,109 @@ test('a project stranded in termination_requested reuses its recorded reason', a
   assert.ok(await waitFor(() => actionBody !== null))
   assert.equal(actionBody.action, 'terminate')
   assert.equal(actionBody.reason, 'Test Project End')
+})
+
+test('prompt fallback for a stranded termination reuses its recorded reason', async () => {
+  const dom = endProjectDom()
+  dom.modal.attributes.delete('data-modal-target')
+  let actionBody = null
+  let confirmMessage = ''
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'termination_requested',
+            lifecycle_version: 4,
+            end_reason: 'Test Project End',
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({
+          project: { id: 675, lifecycle_state: 'terminated', lifecycle_version: 5 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  bridge.window.confirm = (message) => {
+    confirmMessage = message
+    return true
+  }
+  bridge.window.prompt = () => {
+    throw new Error('prompt must not replace the reason already on file')
+  }
+
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+
+  assert.ok(await waitFor(() => actionBody !== null))
+  assert.match(confirmMessage, /Reason already on file: Test Project End/)
+  assert.equal(actionBody.action, 'terminate')
+  assert.equal(actionBody.reason, 'Test Project End')
+})
+
+test('a project stranded in completion_requested stays actionable and submits its review', async () => {
+  const dom = endProjectDom()
+  let actionBody = null
+  let reviewBody = null
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completion_requested',
+            lifecycle_version: 4,
+            has_review: false,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({
+          project: {
+            id: 675,
+            lifecycle_state: 'completed',
+            lifecycle_version: 5,
+            starter_name: 'JP Test',
+          },
+        })
+      }
+      if (url.includes('/brand/reviews/submit')) {
+        reviewBody = JSON.parse(init.body)
+        return response({ review_id: 42 })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+  assert.equal(dom.end.hasAttribute('data-project-action-waiting'), false)
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => reviewBody !== null))
+  assert.equal(actionBody.action, 'complete')
+  assert.equal(actionBody.reason, '')
+  assert.equal(reviewBody.project_id, 675)
+  assert.equal(reviewBody.rating, 5)
+  assert.equal(reviewBody.review_text, 'Excellent collaboration overall.')
 })
