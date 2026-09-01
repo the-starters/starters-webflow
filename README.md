@@ -1154,13 +1154,13 @@ with the exact validation reason, including when diagnostics record a receipt.
 They accept the live `Feedback` field and the legacy `Public-Feedback` field
 during the authored surface transition.
 
-The Brand end-project form offers its rating and public-review fields for both
-completion and early end, but not cancellation. The review is optional. If the
-Brand enters either a rating or review text, JavaScript requires both a 1–5
+The Brand end-project form offers its rating and public-review fields only for
+normal completion, not early end or cancellation. The review is optional. If
+the Brand enters either a rating or review text, JavaScript requires both a 1–5
 rating and a 10–4,000 character review before posting the project action. When
-the action response reaches a reviewable state, `completed` or `terminated`,
-the controller submits the review to `brand/reviews/submit` in the same pass.
-`canceled` and `cancelled` responses never receive a review. A review failure
+the action response reaches `completed`, the controller submits the review to
+`brand/reviews/submit` in the same pass. Termination never submits a review,
+and `canceled` or `cancelled` responses never receive one. A review failure
 after the project closes does not roll back the project and directs the Brand
 to retry through Review Starter.
 
