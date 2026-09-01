@@ -8,6 +8,8 @@
   var MEMBER_ID_PATTERN = /^mem_(?:sb_)?[A-Za-z0-9]+$/
   var MEMBERSTACK_TIMEOUT_MS = 2000
   var MEMBERSTACK_POLL_MS = 100
+  var PROFILE_POLL_MS = 10000
+  var PROFILE_PUBLISHING_LABEL = 'View Profile (Publishing)'
 
   function hide(element) {
     element.style.display = 'none'
@@ -15,6 +17,30 @@
 
   function show(element) {
     element.style.display = ''
+  }
+
+  function disabledClass(element) {
+    var className = element.getAttribute('data-class-disabled') || ''
+    return className.trim().replace(/^\./, '')
+  }
+
+  function setProfilePublishing(element) {
+    var className = disabledClass(element)
+    if (className) element.classList.add(className)
+    element.setAttribute('aria-disabled', 'true')
+    element.textContent = PROFILE_PUBLISHING_LABEL
+    show(element)
+  }
+
+  function setProfilePublished(element, slug, label) {
+    var className = disabledClass(element)
+    if (className) element.classList.remove(className)
+    element.removeAttribute('aria-disabled')
+    element.textContent = label
+    element.href = V3_PROFILE_PREFIX + encodeURIComponent(slug)
+    element.removeAttribute('target')
+    element.removeAttribute('rel')
+    show(element)
   }
 
   function bindLegacyField(element, memberData, fieldKey) {
@@ -72,7 +98,13 @@
   }
 
   function bindV3Profile(element) {
-    hide(element)
+    var publishedLabel = element.textContent || 'View Profile'
+    setProfilePublishing(element)
+    element.addEventListener('click', function (event) {
+      if (element.getAttribute('aria-disabled') !== 'true') return
+      event.preventDefault()
+      event.stopPropagation()
+    })
     if (typeof fetch !== 'function') return
 
     waitForMemberstackReady()
@@ -86,27 +118,34 @@
         var memberId = member && typeof member.id === 'string' ? member.id.trim() : ''
         if (!MEMBER_ID_PATTERN.test(memberId)) return null
 
-        return fetch(SLUG_RESOLVER_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ member_id: memberId }),
-        })
-      })
-      .then(function (response) {
-        if (!response || response.ok === false) return null
-        return response.json()
-      })
-      .then(function (data) {
-        var slug = data && typeof data.slug === 'string' ? data.slug.trim() : ''
-        if (!slug) return
+        function resolveProfile() {
+          fetch(SLUG_RESOLVER_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ member_id: memberId }),
+          })
+            .then(function (response) {
+              if (!response || response.ok === false) return null
+              return response.json()
+            })
+            .then(function (data) {
+              var slug = data && typeof data.slug === 'string' ? data.slug.trim() : ''
+              if (slug) {
+                setProfilePublished(element, slug, publishedLabel)
+                return
+              }
+              window.setTimeout(resolveProfile, PROFILE_POLL_MS)
+            })
+            .catch(function () {
+              window.setTimeout(resolveProfile, PROFILE_POLL_MS)
+            })
+        }
 
-        element.href = V3_PROFILE_PREFIX + encodeURIComponent(slug)
-        element.removeAttribute('target')
-        element.removeAttribute('rel')
-        show(element)
+        resolveProfile()
+        return null
       })
       .catch(function () {
-        hide(element)
+        // Keep the visible publishing state. The next page load can resolve it.
       })
   }
 

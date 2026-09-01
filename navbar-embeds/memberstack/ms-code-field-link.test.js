@@ -23,6 +23,14 @@ class Link {
     this.href = this.attributes.get('href') || ''
     this.target = this.attributes.get('target') || ''
     this.rel = this.attributes.get('rel') || ''
+    this.textContent = this.attributes.get('textContent') || 'View Profile'
+    this.classes = new Set()
+    this.listeners = new Map()
+    this.classList = {
+      add: (name) => this.classes.add(name),
+      remove: (name) => this.classes.delete(name),
+      contains: (name) => this.classes.has(name),
+    }
   }
 
   getAttribute(name) {
@@ -34,17 +42,45 @@ class Link {
     if (name === 'target') this.target = ''
     if (name === 'rel') this.rel = ''
   }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value))
+  }
+
+  addEventListener(type, listener) {
+    this.listeners.set(type, listener)
+  }
+
+  click() {
+    const event = {
+      defaultPrevented: false,
+      propagationStopped: false,
+      preventDefault() {
+        this.defaultPrevented = true
+      },
+      stopPropagation() {
+        this.propagationStopped = true
+      },
+    }
+    const listener = this.listeners.get('click')
+    if (listener) listener(event)
+    return event
+  }
 }
 
 function load(options) {
   const links = options.links || []
   const listeners = new Map()
   const requests = []
+  const timers = []
   const context = {
     URL,
     Date,
     Promise,
-    setTimeout,
+    setTimeout(callback, delay) {
+      timers.push({ callback, delay })
+      return timers.length
+    },
     document: {
       addEventListener(type, listener) {
         listeners.set(type, listener)
@@ -62,6 +98,7 @@ function load(options) {
     },
     fetch: async (url, init) => {
       requests.push({ url, init })
+      if (options.responses && options.responses.length) return options.responses.shift()
       return options.response || { ok: true, json: async () => ({ slug: 'jp-dionisio' }) }
     },
   }
@@ -75,7 +112,7 @@ function load(options) {
 
   vm.runInNewContext(SOURCE, context)
   listeners.get('DOMContentLoaded')()
-  return { context, links, requests }
+  return { context, links, requests, timers }
 }
 
 async function flush() {
@@ -89,6 +126,7 @@ test('View Profile waits for live Memberstack identity and ignores a stale membe
     target: '_blank',
     rel: 'noopener noreferrer',
     'ms-code-field-link': 'freelancer-profile-url',
+    'data-class-disabled': '.is-disabled',
   })
   const result = load({
     links: [link],
@@ -99,7 +137,10 @@ test('View Profile waits for live Memberstack identity and ignores a stale membe
     currentMember: { id: 'mem_live456' },
   })
 
-  assert.equal(link.style.display, 'none')
+  assert.equal(link.style.display, '')
+  assert.equal(link.textContent, 'View Profile (Publishing)')
+  assert.equal(link.classList.contains('is-disabled'), true)
+  assert.equal(link.getAttribute('aria-disabled'), 'true')
   await flush()
 
   assert.equal(result.requests.length, 1)
@@ -108,6 +149,9 @@ test('View Profile waits for live Memberstack identity and ignores a stale membe
   assert.equal(link.target, '')
   assert.equal(link.rel, '')
   assert.equal(link.style.display, '')
+  assert.equal(link.textContent, 'View Profile')
+  assert.equal(link.classList.contains('is-disabled'), false)
+  assert.equal(link.getAttribute('aria-disabled'), null)
 })
 
 test('View Profile awaits memberReady before reading the live Memberstack identity', async () => {
@@ -126,7 +170,7 @@ test('View Profile awaits memberReady before reading the live Memberstack identi
     },
   })
 
-  assert.equal(link.style.display, 'none')
+  assert.equal(link.style.display, '')
   await flush()
   assert.equal(currentMemberReads, 0)
   assert.equal(result.requests.length, 0)
@@ -140,20 +184,45 @@ test('View Profile awaits memberReady before reading the live Memberstack identi
   assert.equal(link.style.display, '')
 })
 
-test('View Profile stays hidden when no published V3 slug exists', async () => {
-  const link = new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' })
-  load({
+test('View Profile shows a disabled publishing state and activates after the profile publishes', async () => {
+  const link = new Link({
+    href: '#',
+    'ms-code-field-link': 'freelancer-profile-url',
+    'data-class-disabled': '.is-disabled',
+  })
+  const result = load({
     links: [link],
     member: {
       id: 'mem_abc123',
       customFields: { 'freelancer-profile-url': 'https://hirethestarters.com/freelancers-v2/123' },
     },
-    response: { ok: true, json: async () => ({ slug: '' }) },
+    responses: [
+      { ok: true, json: async () => ({ slug: '' }) },
+      { ok: true, json: async () => ({ slug: 'new-starter' }) },
+    ],
   })
 
   await flush()
   assert.equal(link.href, '#')
-  assert.equal(link.style.display, 'none')
+  assert.equal(link.style.display, '')
+  assert.equal(link.textContent, 'View Profile (Publishing)')
+  assert.equal(link.classList.contains('is-disabled'), true)
+  assert.equal(link.getAttribute('aria-disabled'), 'true')
+  const disabledClick = link.click()
+  assert.equal(disabledClick.defaultPrevented, true)
+  assert.equal(disabledClick.propagationStopped, true)
+  assert.equal(result.timers.length, 1)
+  assert.equal(result.timers[0].delay, 10000)
+
+  result.timers.shift().callback()
+  await flush()
+
+  assert.equal(result.requests.length, 2)
+  assert.equal(link.href, '/hire/new-starter')
+  assert.equal(link.textContent, 'View Profile')
+  assert.equal(link.classList.contains('is-disabled'), false)
+  assert.equal(link.getAttribute('aria-disabled'), null)
+  assert.equal(link.click().defaultPrevented, false)
 })
 
 test('other member-field links keep their existing external-link behavior', async () => {
