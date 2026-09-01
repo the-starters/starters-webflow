@@ -102,6 +102,11 @@
           "reviewer-3": normalizeReviewer(parseJson(formData["reviewer-3"])),
         };
 
+        const paidCallRate = toInteger(formData["paid-call-rate"]);
+        const isConsultProfile = String(window.location?.pathname || "").replace(/\/+$/, "") === "/build-profile/consult";
+        const paidCallEnabled = toBool(formData["paid-consulting-calls"]) === true ||
+          (isConsultProfile && paidCallRate > 0);
+
         const payload = {
           member_id: MEMBER.id || "",
 
@@ -153,9 +158,12 @@
           free_call: toBool(formData["free-consulting-calls"]),
           free_call_desc: formData["free-call-description"] || "",
 
-          paid_call: toBool(formData["paid-consulting-calls"]),
+          // The authored paid-call control is hidden in the consult flow. A positive
+          // member-entered rate is therefore the reliable enablement signal even if
+          // fallback hydration left the hidden radio on "no".
+          paid_call: paidCallEnabled,
           paid_call_desc: formData["paid-call-description"] || "",
-          paid_call_rate: toInteger(formData["paid-call-rate"]),
+          paid_call_rate: paidCallRate,
 
           retainer: toBool(formData["offer-monthly-retainers"]),
           retainer_desc: formData["description-retainer"] || "",

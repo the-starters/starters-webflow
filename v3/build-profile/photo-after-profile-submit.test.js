@@ -17,7 +17,7 @@ function element() {
   }
 }
 
-test('Build saves before its photo, reuses unchanged saves, and resaves changed retry payloads', async () => {
+test('Build preserves Full Profile paid-call No while retrying photo saves', async () => {
   const form = element()
   const submit = element()
   const success = element()
@@ -28,6 +28,7 @@ test('Build saves before its photo, reuses unchanged saves, and resaves changed 
 
   let domReady
   let profileSaves = 0
+  const submittedPayloads = []
   let photoAttempts = 0
   let photoPending = true
   const order = []
@@ -54,9 +55,12 @@ test('Build saves before its photo, reuses unchanged saves, and resaves changed 
       yield ['first-name', firstName]
       yield ['last-name', 'Starter']
       yield ['phone', '']
+      yield ['paid-consulting-calls', 'no']
+      yield ['paid-call-rate', '200']
     }
   }
   const window = {
+    location: { pathname: '/build-profile/full-profile' },
     StartersBuildProfilePhotoUpload: photoUpload,
     intlTelInput: { getInstance: () => null },
     $memberstackDom: {
@@ -69,15 +73,16 @@ test('Build saves before its photo, reuses unchanged saves, and resaves changed 
     document: { addEventListener(type, listener) { if (type === 'DOMContentLoaded') domReady = listener } },
     FormData: TestFormData,
     MEMBER: { id: 'member-1', auth: { email: 'profile@example.invalid' }, customFields: {} },
-    activeProfile: { type: 'full-profile', type_id: 'full-profile-id' },
+    activeProfile: { type: 'full', type_id: 'full-profile-id' },
     qs(selector, root) {
       if (root === form && selector === '[form-submit]') return submit
       return fields.get(selector) || null
     },
     setLoader() {},
     waitForMember(callback) { callback() },
-    xanoAuthFetch: async () => {
+    xanoAuthFetch: async (_url, options) => {
       profileSaves += 1
+      submittedPayloads.push(JSON.parse(options.body))
       order.push('profile-save')
       return {
         ok: true,
@@ -100,6 +105,8 @@ test('Build saves before its photo, reuses unchanged saves, and resaves changed 
 
   await assert.rejects(click({ preventDefault() {} }), /synthetic photo failure/)
   assert.equal(profileSaves, 1)
+  assert.equal(submittedPayloads[0].paid_call, false)
+  assert.equal(submittedPayloads[0].paid_call_rate, 200)
   assert.equal(photoAttempts, 1)
   assert.equal(failure.style.display, 'block')
   assert.equal(success.style.display, 'none')
@@ -113,6 +120,8 @@ test('Build saves before its photo, reuses unchanged saves, and resaves changed 
   firstName = 'Changed'
   await click({ preventDefault() {} })
   assert.equal(profileSaves, 2)
+  assert.equal(submittedPayloads[1].paid_call, false)
+  assert.equal(submittedPayloads[1].paid_call_rate, 200)
   assert.equal(photoAttempts, 3)
   assert.equal(form.style.display, 'none')
   assert.equal(failure.style.display, 'none')
