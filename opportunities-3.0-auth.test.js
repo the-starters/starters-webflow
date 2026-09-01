@@ -1766,7 +1766,10 @@ test('project lifecycle replay retries transient failure and accepts earlier exh
       },
     },
   )
-  bridge.window.prompt = () => 'COMPLETE'
+  bridge.window.confirm = () => true
+  bridge.window.prompt = () => {
+    throw new Error('active project fallback must not expose a text input')
+  }
   assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
 
   bridge.dispatchDocument('click', clickEvent(end).event)
@@ -1798,7 +1801,7 @@ test('project lifecycle lock follows replacement controls during replay', async 
   const handlers = new Set()
   const firstPageTwo = deferred()
   let holdFirstPageTwo = true
-  let prompts = 0
+  let confirmations = 0
   let mutations = 0
   let state = {
     status: 'success',
@@ -1876,9 +1879,12 @@ test('project lifecycle lock follows replacement controls during replay', async 
       },
     },
   )
+  bridge.window.confirm = () => {
+    confirmations += 1
+    return true
+  }
   bridge.window.prompt = () => {
-    prompts += 1
-    return 'COMPLETE'
+    throw new Error('active project fallback must not expose a text input')
   }
   assert.ok(await waitFor(() => live.end.getAttribute('data-project-action') === 'end'))
   const firstAction = live.end
@@ -1888,14 +1894,14 @@ test('project lifecycle lock follows replacement controls during replay', async 
   assert.ok(await waitFor(() => live.end !== firstAction && live.wrap.getAttribute('aria-disabled') === 'true'))
   bridge.dispatchDocument('click', clickEvent(live.end).event)
   await new Promise(setImmediate)
-  assert.equal(prompts, 0)
+  assert.equal(confirmations, 0)
   assert.equal(mutations, 0)
 
   firstPageTwo.resolve()
   assert.ok(await waitFor(
     () => mutations === 1 && live.wrap.getAttribute('aria-disabled') === null,
   ))
-  assert.equal(prompts, 1)
+  assert.equal(confirmations, 1)
 })
 
 test('project contract lock follows replacement controls during replay', async () => {
@@ -2135,7 +2141,10 @@ test('project lifecycle success survives repeated failure on the same replay pag
       },
     },
   )
-  bridge.window.prompt = () => 'COMPLETE'
+  bridge.window.confirm = () => true
+  bridge.window.prompt = () => {
+    throw new Error('active project fallback must not expose a text input')
+  }
   assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
   const timers = []
   bridge.window.setTimeout = (callback, delay) => {
@@ -2267,7 +2276,10 @@ test('project lifecycle success uses stable feedback after page-one replay failu
       },
     },
   )
-  bridge.window.prompt = () => 'COMPLETE'
+  bridge.window.confirm = () => true
+  bridge.window.prompt = () => {
+    throw new Error('active project fallback must not expose a text input')
+  }
   assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
 
   bridge.dispatchDocument('click', clickEvent(end).event)
@@ -4044,7 +4056,10 @@ test('lifecycle actions refresh and require a canonical version before mutation'
       routeGuard: true,
     },
   )
-  bridge.window.prompt = () => 'COMPLETE'
+  bridge.window.confirm = () => true
+  bridge.window.prompt = () => {
+    throw new Error('active project fallback must not expose a text input')
+  }
   assert.ok(await waitFor(() => listCount === 1))
 
   bridge.dispatchDocument('click', clickEvent(end).event)
@@ -4098,7 +4113,10 @@ test('lifecycle success survives a failed projection refresh', async () => {
       routeGuard: true,
     },
   )
-  bridge.window.prompt = () => 'COMPLETE'
+  bridge.window.confirm = () => true
+  bridge.window.prompt = () => {
+    throw new Error('active project fallback must not expose a text input')
+  }
   assert.ok(await waitFor(() => listCount === 1))
 
   bridge.dispatchDocument('click', clickEvent(end).event)
