@@ -2371,6 +2371,9 @@
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_END_MODAL_ID = 'end-project'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
+  // Xano #1674 accepts a review on any closed project (widened 2026-09-01),
+  // so the browser guard must match that set rather than completion alone.
+  const PROJECT_REVIEWABLE_STATES = PROJECT_TERMINAL_STATES
   // Sent documents use recipient view/sign sessions. Completed documents use
   // a separate protected-PDF route and never mint a signing session.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
@@ -3660,8 +3663,9 @@
     return lifecycleState(project) === 'pending' ? 'cancel' : 'choose'
   }
 
-  // Ending finalizes on the first action, so a completion always reaches
-  // `completed` and the brand's review always saves in the same pass.
+  // Ending finalizes on the first action, so the project reaches a terminal
+  // state in one pass and the brand's optional review saves alongside it.
+  // JP opened reviews to early ends and cancellations on 2026-09-01.
   function endProjectView(project, role, mode) {
     const step = endProjectStep(project)
     const counterparty = role === 'brand' ? 'Starter' : 'Brand'
@@ -3675,7 +3679,7 @@
         submit: 'Cancel Project',
         showReason: false,
         requireReason: false,
-        showReview: false,
+        showReview: role === 'brand' && !project.has_review,
         showToggle: false,
       }
     }
@@ -3695,7 +3699,7 @@
         submit: 'End Project Early',
         showReason: false,
         requireReason: false,
-        showReview: false,
+        showReview: role === 'brand' && !project.has_review,
         showToggle: false,
       }
     }
@@ -3713,7 +3717,7 @@
         : role === 'brand' ? 'End Project and Submit Review' : 'Mark Work Complete',
       showReason: early,
       requireReason: early,
-      showReview: !early && role === 'brand' && !project.has_review,
+      showReview: role === 'brand' && !project.has_review,
       showToggle: true,
       toggle: early ? 'The work is finished instead' : 'End this project early instead',
     }
@@ -3745,6 +3749,18 @@
     if (parts.title) parts.title.textContent = view.title
     if (parts.subtitle) parts.subtitle.textContent = view.subtitle
     parts.reviewGroups.forEach((group) => setEndProjectVisible(group, view.showReview))
+    // The review is optional, but the Webflow feedback field carries `required`.
+    // A visible required control would refuse an intentionally empty review the
+    // same way a hidden one refused every submit, so drop the native constraint
+    // and let the JS validation own the partly-filled case.
+    if (view.showReview) {
+      parts.reviewGroups.forEach((group) => {
+        $$('input, select, textarea', group).forEach((control) => {
+          control.required = false
+          delete control.dataset.endProjectRequired
+        })
+      })
+    }
     setEndProjectVisible(parts.reasonWrap, view.showReason)
     setEndProjectVisible(parts.toggle, view.showToggle)
     if (parts.toggle && view.toggle) parts.toggle.textContent = view.toggle
@@ -3887,23 +3903,29 @@
       const reviewInput = $('[name="Public-Feedback"], [name="Feedback"]', form)
       const rating = Number(ratingInput && ratingInput.value)
       const reviewText = String(reviewInput && reviewInput.value || '').trim()
-      if (!(rating >= 1 && rating <= 5)) {
-        reviewError(
-          modal,
-          'Choose a rating from 1 to 5 stars.',
-          validationDiagnostic('project_end', 'review', 'INVALID_RATING'),
-        )
-        return
+      // The review is optional (JP, 2026-09-01): ending or cancelling must
+      // succeed with nothing filled in. A partly filled review is a mistake
+      // rather than a choice, so validate both fields once either is touched.
+      const started = rating >= 1 || reviewText !== ''
+      if (started) {
+        if (!(rating >= 1 && rating <= 5)) {
+          reviewError(
+            modal,
+            'Choose a rating from 1 to 5 stars, or clear your feedback to skip the review.',
+            validationDiagnostic('project_end', 'review', 'INVALID_RATING'),
+          )
+          return
+        }
+        if (reviewText.length < 10 || reviewText.length > 4000) {
+          reviewError(
+            modal,
+            'Write between 10 and 4,000 characters, or clear the rating to skip the review.',
+            validationDiagnostic('project_end', 'review', 'INVALID_REVIEW_LENGTH'),
+          )
+          return
+        }
+        intent.review = { rating, reviewText, form }
       }
-      if (reviewText.length < 10 || reviewText.length > 4000) {
-        reviewError(
-          modal,
-          'Write between 10 and 4,000 characters.',
-          validationDiagnostic('project_end', 'review', 'INVALID_REVIEW_LENGTH'),
-        )
-        return
-      }
-      intent.review = { rating, reviewText, form }
     }
     // Resolve before closing: closing dispatches `modal-close`, whose listener
     // cancels a still-pending request and would discard this intent.
@@ -3911,13 +3933,14 @@
     closeEndProjectModal(modal)
   }
 
-  // A review row exists only for a `completed` project. A termination or an
-  // unexpected non-completed response must never receive a review.
+  // A review attaches to a closed project: completed, terminated, or canceled
+  // (Xano #1674 widened 2026-09-01). Anything else means the action did not
+  // finalize, so the review must not be posted.
   async function submitEndProjectReview(intent, project) {
     const review = intent && intent.review
     if (!review) return ''
-    if (lifecycleState(project) !== 'completed') {
-      return 'Project ended. The review was not submitted.'
+    if (!PROJECT_REVIEWABLE_STATES.has(lifecycleState(project))) {
+      return 'Project updated. The review was not submitted.'
     }
     try {
       await API.brandReviewSubmit({
@@ -3932,9 +3955,9 @@
         ),
       })
       clearReviewSubmissionKey(review.form)
-      return 'Project completed and review submitted'
+      return projectMutationFeedback(project) + ' and review submitted'
     } catch (error) {
-      return 'Project completed. The review did not save, please try Review Starter.'
+      return projectMutationFeedback(project) + '. The review did not save, please try Review Starter.'
     }
   }
 
