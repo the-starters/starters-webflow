@@ -1706,6 +1706,9 @@ test('the shared reason panel carries the copy of the contract in play', () => {
   )
   const untouched = leaf('If you would like to discuss options, reach out through the Messages tab')
   const panel = {
+    querySelector() {
+      return null
+    },
     querySelectorAll(selector) {
       assert.equal(selector, 'p, h1, h2, h3')
       return [title, body, untouched]
@@ -1829,4 +1832,32 @@ test('only the pending contract restates the booking before showing its success 
     global.sessionStorage = originalStorage
     global.crypto = originalCrypto
   }
+})
+
+test('the authored booking-copy hooks are preferred over matching the copy strings', () => {
+  const title = { children: [], textContent: 'Propose a new time' }
+  const body = { children: [], textContent: 'anything the Designer happens to say today' }
+  const panel = {
+    querySelector(selector) {
+      if (selector === '[booking-copy="reschedule-title"]') return title
+      if (selector === '[booking-copy="reschedule-body"]') return body
+      return null
+    },
+    querySelectorAll() {
+      throw new Error('string matching must not run when the authored hooks exist')
+    },
+  }
+  const modal = {
+    querySelector(selector) {
+      return selector === '[booking-popup-content="reschedule"]' ? panel : null
+    },
+  }
+
+  assert.equal(api.applyRescheduleContractCopy(modal, 'reschedule-request'), true)
+  assert.equal(title.textContent, 'Update the requested time')
+  assert.match(body.textContent, /applies right away/)
+
+  assert.equal(api.applyRescheduleContractCopy(modal, 'reschedule-propose'), true)
+  assert.equal(title.textContent, 'Propose a new time')
+  assert.match(body.textContent, /until the other participant confirms/)
 })

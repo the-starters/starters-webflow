@@ -853,11 +853,10 @@
   /* One authored reason panel serves both reschedule contracts, so its copy
      cannot be static: the confirmed flow really does keep the current time
      until the counterpart answers, while the pending flow changes the time
-     immediately. The authored text is the confirmed wording, and this swaps it
-     for the pending contract. Matching on the known strings (rather than a
-     styling class) means a later Designer copy edit simply stops the swap and
-     leaves the authored text standing, instead of writing into the wrong node.
-     A Designer-authored second panel would be cleaner and is the follow-up. */
+     immediately. The panel's heading and body carry authored `booking-copy`
+     hooks (`reschedule-title` / `reschedule-body`) so this targets attributes,
+     never a styling class. The known-string match below is only a fallback for
+     a page served before those hooks were published. */
   const RESCHEDULE_COPY = {
     'reschedule-propose': {
       title: 'Propose a new time',
@@ -885,13 +884,25 @@
     if (!modal || !copy || typeof modal.querySelector !== 'function') return false
     const panel = modal.querySelector('[booking-popup-content="reschedule"]')
     if (!panel || typeof panel.querySelectorAll !== 'function') return false
+    let applied = 0
+    const authoredTitle = panel.querySelector('[booking-copy="reschedule-title"]')
+    const authoredBody = panel.querySelector('[booking-copy="reschedule-body"]')
+    if (authoredTitle) {
+      authoredTitle.textContent = copy.title
+      applied += 1
+    }
+    if (authoredBody) {
+      authoredBody.textContent = copy.body
+      applied += 1
+    }
+    if (applied) return true
+    // Fallback for a page published before the authored hooks existed.
     const titles = []
     const bodies = []
     Object.keys(RESCHEDULE_COPY).forEach(function (name) {
       titles.push(RESCHEDULE_COPY[name].title)
       bodies.push(RESCHEDULE_COPY[name].body)
     })
-    let applied = 0
     Array.prototype.forEach.call(panel.querySelectorAll('p, h1, h2, h3'), function (node) {
       if (node.children && node.children.length) return
       const text = clean(node.textContent)
