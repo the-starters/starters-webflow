@@ -251,8 +251,9 @@ binding, the stale-readiness save of an active service, the expired-session
 fail-closed writes, and the authored price tile fallback — canonical precedence,
 single-leaf and split `$` + number selection, the continued-amount guard that leaves a
 tile with a trailing cents fragment alone, imported V2 suggestion validation and explicit
-confirmation, `Not set` empty states, scoped Off-state emphasis, and Free-sibling isolation, stable
-accessible control names, preservation of authored labels, and polite status announcements — plus
+confirmation, `Not set` empty states, scoped Off-state style preservation, and Free-sibling
+isolation, stable accessible control names, preservation of authored labels, and polite status
+announcements — plus
 the authored status-pill resolution and its drifted-copy diagnostic, the
 `w--redirected-checked` radio sync, and the field validation lifecycle, including that a
 rejected rate never blocks a later turn-off, plus the shared native-submit/Update write lock and
@@ -311,8 +312,7 @@ The release owner runs them by hand, in this order, after the PR merges:
    Designer placeholder. In the Off state, confirm the whole card, price tile, status,
    instructions, and Edit control stay fully opaque and readable, with only the authored Off
    pill as the inactive-state cue and no opacity, filters, outlines, or new price-tile decoration.
-   If the tile
-   does not change at all, its markup is neither of the two
+   If the tile does not change at all, its markup is neither of the two
    bound shapes — most often the amount is split across more than the `$` and number pair,
    such as a separate cents span — so report the real structure instead of widening the
    fallback by guess, and prefer adding `data-call-settings-output="price"` in Designer.
