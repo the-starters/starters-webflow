@@ -3673,13 +3673,17 @@
       return {
         step,
         action: 'cancel',
-        reason: 'canceled_before_activation',
+        reason: '',
         title: 'Cancel Project',
-        subtitle: 'This project has not started yet. Cancel it before it begins?',
+        subtitle: 'This project has not started yet. Tell us what happened before cancelling.',
         submit: 'Cancel Project',
-        showReason: false,
-        requireReason: false,
-        showReview: role === 'brand' && !project.has_review,
+        // A cancellation captures an internal record of what happened for
+        // admin ops (JP, 2026-09-01). It is deliberately NOT a review: it never
+        // reaches core_reviews_v3, never shows on /hire, and never moves
+        // ranking points. The text rides along as the project's cancel reason.
+        showReason: true,
+        requireReason: true,
+        showReview: false,
         showToggle: false,
       }
     }
@@ -3891,7 +3895,9 @@
       if (!reason) {
         reviewError(
           modal,
-          'Give a reason for ending this project early.',
+          view.action === 'cancel'
+            ? 'Tell us what happened before cancelling this project.'
+            : 'Give a reason for ending this project early.',
           validationDiagnostic('project_end', 'reason', 'MISSING_REASON'),
         )
         return

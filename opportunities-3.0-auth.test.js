@@ -7680,23 +7680,21 @@ test('hiding a modal group clears required so the form can still submit', async 
   )
   assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
 
-  // pending -> the cancel step hides the reason group but now offers the
-  // optional review, so `required` must be cleared only on the hidden group.
+  // pending -> the cancel step asks what happened (an ops record, not a
+  // review), so the reason group is shown and the review block is hidden.
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
-  assert.equal(dom.reviewGroup.style.display, '')
-  assert.equal(dom.reasonWrap.style.display, 'none')
+  assert.equal(dom.reviewGroup.style.display, 'none')
+  assert.equal(dom.reasonWrap.style.display, '')
   assert.equal(
     dom.feedback.required,
     false,
     'a hidden required control blocks submit with no visible error',
   )
-  assert.equal(dom.reason.required, false)
 
-  // and the constraint must come back when the group is shown again
-  bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
-  await new Promise(setImmediate)
-  assert.equal(dom.reason.required, false, 'cancel step has no toggle, so nothing is restored yet')
+  // The cancel step shows the reason group, so its constraint is restored and
+  // the ops note is genuinely required.
+  assert.equal(dom.reason.required, true, 'the cancel reason is required')
 
   bridge.window.dispatchEvent(
     new bridge.window.CustomEvent('modal-close', { detail: { modal: dom.modal } }),
@@ -7953,12 +7951,15 @@ test('a project stranded in completion_requested stays actionable and submits it
   assert.equal(reviewBody.review_text, 'Excellent collaboration overall.')
 })
 
-// The review is optional on every closing path (JP, 2026-09-01). Leaving it
-// blank must still close the project: the Webflow feedback field carries
-// `required`, so a visible-but-empty review would otherwise block the submit
-// exactly the way a hidden required control did.
-test('cancel succeeds with no rating and posts no review', async () => {
-  const dom = endProjectDom({ rating: '', feedback: '' })
+
+
+
+// A cancellation captures an internal record of what happened for admin ops
+// (JP, 2026-09-01). It is deliberately NOT a review: it must never reach
+// core_reviews_v3, /hire, or ranking points. The text rides along as the
+// project's cancel reason instead.
+test('cancel requires an ops note and sends it as the cancel reason', async () => {
+  const dom = endProjectDom({ reason: '' })
   let actionBody = null
   let reviewCount = 0
   const bridge = await loadBridge(
@@ -7994,10 +7995,21 @@ test('cancel succeeds with no rating and posts no review', async () => {
 
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
-  // The review block is offered, but nothing is required.
-  assert.equal(dom.reviewGroup.style.display, '')
-  assert.equal(dom.feedback.required, false)
+  // the ops note is asked for; the review block is not offered at all
+  assert.equal(dom.reasonWrap.style.display, '')
+  assert.equal(dom.reviewGroup.style.display, 'none')
 
+  // an empty note blocks the cancel
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  await new Promise(setImmediate)
+  assert.equal(actionBody, null, 'cancelling without an ops note must be refused')
+  assert.match(dom.fail.textContent, /what happened/)
+
+  dom.reason.value = 'Brand changed scope before kickoff'
   bridge.dispatchDocument('submit', {
     target: dom.form,
     preventDefault() {},
@@ -8005,99 +8017,6 @@ test('cancel succeeds with no rating and posts no review', async () => {
   })
   assert.ok(await waitFor(() => actionBody !== null))
   assert.equal(actionBody.action, 'cancel')
-  assert.equal(reviewCount, 0, 'an empty review must not be posted')
-})
-
-// A cancel closes a project that never started, and JP chose to allow a review
-// there anyway, so the rating must reach the endpoint.
-test('cancel submits the optional review when it is filled in', async () => {
-  const dom = endProjectDom()
-  let actionBody = null
-  let reviewBody = null
-  const bridge = await loadBridge(
-    async (input, init = {}) => {
-      const url = String(input)
-      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/brand/projects/mine')) {
-        return response({
-          items: [{
-            id: 675,
-            lifecycle_state: 'pending',
-            lifecycle_version: 4,
-            has_review: false,
-            starter_name: 'JP Test',
-          }],
-        })
-      }
-      if (url.includes('/projects/action/v3')) {
-        actionBody = JSON.parse(init.body)
-        return response({
-          project: { id: 675, lifecycle_state: 'canceled', lifecycle_version: 5 },
-        })
-      }
-      if (url.includes('/brand/reviews/submit')) {
-        reviewBody = JSON.parse(init.body)
-        return response({ review_id: 43 })
-      }
-      throw new Error(`Unexpected request: ${url}`)
-    },
-    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
-  )
-  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
-
-  bridge.dispatchDocument('click', clickEvent(dom.end).event)
-  assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
-
-  bridge.dispatchDocument('submit', {
-    target: dom.form,
-    preventDefault() {},
-    stopPropagation() {},
-  })
-  assert.ok(await waitFor(() => reviewBody !== null))
-  assert.equal(actionBody.action, 'cancel')
-  assert.equal(reviewBody.rating, 5)
-  assert.equal(reviewBody.review_text, 'Excellent collaboration overall.')
-})
-
-// A half-filled review is a mistake rather than a choice, so it must be caught
-// instead of silently dropped or posted.
-test('a partly filled review is rejected instead of silently skipped', async () => {
-  const dom = endProjectDom({ feedback: '' })
-  let actionBody = null
-  const bridge = await loadBridge(
-    async (input, init = {}) => {
-      const url = String(input)
-      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/brand/projects/mine')) {
-        return response({
-          items: [{
-            id: 675,
-            lifecycle_state: 'pending',
-            lifecycle_version: 4,
-            has_review: false,
-            starter_name: 'JP Test',
-          }],
-        })
-      }
-      if (url.includes('/projects/action/v3')) {
-        actionBody = JSON.parse(init.body)
-        return response({ project: { id: 675, lifecycle_state: 'canceled' } })
-      }
-      throw new Error(`Unexpected request: ${url}`)
-    },
-    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
-  )
-  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
-
-  bridge.dispatchDocument('click', clickEvent(dom.end).event)
-  assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
-
-  bridge.dispatchDocument('submit', {
-    target: dom.form,
-    preventDefault() {},
-    stopPropagation() {},
-  })
-  await new Promise(setImmediate)
-  assert.equal(actionBody, null, 'a rating with no feedback must not close the project')
-  assert.match(dom.fail.textContent, /10 and 4,000 characters/)
+  assert.equal(actionBody.reason, 'Brand changed scope before kickoff')
+  assert.equal(reviewCount, 0, 'a cancellation must never post a review')
 })
