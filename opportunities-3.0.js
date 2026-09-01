@@ -3932,9 +3932,9 @@
       const reviewInput = $('[name="Public-Feedback"], [name="Feedback"]', form)
       const rating = Number(ratingInput && ratingInput.value)
       const reviewText = String(reviewInput && reviewInput.value || '').trim()
-      // The review is optional (JP, 2026-09-01): completing or ending early
-      // must succeed with nothing filled in. A partly filled review is a mistake
-      // rather than a choice, so validate both fields once either is touched.
+      // The Brand completion review is optional and must allow empty fields.
+      // A partly filled review is a mistake rather than a choice, so validate
+      // both fields once either is touched.
       const started = rating >= 1 || reviewText !== ''
       if (started) {
         if (!(rating >= 1 && rating <= 5)) {
@@ -3962,8 +3962,8 @@
     closeEndProjectModal(modal)
   }
 
-  // A review attaches only to a completed or terminated project. Anything else
-  // means the action did not finalize into a reviewable state.
+  // Review data originates only from Brand completion mode. Before submission,
+  // also require a terminal state that Xano recognizes as reviewable.
   async function submitEndProjectReview(intent, project) {
     const review = intent && intent.review
     if (!review) return ''
