@@ -219,13 +219,17 @@
                             const name = String(company.company_name ?? '').trim();
                             const domain = String(company.company_domain ?? '').trim();
                             const logoUrl = String(company.company_logo_url || company.logo_url || '').trim();
+                            const clientRowId = Number(company.client_row_id || company.id) || 0;
+                            const companyEntityId = Number(company.company_entity_id) || 0;
 
                             if (!name && !domain) return acc;
 
-                            acc[crypto.randomUUID()] = {
+                            acc[clientRowId ? `client-${clientRowId}` : crypto.randomUUID()] = {
                                 name,
                                 domain,
                                 logo_url: logoUrl,
+                                client_row_id: clientRowId,
+                                company_entity_id: companyEntityId,
                             };
 
                             return acc;

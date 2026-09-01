@@ -146,12 +146,15 @@ test('Edit Profile preserves a hydrated API company logo in the serialized selec
   const logoUrl = 'https://logos.example/acme.svg'
   const { valueInput } = createHarness(
     path.join(__dirname, '../starter-edit-profile/company-autocomplete.js'),
-    [{ company_name: 'Acme', company_domain: 'acme.example', company_logo_url: logoUrl }],
+    [{ id: 42, company_entity_id: 9, company_name: 'Acme', company_domain: 'acme.example', company_logo_url: logoUrl }],
   )
   await new Promise((resolve) => setImmediate(resolve))
 
-  const [company] = Object.values(JSON.parse(valueInput.value))
+  const serialized = JSON.parse(valueInput.value)
+  const company = serialized['client-42']
   assert.equal(company.logo_url, logoUrl)
+  assert.equal(company.client_row_id, 42)
+  assert.equal(company.company_entity_id, 9)
 })
 
 for (const [label, file] of [
@@ -180,9 +183,13 @@ for (const [label, file] of [
   })
 }
 
-function createCrudHarness(file, { deferredWrites = false } = {}) {
+function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [] } = {}) {
   let readyPromise
+  let baselineTimer
   const requests = []
+  const modalCounts = { success: 0, error: 0 }
+  const renderedCards = []
+  const canonicalCompanies = []
 
   function element(value = '') {
     const listeners = new Map()
@@ -215,6 +222,7 @@ function createCrudHarness(file, { deferredWrites = false } = {}) {
   const endDateInput = element('Aug 2026')
   const addButton = element()
   const companyList = element()
+  companyList.appendChild = (card) => { renderedCards.push(card) }
   const companyTemplate = element()
   const editWrapper = element()
   editWrapper.dataset.id = 'company-7'
@@ -226,6 +234,12 @@ function createCrudHarness(file, { deferredWrites = false } = {}) {
   editCurrentCheckbox.checked = true
   const saveEditButton = element()
   const companySubmit = element()
+  const firstCompanyInput = element('true')
+  const alsoWorkedWithInput = element('{}')
+  const successTrigger = element()
+  const errorTrigger = element()
+  successTrigger.addEventListener('click', () => { modalCounts.success += 1 })
+  errorTrigger.addEventListener('click', () => { modalCounts.error += 1 })
   const elements = new Map([
     ['.company-list', companyList],
     ['#company-name', companyInput],
@@ -242,6 +256,10 @@ function createCrudHarness(file, { deferredWrites = false } = {}) {
     ['#edit-company-current', editCurrentCheckbox],
     ['[save-company-edit]', saveEditButton],
     ['[data-edit-submit="companies"]', companySubmit],
+    ['#first-company', firstCompanyInput],
+    ['#also-worked-with', alsoWorkedWithStatuses.length ? alsoWorkedWithInput : null],
+    ["[data-modal-trigger='edit-form-success']", successTrigger],
+    ["[data-modal-trigger='edit-form-error']", errorTrigger],
   ])
   const documentListeners = new Map()
   const document = {
@@ -258,7 +276,25 @@ function createCrudHarness(file, { deferredWrites = false } = {}) {
     },
     fetch: async (url, options = {}) => {
       requests.push({ url, options })
-      return { ok: true, json: async () => ({ companies: [], starter_id: 'starter-1' }) }
+      if (url.includes('/starter/set_also_worked_with')) {
+        const status = alsoWorkedWithStatuses.shift() || 200
+        return {
+          ok: status >= 200 && status < 300,
+          status,
+          json: async () => status >= 200 && status < 300 ? [3068] : { message: 'Select each new company with a valid name and domain' },
+        }
+      }
+      if (url.endsWith('/companies') && options.method === 'POST' && companyCreateStatuses.length) {
+        const status = companyCreateStatuses.shift()
+        const payload = JSON.parse(options.body)
+        if (status >= 200 && status < 300) {
+          const company = { ...payload, id: `company-${canonicalCompanies.length + 1}` }
+          canonicalCompanies.push(company)
+          return { ok: true, status, json: async () => company }
+        }
+        return { ok: false, status, json: async () => ({ message: 'Company creation failed' }) }
+      }
+      return { ok: true, json: async () => ({ companies: canonicalCompanies, starter_id: 'starter-1' }) }
     },
     jQuery: undefined,
     MEMBER: { id: 'member-1' },
@@ -268,7 +304,10 @@ function createCrudHarness(file, { deferredWrites = false } = {}) {
       return elements.get(selector) || null
     },
     qsa() { return [] },
-    setTimeout() { return 0 },
+    setTimeout(callback, delay) {
+      if (alsoWorkedWithStatuses.length && delay === 1500) baselineTimer = callback
+      return 0
+    },
     clearTimeout() {},
     setInterval() { return 0 },
     clearInterval() {},
@@ -288,10 +327,30 @@ function createCrudHarness(file, { deferredWrites = false } = {}) {
     companyInput,
     editCompanyInput,
     requests,
+    modalCounts,
+    renderedCards,
     select,
+    prepareAdd() {
+      companyInput.value = 'QA Wolf'
+      jobTitleInput.value = 'Engineer'
+      startDateInput.value = 'Jan 2025'
+      endDateInput.value = 'Aug 2026'
+      select(companyInput)
+    },
     async start() {
       await documentListeners.get('DOMContentLoaded')[0]()
       await readyPromise
+      baselineTimer?.()
+    },
+    async queueAdd() {
+      await addButton.listeners.get('click')[0]({ preventDefault() {} })
+    },
+    changeAlsoWorkedWith(value) {
+      alsoWorkedWithInput.value = JSON.stringify(value)
+      alsoWorkedWithInput.dispatchEvent(new context.Event('input'))
+    },
+    async submitAll() {
+      await companySubmit.listeners.get('click')[0]({ preventDefault() {} })
     },
     async submitAdd() {
       await addButton.listeners.get('click')[0]({ preventDefault() {} })
@@ -327,6 +386,58 @@ function createCrudHarness(file, { deferredWrites = false } = {}) {
     },
   }
 }
+
+test('Edit Profile keeps pending work and shows an error when Also Worked With fails, then retries successfully', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, { deferredWrites: true, alsoWorkedWithStatuses: [400, 200] })
+  await harness.start()
+  harness.select(harness.companyInput)
+  await harness.queueAdd()
+  harness.changeAlsoWorkedWith({
+    'client-3068': {
+      name: 'OpenStore',
+      domain: '',
+      logo_url: '',
+      client_row_id: 3068,
+      company_entity_id: 1448,
+    },
+  })
+
+  await harness.submitAll()
+  assert.equal(harness.modalCounts.error, 1)
+  assert.equal(harness.modalCounts.success, 0)
+  assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 1)
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 0)
+
+  await harness.submitAll()
+  assert.equal(harness.modalCounts.error, 1)
+  assert.equal(harness.modalCounts.success, 1)
+  assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 2)
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
+})
+
+test('Edit Profile refreshes committed creates after a later create fails', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, { deferredWrites: true, companyCreateStatuses: [200, 500, 200] })
+  await harness.start()
+  harness.prepareAdd()
+  await harness.queueAdd()
+  harness.prepareAdd()
+  await harness.queueAdd()
+
+  await harness.submitAll()
+  assert.equal(harness.modalCounts.error, 1)
+  assert.equal(harness.modalCounts.success, 0)
+  assert.deepEqual(harness.renderedCards.slice(-2).map((card) => card.dataset.id), [
+    'company-1',
+    harness.renderedCards.at(-1).dataset.id,
+  ])
+  assert.match(harness.renderedCards.at(-1).dataset.id, /^draft_/)
+
+  await harness.submitAll()
+  assert.equal(harness.modalCounts.success, 1)
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 3)
+})
 
 for (const [label, file, deferredWrites] of [
   ['Build Profile', path.join(__dirname, '../build-profile/company-experience-crud.js'), false],

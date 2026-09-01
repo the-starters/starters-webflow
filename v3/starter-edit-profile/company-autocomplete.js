@@ -43,13 +43,17 @@
         const name = String(company.company_name ?? '').trim();
         const domain = String(company.company_domain ?? '').trim();
         const logoUrl = String(company.company_logo_url || company.logo_url || '').trim();
+        const clientRowId = Number(company.client_row_id || company.id) || 0;
+        const companyEntityId = Number(company.company_entity_id) || 0;
 
         if (!name && !domain) return acc;
 
-        acc[crypto.randomUUID()] = {
+        acc[clientRowId ? `client-${clientRowId}` : crypto.randomUUID()] = {
           name,
           domain,
           logo_url: logoUrl,
+          client_row_id: clientRowId,
+          company_entity_id: companyEntityId,
         };
 
         return acc;
@@ -117,7 +121,7 @@
         for (const uniqueId of Object.keys(selectedCompanies)) {
           const company = selectedCompanies[uniqueId];
           if (company.name) {
-            renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '');
+            renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '', company.client_row_id, company.company_entity_id);
           }
         }
       })
@@ -130,7 +134,9 @@
         companies[tag.dataset.uniqueId] = {
           "name": qs("[also-worked-tag-name]", tag).textContent,
           "domain": qs("[also-worked-tag-domain]", tag).textContent,
-          "logo_url": tag.dataset.logoUrl || ""
+          "logo_url": tag.dataset.logoUrl || "",
+          "client_row_id": Number(tag.dataset.clientRowId) || 0,
+          "company_entity_id": Number(tag.dataset.companyEntityId) || 0
         }
       });
 
@@ -338,7 +344,7 @@
       }, 300);
     }
 
-    function renderNewTag(selectedName, selectedDomain, item, uniqueId, selectedLogoUrl = '') {
+    function renderNewTag(selectedName, selectedDomain, item, uniqueId, selectedLogoUrl = '', clientRowId = 0, companyEntityId = 0) {
       if (!tagTemplate || !tagWrapper) return;
       if (!selectedName) return;
 
@@ -346,6 +352,8 @@
       newTag.classList.remove('is_template');
       newTag.dataset.uniqueId = uniqueId || crypto.randomUUID();
       newTag.dataset.logoUrl = selectedLogoUrl || item?.dataset?.logoUrl || '';
+      newTag.dataset.clientRowId = String(Number(clientRowId) || 0);
+      newTag.dataset.companyEntityId = String(Number(companyEntityId) || 0);
       qs('[also-worked-tag-name]', newTag).textContent = selectedName;
       qs('[also-worked-tag-domain]', newTag).textContent = selectedDomain;
       qs('[also-worked-tag-delete]', newTag).addEventListener('click', function () {
