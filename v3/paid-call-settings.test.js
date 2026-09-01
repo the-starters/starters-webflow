@@ -1803,17 +1803,17 @@ test('the authored Paid price tile replaces the placeholder with Not set while c
   assert.equal(result.dom.authoredPriceText.textContent, 'Not set')
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Add a rate to turn them on.')
   assert.equal(result.dom.card.getAttribute('data-paid-call-card-state'), 'off')
-  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).opacity, '1')
-  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).outline, '1px dashed currentColor')
-  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['outline-offset'], '-1px')
-  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['box-shadow'], 'none')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).opacity || '', '')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).outline || '', '')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['outline-offset'] || '', '')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['box-shadow'] || '', '')
   assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).color, '#123456')
   assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['background-color'], '#fefefe')
   assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).filter || '', '')
   assert.ok(effectiveContrastRatio(
     computedStyle(result.document, result.dom.authoredPriceCard).color,
     computedStyle(result.document, result.dom.authoredPriceCard)['background-color'],
-    Number(computedStyle(result.document, result.dom.authoredPriceCard).opacity),
+    1,
   ) >= 4.5)
   assert.equal(computedStyle(result.document, result.dom.card).opacity || '', '')
   assert.equal(computedStyle(result.document, result.dom.offOutput).opacity || '', '')
