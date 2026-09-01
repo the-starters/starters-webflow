@@ -1145,8 +1145,10 @@ Starter name, or standalone review modal without an authored name placeholder
 blocks that review-only open. If Review Starter card clicks overlap, only the
 latest click may open the standalone modal; an older canonical lookup that
 resolves later is discarded. Closing it clears the painted name and pending
-project context. Both review forms accept the live `Feedback` field and the
-legacy `Public-Feedback` field during the authored surface transition.
+project context. Both review forms replace Webflow's generic form-failure text
+with the exact validation reason, including when diagnostics record a receipt.
+They accept the live `Feedback` field and the legacy `Public-Feedback` field
+during the authored surface transition.
 
 The Brand end-project form offers its rating and public-review fields for both
 completion and early end, but not cancellation. The review is optional. If the

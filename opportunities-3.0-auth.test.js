@@ -4724,6 +4724,7 @@ test('review submission enforces rating and feedback rules and locks duplicate s
   starterName.textContent = '[Starter Name]'
   const done = el('div', { class: 'w-form-done' })
   const fail = el('div', { class: 'w-form-fail' })
+  fail.textContent = 'Oops! Something went wrong while submitting the form.'
   const modal = el(
     'dialog',
     { 'data-modal-target': 'rate-starter-call' },
@@ -4763,6 +4764,7 @@ test('review submission enforces rating and feedback rules and locks duplicate s
       querySelectorAll: (selector) =>
         [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
       routeGuard: true,
+      workflowDiagnostics: true,
     },
   )
   assert.ok(await waitFor(() => review.getAttribute('data-project-action') === 'review'))
@@ -4779,17 +4781,20 @@ test('review submission enforces rating and feedback rules and locks duplicate s
   feedback.value = 'Valid review feedback.'
   bridge.dispatchDocument('submit', submitEvent())
   assert.match(fail.textContent, /rating from 1 to 5/i)
+  assert.doesNotMatch(fail.textContent, /Oops! Something went wrong/i)
   assert.equal(reviewBodies.length, 0)
 
   rating.value = '5'
   feedback.value = 'Too short'
   bridge.dispatchDocument('submit', submitEvent())
   assert.match(fail.textContent, /between 10 and 4,000 characters/i)
+  assert.doesNotMatch(fail.textContent, /Oops! Something went wrong/i)
   assert.equal(reviewBodies.length, 0)
 
   feedback.value = 'x'.repeat(4001)
   bridge.dispatchDocument('submit', submitEvent())
   assert.match(fail.textContent, /between 10 and 4,000 characters/i)
+  assert.doesNotMatch(fail.textContent, /Oops! Something went wrong/i)
   assert.equal(reviewBodies.length, 0)
 
   feedback.value = 'Excellent canonical project delivery.'
@@ -8131,11 +8136,8 @@ test('a canceled action response discards a carried review intent', async () => 
   assert.equal(reviewCount, 0)
 })
 
-// Validation failures in the end-project modal carry a diagnostic receipt, and
-// the receipt path used to swallow the message: `decorateWorkflowMessage` is
-// deliberately inert so diagnostics never overwrite authored Webflow copy, so
-// routing our copy through it left the Webflow default on screen and the brand
-// saw "Oops! Something went wrong" with no idea what to fix.
+// Keep diagnostics enabled so this exercises the receipt path while preserving
+// the controller-owned validation copy.
 test('a validation failure shows our copy, not the Webflow default', async () => {
   const dom = endProjectDom({ reason: '' })
   dom.fail.textContent = 'Oops! Something went wrong while submitting the form.'
