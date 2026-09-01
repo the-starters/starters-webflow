@@ -23,6 +23,48 @@ test('the Paid error visibility rule outranks Webflow hide utilities', async () 
   assert.equal(computedStyle(result.document, result.dom.nativeError).display, 'block')
 })
 
+test('names every Paid card control and exposes status updates to assistive technology', async () => {
+  const result = load({ cardMode: true, initial: canonical({ services: [] }) })
+  await settle()
+
+  assert.equal(result.dom.open.getAttribute('aria-label'), 'Edit paid call settings')
+  assert.equal(result.dom.close.getAttribute('aria-label'), 'Cancel paid call settings')
+  assert.equal(result.dom.save.getAttribute('aria-label'), 'Update paid call settings')
+  assert.equal(result.dom.enabled.getAttribute('aria-label'), 'Yes, enable paid calls')
+  assert.equal(result.dom.disabled.getAttribute('aria-label'), 'No, keep paid calls off')
+  assert.equal(result.dom.title.getAttribute('aria-label'), 'Paid call description')
+  assert.equal(result.dom.price.getAttribute('aria-label'), 'Paid call rate per hour')
+  assert.equal(result.dom.statusOutput.getAttribute('role'), 'status')
+  assert.equal(result.dom.statusOutput.getAttribute('aria-live'), 'polite')
+})
+
+test('preserves authored accessible names', async () => {
+  const result = load({ cardMode: true, initial: canonical({ services: [] }), beforeLoad(dom) {
+    dom.open.setAttribute('aria-labelledby', 'paid-call-edit-label')
+    dom.price.setAttribute('aria-label', 'Authored price label')
+    dom.enabled.parentElement.textContent = 'Authored enable label'
+  } })
+  await settle()
+
+  assert.equal(result.dom.open.getAttribute('aria-labelledby'), 'paid-call-edit-label')
+  assert.equal(result.dom.open.getAttribute('aria-label'), null)
+  assert.equal(result.dom.price.getAttribute('aria-label'), 'Authored price label')
+  assert.equal(result.dom.enabled.getAttribute('aria-label'), null)
+})
+
+test('preserves authored Webflow action text', async () => {
+  const result = load({ cardMode: true, initial: canonical({ services: [] }), beforeLoad(dom) {
+    dom.open.textContent = 'Edit'
+    dom.close.textContent = 'Cancel'
+    dom.save.textContent = 'Update'
+  } })
+  await settle()
+
+  assert.equal(result.dom.open.getAttribute('aria-label'), null)
+  assert.equal(result.dom.close.getAttribute('aria-label'), null)
+  assert.equal(result.dom.save.getAttribute('aria-label'), null)
+})
+
 function deferred() {
   let resolve
   const promise = new Promise((done) => { resolve = done })
@@ -147,6 +189,26 @@ function computedStyle(document, element) {
     }
   })
   return Object.fromEntries(Object.entries(declarations).map(([name, entry]) => [name, entry.value]))
+}
+
+function effectiveContrastRatio(foreground, background, opacity = 1) {
+  const parse = (hex) => {
+    const value = hex.replace('#', '')
+    return [0, 2, 4].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16))
+  }
+  const composite = (channel) => channel * opacity + 255 * (1 - opacity)
+  const luminance = (rgb) => {
+    const channels = rgb.map((channel) => {
+      const value = channel / 255
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+    })
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+  }
+  const foregroundLuminance = luminance(parse(foreground).map(composite))
+  const backgroundLuminance = luminance(parse(background).map(composite))
+  const lighter = Math.max(foregroundLuminance, backgroundLuminance)
+  const darker = Math.min(foregroundLuminance, backgroundLuminance)
+  return (lighter + 0.05) / (darker + 0.05)
 }
 
 function canonical(overrides = {}) {
@@ -348,6 +410,7 @@ function load(options = {}) {
     options.authoredPills === true,
     options.pillLabels || {},
   )
+  if (typeof options.beforeLoad === 'function') options.beforeLoad(dom)
   const delayedSiblings = options.rootFirst === true && dom.card
     ? dom.card.children.filter((item) => item !== dom.formWrapper)
     : []
@@ -945,6 +1008,9 @@ test('Paid re-resolves the card when status pills and Edit arrive after the root
   assert.equal(result.dom.offOutput.style.display, '')
   assert.equal(result.dom.onOutput.getAttribute('data-call-settings-output'), 'on')
   assert.equal(result.dom.offOutput.getAttribute('data-call-settings-output'), 'off')
+  assert.equal(result.dom.open.getAttribute('aria-label'), 'Edit paid call settings')
+  assert.equal(result.dom.statusOutput.getAttribute('role'), 'status')
+  assert.equal(result.dom.statusOutput.getAttribute('aria-live'), 'polite')
 
   await result.dom.open.dispatch('click')
   assert.equal(result.dom.formWrapper.style.display, 'flex')
@@ -1727,13 +1793,28 @@ test('the authored Paid price tile replaces the placeholder with Not set while c
     cardMode: true,
     priceTile: { canonical: false, authored: true },
     initial: canonical(),
+    beforeLoad(dom) {
+      dom.authoredPriceCard.style.color = '#123456'
+      dom.authoredPriceCard.style['background-color'] = '#fefefe'
+    },
   })
   await settle()
 
   assert.equal(result.dom.authoredPriceText.textContent, 'Not set')
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Add a rate to turn them on.')
   assert.equal(result.dom.card.getAttribute('data-paid-call-card-state'), 'off')
-  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).opacity, '.6')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).opacity || '', '')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).outline || '', '')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['outline-offset'] || '', '')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['box-shadow'] || '', '')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).color, '#123456')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['background-color'], '#fefefe')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).filter || '', '')
+  assert.ok(effectiveContrastRatio(
+    computedStyle(result.document, result.dom.authoredPriceCard).color,
+    computedStyle(result.document, result.dom.authoredPriceCard)['background-color'],
+    1,
+  ) >= 4.5)
   assert.equal(computedStyle(result.document, result.dom.card).opacity || '', '')
   assert.equal(computedStyle(result.document, result.dom.offOutput).opacity || '', '')
   assert.equal(computedStyle(result.document, result.dom.statusOutput).opacity || '', '')
