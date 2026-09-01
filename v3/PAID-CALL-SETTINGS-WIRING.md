@@ -308,8 +308,10 @@ The release owner runs them by hand, in this order, after the PR merges:
    service it must read the canonical Xano rate as `$1,500.00`-style USD in the amount
    element only, with any authored caption and unit untouched and no doubled currency
    symbol. With no confirmed or imported rate it must read `Not set`, never `$0.00` or the
-   Designer placeholder. In the Off state, confirm only the price and service content are muted;
-   the whole card, Off pill, instructions, and Edit control must stay fully readable. If the tile
+   Designer placeholder. In the Off state, confirm the whole card, price tile, status,
+   instructions, and Edit control stay fully opaque and readable, with only the authored Off
+   pill as the inactive-state cue and no opacity, filters, outlines, or new price-tile decoration.
+   If the tile
    does not change at all, its markup is neither of the two
    bound shapes — most often the amount is split across more than the `$` and number pair,
    such as a separate cents span — so report the real structure instead of widening the
