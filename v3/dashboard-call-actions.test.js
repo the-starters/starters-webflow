@@ -1694,3 +1694,139 @@ test('a confirmed reschedule still posts the propose contract', async () => {
     global.crypto = originalCrypto
   }
 })
+
+test('the shared reason panel carries the copy of the contract in play', () => {
+  function leaf(text) {
+    return { children: [], textContent: text }
+  }
+  const title = leaf('Propose a new time')
+  const body = leaf(
+    'Your call keeps its current time until the other participant confirms the new one.' +
+      ' Changes close to the start time can be disruptive, so add a short note about why.',
+  )
+  const untouched = leaf('If you would like to discuss options, reach out through the Messages tab')
+  const panel = {
+    querySelectorAll(selector) {
+      assert.equal(selector, 'p, h1, h2, h3')
+      return [title, body, untouched]
+    },
+  }
+  const modal = {
+    querySelector(selector) {
+      return selector === '[booking-popup-content="reschedule"]' ? panel : null
+    },
+  }
+
+  // A pending call updates its time immediately, so the handshake wording is wrong there.
+  assert.equal(api.applyRescheduleContractCopy(modal, 'reschedule-request'), true)
+  assert.equal(title.textContent, 'Update the requested time')
+  assert.match(body.textContent, /applies right away/)
+  assert.doesNotMatch(body.textContent, /until the other participant confirms/)
+
+  // Reopening on a confirmed call restores the handshake wording.
+  assert.equal(api.applyRescheduleContractCopy(modal, 'reschedule-propose'), true)
+  assert.equal(title.textContent, 'Propose a new time')
+  assert.match(body.textContent, /until the other participant confirms/)
+
+  // Unrelated authored copy in the same panel is never rewritten.
+  assert.equal(
+    untouched.textContent,
+    'If you would like to discuss options, reach out through the Messages tab',
+  )
+})
+
+test('only the pending contract restates the booking before showing its success panel', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const container = { textContent: '' }
+  const reasonField = { value: 'Need a later time' }
+  let currentId = 'booking-pending-1'
+  const modal = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? currentId : null
+    },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      if (selector === '[booking-reschedule-reason]') return reasonField
+      return null
+    },
+    querySelectorAll() {
+      return []
+    },
+  }
+  const mounts = []
+  try {
+    api.resetRescheduleState()
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar(options) {
+        mounts.push(options)
+      },
+    }
+    global.sessionStorage = storage()
+    let uuid = 0
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        uuid += 1
+        return '00000000-0000-4000-8000-00000000000' + uuid
+      },
+    }
+    global.xanoAuthFetch = async function () {
+      return {
+        ok: true,
+        async json() {
+          return {
+            reschedule: { booking_id: currentId, status: 'rescheduled' },
+            reschedule_request: { booking_id: currentId, status: 'pending' },
+          }
+        },
+      }
+    }
+    const start = Date.now() + 96 * 60 * 60 * 1000
+    const slot = { start, end: start + 30 * 60 * 1000, timezone: 'Asia/Manila' }
+
+    // Pending: the call really moved, so the open modal is re-rendered from it.
+    const pending = rescheduleBooking({
+      status: 'pending',
+      booking_id: 'booking-pending-1',
+      start: Date.now() + 72 * 60 * 60 * 1000,
+    })
+    const pendingStart = pending.start
+    const refreshed = []
+    await api.mountRescheduleCalendar({}, modal, pending, 'brand', reasonField.value, undefined,
+      function (_modal, booking) {
+        refreshed.push(booking)
+      })
+    await mounts[0].onConfirm(slot)
+    assert.equal(refreshed.length, 1)
+    assert.equal(refreshed[0], pending)
+    assert.equal(pending.start, start)
+    assert.notEqual(pending.start, pendingStart)
+
+    // Confirmed: the time holds until the counterpart answers, so nothing is restated.
+    // The successful pending confirm clears the authored reason field, so refill it.
+    reasonField.value = 'Need a later time'
+    currentId = 'booking-confirmed-1'
+    const confirmed = rescheduleBooking({
+      status: 'confirmed',
+      booking_id: 'booking-confirmed-1',
+      start: Date.now() + 72 * 60 * 60 * 1000,
+    })
+    const confirmedStart = confirmed.start
+    const notRefreshed = []
+    await api.mountRescheduleCalendar({}, modal, confirmed, 'starter', reasonField.value, undefined,
+      function (_modal, booking) {
+        notRefreshed.push(booking)
+      })
+    await mounts[1].onConfirm(slot)
+    assert.equal(notRefreshed.length, 0)
+    assert.equal(confirmed.start, confirmedStart)
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})

@@ -2286,11 +2286,17 @@ dialog remains on `/starter-dashboard`.
 The native Webflow modal owns `[booking-decline-reason]`,
 `[booking-cancel-reason]`, and the base reschedule trigger. When it also owns the
 `reschedule` reason view, the module keeps that panel and its controls, normalizes
-their copy, does not create replacements for them, and creates only the missing
-shared-calendar and result views. The Brand modal can author the pending path's
-`reschedule-updated` result. A modal that lacks that panel receives a module
-fallback, so the direct-update success cannot switch to a missing target. A
-modal with no authored `reschedule` view receives the module fallback instead.
+their button labels and field placeholder, and does not create replacements for
+them. One authored heading and description serve both reschedule contracts, so
+the module replaces the known confirmed-call wording with pending-request
+wording when the Brand opens that direct-update flow, and restores the known
+confirmed wording for a proposal. The replacement matches only those known
+strings; unrecognized Designer copy stays unchanged. The module creates only
+the missing shared-calendar and result views. The Brand modal can author the
+pending path's `reschedule-updated` result. A modal that lacks that panel receives
+a module fallback, so the direct-update success cannot switch to a missing
+target. A modal with no authored `reschedule` view receives the module fallback
+instead.
 The module also adds the base "Accept new time" and "Keep current time"
 responses beside the reschedule trigger. It creates that response pair once per
 modal, marks both controls with
@@ -2322,9 +2328,12 @@ must be `cancelled`, a proposal must be `rescheduled`, a pending-request update
 must remain `pending`, and either response must be `confirmed`. The success
 panel replaces `[Starter]` and `[Brand]` in its leaf text nodes with the
 counterpart's canonical booking name, or `the other participant` when that name
-is blank. Other authored content stays unchanged. The panel remains visible
-until the participant closes the modal; closing it then refreshes the canonical
-list.
+is blank. Before the pending direct-update panel opens, the module updates the
+open modal from the new start, end, and reason, so its booking fields do not show
+the pre-change time. A confirmed-call proposal does not update those fields,
+because its current time stays authoritative until the counterpart confirms.
+Other authored content stays unchanged. The panel remains visible until the
+participant closes the modal; closing it then refreshes the canonical list.
 
 `dashboard-call-media.js` owns read-only notetaker recording access. The action
 is eligible only for an owner-scoped canonical completed or archived booking
