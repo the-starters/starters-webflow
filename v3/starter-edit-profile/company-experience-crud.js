@@ -1316,6 +1316,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     if (editFormSuccessTrigger) editFormSuccessTrigger.dispatchEvent(new Event('click', { bubbles: true }));
                 } catch (error) {
                     console.error('[Companies] submit all failed:', error);
+                    await renderCompanies();
                     if (editFormErrorTrigger) editFormErrorTrigger.dispatchEvent(new Event('click', { bubbles: true }));
                 } finally {
                     isSubmitting = false;

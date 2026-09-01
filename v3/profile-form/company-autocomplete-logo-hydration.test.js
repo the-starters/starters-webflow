@@ -183,11 +183,13 @@ for (const [label, file] of [
   })
 }
 
-function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [] } = {}) {
+function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [] } = {}) {
   let readyPromise
   let baselineTimer
   const requests = []
   const modalCounts = { success: 0, error: 0 }
+  const renderedCards = []
+  const canonicalCompanies = []
 
   function element(value = '') {
     const listeners = new Map()
@@ -220,6 +222,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
   const endDateInput = element('Aug 2026')
   const addButton = element()
   const companyList = element()
+  companyList.appendChild = (card) => { renderedCards.push(card) }
   const companyTemplate = element()
   const editWrapper = element()
   editWrapper.dataset.id = 'company-7'
@@ -281,7 +284,17 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
           json: async () => status >= 200 && status < 300 ? [3068] : { message: 'Select each new company with a valid name and domain' },
         }
       }
-      return { ok: true, json: async () => ({ companies: [], starter_id: 'starter-1' }) }
+      if (url.endsWith('/companies') && options.method === 'POST' && companyCreateStatuses.length) {
+        const status = companyCreateStatuses.shift()
+        const payload = JSON.parse(options.body)
+        if (status >= 200 && status < 300) {
+          const company = { ...payload, id: `company-${canonicalCompanies.length + 1}` }
+          canonicalCompanies.push(company)
+          return { ok: true, status, json: async () => company }
+        }
+        return { ok: false, status, json: async () => ({ message: 'Company creation failed' }) }
+      }
+      return { ok: true, json: async () => ({ companies: canonicalCompanies, starter_id: 'starter-1' }) }
     },
     jQuery: undefined,
     MEMBER: { id: 'member-1' },
@@ -315,7 +328,15 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     editCompanyInput,
     requests,
     modalCounts,
+    renderedCards,
     select,
+    prepareAdd() {
+      companyInput.value = 'QA Wolf'
+      jobTitleInput.value = 'Engineer'
+      startDateInput.value = 'Jan 2025'
+      endDateInput.value = 'Aug 2026'
+      select(companyInput)
+    },
     async start() {
       await documentListeners.get('DOMContentLoaded')[0]()
       await readyPromise
@@ -393,6 +414,29 @@ test('Edit Profile keeps pending work and shows an error when Also Worked With f
   assert.equal(harness.modalCounts.success, 1)
   assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 2)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
+})
+
+test('Edit Profile refreshes committed creates after a later create fails', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, { deferredWrites: true, companyCreateStatuses: [200, 500, 200] })
+  await harness.start()
+  harness.prepareAdd()
+  await harness.queueAdd()
+  harness.prepareAdd()
+  await harness.queueAdd()
+
+  await harness.submitAll()
+  assert.equal(harness.modalCounts.error, 1)
+  assert.equal(harness.modalCounts.success, 0)
+  assert.deepEqual(harness.renderedCards.slice(-2).map((card) => card.dataset.id), [
+    'company-1',
+    harness.renderedCards.at(-1).dataset.id,
+  ])
+  assert.match(harness.renderedCards.at(-1).dataset.id, /^draft_/)
+
+  await harness.submitAll()
+  assert.equal(harness.modalCounts.success, 1)
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 3)
 })
 
 for (const [label, file, deferredWrites] of [
