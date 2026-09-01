@@ -7279,7 +7279,7 @@ test('binding a live wrap force-hides a leftover nested Spinner', async () => {
 })
 
 // The end-project modal replaces the native prompt/confirm intent capture.
-// These cases pin first-action finalization, the required early-end reason,
+// These cases pin first-action finalization, the fixed early-end reason,
 // the review-timing rule, and the prompt fallback for pages that
 // were published before the modal markup shipped.
 function endProjectDom(overrides = {}) {
@@ -7443,7 +7443,7 @@ test('brand end-project modal completes and submits the review in one pass', asy
   assert.equal(reviewBody.review_text, 'Excellent collaboration overall.')
 })
 
-test('brand termination hides review fields and never submits a review', async () => {
+test('brand termination hides all text inputs and never submits a review', async () => {
   const dom = endProjectDom({ reason: 'Scope changed' })
   let actionBody = null
   let reviewCount = 0
@@ -7491,7 +7491,7 @@ test('brand termination hides review fields and never submits a review', async (
   bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
   assert.equal(dom.reviewGroup.style.display, 'none')
-  assert.equal(dom.reasonWrap.style.display, '')
+  assert.equal(dom.reasonWrap.style.display, 'none')
   assert.equal(dom.projectName.textContent, 'Launch Campaign')
   assert.equal(dom.projectId.textContent, '675')
 
@@ -7503,7 +7503,7 @@ test('brand termination hides review fields and never submits a review', async (
 
   assert.ok(await waitFor(() => dom.label.textContent !== 'End Project'))
   assert.equal(actionBody.action, 'terminate')
-  assert.equal(actionBody.reason, 'Scope changed')
+  assert.equal(actionBody.reason, 'Project ended early')
   assert.equal(reviewCount, 0)
   assert.match(dom.label.textContent, /Project ended/)
 })
@@ -7544,7 +7544,7 @@ test('starter end-project modal completes without review fields', async () => {
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
   assert.equal(dom.reviewGroup.style.display, 'none')
-  assert.equal(dom.reasonWrap.style.display, '')
+  assert.equal(dom.reasonWrap.style.display, 'none')
   assert.equal(dom.projectName.textContent, 'Launch Campaign')
   assert.equal(dom.projectId.textContent, '675')
 
@@ -7568,7 +7568,7 @@ test('starter end-project modal completes without review fields', async () => {
   assert.equal(actionBody.reason, '')
 })
 
-test('early-end mode requires a reason and sends it as the terminate reason', async () => {
+test('early-end mode hides the reason input and sends the fixed terminate reason', async () => {
   const dom = endProjectDom({ reason: '' })
   let actionBody = null
   const bridge = await loadBridge(
@@ -7604,7 +7604,7 @@ test('early-end mode requires a reason and sends it as the terminate reason', as
 
   bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
-  assert.equal(dom.reasonWrap.style.display, '')
+  assert.equal(dom.reasonWrap.style.display, 'none')
   assert.equal(dom.reviewGroup.style.display, 'none')
 
   bridge.dispatchDocument('submit', {
@@ -7612,20 +7612,9 @@ test('early-end mode requires a reason and sends it as the terminate reason', as
     preventDefault() {},
     stopPropagation() {},
   })
-  await new Promise(setImmediate)
-  assert.equal(actionBody, null)
-  assert.equal(dom.fail.style.display, 'block')
-
-  dom.reason.value = 'Scope changed'
-  bridge.dispatchDocument('submit', {
-    target: dom.form,
-    preventDefault() {},
-    stopPropagation() {},
-  })
-
   assert.ok(await waitFor(() => actionBody !== null))
   assert.equal(actionBody.action, 'terminate')
-  assert.equal(actionBody.reason, 'Scope changed')
+  assert.equal(actionBody.reason, 'Project ended early')
 })
 
 test('end-project falls back to prompt when the modal markup is absent', async () => {
@@ -7786,7 +7775,7 @@ test('hiding a modal group clears required so the form can still submit', async 
   )
   await new Promise(setImmediate)
 
-  // starter early-end shows the reason group, which must be required again
+  // Starter early-end also hides the reason group and clears its constraint.
   const starterDom = endProjectDom()
   starterDom.reason.required = true
   const starterBridge = await loadBridge(
@@ -7805,8 +7794,8 @@ test('hiding a modal group clears required so the form can still submit', async 
   assert.ok(await waitFor(() => starterDom.end.getAttribute('data-project-action') === 'end'))
   starterBridge.dispatchDocument('click', clickEvent(starterDom.end).event)
   assert.ok(await waitFor(() => starterDom.title.textContent === 'End Project Early'))
-  assert.equal(starterDom.reasonWrap.style.display, '')
-  assert.equal(starterDom.reason.required, true, 'a visible required control keeps its constraint')
+  assert.equal(starterDom.reasonWrap.style.display, 'none')
+  assert.equal(starterDom.reason.required, false, 'a hidden required control cannot block submit')
 })
 
 // The live Webflow button is a Clickable Wrap: a bare `clickable_btn` overlay
