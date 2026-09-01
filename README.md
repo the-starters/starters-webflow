@@ -1099,10 +1099,14 @@ work and ending it early. Use `[data-end-project-title]` and
 `[data-end-project-reason-wrap]` around `[data-end-project-reason]` for the
 required early-end reason or pre-activation cancel note, and
 `[data-end-project-review]` around the Brand-only rating and public-review
-fields. The controller removes native `required` constraints while a group is
+fields. The controller shows those review fields only for Brand completion and
+hides them for early end. Add `project-element="project-name"` and
+`project-element="project-id"` (or the equivalent `data-end-project-bind`
+values) to display the active project's canonical title and numeric ID in both
+modes. The controller removes native `required` constraints while a group is
 hidden. It restores the reason constraint when that group is shown. The Brand
-review stays optional, so the controller also clears its native constraint when
-shown and uses JavaScript to reject a half-filled review. Author the submit
+completion review stays optional, so the controller also clears its native
+constraint when shown and uses JavaScript to reject a half-filled review. Author the submit
 control as the standard Clickable Wrap: the empty `button.clickable_btn` remains
 the native submitter, while every `.button_main-text` in its
 `.button_main-wrap` receives the state-specific caption. A legacy plain button
