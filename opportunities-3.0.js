@@ -2371,8 +2371,6 @@
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_END_MODAL_ID = 'end-project'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
-  const PROJECT_REQUEST_PARTIES = ['brand', 'starter']
-  const PROJECT_LIFECYCLE_UNAVAILABLE_LABEL = 'Status Unavailable'
   // Sent documents use recipient view/sign sessions. Completed documents use
   // a separate protected-PDF route and never mint a signing session.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
@@ -3380,7 +3378,7 @@
     })
 
     if (end) {
-      const endState = projectLifecycleActionState(project, projectWorkflowRole)
+      const endState = projectLifecycleActionState(project)
       setProjectActionLabel(end, endState.label)
       setProjectActionWaiting(end, endState.blocked)
       if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'lifecycle') {
@@ -3617,48 +3615,16 @@
     return action.dataset.projectActionKey
   }
 
-  function projectPartyRequested(project, role, actionName) {
-    if (!project || (role !== 'brand' && role !== 'starter')) return false
-    const field = role + '_' + actionName + '_requested_at'
-    return project[field] != null && String(project[field]).trim() !== ''
-  }
 
-  function projectLifecycleRequestAction(state) {
-    if (state === 'completion_requested') return 'completion'
-    if (state === 'termination_requested') return 'termination'
-    return ''
-  }
 
-  function projectLifecycleActionState(project, role) {
-    const state = lifecycleState(project)
-    const actionName = projectLifecycleRequestAction(state)
-    if (!actionName) {
-      return {
-        waitingOn: '',
-        blocked: false,
-        label: state === 'pending' ? 'Cancel Project' : 'End Project',
-      }
-    }
-    // A present-but-empty timestamp means that party has not requested; an
-    // absent key means the projection dropped the field, so the requester
-    // cannot be identified and the control must fail closed rather than offer
-    // the requester a second request.
-    const requesterUnknown =
-      (role !== 'brand' && role !== 'starter') ||
-      PROJECT_REQUEST_PARTIES.some(
-        (party) => project[party + '_' + actionName + '_requested_at'] === undefined,
-      )
-    if (requesterUnknown) {
-      return { waitingOn: '', blocked: true, label: PROJECT_LIFECYCLE_UNAVAILABLE_LABEL }
-    }
-    if (projectPartyRequested(project, role, actionName)) {
-      const waitingOn = role === 'brand' ? 'Starter' : 'Brand'
-      return { waitingOn, blocked: true, label: 'Waiting for ' + waitingOn }
-    }
+  // Ending a project finalizes on the first action (Xano #1679, 2026-09-01), so
+  // no party ever waits on the other. Rows left in `*_requested` by the old
+  // two-sided flow stay actionable: acting on one now closes it.
+  function projectLifecycleActionState(project) {
     return {
       waitingOn: '',
       blocked: false,
-      label: actionName === 'completion' ? 'Confirm Completion' : 'Confirm End',
+      label: lifecycleState(project) === 'pending' ? 'Cancel Project' : 'End Project',
     }
   }
 
@@ -3690,20 +3656,14 @@
     }
   }
 
-  function endProjectStep(project, role) {
-    const state = lifecycleState(project)
-    if (state === 'pending') return 'cancel'
-    if (state === 'completion_requested') return 'confirm-complete'
-    if (state === 'termination_requested') return 'confirm-terminate'
-    return 'choose'
+  function endProjectStep(project) {
+    return lifecycleState(project) === 'pending' ? 'cancel' : 'choose'
   }
 
-  // The Xano handshake finalizes only when the counterparty already requested,
-  // and a review can be stored only once the project reaches `completed`. The
-  // view therefore advertises the review inputs solely on the pass that will
-  // finalize a completion for the brand.
+  // Ending finalizes on the first action, so a completion always reaches
+  // `completed` and the brand's review always saves in the same pass.
   function endProjectView(project, role, mode) {
-    const step = endProjectStep(project, role)
+    const step = endProjectStep(project)
     const counterparty = role === 'brand' ? 'Starter' : 'Brand'
     if (step === 'cancel') {
       return {
@@ -3719,31 +3679,20 @@
         showToggle: false,
       }
     }
-    if (step === 'confirm-complete') {
-      return {
-        step,
-        action: 'complete',
-        reason: '',
-        title: 'Confirm Completion',
-        subtitle: 'The ' + counterparty + ' marked this project complete. Confirm to close it.',
-        submit: role === 'brand' ? 'Confirm and Submit Review' : 'Confirm Completion',
-        showReason: false,
-        requireReason: false,
-        showReview: role === 'brand' && !project.has_review,
-        showToggle: false,
-      }
-    }
-    if (step === 'confirm-terminate') {
-      const requested = String(project.end_reason || '').trim()
+    // A row left in `termination_requested` by the retired two-sided flow keeps
+    // its recorded reason: #1679 rejects a terminate whose reason differs from
+    // the pending one, so carry it forward instead of asking again.
+    const pendingReason = lifecycleState(project) === 'termination_requested'
+      ? String(project.end_reason || '').trim()
+      : ''
+    if (pendingReason) {
       return {
         step,
         action: 'terminate',
-        reason: requested,
-        title: 'Confirm Early End',
-        subtitle: requested
-          ? 'The ' + counterparty + ' asked to end this project early. Reason: ' + requested
-          : 'The ' + counterparty + ' asked to end this project early. Confirm to close it.',
-        submit: 'Confirm Early End',
+        reason: pendingReason,
+        title: 'End Project Early',
+        subtitle: 'Reason already on file: ' + pendingReason,
+        submit: 'End Project Early',
         showReason: false,
         requireReason: false,
         showReview: false,
@@ -3757,8 +3706,8 @@
       reason: '',
       title: early ? 'End Project Early' : 'End Project & Review',
       subtitle: early
-        ? 'The project closes after the ' + counterparty + ' confirms the early end.'
-        : 'The project closes after the ' + counterparty + ' confirms the completion.',
+        ? 'This ends the project now and notifies the ' + counterparty + '.'
+        : 'This closes the project now and notifies the ' + counterparty + '.',
       submit: early
         ? 'End Project Early'
         : role === 'brand' ? 'End Project and Submit Review' : 'Mark Work Complete',
@@ -3870,28 +3819,23 @@
     })
   }
 
-  function endProjectPromptIntent(project, role, confirmAction, promptAction) {
-    const step = endProjectStep(project, role)
+  function endProjectPromptIntent(project, confirmAction, promptAction) {
+    const step = endProjectStep(project)
     if (step === 'cancel') {
       return confirmAction('Cancel this project before it starts?')
         ? { action: 'cancel', reason: 'canceled_before_activation' }
         : null
     }
-    if (step === 'confirm-complete') {
-      return confirmAction(
-        'Confirm that the project is complete? The project closes after both sides confirm.',
-      )
-        ? { action: 'complete', reason: '' }
-        : null
-    }
-    if (step === 'confirm-terminate') {
-      const reason = String(project.end_reason || '').trim()
-      return confirmAction('Confirm ending this project early?')
-        ? { action: 'terminate', reason }
+    const pendingReason = lifecycleState(project) === 'termination_requested'
+      ? String(project.end_reason || '').trim()
+      : ''
+    if (pendingReason) {
+      return confirmAction('End this project early now? Reason already on file: ' + pendingReason)
+        ? { action: 'terminate', reason: pendingReason }
         : null
     }
     const response = promptAction(
-      'Type COMPLETE if the work is finished. To end the project early, enter the reason instead. Leave blank to keep it active.',
+      'Type COMPLETE to close this project now. To end it early instead, enter the reason. Leave blank to keep it active.',
       '',
     )
     if (response == null || !String(response).trim()) return null
@@ -3912,10 +3856,9 @@
   ) {
     const state = lifecycleState(project)
     if (!state || PROJECT_TERMINAL_STATES.has(state)) return null
-    if (projectLifecycleActionState(project, role).blocked) return null
     const modalIntent = openEndProjectIntent(project, role)
     if (modalIntent) return modalIntent
-    return endProjectPromptIntent(project, role, confirmAction, promptAction)
+    return endProjectPromptIntent(project, confirmAction, promptAction)
   }
 
   function submitEndProjectIntent(event, modal) {
