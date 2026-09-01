@@ -1257,6 +1257,9 @@ test('authored reschedule controls and field label replace Webflow placeholder c
       'reschedule-calendar',
       'reschedule-declined',
       'reschedule-proposed',
+      // The pending path's success view, generated for the same reason as the
+      // others: a modal without the authored panel must still have a target.
+      'reschedule-updated',
     ],
   )
   const calendarPanel = modal.querySelector('[booking-popup-content="reschedule-calendar"]')
@@ -1272,6 +1275,32 @@ test('authored reschedule controls and field label replace Webflow placeholder c
       .filter((action) => action !== 'reschedule')
       .sort(),
     ['confirm-reschedule', 'reschedule-decline'],
+  )
+
+  const fallbackHost = fakeElement('div')
+  const fallbackBase = fakeElement('div')
+  fallbackBase.setAttribute('booking-popup-content', 'base')
+  fallbackHost.appendChild(fallbackBase)
+  const fallbackModal = {
+    querySelector(selector) {
+      const contentMatch = selector.match(/^\[booking-popup-content="([^"]+)"\]$/)
+      if (contentMatch) {
+        return fallbackHost.children.find(
+          (child) => child.attributes['booking-popup-content'] === contentMatch[1],
+        ) || null
+      }
+      return null
+    },
+    querySelectorAll() {
+      return []
+    },
+  }
+  assert.equal(api.ensureRescheduleViews({ createElement: fakeElement }, fallbackModal), true)
+  const fallbackPanel = fallbackModal.querySelector('[booking-popup-content="reschedule"]')
+  assert.equal(fallbackPanel.children[0].textContent, 'Choose a new time')
+  assert.equal(
+    fallbackPanel.children[1].textContent,
+    'Select a new time and add a short note about why you need the change.',
   )
 })
 
@@ -1550,5 +1579,118 @@ test('a stale mount cannot hide the loader owned by a newer mount', async () => 
     assert.equal(loader.style.display, 'none')
   } finally {
     global.StartersPaidCallBrandPayment = originalCalendar
+  }
+})
+
+test('a pending request is reschedulable by the brand only, and never by the propose contract', () => {
+  const pending = rescheduleBooking({ status: 'pending' })
+  const confirmed = rescheduleBooking({ status: 'confirmed' })
+
+  // The two contracts must never both claim a booking: #5921 refuses a
+  // confirmed booking and #5756 refuses a pending one, so an overlap here
+  // would send a request the server is guaranteed to reject.
+  assert.equal(api.canRequestReschedule('brand', pending), true)
+  assert.equal(api.canProposeReschedule('brand', pending), false)
+  assert.equal(api.canProposeReschedule('brand', confirmed), true)
+  assert.equal(api.canRequestReschedule('brand', confirmed), false)
+
+  // Brand only: it is the brand's own unanswered request.
+  assert.equal(api.canRequestReschedule('starter', pending), false)
+
+  // The same guards as the confirmed path still apply.
+  assert.equal(api.canRequestReschedule('brand', rescheduleBooking({ status: 'pending', is_paid: true })), false)
+  assert.equal(api.canRequestReschedule('brand', rescheduleBooking({ status: 'pending', grant_id: '' })), false)
+  assert.equal(api.canRequestReschedule('brand', rescheduleBooking({ status: 'pending', data_environment: '' })), false)
+  assert.equal(
+    api.canRequestReschedule('brand', rescheduleBooking({ status: 'pending', start: Date.now() - 1000 })),
+    false,
+  )
+})
+
+test('rescheduleKindFor picks the contract the booking actually accepts', () => {
+  assert.equal(api.rescheduleKindFor('brand', rescheduleBooking({ status: 'confirmed' })), 'reschedule-propose')
+  assert.equal(api.rescheduleKindFor('brand', rescheduleBooking({ status: 'pending' })), 'reschedule-request')
+  assert.equal(api.rescheduleKindFor('starter', rescheduleBooking({ status: 'pending' })), '')
+  assert.equal(api.rescheduleKindFor('brand', rescheduleBooking({ status: 'cancelled' })), '')
+})
+
+test('a pending reschedule posts the update contract and keeps the booking pending', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const calls = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() { return '00000000-0000-4000-8000-00000000009a' },
+    }
+    global.xanoAuthFetch = async function (url, options) {
+      calls.push({ url, body: JSON.parse(options.body) })
+      return {
+        ok: true,
+        async json() {
+          // The server leaves a pending request pending; only the time moves.
+          return { reschedule_request: { booking_id: 'booking-pending-1', status: 'pending' } }
+        },
+      }
+    }
+    const booking = rescheduleBooking({ booking_id: 'booking-pending-1', status: 'pending' })
+    const start = Date.now() + 3 * 60 * 60 * 1000
+    const result = await api.proposeReschedule(booking, 'brand', 'Earlier suits us', {
+      start,
+      end: start + 30 * 60 * 1000,
+      timezone: 'Asia/Manila',
+    })
+
+    assert.ok(result)
+    assert.equal(calls.length, 1)
+    // The pending contract, not the handshake one.
+    assert.match(calls[0].url, /\/booking\/reschedule\/request\/v3$/)
+    assert.equal(calls[0].body.booking_id, 'booking-pending-1')
+    assert.equal(calls[0].body.new_start, start)
+    assert.equal(calls[0].body.rescheduled_reason, 'Earlier suits us')
+    assert.ok(calls[0].body.idempotency_key)
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('a confirmed reschedule still posts the propose contract', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const calls = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() { return '00000000-0000-4000-8000-00000000009b' },
+    }
+    global.xanoAuthFetch = async function (url, options) {
+      calls.push({ url, body: JSON.parse(options.body) })
+      return {
+        ok: true,
+        async json() {
+          return { reschedule: { booking_id: 'booking-confirmed-1', status: 'rescheduled' } }
+        },
+      }
+    }
+    const booking = rescheduleBooking({ booking_id: 'booking-confirmed-1', status: 'confirmed' })
+    const start = Date.now() + 4 * 60 * 60 * 1000
+    const result = await api.proposeReschedule(booking, 'brand', 'Conflict came up', {
+      start,
+      end: start + 30 * 60 * 1000,
+      timezone: 'Asia/Manila',
+    })
+
+    assert.ok(result)
+    assert.match(calls[0].url, /\/booking\/reschedule\/propose\/v3$/)
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
   }
 })

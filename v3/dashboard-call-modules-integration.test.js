@@ -687,11 +687,11 @@ test('the authored Reschedule entry click reaches the actions module in real lis
     }
     let getBookingCalls = 0
     // Real boot order: the dashboard swallow listener registers first…
-    dashboard.wireBookingDetails([{ rows }], 'starter')
+    dashboard.wireBookingDetails([{ rows }], 'brand')
     // …then the async-loaded actions module wires second.
     global.StartersDashboardCallActions.wire({
       document: global.document,
-      role: 'starter',
+      role: 'brand',
       restart() {},
       getBooking() {
         getBookingCalls += 1
@@ -706,6 +706,18 @@ test('the authored Reschedule entry click reaches the actions module in real lis
     assert.equal(eligible.prevented, 1)
     const reschedulePanel = panels.find((panel) => panel.name === 'reschedule')
     const basePanel = panels.find((panel) => panel.name === 'base')
+    assert.equal(reschedulePanel.hidden, false)
+    assert.equal(basePanel.hidden, true)
+
+    currentBooking = { ...eligibleBooking, status: 'pending' }
+    rows[0] = currentBooking
+    reschedulePanel.hidden = true
+    basePanel.hidden = false
+    const pendingBefore = getBookingCalls
+    const pending = dispatch()
+    assert.equal(getBookingCalls, pendingBefore + 1)
+    assert.equal(pending.stopped, true)
+    assert.equal(pending.prevented, 1)
     assert.equal(reschedulePanel.hidden, false)
     assert.equal(basePanel.hidden, true)
 
@@ -770,6 +782,9 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
       canDecline() { return false },
       canCancel() { return false },
       canProposeReschedule() { return false },
+      // The gate reads the resolved kind now, because one button serves both
+      // the confirmed propose flow and the pending time update.
+      rescheduleKindFor() { return '' },
       canRespondReschedule() { return false },
     }
     const reschedule = hintButton('reschedule')
@@ -784,7 +799,7 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
     dashboard.configureDetailActions(modal, 'brand', 'confirmed', paidBooking, Date.now())
     assert.equal(
       modal.hints.reschedule.textContent,
-      'Rescheduling is available for confirmed Free calls.',
+      'Rescheduling is available for Free calls.',
     )
     assert.equal(modal.hints.reschedule.hidden, false)
     assert.equal(
@@ -794,7 +809,7 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
     assert.equal(modal.hints.cancel.hidden, false)
 
     // When the actions become available the hints hide again.
-    global.StartersDashboardCallActions.canProposeReschedule = () => true
+    global.StartersDashboardCallActions.rescheduleKindFor = () => 'reschedule-propose'
     global.StartersDashboardCallActions.canCancel = () => true
     const freeBooking = { ...paidBooking, is_paid: false }
     dashboard.configureDetailActions(modal, 'brand', 'confirmed', freeBooking, Date.now())
@@ -803,7 +818,7 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
 
     // A past or terminal booking renders no hint at all.
     const freshModal = hintModal([hintButton('reschedule'), hintButton('switch-cancel')])
-    global.StartersDashboardCallActions.canProposeReschedule = () => false
+    global.StartersDashboardCallActions.rescheduleKindFor = () => ''
     global.StartersDashboardCallActions.canCancel = () => false
     dashboard.configureDetailActions(
       freshModal,

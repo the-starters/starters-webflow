@@ -2165,9 +2165,9 @@ test('an eligible Reschedule click is handed to the actions module untouched', (
     const eligibilityCalls = []
     global.StartersDashboardCallActions = {
       wire() {},
-      canProposeReschedule(role, candidate, now) {
+      rescheduleKindFor(role, candidate, now) {
         eligibilityCalls.push({ role, candidate, now })
-        return true
+        return 'reschedule-propose'
       },
     }
     const card = {
@@ -2199,7 +2199,7 @@ test('an eligible Reschedule click is handed to the actions module untouched', (
     assert.equal(eligibilityCalls[0].candidate, booking)
 
     // An ineligible booking still swallows the click.
-    global.StartersDashboardCallActions.canProposeReschedule = () => false
+    global.StartersDashboardCallActions.rescheduleKindFor = () => ''
     clickListener({
       target: {
         closest(selector) {

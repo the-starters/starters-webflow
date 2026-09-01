@@ -2180,26 +2180,33 @@ eligibility and feedback rules live in the
 [dashboard booking action contract](#dashboard-booking-action-contract). The
 decline chain now also exposes its authored reason step
 (`switch-decline-reason`), so the reason dialog is reachable. Free-call
-reschedule now follows a propose-then-confirm contract on the published
-environment-bound endpoints: the authored `reschedule` trigger opens the
-existing authored reason step, or a module fallback when that step is absent,
-and then the shared availability calendar. The controller keeps authored
-Webflow structure, labels its existing `switch-base` and
-`reschedule-calendar` controls `Back` and `Continue`, and replaces Webflow's
-default Div Block copy with the visible and accessible textarea label `Why do
-you need a new time?`. It loads
+reschedule has two separate contracts on the published environment-bound
+endpoints. For a confirmed call, either participant proposes a time and the
+counterpart responds. For a pending request, only the Brand can update the
+requested time; the booking stays pending and the Starter's normal accept
+applies to the new time. Both contracts use the authored `reschedule` trigger,
+the existing authored reason step or its module fallback, and then the shared
+availability calendar. The controller keeps authored Webflow structure, labels
+its existing `switch-base` and `reschedule-calendar` controls `Back` and
+`Continue`, and replaces Webflow's default Div Block copy with the visible and
+accessible textarea label `Why do you need a new time?`. It loads
 `paid-call-brand-payment.js` on demand and reuses the same slot picker as
-`/hire`. The proposal posts `booking/reschedule/propose/v3` with a required
+`/hire`.
+
+A confirmed-call proposal posts `booking/reschedule/propose/v3` with a required
 reason, the selected slot's unchanged timestamps, the selected IANA timezone,
-and a durable `dashboard-reschedule-propose:` key.
-Only the counterpart sees the module-rendered "Accept new time" and "Keep
-current time" actions in the base view beside the authored reschedule trigger;
-the actions post `booking/reschedule/confirm/v3` or
-`booking/reschedule/decline/v3` with their own durable keys. The call keeps its
-current provider time until the counterpart confirms. Direct transcript access
-and every payment control also stay hidden. There is no hard 24-hour cutoff on
-cancel or reschedule; late-change copy can warn the participant but must never
-block the action.
+and a durable `dashboard-reschedule-propose:` key. Only the counterpart sees
+the module-rendered "Accept new time" and "Keep current time" actions in the
+base view beside the authored reschedule trigger. Those actions post
+`booking/reschedule/confirm/v3` or `booking/reschedule/decline/v3` with their
+own durable keys, and the call keeps its current provider time until the
+counterpart confirms. A pending-request update posts the same slot and reason
+fields to `booking/reschedule/request/v3` with a durable
+`dashboard-reschedule-request:` key, then opens `reschedule-updated`; it has no
+response actions and does not enter the proposal lifecycle. Direct transcript
+access and every payment control also stay hidden. There is no hard 24-hour
+cutoff on cancel or reschedule; late-change copy can warn the participant but
+must never block the action.
 
 The authored reschedule-calendar panels can include a
 `[booking-calendar-loader]` wrapper. The controller shows it as flex while it
@@ -2256,19 +2263,22 @@ confirmed or rescheduled row whose start is in the future. Xano
 ships, so an explicitly Paid row hides Cancel and shows `Paid call cancellation
 is not available yet.` below the authored control. For Cancel eligibility only,
 a row with neither `is_paid` nor `paid_meeting` is treated as legacy Free so
-older Free bookings keep the action. A reschedule proposal keeps the stricter
-contract: it is available to either participant only for a confirmed future
-call with an explicit Free flag, a grant, and positive duration. Only the
-counterpart can confirm or decline a pending proposal. Every command requires a
-booking ID, configuration ID, participant identity, and exact `test` or
-`production` data environment.
+older Free bookings keep the action. Reschedule keeps a stricter shared gate:
+the row must be in the future, have an explicit Free flag, a grant, and positive
+duration. A confirmed call uses the proposal contract for either participant,
+and only the counterpart can confirm or decline the resulting proposal. A
+pending request uses the direct-update contract for the Brand only. The two
+contracts never claim the same booking. Every command requires a booking ID,
+configuration ID, participant identity, and exact `test` or `production` data
+environment.
 
-For an active upcoming row where neither a proposal nor a response is
-available, the modal shows `Rescheduling is available for confirmed Free calls.`
+For an active upcoming row where neither a reschedule action nor a response is
+available, the modal shows `Rescheduling is available for Free calls.`
 below the authored Reschedule control. Both eligibility explanations are
 module-owned `data-starters-action-hint` nodes inserted after the authored
 buttons; the script does not edit Designer markup. The early Reschedule guard
-passes an eligible click to `dashboard-call-actions.js`. It still consumes the
+resolves the confirmed proposal or pending direct-update contract and passes an
+eligible click to `dashboard-call-actions.js`. It still consumes the
 click when that module is unavailable, the booking cannot be resolved, or the
 booking is ineligible, because the legacy empty `popup-booking-reschedule`
 dialog remains on `/starter-dashboard`.
@@ -2277,18 +2287,21 @@ The native Webflow modal owns `[booking-decline-reason]`,
 `[booking-cancel-reason]`, and the base reschedule trigger. When it also owns the
 `reschedule` reason view, the module keeps that panel and its controls, normalizes
 their copy, does not create replacements for them, and creates only the missing
-shared-calendar and result views. A modal with no authored `reschedule` view
-receives the module fallback instead.
+shared-calendar and result views. The Brand modal can author the pending path's
+`reschedule-updated` result. A modal that lacks that panel receives a module
+fallback, so the direct-update success cannot switch to a missing target. A
+modal with no authored `reschedule` view receives the module fallback instead.
 The module also adds the base "Accept new time" and "Keep current time"
 responses beside the reschedule trigger. It creates that response pair once per
 modal, marks both controls with
 `data-starters-reschedule-respond`, and ensures they are still present whenever
-the details modal is populated. Decline, cancel, and reschedule proposal each
-require a non-empty reason. Decline posts `booking_id`, `config_id`, `reason`, and
-`idempotency_key` to `booking/decline/v3`; cancel uses `cancelled_reason` at
-`booking/cancel/v3`. A proposal posts `rescheduled_reason`, `new_start`,
-`new_end`, and `timezone` with those shared identifiers to
-`booking/reschedule/propose/v3`.
+the details modal is populated. Decline, cancel, and both reschedule commands
+require a non-empty reason. Decline posts `booking_id`, `config_id`, `reason`,
+and `idempotency_key` to `booking/decline/v3`; cancel uses `cancelled_reason` at
+`booking/cancel/v3`. Both reschedule commands post `rescheduled_reason`,
+`new_start`, `new_end`, and `timezone` with those shared identifiers. A
+confirmed call posts to `booking/reschedule/propose/v3`; a pending Brand request
+posts to `booking/reschedule/request/v3`.
 Confirm and decline responses post the shared identifiers to their matching
 `booking/reschedule/confirm/v3` or `booking/reschedule/decline/v3` endpoint.
 
@@ -2301,11 +2314,12 @@ status, paid state, and whether the booking has the required identity.
 
 Each idempotency key is tab-scoped and includes the environment, booking, and a
 non-reversible participant identity hash. Decline and cancel also scope the key
-to the reason, a proposal scopes it to reason, slot start, and timezone, and each
-response uses a fixed `respond` scope. An ambiguous or malformed result keeps
-the key for safe replay. Only an exact nested result for the same booking clears the
-matching key: decline must be `declined`, cancel must be `cancelled`, a proposal
-must be `rescheduled`, and either response must be `confirmed`. The success
+to the reason, each reschedule command scopes it to reason, slot start, and
+timezone, and each response uses a fixed `respond` scope. An ambiguous or
+malformed result keeps the key for safe replay. Only an exact nested result for
+the same booking clears the matching key: decline must be `declined`, cancel
+must be `cancelled`, a proposal must be `rescheduled`, a pending-request update
+must remain `pending`, and either response must be `confirmed`. The success
 panel replaces `[Starter]` and `[Brand]` in its leaf text nodes with the
 counterpart's canonical booking name, or `the other participant` when that name
 is blank. Other authored content stays unchanged. The panel remains visible
