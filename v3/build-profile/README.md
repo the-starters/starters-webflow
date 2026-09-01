@@ -179,7 +179,9 @@ These live blocks stay unchanged while Elvin owns availability, booking, and pai
 
 The extracted final submit writer is now a declared behavior-change candidate. It
 keeps the existing normalized profile payload, availability fields, and paid-call
-fields. Its behavior changes are the reviewer-alias compatibility described above
+fields. A positive member-entered paid-call rate enables the paid consult in the
+payload even when fallback hydration left the hidden paid-call radio on `no`.
+Its other behavior changes are the reviewer-alias compatibility described above
 and the profile-save and pending-photo commit gate described in
 [Profile-photo upload contract](#profile-photo-upload-contract). The separate
 outcome observer still does not change its request or payload.

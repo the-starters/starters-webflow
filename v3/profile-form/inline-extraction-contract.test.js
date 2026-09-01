@@ -104,7 +104,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 10927, sha256: 'c1356075ebaa0d117ac5f686a488155c11437c15431a6799694384e6bed2ad07',
+    characters: 11283, sha256: '7547c8c94395018acd7da6cf5f4df9a502bfd331d5d45cf9dc5d028b2439e142',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 219: '          ' }), terminalNewlinesRemoved: 0,
@@ -1342,7 +1342,7 @@ test('build submit writer sends one normalized payload through the authored form
     ['tagline', 'Profile tagline'], ['pro-headline', 'Profile headline'], ['bio-html', '<p>Bio</p>'],
     ['best-fit-1', 'Startups'], ['rate', '125.6'], ['availability-option', '11-20'],
     ['availability', 'availability-id'], ['full-time-placement', 'yes'],
-    ['free-consulting-calls', 'no'], ['paid-consulting-calls', 'yes'],
+    ['free-consulting-calls', 'no'], ['paid-consulting-calls', 'no'],
     ['paid-call-description', 'Strategy call'], ['paid-call-rate', '199.6'],
     ['offer-monthly-retainers', 'yes'], ['rate-retainer', '2500.4'],
     ['service', JSON.stringify({ name: 'Audit', price: 500 })],
