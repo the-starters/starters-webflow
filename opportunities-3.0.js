@@ -3766,6 +3766,24 @@
     }
   }
 
+  // The Starter Webflow component reuses booking-table rows whose authored
+  // contract hides `[booking-element-wrap]` until a controller reveals it.
+  // Binding the identity text is therefore not enough: the populated project
+  // name and ID remain invisible unless their rows are explicitly displayed.
+  function revealEndProjectIdentityRows(elements) {
+    elements.forEach((element) => {
+      if (!element) return
+      const row = element.closest
+        ? element.closest('[booking-element-wrap], .call-details_table-item')
+        : null
+      const target = row || element
+      setEndProjectVisible(target, true)
+      if (row && row.hasAttribute && row.hasAttribute('display-flex')) {
+        row.style.display = 'flex'
+      }
+    })
+  }
+
   function paintEndProjectModal(modal, view, project) {
     const parts = endProjectModalParts(modal)
     const identity = endProjectIdentity(project)
@@ -3773,6 +3791,8 @@
     if (parts.subtitle) parts.subtitle.textContent = view.subtitle
     parts.projectNames.forEach((element) => { element.textContent = identity.name })
     parts.projectIds.forEach((element) => { element.textContent = identity.id })
+    revealEndProjectIdentityRows(parts.projectNames)
+    revealEndProjectIdentityRows(parts.projectIds)
     parts.reviewGroups.forEach((group) => setEndProjectVisible(group, view.showReview))
     // The review is optional, but the Webflow feedback field carries `required`.
     // A visible required control would refuse an intentionally empty review the
