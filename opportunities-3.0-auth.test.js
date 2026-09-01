@@ -7290,6 +7290,10 @@ function endProjectDom(overrides = {}) {
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
   const title = el('p', { 'data-end-project-title': '' })
   const subtitle = el('p', { 'data-end-project-subtitle': '' })
+  const projectName = el('p', { 'project-element': 'project-name' })
+  projectName.textContent = 'project-name'
+  const projectId = el('p', { 'project-element': 'project-id' })
+  projectId.textContent = 'project-id'
   const rating = el('input', { name: 'Call-Rating' })
   rating.value = overrides.rating == null ? '5' : overrides.rating
   const feedback = el('textarea', { name: 'Feedback' })
@@ -7346,11 +7350,12 @@ function endProjectDom(overrides = {}) {
   const modal = el(
     'dialog',
     { 'data-modal-target': 'end-project' },
-    [title, subtitle, form, done, fail],
+    [title, subtitle, projectName, projectId, form, done, fail],
   )
   const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
   return {
-    end, label, wrap, card, title, subtitle, rating, feedback, reviewGroup,
+    end, label, wrap, card, title, subtitle, projectName, projectId,
+    rating, feedback, reviewGroup,
     reason, reasonWrap, toggle, submit, submitText, submitIcon, submitWrap,
     form, done, fail, modal, root,
   }
@@ -7384,6 +7389,7 @@ test('brand end-project modal completes and submits the review in one pass', asy
             lifecycle_version: 4,
             review_eligible: false,
             has_review: false,
+            title: 'Launch Campaign',
             starter_name: 'JP Test',
           }],
         })
@@ -7417,6 +7423,8 @@ test('brand end-project modal completes and submits the review in one pass', asy
   assert.match(dom.subtitle.textContent, /closes the project now/)
   assert.equal(dom.reviewGroup.style.display, '')
   assert.equal(dom.reasonWrap.style.display, 'none')
+  assert.equal(dom.projectName.textContent, 'Launch Campaign')
+  assert.equal(dom.projectId.textContent, '675')
   // Ending finalizes on the first action now, so the early-end toggle stays
   // available on an active project instead of being hidden behind a confirm.
   assert.equal(dom.toggle.style.display, '')
@@ -7435,7 +7443,7 @@ test('brand end-project modal completes and submits the review in one pass', asy
   assert.equal(reviewBody.review_text, 'Excellent collaboration overall.')
 })
 
-test('brand termination submits the optional review when it is filled in', async () => {
+test('brand termination hides review fields and never submits a review', async () => {
   const dom = endProjectDom({ reason: 'Scope changed' })
   let actionBody = null
   let reviewCount = 0
@@ -7451,6 +7459,7 @@ test('brand termination submits the optional review when it is filled in', async
             lifecycle_version: 4,
             review_eligible: false,
             has_review: false,
+            title: 'Launch Campaign',
             starter_name: 'JP Test',
           }],
         })
@@ -7481,6 +7490,10 @@ test('brand termination submits the optional review when it is filled in', async
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
   bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
+  assert.equal(dom.reviewGroup.style.display, 'none')
+  assert.equal(dom.reasonWrap.style.display, '')
+  assert.equal(dom.projectName.textContent, 'Launch Campaign')
+  assert.equal(dom.projectId.textContent, '675')
 
   bridge.dispatchDocument('submit', {
     target: dom.form,
@@ -7491,8 +7504,7 @@ test('brand termination submits the optional review when it is filled in', async
   assert.ok(await waitFor(() => dom.label.textContent !== 'End Project'))
   assert.equal(actionBody.action, 'terminate')
   assert.equal(actionBody.reason, 'Scope changed')
-  // JP opened reviews to early ends on 2026-09-01, so a filled review posts.
-  assert.equal(reviewCount, 1)
+  assert.equal(reviewCount, 0)
   assert.match(dom.label.textContent, /Project ended/)
 })
 
@@ -7509,6 +7521,7 @@ test('starter end-project modal completes without review fields', async () => {
             id: 675,
             lifecycle_state: 'active',
             lifecycle_version: 4,
+            title: 'Launch Campaign',
             brand_name: 'Test Brand',
           }],
         })
@@ -7532,12 +7545,16 @@ test('starter end-project modal completes without review fields', async () => {
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
   assert.equal(dom.reviewGroup.style.display, 'none')
   assert.equal(dom.reasonWrap.style.display, '')
+  assert.equal(dom.projectName.textContent, 'Launch Campaign')
+  assert.equal(dom.projectId.textContent, '675')
 
   bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
   assert.equal(dom.submitText.textContent, 'Mark Work Complete')
   assert.equal(dom.reviewGroup.style.display, 'none')
   assert.equal(dom.reasonWrap.style.display, 'none')
+  assert.equal(dom.projectName.textContent, 'Launch Campaign')
+  assert.equal(dom.projectId.textContent, '675')
 
   bridge.dispatchDocument('submit', {
     target: dom.form,
@@ -7588,8 +7605,7 @@ test('early-end mode requires a reason and sends it as the terminate reason', as
   bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
   assert.equal(dom.reasonWrap.style.display, '')
-  // The review is offered on an early end too now, and stays optional.
-  assert.equal(dom.reviewGroup.style.display, '')
+  assert.equal(dom.reviewGroup.style.display, 'none')
 
   bridge.dispatchDocument('submit', {
     target: dom.form,

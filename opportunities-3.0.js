@@ -3648,6 +3648,8 @@
       form: $('form', modal),
       title: $('[data-end-project-title]', modal),
       subtitle: $('[data-end-project-subtitle]', modal),
+      projectNames: $$('[data-end-project-bind="project-name"], [project-element="project-name"]', modal),
+      projectIds: $$('[data-end-project-bind="project-id"], [project-element="project-id"]', modal),
       reviewGroups: $$('[data-end-project-review]', modal),
       reasonWrap: $('[data-end-project-reason-wrap]', modal),
       reason: $('[data-end-project-reason]', modal),
@@ -3661,8 +3663,8 @@
     return lifecycleState(project) === 'pending' ? 'cancel' : 'choose'
   }
 
-  // Ending finalizes on the first action, so the project reaches a terminal
-  // state in one pass and the brand's optional review saves alongside it.
+  // Ending finalizes on the first action. A Brand completion can save its
+  // optional review alongside the terminal project update; early end cannot.
   function endProjectView(project, role, mode) {
     const step = endProjectStep(project)
     const counterparty = role === 'brand' ? 'Starter' : 'Brand'
@@ -3700,7 +3702,7 @@
         submit: 'End Project Early',
         showReason: false,
         requireReason: false,
-        showReview: role === 'brand' && !project.has_review,
+        showReview: false,
         showToggle: false,
       }
     }
@@ -3718,7 +3720,7 @@
         : role === 'brand' ? 'End Project and Submit Review' : 'Mark Work Complete',
       showReason: early,
       requireReason: early,
-      showReview: role === 'brand' && !project.has_review,
+      showReview: !early && role === 'brand' && !project.has_review,
       showToggle: true,
       toggle: early ? 'The work is finished instead' : 'End this project early instead',
     }
@@ -3745,10 +3747,31 @@
     })
   }
 
-  function paintEndProjectModal(modal, view, starterName) {
+  function endProjectIdentity(project) {
+    const id = Number(project && (project.id || project.project_id))
+    const projectId = id > 0 ? String(id) : ''
+    const name = String(
+      project && (
+        project.title ||
+        project.project_name ||
+        project.project_title ||
+        project.name ||
+        project.service
+      ) || '',
+    ).trim()
+    return {
+      name: name || (projectId ? 'Project #' + projectId : ''),
+      id: projectId,
+    }
+  }
+
+  function paintEndProjectModal(modal, view, project) {
     const parts = endProjectModalParts(modal)
+    const identity = endProjectIdentity(project)
     if (parts.title) parts.title.textContent = view.title
     if (parts.subtitle) parts.subtitle.textContent = view.subtitle
+    parts.projectNames.forEach((element) => { element.textContent = identity.name })
+    parts.projectIds.forEach((element) => { element.textContent = identity.id })
     parts.reviewGroups.forEach((group) => setEndProjectVisible(group, view.showReview))
     // The review is optional, but the Webflow feedback field carries `required`.
     // A visible required control would refuse an intentionally empty review the
@@ -3765,6 +3788,7 @@
     setEndProjectVisible(parts.reasonWrap, view.showReason)
     setEndProjectVisible(parts.toggle, view.showToggle)
     if (parts.toggle && view.toggle) parts.toggle.textContent = view.toggle
+    const starterName = String(project && project.starter_name || '').trim()
     if (starterName) paintProjectReviewStarterName(modal, starterName)
     // The Webflow button is a Clickable Wrap: a bare `clickable_btn` overlay
     // carries type=submit while the visible caption lives in the enclosing
@@ -3808,10 +3832,9 @@
     const modal = endProjectModal()
     if (!modal) return null
     resolveEndProjectRequest(null)
-    const starterName = String(project && project.starter_name || '').trim()
     let mode = role === 'brand' ? 'complete' : 'terminate'
     let view = endProjectView(project, role, mode)
-    const parts = paintEndProjectModal(modal, view, starterName)
+    const parts = paintEndProjectModal(modal, view, project)
     if (parts.form) {
       parts.form.reset()
       parts.form.style.display = ''
@@ -3829,7 +3852,7 @@
           if (!view.showToggle) return
           mode = mode === 'terminate' ? 'complete' : 'terminate'
           view = endProjectView(project, role, mode)
-          paintEndProjectModal(modal, view, starterName)
+          paintEndProjectModal(modal, view, project)
         },
       }
       showProjectModal(PROJECT_END_MODAL_ID, modal)
@@ -3909,9 +3932,9 @@
       const reviewInput = $('[name="Public-Feedback"], [name="Feedback"]', form)
       const rating = Number(ratingInput && ratingInput.value)
       const reviewText = String(reviewInput && reviewInput.value || '').trim()
-      // The review is optional (JP, 2026-09-01): completing or ending early
-      // must succeed with nothing filled in. A partly filled review is a mistake
-      // rather than a choice, so validate both fields once either is touched.
+      // The Brand completion review is optional and must allow empty fields.
+      // A partly filled review is a mistake rather than a choice, so validate
+      // both fields once either is touched.
       const started = rating >= 1 || reviewText !== ''
       if (started) {
         if (!(rating >= 1 && rating <= 5)) {
@@ -3939,8 +3962,8 @@
     closeEndProjectModal(modal)
   }
 
-  // A review attaches only to a completed or terminated project. Anything else
-  // means the action did not finalize into a reviewable state.
+  // Review data originates only from Brand completion mode. Before submission,
+  // also require a terminal state that Xano recognizes as reviewable.
   async function submitEndProjectReview(intent, project) {
     const review = intent && intent.review
     if (!review) return ''
