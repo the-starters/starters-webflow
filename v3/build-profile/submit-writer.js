@@ -103,7 +103,8 @@
         };
 
         const paidCallRate = toInteger(formData["paid-call-rate"]);
-        const paidCallEnabled = toBool(formData["paid-consulting-calls"]) === true || paidCallRate > 0;
+        const paidCallEnabled = toBool(formData["paid-consulting-calls"]) === true ||
+          (formData.type === "consult" && paidCallRate > 0);
 
         const payload = {
           member_id: MEMBER.id || "",
