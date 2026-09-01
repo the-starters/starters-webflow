@@ -2371,9 +2371,7 @@
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_END_MODAL_ID = 'end-project'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
-  // Xano #1674 accepts a review on any closed project (widened 2026-09-01),
-  // so the browser guard must match that set rather than completion alone.
-  const PROJECT_REVIEWABLE_STATES = PROJECT_TERMINAL_STATES
+  const PROJECT_REVIEWABLE_STATES = new Set(['completed', 'terminated'])
   // Sent documents use recipient view/sign sessions. Completed documents use
   // a separate protected-PDF route and never mint a signing session.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
@@ -3665,7 +3663,6 @@
 
   // Ending finalizes on the first action, so the project reaches a terminal
   // state in one pass and the brand's optional review saves alongside it.
-  // JP opened reviews to early ends and cancellations on 2026-09-01.
   function endProjectView(project, role, mode) {
     const step = endProjectStep(project)
     const counterparty = role === 'brand' ? 'Starter' : 'Brand'
@@ -3842,9 +3839,12 @@
   function endProjectPromptIntent(project, confirmAction, promptAction) {
     const step = endProjectStep(project)
     if (step === 'cancel') {
-      return confirmAction('Cancel this project before it starts?')
-        ? { action: 'cancel', reason: 'canceled_before_activation' }
-        : null
+      const response = promptAction(
+        'Tell us what happened before cancelling this project. Leave blank to keep it active.',
+        '',
+      )
+      const reason = String(response || '').trim()
+      return reason ? { action: 'cancel', reason } : null
     }
     const pendingReason = lifecycleState(project) === 'termination_requested'
       ? String(project.end_reason || '').trim()
@@ -3939,9 +3939,8 @@
     closeEndProjectModal(modal)
   }
 
-  // A review attaches to a closed project: completed, terminated, or canceled
-  // (Xano #1674 widened 2026-09-01). Anything else means the action did not
-  // finalize, so the review must not be posted.
+  // A review attaches only to a completed or terminated project. Anything else
+  // means the action did not finalize into a reviewable state.
   async function submitEndProjectReview(intent, project) {
     const review = intent && intent.review
     if (!review) return ''
