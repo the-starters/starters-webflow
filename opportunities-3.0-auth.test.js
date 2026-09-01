@@ -7617,11 +7617,11 @@ test('early-end mode hides the reason input and sends the fixed terminate reason
   assert.equal(actionBody.reason, 'Project ended early')
 })
 
-test('end-project falls back to prompt when the modal markup is absent', async () => {
+test('end-project falls back to confirmation when the modal markup is absent', async () => {
   const dom = endProjectDom()
   dom.modal.attributes.delete('data-modal-target')
   let actionBody = null
-  let prompted = 0
+  const confirmations = []
   const bridge = await loadBridge(
     async (input, init = {}) => {
       const url = String(input)
@@ -7648,17 +7648,69 @@ test('end-project falls back to prompt when the modal markup is absent', async (
     },
     endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
   )
+  bridge.window.confirm = (message) => {
+    confirmations.push(message)
+    return true
+  }
   bridge.window.prompt = () => {
-    prompted += 1
-    return 'COMPLETE'
+    throw new Error('active project fallback must not expose a text input')
   }
   assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
 
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
 
   assert.ok(await waitFor(() => actionBody !== null))
-  assert.equal(prompted, 1)
+  assert.equal(confirmations.length, 1)
   assert.equal(actionBody.action, 'complete')
+  assert.equal(actionBody.reason, '')
+})
+
+test('early-end fallback uses confirmation and sends the fixed reason', async () => {
+  const dom = endProjectDom()
+  dom.modal.attributes.delete('data-modal-target')
+  let actionBody = null
+  const confirmations = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'active',
+            lifecycle_version: 4,
+            review_eligible: false,
+            has_review: false,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({
+          project: { id: 675, lifecycle_state: 'terminated', lifecycle_version: 5 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  bridge.window.confirm = (message) => {
+    confirmations.push(message)
+    return confirmations.length === 2
+  }
+  bridge.window.prompt = () => {
+    throw new Error('early-end fallback must not expose a text input')
+  }
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+
+  assert.ok(await waitFor(() => actionBody !== null))
+  assert.equal(confirmations.length, 2)
+  assert.equal(actionBody.action, 'terminate')
+  assert.equal(actionBody.reason, 'Project ended early')
 })
 
 test('cancel prompt fallback requires and returns the typed ops note', async (t) => {

@@ -3878,15 +3878,12 @@
         ? { action: 'terminate', reason: pendingReason }
         : null
     }
-    const response = promptAction(
-      'Type COMPLETE to close this project now. To end it early instead, enter the reason. Leave blank to keep it active.',
-      '',
-    )
-    if (response == null || !String(response).trim()) return null
-    const value = String(response).trim()
-    return /^complete$/i.test(value)
-      ? { action: 'complete', reason: '' }
-      : { action: 'terminate', reason: value }
+    if (confirmAction('Is the work complete? Select OK to close the project, or Cancel for Early End.')) {
+      return { action: 'complete', reason: '' }
+    }
+    return confirmAction('End this project early now?')
+      ? { action: 'terminate', reason: DEFAULT_EARLY_END_REASON }
+      : null
   }
 
   // Returns a promise so the designed modal can resolve the intent. The
