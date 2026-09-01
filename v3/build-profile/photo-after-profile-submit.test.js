@@ -128,3 +128,117 @@ test('Build saves before its photo, reuses unchanged saves, and resaves changed 
     'photo-3',
   ])
 })
+
+test('Build preserves canonical, draft, and mixed reviewer aliases on submit', async () => {
+  const form = element()
+  const submit = element()
+  const success = element()
+  const failure = element()
+  submit.step = element()
+  form.querySelector = (selector) => selector === '[form-submit]' ? submit : null
+
+  let domReady
+  let submittedPayload
+  const fields = new Map([
+    ['[build-profile-form]', form],
+    ['[build-profile-success]', success],
+    ['[build-profile-error]', failure],
+  ])
+  const reviewerValues = {
+    reviewer: {
+      'first-name': 'Legacy',
+      'last-name': 'Reviewer',
+      position: 'Director',
+      company: 'Legacy Co',
+      email: 'legacy@example.invalid',
+    },
+    'reviewer-2': {
+      fname: 'Draft',
+      lname: 'Reviewer',
+      job: 'Lead',
+      company: 'Draft Co',
+      email: 'draft@example.invalid',
+    },
+    'reviewer-3': {
+      fname: 'Mixed',
+      'last-name': 'Reviewer',
+      position: 'Advisor',
+      company: 'Mixed Co',
+      email: 'mixed@example.invalid',
+    },
+  }
+  class TestFormData {
+    *[Symbol.iterator]() {
+      yield ['email', 'profile@example.invalid']
+      yield ['first-name', 'Test']
+      yield ['last-name', 'Starter']
+      yield ['phone', '']
+      for (const [name, value] of Object.entries(reviewerValues)) {
+        yield [name, JSON.stringify(value)]
+      }
+    }
+  }
+  const window = {
+    intlTelInput: { getInstance: () => null },
+    $memberstackDom: {
+      async updateMember() {},
+      async updateMemberAuth() {},
+    },
+  }
+  const context = vm.createContext({
+    window,
+    document: { addEventListener(type, listener) { if (type === 'DOMContentLoaded') domReady = listener } },
+    FormData: TestFormData,
+    MEMBER: { id: 'member-1', auth: { email: 'profile@example.invalid' }, customFields: {} },
+    activeProfile: { type: 'consult', type_id: 'consult-id' },
+    qs(selector, root) {
+      if (root === form && selector === '[form-submit]') return submit
+      return fields.get(selector) || null
+    },
+    setLoader() {},
+    waitForMember(callback) { callback() },
+    async xanoAuthFetch(_url, options) {
+      submittedPayload = JSON.parse(options.body)
+      return {
+        ok: true,
+        async json() { return { saved: true } },
+        async text() { return '' },
+      }
+    },
+    console: { log() {}, warn() {}, error() {} },
+    JSON,
+    Math,
+    Number,
+    Object,
+    Date,
+  })
+  window.window = window
+
+  new vm.Script(source, { filename: 'submit-writer.js' }).runInContext(context)
+  domReady()
+  await submit.listeners.get('click')({ preventDefault() {} })
+
+  assert.deepEqual(submittedPayload.reviewers, {
+    'reviewer-1': {
+      'first-name': 'Legacy',
+      'last-name': 'Reviewer',
+      position: 'Director',
+      company: 'Legacy Co',
+      email: 'legacy@example.invalid',
+    },
+    'reviewer-2': {
+      'first-name': 'Draft',
+      'last-name': 'Reviewer',
+      position: 'Lead',
+      company: 'Draft Co',
+      email: 'draft@example.invalid',
+    },
+    'reviewer-3': {
+      'first-name': 'Mixed',
+      'last-name': 'Reviewer',
+      position: 'Advisor',
+      company: 'Mixed Co',
+      email: 'mixed@example.invalid',
+    },
+  })
+})

@@ -2391,8 +2391,25 @@ test('calendar-preview uses the existing jQuery UI library for a stylable month 
   assert.equal(calendarColumn.children.indexOf(timezoneControl) > calendarColumn.children.indexOf(calendar), true)
 })
 
+function futureUtcSlot(hour = 4, minute = 30) {
+  const future = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+  return Math.floor(
+    Date.UTC(future.getUTCFullYear(), future.getUTCMonth(), future.getUTCDate(), hour, minute) /
+      1000,
+  )
+}
+
+function formatSlotTime(start, timeZone) {
+  return new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone,
+  }).format(new Date(start * 1000))
+}
+
 test('calendar-preview timezone selector converts slots without a write or another availability read', async () => {
-  const start = Math.floor(Date.UTC(2026, 8, 2, 4, 30) / 1000)
+  const start = futureUtcSlot()
   const { dom, calls } = loadSection({
     serverState: {
       grantId: 'grant-1',
@@ -2424,7 +2441,7 @@ test('calendar-preview timezone selector converts slots without a write or anoth
   )
   let times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
   assert.equal(timezoneSelect.value, 'Asia/Manila')
-  assert.equal(times.children[0].textContent, '12:30 PM')
+  assert.equal(times.children[0].textContent, formatSlotTime(start, 'Asia/Manila'))
 
   timezoneSelect.value = 'America/New_York'
   timezoneSelect.dispatchEvent({ type: 'change', target: timezoneSelect })
@@ -2434,7 +2451,7 @@ test('calendar-preview timezone selector converts slots without a write or anoth
   )
   times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
   assert.equal(timezoneSelect.value, 'America/New_York')
-  assert.equal(times.children[0].textContent, '12:30 AM')
+  assert.equal(times.children[0].textContent, formatSlotTime(start, 'America/New_York'))
   assert.equal(calls.filter((call) => call.method !== 'GET').length, initialWrites)
   assert.equal(
     calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
@@ -2508,7 +2525,7 @@ test('calendar-preview keeps the timezone selector visible when there are no upc
 })
 
 test('calendar-preview selector and slot times share one zone when the starter has no saved timezone', async () => {
-  const start = Math.floor(Date.UTC(2026, 8, 2, 4, 30) / 1000)
+  const start = futureUtcSlot()
   const { dom } = loadSection({
     intl: intlWithLocalTimezone('America/Los_Angeles'),
     serverState: FREE_ONLY_SERVER_STATE,
@@ -2527,7 +2544,7 @@ test('calendar-preview selector and slot times share one zone when the starter h
   )
   const times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
   assert.equal(timezoneSelect.value, 'America/Los_Angeles')
-  assert.equal(times.children[0].textContent, '9:30 PM')
+  assert.equal(times.children[0].textContent, formatSlotTime(start, 'America/Los_Angeles'))
   assert.equal(
     times.children[0].textContent,
     new Intl.DateTimeFormat('en-US', {
@@ -2540,7 +2557,7 @@ test('calendar-preview selector and slot times share one zone when the starter h
 })
 
 test('calendar-preview reuses the timezone selector node and keeps its focus across a change', async () => {
-  const start = Math.floor(Date.UTC(2026, 8, 2, 4, 30) / 1000)
+  const start = futureUtcSlot()
   const { dom, document, calls } = loadSection({
     serverState: FREE_ONLY_SERVER_STATE,
     getRoutes: {
@@ -2584,7 +2601,7 @@ test('calendar-preview reuses the timezone selector node and keeps its focus acr
   assert.equal(
     dom.calendarPreview.querySelector('[data-availability-element="preview-times"]').children[0]
       .textContent,
-    '12:30 AM',
+    formatSlotTime(start, 'America/New_York'),
   )
   assert.equal(
     calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,

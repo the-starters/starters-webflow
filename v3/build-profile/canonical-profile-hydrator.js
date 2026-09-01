@@ -60,6 +60,25 @@
     return reviewers['reviewer-' + (index + 1)] || null
   }
 
+  function reviewerForDraft(reviewer) {
+    if (!isPlainObject(reviewer)) return null
+    if (
+      Object.prototype.hasOwnProperty.call(reviewer, 'fname') ||
+      Object.prototype.hasOwnProperty.call(reviewer, 'lname') ||
+      Object.prototype.hasOwnProperty.call(reviewer, 'job')
+    ) {
+      return reviewer
+    }
+    if (!Object.keys(reviewer).length) return reviewer
+    return {
+      fname: valueOrEmpty(reviewer['first-name']),
+      lname: valueOrEmpty(reviewer['last-name']),
+      job: valueOrEmpty(reviewer.position),
+      company: valueOrEmpty(reviewer.company),
+      email: valueOrEmpty(reviewer.email),
+    }
+  }
+
   function canonicalType(value) {
     var normalized = String(value || '').trim().toLowerCase()
     return normalized === 'consult' ? 'consult' : 'full'
@@ -137,9 +156,9 @@
           'full-time-placement': yesNo(canonical.Open_to_Full_Time),
         },
         step_7: {
-          reviewer: jsonCapture(reviewerAt(reviewers, 0)),
-          'reviewer-2': jsonCapture(reviewerAt(reviewers, 1)),
-          'reviewer-3': jsonCapture(reviewerAt(reviewers, 2)),
+          reviewer: jsonCapture(reviewerForDraft(reviewerAt(reviewers, 0))),
+          'reviewer-2': jsonCapture(reviewerForDraft(reviewerAt(reviewers, 1))),
+          'reviewer-3': jsonCapture(reviewerForDraft(reviewerAt(reviewers, 2))),
         },
       },
     }

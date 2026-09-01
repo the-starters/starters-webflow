@@ -14,7 +14,8 @@ each captured live body.
 
 Five candidates no longer reconstruct to their published bodies. `canonical-profile-loader.js`
 carries company logo hydration, `draft-state.js` carries the member-bound hydration fix,
-`submit-writer.js` carries the profile-save and pending-photo commit gate, `shared-foundation.js`
+`submit-writer.js` carries the behavior changes owned by the
+[Build Profile documentation](../build-profile/README.md), `shared-foundation.js`
 adds a taxonomy value only through an explicit option click or an Enter press on a highlighted
 option, so typing an exact option name never selects it on fill, on a comma, or on blur,
 and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on
