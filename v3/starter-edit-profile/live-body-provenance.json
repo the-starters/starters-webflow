@@ -23,8 +23,8 @@
       "profile-photo.js": { "path": "v3/build-profile/profile-photo.js", "bytes": 14854, "sha256": "b7593bf81d47c0d59a12125e7ad561a61e8ff1b14649f064e4ede9765cf7e558" },
       "portfolio-crud.js": { "path": "v3/starter-edit-profile/portfolio-crud.js", "bytes": 54689, "sha256": "5c69d0c91f0e79cfebb3615321e4b50ebc7449c2c3b4994b175a620d853790e0" },
       "portfolio-list.js": { "path": "v3/starter-edit-profile/portfolio-list.js", "bytes": 4013, "sha256": "f559928f524705d1fcce022a1213b0a637c233cbd55f4973dc376457e0ab74ff" },
-      "company-autocomplete.js": { "path": "v3/starter-edit-profile/company-autocomplete.js", "bytes": 16343, "sha256": "157e32b3f4facf7171d9b609580496a3f55fdcc6d24ff4437fca3151e52cbcae" },
-      "company-experience-crud.js": { "path": "v3/starter-edit-profile/company-experience-crud.js", "bytes": 57151, "sha256": "b5eec611d63dc8935783e9c810f9b3c9fc080812a1cd9e07ae9cf08aa27fb83a" },
+      "company-autocomplete.js": { "path": "v3/starter-edit-profile/company-autocomplete.js", "bytes": 16268, "sha256": "e67c3ac341f95b6b795e2392c171a0c3d42922514c995d18f3c46b379ce26814" },
+      "company-experience-crud.js": { "path": "v3/starter-edit-profile/company-experience-crud.js", "bytes": 58743, "sha256": "639054c62a3dbaa98b8646b7a4d0c18ee4ad6805e21de0e1a597f77045a17e0b" },
       "work-dates.js": { "path": "v3/build-profile/work-dates.js", "bytes": 1929, "sha256": "3be29b0dfecfadd6057e6da6a30af0a47dc41d67bdedda863aca003512fe2890" }
     }
   }

@@ -62,19 +62,12 @@ the live bodies they were captured from. Their shared Build Profile contracts ar
 by [Company selection logo persistence](../profile-form/README.md#company-selection-logo-persistence)
 and [Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
 
-`company-autocomplete.js` additionally owns the Also Worked With search feedback
-contract on this route only; the Build copy is unchanged. A search shows
-`Searching...` immediately and `Still searching company sources...` once it has run
-for four seconds, so a slow company source never looks frozen. Every search carries
-a sequence number that dismissing the dropdown also advances, so only the newest
-search may write results, an error, or a progress message — a late response for an
-abandoned or superseded query is discarded rather than reopening the dropdown or
-overwriting newer results. Typing a new query also aborts the superseded network
-request before the next debounce fires. An abort is silent. A non-`2xx` response is
-treated as a failure, not as results. Refocusing skips the network only when the typed
-text already has rendered results on screen or a request of its own still in flight;
-a progress or error message is never cached as a result, so retyping or refocusing
-after one retries the search instead of stranding the message.
+The shared search request and stale-response contract is owned by
+[Company selection logo persistence](../profile-form/README.md#company-selection-logo-persistence).
+On Starter Edit Profile only, a search shows `Searching...` immediately and
+`Still searching company sources...` after four seconds, so a slow company
+source never looks frozen. That progress message follows the same active-query
+sequence gate as results and errors.
 
 Loader pattern:
 

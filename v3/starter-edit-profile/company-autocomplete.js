@@ -97,10 +97,12 @@
       pendingQuery = '';
     }
 
-    function storeSingleSelection(name, domain, logoUrl) {
+    function storeSingleSelection(name, domain, logoUrl, companyEntityId, source) {
       input.dataset.selectedCompanyName = name || '';
       input.dataset.selectedCompanyDomain = domain || '';
       input.dataset.selectedCompanyLogoUrl = logoUrl || '';
+      input.dataset.selectedCompanyEntityId = String(Number(companyEntityId) || 0);
+      input.dataset.selectedCompanySource = source || '';
     }
 
     function clearStaleSingleSelection() {
@@ -109,6 +111,8 @@
       delete input.dataset.selectedCompanyName;
       delete input.dataset.selectedCompanyDomain;
       delete input.dataset.selectedCompanyLogoUrl;
+      delete input.dataset.selectedCompanyEntityId;
+      delete input.dataset.selectedCompanySource;
     }
 
     let tagTemplate = null;
@@ -182,34 +186,11 @@
     }
 
     function renderResults(results, query) {
-      if (!results.length) {
-        const typedCompany = input.value.trim();
-
-        renderDropdown(`
-          <button class="company-search-item ${isCompanyAdded({ name: typedCompany }) ? "is-added" : ""}" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="">
-              <img class="company-search-logo" src="${PLACEHOLDER_LOGO_URL}" alt="">
-              <span class="company-search-text">
-                  <span class="company-search-name">${escapeHtml(typedCompany || 'Company not found')}</span>
-                  <span class="company-search-domain">Use custom company</span>
-              </span>
-              <span class="company-search-delete">
-                  <svg style="pointer-events: none;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true"
-                      role="img" class="iconify iconify--ic" width="100%" height="100%"
-                      preserveAspectRatio="xMidYMid meet" viewBox="0 0 24 24">
-                      <path fill="currentColor"
-                          d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z">
-                      </path>
-                  </svg>
-              </span>
-          </button>
-      `, query);
-        return;
-      }
-
-      renderDropdown(results
+      const typedCompany = input.value.trim();
+      const resultItems = results
         .map(function (item) {
           return `
-            <button class="company-search-item ${isCompanyAdded(item) ? "is-added" : ""}" type="button" data-name="${escapeHtml(item.name)}" data-domain="${escapeHtml(item.domain)}" data-logo-url="${escapeHtml(item.logo_url || '')}">
+            <button class="company-search-item ${isCompanyAdded(item) ? "is-added" : ""}" type="button" data-name="${escapeHtml(item.name)}" data-domain="${escapeHtml(item.domain)}" data-logo-url="${escapeHtml(item.logo_url || '')}" data-company-entity-id="${Number(item.company_entity_id) || 0}" data-source="${escapeHtml(item.source || '')}">
                 <img class="company-search-logo" src="${escapeHtml(item.logo_url || PLACEHOLDER_LOGO_URL)}" alt="">
                 <span class="company-search-text">
                     <span class="company-search-name">${escapeHtml(item.name)}</span>
@@ -227,7 +208,19 @@
             </button>
         `;
         })
-        .join(''), query);
+      if (!isMulti) {
+        resultItems.push(`
+          <button class="company-search-item" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="" data-company-entity-id="0" data-source="custom">
+              <img class="company-search-logo" src="${PLACEHOLDER_LOGO_URL}" alt="">
+              <span class="company-search-text">
+                  <span class="company-search-name">${escapeHtml(typedCompany)}</span>
+                  <span class="company-search-domain">Use custom company</span>
+              </span>
+          </button>
+        `);
+      }
+
+      renderDropdown(resultItems.join(''), query);
     }
 
     async function searchCompanies(query) {
@@ -410,15 +403,17 @@
       const selectedName = item.dataset.name;
       const selectedDomain = item.dataset.domain || '';
       const selectedLogoUrl = item.dataset.logoUrl || '';
+      const selectedCompanyEntityId = Number(item.dataset.companyEntityId) || 0;
+      const selectedSource = item.dataset.source || '';
       const outOfCapacity = isMaxCompanies();
 
       if (isMulti && !outOfCapacity) {
-        renderNewTag(selectedName, selectedDomain, item, undefined, selectedLogoUrl);
+        renderNewTag(selectedName, selectedDomain, item, undefined, selectedLogoUrl, 0, selectedCompanyEntityId);
 
       } else {
         input.value = selectedName;
         renderedQuery = selectedName;
-        storeSingleSelection(selectedName, selectedDomain, selectedLogoUrl);
+        storeSingleSelection(selectedName, selectedDomain, selectedLogoUrl, selectedCompanyEntityId, selectedSource);
         closeDropdown();
       }
 

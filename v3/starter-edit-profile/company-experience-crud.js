@@ -180,12 +180,20 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             let submitAction = '';
             let companiesCount = 0;
             let addCompanyFeedbackTimeout = null;
+            const placeholderLogo = 'https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6a21517ca6c1caa51f014026_company-placeholder.svg';
+
+            function persistedCompanyLogo(logoUrl) {
+                const normalizedLogoUrl = String(logoUrl || '').trim();
+                return normalizedLogoUrl === placeholderLogo ? '' : normalizedLogoUrl;
+            }
 
             function storeSelectedCompany(input, company) {
                 if (!input) return;
                 input.dataset.selectedCompanyName = company && company.name ? company.name : '';
                 input.dataset.selectedCompanyDomain = company && company.domain ? company.domain : '';
-                input.dataset.selectedCompanyLogoUrl = company && company.logo_url ? company.logo_url : '';
+                input.dataset.selectedCompanyLogoUrl = persistedCompanyLogo(company && company.logo_url);
+                input.dataset.selectedCompanyEntityId = String(Number(company && company.company_entity_id) || 0);
+                input.dataset.selectedCompanySource = company && company.source ? company.source : '';
             }
 
             function clearSelectedCompany(input) {
@@ -193,6 +201,8 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                 delete input.dataset.selectedCompanyName;
                 delete input.dataset.selectedCompanyDomain;
                 delete input.dataset.selectedCompanyLogoUrl;
+                delete input.dataset.selectedCompanyEntityId;
+                delete input.dataset.selectedCompanySource;
             }
 
             function selectedCompanyForInput(input) {
@@ -203,7 +213,9 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     return {
                         name: storedName,
                         domain: String(input.dataset.selectedCompanyDomain || '').trim(),
-                        logo_url: String(input.dataset.selectedCompanyLogoUrl || '').trim(),
+                        logo_url: persistedCompanyLogo(input.dataset.selectedCompanyLogoUrl),
+                        company_entity_id: Number(input.dataset.selectedCompanyEntityId) || 0,
+                        source: String(input.dataset.selectedCompanySource || '').trim(),
                     };
                 }
                 return null;
@@ -216,7 +228,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             let pendingUpdateDrafts = new Map();
             let pendingDeleteDraftIds = new Set();
 
-            const placeholderLogo = 'https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6a21517ca6c1caa51f014026_company-placeholder.svg';
             const textEl = addBtn ? qs('div:first-child', addBtn) : null;
             const defaultButtonText = textEl ? textEl.textContent : 'add company';
             const defaultDropdownLabel = dropdownToggleLabel ? dropdownToggleLabel.textContent.trim() : 'Add Work Experience - 1 of 3';
@@ -289,6 +300,14 @@ function serializeStarterProfileCompanyDate(input, baseline) {
 
             function getCompanyLogo(company) {
                 return company.company_logo_url || company.logo_url || placeholderLogo;
+            }
+
+            function isValidCompanySelection(company) {
+                return !!company && !!(
+                    company.company_entity_id ||
+                    company.domain ||
+                    company.source === 'custom'
+                );
             }
 
             function getCompanyDates(company) {
@@ -912,7 +931,9 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     storeSelectedCompany(editCompanyInput, {
                         name: company.company_name || '',
                         domain: company.company_domain || '',
-                        logo_url: getCompanyLogo(company),
+                        logo_url: company.company_logo_url || company.logo_url || '',
+                        company_entity_id: company.company_entity_id,
+                        source: company.company_source || company.source || (company.company_entity_id ? 'platform' : ''),
                     });
                 }
 
@@ -1107,7 +1128,9 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                         end_date: editCurrentWorkCheckbox && editCurrentWorkCheckbox.checked ? "Present" : serializeStarterProfileCompanyDate(editEndDateInput, editEndDateBaseline),
                         current_work: editCurrentWorkCheckbox ? editCurrentWorkCheckbox.checked : false,
                         company_domain: selectedEditCompany ? selectedEditCompany.domain : '',
-                        company_logo_url: selectedEditCompany && selectedEditCompany.logo_url ? selectedEditCompany.logo_url : placeholderLogo,
+                        company_logo_url: selectedEditCompany ? selectedEditCompany.logo_url : '',
+                        company_entity_id: selectedEditCompany ? selectedEditCompany.company_entity_id : 0,
+                        company_source: selectedEditCompany ? selectedEditCompany.source : '',
                     };
 
                     let isValid = true;
@@ -1117,7 +1140,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                         isValid = false;
                     }
 
-                    if (!payload.company_domain) {
+                    if (!isValidCompanySelection(selectedEditCompany)) {
                         showFieldError(editCompanyInput.closest('[form-group]'));
                         isValid = false;
                     }
@@ -1197,7 +1220,9 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                         end_date: currentWorkCheckbox && currentWorkCheckbox.checked ? "Present" : getValue(endDateInput),
                         current_work: currentWorkCheckbox ? currentWorkCheckbox.checked : false,
                         company_domain: selectedAddCompany ? selectedAddCompany.domain : '',
-                        company_logo_url: selectedAddCompany && selectedAddCompany.logo_url ? selectedAddCompany.logo_url : placeholderLogo,
+                        company_logo_url: selectedAddCompany ? selectedAddCompany.logo_url : '',
+                        company_entity_id: selectedAddCompany ? selectedAddCompany.company_entity_id : 0,
+                        company_source: selectedAddCompany ? selectedAddCompany.source : '',
                     };
 
                     let isValid = true;
@@ -1207,7 +1232,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                         isValid = false;
                     }
 
-                    if (!payload.company_domain) {
+                    if (!isValidCompanySelection(selectedAddCompany)) {
                         showFieldError(companyInput.closest('[form-group]'));
                         isValid = false;
                     }
