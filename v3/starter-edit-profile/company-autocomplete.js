@@ -85,6 +85,13 @@
     let pendingQuery = '';
     let selectingCompany = false;
     let searchSequence = 0;
+    let activeSearchController = null;
+
+    function cancelActiveSearch() {
+      if (activeSearchController) activeSearchController.abort();
+      activeSearchController = null;
+      pendingQuery = '';
+    }
 
     function storeSingleSelection(name, domain, logoUrl) {
       input.dataset.selectedCompanyName = name || '';
@@ -137,8 +144,8 @@
     }
 
     function closeDropdown() {
+      cancelActiveSearch();
       searchSequence += 1;
-      pendingQuery = '';
       dropdown.style.display = 'none';
     }
 
@@ -237,22 +244,29 @@
       pendingQuery = q;
       renderMessage('Searching...');
       const sequence = ++searchSequence;
+      cancelActiveSearch();
+      pendingQuery = q;
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      activeSearchController = controller;
       const slowMessageTimer = setTimeout(function () {
         if (sequence === searchSequence) renderMessage('Still searching company sources...');
       }, 4000);
 
       try {
-        const response = await fetch(`${SEARCH_ENDPOINT}?q=${encodeURIComponent(q)}`);
+        const response = await fetch(`${SEARCH_ENDPOINT}?q=${encodeURIComponent(q)}`, controller ? { signal: controller.signal } : undefined);
         if (!response.ok) throw new Error(`Company search failed (${response.status})`);
         const results = await response.json();
         if (sequence !== searchSequence) return;
 
         renderResults(Array.isArray(results) ? results : [], q);
       } catch (error) {
-        if (sequence === searchSequence) renderMessage('Search unavailable');
+        if (error?.name !== 'AbortError' && sequence === searchSequence) renderMessage('Search unavailable');
       } finally {
         clearTimeout(slowMessageTimer);
-        if (sequence === searchSequence) pendingQuery = '';
+        if (sequence === searchSequence) {
+          pendingQuery = '';
+          if (activeSearchController === controller) activeSearchController = null;
+        }
       }
     }
 
@@ -264,6 +278,8 @@
       if (selectingCompany) return;
 
       clearStaleSingleSelection();
+      cancelActiveSearch();
+      searchSequence += 1;
 
       clearTimeout(timer);
       timer = setTimeout(function () {

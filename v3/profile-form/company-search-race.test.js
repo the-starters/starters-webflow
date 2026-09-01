@@ -44,6 +44,7 @@ function boot() {
   let dropdown = null
   const pendingFetches = []
   const fetchedQueries = []
+  const abortedQueries = []
   const timers = new Map()
   let nextTimerId = 1
   const domReady = []
@@ -72,11 +73,31 @@ function boot() {
         Object.assign(this, options)
       }
     },
-    fetch(url) {
+    AbortController: class AbortController {
+      constructor() {
+        this.signal = {
+          aborted: false,
+          listeners: [],
+          addEventListener(type, listener) {
+            if (type === 'abort') this.listeners.push(listener)
+          },
+        }
+      }
+      abort() {
+        if (this.signal.aborted) return
+        this.signal.aborted = true
+        for (const listener of this.signal.listeners) listener()
+      }
+    },
+    fetch(url, options = {}) {
       const query = decodeURIComponent(String(url).split('?q=')[1] || '')
       fetchedQueries.push(query)
       return new Promise((resolve, reject) => {
         pendingFetches.push({ query, resolve, reject })
+        options.signal?.addEventListener('abort', () => {
+          abortedQueries.push(query)
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+        })
       })
     },
     qs(selector, root) {
@@ -106,6 +127,7 @@ function boot() {
   return {
     input,
     fetchedQueries,
+    abortedQueries,
     get dropdown() { return dropdown },
     isOpen() { return dropdown.style.display === 'block' },
     // The focus handler searches the current input value without the input debounce.
@@ -180,6 +202,18 @@ test('a slow response for an abandoned query never reopens the dropdown', async 
 
   assert.equal(harness.isOpen(), false)
   assert.doesNotMatch(harness.dropdown.innerHTML, /Acme Corp/)
+  assert.deepEqual(harness.abortedQueries, ['acme corp'])
+})
+
+test('a superseded company search aborts the older network request', async () => {
+  const harness = await boot()
+
+  await harness.search('open')
+  await harness.search('openstore')
+
+  assert.deepEqual(harness.fetchedQueries, ['open', 'openstore'])
+  assert.deepEqual(harness.abortedQueries, ['open'])
+  assert.doesNotMatch(harness.dropdown.innerHTML, /Search unavailable/)
 })
 
 test('an abandoned search does not report failure over the dismissed dropdown', async () => {
