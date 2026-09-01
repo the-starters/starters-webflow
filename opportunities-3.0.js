@@ -4134,11 +4134,13 @@
     window.dispatchEvent(new CustomEvent('modal-open', { detail: { modal } }))
   }
 
+  // Write controller-owned copy before the deliberately inert diagnostics
+  // decorator so a receipt cannot leave Webflow's generic failure text visible.
   function reviewError(modal, message, receipt = null) {
     const fail = $('.w-form-fail', modal)
     if (!fail) return
+    fail.textContent = message
     if (receipt) decorateWorkflowMessage(fail, message, receipt)
-    else fail.textContent = message
     fail.style.display = 'block'
   }
 

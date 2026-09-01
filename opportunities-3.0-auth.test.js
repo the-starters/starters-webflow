@@ -4724,6 +4724,7 @@ test('review submission enforces rating and feedback rules and locks duplicate s
   starterName.textContent = '[Starter Name]'
   const done = el('div', { class: 'w-form-done' })
   const fail = el('div', { class: 'w-form-fail' })
+  fail.textContent = 'Oops! Something went wrong while submitting the form.'
   const modal = el(
     'dialog',
     { 'data-modal-target': 'rate-starter-call' },
@@ -4763,6 +4764,7 @@ test('review submission enforces rating and feedback rules and locks duplicate s
       querySelectorAll: (selector) =>
         [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
       routeGuard: true,
+      workflowDiagnostics: true,
     },
   )
   assert.ok(await waitFor(() => review.getAttribute('data-project-action') === 'review'))
@@ -4779,17 +4781,20 @@ test('review submission enforces rating and feedback rules and locks duplicate s
   feedback.value = 'Valid review feedback.'
   bridge.dispatchDocument('submit', submitEvent())
   assert.match(fail.textContent, /rating from 1 to 5/i)
+  assert.doesNotMatch(fail.textContent, /Oops! Something went wrong/i)
   assert.equal(reviewBodies.length, 0)
 
   rating.value = '5'
   feedback.value = 'Too short'
   bridge.dispatchDocument('submit', submitEvent())
   assert.match(fail.textContent, /between 10 and 4,000 characters/i)
+  assert.doesNotMatch(fail.textContent, /Oops! Something went wrong/i)
   assert.equal(reviewBodies.length, 0)
 
   feedback.value = 'x'.repeat(4001)
   bridge.dispatchDocument('submit', submitEvent())
   assert.match(fail.textContent, /between 10 and 4,000 characters/i)
+  assert.doesNotMatch(fail.textContent, /Oops! Something went wrong/i)
   assert.equal(reviewBodies.length, 0)
 
   feedback.value = 'Excellent canonical project delivery.'
@@ -8129,4 +8134,52 @@ test('a canceled action response discards a carried review intent', async () => 
   assert.ok(await waitFor(() => dom.label.textContent !== 'End Project'))
   assert.equal(actionBody.action, 'complete')
   assert.equal(reviewCount, 0)
+})
+
+// Keep diagnostics enabled so this exercises the receipt path while preserving
+// the controller-owned validation copy.
+test('a validation failure shows our copy, not the Webflow default', async () => {
+  const dom = endProjectDom({ reason: '' })
+  dom.fail.textContent = 'Oops! Something went wrong while submitting the form.'
+  let actionBody = null
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'pending',
+            lifecycle_version: 4,
+            has_review: false,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({ project: { id: 675, lifecycle_state: 'canceled' } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    // Diagnostics must be ON: without them validationDiagnostic returns null,
+    // reviewError takes its plain-text branch, and the bug cannot reproduce.
+    { ...endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'), workflowDiagnostics: true },
+  )
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  await new Promise(setImmediate)
+
+  assert.equal(actionBody, null, 'an empty ops note must not cancel the project')
+  assert.match(dom.fail.textContent, /what happened/)
+  assert.doesNotMatch(dom.fail.textContent, /Oops! Something went wrong/)
 })
