@@ -773,8 +773,9 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             }
 
             async function commitDeleteCompanyDrafts() {
-                for (const companyId of pendingDeleteDraftIds) {
+                for (const companyId of Array.from(pendingDeleteDraftIds)) {
                     await deleteCompany(companyId);
+                    pendingDeleteDraftIds.delete(companyId);
                 }
             }
 
@@ -795,7 +796,15 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     : request());
 
                 if (!response.ok) {
-                    console.warn('[setAlsoWorkedWith] XANO error:', response.status);
+                    let data = null;
+                    try {
+                        data = await response.json();
+                    } catch (error) {
+                        data = null;
+                    }
+
+                    console.error('[setAlsoWorkedWith] XANO error:', response.status, data);
+                    throw new Error((data && data.message) || `Also worked with save failed (${response.status})`);
                 }
 
                 alsoWorkedWithBaseline = alsoWorkedWithInput.value;
@@ -1286,16 +1295,20 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                         companySubmit.style.opacity = '0.6';
                     }
 
-                    for (const draft of pendingCreateDrafts.slice()) {
+                    await commitAlsoWorkedWith();
+
+                    while (pendingCreateDrafts.length) {
+                        const draft = pendingCreateDrafts[0];
                         await commitCreateCompanyDraft(draft);
+                        pendingCreateDrafts.shift();
                     }
 
                     for (const [companyId, draftPayload] of Array.from(pendingUpdateDrafts.entries())) {
                         await commitUpdateCompanyDraft(companyId, draftPayload);
+                        pendingUpdateDrafts.delete(companyId);
                     }
 
                     await commitDeleteCompanyDrafts();
-                    await commitAlsoWorkedWith();
 
                     clearAllDraftQueues();
                     await renderCompanies();
