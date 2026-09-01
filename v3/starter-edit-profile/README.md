@@ -69,7 +69,8 @@ for four seconds, so a slow company source never looks frozen. Every search carr
 a sequence number that dismissing the dropdown also advances, so only the newest
 search may write results, an error, or a progress message — a late response for an
 abandoned or superseded query is discarded rather than reopening the dropdown or
-overwriting newer results. A non-`2xx` response is treated as a failure, not as
+overwriting newer results. Typing a new query also aborts the superseded network
+request before the next debounce fires. An abort is silent. A non-`2xx` response is treated as a failure, not as
 results. Refocusing skips the network only when the typed text already has rendered
 results on screen or a request of its own still in flight; a progress or error
 message is never cached as a result, so retyping or refocusing after one retries the
