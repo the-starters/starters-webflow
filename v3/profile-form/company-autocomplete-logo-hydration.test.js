@@ -545,10 +545,13 @@ for (const [label, file, deferredWrites] of [
     assert.equal(payload.company_entity_id, 0)
   })
 
-  test(`${label} keeps the placeholder as presentation only when editing`, async () => {
+  test(`${label} does not persist a hydrated legacy placeholder logo`, async () => {
     const harness = createCrudHarness(file, { deferredWrites })
     await harness.start()
-    await harness.openExistingCompany({ company_logo_url: '', logo_url: '' })
+    await harness.openExistingCompany({
+      company_logo_url: 'https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6a21517ca6c1caa51f014026_company-placeholder.svg',
+      logo_url: '',
+    })
     assert.equal(harness.editCompanyInput.dataset.selectedCompanyLogoUrl, '')
     await harness.submitEdit()
 

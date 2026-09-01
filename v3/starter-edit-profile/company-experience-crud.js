@@ -180,12 +180,18 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             let submitAction = '';
             let companiesCount = 0;
             let addCompanyFeedbackTimeout = null;
+            const placeholderLogo = 'https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6a21517ca6c1caa51f014026_company-placeholder.svg';
+
+            function persistedCompanyLogo(logoUrl) {
+                const normalizedLogoUrl = String(logoUrl || '').trim();
+                return normalizedLogoUrl === placeholderLogo ? '' : normalizedLogoUrl;
+            }
 
             function storeSelectedCompany(input, company) {
                 if (!input) return;
                 input.dataset.selectedCompanyName = company && company.name ? company.name : '';
                 input.dataset.selectedCompanyDomain = company && company.domain ? company.domain : '';
-                input.dataset.selectedCompanyLogoUrl = company && company.logo_url ? company.logo_url : '';
+                input.dataset.selectedCompanyLogoUrl = persistedCompanyLogo(company && company.logo_url);
                 input.dataset.selectedCompanyEntityId = String(Number(company && company.company_entity_id) || 0);
                 input.dataset.selectedCompanySource = company && company.source ? company.source : '';
             }
@@ -207,7 +213,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
                     return {
                         name: storedName,
                         domain: String(input.dataset.selectedCompanyDomain || '').trim(),
-                        logo_url: String(input.dataset.selectedCompanyLogoUrl || '').trim(),
+                        logo_url: persistedCompanyLogo(input.dataset.selectedCompanyLogoUrl),
                         company_entity_id: Number(input.dataset.selectedCompanyEntityId) || 0,
                         source: String(input.dataset.selectedCompanySource || '').trim(),
                     };
@@ -222,7 +228,6 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             let pendingUpdateDrafts = new Map();
             let pendingDeleteDraftIds = new Set();
 
-            const placeholderLogo = 'https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6a21517ca6c1caa51f014026_company-placeholder.svg';
             const textEl = addBtn ? qs('div:first-child', addBtn) : null;
             const defaultButtonText = textEl ? textEl.textContent : 'add company';
             const defaultDropdownLabel = dropdownToggleLabel ? dropdownToggleLabel.textContent.trim() : 'Add Work Experience - 1 of 3';
