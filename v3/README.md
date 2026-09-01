@@ -2112,11 +2112,14 @@ markup. One content state and one applicable pending message can be visible.
 `base` is the acting view for live calls and the fallback everywhere else, but a
 terminal booking opens on its authored terminal panel so the Designer view is
 what the member reads instead of a module-composed base view: `completed` where
-authored, and for a cancelled booking the panel matching its raw status —
-`declined` or `expired` when the Designer separates them, otherwise the shared
-`cancelled` panel. Because that panel is the opening view rather than one the
-member navigated to, the authored `switch-base` back control stays hidden until
-a chain leaves the panel, keeping the doubled close icon off the entry view.
+authored, and for a cancelled booking the `declined` panel when that raw status
+and panel are present, otherwise the shared `cancelled` panel. Expiry is stored
+as `status = "cancelled"` with `cancelled_by = "expired"`, so it also opens the
+shared `cancelled` panel; a compatibility row carrying a raw `expired` status
+does the same even if the Designer authors an `expired` panel. Because that
+panel is the opening view rather than one the member navigated to, the authored
+`switch-base` back control stays hidden until a chain leaves the panel, keeping
+the doubled close icon off the entry view.
 
 Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
@@ -2196,8 +2199,11 @@ accessible textarea label `Why do you need a new time?`. It loads
 A confirmed-call proposal posts `booking/reschedule/propose/v3` with a required
 reason, the selected slot's unchanged timestamps, the selected IANA timezone,
 and a durable `dashboard-reschedule-propose:` key. Only the counterpart sees
-the module-rendered "Accept new time" and "Keep current time" actions in the
-base view beside the authored reschedule trigger. Those actions post
+the Designer-authored "Accept new time" and "Keep current time" actions in the
+base view beside the authored reschedule trigger. The controller uses that pair
+without generating duplicates. It generates a fallback pair only for a legacy
+page where the authored confirm control still sits in a hidden step panel and
+the counterpart cannot reach it. Those actions post
 `booking/reschedule/confirm/v3` or `booking/reschedule/decline/v3` with their
 own durable keys, and the call keeps its current provider time until the
 counterpart confirms. A pending-request update posts the same slot and reason
