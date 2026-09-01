@@ -4134,11 +4134,17 @@
     window.dispatchEvent(new CustomEvent('modal-open', { detail: { modal } }))
   }
 
+  // `decorateWorkflowMessage` is deliberately inert so diagnostics never
+  // overwrite authored Webflow copy. Routing the message through it therefore
+  // rendered nothing, and the surrounding default ("Oops! Something went wrong
+  // while submitting the form.") stayed on screen for every validation failure
+  // that carried a receipt. Always write our own copy, then let the decorator
+  // do whatever the diagnostics layer wants on top of it.
   function reviewError(modal, message, receipt = null) {
     const fail = $('.w-form-fail', modal)
     if (!fail) return
+    fail.textContent = message
     if (receipt) decorateWorkflowMessage(fail, message, receipt)
-    else fail.textContent = message
     fail.style.display = 'block'
   }
 
