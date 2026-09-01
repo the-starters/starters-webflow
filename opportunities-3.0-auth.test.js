@@ -7312,6 +7312,20 @@ function endProjectDom(overrides = {}) {
   projectName.textContent = 'project-name'
   const projectId = el('p', { 'project-element': 'project-id' })
   projectId.textContent = 'project-id'
+  const projectNameRow = el('div', {
+    'booking-element-wrap': '',
+    'display-flex': '',
+    class: 'call-details_table-item',
+  }, [projectName])
+  const projectIdRow = el('div', {
+    'booking-element-wrap': '',
+    'display-flex': '',
+    class: 'call-details_table-item',
+  }, [projectId])
+  if (overrides.identityRowsHidden === true) {
+    projectNameRow.style.display = 'none'
+    projectIdRow.style.display = 'none'
+  }
   const rating = el('input', { name: 'Call-Rating' })
   rating.value = overrides.rating == null ? '5' : overrides.rating
   const feedback = el('textarea', { name: 'Feedback' })
@@ -7368,11 +7382,12 @@ function endProjectDom(overrides = {}) {
   const modal = el(
     'dialog',
     { 'data-modal-target': 'end-project' },
-    [title, subtitle, projectName, projectId, form, done, fail],
+    [title, subtitle, projectNameRow, projectIdRow, form, done, fail],
   )
   const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
   return {
-    end, label, wrap, card, title, subtitle, projectName, projectId,
+    end, label, wrap, card, title, subtitle,
+    projectName, projectNameRow, projectId, projectIdRow,
     rating, feedback, reviewGroup,
     reason, reasonWrap, toggle, submit, submitText, submitIcon, submitWrap,
     form, done, fail, modal, root,
@@ -7866,6 +7881,39 @@ test('hiding a modal group clears required so the form can still submit', async 
   assert.ok(await waitFor(() => starterDom.title.textContent === 'End Project Early'))
   assert.equal(starterDom.reasonWrap.style.display, 'none')
   assert.equal(starterDom.reason.required, false, 'a hidden required control cannot block submit')
+})
+
+test('starter early-end reveals the hidden Webflow project identity rows', async () => {
+  const dom = endProjectDom({ identityRowsHidden: true })
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            title: 'Starter identity visibility regression',
+            lifecycle_state: 'active',
+            lifecycle_version: 4,
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, talentMember, '/starter-dashboard'),
+  )
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
+
+  assert.equal(dom.projectName.textContent, 'Starter identity visibility regression')
+  assert.equal(dom.projectId.textContent, '675')
+  assert.equal(dom.projectNameRow.style.display, 'flex')
+  assert.equal(dom.projectIdRow.style.display, 'flex')
+  assert.equal(dom.reasonWrap.style.display, 'none')
+  assert.equal(dom.reviewGroup.style.display, 'none')
 })
 
 // The live Webflow button is a Clickable Wrap: a bare `clickable_btn` overlay
