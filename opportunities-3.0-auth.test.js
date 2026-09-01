@@ -8015,9 +8015,6 @@ test('a project stranded in completion_requested stays actionable and submits it
   assert.equal(reviewBody.review_text, 'Excellent collaboration overall.')
 })
 
-
-
-
 // A cancellation captures an internal record of what happened for admin ops
 // (JP, 2026-09-01). It is deliberately NOT a review: it must never reach
 // core_reviews_v3, /hire, or ranking points. The text rides along as the

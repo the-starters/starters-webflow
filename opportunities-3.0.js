@@ -3909,8 +3909,8 @@
       const reviewInput = $('[name="Public-Feedback"], [name="Feedback"]', form)
       const rating = Number(ratingInput && ratingInput.value)
       const reviewText = String(reviewInput && reviewInput.value || '').trim()
-      // The review is optional (JP, 2026-09-01): ending or cancelling must
-      // succeed with nothing filled in. A partly filled review is a mistake
+      // The review is optional (JP, 2026-09-01): completing or ending early
+      // must succeed with nothing filled in. A partly filled review is a mistake
       // rather than a choice, so validate both fields once either is touched.
       const started = rating >= 1 || reviewText !== ''
       if (started) {
