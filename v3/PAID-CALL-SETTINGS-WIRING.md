@@ -100,9 +100,10 @@ available through the approved element-edit path; the canonical marker always wi
 tile is then never touched.
 
 When paid calls are off, the controller sets `data-paid-call-card-state="off"` on the Paid card
-scope. Its injected style reduces only `data-service-card-element="price-card"` and the canonical
-price output to `opacity: .6`. The card, Off pill, instructions, and Edit control stay at full
-emphasis and remain readable. Do not put the state attribute or reduced opacity on the whole card.
+scope. Its injected style reduces the saturation of only `data-service-card-element="price-card"`
+and the canonical price output. It keeps them fully opaque so their text retains accessible
+contrast. The card, Off pill, instructions, and Edit control stay at full emphasis and remain
+readable. Do not put the state attribute or reduced opacity on the whole card.
 
 The fallback runs in the card and stable-contract wiring only; the
 `data-paid-call-element="settings"` panel renders a price through its canonical output alone.
