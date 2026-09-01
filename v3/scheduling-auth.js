@@ -44,6 +44,7 @@
     '/api:tCpV3oqd/booking/decline/v3',
     '/api:tCpV3oqd/booking/reschedule/v3',
     '/api:tCpV3oqd/booking/reschedule/propose/v3',
+    '/api:tCpV3oqd/booking/reschedule/request/v3',
     '/api:tCpV3oqd/booking/reschedule/confirm/v3',
     '/api:tCpV3oqd/booking/reschedule/decline/v3',
     '/api:tCpV3oqd/booking_record/archive/v3',

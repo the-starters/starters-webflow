@@ -925,6 +925,23 @@ test('routes direct reviewed V3 calls through the auth bridge', async () => {
   assert.equal(new URL(authenticatedRequests[0].url).pathname, '/api:tCpV3oqd/booking/cancel/v3')
 })
 
+test('lets both reschedule contracts reach the auth bridge instead of failing closed', async () => {
+  const { authenticatedRequests, window } = loadStage()
+
+  for (const route of ['booking/reschedule/propose/v3', 'booking/reschedule/request/v3']) {
+    const response = await window.fetch(`${API_BASE}${route}`, { method: 'POST', body: '{}' })
+    assert.notEqual(response.status, 410)
+  }
+
+  assert.deepEqual(
+    authenticatedRequests.map((request) => new URL(request.url).pathname),
+    [
+      '/api:tCpV3oqd/booking/reschedule/propose/v3',
+      '/api:tCpV3oqd/booking/reschedule/request/v3',
+    ],
+  )
+})
+
 test('blocks legacy Stripe provider calls', async () => {
   const { authenticatedRequests, nativeRequests, window } = loadStage()
 
