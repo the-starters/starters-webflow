@@ -3716,13 +3716,16 @@ test('details open the authored cancelled panel for a cancelled booking', () => 
 
 test('a cancelled booking with its own authored panel opens on that panel', () => {
   const panels = { cancelled: true, declined: true, expired: true }
+  // `expired` is authored here on purpose: even when a Designer adds the panel,
+  // no booking carries a raw `expired` status, so the shared cancelled panel
+  // stays the destination.
   const modal = {
     querySelector(selector) {
       const match = selector.match(/^\[booking-popup-content="(.+)"\]$/)
       return match && panels[match[1]] ? {} : null
     },
   }
-  assert.equal(api.detailOpenPanel(modal, { status: 'expired' }, 'cancelled'), 'expired')
+  assert.equal(api.detailOpenPanel(modal, { status: 'expired' }, 'cancelled'), 'cancelled')
   assert.equal(api.detailOpenPanel(modal, { status: 'declined' }, 'cancelled'), 'declined')
   assert.equal(api.detailOpenPanel(modal, { status: 'canceled' }, 'cancelled'), 'cancelled')
 })
