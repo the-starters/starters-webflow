@@ -87,18 +87,19 @@ normalized final Build Profile payload, and that the controllers do not create a
 ## Company selection logo persistence
 
 The Build Profile and Starter Edit Profile company autocomplete controllers
-serialize each selected company as `name`, `domain`, and `logo_url` in the
-authored `also-worked-with` hidden input. Starter Edit Profile also preserves
-`client_row_id` and `company_entity_id` for each canonical active client. Its
-canonical client-row ID owns the serialized `client-{id}` key; only a selection
-without that ID receives a new local key. This lets an existing legacy client
-with a blank domain retain its canonical identity when saved without allowing a
-new blank-domain selection through Xano validation.
+serialize each selected company as `name`, `domain`, `logo_url`, and
+`company_entity_id` in the authored `also-worked-with` hidden input. Build
+Profile also serializes `source`. Starter Edit Profile instead preserves
+`client_row_id` for each canonical active client. Its canonical client-row ID
+owns the serialized `client-{id}` key; only a selection without that ID receives
+a new local key. This lets an existing legacy client with a blank domain retain
+its canonical identity when saved.
 
 A platform company result keeps its `logo_url` through selection, draft
 hydration, tag rendering, and later serialization. Starter Edit Profile
 canonical hydration accepts the API's `company_logo_url` field and the
-compatible `logo_url` field. A manually typed company has an empty `logo_url`.
+compatible `logo_url` field. An explicitly selected custom company has an empty
+`logo_url`.
 
 Starter Edit Profile saves Also Worked With before pending Work Experience
 creates, updates, and deletes. A rejected mutation stops the sequence, shows the
@@ -108,12 +109,29 @@ later retry. After a partial Work Experience save, the list refreshes canonical
 rows and retains only the unsaved local drafts.
 
 The single-company Work History picker stores the selected `name`, `domain`,
-and `logo_url` on its authored input. The Build Profile and Edit Profile CRUD
-controllers read that stored selection when they build a create or update
-payload. If the member types over the selected name, the picker clears the
-stored selection so an old domain can never be attached to new free text.
-The CRUD controller also blocks a local Work History draft when the selection
-has no domain. This keeps the name-only custom fallback from reaching Xano.
+`logo_url`, `company_entity_id`, and `source` on its authored input. The Build
+Profile and Edit Profile CRUD controllers send that metadata in create and
+update payloads. A selected canonical Company is valid when it has a stable
+`company_entity_id`, even if it has no domain. A selected domain match remains
+valid. Each result list also includes an explicit `Use custom company` choice;
+that choice is valid with `source: custom`, an empty entity ID, an empty domain,
+and an empty logo. Free typing without selecting a result or that custom choice
+is invalid.
+
+If the member types over the selected name, the picker clears all stored
+selection metadata so an old identity cannot be attached to new free text.
+Editing an existing Work Experience row hydrates its entity ID, source, domain,
+and stored logo without requiring reselection. The known Webflow placeholder is
+presentation-only: hydration and payload construction normalize that exact URL
+to an empty `company_logo_url`, and new custom Companies also persist an empty
+logo.
+
+Both route copies debounce input for 250 ms, abort a superseded request, and use
+a sequence number so only the newest active query can render results or an
+error. Closing the dropdown invalidates the active sequence, so a late response
+cannot reopen it. A non-`2xx` response is a failure. Refocusing reuses only
+results for the exact rendered query or a request for that query that is still
+in flight; progress and error messages do not become cached results.
 
 Run the shared contract coverage with:
 
