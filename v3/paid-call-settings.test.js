@@ -1773,6 +1773,10 @@ test('the authored Paid price tile replaces the placeholder with Not set while c
     cardMode: true,
     priceTile: { canonical: false, authored: true },
     initial: canonical(),
+    beforeLoad(dom) {
+      dom.authoredPriceCard.style.color = '#123456'
+      dom.authoredPriceCard.style['background-color'] = '#fefefe'
+    },
   })
   await settle()
 
@@ -1780,7 +1784,12 @@ test('the authored Paid price tile replaces the placeholder with Not set while c
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Add a rate to turn them on.')
   assert.equal(result.dom.card.getAttribute('data-paid-call-card-state'), 'off')
   assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).opacity, '1')
-  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).filter, 'saturate(.45)')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).outline, '1px dashed currentColor')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['outline-offset'], '-1px')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['box-shadow'], 'none')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).color, '#123456')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard)['background-color'], '#fefefe')
+  assert.equal(computedStyle(result.document, result.dom.authoredPriceCard).filter || '', '')
   assert.equal(computedStyle(result.document, result.dom.card).opacity || '', '')
   assert.equal(computedStyle(result.document, result.dom.offOutput).opacity || '', '')
   assert.equal(computedStyle(result.document, result.dom.statusOutput).opacity || '', '')

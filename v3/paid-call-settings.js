@@ -773,7 +773,7 @@
       '[data-call-settings-error-visible="true"].w-form-fail{display:block!important}' +
       '[data-paid-call-card-state="off"] [data-service-card-element="price-card"],' +
       '[data-paid-call-card-state="off"] [data-call-settings-output="price"]{' +
-      'opacity:1;filter:saturate(.45);transition:filter .2s ease}'
+      'opacity:1;outline:1px dashed currentColor;outline-offset:-1px;box-shadow:none}'
     document.head.appendChild(style)
   }
 
