@@ -690,7 +690,7 @@ test('project dashboard actions use the authenticated canonical endpoints', asyn
       if (url.includes('/brand/projects/mine')) return response({ items: [{ id: 675 }] })
       if (url.includes('/contracts/link/v3')) return response({ url: 'https://app.pandadoc.com/s/test' })
       if (url.includes('/projects/action/v3')) {
-        return response({ project: { id: 675, lifecycle_state: 'completion_requested' } })
+        return response({ project: { id: 675, lifecycle_state: 'completed' } })
       }
       if (url.includes('/brand/reviews/submit')) return response({ review_id: 42 })
       throw new Error(`Unexpected request: ${url}`)
@@ -1747,7 +1747,7 @@ test('project lifecycle replay retries transient failure and accepts earlier exh
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
       if (url.includes('/projects/action/v3')) {
         events.push({ type: 'action', body: JSON.parse(init.body) })
-        return response({ project: { id: 675, lifecycle_state: 'completion_requested' } })
+        return response({ project: { id: 675, lifecycle_state: 'completed' } })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -1856,7 +1856,7 @@ test('project lifecycle lock follows replacement controls during replay', async 
         mutations += 1
         assert.equal(JSON.parse(init.body).expected_version, 2)
         return response({
-          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+          project: { id: 675, lifecycle_state: 'completed', lifecycle_version: 3 },
         })
       }
       throw new Error(`Unexpected request: ${url}`)
@@ -2115,7 +2115,7 @@ test('project lifecycle success survives repeated failure on the same replay pag
         events.push('action')
         assert.equal(JSON.parse(init.body).expected_version, 2)
         return response({
-          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+          project: { id: 675, lifecycle_state: 'completed', lifecycle_version: 3 },
         })
       }
       throw new Error(`Unexpected request: ${url}`)
@@ -2153,14 +2153,14 @@ test('project lifecycle success survives repeated failure on the same replay pag
   const actionIndex = events.indexOf('action')
   assert.deepEqual(events.slice(actionIndex + 1), ['page:1', 'page:2:error', 'page:2:error'])
   assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
-  assert.equal(label.textContent, 'Completion requested')
+  assert.equal(label.textContent, 'Project completed')
   assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
 
   bridge.notifyMutations([{ type: 'childList', target: label }])
   await Promise.resolve()
   await Promise.resolve()
 
-  assert.equal(label.textContent, 'Completion requested')
+  assert.equal(label.textContent, 'Project completed')
   assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
   assert.equal(timers.length, 1)
   assert.equal(timers[0].delay, 3500)
@@ -2247,7 +2247,7 @@ test('project lifecycle success uses stable feedback after page-one replay failu
         mutations += 1
         assert.equal(JSON.parse(init.body).expected_version, 2)
         return response({
-          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+          project: { id: 675, lifecycle_state: 'completed', lifecycle_version: 3 },
         })
       }
       throw new Error(`Unexpected request: ${url}`)
@@ -2274,7 +2274,7 @@ test('project lifecycle success uses stable feedback after page-one replay failu
 
   assert.ok(await waitFor(() => {
     const feedback = root.querySelector('[data-project-workflow-feedback]')
-    return feedback && feedback.textContent === 'Completion requested'
+    return feedback && feedback.textContent === 'Project completed'
   }))
   const feedback = root.querySelector('[data-project-workflow-feedback]')
   assert.equal(mutations, 1)
@@ -4030,7 +4030,7 @@ test('lifecycle actions refresh and require a canonical version before mutation'
       }
       if (url.includes('/projects/action/v3')) {
         requests.push({ type: 'action', body: JSON.parse(init.body) })
-        return response({ project: { id: 675, lifecycle_state: 'completion_requested' } })
+        return response({ project: { id: 675, lifecycle_state: 'completed' } })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -4083,7 +4083,7 @@ test('lifecycle success survives a failed projection refresh', async () => {
         actionCount += 1
         assert.equal(JSON.parse(init.body).expected_version, 2)
         return response({
-          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+          project: { id: 675, lifecycle_state: 'completed', lifecycle_version: 3 },
         })
       }
       throw new Error(`Unexpected request: ${url}`)
@@ -4106,7 +4106,7 @@ test('lifecycle success survives a failed projection refresh', async () => {
   assert.ok(await waitFor(() => listCount === 3 && bridge.consoleErrors.length > 0))
   assert.equal(actionCount, 1)
   assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
-  assert.equal(label.textContent, 'Completion requested')
+  assert.equal(label.textContent, 'Project completed')
   assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
 })
 
@@ -7430,11 +7430,12 @@ test('brand end-project modal completes and submits the review in one pass', asy
   assert.equal(reviewBody.review_text, 'Excellent collaboration overall.')
 })
 
-test('brand first-mover completion defers the review until the Starter confirms', async () => {
-  const dom = endProjectDom()
+test('brand termination does not submit a review', async () => {
+  const dom = endProjectDom({ reason: 'Scope changed' })
+  let actionBody = null
   let reviewCount = 0
   const bridge = await loadBridge(
-    async (input) => {
+    async (input, init = {}) => {
       const url = String(input)
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
       if (url.includes('/brand/projects/mine')) {
@@ -7450,10 +7451,11 @@ test('brand first-mover completion defers the review until the Starter confirms'
         })
       }
       if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
         return response({
           project: {
             id: 675,
-            lifecycle_state: 'completion_requested',
+            lifecycle_state: 'terminated',
             lifecycle_version: 5,
             review_eligible: false,
             has_review: false,
@@ -7472,7 +7474,8 @@ test('brand first-mover completion defers the review until the Starter confirms'
 
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
-  assert.equal(dom.toggle.style.display, '')
+  bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
 
   bridge.dispatchDocument('submit', {
     target: dom.form,
@@ -7481,11 +7484,13 @@ test('brand first-mover completion defers the review until the Starter confirms'
   })
 
   assert.ok(await waitFor(() => dom.label.textContent !== 'End Project'))
+  assert.equal(actionBody.action, 'terminate')
+  assert.equal(actionBody.reason, 'Scope changed')
   assert.equal(reviewCount, 0)
-  assert.match(dom.label.textContent, /Review unlocks once both sides confirm/)
+  assert.equal(dom.label.textContent, 'Project ended')
 })
 
-test('starter end-project modal requests completion without review fields', async () => {
+test('starter end-project modal completes without review fields', async () => {
   const dom = endProjectDom()
   let actionBody = null
   const bridge = await loadBridge(
@@ -7505,7 +7510,7 @@ test('starter end-project modal requests completion without review fields', asyn
       if (url.includes('/projects/action/v3')) {
         actionBody = JSON.parse(init.body)
         return response({
-          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 5 },
+          project: { id: 675, lifecycle_state: 'completed', lifecycle_version: 5 },
         })
       }
       throw new Error(`Unexpected request: ${url}`)
@@ -7562,7 +7567,7 @@ test('early-end mode requires a reason and sends it as the terminate reason', as
       if (url.includes('/projects/action/v3')) {
         actionBody = JSON.parse(init.body)
         return response({
-          project: { id: 675, lifecycle_state: 'termination_requested', lifecycle_version: 5 },
+          project: { id: 675, lifecycle_state: 'terminated', lifecycle_version: 5 },
         })
       }
       throw new Error(`Unexpected request: ${url}`)
@@ -7624,7 +7629,7 @@ test('end-project falls back to prompt when the modal markup is absent', async (
       if (url.includes('/projects/action/v3')) {
         actionBody = JSON.parse(init.body)
         return response({
-          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 5 },
+          project: { id: 675, lifecycle_state: 'completed', lifecycle_version: 5 },
         })
       }
       throw new Error(`Unexpected request: ${url}`)

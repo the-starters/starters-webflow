@@ -3911,14 +3911,13 @@
     closeEndProjectModal(modal)
   }
 
-  // A review row exists only for a `completed` project, so a first-mover
-  // request that lands on `completion_requested` must defer to the standing
-  // review CTA rather than post a review the endpoint would reject.
+  // A review row exists only for a `completed` project. A termination or an
+  // unexpected non-completed response must never receive a review.
   async function submitEndProjectReview(intent, project) {
     const review = intent && intent.review
     if (!review) return ''
     if (lifecycleState(project) !== 'completed') {
-      return 'Completion requested. Review unlocks once both sides confirm.'
+      return 'Project ended. The review was not submitted.'
     }
     try {
       await API.brandReviewSubmit({
@@ -3942,9 +3941,7 @@
   function projectMutationFeedback(project) {
     const state = lifecycleState(project)
     return {
-      completion_requested: 'Completion requested',
       completed: 'Project completed',
-      termination_requested: 'End requested',
       terminated: 'Project ended',
       canceled: 'Project canceled',
       cancelled: 'Project canceled',

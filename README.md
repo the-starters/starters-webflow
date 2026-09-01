@@ -1080,8 +1080,9 @@ one stale control from surviving when the selector finds another control first.
 The primary control's label and mutation follow canonical lifecycle state, except
 that canonical `status=pending` takes precedence over a more specific
 `lifecycle_state` and always exposes one authorized cancel action. Active projects
-can request completion or an early termination with a required reason, and a
-counterparty can confirm a pending completion or termination request. Terminal
+can complete or terminate with a required reason. Xano #1679 finalizes the
+project on the first action by either party. Kaeser changed this behavior on
+2026-09-01 to match V2. No counterparty confirmation is required. Terminal
 projects expose no lifecycle action.
 
 The lifecycle intent opens the separate Webflow-authored
@@ -1099,28 +1100,17 @@ shown, so only visible fields can block submission. Author the submit control as
 the standard Clickable Wrap: the empty `button.clickable_btn` remains the native
 submitter, while every `.button_main-text` in its `.button_main-wrap` receives
 the state-specific caption. A legacy plain button can instead keep its caption
-in a nested `div` or `span`. Pending completion and termination requests paint
-confirmation-only states for the counterparty; pre-activation projects paint the
-existing cancel confirmation. If the separate modal markup is absent during a
-Designer/CDN rollout skew, the native prompt and confirm flow remains available
-so the lifecycle action is not stranded.
+in a nested `div` or `span`. Pre-activation projects paint the existing cancel
+confirmation. If the separate modal markup is absent during a Designer/CDN
+rollout skew, the native prompt and confirm flow remains available so the
+lifecycle action is not stranded.
 
-The requesting party never sees a second request. Requester identity comes from
-the canonical `brand_completion_requested_at`, `starter_completion_requested_at`,
-`brand_termination_requested_at`, and `starter_termination_requested_at` fields
-that `starter/projects/mine` and `brand/projects/mine` return on every project
-row. While a request is pending, the party whose timestamp is set reads
-`Waiting for Starter` or `Waiting for Brand`, carries `aria-disabled` plus
-`data-project-action-waiting="true"`, drops its own clicks before any refresh or
-prompt, and is refused again at the intent boundary after the pre-mutation
-refresh, so a stale card cannot replay the request. The same control fails closed
-when either party timestamp for the pending action is absent from the projection,
-or before the dashboard role resolves: the label reads `Status Unavailable`, the
-control carries the same disabled state, and no mutation is posted. A projection
-contract drift therefore degrades to no action instead of an unguarded repeat
-request. Every lifecycle mutation repaints its own card once it settles, so a
-successful request flips that card to its waiting label without a second
-interaction.
+Rows left in `completion_requested` or `termination_requested` by the retired
+two-sided flow remain actionable. They do not show a waiting label, disable the
+requesting party, or fail closed when a request timestamp is missing. A stranded
+termination reuses its recorded `end_reason` and does not show the reason input,
+because Xano #1679 rejects a terminate action whose reason differs from the one
+already on file.
 Immediately before every mutation, the controller refreshes the canonical project
 and requires a nonnegative `lifecycle_version`. It then posts `project_id`,
 `expected_version`, `action`, `reason`, and a retry-stable idempotency key to
@@ -1154,12 +1144,11 @@ The Brand end-project form shows its rating and public-review fields only when
 that intent includes a review. It validates the same 1–5 rating and 10–4,000
 character review contract before posting the project action. When the action
 response reaches canonical `lifecycle_state=completed`, the controller submits
-the review to `brand/reviews/submit` in the same pass. A first-mover completion
-that reaches `completion_requested` does not post the review; it reports that the
-review unlocks after both sides confirm and leaves the standing Review Starter
-action as the later entry point. A review failure after successful completion
-does not roll back the project and directs the Brand to retry through Review
-Starter.
+the review to `brand/reviews/submit` in the same pass. Because completion
+finalizes immediately, the Brand review always saves in that pass. A
+non-completed response does not receive a review. A review failure after
+successful completion does not roll back the project and directs the Brand to
+retry through Review Starter.
 
 A completed-project review email may deep-link to
 `/brand-dashboard?review_project=<project id>#projects-section`. The controller
