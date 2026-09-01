@@ -2307,6 +2307,11 @@
         return bookingForActionTarget(refs, target)
       },
       getBookingStatus: bookingStatus,
+      // Lets the actions module re-render the open modal from a booking it has
+      // just mutated, so a success panel cannot show pre-change values.
+      refreshDetail: function (modal, booking) {
+        return populateDetailModal(modal, booking, role)
+      },
       onAvailable: function () {
         refreshDetailExpiration(refs, role)
       },
