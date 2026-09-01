@@ -2288,11 +2288,13 @@ The native Webflow modal owns `[booking-decline-reason]`,
 `reschedule` reason view, the module keeps that panel and its controls, normalizes
 their button labels and field placeholder, and does not create replacements for
 them. One authored heading and description serve both reschedule contracts, so
-the module replaces the known confirmed-call wording with pending-request
-wording when the Brand opens that direct-update flow, and restores the known
-confirmed wording for a proposal. The replacement matches only those known
-strings; unrecognized Designer copy stays unchanged. The module creates only
-the missing shared-calendar and result views. The Brand modal can author the
+the module targets their stable `[booking-copy="reschedule-title"]` and
+`[booking-copy="reschedule-body"]` hooks with pending-request wording when the
+Brand opens that direct-update flow, and with confirmed-call wording for a
+proposal. If a page predates those published hooks, the module falls back to
+matching only the known contract strings; unrecognized Designer copy stays
+unchanged. The module creates only the missing shared-calendar and result
+views. The Brand modal can author the
 pending path's `reschedule-updated` result. A modal that lacks that panel receives
 a module fallback, so the direct-update success cannot switch to a missing
 target. A modal with no authored `reschedule` view receives the module fallback
