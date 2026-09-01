@@ -60,6 +60,7 @@ test('Build preserves Full Profile paid-call No while retrying photo saves', asy
     }
   }
   const window = {
+    location: { pathname: '/build-profile/full-profile' },
     StartersBuildProfilePhotoUpload: photoUpload,
     intlTelInput: { getInstance: () => null },
     $memberstackDom: {

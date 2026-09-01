@@ -104,7 +104,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 11326, sha256: 'e1a0681e7f67e60f8cefa5531ce094df6c3ada1e8109b1b87d5840e3bee258e2',
+    characters: 11438, sha256: '64bdb27d4834cd218ffe4b9dfd3777ebc0e00d0e8ea838f1106a2b503098a445',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 219: '          ' }), terminalNewlinesRemoved: 0,
@@ -1373,7 +1373,7 @@ test('build submit writer sends one normalized payload through the authored form
       auth: { email: 'profile@example.com' },
       customFields: { 'free-user': 'Ada', 'last-name': 'Lovelace', phone: '+15550000000' },
     },
-    activeProfile: { type: 'consult', type_id: 'consult-id' },
+    activeProfile: { type: 'full', type_id: 'full-id' },
     document,
     qs,
     setLoader(value) { loaderStates.push(value) },
@@ -1382,6 +1382,7 @@ test('build submit writer sends one normalized payload through the authored form
       return { ok: true, async json() { return { ok: true } } }
     },
   })
+  context.window.location = { pathname: '/build-profile/consult' }
   context.window.intlTelInput = { getInstance() { return { getNumber() { return '+15550000000' } } } }
 
   run('v3/build-profile/submit-writer.js', context)
@@ -1402,7 +1403,7 @@ test('build submit writer sends one normalized payload through the authored form
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     payload: {
-      member_id: 'member-1', type: 'consult', type_id: 'consult-id',
+      member_id: 'member-1', type: 'full', type_id: 'full-id',
       email: 'profile@example.com', first_name: 'Ada', last_name: 'Lovelace', phone: '+15550000000',
       country: 'United States', state: 'California', city: 'Los Angeles',
       category: 'Engineering', category_id: 'category-id', roles: 'Developer', roles_ids: 'role-id',

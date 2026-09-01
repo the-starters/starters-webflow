@@ -103,8 +103,9 @@
         };
 
         const paidCallRate = toInteger(formData["paid-call-rate"]);
+        const isConsultProfile = String(window.location?.pathname || "").replace(/\/+$/, "") === "/build-profile/consult";
         const paidCallEnabled = toBool(formData["paid-consulting-calls"]) === true ||
-          (formData.type === "consult" && paidCallRate > 0);
+          (isConsultProfile && paidCallRate > 0);
 
         const payload = {
           member_id: MEMBER.id || "",
