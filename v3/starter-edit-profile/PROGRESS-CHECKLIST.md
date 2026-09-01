@@ -1,6 +1,6 @@
 # 🧭 Starter Profile Reliability Progress Checklist
 
-Last updated: 2026-08-31
+Last updated: 2026-09-01
 
 This checklist tracks release-safe implementation evidence for the
 `/starter-edit-profile` reliability workflow. The workspace operator checklist
@@ -81,9 +81,9 @@ in [README.md](README.md) and in the root
 - [x] A non-`<label>` upload surface opens the chooser on a mouse click and on `Enter`.
 - [x] Typing an exact taxonomy option name never selects it, and clearing a Custom
       Service field writes the cleared value into its hidden capture JSON.
-- [x] A slow Also Worked With search reports progress, an abandoned or superseded
-      response never writes over the dropdown, and a progress or error message is
-      never cached as a result for its query.
+- [x] A slow Also Worked With search reports progress, a superseded request is
+      cancelled, an abandoned or superseded response never writes over the dropdown,
+      and a progress or error message is never cached as a result for its query.
 - [x] The Work Highlight editor normalizes to exactly one cover from either source and
       sends that stored image's ID as `cover_image_id`.
 
@@ -126,9 +126,10 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
       untouched phone and a declined service's description survive a save and a
       reload, the photo chooser opens by mouse and by keyboard, a typed taxonomy
       name is not added without an explicit selection, a cleared Custom Service
-      field persists as cleared, a slow Also Worked With search reports progress and
-      never strands a message, and the chosen Work Highlight cover is the one the
-      live hire page shows. Restore any canary data afterwards.
+      field persists as cleared, a slow Also Worked With search reports progress, a
+      newer query cancels its predecessor without showing an error, no search strands
+      a message, and the chosen Work Highlight cover is the one the live hire page
+      shows. Restore any canary data afterwards.
 
 ## 🛑 Stop conditions
 
