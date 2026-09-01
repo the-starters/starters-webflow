@@ -2372,6 +2372,7 @@
   const PROJECT_END_MODAL_ID = 'end-project'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
   const PROJECT_REVIEWABLE_STATES = new Set(['completed', 'terminated'])
+  const DEFAULT_EARLY_END_REASON = 'Project ended early'
   // Sent documents use recipient view/sign sessions. Completed documents use
   // a separate protected-PDF route and never mint a signing session.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
@@ -3710,7 +3711,7 @@
     return {
       step,
       action: early ? 'terminate' : 'complete',
-      reason: '',
+      reason: early ? DEFAULT_EARLY_END_REASON : '',
       title: early ? 'End Project Early' : 'End Project & Review',
       subtitle: early
         ? 'This ends the project now and notifies the ' + counterparty + '.'
@@ -3718,8 +3719,8 @@
       submit: early
         ? 'End Project Early'
         : role === 'brand' ? 'End Project and Submit Review' : 'Mark Work Complete',
-      showReason: early,
-      requireReason: early,
+      showReason: false,
+      requireReason: false,
       showReview: !early && role === 'brand' && !project.has_review,
       showToggle: true,
       toggle: early ? 'The work is finished instead' : 'End this project early instead',
@@ -3877,15 +3878,12 @@
         ? { action: 'terminate', reason: pendingReason }
         : null
     }
-    const response = promptAction(
-      'Type COMPLETE to close this project now. To end it early instead, enter the reason. Leave blank to keep it active.',
-      '',
-    )
-    if (response == null || !String(response).trim()) return null
-    const value = String(response).trim()
-    return /^complete$/i.test(value)
-      ? { action: 'complete', reason: '' }
-      : { action: 'terminate', reason: value }
+    if (confirmAction('Is the work complete? Select OK to close the project, or Cancel for Early End.')) {
+      return { action: 'complete', reason: '' }
+    }
+    return confirmAction('End this project early now?')
+      ? { action: 'terminate', reason: DEFAULT_EARLY_END_REASON }
+      : null
   }
 
   // Returns a promise so the designed modal can resolve the intent. The

@@ -1080,7 +1080,8 @@ one stale control from surviving when the selector finds another control first.
 The primary control's label and mutation follow canonical lifecycle state, except
 that canonical `status=pending` takes precedence over a more specific
 `lifecycle_state` and always exposes one authorized cancel action. Active projects
-can complete or terminate with a required early-end reason. Pre-activation
+can complete or terminate. Early End has no text input; the controller sends a
+fixed internal reason required by the endpoint. Pre-activation
 projects can cancel only with a required note that records what happened for
 admin operations. The cancel note becomes the project action reason and
 lifecycle-event payload; it is not written to `core_reviews_v3`, does not appear
@@ -1097,10 +1098,11 @@ component opens them in early-end mode. An authored
 work and ending it early. Use `[data-end-project-title]` and
 `[data-end-project-subtitle]` for the state-specific copy,
 `[data-end-project-reason-wrap]` around `[data-end-project-reason]` for the
-required early-end reason or pre-activation cancel note, and
+pre-activation cancel note, and
 `[data-end-project-review]` around the Brand-only rating and public-review
 fields. The controller shows those review fields only for Brand completion and
-hides them for early end. Add `project-element="project-name"` and
+hides them for early end. It also hides the reason field for early end. Add
+`project-element="project-name"` and
 `project-element="project-id"` (or the equivalent `data-end-project-bind`
 values) to display the active project's canonical title and numeric ID in both
 modes. The controller removes native `required` constraints while a group is
