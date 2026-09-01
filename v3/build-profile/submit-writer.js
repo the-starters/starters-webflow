@@ -68,12 +68,17 @@
         };
 
         const normalizeReviewer = (reviewer) => {
-          if (!reviewer || !reviewer.fname || !reviewer.email) return null;
+          if (!reviewer) return null;
+
+          const firstName = reviewer.fname || reviewer["first-name"] || "";
+          const lastName = reviewer.lname || reviewer["last-name"] || "";
+          const position = reviewer.job || reviewer.position || "";
+          if (!firstName || !reviewer.email) return null;
 
           return {
-            "first-name": reviewer.fname || "",
-            "last-name": reviewer.lname || "",
-            position: reviewer.job || "",
+            "first-name": firstName,
+            "last-name": lastName,
+            position,
             company: reviewer.company || "",
             email: reviewer.email || "",
           };
