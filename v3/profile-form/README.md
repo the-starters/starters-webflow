@@ -13,7 +13,8 @@ live identities and candidate identities, plus the exact inverse transformation 
 each captured live body.
 
 Five candidates no longer reconstruct to their published bodies. `canonical-profile-loader.js`
-carries company logo hydration, `draft-state.js` carries the member-bound hydration fix,
+carries company logo and stable client identity hydration, `draft-state.js` carries the
+member-bound hydration fix,
 `submit-writer.js` carries the behavior changes owned by the
 [Build Profile documentation](../build-profile/README.md), `shared-foundation.js`
 adds a taxonomy value only through an explicit option click or an Enter press on a highlighted
@@ -87,11 +88,24 @@ normalized final Build Profile payload, and that the controllers do not create a
 
 The Build Profile and Starter Edit Profile company autocomplete controllers
 serialize each selected company as `name`, `domain`, and `logo_url` in the
-authored `also-worked-with` hidden input. A platform company result keeps its
-`logo_url` through selection, draft hydration, tag rendering, and later
-serialization. Starter Edit Profile canonical hydration accepts the API's
-`company_logo_url` field and the compatible `logo_url` field. A manually typed
-company has an empty `logo_url`.
+authored `also-worked-with` hidden input. Starter Edit Profile also preserves
+`client_row_id` and `company_entity_id` for each canonical active client. Its
+canonical client-row ID owns the serialized `client-{id}` key; only a selection
+without that ID receives a new local key. This lets an existing legacy client
+with a blank domain retain its canonical identity when saved without allowing a
+new blank-domain selection through Xano validation.
+
+A platform company result keeps its `logo_url` through selection, draft
+hydration, tag rendering, and later serialization. Starter Edit Profile
+canonical hydration accepts the API's `company_logo_url` field and the
+compatible `logo_url` field. A manually typed company has an empty `logo_url`.
+
+Starter Edit Profile saves Also Worked With before pending Work Experience
+creates, updates, and deletes. A rejected mutation stops the sequence, shows the
+authored error state, and does not show success. Completed mutations leave their
+pending queue as they succeed, while uncommitted mutations remain queued for a
+later retry. After a partial Work Experience save, the list refreshes canonical
+rows and retains only the unsaved local drafts.
 
 The single-company Work History picker stores the selected `name`, `domain`,
 and `logo_url` on its authored input. The Build Profile and Edit Profile CRUD
