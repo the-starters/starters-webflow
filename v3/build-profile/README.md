@@ -62,7 +62,11 @@ the legacy Memberstack/local draft initializes, it reads the canonical
 stable Memberstack ID before and after that read, maps the canonical
 fields to the seven-step draft shape, and fills only keys that are absent from
 the active draft. Existing draft keys always win, including intentional empty
-or false values. It does not persist Memberstack JSON, localStorage, or Xano
+or false values. Canonical reviewer fields are adapted to the native draft
+aliases (`fname`, `lname`, and `job`). At submit, the writer accepts those draft
+aliases, the canonical aliases (`first-name`, `last-name`, and `position`), or a
+mix of both, then emits the canonical reviewer shape without dropping the last
+name or position. It does not persist Memberstack JSON, localStorage, or Xano
 data; the native wizard keeps ownership of capture and persistence after human
 input.
 
@@ -175,7 +179,8 @@ These live blocks stay unchanged while Elvin owns availability, booking, and pai
 
 The extracted final submit writer is now a declared behavior-change candidate. It
 keeps the existing normalized profile payload, availability fields, and paid-call
-fields, and adds only the profile-save and pending-photo commit gate described in
+fields. Its behavior changes are the reviewer-alias compatibility described above
+and the profile-save and pending-photo commit gate described in
 [Profile-photo upload contract](#profile-photo-upload-contract). The separate
 outcome observer still does not change its request or payload.
 
