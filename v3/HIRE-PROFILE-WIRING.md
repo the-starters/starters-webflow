@@ -18,12 +18,12 @@ is kept at
 `webflow-sites/starters-3/custom-code-backups/hire-template-footer-pre-cdn-migration-2026-08-16.html`
 in the ops workspace.
 
-Phase 2 removed Experiences and Clients from this runtime. Webflow now renders
-Notable Experience from the **Work Histories** collection list filtered to the
-current freelancer, and Clients from the freelancer's **also-worked-with**
-multi-reference. The 2026-08-16 Xano-to-CMS projection finished with zero drift
-for 515 of 517 profiles. The 74 collision-blocked profiles continue to use their
-stale-but-present CMS rows, so both sections still render natively.
+Phase 2 removed Experiences and Clients from this runtime. The later wf-xano
+cutover kept the Webflow-authored templates but moved both list reads to public
+Xano endpoint `#5860`, `GET profile/starter/taxonomy/v3`. The `work_histories`
+and `clients` kinds now render canonical rows without waiting for Webflow CMS
+projection. `hire-profile.js` only neutralizes unresolved custom-Company links
+that do not yet have a public Company page.
 
 ## Install
 
@@ -74,8 +74,8 @@ remain deferred (`paid-call-brand-payment.js`,
 
 | Area | Audience | Owner / source |
 | --- | --- | --- |
-| Notable Experience | everyone, incl. logged out | native Webflow CMS / Work Histories |
-| Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
+| Notable Experience | everyone, incl. logged out | Webflow-authored `starter-work-histories` wf-xano wrapper / public Xano endpoint `#5860` |
+| Clients ("also worked with") | everyone, incl. logged out | Webflow-authored `starter-clients` wf-xano wrapper / public Xano endpoint `#5860` |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: accepted canonical configuration plus successful controller install | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
 | Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
 | Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, and Talent or owner cards stay inert | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |

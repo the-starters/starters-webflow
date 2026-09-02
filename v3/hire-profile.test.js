@@ -694,6 +694,23 @@ function addXanoServiceFixture(page, serviceName) {
   return { wrapper, template, card, title, description }
 }
 
+function addXanoCompanyLinkFixture(page, instance, href, name) {
+  const wrapper = makeElement('div', {
+    'wf-xano-element': 'wrapper',
+    'wf-xano-instance': instance,
+  })
+  const link = makeElement('a', {
+    'wf-xano-item': '',
+    'data-wf-xano-id': `${instance}:${name}`,
+    href,
+    target: '_blank',
+  })
+  link.textContent = name
+  wrapper.appendChild(link)
+  page.root.appendChild(wrapper)
+  return { wrapper, link }
+}
+
 function addXanoRetainerFixture(page, { withCard = true } = {}) {
   const wrapper = makeElement('div', {
     'wf-xano-element': 'wrapper',
@@ -978,6 +995,68 @@ test('native CMS profile rows remain visible while services use the CMS-bound Xa
       .map((child) => child.getAttribute('data-rate-card')),
     ['freelance', 'retainer'],
   )
+})
+
+test('unresolved custom Company links keep their native cards but cannot navigate', async () => {
+  const page = makePage()
+  const emptySlug = addXanoCompanyLinkFixture(
+    page,
+    'starter-work-histories',
+    '/companies/',
+    'Unlisted Work Company',
+  )
+  const pendingSlug = addXanoCompanyLinkFixture(
+    page,
+    'starter-clients',
+    '/companies/company-pending-4680?source=profile',
+    'Unlisted Client',
+  )
+  const valid = addXanoCompanyLinkFixture(
+    page,
+    'starter-clients',
+    '/companies/nike',
+    'Nike',
+  )
+  const context = makeContext({ page, record: { rate: 100 } })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  for (const fixture of [emptySlug, pendingSlug]) {
+    assert.equal(fixture.link.textContent.startsWith('Unlisted'), true)
+    assert.equal(fixture.link.getAttribute('href'), null)
+    assert.equal(fixture.link.getAttribute('target'), null)
+    assert.equal(fixture.link.getAttribute('aria-disabled'), 'true')
+    assert.equal(fixture.link.getAttribute('data-company-link-unavailable'), '')
+  }
+  assert.equal(valid.link.getAttribute('href'), '/companies/nike')
+  assert.equal(valid.link.getAttribute('target'), '_blank')
+  assert.equal(valid.link.getAttribute('aria-disabled'), null)
+})
+
+test('a late wf-xano custom Company link is neutralized idempotently', async () => {
+  const page = makePage()
+  const context = makeContext({ page, record: { rate: 100 } })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const late = addXanoCompanyLinkFixture(
+    page,
+    'starter-clients',
+    '/companies/company-pending-5001',
+    'Late Custom Client',
+  )
+  const mutation = [{ type: 'childList', addedNodes: [late.wrapper] }]
+  context.mutationObserverCallbacks.forEach((callback) => callback(mutation))
+  context.mutationObserverCallbacks.forEach((callback) => callback(mutation))
+
+  assert.equal(late.link.textContent, 'Late Custom Client')
+  assert.equal(late.link.getAttribute('href'), null)
+  assert.equal(late.link.getAttribute('aria-disabled'), 'true')
+  assert.equal(late.link.getAttribute('data-company-link-unavailable'), '')
 })
 
 test('it follows the page when the environment resolves a different index', async () => {
