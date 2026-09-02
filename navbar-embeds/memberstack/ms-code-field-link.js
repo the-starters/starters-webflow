@@ -10,6 +10,7 @@
   var MEMBERSTACK_POLL_MS = 100
   var PROFILE_POLL_MS = 10000
   var PROFILE_PUBLISHING_LABEL = 'View Profile (Publishing)'
+  var boundElements = new WeakSet()
 
   function hide(element) {
     element.style.display = 'none'
@@ -106,7 +107,7 @@
     var requestPending = false
     var stopped = false
 
-    setProfileDisabled(element, publishedLabel)
+    setProfileDisabled(element, PROFILE_PUBLISHING_LABEL)
     element.addEventListener('click', function (event) {
       if (element.getAttribute('aria-disabled') !== 'true') return
       event.preventDefault()
@@ -172,20 +173,34 @@
     watch()
   }
 
-  document.addEventListener('DOMContentLoaded', function () {
+  function bindFieldLinks(root) {
     var memberData
     try {
       memberData = JSON.parse(localStorage.getItem('_ms-mem') || '{}')
     } catch (error) {
       memberData = {}
     }
-    document.querySelectorAll('[ms-code-field-link]').forEach(function (element) {
+
+    var elements = []
+    if (root && typeof root.matches === 'function' && root.matches('[ms-code-field-link]')) {
+      elements.push(root)
+    }
+    if (root && typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('[ms-code-field-link]').forEach(function (element) {
+        elements.push(element)
+      })
+    }
+
+    elements.forEach(function (element) {
+      if (boundElements.has(element)) return
+
       // A real static link is authoritative. Only placeholders use member data.
       var staticHref = element.getAttribute('href')
       if (staticHref && staticHref !== '#') return
 
       var fieldKey = element.getAttribute('ms-code-field-link')
       if (fieldKey === V3_PROFILE_FIELD) {
+        boundElements.add(element)
         // The Memberstack field still stores the legacy V2 profile URL. Resolve
         // the current Starter's canonical V3 CMS slug instead.
         bindV3Profile(element)
@@ -193,7 +208,27 @@
       }
 
       if (!memberData || !memberData.id) return
+      boundElements.add(element)
       bindLegacyField(element, memberData, fieldKey)
     })
-  })
+  }
+
+  function start() {
+    bindFieldLinks(document)
+
+    if (typeof MutationObserver !== 'function' || !document.documentElement) return
+    new MutationObserver(function (mutations) {
+      mutations.forEach(function (mutation) {
+        mutation.addedNodes.forEach(function (node) {
+          bindFieldLinks(node)
+        })
+      })
+    }).observe(document.documentElement, { childList: true, subtree: true })
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start)
+  } else {
+    start()
+  }
 })()
