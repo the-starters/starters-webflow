@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-30
+Last updated: 2026-09-02
 Status: Call projections and Free Call behavior are GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
@@ -19,11 +19,8 @@ is kept at
 in the ops workspace.
 
 Phase 2 removed Experiences and Clients from this runtime. Webflow now renders
-Notable Experience from the **Work Histories** collection list filtered to the
-current freelancer, and Clients from the freelancer's **also-worked-with**
-multi-reference. The 2026-08-16 Xano-to-CMS projection finished with zero drift
-for 515 of 517 profiles. The 74 collision-blocked profiles continue to use their
-stale-but-present CMS rows, so both sections still render natively.
+both sections through the authored page integrations listed under
+[Page ownership](#page-ownership).
 
 ## Install
 
@@ -74,7 +71,7 @@ remain deferred (`paid-call-brand-payment.js`,
 
 | Area | Audience | Owner / source |
 | --- | --- | --- |
-| Notable Experience | everyone, incl. logged out | native Webflow CMS / Work Histories |
+| Notable Experience | everyone, incl. logged out | authored `work_histories` wf-xano instance / canonical Xano endpoint `profile/starter/taxonomy/v3` (`#5860`); the card binds the preformatted `date_range` (`Month Year`) |
 | Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: accepted canonical configuration plus successful controller install | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
 | Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
