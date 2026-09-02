@@ -166,9 +166,8 @@
             </button>
         `;
         })
-      if (!isMulti) {
-        resultItems.push(`
-          <button class="company-search-item" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="" data-company-entity-id="0" data-source="custom">
+      resultItems.push(`
+          <button class="company-search-item ${isCompanyAdded({ name: typedCompany, domain: '' }) ? "is-added" : ""}" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="" data-company-entity-id="0" data-source="custom">
               <img class="company-search-logo" src="${PLACEHOLDER_LOGO_URL}" alt="">
               <span class="company-search-text">
                   <span class="company-search-name">${escapeHtml(typedCompany)}</span>
@@ -176,7 +175,6 @@
               </span>
           </button>
         `);
-      }
 
       renderDropdown(resultItems.join(''), query);
     }
@@ -244,19 +242,27 @@
 
       const existingDomains = qsa('[also-worked-tag]', tagWrapper);
       for (const existingCompany of existingDomains) {
-        const name = qs('[also-worked-tag-name]', existingCompany)?.textContent?.trim();
-        const domain = qs('[also-worked-tag-domain]', existingCompany)?.textContent?.trim();
+        const name = qs('[also-worked-tag-name]', existingCompany)?.textContent?.trim().toLowerCase();
+        const domain = qs('[also-worked-tag-domain]', existingCompany)?.textContent?.trim().toLowerCase();
+        const companyName = String(company.name || '').trim().toLowerCase();
+        const companyDomain = String(company.domain || '').trim().toLowerCase();
+        const existingEntityId = Number(existingCompany.dataset.companyEntityId) || 0;
+        const companyEntityId = Number(company.company_entity_id) || 0;
+
+        if (companyEntityId > 0 && existingEntityId === companyEntityId) {
+          return true;
+        }
 
         if (
-          (company.domain && domain) &&
-          domain === company.domain
+          (companyDomain && domain) &&
+          domain === companyDomain
         ) {
           return true;
         }
 
         if (
           (!company.domain || !domain) &&
-          name === company.name
+          name === companyName
         ) {
           return true;
         }

@@ -8,6 +8,7 @@ const vm = require('node:vm')
 
 function createHarness(file, companies, { isMulti = true } = {}) {
   let domReady
+  let dropdown
   let nextId = 0
   const tags = []
   const inputListeners = {}
@@ -50,14 +51,16 @@ function createHarness(file, companies, { isMulti = true } = {}) {
       if (name === 'DOMContentLoaded') domReady = callback
     },
     createElement() {
-      return {
+      dropdown = {
         className: '',
         style: {},
+        innerHTML: '',
         addEventListener(name, callback) {
           dropdownListeners[name] ||= []
           dropdownListeners[name].push(callback)
         },
       }
+      return dropdown
     },
   }
   const context = {
@@ -100,6 +103,7 @@ function createHarness(file, companies, { isMulti = true } = {}) {
         json: async () => companies,
       }),
     },
+    fetch: async () => ({ ok: true, json: async () => [] }),
   }
 
   vm.runInNewContext(fs.readFileSync(file, 'utf8'), context, { filename: file })
@@ -130,6 +134,12 @@ function createHarness(file, companies, { isMulti = true } = {}) {
     changeInput(value) {
       input.value = value
       inputListeners.input?.()
+    },
+    async search(value) {
+      input.value = value
+      inputListeners.focus?.()
+      await new Promise((resolve) => setImmediate(resolve))
+      return dropdown.innerHTML
     },
   }
 }
@@ -163,6 +173,37 @@ for (const [label, file] of [
   ['Build Profile', path.join(__dirname, '../build-profile/company-autocomplete.js')],
   ['Edit Profile', path.join(__dirname, '../starter-edit-profile/company-autocomplete.js')],
 ]) {
+  test(`${label} offers and serializes a custom company in Also Worked With`, async () => {
+    const harness = createHarness(file, label === 'Edit Profile' ? [] : {})
+    const html = await harness.search('JP Custom Client')
+
+    assert.match(html, /data-name="JP Custom Client"/)
+    assert.match(html, /data-source="custom"/)
+    assert.match(html, />Use custom company</)
+
+    harness.selectCompany({
+      name: 'JP Custom Client',
+      domain: '',
+      logo_url: '',
+      company_entity_id: 0,
+      source: 'custom',
+    })
+
+    const selected = Object.values(JSON.parse(harness.valueInput.value))[0]
+    assert.deepEqual({ ...selected }, {
+      name: 'JP Custom Client',
+      domain: '',
+      logo_url: '',
+      ...(label === 'Edit Profile' ? { client_row_id: 0 } : {}),
+      company_entity_id: 0,
+      source: 'custom',
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 1))
+    const duplicateHtml = await harness.search('jp custom client')
+    assert.match(duplicateHtml, /company-search-item is-added[^>]+data-name="jp custom client"/)
+  })
+
   test(`${label} stores the selected Company domain and logo on the input`, async () => {
     const harness = createHarness(file, {}, { isMulti: false })
     harness.selectCompany({

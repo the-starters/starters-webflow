@@ -54,6 +54,7 @@
           logo_url: logoUrl,
           client_row_id: clientRowId,
           company_entity_id: companyEntityId,
+          source: company.company_source || company.source || '',
         };
 
         return acc;
@@ -125,7 +126,7 @@
         for (const uniqueId of Object.keys(selectedCompanies)) {
           const company = selectedCompanies[uniqueId];
           if (company.name) {
-            renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '', company.client_row_id, company.company_entity_id);
+            renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '', company.client_row_id, company.company_entity_id, company.source);
           }
         }
       })
@@ -140,7 +141,8 @@
           "domain": qs("[also-worked-tag-domain]", tag).textContent,
           "logo_url": tag.dataset.logoUrl || "",
           "client_row_id": Number(tag.dataset.clientRowId) || 0,
-          "company_entity_id": Number(tag.dataset.companyEntityId) || 0
+          "company_entity_id": Number(tag.dataset.companyEntityId) || 0,
+          "source": tag.dataset.companySource || ""
         }
       });
 
@@ -208,9 +210,8 @@
             </button>
         `;
         })
-      if (!isMulti) {
-        resultItems.push(`
-          <button class="company-search-item" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="" data-company-entity-id="0" data-source="custom">
+      resultItems.push(`
+          <button class="company-search-item ${isCompanyAdded({ name: typedCompany, domain: '' }) ? "is-added" : ""}" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="" data-company-entity-id="0" data-source="custom">
               <img class="company-search-logo" src="${PLACEHOLDER_LOGO_URL}" alt="">
               <span class="company-search-text">
                   <span class="company-search-name">${escapeHtml(typedCompany)}</span>
@@ -218,7 +219,6 @@
               </span>
           </button>
         `);
-      }
 
       renderDropdown(resultItems.join(''), query);
     }
@@ -292,19 +292,27 @@
 
       const existingDomains = qsa('[also-worked-tag]', tagWrapper);
       for (const existingCompany of existingDomains) {
-        const name = qs('[also-worked-tag-name]', existingCompany)?.textContent?.trim();
-        const domain = qs('[also-worked-tag-domain]', existingCompany)?.textContent?.trim();
+        const name = qs('[also-worked-tag-name]', existingCompany)?.textContent?.trim().toLowerCase();
+        const domain = qs('[also-worked-tag-domain]', existingCompany)?.textContent?.trim().toLowerCase();
+        const companyName = String(company.name || '').trim().toLowerCase();
+        const companyDomain = String(company.domain || '').trim().toLowerCase();
+        const existingEntityId = Number(existingCompany.dataset.companyEntityId) || 0;
+        const companyEntityId = Number(company.company_entity_id) || 0;
+
+        if (companyEntityId > 0 && existingEntityId === companyEntityId) {
+          return true;
+        }
 
         if (
-          (company.domain && domain) &&
-          domain === company.domain
+          (companyDomain && domain) &&
+          domain === companyDomain
         ) {
           return true;
         }
 
         if (
           (!company.domain || !domain) &&
-          name === company.name
+          name === companyName
         ) {
           return true;
         }
@@ -337,7 +345,7 @@
       }, 300);
     }
 
-    function renderNewTag(selectedName, selectedDomain, item, uniqueId, selectedLogoUrl = '', clientRowId = 0, companyEntityId = 0) {
+    function renderNewTag(selectedName, selectedDomain, item, uniqueId, selectedLogoUrl = '', clientRowId = 0, companyEntityId = 0, source = '') {
       if (!tagTemplate || !tagWrapper) return;
       if (!selectedName) return;
 
@@ -347,6 +355,7 @@
       newTag.dataset.logoUrl = selectedLogoUrl || item?.dataset?.logoUrl || '';
       newTag.dataset.clientRowId = String(Number(clientRowId) || 0);
       newTag.dataset.companyEntityId = String(Number(companyEntityId) || 0);
+      newTag.dataset.companySource = source || item?.dataset?.source || '';
       qs('[also-worked-tag-name]', newTag).textContent = selectedName;
       qs('[also-worked-tag-domain]', newTag).textContent = selectedDomain;
       qs('[also-worked-tag-delete]', newTag).addEventListener('click', function () {
@@ -408,7 +417,7 @@
       const outOfCapacity = isMaxCompanies();
 
       if (isMulti && !outOfCapacity) {
-        renderNewTag(selectedName, selectedDomain, item, undefined, selectedLogoUrl, 0, selectedCompanyEntityId);
+        renderNewTag(selectedName, selectedDomain, item, undefined, selectedLogoUrl, 0, selectedCompanyEntityId, selectedSource);
 
       } else {
         input.value = selectedName;
