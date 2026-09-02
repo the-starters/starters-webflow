@@ -19,10 +19,8 @@ is kept at
 in the ops workspace.
 
 Phase 2 removed Experiences and Clients from this runtime. Webflow now renders
-Notable Experience through the authored `work_histories` wf-xano instance. Its
-canonical source is Xano endpoint `profile/starter/taxonomy/v3` (`#5860`), and
-the card date label binds the endpoint's `date_range` field. Clients still
-render from the freelancer's **also-worked-with** multi-reference.
+both sections through the authored page integrations listed under
+[Page ownership](#page-ownership).
 
 ## Install
 
@@ -73,7 +71,7 @@ remain deferred (`paid-call-brand-payment.js`,
 
 | Area | Audience | Owner / source |
 | --- | --- | --- |
-| Notable Experience | everyone, incl. logged out | authored `work_histories` wf-xano instance / canonical Xano endpoint `profile/starter/taxonomy/v3` (`#5860`); the card binds `date_range` |
+| Notable Experience | everyone, incl. logged out | authored `work_histories` wf-xano instance / canonical Xano endpoint `profile/starter/taxonomy/v3` (`#5860`); the card binds the preformatted `date_range` (`Month Year`) |
 | Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: accepted canonical configuration plus successful controller install | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
 | Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
