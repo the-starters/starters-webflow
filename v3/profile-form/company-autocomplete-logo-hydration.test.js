@@ -6,8 +6,9 @@ const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
-function createHarness(file, companies, { isMulti = true } = {}) {
+function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   let domReady
+  let dropdown
   let nextId = 0
   const tags = []
   const inputListeners = {}
@@ -18,13 +19,18 @@ function createHarness(file, companies, { isMulti = true } = {}) {
   }
   const tagTemplate = {
     cloneNode() {
-      return {
+      const tag = {
         dataset: {},
         name: { textContent: '' },
         domain: { textContent: '' },
         deleteButton: { addEventListener() {} },
         classList: { remove() {} },
+        remove() {
+          const index = tags.indexOf(tag)
+          if (index !== -1) tags.splice(index, 1)
+        },
       }
+      return tag
     },
   }
   const tagWrapper = {
@@ -50,14 +56,16 @@ function createHarness(file, companies, { isMulti = true } = {}) {
       if (name === 'DOMContentLoaded') domReady = callback
     },
     createElement() {
-      return {
+      dropdown = {
         className: '',
         style: {},
+        innerHTML: '',
         addEventListener(name, callback) {
           dropdownListeners[name] ||= []
           dropdownListeners[name].push(callback)
         },
       }
+      return dropdown
     },
   }
   const context = {
@@ -97,9 +105,10 @@ function createHarness(file, companies, { isMulti = true } = {}) {
     window: {
       xanoAuthFetch: async () => ({
         ok: true,
-        json: async () => companies,
+        json: async () => companyFetch ? companyFetch : companies,
       }),
     },
+    fetch: async () => ({ ok: true, json: async () => [] }),
   }
 
   vm.runInNewContext(fs.readFileSync(file, 'utf8'), context, { filename: file })
@@ -108,7 +117,8 @@ function createHarness(file, companies, { isMulti = true } = {}) {
   return {
     input,
     valueInput,
-    selectCompany(selection) {
+    clickResult(selection, { deleteResult = false } = {}) {
+      let isAdded = deleteResult
       const item = {
         dataset: {
           name: selection.name,
@@ -117,19 +127,43 @@ function createHarness(file, companies, { isMulti = true } = {}) {
           companyEntityId: String(selection.company_entity_id || 0),
           source: selection.source || '',
         },
-        classList: { contains() { return false }, add() {} },
+        classList: {
+          contains(name) { return name === 'is-added' && isAdded },
+          add(name) { if (name === 'is-added') isAdded = true },
+          remove(name) { if (name === 'is-added') isAdded = false },
+        },
       }
       const target = {
         closest(selector) {
           if (selector === '.company-search-item') return item
+          if (selector === '.company-search-delete' && deleteResult) return target
           return null
         },
       }
+      if (deleteResult) target.closest = function (selector) {
+        if (selector === '.company-search-delete') return {
+          closest(itemSelector) { return itemSelector === '.company-search-item' ? item : null },
+        }
+        if (selector === '.company-search-item') return item
+        return null
+      }
       for (const listener of dropdownListeners.click || []) listener({ target })
+    },
+    selectCompany(selection) {
+      this.clickResult(selection)
+    },
+    deleteResult(selection) {
+      this.clickResult(selection, { deleteResult: true })
     },
     changeInput(value) {
       input.value = value
       inputListeners.input?.()
+    },
+    async search(value) {
+      input.value = value
+      inputListeners.focus?.()
+      await new Promise((resolve) => setImmediate(resolve))
+      return dropdown.innerHTML
     },
   }
 }
@@ -159,10 +193,86 @@ test('Edit Profile preserves a hydrated API company logo in the serialized selec
   assert.equal(company.company_entity_id, 9)
 })
 
+test('Edit Profile hydration does not append a case-variant duplicate after a custom selection', async () => {
+  let resolveCompanies
+  const companyFetch = new Promise((resolve) => { resolveCompanies = resolve })
+  const harness = createHarness(
+    path.join(__dirname, '../starter-edit-profile/company-autocomplete.js'),
+    [],
+    { companyFetch },
+  )
+
+  harness.selectCompany({
+    name: 'Acme',
+    domain: '',
+    logo_url: '',
+    company_entity_id: 0,
+    source: 'custom',
+  })
+  resolveCompanies([
+    { id: 42, company_entity_id: 9, company_name: 'acme', company_domain: '', company_source: 'custom' },
+  ])
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const selected = Object.values(JSON.parse(harness.valueInput.value))
+  assert.equal(selected.length, 1)
+  assert.equal(selected[0].name, 'Acme')
+})
+
 for (const [label, file] of [
   ['Build Profile', path.join(__dirname, '../build-profile/company-autocomplete.js')],
   ['Edit Profile', path.join(__dirname, '../starter-edit-profile/company-autocomplete.js')],
 ]) {
+  test(`${label} offers and serializes a custom company in Also Worked With`, async () => {
+    const harness = createHarness(file, label === 'Edit Profile' ? [] : {})
+    const html = await harness.search('JP Custom Client')
+
+    assert.match(html, /data-name="JP Custom Client"/)
+    assert.match(html, /data-source="custom"/)
+    assert.match(html, />Use custom company</)
+
+    harness.selectCompany({
+      name: 'JP Custom Client',
+      domain: '',
+      logo_url: '',
+      company_entity_id: 0,
+      source: 'custom',
+    })
+
+    const selected = Object.values(JSON.parse(harness.valueInput.value))[0]
+    assert.deepEqual({ ...selected }, {
+      name: 'JP Custom Client',
+      domain: '',
+      logo_url: '',
+      ...(label === 'Edit Profile' ? { client_row_id: 0 } : {}),
+      company_entity_id: 0,
+      source: 'custom',
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 1))
+    const duplicateHtml = await harness.search('jp custom client')
+    assert.match(duplicateHtml, /company-search-item is-added[^>]+data-name="jp custom client"/)
+
+    harness.deleteResult({ name: 'jp custom client', domain: '', company_entity_id: 0 })
+    assert.equal(Object.keys(JSON.parse(harness.valueInput.value)).length, 0)
+
+    harness.selectCompany({
+      name: 'jp custom client',
+      domain: '',
+      logo_url: '',
+      company_entity_id: 0,
+      source: 'custom',
+    })
+    harness.selectCompany({
+      name: 'JP CUSTOM CLIENT',
+      domain: '',
+      logo_url: '',
+      company_entity_id: 0,
+      source: 'custom',
+    })
+    assert.equal(Object.keys(JSON.parse(harness.valueInput.value)).length, 1)
+  })
+
   test(`${label} stores the selected Company domain and logo on the input`, async () => {
     const harness = createHarness(file, {}, { isMulti: false })
     harness.selectCompany({

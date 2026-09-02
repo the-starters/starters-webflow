@@ -87,19 +87,26 @@ normalized final Build Profile payload, and that the controllers do not create a
 ## Company selection logo persistence
 
 The Build Profile and Starter Edit Profile company autocomplete controllers
-serialize each selected company as `name`, `domain`, `logo_url`, and
-`company_entity_id` in the authored `also-worked-with` hidden input. Build
-Profile also serializes `source`. Starter Edit Profile instead preserves
-`client_row_id` for each canonical active client. Its canonical client-row ID
+serialize each selected company as `name`, `domain`, `logo_url`,
+`company_entity_id`, and `source` in the authored `also-worked-with` hidden
+input. Starter Edit Profile also preserves `client_row_id` for each canonical
+active client. Its canonical client-row ID
 owns the serialized `client-{id}` key; only a selection without that ID receives
 a new local key. This lets an existing legacy client with a blank domain retain
 its canonical identity when saved.
+
+The multi-value Also Worked With pickers offer the typed name as
+`Use custom company`. A new domainless custom selection is stored as an
+owner-scoped `pending_review` Company. It stays out of shared company
+search until review. The same Starter can reload, retain, reorder, or remove it
+by stable Client row and Company IDs. Custom-name duplicate checks ignore case;
+canonical selections prefer Company ID, then normalized domain.
 
 A platform company result keeps its `logo_url` through selection, draft
 hydration, tag rendering, and later serialization. Starter Edit Profile
 canonical hydration accepts the API's `company_logo_url` field and the
 compatible `logo_url` field. An explicitly selected custom company has an empty
-`logo_url`.
+`logo_url`. The shared placeholder is presentation-only and is never persisted.
 
 Starter Edit Profile saves Also Worked With before pending Work Experience
 creates, updates, and deletes. A rejected mutation stops the sequence, shows the
