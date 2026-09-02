@@ -136,9 +136,12 @@ logo.
 Both route copies debounce input for 250 ms, abort a superseded request, and use
 a sequence number so only the newest active query can render results or an
 error. Closing the dropdown invalidates the active sequence, so a late response
-cannot reopen it. A non-`2xx` response is a failure. Refocusing reuses only
-results for the exact rendered query or a request for that query that is still
-in flight; progress and error messages do not become cached results.
+cannot reopen it. A non-`2xx` response is a failure. The active failure state
+keeps the dropdown open with its error message and the typed `Use custom
+company` choice, so a member can still select the domainless fallback.
+Refocusing reuses only results for the exact rendered query or a request for
+that query that is still in flight; progress and error messages do not become
+cached results.
 
 Run the shared contract coverage with:
 

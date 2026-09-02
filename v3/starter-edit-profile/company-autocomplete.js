@@ -187,7 +187,7 @@
                 `, '');
     }
 
-    function renderResults(results, query) {
+    function renderResults(results, query, statusMessage = '') {
       const typedCompany = input.value.trim();
       const resultItems = results
         .map(function (item) {
@@ -210,6 +210,9 @@
             </button>
         `;
         })
+      if (statusMessage) {
+        resultItems.unshift(`<div class="company-search-message">${escapeHtml(statusMessage)}</div>`);
+      }
       resultItems.push(`
           <button class="company-search-item ${isCompanyAdded({ name: typedCompany, domain: '' }) ? "is-added" : ""}" type="button" data-name="${escapeHtml(typedCompany)}" data-domain="" data-logo-url="" data-company-entity-id="0" data-source="custom">
               <img class="company-search-logo" src="${PLACEHOLDER_LOGO_URL}" alt="">
@@ -259,7 +262,9 @@
 
         renderResults(Array.isArray(results) ? results : [], q);
       } catch (error) {
-        if (error?.name !== 'AbortError' && sequence === searchSequence) renderMessage('Search unavailable');
+        if (error?.name !== 'AbortError' && sequence === searchSequence) {
+          renderResults([], '', 'Search unavailable. You can still use a custom company.');
+        }
       } finally {
         clearTimeout(slowMessageTimer);
         if (sequence === searchSequence) {

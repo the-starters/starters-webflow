@@ -265,6 +265,20 @@ test('a failed search that is still active reports that the search is unavailabl
   await harness.failSearch('acme corp')
 
   assert.match(harness.dropdown.innerHTML, /Search unavailable/)
+  assert.match(harness.dropdown.innerHTML, /data-source="custom"/)
+  assert.match(harness.dropdown.innerHTML, /Use custom company/)
+  assert.equal(harness.isOpen(), true)
+})
+
+test('Build Profile also keeps the custom-company fallback when search fails', async () => {
+  const harness = await boot(BUILD_SOURCE)
+
+  await harness.search('acme corp')
+  await harness.failSearch('acme corp')
+
+  assert.match(harness.dropdown.innerHTML, /Search unavailable/)
+  assert.match(harness.dropdown.innerHTML, /data-source="custom"/)
+  assert.match(harness.dropdown.innerHTML, /Use custom company/)
   assert.equal(harness.isOpen(), true)
 })
 
