@@ -311,6 +311,41 @@ test('enriches a domainless custom draft from canonical identity without restori
   })
 })
 
+test('does not replace a domainless custom draft with a same-name platform company', () => {
+  const api = loadApi()
+  const activeCompanies = JSON.stringify({
+    'draft-custom': {
+      name: 'Acme',
+      domain: '',
+      logo_url: '',
+      client_row_id: 0,
+      company_entity_id: 0,
+      source: 'custom',
+    },
+  })
+  const merged = api.mergeProfileFallback(
+    {
+      data: {
+        step_3: {
+          'also-worked-with': JSON.stringify({
+            'platform-acme': {
+              name: 'Acme',
+              domain: 'acme.example',
+              logo_url: 'https://example.test/acme.png',
+              client_row_id: 7,
+              company_entity_id: 88,
+              source: 'platform',
+            },
+          }),
+        },
+      },
+    },
+    { data: { step_3: { 'also-worked-with': activeCompanies } } },
+  )
+
+  assert.equal(merged.data.step_3['also-worked-with'], activeCompanies)
+})
+
 test('select hydration falls back from canonical display text to the authored option value', async () => {
   const window = {
     location: { pathname: '/build-profile/full-profile' },

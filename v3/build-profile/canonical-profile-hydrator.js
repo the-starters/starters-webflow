@@ -85,6 +85,10 @@
     return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
   }
 
+  function normalizedCompanySource(value) {
+    return String(value || '').trim().toLowerCase()
+  }
+
   function positiveCompanyEntityId(company) {
     var entityId = Number(company && company.company_entity_id)
     return Number.isFinite(entityId) && entityId > 0 ? entityId : 0
@@ -109,8 +113,10 @@
     }
     var name = normalizedCompanyName(activeCompany.name)
     if (!name) return null
+    var source = normalizedCompanySource(activeCompany.source)
     return candidates.find(function matchName(company) {
-      return normalizedCompanyName(company.name) === name
+      return normalizedCompanyName(company.name) === name &&
+        (!source || normalizedCompanySource(company.source) === source)
     }) || null
   }
 
