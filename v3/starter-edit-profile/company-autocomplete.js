@@ -286,39 +286,40 @@
       }, 250);
     });
 
+    function companyFromTag(tag) {
+      return {
+        name: qs('[also-worked-tag-name]', tag)?.textContent,
+        domain: qs('[also-worked-tag-domain]', tag)?.textContent,
+        company_entity_id: Number(tag.dataset.companyEntityId) || 0,
+      };
+    }
+
+    function companyFromItem(item) {
+      return {
+        name: item.dataset.name,
+        domain: item.dataset.domain,
+        company_entity_id: Number(item.dataset.companyEntityId) || 0,
+      };
+    }
+
+    function isSameCompany(first, second) {
+      const firstName = String(first?.name || '').trim().toLowerCase();
+      const secondName = String(second?.name || '').trim().toLowerCase();
+      const firstDomain = String(first?.domain || '').trim().toLowerCase();
+      const secondDomain = String(second?.domain || '').trim().toLowerCase();
+      const firstEntityId = Number(first?.company_entity_id) || 0;
+      const secondEntityId = Number(second?.company_entity_id) || 0;
+
+      if (firstEntityId > 0 && secondEntityId === firstEntityId) return true;
+      if (firstDomain && secondDomain) return firstDomain === secondDomain;
+      return firstName === secondName;
+    }
+
     function isCompanyAdded(company) {
-      if (!isMulti) return false;
-      if (!company) return false;
-
-      const existingDomains = qsa('[also-worked-tag]', tagWrapper);
-      for (const existingCompany of existingDomains) {
-        const name = qs('[also-worked-tag-name]', existingCompany)?.textContent?.trim().toLowerCase();
-        const domain = qs('[also-worked-tag-domain]', existingCompany)?.textContent?.trim().toLowerCase();
-        const companyName = String(company.name || '').trim().toLowerCase();
-        const companyDomain = String(company.domain || '').trim().toLowerCase();
-        const existingEntityId = Number(existingCompany.dataset.companyEntityId) || 0;
-        const companyEntityId = Number(company.company_entity_id) || 0;
-
-        if (companyEntityId > 0 && existingEntityId === companyEntityId) {
-          return true;
-        }
-
-        if (
-          (companyDomain && domain) &&
-          domain === companyDomain
-        ) {
-          return true;
-        }
-
-        if (
-          (!company.domain || !domain) &&
-          name === companyName
-        ) {
-          return true;
-        }
-      }
-
-      return false;
+      if (!isMulti || !company) return false;
+      return qsa('[also-worked-tag]', tagWrapper).some(function (tag) {
+        return isSameCompany(company, companyFromTag(tag));
+      });
     }
 
     function isMaxCompanies() {
@@ -362,32 +363,14 @@
         newTag.remove();
 
         // remove item from the list
-        const name = selectedName;
-        const domain = selectedDomain;
+        const removedCompany = companyFromTag(newTag);
 
         syncValue();
 
         const existingItems = qsa('.company-search-item.is-added', searchGroup);
 
         for (const company of existingItems) {
-          const companyName = company.dataset.name;
-          const companyDomain = company.dataset.domain;
-
-          if (
-            (companyDomain && domain) &&
-            domain === companyDomain
-          ) {
-            company.classList.remove('is-added');
-            break;
-          }
-
-          if (
-            (!companyDomain || !domain) &&
-            name === companyName
-          ) {
-            company.classList.remove('is-added');
-            break;
-          }
+          if (isSameCompany(removedCompany, companyFromItem(company))) company.classList.remove('is-added');
         }
       });
 
@@ -406,13 +389,16 @@
 
     dropdown.addEventListener('click', function (event) {
       const item = event.target.closest('.company-search-item');
-      if (!item || item.classList.contains('is-added')) return;
+      if (!item) return;
+
+      const selectedCompany = companyFromItem(item);
+      if (isMulti && isCompanyAdded(selectedCompany)) return;
 
       selectingCompany = true;
-      const selectedName = item.dataset.name;
-      const selectedDomain = item.dataset.domain || '';
+      const selectedName = selectedCompany.name;
+      const selectedDomain = selectedCompany.domain || '';
       const selectedLogoUrl = item.dataset.logoUrl || '';
-      const selectedCompanyEntityId = Number(item.dataset.companyEntityId) || 0;
+      const selectedCompanyEntityId = selectedCompany.company_entity_id;
       const selectedSource = item.dataset.source || '';
       const outOfCapacity = isMaxCompanies();
 
@@ -445,25 +431,10 @@
       item.classList.remove('is-added');
 
       // remove tag from the list
-      const domain = item.dataset.domain;
-      const name = item.dataset.name;
+      const selectedCompany = companyFromItem(item);
       const existingTags = qsa('[also-worked-tag]', tagWrapper);
       for (const company of existingTags) {
-        const companyName = qs('[also-worked-tag-name]', company)?.textContent;
-        const companyDomain = qs('[also-worked-tag-domain]', company)?.textContent;
-
-        if (
-          (companyDomain && domain) &&
-          domain === companyDomain
-        ) {
-          company.remove();
-          break;
-        }
-
-        if (
-          (!companyDomain || !domain) &&
-          name === companyName
-        ) {
+        if (isSameCompany(selectedCompany, companyFromTag(company))) {
           company.remove();
           break;
         }

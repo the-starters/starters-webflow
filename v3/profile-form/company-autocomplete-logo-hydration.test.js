@@ -19,13 +19,18 @@ function createHarness(file, companies, { isMulti = true } = {}) {
   }
   const tagTemplate = {
     cloneNode() {
-      return {
+      const tag = {
         dataset: {},
         name: { textContent: '' },
         domain: { textContent: '' },
         deleteButton: { addEventListener() {} },
         classList: { remove() {} },
+        remove() {
+          const index = tags.indexOf(tag)
+          if (index !== -1) tags.splice(index, 1)
+        },
       }
+      return tag
     },
   }
   const tagWrapper = {
@@ -112,7 +117,8 @@ function createHarness(file, companies, { isMulti = true } = {}) {
   return {
     input,
     valueInput,
-    selectCompany(selection) {
+    clickResult(selection, { deleteResult = false } = {}) {
+      let isAdded = deleteResult
       const item = {
         dataset: {
           name: selection.name,
@@ -121,15 +127,33 @@ function createHarness(file, companies, { isMulti = true } = {}) {
           companyEntityId: String(selection.company_entity_id || 0),
           source: selection.source || '',
         },
-        classList: { contains() { return false }, add() {} },
+        classList: {
+          contains(name) { return name === 'is-added' && isAdded },
+          add(name) { if (name === 'is-added') isAdded = true },
+          remove(name) { if (name === 'is-added') isAdded = false },
+        },
       }
       const target = {
         closest(selector) {
           if (selector === '.company-search-item') return item
+          if (selector === '.company-search-delete' && deleteResult) return target
           return null
         },
       }
+      if (deleteResult) target.closest = function (selector) {
+        if (selector === '.company-search-delete') return {
+          closest(itemSelector) { return itemSelector === '.company-search-item' ? item : null },
+        }
+        if (selector === '.company-search-item') return item
+        return null
+      }
       for (const listener of dropdownListeners.click || []) listener({ target })
+    },
+    selectCompany(selection) {
+      this.clickResult(selection)
+    },
+    deleteResult(selection) {
+      this.clickResult(selection, { deleteResult: true })
     },
     changeInput(value) {
       input.value = value
@@ -202,6 +226,25 @@ for (const [label, file] of [
     await new Promise((resolve) => setTimeout(resolve, 1))
     const duplicateHtml = await harness.search('jp custom client')
     assert.match(duplicateHtml, /company-search-item is-added[^>]+data-name="jp custom client"/)
+
+    harness.deleteResult({ name: 'jp custom client', domain: '', company_entity_id: 0 })
+    assert.equal(Object.keys(JSON.parse(harness.valueInput.value)).length, 0)
+
+    harness.selectCompany({
+      name: 'jp custom client',
+      domain: '',
+      logo_url: '',
+      company_entity_id: 0,
+      source: 'custom',
+    })
+    harness.selectCompany({
+      name: 'JP CUSTOM CLIENT',
+      domain: '',
+      logo_url: '',
+      company_entity_id: 0,
+      source: 'custom',
+    })
+    assert.equal(Object.keys(JSON.parse(harness.valueInput.value)).length, 1)
   })
 
   test(`${label} stores the selected Company domain and logo on the input`, async () => {
