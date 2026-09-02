@@ -31,9 +31,8 @@
  * opportunities-3.0.js, v3/starter-dashboard-points.js): the Memberstack JWT
  * from `getMemberCookie()` is traded at api:g1vmSLWh/auth/trade-token/v3 for a
  * Xano token, which authorizes the api:KZf7nFnk PATCH as a bearer. The traded
- * token is memoized for the page so the retries share one trade, and dropped on
- * failure so the next attempt re-trades rather than reusing a token that just
- * failed.
+ * token promise is memoized while valid and dropped after any failure, so the
+ * next attempt re-trades rather than reusing a token that just failed.
  *
  * Install: TWO deferred tags on /starter-onboarding and nowhere else — this file
  * and v3/onboarding-done-redirect.js, versioned and shipped together, never one

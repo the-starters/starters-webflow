@@ -37,7 +37,7 @@ have just finished with, which is navigation, not authorization.
 | The `PATCH` succeeds | `location.replace('/starter-dashboard')` |
 | That wrapper's success block mutates again | Nothing — the observer disconnected on the first hit |
 | A `PATCH` attempt fails | Retry at roughly 1s and 3s, re-trading the token between attempts |
-| The first-publish `PATCH` exceeds 35 seconds | Abort and redirect without retry; the Xano request may still finish server-side |
+| The onboarding `PATCH` exceeds 35 seconds | Abort and redirect without retry; the Xano request may still finish server-side |
 | All attempts fail | Warn on staging, then redirect anyway — a member behind a hidden form must never be stranded |
 | The completion attempt settles | Record a privacy-safe receipt that distinguishes whether any auth or status request started; keep diagnostic data and copy behavior out of authored messages |
 | No `[data-page-spinner]` element on the page | Nothing; the rest of the sequence runs unchanged |
@@ -51,6 +51,12 @@ The one endpoint it touches, on `api:KZf7nFnk` and bearer-authorized:
 - Write: `PATCH /starters_onboarding/set_onboarding_status` — no body. It answers
   `onboarding_done` plus privacy-safe first-publish eligibility, outcome, event,
   and Webflow status fields.
+
+Xano owns first-publish eligibility. Only a fresh Full or Consult activation can
+run the bounded synchronous Webflow publish. Existing-profile edits stay on the
+normal queue. The fast path uses the normal projection event, receipts, fencing,
+and idempotency controls, and it falls back to that queue when the synchronous
+publish cannot finish safely.
 
 Auth is the same trade-token flow the sibling v3 modules use: the Memberstack
 JWT from `getMemberCookie()` is traded at
@@ -66,9 +72,9 @@ replaying a token Xano just rejected.
 
 No failure mode is allowed to strand the member: logged out, Memberstack never
 loading, `getMemberCookie()` rejecting, a failed or empty token trade, a non-2xx
-write, a request that hangs past the 35-second first-publish budget, a loader element that was
-never built. Nothing is blocked, nothing is reloaded, and no error state is
-painted over the moment the member just finished.
+write, a request that hangs past the 35-second onboarding budget, a loader
+element that was never built. Nothing is blocked, nothing is reloaded, and no
+error state is painted over the moment the member just finished.
 
 This is deliberate and is the whole risk posture of the module. Marking
 completion is **bookkeeping, not a security boundary**. A member whose mark is
@@ -142,12 +148,14 @@ anyone witnessed.
 
 ### The PATCH
 
-Initial attempt plus two retries, at roughly 1s and 3s, re-trading the token
-between failed attempts, then it gives up with a staging-only warning. The
-member waits behind the loader for that whole window — up to about four seconds
-of backoff plus the request budget — and is redirected at the end of it either
-way. A missed mark is recoverable: the record is set on a later visit, and until
-then the only cost is that the onboarding page renders again.
+Failures that settle before the request timeout get up to two retries, at
+roughly 1s and 3s, with a fresh token trade between attempts. The member waits
+behind the loader for the active request and any backoff. An authenticated
+onboarding `PATCH` may stay open for 35 seconds so Xano can finish the bounded
+synchronous publish. If that `PATCH` times out, the browser redirects without a
+retry because the server may still be running it. A missed mark is recoverable:
+the record is set on a later visit, and until then the only cost is that the
+onboarding page renders again.
 
 ## Webflow install
 
@@ -254,10 +262,10 @@ chatty, production is silent.
    (or the Xano origin blocked), reload the page and submit: the page must
    render normally within a couple of seconds, and the submit must still end at
    `/starter-dashboard` once the retries are exhausted — roughly four seconds of
-   backoff for immediate failures. A hung first-publish request aborts once at
-   35 seconds and is not retried because it may still finish server-side. The member
-   may never be left sitting on a hidden form. The record stays unmarked, which
-   is expected: this member gets marked on a later submit.
+   backoff for immediate failures. A hung onboarding request aborts once at
+   35 seconds and is not retried because it may still finish server-side. The
+   member may never be left sitting on a hidden form. The record stays unmarked,
+   which is expected: this member gets marked on a later submit.
 8. **Production silence.** After publishing, confirm the console prints nothing
    from `[starters patch-onboarding-status]` *or* `[starters onboarding-done]`
    on `thestarters.com`.
@@ -274,7 +282,7 @@ chatty, production is silent.
 | PATCH fires twice | Two `.w-form` wrappers reached their success state, which is the intended per-form behaviour. A single wrapper cannot fire twice. |
 | PATCH fires and 401s or 404s | The trade-token call failed or the member has no `user_v3` row (trade-token 404s without one). The staging message carries the status. |
 | PATCH returns 2xx but a later visit to the page does not redirect | Not this file — the record is right, so check the read half in [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md). |
-| Submitted, the form vanished, but the member was never redirected | The `PATCH` is still in flight or still retrying — wait out the ~4s of backoff plus request budget before calling it stuck. If it never arrives: the member has no Memberstack session (the one case that deliberately does not redirect; the console says so), or the browser refused the navigation ("could not redirect to /starter-dashboard" on staging). |
+| Submitted, the form vanished, but the member was never redirected | The `PATCH` is still in flight, or a failed attempt is waiting on backoff. An authenticated `PATCH` can remain open for 35 seconds. Immediate failures retry after roughly 1s and 3s; a timed-out `PATCH` does not retry. If the redirect still never arrives, the member has no Memberstack session (the one case that deliberately does not redirect; the console says so), or the browser refused the navigation ("could not redirect to /starter-dashboard" on staging). |
 | Loader never appears, but the flow otherwise works | No element matching `[data-page-spinner]` on the page — the staging console notes it by name. Add one in the Designer, hidden by default; the module only ever reveals it. |
 | Loader appears and stays forever after a submit | The redirect did not fire; see the "never redirected" row. This module never lowers the loader, because the page is normally replaced out from under it. |
 | Loader is up on a page nobody submitted on | That is the read half's window, not this one. Expected while its status check runs (and permanently once its redirect is navigating) — see [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md). |
