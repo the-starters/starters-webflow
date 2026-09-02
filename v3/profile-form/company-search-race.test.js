@@ -35,11 +35,14 @@ function element(overrides = {}) {
   return Object.assign(node, overrides)
 }
 
-function boot(source = SOURCE) {
+function boot(source = SOURCE, { multi = false, nodeListTags = false } = {}) {
   const group = element()
   const searchGroup = element()
   const valueInput = element()
-  const input = element()
+  const tagWrapper = element()
+  const input = element({
+    hasAttribute(name) { return multi && name === 'data-multiple' },
+  })
   input.closest = (selector) => (selector === '[form-group]' ? group : searchGroup)
 
   let dropdown = null
@@ -56,6 +59,7 @@ function boot(source = SOURCE) {
     Array,
     Error,
     MEMBER: { id: 'member-1' },
+    activeProfile: { data: {} },
     console: { log() {}, warn() {}, error() {}, info() {}, debug() {} },
     crypto: { randomUUID: () => 'company-id' },
     document: {
@@ -103,10 +107,15 @@ function boot(source = SOURCE) {
     },
     qs(selector, root) {
       if (root === group && selector === '#also-worked-with') return valueInput
+      if (root === group && selector === '[also-worked-wrapper]') return tagWrapper
       return null
     },
-    qsa(selector) {
-      return selector === '[logo-search-input]' ? [input] : []
+    qsa(selector, root) {
+      if (selector === '[logo-search-input]') return [input]
+      if (selector === '[also-worked-tag]' && root === tagWrapper && nodeListTags) {
+        return { length: 0, forEach() {}, [Symbol.iterator]: function* () {} }
+      }
+      return []
     },
     setTimeout(callback, delay) {
       const id = nextTimerId++
@@ -246,6 +255,18 @@ test('provider matches still include an explicit custom-company choice', async (
   assert.match(harness.dropdown.innerHTML, /data-source="custom"/)
   assert.match(harness.dropdown.innerHTML, /Use custom company/)
 })
+
+for (const [label, source] of [['Edit Profile', SOURCE], ['Build Profile', BUILD_SOURCE]]) {
+  test(`${label} accepts a browser NodeList when checking multi-select duplicates`, async () => {
+    const harness = await boot(source, { multi: true, nodeListTags: true })
+
+    await harness.search('acme corp')
+    await harness.resolveSearch('acme corp', ACME)
+
+    assert.match(harness.dropdown.innerHTML, /Acme Corp/)
+    assert.match(harness.dropdown.innerHTML, /Use custom company/)
+  })
+}
 
 test('an abandoned search does not report failure over the dismissed dropdown', async () => {
   const harness = await boot()
