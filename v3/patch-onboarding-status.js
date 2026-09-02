@@ -31,9 +31,8 @@
  * opportunities-3.0.js, v3/starter-dashboard-points.js): the Memberstack JWT
  * from `getMemberCookie()` is traded at api:g1vmSLWh/auth/trade-token/v3 for a
  * Xano token, which authorizes the api:KZf7nFnk PATCH as a bearer. The traded
- * token is memoized for the page so the retries share one trade, and dropped on
- * failure so the next attempt re-trades rather than reusing a token that just
- * failed.
+ * token promise is memoized while valid and dropped after any failure, so the
+ * next attempt re-trades rather than reusing a token that just failed.
  *
  * Install: TWO deferred tags on /starter-onboarding and nowhere else — this file
  * and v3/onboarding-done-redirect.js, versioned and shipped together, never one
@@ -63,6 +62,11 @@
   var MEMBERSTACK_TIMEOUT_MS = 8000
   var MEMBERSTACK_POLL_MS = 100
   var REQUEST_TIMEOUT_MS = 8000
+  // Final onboarding can synchronously fast-track the new Starter's exact
+  // Webflow Hire and Services event. Keep this one request open for the bounded
+  // publish window so an 8-second client abort cannot start a duplicate retry
+  // while Xano is still completing the first attempt.
+  var ONBOARDING_PUBLISH_TIMEOUT_MS = 35000
   // Initial attempt plus these two delays. A failed mark is recoverable — the
   // next visit simply redirects late — so this gives up quietly rather than
   // hammering Xano or blocking the completion view.
@@ -316,8 +320,9 @@
   // A hung request must not leave the member staring at a page that may still
   // redirect. AbortController is used when present so the socket is released
   // too, but the timeout stands either way.
-  function fetchWithTimeout(url, options) {
+  function fetchWithTimeout(url, options, timeoutMs) {
     var config = options || {}
+    var requestTimeoutMs = timeoutMs || REQUEST_TIMEOUT_MS
     var controller =
       typeof window.AbortController === 'function' ? new window.AbortController() : null
     if (controller) {
@@ -339,8 +344,8 @@
             controller.abort()
           } catch (error) {}
         }
-        reject(new Error('Request timed out after ' + REQUEST_TIMEOUT_MS + 'ms'))
-      }, REQUEST_TIMEOUT_MS)
+        reject(new Error('Request timed out after ' + requestTimeoutMs + 'ms'))
+      }, requestTimeoutMs)
 
       Promise.resolve()
         .then(function () {
@@ -464,13 +469,15 @@
     for (var attempt = 0; attempt < attempts; attempt += 1) {
       finalAttempt = attempt
       if (attempt > 0) await delay(PATCH_RETRY_DELAYS_MS[attempt - 1])
+      var onboardingPatchStarted = false
       try {
         var token = await xanoToken(markRequestStarted)
         markRequestStarted()
+        onboardingPatchStarted = true
         var response = await fetchWithTimeout(XANO_ONBOARDING_BASE + SET_STATUS_PATH, {
           method: 'PATCH',
           headers: authHeaders(token),
-        })
+        }, ONBOARDING_PUBLISH_TIMEOUT_MS)
         if (response && response.ok) {
           note('onboarding_done set on attempt ' + (attempt + 1) + '.')
           return {
@@ -491,7 +498,12 @@
         // The token may itself be the reason this failed; re-trade next round
         // rather than replaying a token Xano just rejected.
         forgetXanoToken()
-        if (error && error.code === 'logged-out') break
+        // A timed-out PATCH may still be running server-side after the browser
+        // aborts. Do not overlap it with a second first-publish attempt.
+        if (
+          (error && error.code === 'logged-out') ||
+          (onboardingPatchStarted && /timed out/i.test(describe(error)))
+        ) break
       }
     }
 

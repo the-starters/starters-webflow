@@ -192,6 +192,7 @@ function loadModule(options = {}) {
   const fixtures = options.wrappers || []
   const loader = Object.prototype.hasOwnProperty.call(options, 'loader') ? options.loader : null
   const patchOutcomes = (options.patchOutcomes || []).slice()
+  const tradeOutcomes = (options.tradeOutcomes || []).slice()
 
   const location = {
     hostname,
@@ -216,6 +217,8 @@ function loadModule(options = {}) {
     })
 
     if (url.indexOf(TRADE_URL) === 0) {
+      const outcome = tradeOutcomes.length ? tradeOutcomes.shift() : 'ok'
+      if (outcome === 'stall') return new Promise(() => {})
       if (options.tradeRejects) throw new Error('trade network failure')
       if (options.tradeFails) return jsonResponse(null, { ok: false, status: 401 })
       return jsonResponse(
@@ -427,6 +430,72 @@ test('a successful onboarding PATCH records a privacy-safe console receipt', asy
   assert.equal(Object.hasOwn(receipt, 'authorization'), false)
   assert.equal(fixture.done.textContent, 'Your onboarding details were saved.')
   assert.equal(fixture.done.getAttribute('data-workflow-diagnostic-copy'), null)
+  assert.equal(location.replaced, DASHBOARD)
+})
+
+test('the first-publish PATCH stays open beyond the generic 8-second request budget', async () => {
+  const patchReady = deferred()
+  const fixture = formWrapper()
+  const { aborted, clock, location } = loadModule({
+    wrappers: [fixture],
+    patchResponse: patchReady.promise,
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  await clock.advance(8001)
+
+  assert.equal(aborted.length, 0, 'the first publish must not be aborted at the generic timeout')
+  assert.equal(location.replaced, undefined, 'the loader remains while Xano completes the publish')
+
+  patchReady.resolve(jsonResponse({
+    onboarding_done: true,
+    profile_publishing: { outcome_code: 'webflow_applied' },
+  }))
+  await flush()
+  await flush()
+
+  assert.equal(location.replaced, DASHBOARD)
+})
+
+test('a first-publish timeout redirects without starting an overlapping PATCH', async () => {
+  const fixture = formWrapper()
+  const { aborted, clock, fetchCalls, location } = loadModule({
+    wrappers: [fixture],
+    patchResponse: new Promise(() => {}),
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  await clock.advance(35000)
+  await flush()
+
+  assert.equal(aborted.length, 1)
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+  assert.equal(location.replaced, DASHBOARD)
+})
+
+test('a token-trade timeout retries before starting the onboarding PATCH', async () => {
+  const fixture = formWrapper()
+  const { clock, fetchCalls, location } = loadModule({
+    wrappers: [fixture],
+    tradeOutcomes: ['stall', 'ok'],
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  await clock.advance(8000)
+
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
+  assert.equal(location.replaced, undefined)
+
+  await clock.advance(1000)
+
+  assert.equal(fetchCalls.filter((call) => call.url.startsWith(TRADE_URL)).length, 2)
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
   assert.equal(location.replaced, DASHBOARD)
 })
 
