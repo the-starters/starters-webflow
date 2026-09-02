@@ -299,6 +299,7 @@
     function renderNewTag(selectedName, selectedDomain, item, uniqueId, selectedLogoUrl = '', companyEntityId = 0, source = '') {
       if (!tagTemplate || !tagWrapper) return;
       if (!selectedName) return;
+      if (isCompanyAdded({ name: selectedName, domain: selectedDomain, company_entity_id: companyEntityId })) return;
 
       const newTag = tagTemplate.cloneNode(true);
       newTag.classList.remove('is_template');

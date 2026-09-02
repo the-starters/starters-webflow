@@ -6,7 +6,7 @@ const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
-function createHarness(file, companies, { isMulti = true } = {}) {
+function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   let domReady
   let dropdown
   let nextId = 0
@@ -105,7 +105,7 @@ function createHarness(file, companies, { isMulti = true } = {}) {
     window: {
       xanoAuthFetch: async () => ({
         ok: true,
-        json: async () => companies,
+        json: async () => companyFetch ? companyFetch : companies,
       }),
     },
     fetch: async () => ({ ok: true, json: async () => [] }),
@@ -191,6 +191,32 @@ test('Edit Profile preserves a hydrated API company logo in the serialized selec
   assert.equal(company.logo_url, logoUrl)
   assert.equal(company.client_row_id, 42)
   assert.equal(company.company_entity_id, 9)
+})
+
+test('Edit Profile hydration does not append a case-variant duplicate after a custom selection', async () => {
+  let resolveCompanies
+  const companyFetch = new Promise((resolve) => { resolveCompanies = resolve })
+  const harness = createHarness(
+    path.join(__dirname, '../starter-edit-profile/company-autocomplete.js'),
+    [],
+    { companyFetch },
+  )
+
+  harness.selectCompany({
+    name: 'Acme',
+    domain: '',
+    logo_url: '',
+    company_entity_id: 0,
+    source: 'custom',
+  })
+  resolveCompanies([
+    { id: 42, company_entity_id: 9, company_name: 'acme', company_domain: '', company_source: 'custom' },
+  ])
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const selected = Object.values(JSON.parse(harness.valueInput.value))
+  assert.equal(selected.length, 1)
+  assert.equal(selected[0].name, 'Acme')
 })
 
 for (const [label, file] of [
