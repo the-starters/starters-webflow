@@ -171,6 +171,12 @@ picker and never becomes a baseline, so reopening a current role cannot turn the
 sentinel into a calendar value, and clearing "I currently work here" cannot carry
 `Present` into an end-date field the member can see.
 
+Work History cards use the same strict parser for their display label. Valid ISO,
+month-only, and day-precision values render as `Mon YYYY`; for example,
+`2026-08-03T00:00:00.000Z` renders as `Aug 2026`. This display-only transform does
+not rewrite the stored value. `Present`, blanks, and unknown legacy strings keep
+their existing behavior.
+
 Hydration also records the canonical string it came from next to the value the picker
 rendered from it. Opening a different role clears date bounds and disabled state left by
 the prior modal. If jQuery UI initializes after the modal opens, the controller rehydrates

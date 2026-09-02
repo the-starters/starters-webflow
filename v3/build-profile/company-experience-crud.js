@@ -86,6 +86,22 @@ function serializeStarterProfileCompanyDate(input, baseline) {
   return currentValue;
 }
 
+function starterProfileCompanyMonthYearLabel(value) {
+  const text = String(value || '').trim();
+  if (!text || isStarterProfileCompanyPresentDate(text)) return text;
+
+  const date = starterProfileCompanyDatepickerValue(text);
+  if (date) {
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
+  }
+
+  const parts = text.split(/\s+/);
+  if (parts.length < 2) return text;
+
+  return `${parts[0]} ${parts[parts.length - 1]}`;
+}
+
 /**
  * GitHub-owned copy of the Build Profile Webflow controller block.
  * Original live inline body SHA-256: 6dc7fa7306d9558fb493cb6a6cfd6196659e0b7005c6d49831ffcc5f3261b5d3
@@ -247,13 +263,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
       // popup parses the raw string separately in starterProfileCompanyDatepickerValue.
       // Contract: ../profile-form/README.md#company-experience-date-hydration
       function toMonthYearLabel(value) {
-        const text = String(value || '').trim();
-        if (!text || text.toLowerCase() === 'present') return text;
-
-        const parts = text.split(/\s+/);
-        if (parts.length < 2) return text;
-
-        return `${parts[0]} ${parts[parts.length - 1]}`;
+        return starterProfileCompanyMonthYearLabel(value);
       }
 
       // jQuery UI datepicker interop, replacing the old `input._flatpickr` calls now that

@@ -557,6 +557,18 @@ for (const controllerPath of controllerPaths) {
     assert.equal(value.getDate(), 31)
   })
 
+  test(`${controllerPath} renders ISO work-history dates as month and year`, () => {
+    const { context } = loadDateContract(controllerPath)
+
+    assert.equal(context.starterProfileCompanyMonthYearLabel('2026-08-03T00:00:00.000Z'), 'Aug 2026')
+    assert.equal(context.starterProfileCompanyMonthYearLabel('2026-08-31'), 'Aug 2026')
+    assert.equal(context.starterProfileCompanyMonthYearLabel('Jan 2024'), 'Jan 2024')
+    assert.equal(context.starterProfileCompanyMonthYearLabel('April 22, 2026'), 'Apr 2026')
+    assert.equal(context.starterProfileCompanyMonthYearLabel('Present'), 'Present')
+    assert.equal(context.starterProfileCompanyMonthYearLabel(''), '')
+    assert.equal(context.starterProfileCompanyMonthYearLabel('unknown'), 'unknown')
+  })
+
   for (const [rawValue, expectedMonth, expectedDay] of [
     ['Jan 1 2024', 0, 1],
     ['Jan 01 2024', 0, 1],
