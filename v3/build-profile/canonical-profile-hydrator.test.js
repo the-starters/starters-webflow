@@ -59,6 +59,17 @@ test('maps the canonical profile into the native seven-step capture shape', () =
     Paid_Call_Enabled: false,
     Retainer_Enabled: true,
     Open_to_Full_Time: false,
+    Also_Worked_With: [99],
+    Also_Worked_With_Picker: {
+      'client-7': {
+        name: 'Private QA Company',
+        domain: '',
+        logo_url: '',
+        client_row_id: 7,
+        company_entity_id: 88,
+        source: 'custom',
+      },
+    },
     Services: {
       'service-1': { name: 'Audit', price: '100' },
       'service-2': null,
@@ -90,6 +101,16 @@ test('maps the canonical profile into the native seven-step capture shape', () =
   assert.equal(profile.data.step_1['function-required'], 'category-id')
   assert.equal(profile.data.step_1['roles-required'], 'role-id')
   assert.equal(profile.data.step_2['bio-html'], '<p>Bio</p>')
+  assert.deepEqual(JSON.parse(profile.data.step_3['also-worked-with']), {
+    'client-7': {
+      name: 'Private QA Company',
+      domain: '',
+      logo_url: '',
+      client_row_id: 7,
+      company_entity_id: 88,
+      source: 'custom',
+    },
+  })
   assert.equal(profile.data.step_5['skills-required'], 'skill-id')
   assert.equal(profile.data.step_6['free-consulting-calls'], 'yes')
   assert.equal(profile.data.step_6['paid-consulting-calls'], 'no')

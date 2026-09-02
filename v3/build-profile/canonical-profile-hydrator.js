@@ -122,7 +122,11 @@
           'best-fit-3': valueOrEmpty(canonical.Best_Fit_For_3),
         },
         step_3: {
-          'also-worked-with': jsonCapture(canonical.Also_Worked_With),
+          // New profiles receive the complete picker objects. Keep the legacy ID
+          // array as a fallback until every caller has moved to the new field.
+          'also-worked-with': jsonCapture(
+            canonical.Also_Worked_With_Picker || canonical.Also_Worked_With,
+          ),
         },
         step_4: {},
         step_5: {

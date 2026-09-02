@@ -811,9 +811,14 @@ function starterProfileCompanyMonthYearLabel(value) {
                 return data;
             }
 
-            async function commitCreateCompanyDraft(draft) {
+            async function commitCreateCompanyDraft(draft, replaceCompanyId = '') {
                 const { id, type, is_draft, pending_type, ...companyFields } = draft;
-                return createCompany({ ...companyFields, freelancers_id: starter_xano_id });
+                const replaceId = Number(replaceCompanyId) || 0;
+                return createCompany({
+                    ...companyFields,
+                    freelancers_id: starter_xano_id,
+                    ...(replaceId ? { replace_companies_id: replaceId } : {}),
+                });
             }
 
             async function commitUpdateCompanyDraft(companyId, draftPayload) {
@@ -1353,7 +1358,13 @@ function starterProfileCompanyMonthYearLabel(value) {
 
                     while (pendingCreateDrafts.length) {
                         const draft = pendingCreateDrafts[0];
-                        await commitCreateCompanyDraft(draft);
+                        // Pair a pending create with one pending deletion. Xano commits the
+                        // replacement atomically, so a profile already at the three-company
+                        // limit can replace a row without deleting it first or briefly exceeding
+                        // the limit.
+                        const replaceCompanyId = pendingDeleteDraftIds.values().next().value || '';
+                        await commitCreateCompanyDraft(draft, replaceCompanyId);
+                        if (replaceCompanyId) pendingDeleteDraftIds.delete(String(replaceCompanyId));
                         pendingCreateDrafts.shift();
                     }
 
