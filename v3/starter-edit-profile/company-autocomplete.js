@@ -322,7 +322,7 @@
 
     function isCompanyAdded(company) {
       if (!isMulti || !company) return false;
-      return qsa('[also-worked-tag]', tagWrapper).some(function (tag) {
+      return Array.from(qsa('[also-worked-tag]', tagWrapper)).some(function (tag) {
         return isSameCompany(company, companyFromTag(tag));
       });
     }
