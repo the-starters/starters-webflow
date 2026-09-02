@@ -8,10 +8,8 @@
  * draft therefore still sees an otherwise empty wizard even when
  * freelancers_v3 is populated. This controller reads the existing
  * `starter/get` compatibility endpoint, maps its canonical profile shape to
- * the wizard's step shape, and fills only keys that are absent from the active
- * draft. Existing draft keys always win, including intentional empty strings
- * and false values, so a hydrated member identity keeps precedence over the
- * canonical name, email, and phone.
+ * the wizard's step shape, and merges it under the active draft according to
+ * the fallback contract in README.md.
  *
  * It does not persist Memberstack JSON, localStorage, or Xano data. The native
  * wizard continues to own capture and persistence after a human changes a field

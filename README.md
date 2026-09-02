@@ -118,7 +118,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/build-profile/locations-consult.js` — Consult Build Profile country, state, and city controller
 - `v3/build-profile/locations-full-profile.js` — Full Profile country, state, and city controller
 - `v3/build-profile/profile-photo.js` — provenance-locked Build Profile photo controller
-- `v3/build-profile/canonical-profile-hydrator.js` — canonical Xano fallback for missing Memberstack/local Build Profile draft fields; loaded by the existing profile-photo asset without a Webflow block edit
+- `v3/build-profile/canonical-profile-hydrator.js` — canonical Xano fallback and legacy company-picker draft normalization for Build Profile; loaded by the existing profile-photo asset without a Webflow block edit
 - `v3/build-profile/portfolio-crud.js` — provenance-locked Build Profile portfolio mutation controller
 - `v3/build-profile/portfolio-list.js` — provenance-locked Build Profile portfolio list controller
 - `v3/build-profile/company-autocomplete.js` — provenance-locked Build Profile company autocomplete
