@@ -151,11 +151,14 @@ Stored dates are parsed into a real local `Date` before they reach
 `datepicker('setDate', …)`. jQuery UI treats a bare string as its relative-offset
 syntax rather than a calendar date, so a stored `Jan 2024` was read as a day offset and
 hydrated the picker on an unrelated month and year (`Mar 2032` in production Work
-Experience QA). The parser accepts `Month YYYY` (first of that month) and ISO
-`YYYY-MM-DD` with an optional time part (that exact local calendar day, never a UTC
-shift). Because Xano records hold day-precision values as well as month-only ones, it
-also accepts `Month D YYYY` and `Month D, YYYY`, and it rejects an out-of-range day such
-as `Jan 32 2024` rather than rolling it into the next month.
+Experience QA). The parser accepts an exact full or three-letter month in
+`Month YYYY` (first of that month) and ISO `YYYY-MM-DD` with an optional valid
+`THH:MM:SS` suffix, fractional seconds, and `Z` or `+/-HH:MM` offset (that exact
+local calendar day, never a UTC shift). Because Xano records hold day-precision
+values as well as month-only ones, it also accepts `Month D YYYY` and
+`Month D, YYYY`. It rejects unknown month names, malformed ISO suffixes, invalid
+time or offset values, and an out-of-range day such as `Jan 32 2024` rather than
+coercing or rolling the value.
 
 A string in none of those shapes is re-parsed with the widget's own configured
 `dateFormat`. That format is set on the Webflow markup for each input, not here, so the
@@ -170,6 +173,12 @@ member never touched.
 picker and never becomes a baseline, so reopening a current role cannot turn the
 sentinel into a calendar value, and clearing "I currently work here" cannot carry
 `Present` into an end-date field the member can see.
+
+Work History cards use the same strict parser for their display label. Valid ISO,
+month-only, and day-precision values render as `Mon YYYY`; for example,
+`2026-08-03T00:00:00.000Z` renders as `Aug 2026`. This display-only transform does
+not rewrite the stored value. `Present`, blanks, and unknown legacy strings keep
+their existing behavior.
 
 Hydration also records the canonical string it came from next to the value the picker
 rendered from it. Opening a different role clears date bounds and disabled state left by

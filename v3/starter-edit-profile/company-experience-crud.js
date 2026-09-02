@@ -6,7 +6,14 @@ function starterProfileCompanyDatepickerValue(value) {
     const text = String(value || '').trim();
     if (!text || isStarterProfileCompanyPresentDate(text)) return null;
 
-    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+
+    function monthIndexForName(value) {
+        const month = String(value || '').toLowerCase();
+        return monthNames.findIndex(function (name) {
+            return month === name || month === name.slice(0, 3);
+        });
+    }
 
     function localCalendarDate(year, monthIndex, day) {
         const date = new Date(year, monthIndex, day);
@@ -17,15 +24,27 @@ function starterProfileCompanyDatepickerValue(value) {
         ) ? date : null;
     }
 
-    const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/);
+    const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))?)?$/);
     if (isoMatch) {
-        const date = localCalendarDate(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
-        if (date) return date;
+        const validTime = !isoMatch[4] || (
+            Number(isoMatch[4]) <= 23 &&
+            Number(isoMatch[5]) <= 59 &&
+            Number(isoMatch[6]) <= 59 &&
+            (!isoMatch[7] || (
+                Number(isoMatch[7]) <= 14 &&
+                Number(isoMatch[8]) <= 59 &&
+                (Number(isoMatch[7]) < 14 || Number(isoMatch[8]) === 0)
+            ))
+        );
+        if (validTime) {
+            const date = localCalendarDate(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+            if (date) return date;
+        }
     }
 
     const monthDayYearMatch = text.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
     if (monthDayYearMatch) {
-        const monthIndex = monthNames.indexOf(monthDayYearMatch[1].slice(0, 3).toLowerCase());
+        const monthIndex = monthIndexForName(monthDayYearMatch[1]);
         if (monthIndex >= 0) {
             const date = localCalendarDate(Number(monthDayYearMatch[3]), monthIndex, Number(monthDayYearMatch[2]));
             if (date) return date;
@@ -34,7 +53,7 @@ function starterProfileCompanyDatepickerValue(value) {
 
     const monthYearMatch = text.match(/^([A-Za-z]+)\s+(\d{4})$/);
     if (monthYearMatch) {
-        const monthIndex = monthNames.indexOf(monthYearMatch[1].slice(0, 3).toLowerCase());
+        const monthIndex = monthIndexForName(monthYearMatch[1]);
         if (monthIndex >= 0) return new Date(Number(monthYearMatch[2]), monthIndex, 1);
     }
 
@@ -84,6 +103,22 @@ function serializeStarterProfileCompanyDate(input, baseline) {
     const currentValue = input ? input.value.trim() : '';
     if (baseline && currentValue === baseline.pickerValue) return baseline.rawValue;
     return currentValue;
+}
+
+function starterProfileCompanyMonthYearLabel(value) {
+  const text = String(value || '').trim();
+  if (!text || isStarterProfileCompanyPresentDate(text)) return text;
+
+  const date = starterProfileCompanyDatepickerValue(text);
+  if (date) {
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
+  }
+
+  const parts = text.split(/\s+/);
+  if (parts.length < 2) return text;
+
+  return `${parts[0]} ${parts[parts.length - 1]}`;
 }
 
 /**
@@ -267,13 +302,7 @@ function serializeStarterProfileCompanyDate(input, baseline) {
             // popup parses the raw string separately in starterProfileCompanyDatepickerValue.
             // Contract: ../profile-form/README.md#company-experience-date-hydration
             function toMonthYearLabel(value) {
-                const text = String(value || '').trim();
-                if (!text || text.toLowerCase() === 'present') return text;
-
-                const parts = text.split(/\s+/);
-                if (parts.length < 2) return text;
-
-                return `${parts[0]} ${parts[parts.length - 1]}`;
+                return starterProfileCompanyMonthYearLabel(value);
             }
 
             function setButtonText(text) {
