@@ -567,6 +567,8 @@ for (const controllerPath of controllerPaths) {
     assert.equal(context.starterProfileCompanyMonthYearLabel('Present'), 'Present')
     assert.equal(context.starterProfileCompanyMonthYearLabel(''), '')
     assert.equal(context.starterProfileCompanyMonthYearLabel('unknown'), 'unknown')
+    assert.equal(context.starterProfileCompanyMonthYearLabel('Marching 2024'), 'Marching 2024')
+    assert.equal(context.starterProfileCompanyMonthYearLabel('2026-08-03TBD'), '2026-08-03TBD')
   })
 
   for (const [rawValue, expectedMonth, expectedDay] of [
@@ -594,6 +596,10 @@ for (const controllerPath of controllerPaths) {
     assert.equal(getCapturedDate(), null)
     assert.equal(input.value, '')
     assert.equal(context.starterProfileCompanyDatepickerValue('unknown 2024'), null)
+    assert.equal(context.starterProfileCompanyDatepickerValue('Marching 2024'), null)
+    assert.equal(context.starterProfileCompanyDatepickerValue('2026-08-03TBD'), null)
+    assert.equal(context.starterProfileCompanyDatepickerValue('2026-08-03T25:00:00Z'), null)
+    assert.equal(context.starterProfileCompanyDatepickerValue('2026-08-03T12:00:00+14:30'), null)
   })
 
   test(`${controllerPath} hydrates a value written in the widget's own dateFormat`, () => {
