@@ -49,6 +49,19 @@
     }
   }
 
+  function capturedJsonType(value) {
+    if (typeof value !== 'string') {
+      if (Array.isArray(value)) return 'array'
+      return isPlainObject(value) ? 'object' : ''
+    }
+    try {
+      var parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? 'array' : isPlainObject(parsed) ? 'object' : ''
+    } catch (_) {
+      return ''
+    }
+  }
+
   function serviceAt(services, index) {
     if (Array.isArray(services)) return services[index] || null
     if (!isPlainObject(services)) return null
@@ -180,6 +193,14 @@
       var canonicalStep = isPlainObject(canonicalData[stepKey]) ? canonicalData[stepKey] : {}
       var activeStep = isPlainObject(activeData[stepKey]) ? activeData[stepKey] : {}
       mergedData[stepKey] = Object.assign({}, canonicalStep, activeStep)
+
+      if (
+        stepKey === 'step_3' &&
+        capturedJsonType(activeStep['also-worked-with']) === 'array' &&
+        capturedJsonType(canonicalStep['also-worked-with']) === 'object'
+      ) {
+        mergedData[stepKey]['also-worked-with'] = canonicalStep['also-worked-with']
+      }
     })
 
     return {
