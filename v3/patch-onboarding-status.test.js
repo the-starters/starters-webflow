@@ -430,6 +430,50 @@ test('a successful onboarding PATCH records a privacy-safe console receipt', asy
   assert.equal(location.replaced, DASHBOARD)
 })
 
+test('the first-publish PATCH stays open beyond the generic 8-second request budget', async () => {
+  const patchReady = deferred()
+  const fixture = formWrapper()
+  const { aborted, clock, location } = loadModule({
+    wrappers: [fixture],
+    patchResponse: patchReady.promise,
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  await clock.advance(8001)
+
+  assert.equal(aborted.length, 0, 'the first publish must not be aborted at the generic timeout')
+  assert.equal(location.replaced, undefined, 'the loader remains while Xano completes the publish')
+
+  patchReady.resolve(jsonResponse({
+    onboarding_done: true,
+    profile_publishing: { outcome_code: 'webflow_applied' },
+  }))
+  await flush()
+  await flush()
+
+  assert.equal(location.replaced, DASHBOARD)
+})
+
+test('a first-publish timeout redirects without starting an overlapping PATCH', async () => {
+  const fixture = formWrapper()
+  const { aborted, clock, fetchCalls, location } = loadModule({
+    wrappers: [fixture],
+    patchResponse: new Promise(() => {}),
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  await clock.advance(35000)
+  await flush()
+
+  assert.equal(aborted.length, 1)
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+  assert.equal(location.replaced, DASHBOARD)
+})
+
 // --- Loader, hidden form, redirect --------------------------------------------
 
 test('a success shows the loader and hides the form before the PATCH goes out', async () => {

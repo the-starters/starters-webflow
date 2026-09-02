@@ -17,8 +17,8 @@ The read half is
 [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md), which acts on
 the record on later visits by keeping a finished member out of the onboarding
 flow. Both jobs shipped as one file through v1.59.45 and were split at
-v1.59.47. Their host allowlist, path gate, trade-token auth, 8-second request
-budget, and staging-only console diagnostics remain self-contained. The write
+v1.59.47. Their host allowlist, path gate, trade-token auth, and staging-only
+console diagnostics remain self-contained. The write
 half now also attempts to load the repository's shared privacy-safe workflow
 receipt helper from the same jsDelivr repository ref. The pair still installs
 and versions together.
@@ -36,7 +36,8 @@ have just finished with, which is navigation, not authorization.
 | Either page form reaches its Webflow success state | Show `[data-page-spinner]`, hide that form's `.w-form` wrapper, then `PATCH` `set_onboarding_status` |
 | The `PATCH` succeeds | `location.replace('/starter-dashboard')` |
 | That wrapper's success block mutates again | Nothing — the observer disconnected on the first hit |
-| A `PATCH` attempt fails or times out | Retry at roughly 1s and 3s, re-trading the token between attempts |
+| A `PATCH` attempt fails | Retry at roughly 1s and 3s, re-trading the token between attempts |
+| The first-publish `PATCH` exceeds 35 seconds | Abort and redirect without retry; the Xano request may still finish server-side |
 | All attempts fail | Warn on staging, then redirect anyway — a member behind a hidden form must never be stranded |
 | The completion attempt settles | Record a privacy-safe receipt that distinguishes whether any auth or status request started; keep diagnostic data and copy behavior out of authored messages |
 | No `[data-page-spinner]` element on the page | Nothing; the rest of the sequence runs unchanged |
@@ -47,8 +48,9 @@ have just finished with, which is navigation, not authorization.
 
 The one endpoint it touches, on `api:KZf7nFnk` and bearer-authorized:
 
-- Write: `PATCH /starters_onboarding/set_onboarding_status` — no body, answers
-  `{"onboarding_done": true}`.
+- Write: `PATCH /starters_onboarding/set_onboarding_status` — no body. It answers
+  `onboarding_done` plus privacy-safe first-publish eligibility, outcome, event,
+  and Webflow status fields.
 
 Auth is the same trade-token flow the sibling v3 modules use: the Memberstack
 JWT from `getMemberCookie()` is traded at
@@ -64,7 +66,7 @@ replaying a token Xano just rejected.
 
 No failure mode is allowed to strand the member: logged out, Memberstack never
 loading, `getMemberCookie()` rejecting, a failed or empty token trade, a non-2xx
-write, a request that hangs past the 8-second budget, a loader element that was
+write, a request that hangs past the 35-second first-publish budget, a loader element that was
 never built. Nothing is blocked, nothing is reloaded, and no error state is
 painted over the moment the member just finished.
 
@@ -233,7 +235,8 @@ chatty, production is silent.
    and you should land on `/starter-dashboard` via `replace()` — so Back does
    not bounce you into a loop. In the network log, find the
    `PATCH .../set_onboarding_status` request, confirm it actually fired, and read
-   its response body for `{"onboarding_done": true}`. A success visual is not
+   its response body for `onboarding_done: true` and the `profile_publishing`
+   outcome. A success visual is not
    evidence on its own: a redirect-configured form can look like it submitted
    while no `PATCH` was ever issued.
 4. **Check nothing was left in storage.** In the console on the dashboard,
@@ -251,7 +254,8 @@ chatty, production is silent.
    (or the Xano origin blocked), reload the page and submit: the page must
    render normally within a couple of seconds, and the submit must still end at
    `/starter-dashboard` once the retries are exhausted — roughly four seconds of
-   backoff, longer if the requests hang out to their 8-second budget. The member
+   backoff for immediate failures. A hung first-publish request aborts once at
+   35 seconds and is not retried because it may still finish server-side. The member
    may never be left sitting on a hidden form. The record stays unmarked, which
    is expected: this member gets marked on a later submit.
 8. **Production silence.** After publishing, confirm the console prints nothing
