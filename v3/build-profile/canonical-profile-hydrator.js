@@ -60,6 +60,93 @@
     }
   }
 
+  function alsoWorkedWithForDraft(canonical) {
+    var picker = canonical.Also_Worked_With_Picker
+    if (capturedJsonType(picker) === 'object') return picker
+    return canonical.Also_Worked_With
+  }
+
+  function parseCapturedObject(value) {
+    if (isPlainObject(value)) return value
+    if (typeof value !== 'string') return null
+    try {
+      var parsed = JSON.parse(value)
+      return isPlainObject(parsed) ? parsed : null
+    } catch (_) {
+      return null
+    }
+  }
+
+  function normalizedCompanyDomain(value) {
+    return String(value || '').trim().toLowerCase()
+  }
+
+  function normalizedCompanyName(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+  }
+
+  function normalizedCompanySource(value) {
+    return String(value || '').trim().toLowerCase()
+  }
+
+  function positiveCompanyEntityId(company) {
+    var entityId = Number(company && company.company_entity_id)
+    return Number.isFinite(entityId) && entityId > 0 ? entityId : 0
+  }
+
+  function matchingCanonicalCompany(activeCompany, canonicalCompanies) {
+    if (!isPlainObject(activeCompany)) return null
+    var candidates = Object.values(canonicalCompanies).filter(function validCanonical(company) {
+      return isPlainObject(company) && positiveCompanyEntityId(company) > 0
+    })
+    var entityId = positiveCompanyEntityId(activeCompany)
+    if (entityId) {
+      return candidates.find(function matchEntity(company) {
+        return positiveCompanyEntityId(company) === entityId
+      }) || null
+    }
+    var domain = normalizedCompanyDomain(activeCompany.domain)
+    if (domain) {
+      return candidates.find(function matchDomain(company) {
+        return normalizedCompanyDomain(company.domain) === domain
+      }) || null
+    }
+    var name = normalizedCompanyName(activeCompany.name)
+    if (!name) return null
+    var source = normalizedCompanySource(activeCompany.source)
+    return candidates.find(function matchName(company) {
+      return normalizedCompanyName(company.name) === name &&
+        (!source || normalizedCompanySource(company.source) === source)
+    }) || null
+  }
+
+  function enrichActiveCompanies(activeCapture, canonicalCapture) {
+    var activeCompanies = parseCapturedObject(activeCapture)
+    var canonicalCompanies = parseCapturedObject(canonicalCapture)
+    if (!activeCompanies || !canonicalCompanies) return activeCapture
+
+    var enriched = {}
+    Object.keys(activeCompanies).forEach(function enrichCompany(key) {
+      var activeCompany = activeCompanies[key]
+      var canonicalCompany = matchingCanonicalCompany(activeCompany, canonicalCompanies)
+      if (!canonicalCompany) {
+        enriched[key] = activeCompany
+        return
+      }
+
+      var company = Object.assign({}, activeCompany, {
+        company_entity_id: positiveCompanyEntityId(canonicalCompany),
+      })
+      ;['client_row_id', 'source', 'logo_url'].forEach(function hydrateField(field) {
+        if (Object.prototype.hasOwnProperty.call(canonicalCompany, field)) {
+          company[field] = canonicalCompany[field]
+        }
+      })
+      enriched[key] = company
+    })
+    return JSON.stringify(enriched)
+  }
+
   function serviceAt(services, index) {
     if (Array.isArray(services)) return services[index] || null
     if (!isPlainObject(services)) return null
@@ -135,9 +222,7 @@
         step_3: {
           // New profiles receive the complete picker objects. Keep the legacy ID
           // array as a fallback until every caller has moved to the new field.
-          'also-worked-with': jsonCapture(
-            canonical.Also_Worked_With_Picker || canonical.Also_Worked_With,
-          ),
+          'also-worked-with': jsonCapture(alsoWorkedWithForDraft(canonical)),
         },
         step_4: {},
         step_5: {
@@ -198,6 +283,15 @@
         capturedJsonType(canonicalStep['also-worked-with']) === 'object'
       ) {
         mergedData[stepKey]['also-worked-with'] = canonicalStep['also-worked-with']
+      } else if (
+        stepKey === 'step_3' &&
+        capturedJsonType(activeStep['also-worked-with']) === 'object' &&
+        capturedJsonType(canonicalStep['also-worked-with']) === 'object'
+      ) {
+        mergedData[stepKey]['also-worked-with'] = enrichActiveCompanies(
+          activeStep['also-worked-with'],
+          canonicalStep['also-worked-with'],
+        )
       }
     })
 

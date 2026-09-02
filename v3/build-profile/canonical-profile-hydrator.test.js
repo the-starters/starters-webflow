@@ -133,6 +133,41 @@ test('maps the canonical profile into the native seven-step capture shape', () =
   assert.deepEqual(JSON.parse(profile.data.step_7['reviewer-3']), {})
 })
 
+test('prefers canonical picker objects so domainless custom company identity survives hydration', () => {
+  const api = loadApi()
+  const profile = api.mapCanonicalProfile({
+    Also_Worked_With: [99],
+    Also_Worked_With_Picker: {
+      'client-4173': {
+        name: 'Unlisted Custom Company',
+        domain: '',
+        logo_url: '',
+        client_row_id: 4173,
+        company_entity_id: 4681,
+        source: 'custom',
+      },
+    },
+  })
+
+  assert.deepEqual(JSON.parse(profile.data.step_3['also-worked-with']), {
+    'client-4173': {
+      name: 'Unlisted Custom Company',
+      domain: '',
+      logo_url: '',
+      client_row_id: 4173,
+      company_entity_id: 4681,
+      source: 'custom',
+    },
+  })
+})
+
+test('falls back to legacy company IDs when the canonical picker contract is absent', () => {
+  const api = loadApi()
+  const profile = api.mapCanonicalProfile({ Also_Worked_With: [99, 101] })
+
+  assert.deepEqual(JSON.parse(profile.data.step_3['also-worked-with']), [99, 101])
+})
+
 test('uses canonical values only as fallbacks and preserves active draft keys', () => {
   const api = loadApi()
   const merged = api.mergeProfileFallback(
@@ -196,6 +231,111 @@ test('preserves object-shaped company picker drafts', () => {
         step_3: {
           'also-worked-with': JSON.stringify({
             'canonical-company': { name: 'Canonical Company', company_entity_id: 88 },
+          }),
+        },
+      },
+    },
+    { data: { step_3: { 'also-worked-with': activeCompanies } } },
+  )
+
+  assert.equal(merged.data.step_3['also-worked-with'], activeCompanies)
+})
+
+test('enriches a domainless custom draft from canonical identity without restoring omitted companies', () => {
+  const api = loadApi()
+  const activeCompanies = JSON.stringify({
+    'draft-custom': {
+      name: ' Private QA Company ',
+      domain: '',
+      logo_url: '',
+      client_row_id: 0,
+      company_entity_id: 0,
+      source: 'custom',
+      draft_note: 'keep this value',
+    },
+    'draft-unmatched': {
+      name: 'Still Unsaved Company',
+      domain: '',
+      logo_url: '',
+      client_row_id: 0,
+      company_entity_id: 0,
+      source: 'custom',
+    },
+  })
+  const merged = api.mergeProfileFallback(
+    {
+      data: {
+        step_3: {
+          'also-worked-with': JSON.stringify({
+            'client-7': {
+              name: 'private qa company',
+              domain: '',
+              logo_url: 'https://example.test/canonical-logo.png',
+              client_row_id: 7,
+              company_entity_id: 88,
+              source: 'custom',
+            },
+            'client-8': {
+              name: 'Company Removed From Draft',
+              domain: '',
+              logo_url: '',
+              client_row_id: 8,
+              company_entity_id: 89,
+              source: 'custom',
+            },
+          }),
+        },
+      },
+    },
+    { data: { step_3: { 'also-worked-with': activeCompanies } } },
+  )
+
+  assert.deepEqual(JSON.parse(merged.data.step_3['also-worked-with']), {
+    'draft-custom': {
+      name: ' Private QA Company ',
+      domain: '',
+      logo_url: 'https://example.test/canonical-logo.png',
+      client_row_id: 7,
+      company_entity_id: 88,
+      source: 'custom',
+      draft_note: 'keep this value',
+    },
+    'draft-unmatched': {
+      name: 'Still Unsaved Company',
+      domain: '',
+      logo_url: '',
+      client_row_id: 0,
+      company_entity_id: 0,
+      source: 'custom',
+    },
+  })
+})
+
+test('does not replace a domainless custom draft with a same-name platform company', () => {
+  const api = loadApi()
+  const activeCompanies = JSON.stringify({
+    'draft-custom': {
+      name: 'Acme',
+      domain: '',
+      logo_url: '',
+      client_row_id: 0,
+      company_entity_id: 0,
+      source: 'custom',
+    },
+  })
+  const merged = api.mergeProfileFallback(
+    {
+      data: {
+        step_3: {
+          'also-worked-with': JSON.stringify({
+            'platform-acme': {
+              name: 'Acme',
+              domain: 'acme.example',
+              logo_url: 'https://example.test/acme.png',
+              client_row_id: 7,
+              company_entity_id: 88,
+              source: 'platform',
+            },
           }),
         },
       },
