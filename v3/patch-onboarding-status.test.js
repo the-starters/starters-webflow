@@ -192,6 +192,7 @@ function loadModule(options = {}) {
   const fixtures = options.wrappers || []
   const loader = Object.prototype.hasOwnProperty.call(options, 'loader') ? options.loader : null
   const patchOutcomes = (options.patchOutcomes || []).slice()
+  const tradeOutcomes = (options.tradeOutcomes || []).slice()
 
   const location = {
     hostname,
@@ -216,6 +217,8 @@ function loadModule(options = {}) {
     })
 
     if (url.indexOf(TRADE_URL) === 0) {
+      const outcome = tradeOutcomes.length ? tradeOutcomes.shift() : 'ok'
+      if (outcome === 'stall') return new Promise(() => {})
       if (options.tradeRejects) throw new Error('trade network failure')
       if (options.tradeFails) return jsonResponse(null, { ok: false, status: 401 })
       return jsonResponse(
@@ -470,6 +473,28 @@ test('a first-publish timeout redirects without starting an overlapping PATCH', 
   await flush()
 
   assert.equal(aborted.length, 1)
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+  assert.equal(location.replaced, DASHBOARD)
+})
+
+test('a token-trade timeout retries before starting the onboarding PATCH', async () => {
+  const fixture = formWrapper()
+  const { clock, fetchCalls, location } = loadModule({
+    wrappers: [fixture],
+    tradeOutcomes: ['stall', 'ok'],
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  await clock.advance(8000)
+
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
+  assert.equal(location.replaced, undefined)
+
+  await clock.advance(1000)
+
+  assert.equal(fetchCalls.filter((call) => call.url.startsWith(TRADE_URL)).length, 2)
   assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
   assert.equal(location.replaced, DASHBOARD)
 })

@@ -470,9 +470,11 @@
     for (var attempt = 0; attempt < attempts; attempt += 1) {
       finalAttempt = attempt
       if (attempt > 0) await delay(PATCH_RETRY_DELAYS_MS[attempt - 1])
+      var onboardingPatchStarted = false
       try {
         var token = await xanoToken(markRequestStarted)
         markRequestStarted()
+        onboardingPatchStarted = true
         var response = await fetchWithTimeout(XANO_ONBOARDING_BASE + SET_STATUS_PATH, {
           method: 'PATCH',
           headers: authHeaders(token),
@@ -499,7 +501,10 @@
         forgetXanoToken()
         // A timed-out PATCH may still be running server-side after the browser
         // aborts. Do not overlap it with a second first-publish attempt.
-        if ((error && error.code === 'logged-out') || /timed out/i.test(describe(error))) break
+        if (
+          (error && error.code === 'logged-out') ||
+          (onboardingPatchStarted && /timed out/i.test(describe(error)))
+        ) break
       }
     }
 
