@@ -301,13 +301,13 @@ for (const [label, file] of [
   })
 }
 
-function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [] } = {}) {
+function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], initialCompanies = [] } = {}) {
   let readyPromise
   let baselineTimer
   const requests = []
   const modalCounts = { success: 0, error: 0 }
   const renderedCards = []
-  const canonicalCompanies = []
+  const canonicalCompanies = initialCompanies.map((company) => ({ ...company }))
 
   function element(value = '') {
     const listeners = new Map()
@@ -351,6 +351,10 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
   const editCurrentCheckbox = element()
   editCurrentCheckbox.checked = true
   const saveEditButton = element()
+  const removeSubmitButton = element()
+  const removeModal = element()
+  const removeModalTrigger = element()
+  const removeModalClose = element()
   const companySubmit = element()
   const firstCompanyInput = element('true')
   const alsoWorkedWithInput = element('{}')
@@ -373,6 +377,9 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     ['#edit-company-end', editEndDateInput],
     ['#edit-company-current', editCurrentCheckbox],
     ['[save-company-edit]', saveEditButton],
+    ['[company-remove-submit]', removeSubmitButton],
+    ['[data-modal-target="company-remove"]', removeModal],
+    ['[data-modal-trigger="company-remove"]', removeModalTrigger],
     ['[data-edit-submit="companies"]', companySubmit],
     ['#first-company', firstCompanyInput],
     ['#also-worked-with', alsoWorkedWithStatuses.length ? alsoWorkedWithInput : null],
@@ -419,6 +426,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     qs(selector, root) {
       if (selector === 'div:first-child' && root === addButton) return { textContent: 'Add company' }
       if (selector === '.company-card' && root === companyList) return companyTemplate
+      if (selector === '[data-modal-close]' && root === removeModal) return removeModalClose
       return elements.get(selector) || null
     },
     qsa() { return [] },
@@ -450,6 +458,14 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     modalCounts,
     renderedCards,
     select,
+    selectCustom(input, name = 'Private QA Company') {
+      input.value = name
+      input.dataset.selectedCompanyName = name
+      input.dataset.selectedCompanyDomain = ''
+      input.dataset.selectedCompanyLogoUrl = ''
+      input.dataset.selectedCompanyEntityId = '0'
+      input.dataset.selectedCompanySource = 'custom'
+    },
     prepareAdd() {
       companyInput.value = 'QA Wolf'
       jobTitleInput.value = 'Engineer'
@@ -464,6 +480,22 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     },
     async queueAdd() {
       await addButton.listeners.get('click')[0]({ preventDefault() {} })
+    },
+    async queueDelete(company) {
+      const card = element()
+      card.dataset.id = String(company.id)
+      card.dataset.company = JSON.stringify(company)
+      const removeButton = element()
+      await companyList.listeners.get('click')[0]({
+        target: {
+          closest(selector) {
+            if (selector === '.company-card') return card
+            if (selector === '[company-remove-open]') return removeButton
+            return null
+          },
+        },
+      })
+      await removeSubmitButton.listeners.get('click')[0]({ preventDefault() {} })
     },
     changeAlsoWorkedWith(value) {
       alsoWorkedWithInput.value = JSON.stringify(value)
@@ -560,6 +592,35 @@ test('Edit Profile refreshes committed creates after a later create fails', asyn
   await harness.submitAll()
   assert.equal(harness.modalCounts.success, 1)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 3)
+})
+
+test('Edit Profile atomically pairs a replacement create with its pending deletion at the three-company limit', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const existingCompanies = [1, 2, 3].map((id) => ({
+    id,
+    company_name: `Existing ${id}`,
+    company_domain: `existing-${id}.example`,
+    company_entity_id: 100 + id,
+    company_source: 'platform',
+    job_title: 'Engineer',
+    start_date: 'Jan 2025',
+    end_date: 'Aug 2026',
+    current_work: false,
+  }))
+  const harness = createCrudHarness(file, { deferredWrites: true, initialCompanies: existingCompanies })
+  await harness.start()
+  await harness.queueDelete(existingCompanies[2])
+  harness.selectCustom(harness.companyInput)
+  await harness.queueAdd()
+  await harness.submitAll()
+
+  const createRequests = harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST')
+  const deleteRequests = harness.requests.filter(({ url, options }) => url.endsWith('/3') && options.method === 'DELETE')
+  assert.equal(createRequests.length, 1)
+  assert.equal(deleteRequests.length, 0)
+  assert.equal(JSON.parse(createRequests[0].options.body).replace_companies_id, 3)
+  assert.equal(harness.modalCounts.success, 1)
+  assert.equal(harness.modalCounts.error, 0)
 })
 
 for (const [label, file, deferredWrites] of [

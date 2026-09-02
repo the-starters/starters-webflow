@@ -113,7 +113,10 @@ creates, updates, and deletes. A rejected mutation stops the sequence, shows the
 authored error state, and does not show success. Completed mutations leave their
 pending queue as they succeed, while uncommitted mutations remain queued for a
 later retry. After a partial Work Experience save, the list refreshes canonical
-rows and retains only the unsaved local drafts.
+rows and retains only the unsaved local drafts. When a save includes both a
+create and a deletion, the create sends the deleted row as
+`replace_companies_id` so Xano can replace it atomically at the three-company
+limit; the browser does not send a separate delete for that paired row.
 
 The single-company Work History picker stores the selected `name`, `domain`,
 `logo_url`, `company_entity_id`, and `source` on its authored input. The Build

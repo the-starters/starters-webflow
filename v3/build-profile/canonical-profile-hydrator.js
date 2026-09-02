@@ -8,10 +8,8 @@
  * draft therefore still sees an otherwise empty wizard even when
  * freelancers_v3 is populated. This controller reads the existing
  * `starter/get` compatibility endpoint, maps its canonical profile shape to
- * the wizard's step shape, and fills only keys that are absent from the active
- * draft. Existing draft keys always win, including intentional empty strings
- * and false values, so a hydrated member identity keeps precedence over the
- * canonical name, email, and phone.
+ * the wizard's step shape, and merges it under the active draft according to
+ * the fallback contract in README.md.
  *
  * It does not persist Memberstack JSON, localStorage, or Xano data. The native
  * wizard continues to own capture and persistence after a human changes a field
@@ -44,6 +42,19 @@
     if (typeof value === 'string') return value
     try {
       return JSON.stringify(value)
+    } catch (_) {
+      return ''
+    }
+  }
+
+  function capturedJsonType(value) {
+    if (typeof value !== 'string') {
+      if (Array.isArray(value)) return 'array'
+      return isPlainObject(value) ? 'object' : ''
+    }
+    try {
+      var parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? 'array' : isPlainObject(parsed) ? 'object' : ''
     } catch (_) {
       return ''
     }
@@ -122,7 +133,11 @@
           'best-fit-3': valueOrEmpty(canonical.Best_Fit_For_3),
         },
         step_3: {
-          'also-worked-with': jsonCapture(canonical.Also_Worked_With),
+          // New profiles receive the complete picker objects. Keep the legacy ID
+          // array as a fallback until every caller has moved to the new field.
+          'also-worked-with': jsonCapture(
+            canonical.Also_Worked_With_Picker || canonical.Also_Worked_With,
+          ),
         },
         step_4: {},
         step_5: {
@@ -176,6 +191,14 @@
       var canonicalStep = isPlainObject(canonicalData[stepKey]) ? canonicalData[stepKey] : {}
       var activeStep = isPlainObject(activeData[stepKey]) ? activeData[stepKey] : {}
       mergedData[stepKey] = Object.assign({}, canonicalStep, activeStep)
+
+      if (
+        stepKey === 'step_3' &&
+        capturedJsonType(activeStep['also-worked-with']) === 'array' &&
+        capturedJsonType(canonicalStep['also-worked-with']) === 'object'
+      ) {
+        mergedData[stepKey]['also-worked-with'] = canonicalStep['also-worked-with']
+      }
     })
 
     return {

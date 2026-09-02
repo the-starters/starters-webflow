@@ -61,8 +61,10 @@ the legacy Memberstack/local draft initializes, it reads the canonical
 `starter/get` profile through the authenticated browser fetch, verifies the
 stable Memberstack ID before and after that read, maps the canonical
 fields to the seven-step draft shape, and fills only keys that are absent from
-the active draft. Existing draft keys always win, including intentional empty
-or false values. Canonical reviewer fields are adapted to the native draft
+the active draft. It also replaces a legacy array-shaped `also-worked-with`
+draft with the canonical `Also_Worked_With_Picker` object. All other existing
+draft keys win, including intentional empty or false values and an object-shaped
+company-picker draft. Canonical reviewer fields are adapted to the native draft
 aliases (`fname`, `lname`, and `job`). At submit, the writer accepts those draft
 aliases, the canonical aliases (`first-name`, `last-name`, and `position`), or a
 mix of both, then emits the canonical reviewer shape without dropping the last

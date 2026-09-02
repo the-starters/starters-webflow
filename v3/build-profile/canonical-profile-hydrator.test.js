@@ -59,6 +59,17 @@ test('maps the canonical profile into the native seven-step capture shape', () =
     Paid_Call_Enabled: false,
     Retainer_Enabled: true,
     Open_to_Full_Time: false,
+    Also_Worked_With: [99],
+    Also_Worked_With_Picker: {
+      'client-7': {
+        name: 'Private QA Company',
+        domain: '',
+        logo_url: '',
+        client_row_id: 7,
+        company_entity_id: 88,
+        source: 'custom',
+      },
+    },
     Services: {
       'service-1': { name: 'Audit', price: '100' },
       'service-2': null,
@@ -90,6 +101,16 @@ test('maps the canonical profile into the native seven-step capture shape', () =
   assert.equal(profile.data.step_1['function-required'], 'category-id')
   assert.equal(profile.data.step_1['roles-required'], 'role-id')
   assert.equal(profile.data.step_2['bio-html'], '<p>Bio</p>')
+  assert.deepEqual(JSON.parse(profile.data.step_3['also-worked-with']), {
+    'client-7': {
+      name: 'Private QA Company',
+      domain: '',
+      logo_url: '',
+      client_row_id: 7,
+      company_entity_id: 88,
+      source: 'custom',
+    },
+  })
   assert.equal(profile.data.step_5['skills-required'], 'skill-id')
   assert.equal(profile.data.step_6['free-consulting-calls'], 'yes')
   assert.equal(profile.data.step_6['paid-consulting-calls'], 'no')
@@ -112,7 +133,7 @@ test('maps the canonical profile into the native seven-step capture shape', () =
   assert.deepEqual(JSON.parse(profile.data.step_7['reviewer-3']), {})
 })
 
-test('uses canonical values only as fallbacks and preserves every active draft key', () => {
+test('uses canonical values only as fallbacks and preserves active draft keys', () => {
   const api = loadApi()
   const merged = api.mergeProfileFallback(
     {
@@ -141,6 +162,48 @@ test('uses canonical values only as fallbacks and preserves every active draft k
   assert.equal(merged.data.step_1.phone, '+15551111111')
   assert.equal(merged.data.step_1.city, 'Canonical City')
   assert.equal(merged.data.step_2.tagline, 'Canonical tagline')
+})
+
+test('replaces legacy company ID drafts with canonical picker objects', () => {
+  const api = loadApi()
+  const canonicalCompanies = JSON.stringify({
+    'client-7': {
+      name: 'Private QA Company',
+      company_entity_id: 88,
+      source: 'custom',
+    },
+  })
+  const merged = api.mergeProfileFallback(
+    { data: { step_3: { 'also-worked-with': canonicalCompanies } } },
+    { data: { step_3: { 'also-worked-with': '[99]' } } },
+  )
+
+  assert.equal(merged.data.step_3['also-worked-with'], canonicalCompanies)
+})
+
+test('preserves object-shaped company picker drafts', () => {
+  const api = loadApi()
+  const activeCompanies = JSON.stringify({
+    'draft-company': {
+      name: 'Unsaved Draft Company',
+      company_entity_id: 0,
+      source: 'custom',
+    },
+  })
+  const merged = api.mergeProfileFallback(
+    {
+      data: {
+        step_3: {
+          'also-worked-with': JSON.stringify({
+            'canonical-company': { name: 'Canonical Company', company_entity_id: 88 },
+          }),
+        },
+      },
+    },
+    { data: { step_3: { 'also-worked-with': activeCompanies } } },
+  )
+
+  assert.equal(merged.data.step_3['also-worked-with'], activeCompanies)
 })
 
 test('select hydration falls back from canonical display text to the authored option value', async () => {
