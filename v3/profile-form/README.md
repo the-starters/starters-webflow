@@ -95,9 +95,9 @@ owns the serialized `client-{id}` key; only a selection without that ID receives
 a new local key. This lets an existing legacy client with a blank domain retain
 its canonical identity when saved.
 
-Both single Work History and multi-value Also Worked With pickers offer the
-typed name as `Use custom company`. A new domainless custom selection is stored
-as an owner-scoped `pending_review` Company. It stays out of shared company
+The multi-value Also Worked With pickers offer the typed name as
+`Use custom company`. A new domainless custom selection is stored as an
+owner-scoped `pending_review` Company. It stays out of shared company
 search until review. The same Starter can reload, retain, reorder, or remove it
 by stable Client row and Company IDs. Custom-name duplicate checks ignore case;
 canonical selections prefer Company ID, then normalized domain.
