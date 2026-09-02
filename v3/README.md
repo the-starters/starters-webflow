@@ -1700,10 +1700,11 @@ node --test v3/onboarding-done-redirect.test.js
 `.w-form-done` success state (one `MutationObserver` per `.w-form` wrapper, so
 a click that only means "tried" never counts), then raises the shared spinner,
 hides the submitted form, `PATCH`es
-`starters_onboarding/set_onboarding_status` with retries and fresh token
-trades, and takes the member to `/starter-dashboard` once the write settles
-either way — a missed mark self-heals on a later visit. It never reads status
-and never routes anyone except its own member after their own submit.
+`starters_onboarding/set_onboarding_status` under the bounded retry and timeout
+rules in the wiring doc, and takes the member to `/starter-dashboard` once the
+write settles either way — a missed mark self-heals on a later visit. It never
+reads status and never routes anyone except its own member after their own
+submit.
 `window.StartersPatchOnboardingStatus.markOnboardingDone()` exercises the
 write by hand on staging. Installs only as a pinned pair with
 `onboarding-done-redirect.js` (above); the authoritative wiring lives in
