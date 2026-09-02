@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-30
+Last updated: 2026-09-03
 Status: Call projections and Free Call behavior are GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
@@ -84,6 +84,17 @@ remain deferred (`paid-call-brand-payment.js`,
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
 | Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all |
+
+### Company-link safety
+
+The `starter-work-histories` and `starter-clients` wf-xano wrappers keep every
+rendered custom-Company row visible. `hire-profile.js` removes navigation only
+when a rendered item resolves to `/companies/` or a temporary
+`/companies/company-pending-*` path. It removes `href` and `target`, then marks
+the anchor with `aria-disabled="true"` and `data-company-link-unavailable`.
+Valid Company paths, hidden templates, and links outside these two wrappers are
+unchanged. The initial scan and the shared late-node observer apply the same
+rule, so delayed wf-xano results cannot restore a missing Company-page link.
 
 The runtime no longer calls `api:SYL06lUR/companies`,
 `edit_profile/starter/get_also_worked_with`, or `profile/get_companies`.

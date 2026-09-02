@@ -279,8 +279,8 @@ function makePage({
   nativeBinding.appendChild(starterXanoId)
   root.appendChild(nativeBinding)
 
-  // Webflow CMS owns these rows after the Phase 2 cutover. The runtime must
-  // leave the server-rendered content in place for anonymous visitors.
+  // The profile-list renderer owns these rows. The runtime must leave their
+  // authored content in place for anonymous visitors.
   const experience = makeElement('article', { 'data-native-experience': '' })
   experience.textContent = 'Acme Corp — Product Designer — 2022 to Present'
   root.appendChild(experience)
