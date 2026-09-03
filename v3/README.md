@@ -3308,11 +3308,11 @@ The script never calculates points or rank in the browser. It trades the active
 Memberstack session for a Xano token and renders only the authenticated summary.
 When Xano reports `refreshing`, or a nominally ready payload lacks a rank/cohort,
 the position is withheld and both the overall-rank and primary-role cards are
-hidden. While that state remains active, the controller re-fetches the summary
-every 10 seconds for up to 10 minutes so a scheduled rank rebuild can replace
-the authored refreshing state without a page reload. Polling stops immediately
-on every terminal state or request error. The `ineligible` and `quarantined`
-statuses likewise hide both cards and
+hidden. While that state remains active, the controller makes up to 60 summary
+requests, waiting 10 seconds after each nonterminal response except the last,
+so a scheduled rank rebuild can replace the authored refreshing state without a
+page reload. Polling stops immediately on every terminal state or request error.
+The `ineligible` and `quarantined` statuses likewise hide both cards and
 reveal their matching Designer-authored state blocks. Missing primary roles keep
 the overall-rank card and reveal the authored setup state inside the role card,
 except when Xano returns `consult_only: true`. Consult-only profiles have no
