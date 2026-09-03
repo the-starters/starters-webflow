@@ -916,13 +916,15 @@ async function testServiceFailuresExplainThemselvesInTheErrorModal() {
 	assert.match(invalidPrice.errorFeedback.textContent, /\$1 to \$50,000/)
 }
 
+// A collapsed retainer section must not block the step, and must not forward the
+// stale text of a control the member cannot see as an unvalidated Xano value.
 async function testCollapsedRetainerSectionNeverBlocksStepSix() {
 	const unsetToggle = await submittedStepPayload(saved({
 		stepIndex: 6,
 		additionalFormValues: [['rate-retainer', '   ']],
 	}))
 	assert.equal(unsetToggle.Retainer_Enabled, undefined)
-	assert.equal(unsetToggle.Retainer_Rate, '   ')
+	assert.equal(Object.prototype.hasOwnProperty.call(unsetToggle, 'Retainer_Rate'), false)
 
 	const legacyDisabledValue = await submittedStepPayload(saved({
 		stepIndex: 6,
@@ -932,7 +934,33 @@ async function testCollapsedRetainerSectionNeverBlocksStepSix() {
 		],
 	}))
 	assert.equal(legacyDisabledValue.Retainer_Enabled, false)
-	assert.equal(legacyDisabledValue.Retainer_Rate, '30000')
+	assert.equal(legacyDisabledValue.Retainer_Rate, 0)
+}
+
+// Step 6 owns the service price contract for every slot, so it must serialize the
+// slots it validated instead of keying the write-back on slot 1 having a value.
+async function testStepSixPersistsEveryValidatedServiceSlot() {
+	const secondSlotOnly = await submittedStepPayload(saved({
+		stepIndex: 6,
+		additionalFormValues: [
+			['service', ''],
+			['service-2', JSON.stringify({ name: 'Audit', price: '500' })],
+		],
+	}))
+	const persisted = JSON.parse(secondSlotOnly.Services)
+	assert.equal(persisted['service-1'], null)
+	assert.deepEqual(persisted['service-2'], { name: 'Audit', price: 500 })
+	assert.equal(persisted['service-3'], null)
+
+	const whitespaceOnly = await submittedStepPayload(saved({
+		stepIndex: 6,
+		additionalFormValues: [['service', JSON.stringify({ name: ' ', price: ' ' })]],
+	}))
+	assert.deepEqual(JSON.parse(whitespaceOnly.Services), {
+		'service-1': null,
+		'service-2': null,
+		'service-3': null,
+	})
 }
 
 async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
@@ -1490,6 +1518,7 @@ Promise.all([
 	testStepSixPriceContractSurvivesABlankServiceCaptureField(),
 	testServiceFailuresExplainThemselvesInTheErrorModal(),
 	testCollapsedRetainerSectionNeverBlocksStepSix(),
+	testStepSixPersistsEveryValidatedServiceSlot(),
   testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),

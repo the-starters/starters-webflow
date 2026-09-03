@@ -36,7 +36,11 @@ Monthly Retainer allows `$1` through `$25,000`, and each Custom Service allows `
 An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, unsafe integer, or value outside
 its range stops before the Xano request. A toggle-owned rate is only validated while its own section
 says yes; a collapsed Monthly Retainer or Paid Call section keeps its existing zero or null
-compatibility state instead of blocking the submit on text the member cannot see. A blank
+compatibility state instead of blocking the submit on text the member cannot see, and its stale text is
+never forwarded unvalidated: Edit Profile sends the canonical zero only alongside the toggle it is
+turning off and otherwise omits the field. On Build Profile Consult, where the paid-call radio is
+hidden, only a positive authored rate enables the paid consult, so the canonical zero rate stays the
+no-paid-consult compatibility state. A blank
 profile-type-inapplicable Hourly Rate keeps the same zero compatibility state. Service prices and names
 live in hidden capture inputs, so their failures report through the authored error modal rather than
 native constraint validation. No invalid value is silently clamped.

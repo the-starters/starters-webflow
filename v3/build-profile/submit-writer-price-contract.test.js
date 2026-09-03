@@ -189,6 +189,22 @@ test('a collapsed section keeps its compatibility value instead of blocking the 
   assert.equal(paidCall.requests[0].body.paid_call_rate, null)
 })
 
+test('a consult profile treats the canonical zero paid-call rate as no paid consult', async () => {
+  for (const sentinel of ['0', '00', ' 0 ']) {
+    const result = load({ 'paid-call-rate': sentinel }, '/build-profile/consult')
+    await result.submit.click()
+    assert.equal(result.requests.length, 1, result.inputs['[name="paid-call-rate"]'].validationMessage)
+    assert.equal(result.requests[0].body.paid_call, false)
+    assert.equal(result.requests[0].body.paid_call_rate, null)
+    assert.equal(result.error.style.display, 'none')
+  }
+
+  const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '0' }, '/build-profile/consult')
+  await selected.submit.click()
+  assert.equal(selected.requests.length, 0)
+  assert.match(selected.inputs['[name="paid-call-rate"]'].validationMessage, /\$1 to \$1,000/)
+})
+
 test('disabled and non-owned blank rates preserve compatibility zero without accepting authored zero', async () => {
   const consult = load({ rate: '' }, '/build-profile/consult')
   await consult.submit.click()

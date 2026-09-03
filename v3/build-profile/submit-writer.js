@@ -75,22 +75,18 @@
         };
 
         const wholeDollar = (value, { min, max, label, selector, allowBlank = false }) => {
+          const field = qs(selector, form);
+          const message = `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
           const raw = String(value ?? '').trim();
           if (!raw) {
             if (allowBlank) return null;
-            return priceError(qs(selector, form), `${label} is required.`, 'PRICE_REQUIRED');
+            return priceError(field, `${label} is required.`, 'PRICE_REQUIRED');
           }
-          if (!/^[0-9]+$/.test(raw)) {
-            return priceError(qs(selector, form), `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`, 'PRICE_NOT_INTEGER');
-          }
+          if (!/^[0-9]+$/.test(raw)) return priceError(field, message, 'PRICE_NOT_INTEGER');
           const number = Number(raw);
-          if (!Number.isSafeInteger(number)) {
-            return priceError(qs(selector, form), `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`, 'PRICE_NOT_INTEGER');
-          }
-          if (number < min || number > max) {
-            return priceError(qs(selector, form), `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`, 'PRICE_OUT_OF_RANGE');
-          }
-          qs(selector, form)?.setCustomValidity?.('');
+          if (!Number.isSafeInteger(number)) return priceError(field, message, 'PRICE_NOT_INTEGER');
+          if (number < min || number > max) return priceError(field, message, 'PRICE_OUT_OF_RANGE');
+          field?.setCustomValidity?.('');
           return number;
         };
 
@@ -150,12 +146,14 @@
 
         const isConsultProfile = String(window.location?.pathname || "").replace(/\/+$/, "") === "/build-profile/consult";
         const paidCallSelected = toBool(formData["paid-consulting-calls"]) === true;
-        const paidCallHasValue = String(formData["paid-call-rate"] ?? '').trim() !== '';
-        const paidCallEnabled = paidCallSelected || (isConsultProfile && paidCallHasValue);
+        const paidCallRaw = String(formData["paid-call-rate"] ?? '').trim();
+        const paidCallAuthored = paidCallRaw !== '' && !/^0+$/.test(paidCallRaw);
+        const paidCallEnabled = paidCallSelected || (isConsultProfile && paidCallAuthored);
         // A toggle-owned rate is only authored while its own section says yes. Once the
         // toggle is off the control is collapsed, so its stale text is neither visible
         // nor editable and must never block the whole submit behind a price failure the
-        // member cannot see or reach. Blank already meant the compatibility value.
+        // member cannot see or reach. A blank value and the canonical zero sentinel both
+        // already meant the compatibility value, so neither one enables a paid consult.
         const paidCallRate = paidCallEnabled
           ? wholeDollar(formData["paid-call-rate"], {
               min: 1,
