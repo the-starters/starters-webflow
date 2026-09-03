@@ -405,6 +405,56 @@ for (const controllerPath of controllerPaths) {
     assert.equal(payload.end_date, 'Dec 2024')
   })
 
+  test(`${controllerPath} hydrates and preserves untouched numeric legacy dates`, async () => {
+    const app = bootCompanyController(controllerPath)
+
+    app.openEditFor({
+      id: 8,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '04/22/2026',
+      end_date: '04/30/2026',
+    })
+
+    assert.equal(app.editStartDateInput.value, '2026-04')
+    assert.equal(app.editEndDateInput.value, '2026-04')
+
+    await app.saveEdit()
+    const payload = app.lastRequestPayload()
+
+    assert.equal(payload.start_date, '04/22/2026')
+    assert.equal(payload.end_date, '04/30/2026')
+  })
+
+  test(`${controllerPath} blocks an inverted range and saves it once corrected`, async () => {
+    const app = bootCompanyController(controllerPath)
+
+    app.openEditFor({
+      id: 10,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '2026-08',
+      end_date: '2025-01',
+    })
+
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2026-08')
+    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-01')
+
+    const requestsBeforeInvalidSave = app.fetchCalls.length
+    await app.saveEdit()
+    assert.equal(app.fetchCalls.length, requestsBeforeInvalidSave)
+
+    app.editEndDateInput.value = '2026-08'
+    app.editEndDateInput.dispatchEvent({ type: 'input' })
+    assert.equal(app.editStartDateInput.getAttribute('max'), '2026-08')
+
+    await app.saveEdit()
+    const payload = app.lastRequestPayload()
+
+    assert.equal(payload.start_date, '2026-08')
+    assert.equal(payload.end_date, '2026-08')
+  })
+
   test(`${controllerPath} ignores cross-field bounds left behind by an earlier edit`, async () => {
     const app = bootCompanyController(controllerPath)
 
@@ -509,20 +559,20 @@ for (const controllerPath of controllerPaths) {
       end_date: 'Dec 2024',
     })
 
-    app.editStartDateInput.value = '2025-02'
+    app.editStartDateInput.value = '2024-02'
     app.editStartDateInput.dispatchEvent({ type: 'input' })
-    assert.equal(app.editStartDateInput.value, '2025-02')
+    assert.equal(app.editStartDateInput.value, '2024-02')
 
     app.endPicker.ready = true
     app.clock.advance(500)
 
-    assert.equal(app.editStartDateInput.value, '2025-02')
+    assert.equal(app.editStartDateInput.value, '2024-02')
     assert.equal(app.editEndDateInput.value, '2024-12')
 
     await app.saveEdit()
     const payload = app.lastRequestPayload()
 
-    assert.equal(payload.start_date, '2025-02')
+    assert.equal(payload.start_date, '2024-02')
     assert.equal(payload.end_date, 'Dec 2024')
   })
 
@@ -624,7 +674,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(context.starterProfileCompanyDatepickerValue('2026-08-03T12:00:00+14:30'), null)
   })
 
-  test(`${controllerPath} hydrates a value written in the widget's own dateFormat`, () => {
+  test(`${controllerPath} hydrates a numeric legacy date without the widget`, () => {
     const { context, getCapturedDate, getParseDateCalls } = loadDateContract(controllerPath, {
       dateFormat: 'mm/dd/yy',
     })
@@ -637,7 +687,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(capturedDate.getMonth(), 3)
     assert.equal(capturedDate.getDate(), 22)
     assert.equal(input.value, 'Apr 22 2026')
-    assert.deepEqual(getParseDateCalls(), [{ format: 'mm/dd/yy', value: '04/22/2026' }])
+    assert.deepEqual(getParseDateCalls(), [])
   })
 
   test(`${controllerPath} prefers the canonical shapes over the widget dateFormat`, () => {
@@ -676,14 +726,17 @@ for (const controllerPath of controllerPaths) {
     assert.equal(input.value, '')
   })
 
-  test(`${controllerPath} hydrates nothing when the widget has no configured dateFormat`, () => {
+  test(`${controllerPath} hydrates a numeric legacy date without a configured widget format`, () => {
     const { context, getCapturedDate, getParseDateCalls } = loadDateContract(controllerPath)
     const input = { value: '04/22/2026' }
 
     context.setStarterProfileCompanyDatepickerDate(input, input.value)
 
-    assert.equal(getCapturedDate(), null)
-    assert.equal(input.value, '')
+    const capturedDate = getCapturedDate()
+    assert.equal(capturedDate.getFullYear(), 2026)
+    assert.equal(capturedDate.getMonth(), 3)
+    assert.equal(capturedDate.getDate(), 22)
+    assert.equal(input.value, 'Apr 22 2026')
     assert.deepEqual(getParseDateCalls(), [])
   })
 

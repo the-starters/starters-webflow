@@ -45,14 +45,14 @@ const EXPECTED_CAPTURE = {
   },
 }
 const EXPECTED_CANDIDATES = {
-  sourceCommit: 'working-tree@2551a8c43616949c750682094e5b6fb04e13e10d',
+  sourceCommit: 'working-tree@6f7f005788a27e8709450ec063cdb3f1926fff8d',
   files: {
     'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 14854, sha256: 'b7593bf81d47c0d59a12125e7ad561a61e8ff1b14649f064e4ede9765cf7e558' },
     'portfolio-crud.js': { path: 'v3/build-profile/portfolio-crud.js', bytes: 38397, sha256: '67a4ae90325477bc931a35d015eeba536e90ad5ff90968dc6c0cccb06872576f' },
     'portfolio-list.js': { path: 'v3/build-profile/portfolio-list.js', bytes: 4036, sha256: '508b94b1f40f05dcc916c79c3cf0bec04f627f75bb607d93d02c02e0950fe11b' },
     'company-autocomplete.js': { path: 'v3/build-profile/company-autocomplete.js', bytes: 14773, sha256: '92e8029557b57fa4f29fa218586988d1363f07eab008971327386bdb2427d1b3' },
-    'work-dates.js': { path: 'v3/build-profile/work-dates.js', bytes: 1929, sha256: '3be29b0dfecfadd6057e6da6a30af0a47dc41d67bdedda863aca003512fe2890' },
-    'company-experience-crud.js': { path: 'v3/build-profile/company-experience-crud.js', bytes: 42621, sha256: 'd445a6b7a033d29b2c8e5093ddae02b5162c5c825740e9c27677702be91f324a' },
+    'work-dates.js': { path: 'v3/build-profile/work-dates.js', bytes: 1965, sha256: 'adf33ed23018b31007c43f14940152b31cf896d8dd66fc67d5f310d7e6cfdf3e' },
+    'company-experience-crud.js': { path: 'v3/build-profile/company-experience-crud.js', bytes: 46781, sha256: 'f5bdb0f64c510a6cf5fa36eb7255e58a117854fd017034e991fb45b3e4f9bcda' },
     'field-counters.js': { path: 'v3/build-profile/field-counters.js', bytes: 5027, sha256: '89add4a5af95b6e011116d13c868a7bcc91d36616f216a0ea5ec6aac296fbe61' },
     'bio-editor.js': { path: 'v3/build-profile/bio-editor.js', bytes: 12246, sha256: 'df9f20286ded40b99a04dfe9e9cae41a9737b351ef6e55dda0f7b346091082cc' },
     'grouped-selects.js': { path: 'v3/build-profile/grouped-selects.js', bytes: 1649, sha256: '9fc122b55ae5a0e40bbea47932fbb446d74de656d7818cc3744511adc0a8db22' },

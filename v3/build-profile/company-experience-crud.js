@@ -47,6 +47,11 @@ function starterProfileCompanyDatepickerValue(value) {
     return localCalendarDate(Number(nativeMonthMatch[1]), Number(nativeMonthMatch[2]) - 1, 1);
   }
 
+  const numericDateMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (numericDateMatch) {
+    return localCalendarDate(Number(numericDateMatch[3]), Number(numericDateMatch[1]) - 1, Number(numericDateMatch[2]));
+  }
+
   const monthDayYearMatch = text.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
   if (monthDayYearMatch) {
     const monthIndex = monthIndexForName(monthDayYearMatch[1]);
@@ -143,6 +148,42 @@ function serializeStarterProfileCompanyDate(input, baseline) {
   return currentValue;
 }
 
+function syncStarterProfileCompanyMonthRange(startInput, endInput, isCurrent) {
+  if (!startInput || !endInput) return;
+
+  const startValue = startInput.value.trim();
+  const endValue = endInput.value.trim();
+
+  if (startValue) endInput.setAttribute('min', startValue);
+  else endInput.removeAttribute('min');
+
+  if (!isCurrent && endValue) startInput.setAttribute('max', endValue);
+  else startInput.removeAttribute('max');
+}
+
+function isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent) {
+  if (isCurrent || !startInput || !endInput) return true;
+
+  const startValue = startInput.value.trim();
+  const endValue = endInput.value.trim();
+  return !startValue || !endValue || startValue <= endValue;
+}
+
+function bindStarterProfileCompanyMonthRange(startInput, endInput, currentCheckbox) {
+  if (!startInput || !endInput) return;
+
+  const syncRange = function () {
+    syncStarterProfileCompanyMonthRange(startInput, endInput, !!(currentCheckbox && currentCheckbox.checked));
+  };
+
+  startInput.addEventListener('input', syncRange);
+  startInput.addEventListener('change', syncRange);
+  endInput.addEventListener('input', syncRange);
+  endInput.addEventListener('change', syncRange);
+  if (currentCheckbox) currentCheckbox.addEventListener('change', syncRange);
+  syncRange();
+}
+
 function starterProfileCompanyMonthYearLabel(value) {
   const text = String(value || '').trim();
   if (!text || isStarterProfileCompanyPresentDate(text)) return text;
@@ -201,6 +242,8 @@ function starterProfileCompanyMonthYearLabel(value) {
       enableStarterProfileCompanyMonthInput(endDateInput, 'End month and year');
       enableStarterProfileCompanyMonthInput(editStartDateInput, 'Start month and year');
       enableStarterProfileCompanyMonthInput(editEndDateInput, 'End month and year');
+      bindStarterProfileCompanyMonthRange(startDateInput, endDateInput, currentWorkCheckbox);
+      bindStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, editCurrentWorkCheckbox);
 
       const modalEdit = qs('[data-modal-target="company-edit"]');
       const modalEditTrigger = qs('[data-modal-trigger="company-edit"]');
@@ -888,6 +931,8 @@ function starterProfileCompanyMonthYearLabel(value) {
             editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
             editEndDateBaseline = starterProfileCompanyDateBaseline(editEndDateInput, rawEndDate);
           }
+
+          syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, !!company.current_work);
         }
 
         if (editCompanyInput) {
@@ -1090,6 +1135,12 @@ function starterProfileCompanyMonthYearLabel(value) {
             isValid = false;
           }
 
+          if (!isStarterProfileCompanyMonthRangeValid(editStartDateInput, editEndDateInput, payload.current_work)) {
+            showFieldError(editStartDateInput.closest('[form-group]'));
+            showFieldError(editEndDateInput.closest('[form-group]'));
+            isValid = false;
+          }
+
           if (!isValid) return;
 
           const textEl = saveCompanyEditButton.querySelector('.button_main-text');
@@ -1176,6 +1227,12 @@ function starterProfileCompanyMonthYearLabel(value) {
 
           if (!payload.job_title) {
             showFieldError(jobTitleInput.closest('[form-group]'));
+            isValid = false;
+          }
+
+          if (!isStarterProfileCompanyMonthRangeValid(startDateInput, endDateInput, payload.current_work)) {
+            showFieldError(startDateInput.closest('[form-group]'));
+            showFieldError(endDateInput.closest('[form-group]'));
             isValid = false;
           }
 
