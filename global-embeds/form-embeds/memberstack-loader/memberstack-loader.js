@@ -36,6 +36,10 @@
 //
 // Forms added after load (modals, step flows): call
 // window.startersMemberstackLoader.rescan().
+//
+// On staging (webflow.io, localhost, the dev tunnel, or window.STARTERS_DEBUG
+// === true) the script warns once per page about a missing, duplicated or
+// stray [data-ms-loader]. Production is silent.
 
 (function () {
   if (window.__startersMemberstackLoaderInit) return;
@@ -290,6 +294,89 @@
     }, true);
   }
 
+  // --- staging diagnostics --------------------------------------------------
+  // Anchored on a dot or the start of the string, so a lookalike domain such
+  // as notwebflow.io or evil-trycloudflare.com cannot read as staging.
+  var STAGING_HOSTS = [/(\.|^)webflow\.io$/, /(\.|^)trycloudflare\.com$/];
+
+  var warnedNoLoader = false;
+  var warnedManyLoaders = false;
+  var warnedStrayLoader = false;
+
+  function isDevHost() {
+    try {
+      // Tested outside the host check: it may turn logging on in production,
+      // but it must never widen what counts as a staging host.
+      if (window.STARTERS_DEBUG === true) return true;
+      var h = (location && location.hostname) || '';
+      if (h === 'localhost' || h === '127.0.0.1') return true;
+      for (var i = 0; i < STAGING_HOSTS.length; i++) {
+        if (STAGING_HOSTS[i].test(h)) return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function devWarn() {
+    if (!isDevHost()) return;
+    try {
+      console.warn.apply(console, ['[memberstack-loader]'].concat([].slice.call(arguments)));
+    } catch (e) {
+      /* no-op */
+    }
+  }
+
+  function describe(el) {
+    var out = el.tagName ? String(el.tagName).toLowerCase() : 'element';
+    var id = el.getAttribute('id');
+    if (id) out += '#' + id;
+    var cls = el.getAttribute('class');
+    var first = cls ? cls.trim().split(/\s+/)[0] : '';
+    if (first) out += '.' + first;
+    return out;
+  }
+
+  // Each condition speaks at most once per page, so a rescan never repeats it.
+  // Never throws: a broken diagnostic must not cost the page its wiring.
+  function diagnose() {
+    if (!isDevHost()) return;
+    try {
+      var forms = document.querySelectorAll(MS_FORM_SELECTOR);
+      var marked = document.querySelectorAll(LOADER_SELECTOR);
+
+      var auth = 0;
+      for (var i = 0; i < forms.length; i++) {
+        var record = forms[i][WIRED_FLAG];
+        if (record && record.isAuth) auth++;
+      }
+
+      if (!warnedNoLoader && auth && !marked.length) {
+        warnedNoLoader = true;
+        devWarn('no ' + LOADER_SELECTOR + ' on a page with ' + auth + ' auth form(s); ' +
+          'a form with no Button Spinner falls back to Memberstack\'s overlay');
+      }
+
+      if (!warnedManyLoaders && marked.length > 1) {
+        warnedManyLoaders = true;
+        devWarn(marked.length + ' ' + LOADER_SELECTOR + ' elements at load; ' +
+          'Memberstack pins the first and ignores the rest');
+      }
+
+      if (!warnedStrayLoader) {
+        for (var j = 0; j < marked.length; j++) {
+          if (marked[j].closest(MS_FORM_SELECTOR)) continue;
+          warnedStrayLoader = true;
+          devWarn(LOADER_SELECTOR + ' outside any Memberstack form: ' + describe(marked[j]));
+          break;
+        }
+      }
+    } catch (e) {
+      /* no-op */
+    }
+  }
+
   // --- discovery ------------------------------------------------------------
 
   function init() {
@@ -338,6 +425,8 @@
       observeReassert(record);
       wireSubmit(record);
     }
+
+    diagnose();
   }
 
   window.startersMemberstackLoader = { rescan: init, release: RELEASE };

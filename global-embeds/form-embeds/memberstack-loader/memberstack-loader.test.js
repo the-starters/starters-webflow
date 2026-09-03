@@ -2027,3 +2027,205 @@ test('with password-validation loaded the marker still follows the click', async
   assert.equal(w.ms.submits, 2)
   assert.deepEqual(loaders(w.root), [w.submitSpinner])
 })
+
+// ---------------------------------------------------------------------------
+// Staging diagnostics
+//
+// Three warnings, each at most once per page, emitted only on a staging host
+// or under window.STARTERS_DEBUG === true. Production is silent.
+// ---------------------------------------------------------------------------
+
+const STAGING = 'the-starters-3-0.webflow.io'
+const TAG = '[memberstack-loader]'
+
+/** the /login shape of the problem: an auth form whose Spinner has no marker */
+const noLoaderPage = () => {
+  const s = signupForm({ noLoader: true })
+  return { s, root: body([s.form]) }
+}
+
+/** two authored markers on one page: Memberstack pins the first and ignores the rest */
+const twoLoaderPage = () => {
+  const s = signupForm()
+  const p = profileForm()
+  return { s, p, root: body([s.form, p.form]) }
+}
+
+/** a marker parked on a decorative div, next to a correctly authored form */
+const strayLoaderPage = () => {
+  const s = signupForm()
+  const hero = h('div', { id: 'hero', class: 'foo', 'data-ms-loader': '' })
+  return { s, hero, root: body([s.form, hero]) }
+}
+
+test('a staging signup page with no loader marker is told so once', async () => {
+  const { root } = noLoaderPage()
+  const app = mount(root, { hostname: STAGING })
+
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+  assert.ok(app.warnings[0].includes(TAG), app.warnings[0])
+  assert.ok(
+    app.warnings[0].includes('no [data-ms-loader] on a page with 1 auth form(s)'),
+    app.warnings[0],
+  )
+})
+
+test('a staging page with two loader markers is told Memberstack pins the first', async () => {
+  const { root } = twoLoaderPage()
+  const app = mount(root, { hostname: STAGING })
+
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+  assert.ok(app.warnings[0].includes('2 [data-ms-loader] elements at load'), app.warnings[0])
+})
+
+test('a loader marker outside every form is named element by element', async () => {
+  const { root } = strayLoaderPage()
+  const app = mount(root, { hostname: STAGING })
+
+  assert.equal(app.warnings.length, 2, app.warnings.join(' | '))
+  assert.ok(app.warnings[0].includes('2 [data-ms-loader] elements at load'), app.warnings[0])
+  assert.equal(
+    app.warnings[1],
+    TAG + ' [data-ms-loader] outside any Memberstack form: div#hero.foo',
+  )
+})
+
+test('the homepage shape says nothing on staging', async () => {
+  const { root } = anchoredPage()
+  const app = mount(root, { hostname: STAGING })
+
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('a profile page carrying its own authored loader says nothing on staging', async () => {
+  const p = profileForm()
+  const app = mount(body([p.form]), { hostname: STAGING })
+
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('a page with no auth form is not nagged about a missing loader', async () => {
+  const p = profileForm({ noLoader: true })
+  const app = mount(body([p.form]), { hostname: STAGING })
+
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('production stays silent on a page that warns twice on staging', async () => {
+  const app = mount(strayLoaderPage().root)
+
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('production stays silent on a page with no loader marker', async () => {
+  const app = mount(noLoaderPage().root)
+
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('STARTERS_DEBUG turns the same warnings on in production', async () => {
+  const stray = mount(strayLoaderPage().root, { debug: true })
+  assert.equal(stray.warnings.length, 2, stray.warnings.join(' | '))
+  assert.ok(stray.warnings[0].includes('2 [data-ms-loader] elements at load'), stray.warnings[0])
+  assert.ok(stray.warnings[1].includes('outside any Memberstack form'), stray.warnings[1])
+
+  const missing = mount(noLoaderPage().root, { debug: true })
+  assert.equal(missing.warnings.length, 1, missing.warnings.join(' | '))
+  assert.ok(missing.warnings[0].includes('no [data-ms-loader] on a page with'), missing.warnings[0])
+})
+
+test('STARTERS_DEBUG set to false leaves production silent', async () => {
+  const app = mount(noLoaderPage().root, { debug: false })
+
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+for (const hostname of ['localhost', '127.0.0.1', STAGING, 'abc-def.trycloudflare.com']) {
+  test('on ' + hostname + ' the missing loader is reported', async () => {
+    const app = mount(noLoaderPage().root, { hostname })
+
+    assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+  })
+}
+
+for (const hostname of ['notwebflow.io', 'evil-trycloudflare.com', 'www.thestarters.com']) {
+  test('on ' + hostname + ' nothing is reported', async () => {
+    const app = mount(noLoaderPage().root, { hostname })
+
+    assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+  })
+}
+
+test('rescanning never repeats the missing-loader warning', async () => {
+  const app = mount(noLoaderPage().root, { hostname: STAGING })
+
+  app.window.startersMemberstackLoader.rescan()
+  app.window.startersMemberstackLoader.rescan()
+  app.window.startersMemberstackLoader.rescan()
+
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+})
+
+test('rescanning never repeats the duplicate or the stray warning', async () => {
+  const app = mount(strayLoaderPage().root, { hostname: STAGING })
+
+  app.window.startersMemberstackLoader.rescan()
+  app.window.startersMemberstackLoader.rescan()
+
+  assert.equal(app.warnings.length, 2, app.warnings.join(' | '))
+})
+
+test('the warning changes nothing about what a submit does on staging', async () => {
+  const { s, root } = noLoaderPage()
+  const app = mount(root, { hostname: STAGING })
+  const ms = memberstack(root, s.form, { cache: false })
+
+  ms.submit()
+  assert.deepEqual(loaders(root), [s.submitSpinner], 'the marker lands on the submitting Spinner')
+  await flush()
+  assert.equal(ms.overlayShows, 0)
+  assert.equal(s.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(s.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+
+  ms.hide()
+  await flush()
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+  assert.deepEqual(marksOf(s.control), NO_MARKS)
+
+  app.window.startersMemberstackLoader.rescan()
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+})
+
+test('with the DOM still parsing the warning waits for DOMContentLoaded', async () => {
+  const app = mount(noLoaderPage().root, { hostname: STAGING, readyState: 'loading' })
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+
+  app.fireReady()
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+})
+
+test('loading the script twice on staging still warns once', async () => {
+  const app = mount(noLoaderPage().root, { hostname: STAGING, loadTwice: true })
+
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+})
+
+test('a diagnostics failure never breaks the button wiring', async () => {
+  const { p, root } = twoLoaderPage()
+  const all = root.querySelectorAll.bind(root)
+  root.querySelectorAll = (selector) => {
+    if (selector === '[data-ms-loader]') throw new Error('querySelectorAll blew up')
+    return all(selector)
+  }
+  root.querySelector = (selector) => all(selector)[0] || null
+
+  const app = mount(root, { hostname: STAGING })
+  const profile = memberstack(root, p.form)
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+
+  profile.submit()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'block', 'the Save button still spins')
+  assert.deepEqual(marksOf(p.wrap), IDLE_WRAP, 'a profile form is still never dressed')
+})
