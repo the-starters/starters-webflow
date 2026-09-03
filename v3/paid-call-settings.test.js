@@ -742,6 +742,56 @@ test('renders the active service and prerequisite state from canonical GET', asy
   assert.ok(result.dom.prerequisites.every((item) => item.getAttribute('data-ready') === 'true'))
 })
 
+// A rate stored before the whole-dollar contract narrowed is real member data this
+// browser must not repair. It is also not bookable, so the card must say exactly
+// that and name the stored amount rather than reporting "on and bookable" or
+// leaving an apparently enabled card reading "Not set".
+for (const [label, priceCents, formatted] of [
+  ['above the $1,000 maximum', 250000, '$2,500.00'],
+  ['carrying cents', 42550, '$425.50'],
+]) {
+  test(`an active canonical rate ${label} renders a non-bookable correction-required card`, async () => {
+    const stale = service({ price_cents: priceCents })
+    const result = load({ cardMode: true, initial: canonical({
+      services: [stale],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }) })
+    await settle()
+
+    assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+    assert.equal(result.dom.root.getAttribute('data-paid-call-rate-state'), 'correction-required')
+    assert.equal(
+      result.dom.statusOutput.textContent,
+      'Paid calls are not bookable: update this service to a whole-dollar rate from $1 to $1,000.',
+    )
+    assert.equal(result.dom.priceOutput.textContent, formatted)
+    assert.deepEqual(
+      result.calls.map(({ path, method }) => ({ path, method })),
+      [{ path: '/starter/paid-call-settings/get/v3', method: 'GET' }],
+      'the canonical value is preserved until the member submits a valid replacement',
+    )
+    assert.ok(
+      result.events.some(
+        (event) => event.type === 'starterPaidCallSettingsChanged' && event.detail.bookable === false,
+      ),
+    )
+  })
+}
+
+test('an in-contract active canonical rate still reports on and bookable', async () => {
+  const active = service({ price_cents: 35000 })
+  const result = load({ cardMode: true, initial: canonical({
+    services: [active],
+    readiness: { paid_call_enabled: true, bookable: true },
+  }) })
+  await settle()
+
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-rate-state'), '')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
+  assert.equal(result.dom.priceOutput.textContent, '$350.00')
+})
+
 test('the native Paid card binds without generated IDs and upgrades a legacy duration to fixed 60', async () => {
   const legacy = service({ duration: 15, price_cents: 500, revision: 1 })
   const result = load({
@@ -1708,6 +1758,8 @@ test('the Paid card price output renders the grouped maximum and rejects out-of-
   assert.equal(grouped.dom.onOutput.style.display, '')
   assert.equal(grouped.dom.offOutput.style.display, 'none')
 
+  // A stored rate the contract rejects is still the member's real value: the card
+  // names it beside the correction-required state instead of reading as unset.
   const legacyCents = load({
     cardMode: true,
     initial: canonical({
@@ -1716,7 +1768,9 @@ test('the Paid card price output renders the grouped maximum and rejects out-of-
     }),
   })
   await settle()
-  assert.equal(legacyCents.dom.priceOutput.textContent, 'Not set')
+  assert.equal(legacyCents.dom.priceOutput.textContent, '$10.50')
+  assert.equal(legacyCents.dom.root.getAttribute('data-paid-call-rate-state'), 'correction-required')
+  assert.equal(legacyCents.dom.root.getAttribute('data-paid-call-bookable'), 'false')
 
   const off = load({ cardMode: true, initial: canonical() })
   await settle()

@@ -207,10 +207,19 @@ function decorateProfileFeedback(modalName, receipt) {
 	return receipt;
 }
 
+// The feedback modals are shared, so a message written for one reveal must never
+// still be on screen for the next. The authored copy is memoized the first time a
+// modal is painted and restored whenever a reveal supplies no message of its own.
+const authoredProfileFeedbackCopy = new Map();
+
 function setProfileFeedbackMessage(modalName, message) {
 	const target = qs(`[data-modal-target="${modalName}"]`);
 	const messageElement = target ? qs('p', target) : null;
-	if (messageElement && message) messageElement.textContent = message;
+	if (!messageElement) return;
+	if (!authoredProfileFeedbackCopy.has(modalName)) {
+		authoredProfileFeedbackCopy.set(modalName, messageElement.textContent);
+	}
+	messageElement.textContent = message || authoredProfileFeedbackCopy.get(modalName);
 }
 
 function configureCanonicalCallSettings() {
@@ -244,7 +253,8 @@ function configureCanonicalCallSettings() {
 	step.appendChild(notice);
 }
 
-function openProfileFeedback(modalName, trigger) {
+function openProfileFeedback(modalName, trigger, message) {
+	setProfileFeedbackMessage(modalName, message);
 	const modalApi = window.lumos?.modal;
 	if (typeof modalApi?.open === 'function') {
 		modalApi.open(modalName);
@@ -310,11 +320,6 @@ const PRICE_CONTRACTS = Object.freeze({
 	Services: Object.freeze({ min: 1, max: 50000, label: 'service price' }),
 });
 
-function isCompatibilityEmptyRate(value) {
-	const raw = String(value ?? '').trim();
-	return raw === '' || /^0+$/.test(raw);
-}
-
 function rateInputContract(input) {
 	const name = String(input?.getAttribute?.('name') || '');
 	if (name === 'rate') return PRICE_CONTRACTS.Hourly_Rate;
@@ -332,8 +337,12 @@ function applyRateInputContract(input, contract) {
 	input.setAttribute('max', String(contract.max));
 }
 
-// The published shared foundation rewrites whole dollars to two decimals on
-// blur. This page owns its rate inputs so authored integer text remains intact.
+// The published shared foundation rewrites every authored rate through
+// parseFloat().toFixed(2) on blur, which turns 125 into 125.00 and leaves no
+// value a whole-dollar contract can accept. This page therefore owns the
+// rate-input contract for the prices it validates: claiming each control keeps
+// that formatter off them, and owning the page global keeps the same contract on
+// the service rows other page scripts clone.
 function formatRateInputs(wrapper = null) {
 	qsa('[data-element="rate"]', wrapper).forEach((input) => {
 		input.classList?.add?.('initialized');
@@ -670,11 +679,16 @@ onDomReady(function () {
 			});
 		}
 
-		// Optional or profile-inapplicable fields round-trip the zero sentinel that
-		// this writer persists for an authored blank. Applicable fields stay strict.
-		function wholeDollar(value, contract, { optional = false } = {}) {
+		// Wherever a blank is the compatibility-empty state, the canonical zero this
+		// same page persists for that field is that same state rather than an authored
+		// price. Otherwise the rate it wrote itself blocks every later save on reload.
+		function compatibilityEmpty(raw, allowBlank) {
+			return Boolean(allowBlank) && (raw === '' || /^0+$/.test(raw));
+		}
+
+		function wholeDollar(value, contract, { allowBlank = false } = {}) {
 			const raw = String(value ?? '').trim();
-			if (optional && isCompatibilityEmptyRate(raw)) return { valid: true, value: null };
+			if (compatibilityEmpty(raw, allowBlank)) return { valid: true, value: null };
 			if (!raw) return { valid: false, code: 'PRICE_REQUIRED' };
 			if (!/^[0-9]+$/.test(raw)) return { valid: false, code: 'PRICE_NOT_INTEGER' };
 			const number = Number(raw);
@@ -691,6 +705,13 @@ onDomReady(function () {
 			return String(service?.name ?? '').trim();
 		}
 
+		// Clearing the price is the only remove gesture these forms author, so an empty
+		// price empties the slot instead of blocking the step on a service the member is
+		// deleting. A non-blank price is authored and stays strict.
+		function servicePriceAuthored(service) {
+			return String(service?.price ?? '').trim() !== '';
+		}
+
 		// Services live in hidden JSON capture inputs, so a price failure there cannot
 		// surface through native constraint validation. Those failures, and any failure
 		// whose control is absent, own the authored error modal instead, the same way
@@ -699,13 +720,26 @@ onDomReady(function () {
 			const message = failure.message;
 			failure.field?.setCustomValidity?.(message);
 			if (failure.mirror || !failure.field) {
-				setProfileFeedbackMessage('edit-form-error', message);
-				openProfileFeedback('edit-form-error', openErrorModal);
+				openProfileFeedback('edit-form-error', openErrorModal, message);
 				return message;
 			}
 			failure.field?.focus?.();
 			failure.field?.reportValidity?.();
 			return message;
+		}
+
+		// A reported price failure leaves a custom validity message on its control, and
+		// native validation runs before the price contract can revalidate. Without this
+		// reset the next save reports the stale message and returns, so a corrected
+		// whole-dollar value could never be saved without a full page reload.
+		function clearStepSixPriceValidity() {
+			const step = stepElement(6);
+			[qs('[name="rate"]', step), qs('[name="rate-retainer"]', step)].forEach((field) => {
+				field?.setCustomValidity?.('');
+			});
+			['service', 'service-2', 'service-3'].forEach((id) => {
+				qs(`#${id}`, form)?.setCustomValidity?.('');
+			});
 		}
 
 		function validateStepSixPrices(payload, services) {
@@ -714,7 +748,7 @@ onDomReady(function () {
 			let hourly = { valid: true, value: null };
 			if (Object.prototype.hasOwnProperty.call(payload, 'Hourly_Rate')) {
 				hourly = wholeDollar(payload.Hourly_Rate, PRICE_CONTRACTS.Hourly_Rate, {
-					optional: hourlyField?.required === false,
+					allowBlank: hourlyField?.required === false,
 				});
 				if (!hourly.valid) {
 					return { ...hourly, field: hourlyField, message: priceMessage(PRICE_CONTRACTS.Hourly_Rate) };
@@ -741,7 +775,7 @@ onDomReady(function () {
 			}
 
 			for (const [slot, service] of Object.entries(services)) {
-				if (!service || (!serviceName(service) && !String(service.price ?? '').trim())) continue;
+				if (!servicePriceAuthored(service)) continue;
 				const serviceField = qs(`#${slot === 'service-1' ? 'service' : slot}`, form);
 				if (!serviceName(service)) {
 					return {
@@ -784,6 +818,7 @@ onDomReady(function () {
 					let saveToken = null;
 					let canonicalSaveAccepted = false;
 					try {
+						if (stepIndex === 6) clearStepSixPriceValidity();
 						const validation = validateOwnedStep(stepIndex, { report: true });
 						if (!validation.valid) {
 							await workflowDiagnosticsReady;
@@ -880,9 +915,9 @@ onDomReady(function () {
 
 				if (Object.prototype.hasOwnProperty.call(payload, 'Services')) {
 					payload.Services = JSON.stringify({
-						"service-1": serviceName(service1) ? service1 : null,
-						"service-2": serviceName(service2) ? service2 : null,
-						"service-3": serviceName(service3) ? service3 : null,
+						"service-1": servicePriceAuthored(service1) ? service1 : null,
+						"service-2": servicePriceAuthored(service2) ? service2 : null,
+						"service-3": servicePriceAuthored(service3) ? service3 : null,
 					});
 				}
 			}
@@ -1037,14 +1072,14 @@ onDomReady(function () {
 					resource_id: result?.id || result?.profile_id || window.activeProfile?.id || '',
 					projection_pending: result?.projection_pending === true,
 				});
-				setProfileFeedbackMessage(
+				decorateProfileFeedback('edit-form-success', diagnostic);
+				openProfileFeedback(
 					'edit-form-success',
+					openSuccessModal,
 					result?.projection_pending === true
 						? 'Your profile was saved. Public profile changes can take a moment to appear.'
 						: 'Your profile was saved.',
 				);
-				decorateProfileFeedback('edit-form-success', diagnostic);
-				openProfileFeedback('edit-form-success', openSuccessModal);
 			} catch (error) {
 				const authChanged = error?.code === 'MEMBER_SCOPE_CHANGED';
 				diagnostic = recordProfileDiagnostic(diagnostic, {
@@ -1081,7 +1116,7 @@ onDomReady(function () {
 
 			OPTIONAL_CANONICAL_RATES.forEach(({ field, isOptional }) => {
 				if (!Object.prototype.hasOwnProperty.call(payload, field)) return;
-				if (!isCompatibilityEmptyRate(payload[field])) return;
+				if (!compatibilityEmpty(String(payload[field] ?? '').trim(), true)) return;
 				if (!isOptional(payload, step)) return;
 
 				payload[field] = 0;

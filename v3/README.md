@@ -2696,6 +2696,14 @@ Designer follow-up):
 - no `availability-popup-close="pre-redirect"` variant exists (both close
   controls are plain), so the legacy manager-restore close branch is
   currently dead but harmless.
+- `config-request-error` carries no `[error-text-element]`, so the rate-specific
+  paid-call remediation copy a blocked calendar transition reports has nowhere
+  to render on that page and the step keeps its authored generic copy. The
+  non-modal section already authors that element in its shared notification
+  modal and shows the message there. Whenever that element is authored, every
+  path that reveals the error step restores its authored copy first, so a
+  blocked transition's remediation message can never still be on screen for the
+  next, unrelated failure; only a rate-aware caller replaces it.
 
 Grant state (`nylas_grant_id`/`email`/`calendar_id`) is sourced only from the
 canonical scheduling row via an authenticated `get_by_memberstack` read at
