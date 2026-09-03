@@ -126,12 +126,17 @@ steps cannot arm the warning.
 
 After validation, the main writer calls `beginSave(stepIndex)` before its first async
 save stage and passes the returned revision token to
-`finishSave(stepIndex, saved, token)` after the operation settles. Only an explicit
-canonical `saved: true` response clears edits included when that save began. A failed
-request or a newer edit stays dirty, and an active request remains protected. The
-Companies and Work Highlights controllers use the same contract for steps 3 and 4
-and mark their draft-queue mutations directly. Saving one section never clears
-unsaved work in another section.
+`finishSave(stepIndex, saved, token)` after the operation settles. Once the request
+payload is complete, `sealSave(token)` moves the accepted revision boundary to that
+snapshot. Only an explicit canonical `saved: true` response clears edits included in
+the snapshot. A failed request or an edit made after the snapshot stays dirty, and an
+active request remains protected.
+
+The Companies and Work Highlights controllers use the same step-scoped contract for
+steps 3 and 4 and mark their draft-queue mutations directly. They accept their own
+revision after all snapshotted canonical mutations succeed, before the follow-up list
+refresh, and remove only the snapshotted Work Highlight drafts. Saving one section
+never clears unsaved work in another section.
 
 The `beforeunload` handler prevents navigation only while at least one step is dirty
 or saving. An unchanged page and a fully accepted save navigate without a false

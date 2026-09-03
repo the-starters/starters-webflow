@@ -301,7 +301,7 @@ for (const [label, file] of [
   })
 }
 
-function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], initialCompanies = [] } = {}) {
+function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], companyGetStatuses = [], initialCompanies = [] } = {}) {
   let readyPromise
   let baselineTimer
   const requests = []
@@ -419,6 +419,16 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
           return { ok: true, status, json: async () => company }
         }
         return { ok: false, status, json: async () => ({ message: 'Company creation failed' }) }
+      }
+      if (url.includes('/companies?member_id=')) {
+        const status = companyGetStatuses.shift() || 200
+        return {
+          ok: status >= 200 && status < 300,
+          status,
+          json: async () => status >= 200 && status < 300
+            ? { companies: canonicalCompanies, starter_id: 'starter-1' }
+            : { message: 'Company refresh failed' },
+        }
       }
       return { ok: true, json: async () => ({ companies: canonicalCompanies, starter_id: 'starter-1' }) }
     },
@@ -605,6 +615,22 @@ test('Edit Profile refreshes committed creates after a later create fails', asyn
   await harness.submitAll()
   assert.equal(harness.modalCounts.success, 1)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 3)
+})
+
+test('Edit Profile clears its accepted Company revision when the follow-up refresh fails', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    deferredWrites: true,
+    companyCreateStatuses: [200],
+    companyGetStatuses: [200, 200, 500],
+  })
+  await harness.start()
+  harness.prepareAdd()
+  await harness.queueAdd()
+  await harness.submitAll()
+
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
+  assert.deepEqual(harness.dirtyStateCalls, [['dirty', 3], ['begin', 3], ['finish', 3, true]])
 })
 
 test('Edit Profile atomically pairs a replacement create with its pending deletion at the three-company limit', async () => {
