@@ -661,6 +661,7 @@ for (const [label, file, deferredWrites] of [
     assert.equal(updateRequest.url.endsWith('/company-7'), true)
     assert.deepEqual(JSON.parse(updateRequest.options.body), {
       ...expectedSelection,
+      ...(label === 'Build Profile' ? { defer_projection: true } : {}),
       job_title: 'Lead Engineer',
       start_date: 'Jan 2025',
       end_date: 'Present',
@@ -733,3 +734,25 @@ for (const [label, file, deferredWrites] of [
     assert.doesNotMatch(payload.company_logo_url, /company-placeholder/)
   })
 }
+
+test('Build Profile defers projection when deleting Company experience', async () => {
+  const file = path.join(__dirname, '../build-profile/company-experience-crud.js')
+  const company = {
+    id: 7,
+    company_name: 'QA Wolf',
+    company_domain: 'qawolf.com',
+    company_entity_id: 73,
+    company_source: 'platform',
+    job_title: 'Engineer',
+    start_date: 'Jan 2025',
+    end_date: 'Aug 2026',
+    current_work: false,
+  }
+  const harness = createCrudHarness(file, { deferredWrites: false, initialCompanies: [company] })
+  await harness.start()
+  await harness.queueDelete(company)
+
+  const deleteRequest = harness.requests.find(({ options }) => options.method === 'DELETE')
+  assert.equal(deleteRequest.url.endsWith('/7'), true)
+  assert.deepEqual(JSON.parse(deleteRequest.options.body), { defer_projection: true })
+})

@@ -725,6 +725,7 @@ function starterProfileCompanyMonthYearLabel(value) {
           headers: {
             'Content-Type': 'application/json',
           },
+          body: JSON.stringify({ defer_projection: true }),
         });
         const diagnostics = window.StartersNativeFormDiagnostics;
         const response = await (diagnostics
@@ -1015,6 +1016,7 @@ function starterProfileCompanyMonthYearLabel(value) {
 
           const payload = {
             freelancers_id: starter_xano_id,
+            defer_projection: true,
             company_name: getValue(editCompanyInput),
             job_title: getValue(editJobTitleInput),
             start_date: serializeStarterProfileCompanyDate(editStartDateInput, editStartDateBaseline),
