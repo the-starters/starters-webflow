@@ -690,10 +690,15 @@
     const avails = availability.items
     for (const id in avails) {
       if (!Object.prototype.hasOwnProperty.call(avails, id)) continue
+      const avail = avails[id]
+      // `general` is retained canonically when overrides cover every base day
+      // so an override removal can restore its original schedule. Nylas open
+      // hours cannot contain an empty window, so omit only that special item.
+      if (id === 'general' && avail.days.length === 0) continue
       availabilityArray.push({
-        days: avails[id].days,
-        start: avails[id].start,
-        end: avails[id].end,
+        days: avail.days,
+        start: avail.start,
+        end: avail.end,
       })
     }
     return availabilityArray
@@ -2160,6 +2165,8 @@
 
     const availId = form.dataset.availabilityId || id || 'general'
     const avail = { days: selectedDays, start: startTime, end: endTime }
+    const previousAvailability = JSON.parse(JSON.stringify(availability))
+    let canonicalSaved = false
 
     setRequestBusy(true)
     try {
@@ -2177,6 +2184,7 @@
 
       availability.items[availId] = avail
       await updateAvail()
+      canonicalSaved = true
 
       if (grantId) {
         const updated = await updateConfigs()
@@ -2194,6 +2202,11 @@
       console.log('[scheduling-section] availability saved', { id: availId, avail: avail })
       openNotification('availability-saved')
     } catch (error) {
+      if (!canonicalSaved) {
+        availability = previousAvailability
+        window.STARTER_AVAILABILITY = previousAvailability
+        renderAvailabilityItems()
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] availability save failed:', error && error.message)
       showNotificationError(ERROR_TEXT_ITEM_SAVE)

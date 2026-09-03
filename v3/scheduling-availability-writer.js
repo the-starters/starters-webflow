@@ -643,10 +643,12 @@
     const avails = availability.items
     for (const id in avails) {
       if (!Object.prototype.hasOwnProperty.call(avails, id)) continue
+      const avail = avails[id]
+      if (id === 'general' && avail.days.length === 0) continue
       availabilityArray.push({
-        days: avails[id].days,
-        start: avails[id].start,
-        end: avails[id].end,
+        days: avail.days,
+        start: avail.start,
+        end: avail.end,
       })
     }
     return availabilityArray
@@ -1240,6 +1242,8 @@
 
     const step = form.closest('[availability-step]')
     setLoader(true, step)
+    const previousAvailability = JSON.parse(JSON.stringify(availability))
+    let canonicalSaved = false
 
     try {
       const availId = form.dataset.availabilityId || 'general'
@@ -1259,6 +1263,7 @@
 
       availability.items[availId] = avail
       await updateAvail()
+      canonicalSaved = true
 
       if (initialState) {
         await refreshCanonicalConnectionState()
@@ -1310,6 +1315,11 @@
       switchStep('default')
       setLoader(false, step)
     } catch (error) {
+      if (!canonicalSaved) {
+        availability = previousAvailability
+        window.STARTER_AVAILABILITY = previousAvailability
+        renderAvail()
+      }
       publishCalendarConnectionError()
       setLoader(false, step)
       switchStep('config-request-error')

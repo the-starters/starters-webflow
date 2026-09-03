@@ -4,6 +4,7 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./scheduling-availability-writer.js'), 'utf8')
+const sectionSource = fs.readFileSync(require.resolve('./scheduling-availability-section.js'), 'utf8')
 const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 
 /* ------------------------------------------------------------------ */
@@ -569,6 +570,14 @@ const TZ_CACHED = { 'starter-timezone:member-a': 'Asia/Manila' }
 /* ------------------------------------------------------------------ */
 /* Tests                                                               */
 /* ------------------------------------------------------------------ */
+
+test('both availability controllers omit only an empty general provider window and restore failed canonical saves', () => {
+  for (const controller of [source, sectionSource]) {
+    assert.match(controller, /id === 'general' && avail\.days\.length === 0/)
+    assert.match(controller, /const previousAvailability = JSON\.parse\(JSON\.stringify\(availability\)\)/)
+    assert.match(controller, /if \(!canonicalSaved\)/)
+  }
+})
 
 test('does not install on an unapproved production path', () => {
   const result = loadWriter({
