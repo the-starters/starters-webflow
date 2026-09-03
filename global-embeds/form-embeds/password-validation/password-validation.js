@@ -289,6 +289,7 @@
       // Only a real control has a disabled property worth setting; writing one
       // onto a div or an anchor invents an attribute the browser ignores.
       native: native,
+      adopted: false,
       theme: readAuthoredTheme(themeEl)
     };
   }
@@ -379,8 +380,9 @@
   // Mirrors readAuthoredTheme's handling of a CTA authored already-grey.
   function adoptAuthoredState(button) {
     if (peerHeld(button.root)) return;
-    var nodes = button.controls.slice();
-    if (button.themeEl && nodes.indexOf(button.themeEl) === -1) nodes.push(button.themeEl);
+    // The same nodes foreignHold reads and setDisabled writes: a node we can
+    // never claim is a hold we can never release.
+    var nodes = buttonNodes(button);
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i];
       if (peerHeld(el)) continue;
@@ -392,36 +394,39 @@
     }
   }
 
+  // Claiming state only earns its keep where a render can hand it back. A
+  // bridge with no gate never re-opens the CTA, so what it found there stays
+  // foreign and the click stands down instead of overriding it. Once per
+  // button, so a later write by somebody else is never claimed.
+  function adoptWhenGated(bridge) {
+    if (!bridge.gate || !bridge.button || bridge.button.adopted) return;
+    bridge.button.adopted = true;
+    adoptAuthoredState(bridge.button);
+  }
+
   function setDisabled(button, isDisabled) {
     if (!button) return;
     var themeEl = button.themeEl;
-    var controls = button.controls;
+    // Write over exactly what foreignHold reads, so no node can hold a state
+    // the gate is unable to hand back.
+    var nodes = buttonNodes(button);
     var i;
-    var el;
 
     if (isDisabled) {
       button.root.classList.add('disabled');
-      if (themeEl) {
-        themeEl.setAttribute(THEME_ATTR, DISABLED_THEME);
-        if (controls.indexOf(themeEl) === -1) gateAria(themeEl);
-      }
-      for (i = 0; i < controls.length; i++) {
-        el = controls[i];
-        gateAria(el);
-        gateNative(el);
+      if (themeEl) themeEl.setAttribute(THEME_ATTR, DISABLED_THEME);
+      for (i = 0; i < nodes.length; i++) {
+        gateAria(nodes[i]);
+        gateNative(nodes[i]);
       }
     } else {
       // Release only what we own, and only look open when nobody else holds it.
       var held = foreignHold(button);
       if (!held) button.root.classList.remove('disabled');
-      if (themeEl) {
-        if (!held && button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
-        if (controls.indexOf(themeEl) === -1) ungateAria(themeEl);
-      }
-      for (i = 0; i < controls.length; i++) {
-        el = controls[i];
-        ungateAria(el);
-        ungateNative(el);
+      if (themeEl && !held && button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
+      for (i = 0; i < nodes.length; i++) {
+        ungateAria(nodes[i]);
+        ungateNative(nodes[i]);
       }
     }
   }
@@ -652,12 +657,12 @@
           if (event.preventDefault) event.preventDefault();
           return;
         }
-        // Foreign state survives our render; only our own marks are ever cleared.
+        // Foreign state survives our render; only our own marks are ever
+        // cleared. Read over the same nodes the render does, so a hold that
+        // greys the CTA can never leave the bridge submitting anyway.
         var root = bridge.button.root;
-        var refused = event.defaultPrevented ||
-          peerHeld(root) || peerHeld(control) ||
-          foreignAria(root) || foreignAria(control) ||
-          foreignNative(control);
+        var refused = event.defaultPrevented || foreignHold(bridge.button) ||
+          peerHeld(control) || foreignAria(control) || foreignNative(control);
         if (refused) {
           // A silently dead CTA is worth naming on staging.
           devWarn('click refused by another script\'s disabled state on the CTA', root);
@@ -677,7 +682,6 @@
       var root = form.querySelector(SUBMIT_BUTTON_SELECTOR);
       if (root) {
         bridge.button = resolveButton(root, form);
-        adoptAuthoredState(bridge.button);
         root.addEventListener('click', bridge.onClick);
       }
     }
@@ -881,6 +885,8 @@
       return gate;
     }
     bridge.gate = render;
+    // Now that a render can release it, state already on the CTA is ours.
+    adoptWhenGated(bridge);
 
     // Autofill and password-manager paths are inconsistent: some fire `input`,
     // some only `change`, some nothing until the field is left. Binding all
@@ -997,6 +1003,7 @@
         // A marker that arrived or was swapped after wiring is picked up here;
         // the data-ms-form tail below never sees a form without that attribute.
         var adopted = ensureBridge(form);
+        adoptWhenGated(adopted);
         if (adopted.gate) adopted.gate();
         continue;
       }
@@ -1023,6 +1030,7 @@
       var msForm = msForms[m];
       if (!msForm[BRIDGE_FLAG] && !msForm.querySelector(SUBMIT_BUTTON_SELECTOR)) continue;
       var bridged = ensureBridge(msForm);
+      adoptWhenGated(bridged);
       // A CTA that arrived after wiring greys now, not on the first keystroke.
       if (bridged.gate) bridged.gate();
     }
