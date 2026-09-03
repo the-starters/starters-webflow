@@ -120,9 +120,11 @@ and submit a stale contact value the member cannot see.
 ### Unsaved-change warning
 
 `canonical-profile-loader.js` owns one page-level dirty-state controller. Canonical
-hydration does not make the form dirty. Native `input` and `change` events mark only
-their containing `[data-form="step"][data-index]` section. Inputs outside the profile
-steps cannot arm the warning.
+hydration does not make the form dirty. `input` and `change` events, including
+synthetic events emitted by user-driven custom controls, mark only their containing
+`[data-form="step"][data-index]` section. Controller initialization and hydration
+dispatches must run through `runHydrationSync()` so those synthetic events stay
+clean. Inputs outside the profile steps cannot arm the warning.
 
 After validation, the main writer calls `beginSave(stepIndex)` before its first async
 save stage and passes the returned revision token to
@@ -134,9 +136,12 @@ active request remains protected.
 
 The Companies and Work Highlights controllers use the same step-scoped contract for
 steps 3 and 4 and mark their draft-queue mutations directly. They accept their own
-revision after all snapshotted canonical mutations succeed, before the follow-up list
-refresh, and remove only the snapshotted Work Highlight drafts. Saving one section
-never clears unsaved work in another section.
+revision after all canonical mutations for that submission succeed, before the
+follow-up list refresh. Work Highlights permit only one in-flight submit and remove
+only the exact snapshotted drafts, leaving later drafts queued. Discarding a local
+Company or Work Highlight draft removes only the revision that draft owns; it returns
+the step to clean only when no other pending change remains. Saving one section never
+clears unsaved work in another section.
 
 The `beforeunload` handler prevents navigation only while at least one step is dirty
 or saving. An unchanged page and a fully accepted save navigate without a false
