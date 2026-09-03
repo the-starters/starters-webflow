@@ -441,6 +441,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     waitForMember(callback) { readyPromise = callback() },
     window: {
       __tsProfileDirtyState: {
+        markDirty(stepIndex) { dirtyStateCalls.push(['dirty', stepIndex]) },
         beginSave(stepIndex) { dirtyStateCalls.push(['begin', stepIndex]) },
         finishSave(stepIndex, saved) { dirtyStateCalls.push(['finish', stepIndex, saved]) },
       },
@@ -570,7 +571,7 @@ test('Edit Profile keeps pending work and shows an error when Also Worked With f
   assert.equal(harness.modalCounts.success, 0)
   assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 1)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 0)
-  assert.deepEqual(harness.dirtyStateCalls, [['begin', 3], ['finish', 3, false]])
+  assert.deepEqual(harness.dirtyStateCalls, [['dirty', 3], ['begin', 3], ['finish', 3, false]])
 
   await harness.submitAll()
   assert.equal(harness.modalCounts.error, 1)
@@ -578,7 +579,7 @@ test('Edit Profile keeps pending work and shows an error when Also Worked With f
   assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 2)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
   assert.deepEqual(harness.dirtyStateCalls, [
-    ['begin', 3], ['finish', 3, false],
+    ['dirty', 3], ['begin', 3], ['finish', 3, false],
     ['begin', 3], ['finish', 3, true],
   ])
 })
@@ -624,6 +625,7 @@ test('Edit Profile atomically pairs a replacement create with its pending deleti
   await harness.queueDelete(existingCompanies[2])
   harness.selectCustom(harness.companyInput)
   await harness.queueAdd()
+  assert.deepEqual(harness.dirtyStateCalls, [['dirty', 3], ['dirty', 3]])
   await harness.submitAll()
 
   const createRequests = harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST')

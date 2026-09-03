@@ -300,6 +300,7 @@ async function commitStarterEditPortfolioDrafts(options) {
 
       function queuePortfolioDeletion(portfolio) {
         if (!portfolio || !portfolio.id) return;
+        window.__tsProfileDirtyState?.markDirty?.(4);
 
         if (portfolio.is_draft) {
           if (portfolio.pending_type === 'update') {
@@ -959,6 +960,7 @@ async function commitStarterEditPortfolioDrafts(options) {
           const description = descInp ? descInp.value.trim() : '';
           if (!title) throw new Error('Please fill all required fields');
           if (selectedFiles.length === 0) throw new Error('Please upload at least one image');
+          window.__tsProfileDirtyState?.markDirty?.(4);
           pendingCreateDrafts.push(createCreateDraft());
           await renderPortfolios();
           resetCreateForm();
@@ -984,6 +986,7 @@ async function commitStarterEditPortfolioDrafts(options) {
 
           if (activePortfolio.pending_type === 'create') {
             const updatedDraft = updateCreateDraftFromModal();
+            window.__tsProfileDirtyState?.markDirty?.(4);
             pendingCreateDrafts = pendingCreateDrafts.map(function (draft) {
               return draft.id === updatedDraft.id ? updatedDraft : draft;
             });
@@ -992,6 +995,7 @@ async function commitStarterEditPortfolioDrafts(options) {
             return;
           }
 
+          window.__tsProfileDirtyState?.markDirty?.(4);
           pendingUpdateDrafts.set(String(activePortfolio.id), createUpdateDraft());
           closeModal();
           await renderPortfolios();
@@ -1144,14 +1148,14 @@ async function commitStarterEditPortfolioDrafts(options) {
         const finalSubmitButton = portfolioSubmit || editSubmit || createSubmit;
 
         if (!pendingCreateDrafts.length && !pendingUpdateDrafts.size && !pendingDeleteDraftIds.size) {
-          window.__tsProfileDirtyState?.finishSave(4, true);
           successController.showForSubmit(0);
           return;
         }
 
         let saved = false;
+        let saveToken = null;
         try {
-          window.__tsProfileDirtyState?.beginSave(4);
+          saveToken = window.__tsProfileDirtyState?.beginSave(4);
           setPortfolioSubmitLoading(finalSubmitButton, true);
 
           const createDrafts = pendingCreateDrafts.slice();
@@ -1172,7 +1176,7 @@ async function commitStarterEditPortfolioDrafts(options) {
           console.error(error);
           openNotifyModal(getErrorMessage(error, 'Portfolio save failed'));
         } finally {
-          window.__tsProfileDirtyState?.finishSave(4, saved);
+          window.__tsProfileDirtyState?.finishSave(4, saved, saveToken);
           setPortfolioSubmitLoading(finalSubmitButton, false);
           updatePortfolioSubmitState();
         }

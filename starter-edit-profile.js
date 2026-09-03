@@ -642,6 +642,9 @@ onDomReady(function () {
 				submitButton.addEventListener('click', async (event) => {
 					event.preventDefault();
 					const replayProof = stepIndex === 1 ? takePersonalDetailsReplay(form) : null;
+					let saveStarted = false;
+					let saveToken = null;
+					let canonicalSaveAccepted = false;
 					try {
 						const validation = validateOwnedStep(stepIndex, { report: true });
 						if (!validation.valid) {
@@ -655,8 +658,11 @@ onDomReady(function () {
 							return;
 						}
 
-						await submitStep(stepIndex, submitButton, replayProof);
+						saveToken = window.__tsProfileDirtyState?.beginSave(stepIndex);
+						saveStarted = true;
+						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof);
 					} finally {
+						if (saveStarted) window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted, saveToken);
 						rejectReplayProof(replayProof);
 					}
 				});
@@ -819,11 +825,9 @@ onDomReady(function () {
 				return;
 			}
 
-			const profileDirtyState = window.__tsProfileDirtyState;
 			let canonicalSaveAccepted = false;
 			try {
 				acceptReplayProof(replayProof);
-				profileDirtyState?.beginSave(stepIndex);
 				requestStarted = true;
 				const response = await fetch(`${PATCH_ENDPOINT}${memberScope.member.id}`, {
 					method: 'PATCH',
@@ -902,9 +906,9 @@ onDomReady(function () {
 					error_code: diagnostic?.error_code || 'WORKFLOW_ERROR',
 				});
 			} finally {
-				window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted);
 				setSubmitLoading(submitButton, false);
 			}
+			return canonicalSaveAccepted;
 		}
 
 		// Optional rate controls clear their visible values when their owning toggle is

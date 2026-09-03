@@ -1046,6 +1046,7 @@ function starterProfileCompanyMonthYearLabel(value) {
             }
 
             function queueCompanyDeletion(id) {
+                window.__tsProfileDirtyState?.markDirty?.(3);
                 if (isDraftCompanyId(id)) {
                     removeCreateDraft(id);
                     return;
@@ -1197,12 +1198,14 @@ function starterProfileCompanyMonthYearLabel(value) {
                         textEl.textContent = 'Saving...';
 
                         if (isDraftCompanyId(companyId)) {
+                            window.__tsProfileDirtyState?.markDirty?.(3);
                             pendingCreateDrafts = pendingCreateDrafts.map(function (draft) {
                                 return draft.id === companyId
                                     ? { ...draft, ...payload, id: companyId, type: 'create', is_draft: true, pending_type: 'create' }
                                     : draft;
                             });
                         } else {
+                            window.__tsProfileDirtyState?.markDirty?.(3);
                             pendingUpdateDrafts.set(String(companyId), payload);
                         }
                         await renderCompanies();
@@ -1300,6 +1303,7 @@ function starterProfileCompanyMonthYearLabel(value) {
                         clearAddCompanyFeedbackTimeout();
                         updateAddBtnState();
 
+                        window.__tsProfileDirtyState?.markDirty?.(3);
                         pendingCreateDrafts.push({
                             id: `draft_${Date.now()}_${Math.random()}`,
                             type: 'create',
@@ -1345,8 +1349,9 @@ function starterProfileCompanyMonthYearLabel(value) {
                 if (isSubmitting) return;
 
                 let saved = false;
+                let saveToken = null;
                 try {
-                    window.__tsProfileDirtyState?.beginSave(3);
+                    saveToken = window.__tsProfileDirtyState?.beginSave(3);
                     isSubmitting = true;
                     submitAction = 'submitting';
                     updateAddBtnState();
@@ -1387,7 +1392,7 @@ function starterProfileCompanyMonthYearLabel(value) {
                     await renderCompanies();
                     if (editFormErrorTrigger) editFormErrorTrigger.dispatchEvent(new Event('click', { bubbles: true }));
                 } finally {
-                    window.__tsProfileDirtyState?.finishSave(3, saved);
+                    window.__tsProfileDirtyState?.finishSave(3, saved, saveToken);
                     isSubmitting = false;
                     submitAction = '';
 

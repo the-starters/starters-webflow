@@ -59,10 +59,10 @@ function beforeUnload(window) {
   document.dispatch('change', { target: field(1) })
   assert.equal(beforeUnload(window).prevented, true, 'a real edit warns before navigation')
 
-  state.beginSave(1)
+  const save = state.beginSave(1)
   assert.equal(beforeUnload(window).prevented, true, 'an in-flight save remains protected')
 
-  state.finishSave(1, true)
+  state.finishSave(1, true, save)
   assert.equal(beforeUnload(window).prevented, false, 'an accepted save clears its step')
 }
 
@@ -70,12 +70,12 @@ function beforeUnload(window) {
   const { window, document, state } = loadDirtyState()
   state.finishHydration()
   document.dispatch('input', { target: field(2) })
-  state.beginSave(2)
-  state.finishSave(2, false)
+  const failedSave = state.beginSave(2)
+  state.finishSave(2, false, failedSave)
   assert.equal(beforeUnload(window).prevented, true, 'a failed save keeps the warning')
 
-  state.beginSave(2)
-  state.finishSave(2, true)
+  const retrySave = state.beginSave(2)
+  state.finishSave(2, true, retrySave)
   assert.equal(beforeUnload(window).prevented, false, 'a repeated successful save clears it')
 }
 
@@ -84,12 +84,22 @@ function beforeUnload(window) {
   state.finishHydration()
   document.dispatch('input', { target: field(1) })
   document.dispatch('input', { target: field(2) })
-  state.beginSave(1)
-  state.finishSave(1, true)
+  const firstSave = state.beginSave(1)
+  state.finishSave(1, true, firstSave)
   assert.equal(beforeUnload(window).prevented, true, 'saving one step preserves another dirty step')
-  state.beginSave(2)
-  state.finishSave(2, true)
+  const secondSave = state.beginSave(2)
+  state.finishSave(2, true, secondSave)
   assert.equal(beforeUnload(window).prevented, false)
+}
+
+{
+  const { window, document, state } = loadDirtyState()
+  state.finishHydration()
+  document.dispatch('input', { target: field(1) })
+  const save = state.beginSave(1)
+  document.dispatch('input', { target: field(1) })
+  state.finishSave(1, true, save)
+  assert.equal(beforeUnload(window).prevented, true, 'an accepted save preserves edits made after it began')
 }
 
 console.log('Edit Profile dirty-state behavior passed')

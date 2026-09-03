@@ -7,7 +7,8 @@
     profileDirtyState = (function () {
         var hydrating = true;
         var dirtySteps = new Set();
-        var savingSteps = new Set();
+        var dirtyRevisions = new Map();
+        var savingSteps = new Map();
 
         function stepKey(value) {
             var normalized = String(value ?? '').trim();
@@ -29,17 +30,31 @@
             finishHydration: function () {
                 hydrating = false;
                 dirtySteps.clear();
+                dirtyRevisions.clear();
             },
             markDirty: function (stepIndex) {
-                if (!hydrating) dirtySteps.add(stepKey(stepIndex));
+                if (hydrating) return;
+                var key = stepKey(stepIndex);
+                dirtyRevisions.set(key, (dirtyRevisions.get(key) || 0) + 1);
+                dirtySteps.add(key);
             },
             beginSave: function (stepIndex) {
-                savingSteps.add(stepKey(stepIndex));
-            },
-            finishSave: function (stepIndex, saved) {
                 var key = stepKey(stepIndex);
-                savingSteps.delete(key);
-                if (saved) dirtySteps.delete(key);
+                var token = { key: key, revision: dirtyRevisions.get(key) || 0 };
+                var saves = savingSteps.get(key) || new Set();
+                saves.add(token);
+                savingSteps.set(key, saves);
+                return token;
+            },
+            finishSave: function (stepIndex, saved, token) {
+                var key = stepKey(stepIndex);
+                var saves = savingSteps.get(key);
+                var completedSave = token;
+                if (!completedSave && saves) completedSave = saves.values().next().value;
+                if (saves && completedSave) saves.delete(completedSave);
+                if (saves && !saves.size) savingSteps.delete(key);
+                var savedRevision = completedSave ? completedSave.revision : dirtyRevisions.get(key) || 0;
+                if (saved && (dirtyRevisions.get(key) || 0) === savedRevision) dirtySteps.delete(key);
                 else dirtySteps.add(key);
             },
             isDirty: isDirty,
