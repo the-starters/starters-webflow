@@ -2741,6 +2741,17 @@ row timezone is persisted through `starter/set_timezone/v3` only when the
 member submits an availability or calendar action. A member-scoped cached
 timezone can supply that value, but does not count as canonical persistence.
 
+Availability item persistence is identical in this writer and the non-modal
+section below. The canonical `general` item keeps its `defaultDays` and may
+legitimately have `days: []` while overrides cover every default day. Override
+edits and removals always recompute `general.days` as the default days not
+claimed by any current override, so moving or deleting an override restores its
+former day. The empty `general` item remains in the canonical Xano payload for
+that future restoration, but is omitted from Nylas
+`default_open_hours` because the provider cannot accept an empty window. If the
+canonical availability write fails, the controller restores the pre-write
+browser model and rendered cards and does not continue to provider updates.
+
 Paid-call rate: the availability controllers do not read `#price`, `data-rate`,
 or `paid_call_rate` in localStorage. They create only the free-call
 configuration. Availability edits send an availability-only update for every

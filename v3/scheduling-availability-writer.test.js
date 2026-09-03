@@ -811,6 +811,96 @@ test('form submit writes the authenticated member id and reaches the success ste
   assert.ok(result.events.some((e) => e.type === 'starterSchedulingWriteSuccess'))
 })
 
+test('editing an override restores its previous default day and omits an empty provider window', async () => {
+  const availability = {
+    items: {
+      general: { days: [2], start: '09:00', end: '17:00', defaultDays: [1, 2] },
+      'ov-1': { days: [1], start: '13:00', end: '15:00' },
+    },
+    manager: 'platform',
+  }
+  let canonicalAvailability = availability
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/update_availability/v3': (body) => {
+        canonicalAvailability = body.availability
+        return { status: 200, body: { id: 1 } }
+      },
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: canonicalAvailability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+    },
+  })
+  await settle()
+
+  const item = new El('div', { 'availability-item': '' })
+  item.dataset.id = 'ov-1'
+  const editBtn = new El('a', { 'availability-action-btn': 'availability-edit' })
+  item.appendChild(editBtn)
+  result.dom.root.appendChild(item)
+  result.clickAction(editBtn)
+  result.dom.fields.days.forEach((day) => { day.checked = false })
+  result.dom.fields.days[2].checked = true
+  result.dom.fields.start.value = '13:00'
+  result.dom.fields.end.value = '15:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  const update = result.calls.find((call) => call.path === '/starter/update_availability/v3')
+  assert.deepEqual(update.body.availability.items.general.days, [1])
+  assert.deepEqual(update.body.availability.items['ov-1'].days, [2])
+  const configUpdate = result.calls.find((call) => call.path === '/scheduler/configurations/update/v3')
+  const providerHours = configUpdate.body.in_availability.availability_rules.default_open_hours
+  assert.equal(providerHours.some((window) => window.days.length === 0), false)
+  assert.deepEqual(providerHours.map((window) => window.days), [[1], [2]])
+})
+
+test('failed canonical override save restores the mirrored model and cards', async () => {
+  const availability = {
+    items: {
+      general: { days: [2], start: '09:00', end: '17:00', defaultDays: [1, 2] },
+      'ov-1': { days: [1], start: '13:00', end: '15:00' },
+    },
+    manager: 'platform',
+  }
+  const expectedAvailability = JSON.parse(JSON.stringify(availability))
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/update_availability/v3': () => ({ status: 500, body: { message: 'rejected' } }),
+    },
+  })
+  await settle()
+
+  const item = new El('div', { 'availability-item': '' })
+  item.dataset.id = 'ov-1'
+  const editBtn = new El('a', { 'availability-action-btn': 'availability-edit' })
+  item.appendChild(editBtn)
+  result.dom.root.appendChild(item)
+  result.clickAction(editBtn)
+  result.dom.fields.days.forEach((day) => { day.checked = false })
+  result.dom.fields.days[2].checked = true
+  result.dom.fields.start.value = '13:00'
+  result.dom.fields.end.value = '15:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  assert.equal(JSON.stringify(result.window.STARTER_AVAILABILITY), JSON.stringify(expectedAvailability))
+  assert.deepEqual(result.dom.list.children.map((card) => card.dataset.id), ['general', 'ov-1'])
+  assert.equal(result.calls.some((call) => call.path === '/scheduler/configurations/update/v3'), false)
+})
+
 test('form submit accepts provider 2xx statuses for configuration updates', async () => {
   const result = loadWriter({
     storage: TZ_CACHED,
@@ -1675,6 +1765,33 @@ test('removing an override returns its days to the general schedule', async () =
   const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', configIndex + 1)
   assert.ok(updateIndex > -1 && configIndex > updateIndex)
   assert.ok(canonicalReadIndex > configIndex)
+})
+
+test('failed canonical removal restores the mirrored model and cards', async () => {
+  const availability = defaultAvailability()
+  availability.items.general.days = [1, 2]
+  availability.items['ov-1'] = { days: [3], start: '13:00', end: '15:00' }
+  const expectedAvailability = JSON.parse(JSON.stringify(availability))
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/update_availability/v3': () => ({ status: 500, body: { message: 'rejected' } }),
+    },
+  })
+  await settle()
+
+  const item = new El('div', { 'availability-item': '' })
+  item.dataset.id = 'ov-1'
+  const removeBtn = new El('a', { 'availability-action-btn': 'availability-remove' })
+  item.appendChild(removeBtn)
+  result.dom.root.appendChild(item)
+  result.clickAction(removeBtn)
+  await settle()
+
+  assert.equal(JSON.stringify(result.window.STARTER_AVAILABILITY), JSON.stringify(expectedAvailability))
+  assert.deepEqual(result.dom.list.children.map((card) => card.dataset.id), ['general', 'ov-1'])
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
 })
 
 test('rejects malformed canonical availability after a mutation', async () => {
