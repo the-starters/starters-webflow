@@ -879,6 +879,8 @@ function starterProfileCompanyMonthYearLabel(value) {
           }
         }
 
+        syncStarterProfileCompanyMonthRange(startDateInput, endDateInput, false);
+
         updateAddCompanyButtonState();
       }
 
@@ -999,6 +1001,7 @@ function starterProfileCompanyMonthYearLabel(value) {
           }
 
           setCheckboxState(editCurrentWorkCheckbox, false);
+          syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, false);
 
           editStartDateBaseline = null;
           editEndDateBaseline = null;

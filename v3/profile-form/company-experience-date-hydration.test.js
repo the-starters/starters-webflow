@@ -251,6 +251,12 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
 
   const elements = {
     companyList: new FakeElement(),
+    companyInput: new FakeElement(),
+    jobTitleInput: new FakeElement(),
+    startDateInput: new FakeElement(),
+    endDateInput: new FakeElement(),
+    currentWorkCheckbox: new FakeElement(),
+    addCompanyButton: new FakeElement(),
     editCompanyWrapper: new FakeElement(),
     editCompanyInput: new FakeElement(),
     editJobTitleInput: new FakeElement(),
@@ -259,6 +265,7 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     editCurrentWorkCheckbox: new FakeElement(),
     modalEdit: new FakeElement(),
     modalEditTrigger: new FakeElement(),
+    modalEditClose: new FakeElement(),
     saveCompanyEditButton: new FakeElement(),
     companySubmit: new FakeElement(),
     firstCompanyInput: new FakeElement(),
@@ -270,11 +277,21 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
 
   const startPicker = createPicker(elements.editStartDateInput, pickerReady)
   const endPicker = createPicker(elements.editEndDateInput, pickerReady)
+  const addStartPicker = createPicker(elements.startDateInput, pickerReady)
+  const addEndPicker = createPicker(elements.endDateInput, pickerReady)
   pickers.set(elements.editStartDateInput, startPicker)
   pickers.set(elements.editEndDateInput, endPicker)
+  pickers.set(elements.startDateInput, addStartPicker)
+  pickers.set(elements.endDateInput, addEndPicker)
 
   const bySelector = new Map([
     ['.company-list', elements.companyList],
+    ['#company-name', elements.companyInput],
+    ['#company-position', elements.jobTitleInput],
+    ['#company-start', elements.startDateInput],
+    ['#company-end', elements.endDateInput],
+    ['#company-current', elements.currentWorkCheckbox],
+    ['#add-company', elements.addCompanyButton],
     ['#first-company', elements.firstCompanyInput],
     ['#edit-company-wrapper', elements.editCompanyWrapper],
     ['#edit-company-name', elements.editCompanyInput],
@@ -296,7 +313,10 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     window: {},
     MEMBER: { id: 'member-1' },
     jQuery: createJQuery(pickers),
-    qs: (selector, scope) => (scope ? null : bySelector.get(selector) || null),
+    qs: (selector, scope) => {
+      if (scope === elements.modalEdit && selector === '[data-modal-close]') return elements.modalEditClose
+      return scope ? null : bySelector.get(selector) || null
+    },
     waitForMember: (callback) => {
       bootPromise = callback()
     },
@@ -361,6 +381,23 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     for (const handler of elements.companySubmit.handlersFor('click')) await handler(clickEvent)
   }
 
+  async function addCompany({ companyName, startDate, endDate }) {
+    elements.companyInput.value = companyName
+    elements.companyInput.dataset.selectedCompanyName = companyName
+    elements.companyInput.dataset.selectedCompanyDomain = `${companyName.toLowerCase()}.example`
+    elements.companyInput.dataset.selectedCompanyEntityId = '1'
+    elements.companyInput.dataset.selectedCompanySource = 'platform'
+    elements.jobTitleInput.value = 'Engineer'
+    elements.startDateInput.value = startDate
+    elements.endDateInput.value = endDate
+    elements.startDateInput.dispatchEvent({ type: 'input' })
+    elements.endDateInput.dispatchEvent({ type: 'input' })
+
+    const clickEvent = { type: 'click', preventDefault() {} }
+    for (const handler of elements.addCompanyButton.handlersFor('click')) await handler(clickEvent)
+    for (const handler of elements.companySubmit.handlersFor('click')) await handler(clickEvent)
+  }
+
   return {
     ...elements,
     startPicker,
@@ -370,6 +407,7 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     clobberOnModalOpen,
     openEditFor,
     saveEdit,
+    addCompany,
     ready: () => bootPromise,
     markPickersReady() {
       if (startPicker.input.type === 'month') startPicker.destroyed = true
@@ -382,6 +420,58 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
 }
 
 for (const controllerPath of controllerPaths) {
+  test(`${controllerPath} clears native bounds between consecutive additions`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    await app.addCompany({ companyName: 'Acme', startDate: '2024-01', endDate: '2024-12' })
+
+    assert.equal(app.startDateInput.value, '')
+    assert.equal(app.endDateInput.value, '')
+    assert.equal(app.startDateInput.getAttribute('max'), null)
+    assert.equal(app.endDateInput.getAttribute('min'), null)
+
+    await app.addCompany({ companyName: 'Globex', startDate: '2025-01', endDate: '2025-12' })
+
+    assert.equal(app.startDateInput.value, '')
+    assert.equal(app.endDateInput.value, '')
+    assert.equal(app.startDateInput.getAttribute('max'), null)
+    assert.equal(app.endDateInput.getAttribute('min'), null)
+  })
+
+  test(`${controllerPath} recomputes native bounds between edit operations`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    app.openEditFor({
+      id: 20,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '2024-01',
+      end_date: '2024-12',
+    })
+
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2024-01')
+    assert.equal(app.editStartDateInput.getAttribute('max'), '2024-12')
+
+    app.openEditFor({
+      id: 21,
+      company_name: 'Globex',
+      job_title: 'Designer',
+      start_date: '2025-03',
+      end_date: '2025-03',
+    })
+
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2025-03')
+    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-03')
+
+    await app.saveEdit()
+    app.clock.advance(1600)
+
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+  })
+
   test(`${controllerPath} restores the stored dates after the picker rewrites them on open`, async () => {
     const app = bootCompanyController(controllerPath)
     const drift = new Date(2026, 7, 29)

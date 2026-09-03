@@ -1046,6 +1046,8 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     }
                 }
 
+                syncStarterProfileCompanyMonthRange(startDateInput, endDateInput, false);
+
                 updateAddBtnState();
             }
 
@@ -1166,6 +1168,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     }
 
                     setCheckboxState(editCurrentWorkCheckbox, false);
+                    syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, false);
 
                     editStartDateBaseline = null;
                     editEndDateBaseline = null;
