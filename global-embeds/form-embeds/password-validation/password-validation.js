@@ -1,6 +1,6 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation
 //
-// @release v1.59.502
+// @release v1.59.506
 //
 // Password validation — configured entirely from wrapper attributes so a
 // Webflow component instance can pick its own rule set with no code changes.
@@ -41,7 +41,11 @@
 // gated only where a wrapper configures rules — a fail-open form still submits.
 // Disabling covers the wrap AND every overlay control inside it (native
 // `disabled` + aria-disabled), so the visible button can never stay live while
-// only the hidden one is gated.
+// only the hidden one is gated. Writes data-password-validation-aria /
+// -native on the CTA at runtime as ownership marks; never author them. Only
+// our own marks are ever cleared, so a peer's refusal — its aria-disabled, its
+// native disabled, or its own data-*-disabled marker — survives our renders,
+// keeps the CTA greyed, and stands the bridge down instead of submitting.
 //
 // Memberstack rejections after the click (duplicate email, 4xx/5xx, Turnstile,
 // network) used to be console-only. A submit that is not blocked arms a
@@ -67,7 +71,7 @@
   var RULE_ATTR = PREFIX + 'rule';
   var ICON_ATTR = PREFIX + 'icon';
   var DEFAULT_COUNT = 8;
-  var RELEASE = 'v1.59.502';
+  var RELEASE = 'v1.59.506';
   var WIRED_FLAG = '__startersPasswordValidation';
   var BRIDGE_FLAG = '__startersPasswordBridge';
   var SUBMIT_BUTTON_SELECTOR = '[ms-code-submit-button]';
@@ -285,46 +289,149 @@
       // Only a real control has a disabled property worth setting; writing one
       // onto a div or an anchor invents an attribute the browser ignores.
       native: native,
+      adopted: false,
       theme: readAuthoredTheme(themeEl)
     };
+  }
+
+  function isAriaDisabled(el) {
+    return !!(el && el.getAttribute && el.getAttribute('aria-disabled') === 'true');
+  }
+
+  // Ownership marks. Another script can disable the same CTA, and its refusal
+  // has to outlive our renders, so we only ever clear what we wrote ourselves.
+  var OWNS_ARIA = 'data-password-validation-aria';
+  var OWNS_NATIVE = 'data-password-validation-native';
+
+  // The markers step-flow.js and form-validation.js write on a CTA they hold.
+  var PEER_MARKERS = '[data-form-flow-disabled],[data-validate-disabled]';
+
+  function peerHeld(el) {
+    return !!(el && el.closest && el.closest(PEER_MARKERS));
+  }
+
+  function ownsAria(el) {
+    return !!(el && el.hasAttribute && el.hasAttribute(OWNS_ARIA));
+  }
+
+  function ownsNative(el) {
+    return !!(el && el.hasAttribute && el.hasAttribute(OWNS_NATIVE));
+  }
+
+  // Writing over a refusal we did not author would make it ours to clear.
+  function gateAria(el) {
+    if (isAriaDisabled(el)) return;
+    el.setAttribute('aria-disabled', 'true');
+    el.setAttribute(OWNS_ARIA, '');
+  }
+
+  // A peer holding the node keeps the attribute even where the mark is ours;
+  // the mark is released only when the attribute actually comes off.
+  function ungateAria(el) {
+    if (!ownsAria(el) || peerHeld(el)) return;
+    el.removeAttribute('aria-disabled');
+    el.removeAttribute(OWNS_ARIA);
+  }
+
+  function gateNative(el) {
+    if (!isNativeControl(el) || el.disabled) return;
+    el.disabled = true;
+    el.setAttribute('disabled', 'disabled');
+    el.setAttribute('tabindex', '-1');
+    el.setAttribute(OWNS_NATIVE, '');
+  }
+
+  function ungateNative(el) {
+    if (!isNativeControl(el) || !ownsNative(el) || peerHeld(el)) return;
+    el.disabled = false;
+    el.removeAttribute('disabled');
+    el.removeAttribute('tabindex');
+    el.removeAttribute(OWNS_NATIVE);
+  }
+
+  function foreignAria(el) {
+    return isAriaDisabled(el) && !ownsAria(el);
+  }
+
+  function foreignNative(el) {
+    return !!(el && el.disabled) && !ownsNative(el);
+  }
+
+  // Every node the gate treats, so a refusal anywhere on the CTA is seen.
+  function buttonNodes(button) {
+    var nodes = button.controls.slice();
+    if (nodes.indexOf(button.root) === -1) nodes.push(button.root);
+    if (button.themeEl && nodes.indexOf(button.themeEl) === -1) nodes.push(button.themeEl);
+    return nodes;
+  }
+
+  // A peer's refusal outranks our open verdict: the CTA stays looking dead.
+  function foreignHold(button) {
+    var nodes = buttonNodes(button);
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (peerHeld(el) || foreignAria(el) || foreignNative(el)) return true;
+    }
+    return false;
+  }
+
+  // State already on the CTA when we first resolve it, with no peer claiming
+  // it, is adopted as ours — otherwise we could never open the button again.
+  // Mirrors readAuthoredTheme's handling of a CTA authored already-grey.
+  function adoptAuthoredState(button) {
+    if (peerHeld(button.root)) return false;
+    // The same nodes foreignHold reads and setDisabled writes: a node we can
+    // never claim is a hold we can never release.
+    var nodes = buttonNodes(button);
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (peerHeld(el)) continue;
+      if (isAriaDisabled(el) && !ownsAria(el)) el.setAttribute(OWNS_ARIA, '');
+      if (isNativeControl(el) && el.disabled && !ownsNative(el)) {
+        el.setAttribute('tabindex', '-1');
+        el.setAttribute(OWNS_NATIVE, '');
+      }
+    }
+    return true;
+  }
+
+  // Claiming state only earns its keep where a render can hand it back. A
+  // bridge with no gate never re-opens the CTA, so what it found there stays
+  // foreign and the click stands down instead of overriding it. The one-shot
+  // is spent only when adoption ran; a peer-held root gets another try later.
+  function adoptWhenGated(bridge) {
+    if (!bridge.gate || !bridge.button || bridge.button.adopted) return;
+    if (adoptAuthoredState(bridge.button)) bridge.button.adopted = true;
   }
 
   function setDisabled(button, isDisabled) {
     if (!button) return;
     var themeEl = button.themeEl;
-    var controls = button.controls;
+    // Write over exactly what foreignHold reads, so no node can hold a state
+    // the gate is unable to hand back.
+    var nodes = buttonNodes(button);
     var i;
-    var el;
 
     if (isDisabled) {
       button.root.classList.add('disabled');
-      if (themeEl) {
-        themeEl.setAttribute(THEME_ATTR, DISABLED_THEME);
-        if (controls.indexOf(themeEl) === -1) themeEl.setAttribute('aria-disabled', 'true');
-      }
-      for (i = 0; i < controls.length; i++) {
-        el = controls[i];
-        el.setAttribute('aria-disabled', 'true');
-        if (isNativeControl(el)) {
-          el.disabled = true;
-          el.setAttribute('disabled', 'disabled');
-          el.setAttribute('tabindex', '-1');
-        }
+      if (themeEl) themeEl.setAttribute(THEME_ATTR, DISABLED_THEME);
+      for (i = 0; i < nodes.length; i++) {
+        gateAria(nodes[i]);
+        gateNative(nodes[i]);
       }
     } else {
-      button.root.classList.remove('disabled');
-      if (themeEl) {
-        if (button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
-        if (controls.indexOf(themeEl) === -1) themeEl.removeAttribute('aria-disabled');
+      // While anyone else holds the CTA it looks dead and we release nothing;
+      // our marks wait for the first unheld open render.
+      if (foreignHold(button)) {
+        button.root.classList.add('disabled');
+        if (themeEl) themeEl.setAttribute(THEME_ATTR, DISABLED_THEME);
+        return;
       }
-      for (i = 0; i < controls.length; i++) {
-        el = controls[i];
-        el.removeAttribute('aria-disabled');
-        if (isNativeControl(el)) {
-          el.disabled = false;
-          el.removeAttribute('disabled');
-          el.removeAttribute('tabindex');
-        }
+      button.root.classList.remove('disabled');
+      if (themeEl && button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
+      for (i = 0; i < nodes.length; i++) {
+        ungateAria(nodes[i]);
+        ungateNative(nodes[i]);
       }
     }
   }
@@ -514,10 +621,6 @@
     return !!(form.getAttribute && form.getAttribute('data-ms-form') === 'signup');
   }
 
-  function isAriaDisabled(el) {
-    return !!(el && el.getAttribute && el.getAttribute('aria-disabled') === 'true');
-  }
-
   // No gate installed means nothing holds the click back.
   function gateOpen(bridge) {
     return !bridge.gate || bridge.gate();
@@ -531,7 +634,7 @@
     var bridge = form[BRIDGE_FLAG];
 
     if (!bridge) {
-      bridge = form[BRIDGE_FLAG] = { button: null, gate: null, lastGate: null };
+      bridge = form[BRIDGE_FLAG] = { button: null, gate: null };
       var surface = failSurface(form);
 
       form.addEventListener('submit', function (event) {
@@ -553,25 +656,23 @@
       bridge.onClick = function (event) {
         if (!bridge.button || event.currentTarget !== bridge.button.root) return;
         var control = clickedControl(event, bridge.button);
-        // Ownership rule: our own gate writes aria-disabled/disabled on these
-        // same nodes, so what is on them only reads as another script's refusal
-        // where the last verdict we wrote was open (or we never wrote one).
-        var foreign = !bridge.gate || bridge.lastGate === true;
-        var refused = event.defaultPrevented || (foreign && (
-          isAriaDisabled(bridge.button.root) ||
-          isAriaDisabled(control) ||
-          !!(control && control.disabled)
-        ));
-        // Captured first: gateOpen re-renders, which clears their state too.
         if (!gateOpen(bridge)) {
           // A disabled native control never gets here; an anchor or a stale
           // overlay still can, and must not navigate or submit.
           if (event.preventDefault) event.preventDefault();
           return;
         }
-        // Another script (step-flow, form-validation) refused this click and
-        // owns the outcome — do not preventDefault on its behalf.
-        if (refused) return;
+        // Foreign state survives our render; only our own marks are ever
+        // cleared. One predicate, read over the same nodes the render uses.
+        if (event.defaultPrevented) {
+          devWarn('click already cancelled by another script', bridge.button.root);
+          return;
+        }
+        if (foreignHold(bridge.button)) {
+          // A silently dead CTA is worth naming on staging.
+          devWarn('click refused by another script\'s disabled state on the CTA', bridge.button.root);
+          return;
+        }
         if (isNativeSubmitter(control)) return;
         if (control && control.matches && control.matches('a') && event.preventDefault) {
           event.preventDefault();
@@ -756,6 +857,7 @@
     // Returns the verdict rather than stashing it, so no caller can ever
     // adjudicate on a copy that has gone stale.
     function render() {
+      adoptWhenGated(bridge);
       var value = input.value || '';
       var allPass = true;
 
@@ -786,10 +888,11 @@
       var gate = allPass && emailSatisfied(emailInput) && termsSatisfied(termsInput);
       // Live read: a CTA that only arrives on a later rescan still greys.
       setDisabled(bridge.button, !gate);
-      bridge.lastGate = gate;
       return gate;
     }
     bridge.gate = render;
+    // Now that a render can release it, state already on the CTA is ours.
+    adoptWhenGated(bridge);
 
     // Autofill and password-manager paths are inconsistent: some fire `input`,
     // some only `change`, some nothing until the field is left. Binding all
@@ -906,6 +1009,7 @@
         // A marker that arrived or was swapped after wiring is picked up here;
         // the data-ms-form tail below never sees a form without that attribute.
         var adopted = ensureBridge(form);
+        adoptWhenGated(adopted);
         if (adopted.gate) adopted.gate();
         continue;
       }
@@ -932,6 +1036,7 @@
       var msForm = msForms[m];
       if (!msForm[BRIDGE_FLAG] && !msForm.querySelector(SUBMIT_BUTTON_SELECTOR)) continue;
       var bridged = ensureBridge(msForm);
+      adoptWhenGated(bridged);
       // A CTA that arrived after wiring greys now, not on the first keystroke.
       if (bridged.gate) bridged.gate();
     }

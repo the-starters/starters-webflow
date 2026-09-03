@@ -38,6 +38,20 @@ appended Turnstile wrapper on those forms (search that file for
 the signup modal and account settings forms. That stylesheet is a body embed
 pasted into Webflow rather than a CDN script, so the live copy is edited by hand.
 
+## CTA disabled-state ownership marks
+
+More than one script can disable the same `[ms-code-submit-button]` CTA, so
+[`password-validation/password-validation.js`](password-validation/password-validation.js)
+marks its own writes: `data-password-validation-aria` wherever it sets
+`aria-disabled="true"`, and `data-password-validation-native` wherever it sets a
+native control's `disabled`. Both land on the marker root, the theme element and
+every control under the marker, at runtime only. Never author either attribute in
+Webflow, and never write them from another script: the CTA gate clears only the
+state carrying its own mark, so a mark written by anyone else lets it erase a
+refusal it does not own. Scripts that hold the same CTA should keep announcing
+themselves with `data-form-flow-disabled` / `data-validate-disabled`, which the
+gate reads as a refusal it must leave alone.
+
 A form carrying Webflow's `display-contents` class **generates no box**, so its
 `getBoundingClientRect()` is `0 × 0` and the observer never reports it as
 intersecting — not on load, not on scroll, not when the modal holding it opens.

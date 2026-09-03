@@ -2493,8 +2493,12 @@ test('r6-14: a foreign refusal survives our own render clearing it', () => {
   assert.equal(overlayOpen(f), true, 'our gate is open')
 
   f.wrapBtn.setAttribute('aria-disabled', 'true')
-  const click = dispatch(f.overlay, 'click')
+  // real browsers fire the password field's focusout before the click, so the
+  // render it triggers must not clear an aria-disabled we never wrote
+  dispatch(f.input, 'focusout')
+  assert.equal(aria(f.wrapBtn), 'true', 'our render never removes what we did not write')
 
+  const click = dispatch(f.overlay, 'click')
   assert.equal(f.submits.length, 0, 'the other script refused this click')
   assert.equal(click.defaultPrevented, false, 'and owns it — we do not preventDefault')
 })
@@ -2535,3 +2539,232 @@ test('r6-15: rescan refreshes a checklist bridge on a form with no data-ms-form'
   assert.equal(f.submits.length, 1, 'exactly one synthetic submit')
 })
 
+test('r6-16a: authored aria-disabled at first resolve is adopted, not left to brick the CTA', () => {
+  // nobody claims this attribute, so it is stale authoring, not a live refusal:
+  // if we refuse to touch it the CTA can never open and Sign up is dead
+  const f = liveSetup({ cta: 'none' })
+  const { wrapBtn, overlay } = buildCta('overlay')
+  wrapBtn.setAttribute('aria-disabled', 'true')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+
+  assert.equal(aria(wrapBtn), null, 'adopted at resolve, so our open render clears it')
+  assert.equal(aria(overlay), null)
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the CTA works instead of being silently dead')
+})
+
+test('r6-16b: a foreign native disabled survives our open render and refuses the click', () => {
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true, 'our gate is open and has released the control')
+
+  // another script disables the overlay itself, leaving no mark of ours
+  f.overlay.disabled = true
+  dispatch(f.input, 'focusout')
+  assert.equal(f.overlay.disabled, true, 'our render never re-enables what we did not disable')
+
+  const click = dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'a type=button overlay would otherwise have submitted')
+  assert.equal(click.defaultPrevented, false, 'the other script owns it')
+})
+
+test('r6-17: a peer marker keeps the CTA greyed through our open render', () => {
+  const f = liveSetup({ mount: onStaging() })
+  assert.equal(overlayGated(f), true, 'we closed the gate on the empty form')
+
+  // step-flow.js holds the CTA with its own marker and no aria of its own
+  f.wrapBtn.setAttribute('data-form-flow-disabled', '')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+
+  assert.equal(theme(f.wrapBtn), 'disabled', 'our open verdict does not restore the theme')
+  assert.equal(f.wrapBtn.classList.contains('disabled'), true, 'nor the disabled class')
+  assert.equal(aria(f.wrapBtn), 'true', 'a peer holding the node keeps the attribute')
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'and the click stands down')
+  assert.match(f.warnings.join(' '), /refused by another script/, 'staging says why')
+})
+
+test('r6-18: a stranded ownership mark cannot be used to clear a peer refusal', () => {
+  const f = liveSetup()
+  assert.equal(aria(f.wrapBtn), 'true', 'we gated the empty form and marked it ours')
+
+  // a peer strips our mark, then writes its own refusal over the same node
+  f.wrapBtn.removeAttribute('data-password-validation-aria')
+  f.wrapBtn.setAttribute('aria-disabled', 'true')
+  f.wrapBtn.setAttribute('data-form-flow-disabled', '')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+
+  assert.equal(aria(f.wrapBtn), 'true', 'the refusal survives our open render')
+  assert.equal(theme(f.wrapBtn), 'disabled', 'and the CTA still looks dead')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0)
+})
+
+test('r6-19: a bridge with no gate leaves authored disabled state as a refusal', () => {
+  // nothing here will ever re-open the CTA, so claiming what we found would
+  // only throw away somebody else's refusal
+  const f = liveSetup({ wrapper: false, cta: 'none', mount: onStaging() })
+
+  const { wrapBtn, overlay } = buildCta('overlay')
+  wrapBtn.setAttribute('aria-disabled', 'true')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 0, 'the gateless bridge stands down')
+  assert.equal(aria(wrapBtn), 'true', 'and leaves the attribute where it found it')
+  assert.equal(
+    wrapBtn.hasAttribute('data-password-validation-aria'),
+    false,
+    'never claimed as ours',
+  )
+  assert.match(f.warnings.join(' '), /refused by another script/, 'staging says why')
+})
+
+test('r6-20: authored aria-disabled on a marker root that is not the theme element opens', () => {
+  // theme on the wrap AROUND the marker, the control inside it: the root is
+  // neither, and state stranded there would brick the CTA for good
+  const f = liveSetup({ cta: 'none' })
+
+  const link = h('a', { href: '#' }, ['SIGN UP'])
+  link.classList.add('clickable_link')
+  const marker = h('div', { 'ms-code-submit-button': '', 'aria-disabled': 'true' }, [link])
+  const themeWrap = h('div', { 'data-button-theme': 'black' }, [marker])
+  themeWrap.classList.add('button_main-wrap')
+  f.form.append(themeWrap)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+
+  assert.equal(aria(marker), null, 'the root is adopted at resolve and released on open')
+  assert.equal(theme(themeWrap), 'black', 'so the theme comes back')
+  assert.equal(marker.classList.contains('disabled'), false)
+
+  dispatch(link, 'click')
+  assert.equal(f.submits.length, 1, 'the CTA works instead of being permanently dead')
+})
+
+test('r6-21: a foreign hold on a control other than the clicked one refuses the click', () => {
+  // hidden native submit + overlay: the peer disables the one the member never
+  // touches, so only the wider read catches it
+  const f = liveSetup({ cta: 'none' })
+
+  const hidden = h('button', { type: 'submit' }, ['SIGN UP'])
+  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
+  overlay.classList.add('clickable_btn')
+  const wrapBtn = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [
+    hidden,
+    overlay,
+  ])
+  wrapBtn.classList.add('button_main-wrap')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(theme(wrapBtn), 'black', 'our gate opened the CTA')
+
+  // another script refuses on the hidden control, with no mark of its own
+  hidden.setAttribute('aria-disabled', 'true')
+  type(f, 'weakpass')
+  type(f, VALID_PASSWORD)
+
+  assert.equal(aria(hidden), 'true', 'our render never clears what we did not write')
+  assert.equal(theme(wrapBtn), 'disabled', 'and the CTA is not painted live over the refusal')
+  assert.equal(wrapBtn.classList.contains('disabled'), true)
+
+  const click = dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 0, 'the click on the open-looking overlay stands down')
+  assert.equal(click.defaultPrevented, false, 'the other script owns it')
+})
+
+test('r6-22: a hold that appears after we opened greys the CTA on the next render', () => {
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.ok(overlayOpen(f), 'our gate opened the CTA')
+
+  // another script refuses on the wrap, with no mark of its own, after we opened
+  f.wrapBtn.setAttribute('aria-disabled', 'true')
+  type(f, VALID_PASSWORD)
+
+  assert.equal(theme(f.wrapBtn), 'disabled', 'the disabled look is applied, not merely kept')
+  assert.equal(f.wrapBtn.classList.contains('disabled'), true)
+  assert.equal(aria(f.wrapBtn), 'true', 'their refusal is untouched')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0)
+})
+
+test('r6-23: adoption is not spent while a peer holds the root; it happens once the peer lets go', () => {
+  const f = liveSetup({ cta: 'none' })
+  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
+  overlay.classList.add('clickable_btn')
+  const wrapBtn = h(
+    'div',
+    { 'ms-code-submit-button': '', 'data-button-theme': 'black', 'aria-disabled': 'true', 'data-form-flow-disabled': '' },
+    [overlay]
+  )
+  wrapBtn.classList.add('button_main-wrap')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 0, 'peer-held: refused')
+  assert.equal(aria(wrapBtn), 'true', 'and not adopted while the peer holds it')
+
+  wrapBtn.removeAttribute('data-form-flow-disabled')
+  type(f, VALID_PASSWORD)
+  assert.equal(aria(wrapBtn), null, 'the authored state is adopted once the peer lets go, and released')
+  assert.equal(theme(wrapBtn), 'black')
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1)
+})
+
+test('r6-24: our native disabled is not released while another node is foreign-held', () => {
+  const f = liveSetup({ cta: 'none' })
+  const hidden = h('button', { type: 'submit' }, ['SIGN UP'])
+  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
+  overlay.classList.add('clickable_btn')
+  const wrapBtn = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [hidden, overlay])
+  wrapBtn.classList.add('button_main-wrap')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(hidden.disabled, false, 'open: our native disable was released')
+
+  hidden.setAttribute('aria-disabled', 'true') // a foreign hold on the hidden control
+  type(f, 'weakpass')
+  assert.equal(hidden.disabled, true, 'closed: we disabled it again')
+  type(f, VALID_PASSWORD)
+  assert.equal(hidden.disabled, true, 'open but held: our native disable stays, so Enter cannot submit')
+  assert.equal(theme(wrapBtn), 'disabled')
+
+  hidden.removeAttribute('aria-disabled')
+  type(f, VALID_PASSWORD)
+  assert.equal(hidden.disabled, false, 'first unheld open render releases it')
+  assert.equal(theme(wrapBtn), 'black')
+})
