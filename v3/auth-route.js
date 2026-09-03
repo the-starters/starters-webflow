@@ -472,30 +472,44 @@
       .forEach(function (form) {
         form.setAttribute('data-ms-redirect', ROUTE_PATH)
         form.setAttribute('redirect', ROUTE_PATH)
-        if (
-          typeof form.addEventListener === 'function' &&
-          !form.__startersAuthTimingBound
-        ) {
-          form.__startersAuthTimingBound = true
-          form.addEventListener('submit', beginLoginTiming)
-          form.addEventListener('click', function (event) {
-            var target = event && event.target
-            if (!target || typeof target.closest !== 'function') return
-            if (
-              target.closest(
-                'button[type="submit"], input[type="submit"], ' +
-                  '[data-ms-button="submit"], [data-ms-auth-provider]',
-              )
-            ) {
-              // Memberstack's `[data-ms-auth-provider]` controls are links, and
-              // they complete a click-driven login without ever firing submit
-              // on this form. Restart the receipt for that attempt so it cannot
-              // inherit a rejected password attempt from this page.
-              beginLoginTiming()
-            }
-          })
-        }
       })
+
+    // Timing measures the login-to-destination interval, so only the login form
+    // starts a receipt. The signup form on these pages routes through
+    // /auth-route on the same attributes above, but account creation, Turnstile,
+    // and plan assignment make it a structurally different and longer flow;
+    // measuring it under the `login-submit` stage would inflate the number this
+    // receipt exists to report.
+    document
+      .querySelectorAll('[data-ms-form="login"]')
+      .forEach(bindLoginTiming)
+  }
+
+  function bindLoginTiming(form) {
+    if (
+      typeof form.addEventListener !== 'function' ||
+      form.__startersAuthTimingBound
+    ) {
+      return
+    }
+    form.__startersAuthTimingBound = true
+    form.addEventListener('submit', beginLoginTiming)
+    form.addEventListener('click', function (event) {
+      var target = event && event.target
+      if (!target || typeof target.closest !== 'function') return
+      if (
+        target.closest(
+          'button[type="submit"], input[type="submit"], ' +
+            '[data-ms-button="submit"], [data-ms-auth-provider]',
+        )
+      ) {
+        // Memberstack's `[data-ms-auth-provider]` controls are links, and they
+        // complete a click-driven login without ever firing submit on this
+        // form. Restart the receipt for that attempt so it cannot inherit a
+        // rejected password attempt from this page.
+        beginLoginTiming()
+      }
+    })
   }
 
   function waitForMemberstack() {

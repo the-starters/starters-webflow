@@ -125,7 +125,9 @@ form's `/auth-route` redirect written, and after DOMContentLoaded on
 `/auth-route`, which reads the guard's role contract. Keep the static deferred
 sitewide `route-guard.js` unconditional and ahead of the loader because it owns
 the shared stable plan-role contract and completes before DOMContentLoaded.
-Keep `signup-attribution.js`, both `utils/posthog-*.js` helpers, and the
+Keep `signup-attribution.js`, both `utils/posthog-*.js` helpers,
+`native-form-diagnostics.js` — the sitewide observer that owns the
+`brand_login` and `talent_login` receipts — and the
 login/password/email validation owners outside
 the minimal-controller conditional. Remove the old page-level `auth-route.js`
 tags only through the overlap, delivery, and one-path-at-a-time behavior proof

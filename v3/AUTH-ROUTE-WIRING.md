@@ -15,7 +15,8 @@ moved to `get_build_profile_status` on 2026-08-04.
    parser-inserted deferred, unconditional head tag on every page, ahead of the loader,
    per step 1 of [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md#webflow-install).
    It must never move behind `StartersV3AuthPageLoader` or any other
-   CDN-dependent conditional. Same for `v3/signup-attribution.js` (see step 7).
+   CDN-dependent conditional. Same for `v3/signup-attribution.js` and
+   `v3/native-form-diagnostics.js` (see step 7).
 
    This tag is the **sole owner** of route-guard delivery and of
    guard-before-router ordering, on all three auth paths as well as everywhere
@@ -162,6 +163,17 @@ moved to `get_build_profile_status` on 2026-08-04.
    would go dark on the three pages this wiring changes — the pages where a
    loader or child-asset failure is most likely.
 
+   **Keep `v3/native-form-diagnostics.js` out of this block and unconditional
+   sitewide too.** It is a deferred sitewide observer of the provider-owned
+   native forms, not an application controller, and its install contract is
+   already sitewide `defer` ([README](../README.md#current-scripts)). Its
+   `form[data-ms-form="login"]` selector is what records the `brand_login` and
+   `talent_login` receipts, and `/login` and `/starter-login` are the only
+   pages that produce them — the same going-dark argument as `posthog-track.js`
+   above. Omitting Brand account also drops the fallback insert in
+   `v3/brand-account-controller.js`, so on these paths the static sitewide tag
+   is the only delivery left.
+
    Keep the
    remaining controllers' existing order and inline configuration unchanged
    when the answer is true. Build the complete candidate from a fresh
@@ -196,7 +208,11 @@ on the next real login.
 
 ## Timing evidence
 
-The login form starts a timestamp-only receipt in session storage. The router
+The login form starts a timestamp-only receipt in session storage. The signup
+form on the same page gets the identical `/auth-route` redirect attributes but
+never starts a receipt: a signup spans account creation, Turnstile, and plan
+assignment, so counting it under the `login-submit` stage would inflate the
+login-to-destination duration this receipt exists to report. The router
 emits fixed `performance.mark()` names for router boot, Memberstack ready,
 member snapshot, token trade, status read, and redirect request. The sitewide
 loader emits `destination-load` on the final non-auth page and consumes the
@@ -464,8 +480,12 @@ Production stays silent apart from the configuration errors in the table above.
   opposite: the `auth-route.js` request starts during head parsing, well before
   DOMContentLoaded, so the form is configured as early as possible.
 - Confirm `/auth-route` requests no unrelated application controller, and that
-  `signup-attribution.js` and both PostHog helpers ARE still requested on
-  `/login` and `/starter-login`. Land on
+  `signup-attribution.js`, `native-form-diagnostics.js`, and both PostHog
+  helpers ARE still requested on
+  `/login` and `/starter-login`. Submit a wrong password on each login page and
+  confirm `copyWorkflowDiagnostic('brand_login')` on `/login` and
+  `copyWorkflowDiagnostic('talent_login')` on `/starter-login` still return a
+  receipt; a missing observer records none. Land on
   `/login?utm_source=gate-check&fbclid=gate-check` and confirm the attribution
   cookies are written. Sign out from a member session, land on `/login`, and
   confirm `posthog.get_distinct_id()` is no longer the previous `mem_*` id.
@@ -474,7 +494,8 @@ Production stays silent apart from the configuration errors in the table above.
   Spot-check `/build-profile/select-profile`: `html[data-route-guard]` must be
   set before `build-profile-redirect.js` runs.
 - With the loader URL blocked in devtools, confirm every page still emits
-  `route-guard.js`, `signup-attribution.js`, both PostHog helpers, and the full
+  `route-guard.js`, `signup-attribution.js`, `native-form-diagnostics.js`, both
+  PostHog helpers, and the full
   controller block. On
   the three auth paths, whether `/login` still gets `redirect="/auth-route"`
   depends on where step 6's cutover stands: during the overlap window the
@@ -515,6 +536,8 @@ Production stays silent apart from the configuration errors in the table above.
   consumed on the destination. Confirm `destination-load.elapsedMs` includes
   the destination page load, is finite, is at most 120000, and no timing event
   contains a member ID, email, cookie, Xano token, or requested destination.
+  Then submit the signup form on `/login` and confirm it routes through
+  `/auth-route` while emitting no `login-submit` stage and leaving no receipt.
 - Verify login with `next=/dashboard` for Talent, paid Brand, Test Brand, and
   Brand Free in both incomplete-quiz and completed-quiz states.
 - Verify the four Talent funnel states on staging with the console open: a member

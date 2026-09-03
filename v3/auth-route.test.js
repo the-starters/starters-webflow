@@ -158,6 +158,10 @@ function loadRouter(options = {}) {
   function makeForm(kind) {
     const listeners = {}
     return {
+      kind,
+      hasListener(name) {
+        return typeof listeners[name] === 'function'
+      },
       setAttribute(name, value) {
         formAttributes[kind][name] = value
         attributes[name] = value
@@ -354,8 +358,16 @@ function loadRouter(options = {}) {
     },
     // The login forms live in the body. While the parser is still running they
     // are not in the tree yet, which is what a head-injected script sees.
-    querySelectorAll() {
-      return document.readyState === 'loading' ? [] : forms
+    // The selector is really evaluated against each form's `data-ms-form` kind,
+    // so a query that widens past the login form fails the tests below instead
+    // of being handed every form regardless of what it asked for.
+    querySelectorAll(selector) {
+      if (document.readyState === 'loading') return []
+      const kinds = (
+        String(selector).match(/\[data-ms-form="([\w-]+)"\]/g) || []
+      ).map((token) => token.slice('[data-ms-form="'.length, -2))
+      assert.ok(kinds.length, 'unsupported form selector: ' + selector)
+      return forms.filter((form) => kinds.includes(form.kind))
     },
   }
   function finishParsing() {
@@ -1207,6 +1219,39 @@ test('a non-submit control click leaves the timing receipt alone', () => {
       label,
     )
   }
+})
+
+// /login carries a signup modal form, and it gets the same /auth-route redirect
+// attributes so its members route through the router too. It must NOT start a
+// receipt: a signup spans account creation, Turnstile, and plan assignment, so
+// reporting it under the `login-submit` stage inflates the login-to-destination
+// duration this receipt exists to measure.
+test('a signup form on a login page starts no login timing receipt', () => {
+  const harness = loadRouter({ pathname: '/login' })
+  const signup = harness.forms[1]
+
+  assert.deepEqual(harness.formAttributes.signup, {
+    'data-ms-redirect': '/auth-route',
+    redirect: '/auth-route',
+  })
+  assert.equal(signup.hasListener('submit'), false)
+  assert.equal(signup.hasListener('click'), false)
+
+  signup.dispatch('submit')
+  signup.dispatch('click', {
+    target: formControl({ tag: 'button', attributes: { type: 'submit' } }),
+  })
+
+  assert.equal(harness.storage.has(TIMING_KEY), false)
+  assert.equal(
+    harness.marks.includes('starters:v3-auth-route:login-submit'),
+    false,
+  )
+
+  // The login form on the same page still measures, so the scoping is the
+  // form's kind and not a disabled feature.
+  harness.forms[0].dispatch('submit')
+  assert.equal(harness.storage.has(TIMING_KEY), true)
 })
 
 // The loader inserts this file dynamically from the site head, so it can run
