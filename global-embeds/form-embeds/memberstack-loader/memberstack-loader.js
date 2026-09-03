@@ -1,4 +1,4 @@
-// Memberstack loader — dresses a Memberstack auth form's Button as busy and
+// Memberstack loader: dresses a Memberstack auth form's Button as busy and
 // disabled while Memberstack shows its own spinner, and restores it on hide.
 //
 // @release v1.59.507
@@ -15,13 +15,18 @@
 //
 // Only auth forms (data-ms-form login / signup / forgot-password /
 // reset-password) are touched. Every attribute this script may have to undo is
-// written alongside an ownership mark — data-memberstack-loader-theme, -busy,
-// -aria — and only marked attributes are ever removed, so a peer's hold (for
+// written alongside an ownership mark (data-memberstack-loader-theme, -busy,
+// -aria), and only marked attributes are ever removed, so a peer's hold (for
 // example password-validation.js's own aria-disabled) survives untouched.
 // Never author those marks in Webflow.
 //
 // A success redirect navigates without hiding the loader, so Pending is meant
 // to outlive the page: there is no timeout and no fail-open timer.
+//
+// While Pending, a capture-phase submit listener swallows every further submit
+// on the form, and a second MutationObserver puts the Pending attributes back
+// whenever a peer script strips or overwrites one. What the script re-asserts
+// it also owns, so hide still ends where the peer left the button.
 //
 // Forms added after load (modals, step flows): call
 // window.startersMemberstackLoader.rescan().
@@ -53,6 +58,8 @@
   var ARIA_MARK = 'data-memberstack-loader-aria';
 
   var AUTH_KINDS = ['login', 'signup', 'forgot-password', 'reset-password'];
+
+  var REASSERT_ATTRS = [THEME_ATTR, BUSY_ATTR, LOADING_ATTR, ARIA_ATTR];
 
   // --- resolving the form's Button -----------------------------------------
 
@@ -143,6 +150,42 @@
     else if (!shown && record.pending) leavePending(record);
   }
 
+  // Writes only where the value differs: an unconditional write would be seen
+  // by this same observer and loop.
+  function reassert(record) {
+    var wrap = record.wrap;
+    var control = record.control;
+
+    if (wrap.getAttribute(THEME_ATTR) !== DISABLED_THEME) {
+      wrap.setAttribute(THEME_ATTR, DISABLED_THEME);
+    }
+    // Claiming on the way back: the peer took whatever was there, so hide has
+    // to end with the attribute absent.
+    if (wrap.getAttribute(BUSY_ATTR) !== 'true') {
+      wrap.setAttribute(BUSY_ATTR, 'true');
+      if (!wrap.hasAttribute(BUSY_MARK)) wrap.setAttribute(BUSY_MARK, '');
+    }
+    if (wrap.getAttribute(LOADING_ATTR) !== 'true') wrap.setAttribute(LOADING_ATTR, 'true');
+    if (control.getAttribute(ARIA_ATTR) !== 'true') {
+      control.setAttribute(ARIA_ATTR, 'true');
+      if (!control.hasAttribute(ARIA_MARK)) control.setAttribute(ARIA_MARK, '');
+    }
+  }
+
+  function observeReassert(record) {
+    if (!record.isAuth || !record.spinner || !record.wrap || !record.control) return;
+    if (typeof MutationObserver === 'undefined') return;
+    if (record.reassertObserved) return;
+    record.reassertObserved = true;
+    var observer = new MutationObserver(function () {
+      if (!record.pending) return;
+      reassert(record);
+    });
+    var options = { attributes: true, attributeFilter: REASSERT_ATTRS };
+    observer.observe(record.wrap, options);
+    observer.observe(record.control, options);
+  }
+
   function observeSpinner(record) {
     if (!record.isAuth || !record.spinner) return;
     if (typeof MutationObserver === 'undefined') return;
@@ -152,6 +195,27 @@
       sync(record);
     });
     observer.observe(record.spinner, { attributes: true, attributeFilter: ['style'] });
+  }
+
+  // --- submit ---------------------------------------------------------------
+
+  function onSubmit(record, event) {
+    if (record.pending) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    // Routing (the loader follows the submitting form) lands here next.
+  }
+
+  // Capture phase, so a repeat submit dies before Memberstack or any peer
+  // listener sees it. Bound on every Memberstack form, inert off Pending.
+  function wireSubmit(record) {
+    if (record.submitWired) return;
+    record.submitWired = true;
+    record.form.addEventListener('submit', function (event) {
+      onSubmit(record, event);
+    }, true);
   }
 
   // --- discovery ------------------------------------------------------------
@@ -172,8 +236,10 @@
             record.control = late.control;
             record.spinner = late.spinner;
             observeSpinner(record);
+            observeReassert(record);
           }
         }
+        wireSubmit(record);
         continue;
       }
 
@@ -186,10 +252,14 @@
         wrap: parts.wrap,
         control: parts.control,
         spinner: parts.spinner,
-        pending: false
+        pending: false,
+        submitWired: false,
+        reassertObserved: false
       };
       form[WIRED_FLAG] = record;
       observeSpinner(record);
+      observeReassert(record);
+      wireSubmit(record);
     }
   }
 

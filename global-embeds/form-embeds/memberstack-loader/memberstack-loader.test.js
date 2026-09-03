@@ -6,6 +6,12 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(path.join(__dirname, 'memberstack-loader.js'), 'utf8')
 
+/** the real peer this component has to share a CTA with, loaded verbatim */
+const pvSource = fs.readFileSync(
+  path.join(__dirname, '..', 'password-validation', 'password-validation.js'),
+  'utf8',
+)
+
 // ---------------------------------------------------------------------------
 // Minimal DOM, grown from password-validation.test.js: attributes, classes,
 // style.display, text nodes, a tiny selector engine (tag / [attr] / [attr="v"]
@@ -22,9 +28,9 @@ const source = fs.readFileSync(path.join(__dirname, 'memberstack-loader.js'), 'u
 //     reverse is not wired: classList.add does not rewrite the attribute).
 //   * MutationObserver shim: attributes only, honouring attributeFilter,
 //     delivered batched per observer on a microtask. NO childList, NO subtree,
-//     NO oldValue, NO characterData, and no record for a write that does not
-//     change the value (the real thing does record those; nothing here relies
-//     on the difference).
+//     NO oldValue, NO characterData. A write is recorded even when it does not
+//     change the value, exactly as the real thing does — which is why the
+//     re-assert loop guard is tested here rather than only reasoned about.
 //
 // `flush()` awaits one macrotask turn so queued microtask deliveries have run.
 // `observerCount(node)` reports how many live observers watch a node, the
@@ -315,10 +321,25 @@ function dispatch(target, type, extra) {
   return event
 }
 
+/** what `new Event(type, opts)` gives a script inside the VM */
+class FakeEvent {
+  constructor(type, opts = {}) {
+    this.type = type
+    this.bubbles = !!opts.bubbles
+    this.cancelable = !!opts.cancelable
+    this.defaultPrevented = false
+  }
+  preventDefault() {
+    this.defaultPrevented = true
+  }
+}
+
 /**
- * Run the script against a fake document whose body is `root`.
+ * Run one or more scripts against a fake document whose body is `root`.
+ * `sources` order is load order, which is also listener registration order.
  * @param {Element} root
- * @param {{loadTwice?: boolean, readyState?: string}} [options]
+ * @param {{loadTwice?: boolean, readyState?: string, hostname?: string,
+ *          debug?: boolean, fetch?: Function, sources?: string[]}} [options]
  * @returns {{window: object, warnings: string[], root: Element, fireReady: () => void}}
  */
 function mount(root, options = {}) {
@@ -334,8 +355,10 @@ function mount(root, options = {}) {
     querySelectorAll: (selector) => root.querySelectorAll(selector),
     querySelector: (selector) => root.querySelector(selector),
   }
-  const location = { hostname: 'www.thestarters.com' }
+  const location = { hostname: options.hostname || 'www.thestarters.com' }
   const window = { location }
+  if (options.debug !== undefined) window.STARTERS_DEBUG = options.debug
+  if (options.fetch) window.fetch = options.fetch
   window.window = window
 
   const context = vm.createContext({
@@ -344,10 +367,20 @@ function mount(root, options = {}) {
     location,
     MutationObserver,
     queueMicrotask,
+    Event: FakeEvent,
+    // Real timers, unref'd so a pending watcher timeout never holds the
+    // test process open.
+    setTimeout: (fn, ms) => {
+      const t = setTimeout(fn, ms)
+      if (t.unref) t.unref()
+      return t
+    },
+    clearTimeout: (t) => clearTimeout(t),
     console: { warn: (...args) => warnings.push(args.map(String).join(' ')) },
   })
-  vm.runInContext(source, context)
-  if (options.loadTwice) vm.runInContext(source, context)
+  const sources = options.sources || [source]
+  sources.forEach((src) => vm.runInContext(src, context))
+  if (options.loadTwice) sources.forEach((src) => vm.runInContext(src, context))
 
   /** run the DOMContentLoaded handlers the script parked while the DOM parsed */
   const fireReady = () => {
@@ -365,9 +398,51 @@ function mount(root, options = {}) {
 const spinner = (attrs) =>
   h('div', attrs, [h('div', { class: 'button_spinner' })])
 
+const P = 'starters-password-validation-'
+const ALL_RULES = ['characters', 'special', 'capitalization', 'numbers']
+const RULE_TEXT = {
+  characters: 'At least {count} characters',
+  special: 'One special character',
+  capitalization: 'Upper and lower case',
+  numbers: 'One number',
+}
+
+/** the password-validation checklist component, authored the documented way */
+function passwordChecklist() {
+  return h(
+    'div',
+    {
+      [P + 'characters']: 'true',
+      [P + 'special']: 'true',
+      [P + 'capitalization']: 'true',
+      [P + 'numbers']: 'true',
+      [P + 'character-count']: '8',
+    },
+    ALL_RULES.map((name) =>
+      h('div', { [P + 'rule']: name }, [
+        h('div', { [P + 'icon']: 'valid' }),
+        h('div', { [P + 'icon']: 'invalid' }),
+        h('div', {}, [RULE_TEXT[name]]),
+      ]),
+    ),
+  )
+}
+
+/** set a field the way a person does: value first, then the events */
+function fill(input, value) {
+  input.value = value
+  dispatch(input, 'input')
+  dispatch(input, 'change')
+}
+
+function check(input) {
+  input.checked = true
+  dispatch(input, 'change')
+}
+
 /**
  * @param {{kind?: string, theme?: string, ariaDisabled?: string, noLoader?: boolean,
- *          noSpinner?: boolean}} [opts]
+ *          noSpinner?: boolean, checklist?: boolean}} [opts]
  */
 function signupForm(opts = {}) {
   const kind = opts.kind === undefined ? 'signup' : opts.kind
@@ -430,6 +505,69 @@ function signupForm(opts = {}) {
     ],
   )
 
+  const email = h('input', {
+    class: 'form_input w-input',
+    name: 'Work-Email',
+    placeholder: 'Work Email',
+    type: 'email',
+    id: 'Work-Email',
+    'data-ms-member': 'email',
+    required: '',
+  })
+  const password = h('input', {
+    class: 'form_input is-password w-input',
+    name: 'Password',
+    type: 'password',
+    id: 'Password',
+    'data-ms-member': 'password',
+    required: '',
+  })
+  const termsVisual = h('div', {
+    class: 'w-checkbox-input w-checkbox-input--inputType-custom auth-form_checkbox_icon',
+  })
+  const terms = h('input', {
+    type: 'checkbox',
+    name: 'Accept-legal',
+    id: 'Accept-legal',
+    required: '',
+    'data-ms-member': 'terms-and-condition',
+  })
+  const checklist = opts.checklist ? passwordChecklist() : null
+
+  const buttonGroup = h('div', { class: 'auth_form-button-group' }, [
+    submitWrap,
+    linkWrap,
+    h('a', { 'data-ms-auth-provider': 'google', href: '#', class: 'button is-google w-button' }, [
+      'Continue with Google',
+    ]),
+  ])
+
+  const formChildren = [
+    h('label', { for: 'Work-Email', class: 'form_label' }, ['Work Email']),
+    email,
+    h('label', { for: 'Password', class: 'form_label' }, ['Password']),
+    h('div', { class: 'password-input_component' }, [
+      h('div', { 'data-password-input': '', class: 'password-input_wrapper' }, [
+        password,
+        h('div', { id: 'passwordToggle', 'data-password-toggle': '', class: 'password-toggle' }, [
+          h('div', { class: 'eye-icon show' }),
+          h('div', { class: 'eye-icon visible' }),
+        ]),
+      ]),
+    ]),
+    h('div', { class: 'spacer-6' }),
+    h('label', { class: 'w-checkbox auth-form_checkbox' }, [
+      termsVisual,
+      terms,
+      h('span', { class: 'text-size-medium w-form-label', for: 'Accept-legal' }, [
+        'I accept the Terms',
+      ]),
+    ]),
+    h('div', { class: 'spacer-16' }),
+  ]
+  if (checklist) formChildren.push(checklist)
+  formChildren.push(buttonGroup)
+
   const form = h(
     'form',
     {
@@ -441,62 +579,24 @@ function signupForm(opts = {}) {
       class: 'auth_form-block',
       'data-turnstile-sitekey': '0x4AAAAAAAQTptj2So4dx43e',
     },
-    [
-      h('label', { for: 'Work-Email', class: 'form_label' }, ['Work Email']),
-      h('input', {
-        class: 'form_input w-input',
-        name: 'Work-Email',
-        placeholder: 'Work Email',
-        type: 'email',
-        id: 'Work-Email',
-        'data-ms-member': 'email',
-        required: '',
-      }),
-      h('label', { for: 'Password', class: 'form_label' }, ['Password']),
-      h('div', { class: 'password-input_component' }, [
-        h('div', { 'data-password-input': '', class: 'password-input_wrapper' }, [
-          h('input', {
-            class: 'form_input is-password w-input',
-            name: 'Password',
-            type: 'password',
-            id: 'Password',
-            'data-ms-member': 'password',
-            required: '',
-          }),
-          h('div', { id: 'passwordToggle', 'data-password-toggle': '', class: 'password-toggle' }, [
-            h('div', { class: 'eye-icon show' }),
-            h('div', { class: 'eye-icon visible' }),
-          ]),
-        ]),
-      ]),
-      h('div', { class: 'spacer-6' }),
-      h('label', { class: 'w-checkbox auth-form_checkbox' }, [
-        h('div', {
-          class: 'w-checkbox-input w-checkbox-input--inputType-custom auth-form_checkbox_icon',
-        }),
-        h('input', {
-          type: 'checkbox',
-          name: 'Accept-legal',
-          id: 'Accept-legal',
-          required: '',
-          'data-ms-member': 'terms-and-condition',
-        }),
-        h('span', { class: 'text-size-medium w-form-label', for: 'Accept-legal' }, [
-          'I accept the Terms',
-        ]),
-      ]),
-      h('div', { class: 'spacer-16' }),
-      h('div', { class: 'auth_form-button-group' }, [
-        submitWrap,
-        linkWrap,
-        h('a', { 'data-ms-auth-provider': 'google', href: '#', class: 'button is-google w-button' }, [
-          'Continue with Google',
-        ]),
-      ]),
-    ],
+    formChildren,
   )
 
-  return { form, submitWrap, submitElement, submitSpinner, control, linkWrap, linkSpinner, link }
+  return {
+    form,
+    submitWrap,
+    submitElement,
+    submitSpinner,
+    control,
+    linkWrap,
+    linkSpinner,
+    link,
+    email,
+    password,
+    terms,
+    termsVisual,
+    checklist,
+  }
 }
 
 /** profile/security shape: no marker, native submit inside the wrap */
@@ -971,4 +1071,499 @@ test('a browser with no MutationObserver still loads the script quietly', async 
   await flush()
   assert.equal(f.submitWrap.getAttribute('data-button-theme'), 'black')
   assert.equal(warnings.length, 0)
+})
+
+// ---------------------------------------------------------------------------
+// Double-submit guard
+// ---------------------------------------------------------------------------
+
+test('a second submit while the button is busy never reaches Memberstack', async () => {
+  const f = signupForm()
+  const root = body([f.form])
+  const app = mount(root)
+  const ms = memberstack(root, f.form)
+  let watched = 0
+  f.form.addEventListener('submit', () => {
+    watched += 1
+  })
+
+  const first = ms.submit()
+  await flush()
+  assert.equal(ms.submits, 1)
+  assert.equal(watched, 1, 'the first submit reaches every bubble listener')
+  assert.equal(first.stopped, false)
+  assert.equal(f.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(f.control.getAttribute('aria-disabled'), 'true')
+
+  const second = ms.submit()
+  assert.equal(ms.submits, 1, 'Memberstack is asked once')
+  assert.equal(watched, 1, 'and nothing downstream is asked twice either')
+  assert.equal(second.defaultPrevented, true)
+  assert.equal(second.stopped, true)
+  assert.equal(app.warnings.length, 0)
+})
+
+test('once the spinner hides, the same button submits again', async () => {
+  const f = signupForm()
+  const root = body([f.form])
+  mount(root)
+  const ms = memberstack(root, f.form)
+
+  ms.submit()
+  await flush()
+  ms.hide()
+  await flush()
+  assert.deepEqual(marksOf(f.submitWrap), {
+    theme: 'black',
+    themeMark: null,
+    busy: null,
+    busyMark: null,
+    loading: null,
+    ariaDisabled: null,
+    ariaMark: null,
+  })
+
+  ms.submit()
+  await flush()
+  assert.equal(ms.submits, 2)
+  assert.deepEqual(marksOf(f.submitWrap), {
+    theme: 'disabled',
+    themeMark: 'black',
+    busy: 'true',
+    busyMark: '',
+    loading: 'true',
+    ariaDisabled: null,
+    ariaMark: null,
+  })
+  assert.equal(f.control.getAttribute('aria-disabled'), 'true')
+})
+
+test('a non-auth Memberstack form can still be submitted as often as it likes', async () => {
+  const f = profileForm()
+  const root = body([f.form])
+  const app = mount(root)
+  const ms = memberstack(root, f.form)
+
+  ms.submit()
+  await flush()
+  f.submitSpinner.style.display = 'block'
+  await flush()
+  ms.submit()
+  await flush()
+  ms.submit()
+  await flush()
+
+  assert.equal(ms.submits, 3)
+  assert.deepEqual(marksOf(f.wrap), {
+    theme: 'black',
+    themeMark: null,
+    busy: null,
+    busyMark: null,
+    loading: null,
+    ariaDisabled: null,
+    ariaMark: null,
+  })
+  assert.deepEqual(marksOf(f.control), {
+    theme: null,
+    themeMark: null,
+    busy: null,
+    busyMark: null,
+    loading: null,
+    ariaDisabled: null,
+    ariaMark: null,
+  })
+  assert.equal(app.warnings.length, 0)
+})
+
+test('the reset-password form, which shows no spinner, submits every time', async () => {
+  const f = resetForm()
+  const root = body([f.form])
+  const app = mount(root)
+  const ms = memberstack(root, f.form)
+
+  ms.submit()
+  await flush()
+  ms.submit()
+  await flush()
+  ms.submit()
+  await flush()
+
+  assert.equal(ms.submits, 3)
+  assert.deepEqual(marksOf(f.control), {
+    theme: null,
+    themeMark: null,
+    busy: null,
+    busyMark: null,
+    loading: null,
+    ariaDisabled: null,
+    ariaMark: null,
+  })
+  assert.equal(app.warnings.length, 0)
+})
+
+test('repeated rescans never stack a second guard on the same form', async () => {
+  const f = signupForm()
+  const root = body([f.form])
+  const app = mount(root)
+
+  const wired = f.form.listenerCount('submit')
+  assert.equal(wired, 1, 'one guard after the first wiring')
+
+  const ms = memberstack(root, f.form)
+  const withStandIn = f.form.listenerCount('submit')
+  app.window.startersMemberstackLoader.rescan()
+  app.window.startersMemberstackLoader.rescan()
+  assert.equal(f.form.listenerCount('submit'), withStandIn)
+
+  ms.submit()
+  await flush()
+  assert.equal(ms.submits, 1)
+  ms.submit()
+  assert.equal(ms.submits, 1)
+})
+
+// ---------------------------------------------------------------------------
+// Re-assertion while the spinner runs
+// ---------------------------------------------------------------------------
+
+test('another script stripping the busy look mid-submit gets it put straight back', async () => {
+  const f = signupForm()
+  const root = body([f.form])
+  mount(root)
+  const ms = memberstack(root, f.form)
+
+  ms.submit()
+  await flush()
+
+  f.control.removeAttribute('aria-disabled')
+  await flush()
+  assert.equal(f.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(f.control.getAttribute('data-memberstack-loader-aria'), '')
+
+  f.submitWrap.setAttribute('data-button-theme', 'black')
+  await flush()
+  assert.equal(f.submitWrap.getAttribute('data-button-theme'), 'disabled')
+
+  f.submitWrap.removeAttribute('aria-busy')
+  await flush()
+  assert.equal(f.submitWrap.getAttribute('aria-busy'), 'true')
+  assert.equal(f.submitWrap.getAttribute('data-memberstack-loader-busy'), '')
+
+  f.submitWrap.removeAttribute('data-ms-loading')
+  await flush()
+  assert.equal(f.submitWrap.getAttribute('data-ms-loading'), 'true')
+
+  f.control.setAttribute('aria-disabled', 'false')
+  await flush()
+  assert.equal(f.control.getAttribute('aria-disabled'), 'true')
+
+  ms.hide()
+  await flush()
+  assert.deepEqual(marksOf(f.submitWrap), {
+    theme: 'black',
+    themeMark: null,
+    busy: null,
+    busyMark: null,
+    loading: null,
+    ariaDisabled: null,
+    ariaMark: null,
+  })
+  assert.equal(f.control.hasAttribute('aria-disabled'), false)
+  assert.equal(f.control.hasAttribute('data-memberstack-loader-aria'), false)
+
+  f.submitWrap.setAttribute('data-button-theme', 'primary')
+  await flush()
+  assert.equal(f.submitWrap.getAttribute('data-button-theme'), 'primary', 'no longer defended')
+
+  f.control.setAttribute('aria-disabled', 'true')
+  await flush()
+  assert.equal(f.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(f.control.hasAttribute('data-memberstack-loader-aria'), false)
+})
+
+test("a foreign hold stripped mid-submit becomes ours, and leaves with us", async () => {
+  const f = signupForm({ ariaDisabled: 'true' })
+  const root = body([f.form])
+  mount(root)
+  const ms = memberstack(root, f.form)
+
+  ms.submit()
+  await flush()
+  assert.equal(f.control.hasAttribute('data-memberstack-loader-aria'), false, 'not ours yet')
+
+  f.control.removeAttribute('aria-disabled')
+  await flush()
+  assert.equal(f.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(f.control.getAttribute('data-memberstack-loader-aria'), '')
+
+  ms.hide()
+  await flush()
+  assert.equal(f.control.hasAttribute('aria-disabled'), false, 'the state the peer left')
+  assert.equal(f.control.hasAttribute('data-memberstack-loader-aria'), false)
+})
+
+test("a foreign aria-busy stripped mid-submit becomes ours, and leaves with us", async () => {
+  const f = signupForm()
+  f.submitWrap.setAttribute('aria-busy', 'true')
+  const root = body([f.form])
+  mount(root)
+  const ms = memberstack(root, f.form)
+
+  ms.submit()
+  await flush()
+  assert.equal(f.submitWrap.hasAttribute('data-memberstack-loader-busy'), false, 'not ours yet')
+
+  f.submitWrap.removeAttribute('aria-busy')
+  await flush()
+  assert.equal(f.submitWrap.getAttribute('aria-busy'), 'true')
+  assert.equal(f.submitWrap.getAttribute('data-memberstack-loader-busy'), '')
+
+  ms.hide()
+  await flush()
+  assert.equal(f.submitWrap.hasAttribute('aria-busy'), false, 'the state the peer left')
+  assert.equal(f.submitWrap.hasAttribute('data-memberstack-loader-busy'), false)
+})
+
+test('re-asserting the busy look settles instead of looping', async () => {
+  const f = signupForm()
+  const root = body([f.form])
+  mount(root)
+  const ms = memberstack(root, f.form)
+
+  ms.submit()
+  await flush()
+  f.control.removeAttribute('aria-disabled')
+  await flush()
+
+  const wrapBefore = marksOf(f.submitWrap)
+  const controlBefore = marksOf(f.control)
+  const wrapObservers = observerCount(f.submitWrap)
+  const controlObservers = observerCount(f.control)
+
+  await flush()
+  await flush()
+
+  assert.deepEqual(marksOf(f.submitWrap), wrapBefore)
+  assert.deepEqual(marksOf(f.control), controlBefore)
+  assert.equal(observerCount(f.submitWrap), wrapObservers)
+  assert.equal(observerCount(f.control), controlObservers)
+  assert.equal(wrapObservers, 1)
+  assert.equal(controlObservers, 1)
+})
+
+test('a non-auth form is watched nowhere at all', async () => {
+  const f = profileForm()
+  const root = body([f.form])
+  const app = mount(root)
+  app.window.startersMemberstackLoader.rescan()
+
+  assert.equal(observerCount(f.wrap), 0)
+  assert.equal(observerCount(f.control), 0)
+  assert.equal(observerCount(f.submitSpinner), 0)
+})
+
+test('a button wired by a later rescan is defended just like the rest', async () => {
+  const f = signupForm({ noSpinner: true })
+  const root = body([f.form])
+  const app = mount(root)
+
+  assert.equal(observerCount(f.submitWrap), 0)
+  f.submitElement.append(f.submitSpinner)
+  app.window.startersMemberstackLoader.rescan()
+  assert.equal(observerCount(f.submitWrap), 1)
+  assert.equal(observerCount(f.control), 1)
+
+  const ms = memberstack(root, f.form)
+  ms.submit()
+  await flush()
+  assert.equal(f.submitWrap.getAttribute('data-button-theme'), 'disabled')
+
+  f.submitWrap.removeAttribute('data-ms-loading')
+  await flush()
+  assert.equal(f.submitWrap.getAttribute('data-ms-loading'), 'true')
+
+  ms.submit()
+  assert.equal(ms.submits, 1)
+})
+
+// ---------------------------------------------------------------------------
+// Alongside the real password-validation.js
+// ---------------------------------------------------------------------------
+
+const REFUSED = "click refused by another script's disabled state on the CTA"
+
+/**
+ * A page carrying both scripts, in the given load order, plus the Webflow
+ * fail block password-validation reaches for.
+ * @param {{form?: object, loaderFirst?: boolean, hostname?: string}} [opts]
+ */
+function pvWorld(opts = {}) {
+  const f = signupForm(opts.form || {})
+  const fail = h('div', { class: 'w-form-fail' }, [h('div', {}, [''])])
+  const root = body([h('div', { class: 'w-form' }, [f.form, fail])])
+  const app = mount(root, {
+    sources: opts.loaderFirst ? [source, pvSource] : [pvSource, source],
+    hostname: opts.hostname || 'the-starters-3-0.webflow.io',
+  })
+  const ms = memberstack(root, f.form)
+  return Object.assign({ root, fail, ms }, f, app)
+}
+
+test('with password-validation loaded first, a repeat click is refused, not double-submitted', async () => {
+  const w = pvWorld()
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 1)
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(w.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(w.control.getAttribute('data-memberstack-loader-aria'), '')
+
+  const before = w.warnings.length
+  dispatch(w.control, 'click')
+  assert.equal(w.ms.submits, 1)
+  const fresh = w.warnings.slice(before)
+  assert.equal(fresh.length, 1, fresh.join(' | '))
+  assert.ok(fresh[0].includes(REFUSED), fresh[0])
+
+  w.ms.hide()
+  await flush()
+  assert.equal(w.control.hasAttribute('aria-disabled'), false)
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 2)
+})
+
+test('with the loader script first, the pair behaves identically', async () => {
+  const w = pvWorld({ loaderFirst: true })
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 1)
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(w.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(w.control.getAttribute('data-memberstack-loader-aria'), '')
+
+  const before = w.warnings.length
+  dispatch(w.control, 'click')
+  assert.equal(w.ms.submits, 1)
+  const fresh = w.warnings.slice(before)
+  assert.equal(fresh.length, 1, fresh.join(' | '))
+  assert.ok(fresh[0].includes(REFUSED), fresh[0])
+
+  w.ms.hide()
+  await flush()
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 2)
+})
+
+test('on production the refused repeat click says nothing in the console', async () => {
+  const w = pvWorld({ hostname: 'www.thestarters.com' })
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 1)
+  dispatch(w.control, 'click')
+  assert.equal(w.ms.submits, 1)
+  assert.equal(w.warnings.length, 0)
+})
+
+test('pressing Enter during a Memberstack submit is swallowed with password-validation loaded', async (t) => {
+  const w = pvWorld()
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 1)
+
+  // password-validation's capture listener clears this block when it runs
+  w.fail.style.display = 'block'
+  const event = dispatch(w.form, 'submit')
+
+  assert.equal(w.ms.submits, 1)
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(event.stopped, true)
+  const pvFirst = w.fail.style.display === 'none'
+  t.diagnostic(
+    'sources password-validation then loader: password-validation capture listener ran ' +
+      (pvFirst ? 'BEFORE' : 'AFTER') +
+      ' this script',
+  )
+})
+
+test('the checklist gate and the busy button hand the same CTA back and forth', async (t) => {
+  const w = pvWorld({ form: { checklist: true } })
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 0, 'the gate is closed')
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(w.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(w.control.getAttribute('data-password-validation-aria'), '')
+
+  fill(w.email, 'brand@example.com')
+  fill(w.password, 'Passw0rd!')
+  check(w.terms)
+  await flush()
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'black')
+  assert.equal(w.control.hasAttribute('aria-disabled'), false)
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 1)
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(w.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(w.control.getAttribute('data-memberstack-loader-aria'), '')
+  assert.equal(w.control.hasAttribute('data-password-validation-aria'), false)
+
+  dispatch(w.email, 'focusout')
+  await flush()
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(w.control.getAttribute('data-memberstack-loader-aria'), '')
+  assert.equal(w.submitWrap.getAttribute('aria-busy'), 'true')
+  t.diagnostic(
+    'password-validation render mid-submit leaves wrap class `disabled`: ' +
+      w.submitWrap.classList.contains('disabled'),
+  )
+
+  const before = w.warnings.length
+  dispatch(w.control, 'click')
+  assert.equal(w.ms.submits, 1)
+  const fresh = w.warnings.slice(before)
+  assert.equal(fresh.length, 1, fresh.join(' | '))
+  assert.ok(fresh[0].includes(REFUSED), fresh[0])
+
+  w.ms.hide()
+  await flush()
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'black')
+  assert.equal(w.control.hasAttribute('aria-disabled'), false)
+  assert.equal(w.control.hasAttribute('data-memberstack-loader-aria'), false)
+  const classAfterHide = w.submitWrap.classList.contains('disabled')
+  t.diagnostic('after hide, wrap class `disabled` is present: ' + classAfterHide)
+  assert.equal(classAfterHide, true, 'password-validation clears its own class on its next render')
+
+  dispatch(w.email, 'input')
+  await flush()
+  assert.equal(w.submitWrap.classList.contains('disabled'), false)
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'black')
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 2)
+})
+
+test('an unfilled checklist form blocks Enter and neither script dresses the button', async () => {
+  const w = pvWorld({ form: { checklist: true } })
+
+  const event = dispatch(w.form, 'submit')
+  await flush()
+
+  assert.equal(w.ms.submits, 0)
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(event.stopped, true)
+  assert.equal(w.submitSpinner.style.display, '')
+  assert.equal(w.submitWrap.hasAttribute('data-memberstack-loader-theme'), false)
+  assert.equal(w.submitWrap.hasAttribute('aria-busy'), false)
+  assert.equal(w.submitWrap.hasAttribute('data-ms-loading'), false)
+  assert.equal(w.control.hasAttribute('data-memberstack-loader-aria'), false)
 })
