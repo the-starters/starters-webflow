@@ -535,15 +535,12 @@
     document.addEventListener('click', function (event) {
       var target = event && event.target
       if (!target || typeof target.closest !== 'function') return
-      if (
-        !target.closest(
-          'button[type="submit"], input[type="submit"], ' +
-            '[data-ms-button="submit"], [data-ms-auth-provider]',
-        )
-      ) {
-        return
-      }
-      var owner = target.closest(
+      // Native and Memberstack submit controls continue through the form's
+      // `submit` event, which is the single timing boundary for those attempts.
+      // Provider links do not submit the form, so only they need click handling.
+      var provider = target.closest('[data-ms-auth-provider]')
+      if (!provider || typeof provider.closest !== 'function') return
+      var owner = provider.closest(
         '[data-ms-form="login"], [data-ms-form="signup"]',
       )
       var kind =
@@ -554,11 +551,7 @@
         clearLoginTiming()
         return
       }
-      if (kind === 'login') {
-        beginLoginTiming()
-        return
-      }
-      if (target.closest('[data-ms-auth-provider]')) beginLoginTiming()
+      beginLoginTiming()
     })
   }
 

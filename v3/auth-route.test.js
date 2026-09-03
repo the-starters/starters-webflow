@@ -182,6 +182,7 @@ function loadRouter(options = {}) {
   // Shareable so one test can hand a receipt from the real router to the real
   // loader over a single session storage.
   const storage = options.storage || new Map()
+  const storageWrites = []
   if (options.storedDestination) {
     storage.set('thestarters:v3-auth-next', options.storedDestination)
   }
@@ -214,6 +215,7 @@ function loadRouter(options = {}) {
     },
     setItem(key, value) {
       if (options.storageFailure === 'set') throw new DOMException('', 'SecurityError')
+      storageWrites.push({ key, value })
       storage.set(key, value)
     },
   }
@@ -427,6 +429,7 @@ function loadRouter(options = {}) {
     marks,
     events,
     storage,
+    storageWrites,
     window,
   }
 }
@@ -1175,10 +1178,14 @@ function formControl({
   return node
 }
 
-test('a submit-control click restarts timing after a rejected attempt', () => {
+test('click plus submit records one timing update for submit controls', () => {
   for (const control of [
-    formControl({ tag: 'button', attributes: { type: 'submit' }, owner: 'login' }),
-    formControl({ tag: 'input', attributes: { type: 'submit' }, owner: 'login' }),
+    formControl({
+      tag: 'button',
+      classes: ['clickable_btn'],
+      attributes: { type: 'submit' },
+      owner: 'login',
+    }),
     formControl({
       tag: 'div',
       attributes: { 'data-ms-button': 'submit' },
@@ -1189,12 +1196,28 @@ test('a submit-control click restarts timing after a rejected attempt', () => {
     harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
 
     harness.dispatchDocument('click', { target: control })
+    harness.forms[0].dispatch('submit')
 
     const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
     assert.notEqual(receipt.startedAt, 1, control.tag)
     assert.deepEqual(Object.keys(receipt), ['startedAt'], control.tag)
-    assert.ok(
-      harness.marks.includes('starters:v3-auth-route:login-submit'),
+    assert.equal(
+      harness.storageWrites.filter((write) => write.key === TIMING_KEY).length,
+      1,
+      control.tag,
+    )
+    assert.equal(
+      harness.marks.filter(
+        (mark) => mark === 'starters:v3-auth-route:login-submit',
+      ).length,
+      1,
+      control.tag,
+    )
+    assert.equal(
+      harness.events.filter(
+        (event) => event.detail && event.detail.stage === 'login-submit',
+      ).length,
+      1,
       control.tag,
     )
   }
@@ -1399,14 +1422,16 @@ test('a signup attempt discards a rejected password receipt without measuring it
           owner: 'signup',
         }),
       }),
-    (harness) =>
+    (harness) => {
       harness.dispatchDocument('click', {
         target: formControl({
           tag: 'button',
           attributes: { type: 'submit' },
           owner: 'signup',
         }),
-      }),
+      })
+      harness.forms[1].dispatch('submit')
+    },
   ]) {
     const harness = loadRouter({ pathname: '/login' })
     const rejectedAt = 1700000000000
