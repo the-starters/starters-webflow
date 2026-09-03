@@ -734,6 +734,16 @@
     return claimed
   }
 
+  function reconcileGeneralDays() {
+    const general = availability.items.general
+    if (!general) return
+    const baseDays = Array.isArray(general.defaultDays) ? general.defaultDays : general.days
+    const claimed = computeOverrides()
+    general.days = baseDays.filter(function (day) {
+      return claimed.indexOf(day) === -1
+    })
+  }
+
   function writeAvailabilityCache() {
     try {
       window.localStorage.setItem(
@@ -2170,19 +2180,12 @@
 
     setRequestBusy(true)
     try {
-      if (availId !== 'general') {
-        const general = availability.items.general
-        if (general) {
-          general.days = general.days.filter(function (day) {
-            return avail.days.indexOf(day) === -1
-          })
-          availability.items.general = general
-        }
-      } else {
+      if (availId === 'general') {
         avail.defaultDays = avail.days
       }
 
       availability.items[availId] = avail
+      if (availId !== 'general') reconcileGeneralDays()
       await updateAvail()
       canonicalSaved = true
 
@@ -2223,17 +2226,15 @@
     const removed = availability.items[id]
     const general = availability.items.general
     if (!removed || !general) return false
-    removed.days.forEach(function (day) {
-      if (general.defaultDays && general.defaultDays.indexOf(day) > -1) {
-        general.days.push(day)
-      }
-    })
-    availability.items.general = general
+    const previousAvailability = JSON.parse(JSON.stringify(availability))
+    let canonicalSaved = false
     delete availability.items[id]
+    reconcileGeneralDays()
 
     setRequestBusy(true)
     try {
       await updateAvail()
+      canonicalSaved = true
       if (grantId) {
         const updated = await updateConfigs()
         if (!updated) {
@@ -2249,6 +2250,11 @@
       console.log('[scheduling-section] availability removed', { id: id })
       return true
     } catch (error) {
+      if (!canonicalSaved) {
+        availability = previousAvailability
+        window.STARTER_AVAILABILITY = previousAvailability
+        renderAvailabilityItems()
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] availability remove failed:', error && error.message)
       return false

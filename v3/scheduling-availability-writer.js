@@ -654,6 +654,22 @@
     return availabilityArray
   }
 
+  function reconcileGeneralDays() {
+    const general = availability.items.general
+    if (!general) return
+    const baseDays = Array.isArray(general.defaultDays) ? general.defaultDays : general.days
+    const claimed = []
+    for (const id in availability.items) {
+      if (!Object.prototype.hasOwnProperty.call(availability.items, id) || id === 'general') continue
+      availability.items[id].days.forEach(function (day) {
+        if (claimed.indexOf(day) === -1) claimed.push(day)
+      })
+    }
+    general.days = baseDays.filter(function (day) {
+      return claimed.indexOf(day) === -1
+    })
+  }
+
   function writeAvailabilityCache() {
     try {
       window.localStorage.setItem(
@@ -1249,19 +1265,12 @@
       const availId = form.dataset.availabilityId || 'general'
       const avail = { days: selectedDays, start: startTime.value, end: endTime.value }
 
-      if (availId !== 'general') {
-        const general = availability.items.general
-        if (general) {
-          general.days = general.days.filter(function (day) {
-            return avail.days.indexOf(day) === -1
-          })
-          availability.items.general = general
-        }
-      } else {
+      if (availId === 'general') {
         avail.defaultDays = avail.days
       }
 
       availability.items[availId] = avail
+      if (availId !== 'general') reconcileGeneralDays()
       await updateAvail()
       canonicalSaved = true
 
@@ -1518,16 +1527,14 @@
     const removed = availability.items[item.dataset.id]
     const general = availability.items.general
     if (!removed || !general) return
-    removed.days.forEach(function (day) {
-      if (general.defaultDays && general.defaultDays.indexOf(day) > -1) {
-        general.days.push(day)
-      }
-    })
-    availability.items.general = general
+    const previousAvailability = JSON.parse(JSON.stringify(availability))
+    let canonicalSaved = false
     delete availability.items[item.dataset.id]
+    reconcileGeneralDays()
 
     try {
       await updateAvail()
+      canonicalSaved = true
       if (grantId) {
         const updated = await updateConfigs(null, true)
         if (!updated) {
@@ -1542,6 +1549,11 @@
       renderAvail()
       emit('starterSchedulingWriteSuccess', { action: 'availability-remove' })
     } catch (error) {
+      if (!canonicalSaved) {
+        availability = previousAvailability
+        window.STARTER_AVAILABILITY = previousAvailability
+        renderAvail()
+      }
       publishCalendarConnectionError()
       switchStep('config-request-error')
       console.warn('[scheduling-writer] availability remove failed:', error && error.message)
