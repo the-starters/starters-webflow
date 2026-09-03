@@ -2482,3 +2482,56 @@ test('r6-13: a click another script already refused is never turned into a submi
   dispatch(ariaControl.overlay, 'click')
   assert.equal(ariaControl.submits.length, 0, 'on the control too')
 })
+
+test('r6-14: a foreign refusal survives our own render clearing it', () => {
+  // our gate is open and has painted the CTA open, so anything disabled on the
+  // CTA now was written by somebody else
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true, 'our gate is open')
+
+  f.wrapBtn.setAttribute('aria-disabled', 'true')
+  const click = dispatch(f.overlay, 'click')
+
+  assert.equal(f.submits.length, 0, 'the other script refused this click')
+  assert.equal(click.defaultPrevented, false, 'and owns it — we do not preventDefault')
+})
+
+test('r6-14: our own stale aria-disabled is not mistaken for a foreign refusal', () => {
+  // the gate was closed at the last render, so the disabled state on the CTA is
+  // ours; the fields are then filled with no event, exactly as a password
+  // manager can, and the click's own render is the first to see them
+  const f = liveSetup()
+  type(f, 'weakpass')
+  assert.equal(overlayGated(f), true, 'we wrote the disabled state')
+
+  f.input.value = VALID_PASSWORD
+  f.email.value = 'brand@example.com'
+  f.terms.checked = true
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the click renders open and submits once')
+})
+
+test('r6-15: rescan refreshes a checklist bridge on a form with no data-ms-form', () => {
+  const f = liveSetup({ cta: 'none', msForm: false })
+
+  const { wrapBtn, overlay } = buildCta('overlay')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  const live = Object.assign({}, f, { wrapBtn, overlay })
+  assert.equal(overlayGated(live), true, 'the late CTA greys even with no data-ms-form')
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus one gate')
+  assert.equal(wrapBtn.listenerCount('click'), 1, 'one bridge on the live root')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(live), true)
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1, 'exactly one synthetic submit')
+})
+

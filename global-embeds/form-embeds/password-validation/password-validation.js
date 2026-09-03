@@ -531,7 +531,7 @@
     var bridge = form[BRIDGE_FLAG];
 
     if (!bridge) {
-      bridge = form[BRIDGE_FLAG] = { button: null, gate: null };
+      bridge = form[BRIDGE_FLAG] = { button: null, gate: null, lastGate: null };
       var surface = failSurface(form);
 
       form.addEventListener('submit', function (event) {
@@ -553,17 +553,25 @@
       bridge.onClick = function (event) {
         if (!bridge.button || event.currentTarget !== bridge.button.root) return;
         var control = clickedControl(event, bridge.button);
+        // Ownership rule: our own gate writes aria-disabled/disabled on these
+        // same nodes, so what is on them only reads as another script's refusal
+        // where the last verdict we wrote was open (or we never wrote one).
+        var foreign = !bridge.gate || bridge.lastGate === true;
+        var refused = event.defaultPrevented || (foreign && (
+          isAriaDisabled(bridge.button.root) ||
+          isAriaDisabled(control) ||
+          !!(control && control.disabled)
+        ));
+        // Captured first: gateOpen re-renders, which clears their state too.
         if (!gateOpen(bridge)) {
           // A disabled native control never gets here; an anchor or a stale
           // overlay still can, and must not navigate or submit.
           if (event.preventDefault) event.preventDefault();
           return;
         }
-        // Another script (step-flow, form-validation) already refused this
-        // click and owns the outcome — do not preventDefault on its behalf.
-        if (event.defaultPrevented) return;
-        if (isAriaDisabled(bridge.button.root) || isAriaDisabled(control)) return;
-        if (control && control.disabled) return;
+        // Another script (step-flow, form-validation) refused this click and
+        // owns the outcome — do not preventDefault on its behalf.
+        if (refused) return;
         if (isNativeSubmitter(control)) return;
         if (control && control.matches && control.matches('a') && event.preventDefault) {
           event.preventDefault();
@@ -778,6 +786,7 @@
       var gate = allPass && emailSatisfied(emailInput) && termsSatisfied(termsInput);
       // Live read: a CTA that only arrives on a later rescan still greys.
       setDisabled(bridge.button, !gate);
+      bridge.lastGate = gate;
       return gate;
     }
     bridge.gate = render;
@@ -894,6 +903,10 @@
       var wired = form[WIRED_FLAG];
       if (wired) {
         wired.adopt(wrapper);
+        // A marker that arrived or was swapped after wiring is picked up here;
+        // the data-ms-form tail below never sees a form without that attribute.
+        var adopted = ensureBridge(form);
+        if (adopted.gate) adopted.gate();
         continue;
       }
 
