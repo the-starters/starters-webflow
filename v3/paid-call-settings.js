@@ -295,7 +295,9 @@
   function displayableRate(value) {
     if (!value || String(value.currency || '').toLowerCase() !== 'usd') return null
     const cents = Number(value.price_cents)
-    return Number.isInteger(cents) && cents >= 100 ? value : null
+    return Number.isInteger(cents) && cents >= 100 && cents <= 100000 && cents % 100 === 0
+      ? value
+      : null
   }
 
   function importedRateSuggestion(value) {
@@ -504,6 +506,15 @@
     setAccessibleName(field('title'), 'Paid call description')
     setAccessibleName(field('price'), 'Paid call rate per hour')
     setAccessibleName(field('duration'), 'Paid call duration')
+
+    const priceInput = field('price')
+    if (priceInput) {
+      priceInput.setAttribute('type', 'number')
+      priceInput.setAttribute('inputmode', 'numeric')
+      priceInput.setAttribute('step', '1')
+      priceInput.setAttribute('min', '1')
+      priceInput.setAttribute('max', '1000')
+    }
 
     const status =
       qs('[data-call-settings-output="status"]', uiScope || root) ||
@@ -977,7 +988,8 @@
     const titleInput = field('title')
     const priceInput = field('price')
     const title = String((titleInput && titleInput.value) || '').trim()
-    const price = Number((priceInput && priceInput.value) || 0)
+    const rawPrice = String((priceInput && priceInput.value) || '').trim()
+    const price = /^[0-9]+$/.test(rawPrice) ? Number(rawPrice) : NaN
     const duration = FIXED_DURATION_MINUTES
     clearFieldValidity()
     if (title.length < 3 || title.length > 80) {
@@ -985,8 +997,8 @@
       reportFieldInvalid(titleInput, message)
       throw new Error(message)
     }
-    if (!Number.isInteger(price) || price < 1 || price > 999999) {
-      const message = 'Use a whole-dollar rate from $1 to $999,999.'
+    if (!Number.isSafeInteger(price) || price < 1 || price > 1000) {
+      const message = 'Use a whole-dollar rate from $1 to $1,000.'
       reportFieldInvalid(priceInput, message)
       throw new Error(message)
     }

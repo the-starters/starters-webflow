@@ -34,6 +34,11 @@ test('names every Paid card control and exposes status updates to assistive tech
   assert.equal(result.dom.disabled.getAttribute('aria-label'), 'No, keep paid calls off')
   assert.equal(result.dom.title.getAttribute('aria-label'), 'Paid call description')
   assert.equal(result.dom.price.getAttribute('aria-label'), 'Paid call rate per hour')
+  assert.equal(result.dom.price.getAttribute('type'), 'number')
+  assert.equal(result.dom.price.getAttribute('inputmode'), 'numeric')
+  assert.equal(result.dom.price.getAttribute('step'), '1')
+  assert.equal(result.dom.price.getAttribute('min'), '1')
+  assert.equal(result.dom.price.getAttribute('max'), '1000')
   assert.equal(result.dom.statusOutput.getAttribute('role'), 'status')
   assert.equal(result.dom.statusOutput.getAttribute('aria-live'), 'polite')
 })
@@ -868,10 +873,10 @@ test('a sub-dollar published Paid rate uses native validation instead of failing
   await settle()
 
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
-  assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $999,999.')
+  assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $1,000.')
   assert.equal(result.dom.price.reportValidityCalls, 1)
   assert.equal(result.dom.price.getAttribute('aria-invalid'), 'true')
-  assert.equal(result.dom.statusOutput.textContent, 'Use a whole-dollar rate from $1 to $999,999.')
+  assert.equal(result.dom.statusOutput.textContent, 'Use a whole-dollar rate from $1 to $1,000.')
 
   result.dom.price.value = '1'
   await result.dom.price.dispatch('input')
@@ -902,7 +907,7 @@ test('a rejected rate never blocks turning published Paid calls off', async () =
   result.dom.price.value = '0.5'
   await result.dom.save.dispatch('click')
   await settle()
-  assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $999,999.')
+  assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $1,000.')
   assert.equal(result.dom.form.reportValidity(), false)
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
 
@@ -1690,16 +1695,16 @@ test('the Paid card shows only the OFF pill while canonical settings load', asyn
   assert.equal(result.dom.offOutput.style.display, 'none')
 })
 
-test('the Paid card price output renders grouped two-decimal USD', async () => {
+test('the Paid card price output renders the grouped maximum and rejects out-of-contract values', async () => {
   const grouped = load({
     cardMode: true,
     initial: canonical({
-      services: [service({ price_cents: 150000 })],
+      services: [service({ price_cents: 100000 })],
       readiness: { paid_call_enabled: true, bookable: true },
     }),
   })
   await settle()
-  assert.equal(grouped.dom.priceOutput.textContent, '$1,500.00')
+  assert.equal(grouped.dom.priceOutput.textContent, '$1,000.00')
   assert.equal(grouped.dom.onOutput.style.display, '')
   assert.equal(grouped.dom.offOutput.style.display, 'none')
 
@@ -1711,13 +1716,31 @@ test('the Paid card price output renders grouped two-decimal USD', async () => {
     }),
   })
   await settle()
-  assert.equal(legacyCents.dom.priceOutput.textContent, '$10.50')
+  assert.equal(legacyCents.dom.priceOutput.textContent, 'Not set')
 
   const off = load({ cardMode: true, initial: canonical() })
   await settle()
   assert.equal(off.dom.priceOutput.textContent, 'Not set')
   assert.equal(off.dom.onOutput.style.display, 'none')
   assert.equal(off.dom.offOutput.style.display, '')
+})
+
+test('Paid input rejects maximum plus one and non-ASCII-digit number syntax before POST', async () => {
+  for (const value of ['1001', '-1', '1.5', '1,000', '$50', '1e2']) {
+    const result = load({
+      cardMode: true,
+      initial: canonical(),
+    })
+    await settle()
+    result.dom.enabled.checked = true
+    await result.dom.enabled.dispatch('change')
+    result.dom.title.value = 'Paid Consultation Call'
+    result.dom.price.value = value
+    await result.dom.save.dispatch('click')
+    await settle()
+    assert.equal(result.calls.some((call) => call.method === 'POST'), false, `${value} must not POST`)
+    assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $1,000.')
+  }
 })
 
 test('the current native Paid card price marker renders canonical USD without a new Webflow hook', async () => {

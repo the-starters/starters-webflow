@@ -26,6 +26,7 @@ class Target {
     this.textContent = ''
     this.focusCount = 0
     this.reportValidityCount = 0
+    this.validationMessage = ''
     this.children = []
   }
 
@@ -44,6 +45,7 @@ class Target {
   hasAttribute(name) { return this.attributes.has(name) }
   focus() { this.focusCount += 1 }
   reportValidity() { this.reportValidityCount += 1; return this.checkValidity?.() ?? true }
+  setCustomValidity(message) { this.validationMessage = String(message || '') }
   appendChild(child) { this.children.push(child); child.parentElement = this; return child }
 }
 
@@ -119,6 +121,10 @@ function createEnvironment(fetchImpl, {
     },
     6: {
       '[name="rate"]': createField('[name="rate"]', { value: '125', required: publishedRequired(6, 'rate') }),
+      '[name="rate-retainer"]': createField('[name="rate-retainer"]', { value: '', required: false }),
+      '#service': createField('#service', { value: '' }),
+      '#service-2': createField('#service-2', { value: '' }),
+      '#service-3': createField('#service-3', { value: '' }),
       '#availability-required': createField('#availability-required', { value: '1' }),
       '[name="free-consulting-calls"]': createField('[name="free-consulting-calls"]', { value: 'yes' }),
       '[name="free-call-description"]': createField('[name="free-call-description"]', { value: 'Legacy free description' }),
@@ -212,7 +218,11 @@ function createEnvironment(fetchImpl, {
       ['bio-html', stepFields['#bio-html'].value],
     ] : []),
     ...(stepIndex === 5 ? [['skill-option', 'Research'], ['skills', '1'], ['tool-option', 'Figma'], ['tools', '1']] : []),
-    ...(stepIndex === 6 ? [['rate', stepFields['[name="rate"]'].value], ['availability-option', 'Available'], ['availability', '1']] : []),
+    ...(stepIndex === 6 ? [
+      ['rate', stepFields['[name="rate"]'].value],
+      ['availability-option', 'Available'],
+      ['availability', '1'],
+    ] : []),
     ...(stepIndex === 7 ? [
       ['reviewer', stepFields['[name="reviewer"]'].value],
       ['reviewer-2', stepFields['[name="reviewer-2"]'].value],
@@ -700,7 +710,7 @@ async function testOptionalRatesPreserveCanonicalZeroSentinel() {
       ['rate-retainer', '500'],
     ],
   }))
-  assert.equal(configuredPayload.Retainer_Rate, '500')
+  assert.equal(configuredPayload.Retainer_Rate, 500)
 }
 
 async function testStepSixNeverWritesPaidCallAuthority() {
@@ -803,15 +813,72 @@ async function testPhoneCountryChangeCountsAsAMemberEdit() {
 }
 
 async function testEnabledOptionalRatesNeverSilentlyPersistZero() {
-  const enabledBlankPayload = await submittedStepPayload(saved({
-    stepIndex: 6,
-    additionalFormValues: [
-      ['offer-monthly-retainers', 'yes'],
-      ['rate-retainer', '   '],
-    ],
-  }))
-  assert.equal(enabledBlankPayload.Retainer_Enabled, true)
-  assert.equal(enabledBlankPayload.Retainer_Rate, '   ')
+	const environment = saved({
+		stepIndex: 6,
+		additionalFormValues: [
+			['offer-monthly-retainers', 'yes'],
+			['rate-retainer', '   '],
+		],
+	})
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.equal(environment.fields['[name="rate-retainer"]'].reportValidityCount, 1)
+	assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+}
+
+async function testStepSixRejectsInvalidWholeDollarPricesBeforeFetch() {
+	for (const value of ['0', '1001', '-1', '1.5', '1,000', '$50', '1e2']) {
+		const environment = saved({
+			stepIndex: 6,
+			fieldOverrides: { '[name="rate"]': { value } },
+		})
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `hourly ${value} must not send`)
+	}
+
+	for (const value of ['25001', '1.5']) {
+		const environment = saved({
+			stepIndex: 6,
+			additionalFormValues: [
+				['offer-monthly-retainers', 'yes'],
+				['rate-retainer', value],
+			],
+		})
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `retainer ${value} must not send`)
+	}
+
+	for (const value of ['0', '50001', '1.5']) {
+		const environment = saved({
+			stepIndex: 6,
+			additionalFormValues: [['service', JSON.stringify({ name: 'Audit', price: value })]],
+		})
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `service ${value} must not send`)
+	}
+}
+
+async function testStepSixPersistsExactPriceBoundaries() {
+	const environment = saved({
+		stepIndex: 6,
+		fieldOverrides: { '[name="rate"]': { value: '1000' } },
+		additionalFormValues: [
+			['offer-monthly-retainers', 'yes'],
+			['rate-retainer', '25000'],
+			['service', JSON.stringify({ name: 'Audit', price: '50000' })],
+		],
+	})
+	await submit(environment)
+	assert.equal(environment.requests.length, 1, JSON.stringify({
+		hourly: environment.fields['[name="rate"]'].validationMessage,
+		retainer: environment.fields['[name="rate-retainer"]'].validationMessage,
+		service: environment.fields['#service'].validationMessage,
+		modalEvents: environment.modalEvents,
+	}))
+	const payload = JSON.parse(environment.requests[0][1].body)
+	assert.equal(payload.Hourly_Rate, 1000)
+	assert.equal(payload.Retainer_Rate, 25000)
+	assert.equal(JSON.parse(payload.Services)['service-1'].price, 50000)
 }
 
 async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
@@ -823,7 +890,7 @@ async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
   assert.equal(consultPayload.Hourly_Rate, 0)
 
   const fullPayload = await submittedStepPayload(saved({ stepIndex: 6 }))
-  assert.equal(fullPayload.Hourly_Rate, '125')
+  assert.equal(fullPayload.Hourly_Rate, 125)
 
   const requiredBlank = createEnvironment(async () => {
     throw new Error('fetch must not run')
@@ -1364,6 +1431,8 @@ Promise.all([
   testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
   testPhoneCountryChangeCountsAsAMemberEdit(),
   testEnabledOptionalRatesNeverSilentlyPersistZero(),
+	testStepSixRejectsInvalidWholeDollarPricesBeforeFetch(),
+	testStepSixPersistsExactPriceBoundaries(),
   testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
