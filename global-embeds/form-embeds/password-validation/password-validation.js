@@ -41,10 +41,11 @@
 // gated only where a wrapper configures rules — a fail-open form still submits.
 // Disabling covers the wrap AND every overlay control inside it (native
 // `disabled` + aria-disabled), so the visible button can never stay live while
-// only the hidden one is gated. Each attribute we write is marked
-// `data-starters-pv-gated` and only ever cleared by us, so a refusal another
-// script wrote on the same CTA survives our renders — the bridge reads it and
-// stands down rather than submitting on that script's behalf.
+// only the hidden one is gated. Writes data-password-validation-aria /
+// -native on the CTA at runtime as ownership marks; never author them. Only
+// our own marks are ever cleared, so a peer's refusal — its aria-disabled, its
+// native disabled, or its own data-*-disabled marker — survives our renders,
+// keeps the CTA greyed, and stands the bridge down instead of submitting.
 //
 // Memberstack rejections after the click (duplicate email, 4xx/5xx, Turnstile,
 // network) used to be console-only. A submit that is not blocked arms a
@@ -292,43 +293,103 @@
     };
   }
 
-  // Ownership marker. Another script can disable the same CTA, and its refusal
+  function isAriaDisabled(el) {
+    return !!(el && el.getAttribute && el.getAttribute('aria-disabled') === 'true');
+  }
+
+  // Ownership marks. Another script can disable the same CTA, and its refusal
   // has to outlive our renders, so we only ever clear what we wrote ourselves.
-  var OWNED_ATTR = 'data-starters-pv-gated';
+  var OWNS_ARIA = 'data-password-validation-aria';
+  var OWNS_NATIVE = 'data-password-validation-native';
 
-  function ownsPart(el, part) {
-    var value = el && el.getAttribute ? el.getAttribute(OWNED_ATTR) : null;
-    return !!value && value.split(' ').indexOf(part) !== -1;
+  // The markers step-flow.js and form-validation.js write on a CTA they hold.
+  var PEER_MARKERS = '[data-form-flow-disabled],[data-validate-disabled]';
+
+  function peerHeld(el) {
+    return !!(el && el.closest && el.closest(PEER_MARKERS));
   }
 
-  function claimPart(el, part) {
-    var value = el.getAttribute(OWNED_ATTR);
-    el.setAttribute(OWNED_ATTR, value ? value + ' ' + part : part);
+  function ownsAria(el) {
+    return !!(el && el.hasAttribute && el.hasAttribute(OWNS_ARIA));
   }
 
-  function releasePart(el, part) {
-    var value = el.getAttribute(OWNED_ATTR);
-    if (!value) return;
-    var kept = [];
-    var parts = value.split(' ');
-    for (var i = 0; i < parts.length; i++) {
-      if (parts[i] && parts[i] !== part) kept.push(parts[i]);
-    }
-    if (kept.length) el.setAttribute(OWNED_ATTR, kept.join(' '));
-    else el.removeAttribute(OWNED_ATTR);
+  function ownsNative(el) {
+    return !!(el && el.hasAttribute && el.hasAttribute(OWNS_NATIVE));
   }
 
   // Writing over a refusal we did not author would make it ours to clear.
   function gateAria(el) {
     if (isAriaDisabled(el)) return;
     el.setAttribute('aria-disabled', 'true');
-    claimPart(el, 'aria');
+    el.setAttribute(OWNS_ARIA, '');
   }
 
+  // A peer holding the node keeps the attribute even where the mark is ours;
+  // the mark is released only when the attribute actually comes off.
   function ungateAria(el) {
-    if (!ownsPart(el, 'aria')) return;
+    if (!ownsAria(el) || peerHeld(el)) return;
     el.removeAttribute('aria-disabled');
-    releasePart(el, 'aria');
+    el.removeAttribute(OWNS_ARIA);
+  }
+
+  function gateNative(el) {
+    if (!isNativeControl(el) || el.disabled) return;
+    el.disabled = true;
+    el.setAttribute('disabled', 'disabled');
+    el.setAttribute('tabindex', '-1');
+    el.setAttribute(OWNS_NATIVE, '');
+  }
+
+  function ungateNative(el) {
+    if (!isNativeControl(el) || !ownsNative(el) || peerHeld(el)) return;
+    el.disabled = false;
+    el.removeAttribute('disabled');
+    el.removeAttribute('tabindex');
+    el.removeAttribute(OWNS_NATIVE);
+  }
+
+  function foreignAria(el) {
+    return isAriaDisabled(el) && !ownsAria(el);
+  }
+
+  function foreignNative(el) {
+    return !!(el && el.disabled) && !ownsNative(el);
+  }
+
+  // Every node the gate treats, so a refusal anywhere on the CTA is seen.
+  function buttonNodes(button) {
+    var nodes = button.controls.slice();
+    if (nodes.indexOf(button.root) === -1) nodes.push(button.root);
+    if (button.themeEl && nodes.indexOf(button.themeEl) === -1) nodes.push(button.themeEl);
+    return nodes;
+  }
+
+  // A peer's refusal outranks our open verdict: the CTA stays looking dead.
+  function foreignHold(button) {
+    var nodes = buttonNodes(button);
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (peerHeld(el) || foreignAria(el) || foreignNative(el)) return true;
+    }
+    return false;
+  }
+
+  // State already on the CTA when we first resolve it, with no peer claiming
+  // it, is adopted as ours — otherwise we could never open the button again.
+  // Mirrors readAuthoredTheme's handling of a CTA authored already-grey.
+  function adoptAuthoredState(button) {
+    if (peerHeld(button.root)) return;
+    var nodes = button.controls.slice();
+    if (button.themeEl && nodes.indexOf(button.themeEl) === -1) nodes.push(button.themeEl);
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (peerHeld(el)) continue;
+      if (isAriaDisabled(el) && !ownsAria(el)) el.setAttribute(OWNS_ARIA, '');
+      if (isNativeControl(el) && el.disabled && !ownsNative(el)) {
+        el.setAttribute('tabindex', '-1');
+        el.setAttribute(OWNS_NATIVE, '');
+      }
+    }
   }
 
   function setDisabled(button, isDisabled) {
@@ -347,28 +408,20 @@
       for (i = 0; i < controls.length; i++) {
         el = controls[i];
         gateAria(el);
-        if (isNativeControl(el) && !el.disabled) {
-          el.disabled = true;
-          el.setAttribute('disabled', 'disabled');
-          el.setAttribute('tabindex', '-1');
-          claimPart(el, 'native');
-        }
+        gateNative(el);
       }
     } else {
-      button.root.classList.remove('disabled');
+      // Release only what we own, and only look open when nobody else holds it.
+      var held = foreignHold(button);
+      if (!held) button.root.classList.remove('disabled');
       if (themeEl) {
-        if (button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
+        if (!held && button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
         if (controls.indexOf(themeEl) === -1) ungateAria(themeEl);
       }
       for (i = 0; i < controls.length; i++) {
         el = controls[i];
         ungateAria(el);
-        if (isNativeControl(el) && ownsPart(el, 'native')) {
-          el.disabled = false;
-          el.removeAttribute('disabled');
-          el.removeAttribute('tabindex');
-          releasePart(el, 'native');
-        }
+        ungateNative(el);
       }
     }
   }
@@ -558,14 +611,6 @@
     return !!(form.getAttribute && form.getAttribute('data-ms-form') === 'signup');
   }
 
-  function isAriaDisabled(el) {
-    return !!(el && el.getAttribute && el.getAttribute('aria-disabled') === 'true');
-  }
-
-  function foreignAria(el) {
-    return isAriaDisabled(el) && !ownsPart(el, 'aria');
-  }
-
   // No gate installed means nothing holds the click back.
   function gateOpen(bridge) {
     return !bridge.gate || bridge.gate();
@@ -601,22 +646,23 @@
       bridge.onClick = function (event) {
         if (!bridge.button || event.currentTarget !== bridge.button.root) return;
         var control = clickedControl(event, bridge.button);
-        // Ownership rule: disabled state reads as another script's refusal only
-        // where OWNED_ATTR says we did not write it.
-        var refused = event.defaultPrevented ||
-          foreignAria(bridge.button.root) ||
-          foreignAria(control) ||
-          !!(control && control.disabled && !ownsPart(control, 'native'));
-        // Captured first: defaultPrevented only holds until gateOpen re-renders.
         if (!gateOpen(bridge)) {
           // A disabled native control never gets here; an anchor or a stale
           // overlay still can, and must not navigate or submit.
           if (event.preventDefault) event.preventDefault();
           return;
         }
-        // Another script (step-flow, form-validation) refused this click and
-        // owns the outcome — do not preventDefault on its behalf.
-        if (refused) return;
+        // Foreign state survives our render; only our own marks are ever cleared.
+        var root = bridge.button.root;
+        var refused = event.defaultPrevented ||
+          peerHeld(root) || peerHeld(control) ||
+          foreignAria(root) || foreignAria(control) ||
+          foreignNative(control);
+        if (refused) {
+          // A silently dead CTA is worth naming on staging.
+          devWarn('click refused by another script\'s disabled state on the CTA', root);
+          return;
+        }
         if (isNativeSubmitter(control)) return;
         if (control && control.matches && control.matches('a') && event.preventDefault) {
           event.preventDefault();
@@ -631,6 +677,7 @@
       var root = form.querySelector(SUBMIT_BUTTON_SELECTOR);
       if (root) {
         bridge.button = resolveButton(root, form);
+        adoptAuthoredState(bridge.button);
         root.addEventListener('click', bridge.onClick);
       }
     }
