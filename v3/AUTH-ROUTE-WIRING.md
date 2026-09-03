@@ -15,23 +15,39 @@ moved to `get_build_profile_status` on 2026-08-04.
    blocking script tag, after `memberReady` and before the conditional
    application block. Do not add `defer`; the condition must be available to
    the following inline block. Use the same release ref as its child assets.
-   The loader inserts `route-guard.js` first, then `auth-route.js`, on `/login`,
-   `/starter-login`, and `/auth-route`.
+   The loader inserts `route-guard.js` first, then `auth-route.js`, and only on
+   `/login`, `/starter-login`, and `/auth-route`. On every other path it
+   inserts nothing. If it cannot read its own `src` it fails closed and inserts
+   nothing at all rather than falling back to a different release ref.
 
    ```html
    <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/auth-page-loader.js"></script>
    ```
-5. Remove the old static sitewide `route-guard.js` tag and all page-level
-   `auth-route.js` tags after the loader is installed. Duplicate boot guards
-   prevent double behavior during a staged readback, but duplicates are not the
-   intended final state.
-6. Put the unrelated site application-controller tags behind this exact test:
+5. Remove the page-level `auth-route.js` tags after the loader is installed.
+   Keep the sitewide `route-guard.js` tag: the loader never replaces it on a
+   non-auth page. Its own boot guard makes a duplicate execution inert, so a
+   staged readback that leaves both in place is safe but is not the final state.
+6. Move the sitewide `route-guard.js` tag and the unrelated site
+   application-controller tags behind this exact test, with `route-guard.js`
+   still first:
 
    ```js
    window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(
      window.location.pathname,
    )
    ```
+
+   **Ordering invariant.** The block must emit its tags while the parser is
+   still blocked on it (`document.write` from the inline head script, not
+   `appendChild`). `route-guard.js` owns the sitewide stable plan-ID role
+   contract and every page-level controller that reads
+   `window.StartersV3RouteGuard` — `build-profile-redirect.js`,
+   `complete-profile-redirect.js`, `starter-profile-redirect.js`,
+   `messages-profile.js`, `opportunities-3.0.js` — fails open to a `null` role
+   and silently stays put if the guard has not executed by the time its own tag
+   runs. Non-blocking emission would break that on every non-auth page. The
+   guard's `/memberstack/search-freelancers` compatibility redirect likewise
+   must not sit behind a CDN round trip.
 
    A false answer must emit none of `wf-xano`, the Xano SDK, PostHog helpers,
    validation, `opportunities-3.0.js`, project controllers, dashboard action
@@ -73,8 +89,16 @@ The login form starts a timestamp-only receipt in session storage. The router
 emits fixed `performance.mark()` names for router boot, Memberstack ready,
 member snapshot, token trade, status read, and redirect request. The sitewide
 loader emits `destination-load` on the final non-auth page and consumes the
-receipt. The receipt contains only `startedAt`. Events and marks never contain a
-member ID, email, cookie, Xano token, or requested destination.
+receipt. The receipt contains only `startedAt` and, once confirmed,
+`redirectedAt`. Events and marks never contain a member ID, email, cookie, Xano
+token, or requested destination.
+
+Only a completed login-to-destination flow can be measured. `/auth-route` stamps
+`redirectedAt` on the receipt at the moment it hands off, and the loader refuses
+to emit `destination-load` for a receipt without it. A login page boot clears
+any receipt it finds, and the logged-out bounce back to `/login` clears it too,
+so a rejected password or an abandoned login page can never be read later as a
+login-to-destination duration.
 
 Listen for `starters:v3-auth-route-timing`. Its detail contains `stage` and,
 when the cross-page receipt is present, `elapsedMs`. Receipts older than two
@@ -299,12 +323,17 @@ Production stays silent apart from the configuration errors in the table above.
 - Confirm the loader requests `route-guard.js` before `auth-route.js` from one
   release ref on all three auth paths.
 - Confirm `/auth-route` requests no unrelated application controller.
+- Confirm the loader requests nothing on a non-auth page, and that
+  `route-guard.js` there is still a parser-blocking head tag that executes
+  before every page-level controller. Spot-check
+  `/build-profile/select-profile`: `html[data-route-guard]` must be set before
+  `build-profile-redirect.js` runs.
 - Confirm `/starter-login` passes through `/auth-route` rather than the shared
   plan redirect.
 - Confirm `/sign-up` still has NO `auth-route.js` embed, and that its signup
   modals still return to their `starters-ms-redirect` marker destinations.
 - Back up page-level code before installing the script.
-- Run `node --test v3/auth-route.test.js`.
+- Run `node --test v3/auth-route.test.js v3/auth-page-loader.test.js`.
 - Verify login with `next=/dashboard` for Talent, paid Brand, Test Brand, and
   Brand Free in both incomplete-quiz and completed-quiz states.
 - Verify the four Talent funnel states on staging with the console open: a member

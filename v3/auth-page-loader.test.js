@@ -5,6 +5,8 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./auth-page-loader.js'), 'utf8')
 const TIMING_KEY = 'thestarters:v3-auth-route-timing'
+const PINNED_SRC =
+  'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v9.8.7/v3/auth-page-loader.js'
 
 function loadLoader(options = {}) {
   const pathname = options.pathname || '/auth-route'
@@ -12,10 +14,17 @@ function loadLoader(options = {}) {
   const appended = []
   const marks = []
   const events = []
+  const errors = []
   const listeners = {}
   const storage = new Map()
   if (options.startedAt !== undefined) {
-    storage.set(TIMING_KEY, JSON.stringify({ startedAt: options.startedAt }))
+    const receipt = { startedAt: options.startedAt }
+    // /auth-route stamps `redirectedAt` as it hands off; a receipt without it
+    // never reached the router.
+    if (options.redirectedAt !== undefined) {
+      receipt.redirectedAt = options.redirectedAt
+    }
+    storage.set(TIMING_KEY, JSON.stringify(receipt))
   }
 
   function makeParent() {
@@ -30,11 +39,12 @@ function loadLoader(options = {}) {
   const head = makeParent()
   const documentElement = makeParent()
   const document = {
-    currentScript: {
-      src:
-        options.loaderSrc ||
-        'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v9.8.7/v3/auth-page-loader.js',
-    },
+    currentScript: Object.prototype.hasOwnProperty.call(
+      options,
+      'currentScript',
+    )
+      ? options.currentScript
+      : { src: options.loaderSrc || PINNED_SRC },
     head,
     documentElement,
     readyState: options.readyState || 'loading',
@@ -94,11 +104,14 @@ function loadLoader(options = {}) {
     Number,
     Set,
     String,
+    console: {
+      error: (message) => errors.push(message),
+    },
     document,
     window,
   })
 
-  return { appended, events, listeners, marks, storage, window }
+  return { appended, errors, events, listeners, marks, storage, window }
 }
 
 test('auth paths install only route guard then auth router from one release ref', () => {
@@ -127,17 +140,26 @@ test('auth paths install only route guard then auth router from one release ref'
   }
 })
 
-test('ordinary pages install only route guard and admit the existing app block', () => {
-  const { appended, window } = loadLoader({ pathname: '/starter-dashboard' })
+// The sitewide route-guard.js tag stays parser-inserted in the site head so it
+// keeps executing before page-level controllers that read
+// window.StartersV3RouteGuard. Injecting it here would make it non-blocking and
+// silently hand those controllers a null role.
+test('non-auth pages install nothing and admit the existing app block', () => {
+  for (const pathname of [
+    '/starter-dashboard',
+    '/build-profile/select-profile',
+    '/forgot-password',
+    '/memberstack/search-freelancers',
+  ]) {
+    const { appended, window } = loadLoader({ pathname })
 
-  assert.equal(appended.length, 1)
-  assert.equal(appended[0].attributes['data-starters-auth-runtime'], 'route-guard')
-  assert.equal(
-    window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(
-      '/starter-dashboard',
-    ),
-    true,
-  )
+    assert.deepEqual(appended, [], pathname)
+    assert.equal(
+      window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(pathname),
+      true,
+      pathname,
+    )
+  }
 })
 
 test('unapproved hosts install nothing', () => {
@@ -145,10 +167,25 @@ test('unapproved hosts install nothing', () => {
   assert.equal(appended.length, 0)
 })
 
+test('an underivable base fails closed instead of mixing release refs', () => {
+  for (const options of [
+    { currentScript: null },
+    { currentScript: {} },
+    { loaderSrc: 'https://assets.example.com/bundles/site-head.js' },
+  ]) {
+    const { appended, errors } = loadLoader({ pathname: '/login', ...options })
+
+    assert.deepEqual(appended, [], JSON.stringify(options))
+    assert.equal(errors.length, 1, JSON.stringify(options))
+    assert.match(errors[0], /auth runtime not installed/)
+  }
+})
+
 test('destination load emits timestamp-only timing and consumes the marker', () => {
   const { events, listeners, marks, storage } = loadLoader({
     pathname: '/starter-dashboard',
     startedAt: 1700000000000,
+    redirectedAt: 1700000004000,
   })
 
   assert.equal(typeof listeners.load, 'function')
@@ -164,10 +201,23 @@ test('destination load emits timestamp-only timing and consumes the marker', () 
   assert.equal(JSON.stringify(events).includes('token'), false)
 })
 
+test('a receipt the router never confirmed is discarded without an event', () => {
+  const { events, listeners, marks, storage } = loadLoader({
+    pathname: '/forgot-password',
+    startedAt: 1700000000000,
+  })
+
+  listeners.load()
+  assert.equal(events.length, 0)
+  assert.equal(marks.length, 0)
+  assert.equal(storage.has(TIMING_KEY), false)
+})
+
 test('auth pages preserve timing for the next navigation', () => {
   const { listeners, storage } = loadLoader({
     pathname: '/auth-route',
     startedAt: 1700000000000,
+    redirectedAt: 1700000004000,
   })
 
   assert.equal(listeners.load, undefined)
@@ -178,6 +228,7 @@ test('stale timing is removed without emitting a destination event', () => {
   const { events, listeners, marks, storage } = loadLoader({
     pathname: '/brand-dashboard',
     startedAt: 1699999000000,
+    redirectedAt: 1699999004000,
   })
 
   listeners.load()

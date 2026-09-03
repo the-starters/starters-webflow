@@ -217,6 +217,27 @@
     timingMark('login-submit')
   }
 
+  function clearLoginTiming() {
+    try {
+      window.sessionStorage.removeItem(TIMING_STORAGE_KEY)
+    } catch (error) {}
+  }
+
+  // A receipt only becomes readable evidence once /auth-route actually hands
+  // off. Without `redirectedAt` the loader discards it, so a rejected password
+  // or an abandoned login page can never be reported later as a
+  // login-to-destination duration.
+  function confirmRedirectTiming() {
+    var startedAt = timingStartedAt()
+    if (startedAt === null) return
+    try {
+      window.sessionStorage.setItem(
+        TIMING_STORAGE_KEY,
+        JSON.stringify({ startedAt: startedAt, redirectedAt: Date.now() }),
+      )
+    } catch (error) {}
+  }
+
   function timingMark(stage) {
     var markName = TIMING_MARK_PREFIX + stage
     try {
@@ -237,6 +258,7 @@
   }
 
   function requestRedirect(destination) {
+    confirmRedirectTiming()
     timingMark('redirect-request')
     window.location.replace(destination)
   }
@@ -421,6 +443,10 @@
   }
 
   function configureLoginForms() {
+    // A login page is the start of a flow, never the middle of one. Any receipt
+    // still here belongs to an earlier attempt that never reached /auth-route.
+    clearLoginTiming()
+
     var queryValue = new URLSearchParams(window.location.search).get('next')
     var queryDestination = localPath(queryValue)
     if (queryDestination) {
@@ -762,6 +788,7 @@
     var member = await currentMemberSnapshot(memberstack)
     timingMark('member-snapshot')
     if (!member || !member.id) {
+      clearLoginTiming()
       var loginNext = consumeRequestedDestination()
       var loginUrl = loginNext
         ? LOGIN_PATH + '?next=' + encodeURIComponent(loginNext)
@@ -870,7 +897,17 @@
 
   if (!APPROVED_HOSTS.has(window.location.hostname)) return
   if (isLoginPath(window.location.pathname)) {
-    configureLoginForms()
+    // The loader inserts this file dynamically, so it can execute before the
+    // parser has reached the login form. Without this guard the form query
+    // matches nothing, the /auth-route redirect attributes are never written,
+    // and the login falls through to the shared Memberstack plan redirect.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', configureLoginForms, {
+        once: true,
+      })
+    } else {
+      configureLoginForms()
+    }
     return
   }
   if (window.location.pathname === ROUTE_PATH) {

@@ -4,18 +4,24 @@
  * @release v1.59.441
  *
  * Install once in the V3 site Head Code after Memberstack and the shared
- * `window.memberReady` initializer. It replaces the static sitewide
- * `route-guard.js` tag and the page-level `auth-route.js` tags.
+ * `window.memberReady` initializer, and before the conditional site
+ * application block. It replaces the page-level `auth-route.js` tags. It does
+ * not replace the sitewide `route-guard.js` tag.
  *
- * On /login, /starter-login, and /auth-route it inserts only route-guard.js and
- * auth-route.js. Other application controllers must stay inside the
- * `StartersV3AuthPageLoader.shouldLoadApplicationControllers()` condition in
- * the complete site Head Code. On all other pages it inserts route-guard.js
- * only; the existing site-head controller block remains authoritative there.
+ * On /login, /starter-login, and /auth-route it inserts route-guard.js and
+ * then auth-route.js, and the site application block must skip itself through
+ * `StartersV3AuthPageLoader.shouldLoadApplicationControllers()`. On every other
+ * page the loader inserts nothing. The sitewide `route-guard.js` tag stays
+ * inside that parser-blocking application block, so it keeps executing before
+ * every page-level controller that reads `window.StartersV3RouteGuard`.
  *
  * Both dynamic scripts have `async = false`. Browsers can download them in
  * parallel but must execute them in insertion order, which preserves the
  * stable plan-ID role contract before the router consumes it.
+ *
+ * The loader only serves child assets from the release ref it was itself served
+ * from. When it cannot read its own `src` it fails closed and installs nothing
+ * rather than mixing refs.
  */
 ;(function () {
   'use strict'
@@ -31,8 +37,6 @@
   var AUTH_PATHS = new Set(['/login', '/starter-login', '/auth-route'])
   var ROUTE_GUARD_PATH = 'v3/route-guard.js'
   var AUTH_ROUTE_PATH = 'v3/auth-route.js'
-  var DEFAULT_BASE =
-    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/'
   var TIMING_STORAGE_KEY = 'thestarters:v3-auth-route-timing'
   var TIMING_MARK_PREFIX = 'starters:v3-auth-route:'
   var TIMING_MAX_AGE_MS = 120000
@@ -53,12 +57,12 @@
     try {
       var current = document.currentScript
       var src = current && current.src
-      if (!src) return DEFAULT_BASE
+      if (!src) return null
       var suffix = 'v3/auth-page-loader.js'
       var index = src.indexOf(suffix)
-      return index === -1 ? DEFAULT_BASE : src.slice(0, index)
+      return index === -1 ? null : src.slice(0, index)
     } catch (error) {
-      return DEFAULT_BASE
+      return null
     }
   }
 
@@ -73,12 +77,25 @@
   }
 
   function install(pathname) {
+    if (!isAuthPath(pathname)) return []
     var base = loaderBase()
-    var installed = [appendOrderedScript(base + ROUTE_GUARD_PATH, 'route-guard')]
-    if (isAuthPath(pathname)) {
-      installed.push(appendOrderedScript(base + AUTH_ROUTE_PATH, 'auth-route'))
+    if (!base) {
+      console.error(
+        '[v3-auth-page-loader] Cannot read its own release base from ' +
+          'document.currentScript; auth runtime not installed.',
+      )
+      return []
     }
-    return installed
+    return [
+      appendOrderedScript(base + ROUTE_GUARD_PATH, 'route-guard'),
+      appendOrderedScript(base + AUTH_ROUTE_PATH, 'auth-route'),
+    ]
+  }
+
+  function discardTiming() {
+    try {
+      window.sessionStorage.removeItem(TIMING_STORAGE_KEY)
+    } catch (error) {}
   }
 
   function finishNavigationTiming(pathname) {
@@ -93,11 +110,18 @@
 
     var startedAt = parsed && Number(parsed.startedAt)
     if (!Number.isFinite(startedAt)) return null
+    // `redirectedAt` is stamped by /auth-route immediately before it hands off.
+    // Without it the receipt belongs to a login attempt that never reached the
+    // router — a rejected password, or a click away from the login page — and
+    // its elapsed time would not measure a login-to-destination navigation.
+    var redirectedAt = parsed && Number(parsed.redirectedAt)
     var elapsedMs = Date.now() - startedAt
-    if (elapsedMs < 0 || elapsedMs > TIMING_MAX_AGE_MS) {
-      try {
-        window.sessionStorage.removeItem(TIMING_STORAGE_KEY)
-      } catch (error) {}
+    if (
+      !Number.isFinite(redirectedAt) ||
+      elapsedMs < 0 ||
+      elapsedMs > TIMING_MAX_AGE_MS
+    ) {
+      discardTiming()
       return null
     }
 
@@ -113,9 +137,7 @@
         }),
       )
     } catch (error) {}
-    try {
-      window.sessionStorage.removeItem(TIMING_STORAGE_KEY)
-    } catch (error) {}
+    discardTiming()
     return elapsedMs
   }
 
@@ -130,16 +152,17 @@
   window.StartersV3AuthPageLoader = api
 
   if (!isApprovedHost(window.location && window.location.hostname)) return
-  install((window.location && window.location.pathname) || '')
+  var pathname = (window.location && window.location.pathname) || ''
+  install(pathname)
 
-  if (!isAuthPath((window.location && window.location.pathname) || '')) {
+  if (!isAuthPath(pathname)) {
     if (document.readyState === 'complete') {
-      finishNavigationTiming(window.location.pathname)
+      finishNavigationTiming(pathname)
     } else if (typeof window.addEventListener === 'function') {
       window.addEventListener(
         'load',
         function () {
-          finishNavigationTiming(window.location.pathname)
+          finishNavigationTiming(pathname)
         },
         { once: true },
       )

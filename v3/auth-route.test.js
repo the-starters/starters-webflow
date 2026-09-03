@@ -17,6 +17,7 @@ const STATUS_URL =
 const BRAND_STATUS_URL =
   XANO + '/api:KZf7nFnk/starters_onboarding/get_brand_profile_status'
 const BRAND_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
+const TIMING_KEY = 'thestarters:v3-auth-route-timing'
 // The endpoint the funnel check used to read. Still stubbed so "it is never
 // requested any more" is an assertion about behaviour rather than about a stub
 // that would have thrown anyway.
@@ -174,6 +175,9 @@ function loadRouter(options = {}) {
   if (options.storedDestination) {
     storage.set('thestarters:v3-auth-next', options.storedDestination)
   }
+  if (options.timingReceipt) {
+    storage.set(TIMING_KEY, JSON.stringify(options.timingReceipt))
+  }
   // The same-tab completion marker v3/brand-account-controller.js writes.
   if (options.brandMarker !== undefined) {
     storage.set(BRAND_MARKER_KEY, options.brandMarker)
@@ -330,21 +334,33 @@ function loadRouter(options = {}) {
     window.setTimeout(() => {
       window.$memberstackDom = memberstackFor(options.delayedMember)
     }, options.memberstackDelayMs || 25)
-  } else if (options.member) {
+  } else if (Object.prototype.hasOwnProperty.call(options, 'member')) {
+    // `member: null` is Memberstack present with nobody signed in.
     window.$memberstackDom = memberstackFor(options.member)
   }
   if (Object.prototype.hasOwnProperty.call(options, 'memberReady')) {
     window.memberReady = options.memberReady
   }
+  const documentListeners = {}
   const document = {
+    readyState: options.documentReadyState || 'complete',
     documentElement: {
       setAttribute(name, value) {
         attributes[name] = value
       },
     },
-    querySelectorAll() {
-      return forms
+    addEventListener(name, callback) {
+      documentListeners[name] = callback
     },
+    // The login forms live in the body. While the parser is still running they
+    // are not in the tree yet, which is what a head-injected script sees.
+    querySelectorAll() {
+      return document.readyState === 'loading' ? [] : forms
+    },
+  }
+  function finishParsing() {
+    document.readyState = 'interactive'
+    if (documentListeners.DOMContentLoaded) documentListeners.DOMContentLoaded()
   }
 
   class FakeDate extends Date {
@@ -379,6 +395,7 @@ function loadRouter(options = {}) {
     formAttributes,
     clock,
     fetchCalls,
+    finishParsing,
     forms,
     getCurrentMemberCalls: () => getCurrentMemberCalls,
     location,
@@ -1056,14 +1073,77 @@ test('login submit starts the cross-navigation timing receipt', () => {
   const harness = loadRouter({ pathname: '/login' })
 
   harness.forms[0].dispatch('submit')
-  const receipt = JSON.parse(
-    harness.storage.get('thestarters:v3-auth-route-timing'),
-  )
+  const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
   assert.equal(typeof receipt.startedAt, 'number')
   assert.deepEqual(Object.keys(receipt), ['startedAt'])
   assert.ok(
     harness.marks.includes('starters:v3-auth-route:login-submit'),
   )
+})
+
+// The loader inserts this file dynamically from the site head, so it can run
+// before the parser reaches the login form. Configuring nothing would leave the
+// form on the shared Memberstack plan redirect and skip /auth-route entirely.
+test('a login page still parsing when the router boots is configured on DOMContentLoaded', () => {
+  const harness = loadRouter({
+    pathname: '/login',
+    documentReadyState: 'loading',
+  })
+
+  assert.deepEqual(harness.formAttributes.login, {})
+
+  harness.finishParsing()
+
+  assert.deepEqual(harness.formAttributes.login, {
+    'data-ms-redirect': '/auth-route',
+    redirect: '/auth-route',
+  })
+  assert.deepEqual(harness.formAttributes.signup, {
+    'data-ms-redirect': '/auth-route',
+    redirect: '/auth-route',
+  })
+  harness.forms[0].dispatch('submit')
+  assert.equal(harness.storage.has(TIMING_KEY), true)
+})
+
+test('a login page boot discards a receipt from an attempt that never routed', () => {
+  const harness = loadRouter({
+    pathname: '/login',
+    timingReceipt: { startedAt: Date.now() },
+  })
+
+  assert.equal(harness.storage.has(TIMING_KEY), false)
+})
+
+test('auth route confirms the receipt only as it hands off to the destination', async () => {
+  const startedAt = Date.now()
+  const member = talentMember()
+  const harness = loadRouter({
+    pathname: '/auth-route',
+    member,
+    memberReady: Promise.resolve(member),
+    xano: { statusBody: ONBOARDED },
+    timingReceipt: { startedAt },
+  })
+
+  await flush()
+  assert.equal(harness.location.replaced, '/starter-dashboard')
+  const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
+  assert.equal(receipt.startedAt, startedAt)
+  assert.equal(typeof receipt.redirectedAt, 'number')
+  assert.deepEqual(Object.keys(receipt).sort(), ['redirectedAt', 'startedAt'])
+})
+
+test('a logged-out bounce back to /login discards the receipt unconfirmed', async () => {
+  const harness = loadRouter({
+    pathname: '/auth-route',
+    member: null,
+    timingReceipt: { startedAt: Date.now() },
+  })
+
+  await flush()
+  assert.equal(harness.location.replaced, '/login')
+  assert.equal(harness.storage.has(TIMING_KEY), false)
 })
 
 test('auth route preserves the stored destination from login', async () => {
