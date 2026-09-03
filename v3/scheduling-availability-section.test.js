@@ -1366,6 +1366,13 @@ for (const [label, priceCents] of [
       'no paid-call rate may be rewritten from a rejected canonical value',
     )
     assert.equal(dom.notif.steps['calendar-disconnected'].style.display, 'none')
+    // The rate is repairable in Call Settings, so the member must be told that
+    // rather than being left with copy that blames the calendar connection.
+    assert.equal(dom.notif.steps['request-error'].style.display, '')
+    assert.match(dom.notif.errorText.textContent, /paid call rate/i)
+    assert.match(dom.notif.errorText.textContent, /\$1 to \$1,000/)
+    assert.match(dom.notif.errorText.textContent, /Call Settings/)
+    assert.doesNotMatch(dom.notif.errorText.textContent, /contact support/)
   })
 }
 

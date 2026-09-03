@@ -173,7 +173,7 @@ test('consult Paid Call accepts $1 and $1,000, rejects $1.01, and converts to no
     assert.equal(result.requests.length, 1)
     assert.equal(result.requests[0].body.paid_call_rate, Number(value))
   }
-  const invalid = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '1.01' }, '/build-profile/consult')
+  const invalid = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '1.01' }, '/build-profile/full')
   await invalid.submit.click()
   assert.equal(invalid.requests.length, 0)
 
@@ -208,7 +208,7 @@ test('a consult profile treats the canonical zero paid-call rate as no paid cons
     assert.equal(result.error.style.display, 'none')
   }
 
-  const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '0' }, '/build-profile/consult')
+  const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '0' }, '/build-profile/full')
   await selected.submit.click()
   assert.equal(selected.requests.length, 0)
   assert.match(selected.inputs['[name="paid-call-rate"]'].validationMessage, /\$1 to \$1,000/)
@@ -237,12 +237,61 @@ test('a consult profile never enables or blocks on hidden paid-call data the con
     assert.equal(result.inputs['[name="paid-call-rate"]'].reportValidityCount, 0)
   }
 
-  const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '2500' }, '/build-profile/consult')
+  const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '2500' }, '/build-profile/full')
   await selected.submit.click()
   assert.equal(selected.requests.length, 0)
   assert.equal(selected.error.style.display, 'block')
   assert.match(selected.inputs['[name="paid-call-rate"]'].validationMessage, /\$1 to \$1,000/)
   assert.equal(selected.inputs['[name="paid-call-rate"]'].reportValidityCount, 1)
+})
+
+// The consult flow authors no paid-call section, so hydration can leave the hidden
+// radio on either answer over data the member can neither see nor repair. Neither
+// answer may block the submit or leak an out-of-contract rate.
+test('a consult profile ignores the hidden paid-call radio over data the contract rejects', async () => {
+  for (const stale of ['2500', '0', '1.50', '1,000', '$50', '1e2', '-5', '   ', '9007199254740993']) {
+    const result = load(
+      { 'paid-consulting-calls': 'yes', 'paid-call-rate': stale },
+      '/build-profile/consult',
+    )
+    await result.submit.click()
+    assert.equal(
+      result.requests.length, 1,
+      `${stale}: ${result.inputs['[name="paid-call-rate"]'].validationMessage}`,
+    )
+    assert.equal(result.requests[0].body.paid_call, false)
+    assert.equal(result.requests[0].body.paid_call_rate, null)
+    assert.equal(result.error.style.display, 'none')
+    assert.equal(result.inputs['[name="paid-call-rate"]'].reportValidityCount, 0)
+  }
+
+  const inContract = load(
+    { 'paid-consulting-calls': 'yes', 'paid-call-rate': '250' },
+    '/build-profile/consult',
+  )
+  await inContract.submit.click()
+  assert.equal(inContract.requests.length, 1)
+  assert.equal(inContract.requests[0].body.paid_call, true)
+  assert.equal(inContract.requests[0].body.paid_call_rate, 250)
+})
+
+// A consult save persists Hourly_Rate 0 for the profile-inapplicable control, and
+// hydration writes that 0 straight back into the field. Reading it back as an
+// authored price would block every later submit on a value the member cannot repair.
+test('a consult profile round-trips the canonical zero hourly rate it persists', async () => {
+  for (const sentinel of ['0', '00', ' 0 ']) {
+    const result = load({ rate: sentinel }, '/build-profile/consult')
+    await result.submit.click()
+    assert.equal(result.requests.length, 1, `${sentinel}: ${result.inputs['[name="rate"]'].validationMessage}`)
+    assert.equal(result.requests[0].body.hourly_rate, 0)
+    assert.equal(result.error.style.display, 'none')
+  }
+
+  const fullProfile = load({ rate: '0' }, '/build-profile/full')
+  await fullProfile.submit.click()
+  assert.equal(fullProfile.requests.length, 0)
+  assert.equal(fullProfile.error.style.display, 'block')
+  assert.match(fullProfile.inputs['[name="rate"]'].validationMessage, /\$1 to \$1,000/)
 })
 
 test('a consult profile still enables an in-contract hidden paid-call rate', async () => {

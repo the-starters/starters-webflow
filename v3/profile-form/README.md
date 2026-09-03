@@ -73,16 +73,23 @@ round decimals, or convert exponent notation. The native inputs use `type="numbe
 Monthly Retainer allows `$1` through `$25,000`, and each Custom Service allows `$1` through `$50,000`.
 An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, unsafe integer, or value outside
 its range stops before the Xano request. A toggle-owned rate is only validated while its own section
-says yes; a collapsed Monthly Retainer or Paid Call section keeps its existing zero or null
-compatibility state instead of blocking the submit on text the member cannot see, and its stale text is
-never forwarded unvalidated: Edit Profile sends the canonical zero only alongside the toggle it is
-turning off and otherwise omits the field. On Build Profile Consult, where the paid-call radio is
-hidden, only a rate that already satisfies this contract enables the paid consult, so a canonical zero,
-blank, malformed, or out-of-range rate behind that hidden control stays the no-paid-consult
-compatibility state rather than blocking the submit. A blank
-profile-type-inapplicable Hourly Rate keeps the same zero compatibility state. Service prices and names
-live in hidden capture inputs, so their failures report through the authored error modal rather than
-native constraint validation. No invalid value is silently clamped.
+says yes. A collapsed Monthly Retainer or Paid Call section never forwards the stale text behind it,
+because an unvalidated collapsed value would violate this contract: Build Profile replaces it with the
+same zero or null compatibility value it uses for a section that was never filled in, so turning a
+section off does discard the rate it was holding, and Edit Profile sends the canonical zero only
+alongside the toggle it is turning off and otherwise omits the field. On Build Profile Consult no
+paid-call section is authored at all, so the hidden radio is not an answer either: only a rate that
+already satisfies this contract preserves the paid consult, and a canonical zero, blank, malformed,
+unsafe, or out-of-range rate behind that hidden control stays the no-paid-consult compatibility state
+whichever way hydration left the radio, rather than blocking a submit the member cannot repair.
+
+Wherever a blank is the compatibility-empty state, the canonical zero these same writers persist for
+that field is that same state: a blank or zero profile-type-inapplicable Hourly Rate round-trips as the
+zero compatibility value instead of being read back as an authored price, while a required or
+applicable Hourly Rate still rejects zero. Service prices and names live in hidden capture inputs, so
+their failures report through the authored error modal rather than native constraint validation. A
+reported price failure is cleared before the next attempt, so a corrected whole-dollar value saves
+without a page reload. No invalid value is silently clamped.
 
 Until the cutover installs this candidate foundation, the published body still live on
 `/starter-edit-profile` re-formats every rate it claims to two decimals on blur, which no whole-dollar

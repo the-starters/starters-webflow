@@ -37,6 +37,13 @@
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
+  // A stored paid-call rate the whole-dollar contract rejects stops the transition
+  // before the irreversible provider request. That is a repairable Call Settings
+  // problem, not a connection failure, so the authored error step must name the
+  // rate instead of leaving the member with generic calendar copy.
+  const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
+  const ERROR_TEXT_PAID_CALL_RATE =
+    'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
@@ -467,6 +474,21 @@
   }
 
   // Matches the page's shared `[data-custom-loader]` contract.
+  // Remembers the authored copy once so the rate-specific remediation message can
+  // be swapped in and back out without inventing a fallback for every other failure.
+  let authoredTransitionErrorCopy = null
+
+  function showTransitionError(error) {
+    const step = switchStep('config-request-error')
+    const errorEl = step && qs('[error-text-element]', step)
+    if (!errorEl) return
+    if (authoredTransitionErrorCopy === null) authoredTransitionErrorCopy = errorEl.textContent
+    errorEl.textContent =
+      error && error.code === PAID_CALL_RATE_UNSUPPORTED
+        ? ERROR_TEXT_PAID_CALL_RATE
+        : authoredTransitionErrorCopy
+  }
+
   function setLoader(state, wrapper) {
     const loader = qs('[data-custom-loader]', wrapper || undefined)
     if (!loader) return
@@ -839,13 +861,17 @@
       duration_minutes: Number(service.duration),
     }
     if (
-      intent.title.length < 3 ||
       !Number.isInteger(intent.price_cents) ||
       intent.price_cents < 100 ||
       intent.price_cents > 100000 ||
-      intent.price_cents % 100 !== 0 ||
-      [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1
+      intent.price_cents % 100 !== 0
     ) {
+      throw Object.assign(
+        new Error('Canonical paid-call rate is outside the whole-dollar contract'),
+        { code: PAID_CALL_RATE_UNSUPPORTED },
+      )
+    }
+    if (intent.title.length < 3 || [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1) {
       throw new Error('Canonical paid-call service cannot be preserved')
     }
     return intent
@@ -1419,7 +1445,7 @@
         console.warn('[scheduling-writer] manager recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
-      switchStep('config-request-error')
+      showTransitionError(error)
       console.warn('[scheduling-writer] manager change failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'manager-submit',
@@ -1474,7 +1500,7 @@
         console.warn('[scheduling-writer] disconnect recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
-      switchStep('config-request-error')
+      showTransitionError(error)
       console.warn('[scheduling-writer] disconnect failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'disconnect-calendar',

@@ -93,7 +93,10 @@ function createEnvironment(fetchImpl, {
       disabled: false,
       valid: true,
     }, defaults, fieldOverrides[selector] || {})
-    field.checkValidity = () => field.valid && (!field.required || String(field.value ?? '').trim() !== '')
+    field.checkValidity = () =>
+      field.validationMessage === ''
+      && field.valid
+      && (!field.required || String(field.value ?? '').trim() !== '')
     const name = selector.match(/^\[name="([^"]+)"\]$/)?.[1]
     if (name) {
       field.name = name
@@ -1071,6 +1074,60 @@ async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
   assert.equal(requiredBlank.requests.length, 0)
 }
 
+// A consult save persists Hourly_Rate 0 for the profile-inapplicable control and
+// the canonical loader writes that 0 straight back into the field, so reading it
+// back as an authored price would block every later save on this flow's own data.
+async function testConsultCanonicalZeroHourlyRateSurvivesSaveReloadSave() {
+  const first = saved({
+    stepIndex: 6,
+    profileType: 'consult',
+    fieldOverrides: { '[name="rate"]': { value: '', required: false, valid: true } },
+  })
+  const firstPayload = await submittedStepPayload(first)
+  assert.equal(firstPayload.Hourly_Rate, 0)
+
+  const reloaded = saved({
+    stepIndex: 6,
+    profileType: 'consult',
+    fieldOverrides: {
+      '[name="rate"]': { value: String(firstPayload.Hourly_Rate), required: false, valid: true },
+    },
+  })
+  const reloadedPayload = await submittedStepPayload(reloaded)
+  assert.equal(reloadedPayload.Hourly_Rate, 0)
+
+  const required = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    stepIndex: 6,
+    fieldOverrides: { '[name="rate"]': { value: '0' } },
+  })
+  await submit(required)
+  assert.equal(required.requests.length, 0, 'a required hourly rate must still reject zero')
+}
+
+// A reported price failure leaves a custom validity message on its control, and
+// native validation runs before the price contract can revalidate. Without the
+// reset the corrected value could never be saved without a full page reload.
+async function testCorrectedPriceSavesAfterAReportedPriceFailure() {
+  const environment = saved({
+    stepIndex: 6,
+    fieldOverrides: { '[name="rate"]': { value: '125.00' } },
+  })
+  const rate = environment.fields['[name="rate"]']
+
+  await submit(environment)
+  assert.equal(environment.requests.length, 0, 'a decimal hourly rate must not reach Xano')
+  assert.match(rate.validationMessage, /\$1 to \$1,000/)
+
+  rate.value = '125'
+  await submit(environment)
+  assert.equal(environment.requests.length, 1, rate.validationMessage)
+  const [, options] = environment.requests[0]
+  assert.equal(JSON.parse(options.body).Hourly_Rate, 125)
+  assert.equal(rate.validationMessage, '')
+}
+
 async function testReviewerStepUsesCanonicalBuildProfileShape() {
   const environment = createEnvironment(async () => ({
     ok: true,
@@ -1609,6 +1666,8 @@ Promise.all([
 	testClonedServicePriceRowsGetTheWholeDollarContract(),
 	testStepSixPersistsEveryValidatedServiceSlot(),
   testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
+  testConsultCanonicalZeroHourlyRateSurvivesSaveReloadSave(),
+  testCorrectedPriceSavesAfterAReportedPriceFailure(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
   testRejectedFetch(),

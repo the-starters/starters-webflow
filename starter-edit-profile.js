@@ -669,9 +669,17 @@ onDomReady(function () {
 			});
 		}
 
+		// Wherever a blank is the compatibility-empty state, the canonical zero this
+		// same page persists for that field is that same state rather than an authored
+		// price. Otherwise the rate it wrote itself blocks every later save on reload.
+		function compatibilityEmpty(raw, allowBlank) {
+			return Boolean(allowBlank) && (raw === '' || /^0+$/.test(raw));
+		}
+
 		function wholeDollar(value, contract, { allowBlank = false } = {}) {
 			const raw = String(value ?? '').trim();
-			if (!raw) return allowBlank ? { valid: true, value: null } : { valid: false, code: 'PRICE_REQUIRED' };
+			if (compatibilityEmpty(raw, allowBlank)) return { valid: true, value: null };
+			if (!raw) return { valid: false, code: 'PRICE_REQUIRED' };
 			if (!/^[0-9]+$/.test(raw)) return { valid: false, code: 'PRICE_NOT_INTEGER' };
 			const number = Number(raw);
 			if (!Number.isSafeInteger(number)) return { valid: false, code: 'PRICE_NOT_INTEGER' };
@@ -702,6 +710,20 @@ onDomReady(function () {
 			failure.field?.focus?.();
 			failure.field?.reportValidity?.();
 			return message;
+		}
+
+		// A reported price failure leaves a custom validity message on its control, and
+		// native validation runs before the price contract can revalidate. Without this
+		// reset the next save reports the stale message and returns, so a corrected
+		// whole-dollar value could never be saved without a full page reload.
+		function clearStepSixPriceValidity() {
+			const step = stepElement(6);
+			[qs('[name="rate"]', step), qs('[name="rate-retainer"]', step)].forEach((field) => {
+				field?.setCustomValidity?.('');
+			});
+			['service', 'service-2', 'service-3'].forEach((id) => {
+				qs(`#${id}`, form)?.setCustomValidity?.('');
+			});
 		}
 
 		function validateStepSixPrices(payload, services) {
@@ -780,6 +802,7 @@ onDomReady(function () {
 					let saveToken = null;
 					let canonicalSaveAccepted = false;
 					try {
+						if (stepIndex === 6) clearStepSixPriceValidity();
 						const validation = validateOwnedStep(stepIndex, { report: true });
 						if (!validation.valid) {
 							await workflowDiagnosticsReady;
@@ -1077,7 +1100,7 @@ onDomReady(function () {
 
 			OPTIONAL_CANONICAL_RATES.forEach(({ field, isOptional }) => {
 				if (!Object.prototype.hasOwnProperty.call(payload, field)) return;
-				if (String(payload[field] ?? '').trim() !== '') return;
+				if (!compatibilityEmpty(String(payload[field] ?? '').trim(), true)) return;
 				if (!isOptional(payload, step)) return;
 
 				payload[field] = 0;

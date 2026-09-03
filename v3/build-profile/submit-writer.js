@@ -75,9 +75,16 @@
           throw Object.assign(new Error(message), { code });
         };
 
+        // Wherever a blank is the compatibility-empty state, the canonical zero this
+        // same writer persists for that field is that same state rather than an
+        // authored price. Otherwise a rate the writer stored itself blocks its own
+        // next submit on a control the member cannot repair.
+        const compatibilityEmpty = (raw, allowBlank) => Boolean(allowBlank) && (raw === '' || /^0+$/.test(raw));
+
         const wholeDollarFailure = (value, { min, max, allowBlank = false }) => {
           const raw = String(value ?? '').trim();
-          if (!raw) return allowBlank ? null : 'PRICE_REQUIRED';
+          if (compatibilityEmpty(raw, allowBlank)) return null;
+          if (!raw) return 'PRICE_REQUIRED';
           if (!/^[0-9]+$/.test(raw)) return 'PRICE_NOT_INTEGER';
           const number = Number(raw);
           if (!Number.isSafeInteger(number)) return 'PRICE_NOT_INTEGER';
@@ -95,10 +102,9 @@
               : `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
             return priceError(field, message, failure);
           }
-          const raw = String(value ?? '').trim();
-          if (!raw) return null;
           field?.setCustomValidity?.('');
-          return Number(raw);
+          const raw = String(value ?? '').trim();
+          return compatibilityEmpty(raw, contract.allowBlank) ? null : Number(raw);
         };
 
         const parseJson = (value) => {
@@ -166,11 +172,13 @@
         // A toggle-owned rate is only authored while its own section says yes. Once the
         // toggle is off the control is collapsed, so its stale text is neither visible
         // nor editable and must never block the whole submit behind a price failure the
-        // member cannot see or reach. Only a rate the contract already accepts can
-        // stand in for the collapsed consult toggle; every other value, blank included,
-        // keeps the compatibility state instead of enabling a paid consult.
+        // member cannot see or reach. The consult flow authors no paid-call section at
+        // all, so neither the hidden radio nor its hidden text is an authored answer
+        // there: only a rate the contract already accepts preserves a paid consult, and
+        // every other value, blank included, keeps the no-paid-consult compatibility
+        // state. Full Profile authors the control, so its answer stays strict.
         const paidCallInContract = wholeDollarFailure(formData["paid-call-rate"], PAID_CALL_PRICE) === null;
-        const paidCallEnabled = paidCallSelected || (isConsultProfile && paidCallInContract);
+        const paidCallEnabled = isConsultProfile ? paidCallInContract : paidCallSelected;
         const paidCallRate = paidCallEnabled
           ? wholeDollar(formData["paid-call-rate"], PAID_CALL_PRICE)
           : null;
@@ -244,9 +252,9 @@
           free_call: toBool(formData["free-consulting-calls"]),
           free_call_desc: formData["free-call-description"] || "",
 
-          // The authored paid-call control is hidden in the consult flow. An in-contract
-          // whole-dollar rate is therefore the reliable enablement signal even if
-          // fallback hydration left the hidden radio on "no".
+          // The authored paid-call control is hidden in the consult flow, so an
+          // in-contract whole-dollar rate is the only enablement signal there,
+          // whichever way fallback hydration left the hidden radio.
           paid_call: paidCallEnabled,
           paid_call_desc: formData["paid-call-description"] || "",
           paid_call_rate: paidCallRate,

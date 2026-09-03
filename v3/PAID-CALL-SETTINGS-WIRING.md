@@ -37,11 +37,14 @@ Use these attributes on existing native Webflow elements:
 
 The title must contain 3 to 80 characters. A legacy duration select can remain in Designer, but its
 value is ignored while the product duration is fixed. The rate field accepts whole US dollars from 1
-to 999999.
+to 1000.
 
-The same `$1` minimum is enforced by the Brand-side bookable-set filter, canonical price renderer,
-and both calendar-transition controllers. A saved `$1` Paid service stays visible, bookable, and
-preserved when the Starter changes calendar providers.
+The same `$1` to `$1,000` whole-dollar range is enforced by the Brand-side bookable-set filter,
+canonical price renderer, and both calendar-transition controllers. A saved `$1` or `$1,000` Paid
+service stays visible, bookable, and preserved when the Starter changes calendar providers. A stored
+rate outside that range, or one carrying cents, is not displayable and stops a calendar transition
+before the provider grant is deleted; both transition controllers report that specific repairable
+rate instead of generic connection copy.
 
 The current native `Dashboard / Call Item` Paid instance is also supported without generated markup:
 
@@ -147,11 +150,11 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - Xano `nylas_configurations_v3` table `#104` is the canonical Paid Call authority.
 - Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`).
 - An active service in `services[]` is the confirmed V3 authority. It wins over any imported
-  suggestion. A service rate is displayable only when it is USD and has an integer
-  `price_cents >= 100`; invalid active data renders and prefills as `Not set` without inventing a
-  fallback.
+  suggestion. A service rate is displayable only when it is USD and has an exact whole-dollar integer
+  `price_cents` from 100 through 100000 (`price_cents % 100 === 0`); invalid active data renders and
+  prefills as `Not set` without inventing a fallback.
 - With no active service, the GET may return a top-level `suggestion`. The browser accepts it only
-  when it is USD, uses a whole-dollar integer amount of at least 100 cents, has
+  when it is USD, uses a whole-dollar integer amount from 100 through 100000 cents, has
   `source: "legacy_v2"`, and has `requires_confirmation: true`. A valid suggestion replaces the
   authored placeholder and prefills the native rate field, but the card and No radio remain Off.
   The suggestion does not cause a write. The Starter must select Yes and submit the existing native
@@ -213,7 +216,7 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   lock covers native submit and Update click, so they cannot start duplicate writes.
 - The browser sends product intent only. It never sends a member ID, grant ID, calendar ID, Stripe account ID, or payment environment.
 - Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`. Its bookable-slots preview does read the canonical Paid service to render duration and price read-only; the admission rules for that card live in [Booking-stage availability section](README.md#booking-stage-availability-section).
-- Calendar transitions carry a one-use intent captured from canonical paid-call GET through the existing OAuth session envelope, then recreate it through paid-call upsert and canonical readback.
+- Calendar transitions carry a one-use intent captured from canonical paid-call GET through the existing OAuth session envelope, then recreate it through paid-call upsert and canonical readback. A canonical rate outside the `$1` to `$1,000` whole-dollar range stops that capture before any destructive provider or calendar request and surfaces the rate-specific remediation message, so the stored service is never preserved, rounded, or silently dropped.
 - The Xano projection function remains the only writer to `freelancers_v3.Paid_Call_Enabled` and `Paid_Call_Rate` for this flow.
 - The controller uses the owner-specific fetch reference retained by `scheduling-auth.js`. It accepts
   `window.xanoAuthFetch` as a compatibility fallback only while
