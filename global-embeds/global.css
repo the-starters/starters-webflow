@@ -602,6 +602,11 @@
     display: none !important;
   }
 
+  /* Turnstile wrapper: Webflow-appended, Memberstack never reads the token */
+  form[data-ms-form] > div:has(input[name='cf-turnstile-response']) {
+    display: none;
+  }
+
   html.wf-design-mode [data-wf-display='flex'] {
     display: flex !important;
   }
