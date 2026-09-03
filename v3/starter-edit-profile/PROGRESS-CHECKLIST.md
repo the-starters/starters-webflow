@@ -1,6 +1,6 @@
 # 🧭 Starter Profile Reliability Progress Checklist
 
-Last updated: 2026-09-01
+Last updated: 2026-09-03
 
 This checklist tracks release-safe implementation evidence for the
 `/starter-edit-profile` reliability workflow. The workspace operator checklist
@@ -18,9 +18,9 @@ in [README.md](README.md) and in the root
       required rate keeps failing instead of persisting a zero rate.
 - [x] Pass every non-blank rate value through to Xano unrewritten.
 - [x] Keep the authored Services and Rates markup intact while the controller disables
-      the legacy Paid Call controls and adds a link to the dashboard settings writer.
-- [x] Omit the legacy Paid Call toggle, description, and rate from every step 6 profile
-      payload.
+      the legacy Free and Paid Call controls and adds a link to Call Settings.
+- [x] Omit the legacy Free Call toggle and description plus the Paid Call toggle,
+      description, and rate from every step 6 profile payload.
 - [x] Require `saved: true` and a Boolean `projection_pending`, show success after the
       canonical save even when public projection is pending or reports a later non-2xx
       failure, and fail closed when a 2xx response omits either confirmation.
@@ -39,8 +39,8 @@ in [README.md](README.md) and in the root
 - [x] Resolve Personal Details email and phone by their step-scoped `#email` and
       `#phone` IDs so hidden duplicate-name controls cannot override the authored
       values. Contract: [Validation and submit ownership](README.md#validation-and-submit-ownership).
-- [x] Clear a declined service's description and rate only when the member switches
-      that toggle off, so hydration preserves stored Free Call and retainer copy.
+- [x] Clear a declined Retainer's description and rate only when the member switches
+      that toggle off, so hydration preserves stored retainer copy.
 - [x] Open the profile-photo chooser by mouse or keyboard when Webflow rendered the
       upload surface as something other than a native `<label>`. Contract:
       [Profile-photo upload contract](../build-profile/README.md#profile-photo-upload-contract).
@@ -55,7 +55,7 @@ in [README.md](README.md) and in the root
 
 ## 🧪 Automated evidence
 
-- [x] Legacy Paid Call controls are disabled and un-required, link to Paid Call
+- [x] Legacy Free and Paid Call controls are disabled and un-required, link to Call
       Settings, and never contribute fields to the step 6 payload.
 - [x] Disabled Retainer rates submit `0`, and configured Retainer rates on the same
       step submit unchanged.
@@ -76,7 +76,7 @@ in [README.md](README.md) and in the root
 - [x] An untouched canonical phone submits unchanged while an `input` or a
       `countrychange` submits the `intl-tel-input` value, and the authored contact
       controls win over hidden duplicate-name controls in the submit payload.
-- [x] Hydration keeps a declined service's stored description across repeated passes,
+- [x] Hydration keeps a declined Retainer's stored description across repeated passes,
       still hides and un-requires its controls, and only a member toggle clears it.
 - [x] A non-`<label>` upload surface opens the chooser on a mouse click and on `Enter`.
 - [x] Typing an exact taxonomy option name never selects it, and clearing a Custom
@@ -106,10 +106,10 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
 - [ ] No-mistakes review, tests, documentation, lint, PR, and CI pass with no findings.
 - [ ] Release the asset through the [release verification](README.md#release-verification)
       sequence, including the tag, jsDelivr purge, and served-byte comparison.
-- [ ] Confirm on the published page that legacy Paid Call controls are disabled, the
-      settings link routes to `/starter-dashboard#calendar`, no Paid Call profile
-      fields are sent, and turning retainers off saves canonical `0` without changing
-      stored Paid Call settings.
+- [ ] Confirm on the published page that legacy Free and Paid Call controls are
+      disabled, the settings link routes to `/starter-dashboard#calendar`, no Free or
+      Paid Call profile fields are sent, and turning retainers off saves canonical `0`
+      without changing stored Call Settings.
 - [ ] Confirm endpoint #1499 returns `saved: true` with a Boolean
       `projection_pending`; verify pending and complete projection states show profile
       success, including the documented canonical-save response with non-2xx status,

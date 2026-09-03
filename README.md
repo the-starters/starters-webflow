@@ -151,8 +151,8 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   and blocks known edit mutations on non-Live hosts. The authoritative photo
   upload and release-gate contract lives in
   [`v3/build-profile/README.md`](v3/build-profile/README.md#profile-photo-upload-contract)
-- `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior; it requires the canonical `saved` response contract, treats public projection as asynchronous, and routes Paid Call pricing to the dashboard settings writer
-  migrated from the legacy Webflow footer. It keeps the existing Designer form
+- `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior; it requires the canonical `saved` response contract, treats public projection as asynchronous, and routes Free and Paid Call settings to their dashboard writers.
+  The controller was migrated from the legacy Webflow footer. It keeps the existing Designer form
   and modal markup, opens the existing success or error modal through the Lumos
   API, and uses its hidden modal triggers only when that API is unavailable. It
   shows success after Xano explicitly returns `saved: true` and a Boolean
@@ -173,17 +173,16 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   `Reviewers` object used by Build Profile before the authenticated Xano PATCH.
   If that native step is absent, the controller does not send `Reviewers`.
   On the Services and Rates step, a blank rate whose owning control is off —
-  Hourly Rate while the authored `[name="rate"]` control is not required, Paid
-  Call Rate with paid calls disabled, Retainer Rate with retainers disabled — is
+  Hourly Rate while the authored `[name="rate"]` control is not required or
+  Retainer Rate with retainers disabled — is
   sent as the canonical integer `0` rather than an empty string, because those
   controls clear their visible value when their toggle turns off. A blank rate
   whose control is still live is sent unchanged, so an empty required rate keeps
   failing instead of silently persisting a zero rate. Non-blank rate values are
-  never rewritten. Only the member switching a Retainer, Paid Call, or Free Call
-  toggle off clears that service's now-hidden description and rate. Hydrating the
-  stored profile runs the same show/hide and required-attribute pass without
-  clearing, so a stored Free Call or retainer description survives every reload
-  instead of being blanked into the next save.
+  never rewritten. Only the member switching Retainer off clears that service's
+  now-hidden description and rate. Hydrating the stored profile runs the same
+  show/hide and required-attribute pass without clearing, so a stored retainer
+  description survives every reload instead of being blanked into the next save.
   The Phone field is preserved byte-for-byte when the member does not touch it:
   the controller records the canonical `step_1.phone` value as the profile
   hydrates and submits it unchanged, and re-reads the value from `intl-tel-input`
