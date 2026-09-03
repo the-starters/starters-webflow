@@ -5586,7 +5586,7 @@ test('invoice context selects only one canonical completed-project final placeho
     kind: 'stripe_invoice',
     handoff_type: 'final',
     sync_origin: 'v3',
-    status: 'pending',
+    status: 'unknown',
   }
 
   const eligible = bridge.window.Opp30.invoiceProjectContext(card, {
@@ -5597,6 +5597,23 @@ test('invoice context selects only one canonical completed-project final placeho
   })
   assert.equal(eligible.invoiceMode, 'final')
   assert.equal(eligible.finalInvoiceId, 961)
+  assert.equal(eligible.finalInvoiceAmount, null)
+
+  const recovery = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    status: 'completed',
+    lifecycle_state: 'completed',
+    final_invoice: {
+      ...final,
+      amount: 125.25,
+      description: 'Original final work',
+      recovery_ready: true,
+    },
+  })
+  assert.equal(recovery.invoiceMode, 'final')
+  assert.equal(recovery.finalInvoiceAmount, 125.25)
+  assert.equal(recovery.finalInvoiceDescription, 'Original final work')
+  assert.equal('stripe_ref' in recovery, false)
 
   const invalid = bridge.window.Opp30.invoiceProjectContext(card, {
     id: 746,
@@ -5606,6 +5623,26 @@ test('invoice context selects only one canonical completed-project final placeho
   })
   assert.equal(invalid.invoiceMode, 'unavailable')
 
+  for (const status of ['unknown', 'unpaid']) {
+    const blankPlaceholder = bridge.window.Opp30.invoiceProjectContext(card, {
+      id: 746,
+      status: 'completed',
+      lifecycle_state: 'completed',
+      final_invoice: { ...final, status },
+    })
+    assert.equal(blankPlaceholder.invoiceMode, 'final')
+  }
+
+  for (const status of ['paid', 'void']) {
+    const terminal = bridge.window.Opp30.invoiceProjectContext(card, {
+      id: 746,
+      status: 'completed',
+      lifecycle_state: 'completed',
+      final_invoice: { ...final, status },
+    })
+    assert.equal(terminal.invoiceMode, 'unavailable')
+  }
+
   const incomplete = bridge.window.Opp30.invoiceProjectContext(card, {
     id: 746,
     status: 'active',
@@ -5613,6 +5650,54 @@ test('invoice context selects only one canonical completed-project final placeho
     invoices: [],
   })
   assert.equal(incomplete.invoiceMode, 'standard')
+})
+
+test('final invoice description enforces the trimmed 1..500 character endpoint contract', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const normalize = bridge.window.Opp30.normalizeFinalInvoiceDescription
+
+  assert.equal(normalize(''), null)
+  assert.equal(normalize('   '), null)
+  assert.equal(normalize(' x '), 'x')
+  assert.equal(normalize('a'.repeat(500)), 'a'.repeat(500))
+  assert.equal(normalize('a'.repeat(501)), null)
+})
+
+test('final invoice submit blocks an invalid description before any request', async () => {
+  for (const invalidDescription of ['', '   ', 'a'.repeat(501)]) {
+    const dom = invoiceSubmitDom()
+    dom.description.value = invalidDescription
+    const requests = []
+    const document = documentWith(dom.modal)
+    const bridge = await loadBridge(
+      async (input) => {
+        requests.push(String(input))
+        return response({})
+      },
+      {
+        member: talentMember,
+        querySelector: document.querySelector,
+        querySelectorAll: document.querySelectorAll,
+      },
+    )
+    bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+      projectId: 746,
+      title: 'Completed campaign',
+      brand: 'Acme Co',
+      invoiceMode: 'final',
+      finalInvoiceId: 961,
+    })
+
+    bridge.dispatchDocument('submit', {
+      target: dom.form,
+      preventDefault() {},
+      stopPropagation() {},
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.deepEqual(requests, [])
+    assert.match(dom.modal.querySelector('.w-form-fail').textContent, /between 1 and 500/)
+  }
 })
 
 test('completed-project invoice submit uses final-create and accepts invoice_link', async () => {
@@ -5655,9 +5740,59 @@ test('completed-project invoice submit uses final-create and accepts invoice_lin
 
   assert.ok(await waitFor(() => requests.length === 1))
   assert.match(requests[0].body.idempotency_key, /^final-invoice-v3-746-/)
+  assert.equal(requests[0].body.description, 'August retainer')
   const link = dom.modal.querySelector('[data-wf-invoice="payment-link"]')
   assert.ok(await waitFor(() =>
     link.href === 'https://invoice.stripe.com/i/final-test'))
+})
+
+test('recoverable final invoice prefills its canonical amount and sends no provider identity', async () => {
+  const dom = invoiceSubmitDom()
+  const requests = []
+  const document = documentWith(dom.modal)
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/final-create/v3')) {
+        requests.push(JSON.parse(init.body))
+        return response({
+          invoice_id: 961,
+          status: 'unpaid',
+          invoice_link: 'https://invoice.stripe.com/i/recovered-test',
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      querySelector: document.querySelector,
+      querySelectorAll: document.querySelectorAll,
+    },
+  )
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+    projectId: 746,
+    title: 'Completed campaign',
+    brand: 'Acme Co',
+    invoiceMode: 'final',
+    finalInvoiceId: 961,
+    finalInvoiceAmount: 125.25,
+    finalInvoiceDescription: 'Original final work',
+  })
+  assert.equal(dom.amount.value, '125.25')
+  assert.equal(dom.description.value, 'Original final work')
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.equal(requests[0].amount, 125.25)
+  assert.equal(requests[0].description, 'Original final work')
+  assert.equal('stripe_ref' in requests[0], false)
+  assert.doesNotMatch(JSON.stringify(requests[0]), /in_[A-Za-z0-9]/)
 })
 
 test('Generate Invoice waits for canonical project context before opening', async () => {

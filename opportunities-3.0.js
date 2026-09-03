@@ -1823,6 +1823,9 @@
   const INVOICE_MIN_AMOUNT = 0.01
   const INVOICE_MAX_AMOUNT = 1000000
   const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
+  const INVOICE_FINAL_DESCRIPTION_MAX_LENGTH = 500
+  const INVOICE_FINAL_DESCRIPTION_MESSAGE =
+    'Enter a final invoice description between 1 and 500 characters.'
   const INVOICE_NO_PROJECT_MESSAGE =
     'Open Generate Invoice from the project you want to bill, so we know which project to invoice.'
   const INVOICE_FINAL_UNAVAILABLE_MESSAGE =
@@ -1841,7 +1844,8 @@
       !invoice ||
       String(invoice.kind || '').trim().toLowerCase() !== 'stripe_invoice' ||
       String(invoice.handoff_type || '').trim().toLowerCase() !== 'final' ||
-      String(invoice.sync_origin || '').trim().toLowerCase() !== 'v3'
+      String(invoice.sync_origin || '').trim().toLowerCase() !== 'v3' ||
+      !['unknown', 'unpaid'].includes(String(invoice.status || '').trim().toLowerCase())
     ) return null
     return invoice
   }
@@ -1880,6 +1884,14 @@
         cardFieldText(card, 'contact_name'),
       invoiceMode: finalPlaceholder ? 'final' : (completed ? 'unavailable' : 'standard'),
       finalInvoiceId: Number(finalPlaceholder && finalPlaceholder.id) || null,
+      finalInvoiceAmount:
+        finalPlaceholder && normalizeInvoiceAmount(finalPlaceholder.amount) !== null
+          ? normalizeInvoiceAmount(finalPlaceholder.amount)
+          : null,
+      finalInvoiceDescription:
+        finalPlaceholder && finalPlaceholder.recovery_ready === true
+          ? (normalizeFinalInvoiceDescription(finalPlaceholder.description) || '')
+          : '',
     }
   }
 
@@ -1890,6 +1902,13 @@
     const amount = Math.round(raw * 100) / 100
     if (amount < INVOICE_MIN_AMOUNT || amount > INVOICE_MAX_AMOUNT) return null
     return amount
+  }
+
+  /** A final invoice requires the same trimmed 1..500 character contract as Xano. */
+  function normalizeFinalInvoiceDescription(value) {
+    const description = String(value == null ? '' : value).trim()
+    if (!description || description.length > INVOICE_FINAL_DESCRIPTION_MAX_LENGTH) return null
+    return description
   }
 
   function invoiceBind(modal, field, value) {
@@ -2017,6 +2036,20 @@
     const done = $('.w-form-done', modal)
     if (form) {
       form.reset()
+      const recoveryAmount = context && context.invoiceMode === 'final'
+        ? normalizeInvoiceAmount(context.finalInvoiceAmount)
+        : null
+      const amountInput = typeof form.querySelector === 'function'
+        ? ($('#Amount', form) || $('[name="Amount"]', form))
+        : null
+      if (amountInput && recoveryAmount !== null) amountInput.value = String(recoveryAmount)
+      const recoveryDescription = context && context.invoiceMode === 'final'
+        ? normalizeFinalInvoiceDescription(context.finalInvoiceDescription)
+        : null
+      const descriptionInput = typeof form.querySelector === 'function'
+        ? ($('#Description', form) || $('[name="Description"]', form))
+        : null
+      if (descriptionInput && recoveryDescription !== null) descriptionInput.value = recoveryDescription
       form.style.display = ''
       delete form.dataset.invoiceIdempotencyKey
     }
@@ -2344,6 +2377,18 @@
         )
         return
       }
+      const rawDescription = descriptionInput ? descriptionInput.value : ''
+      const description = context.invoiceMode === 'final'
+        ? normalizeFinalInvoiceDescription(rawDescription)
+        : String(rawDescription || '').trim()
+      if (context.invoiceMode === 'final' && description === null) {
+        invoiceError(
+          modal,
+          INVOICE_FINAL_DESCRIPTION_MESSAGE,
+          validationDiagnostic('generate_invoice', 'invoice', 'INVALID_FINAL_DESCRIPTION'),
+        )
+        return
+      }
 
       clearInvoiceError(modal)
       binding.submitting = true
@@ -2357,7 +2402,7 @@
         const result = await createInvoice({
           project_id: context.projectId,
           amount,
-          description: descriptionInput ? descriptionInput.value.trim() : '',
+          description,
           idempotency_key: invoiceIdempotencyKey(form, context.projectId, context.invoiceMode),
         })
         if (!invoiceWorkflowBindingCurrent(binding)) return
@@ -6921,6 +6966,7 @@
     invoiceErrorMessage,
     formatInvoiceAmount,
     normalizeInvoiceAmount,
+    normalizeFinalInvoiceDescription,
     openInvoiceModal,
     prepareInvoiceModal,
     paintInvoiceSuccess,
