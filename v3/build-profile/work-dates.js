@@ -28,6 +28,7 @@
 
                     endDateInput.value = previousEndDate;
                     previousEndDate = '';
+                    endDateInput.dispatchEvent(new Event('starter:work-date-value-restored'));
                 }
             }
 

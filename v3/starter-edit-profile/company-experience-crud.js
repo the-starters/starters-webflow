@@ -180,6 +180,7 @@ function bindStarterProfileCompanyMonthRange(startInput, endInput, currentCheckb
     startInput.addEventListener('change', syncRange);
     endInput.addEventListener('input', syncRange);
     endInput.addEventListener('change', syncRange);
+    endInput.addEventListener('starter:work-date-value-restored', syncRange);
     if (currentCheckbox) currentCheckbox.addEventListener('change', syncRange);
     syncRange();
 }

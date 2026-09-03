@@ -542,6 +542,30 @@ for (const controllerPath of controllerPaths) {
     assert.equal(app.editEndDateInput.value, '')
   })
 
+  test(`${controllerPath} resyncs bounds without changing a legacy baseline`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    app.openEditFor({
+      id: 24,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: 'Jan 2024',
+      end_date: 'Dec 2025',
+    })
+
+    app.editCurrentWorkCheckbox.checked = true
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+    app.editCurrentWorkCheckbox.checked = false
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+
+    assert.equal(app.editEndDateInput.value, '2025-12')
+    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-12')
+
+    await app.saveEdit()
+    assert.equal(app.lastRequestPayload().end_date, 'Dec 2025')
+  })
+
   test(`${controllerPath} restores the stored dates after the picker rewrites them on open`, async () => {
     const app = bootCompanyController(controllerPath)
     const drift = new Date(2026, 7, 29)
