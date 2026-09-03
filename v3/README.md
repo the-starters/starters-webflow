@@ -134,7 +134,8 @@ tags only through the overlap, delivery, and one-path-at-a-time behavior proof
 in the wiring guide. It runs on the V3 Webflow staging hostname and both custom
 domains; see
 [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
-installation, error contract, and release gate. The versioned
+installation, error contract, privacy-safe login timing evidence, and release
+gate. The versioned
 [V3 Member Access Matrix](ACCESS-MATRIX.md) maps stable plan IDs to roles and
 documents route access plus the separate Webflow, content, and Xano enforcement
 layers.

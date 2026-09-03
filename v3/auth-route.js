@@ -255,7 +255,8 @@
 
     var startedAt = timingStartedAt()
     var detail = { stage: stage }
-    if (startedAt !== null) detail.elapsedMs = Math.max(0, Date.now() - startedAt)
+    if (startedAt !== null)
+      detail.elapsedMs = Math.max(0, Date.now() - startedAt)
     try {
       window.dispatchEvent(
         new CustomEvent('starters:v3-auth-route-timing', { detail: detail }),
@@ -485,9 +486,11 @@
     // attempt leaving this page is the one flow that would otherwise let a
     // rejected password on the same visit be confirmed at /auth-route as a
     // login-to-destination duration.
-    document.querySelectorAll('[data-ms-form="login"]').forEach(function (form) {
-      bindAttemptSubmit(form, beginLoginTiming)
-    })
+    document
+      .querySelectorAll('[data-ms-form="login"]')
+      .forEach(function (form) {
+        bindAttemptSubmit(form, beginLoginTiming)
+      })
     document
       .querySelectorAll('[data-ms-form="signup"]')
       .forEach(function (form) {
