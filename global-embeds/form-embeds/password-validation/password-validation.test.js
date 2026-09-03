@@ -132,6 +132,17 @@ class Element {
   matches(selector) {
     return matches(this, selector)
   }
+  contains(node) {
+    for (let n = node; n; n = n.parentElement) if (n === this) return true
+    return false
+  }
+  /** detach from the tree, so a swapped-out CTA subtree can be modelled */
+  remove() {
+    const parent = this.parentElement
+    if (!parent) return
+    parent.childNodes = parent.childNodes.filter((n) => n !== this)
+    this.parentElement = null
+  }
   closest(selector) {
     let node = this
     while (node) {
@@ -1934,12 +1945,45 @@ const SIGNUP_RULES = {
 }
 
 /**
+ * The [ms-code-submit-button] CTA in each shape the live Button component ships.
+ * @param {'overlay'|'native'|'anchor'|'none'} [kind]
+ * @returns {{overlay: Element|null, wrapBtn: Element|null}}
+ */
+function buildCta(kind) {
+  if (kind === 'none') return { overlay: null, wrapBtn: null }
+  if (kind === 'native') {
+    const native = h('button', { type: 'submit', 'ms-code-submit-button': '' }, ['SIGN UP'])
+    return { overlay: native, wrapBtn: native }
+  }
+  let overlay
+  if (kind === 'anchor') {
+    overlay = h('a', { href: '#' }, ['SIGN UP'])
+    overlay.classList.add('clickable_link')
+  } else {
+    overlay = h('button', { type: 'button' }, ['SIGN UP'])
+    overlay.classList.add('clickable_btn')
+  }
+  const clickWrap = h('div', {}, [overlay])
+  clickWrap.classList.add('clickable_wrap')
+  const wrapBtn = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [clickWrap])
+  wrapBtn.classList.add('button_main-wrap')
+  return { overlay, wrapBtn }
+}
+
+/**
  * The published /sign-up shape: marker + theme on the Button wrap, the
  * overlay button inside it, email + terms alongside the password.
- * @param {{email?: boolean, terms?: boolean, customCheckbox?: boolean, failBlock?: boolean, mount?: object}} [opts]
+ *
+ * `wrapper: false` drops the checklist entirely (the page the fix is for),
+ * `cta` picks the control shape ('none' authors no marker at all), and
+ * `msForm` sets or removes the data-ms-form kind.
+ * @param {{email?: boolean, terms?: boolean, customCheckbox?: boolean, failBlock?: boolean, wrapper?: false|object, cta?: 'overlay'|'native'|'anchor'|'none', msForm?: false|string, mount?: object}} [opts]
  */
 function liveSetup(opts = {}) {
-  const { wrapper, rows } = buildWrapper(SIGNUP_RULES)
+  const config = opts.wrapper === false ? null : opts.wrapper || SIGNUP_RULES
+  const built = config ? buildWrapper(config) : { wrapper: null, rows: null }
+  const wrapper = built.wrapper
+  const rows = built.rows
   const input = h('input', { type: 'password', 'data-ms-member': 'password' })
 
   const email = opts.email === false ? null : h('input', { type: 'email', 'data-ms-member': 'email' })
@@ -1958,19 +2002,18 @@ function liveSetup(opts = {}) {
     }
   }
 
-  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
-  overlay.classList.add('clickable_btn')
-  const clickWrap = h('div', {}, [overlay])
-  clickWrap.classList.add('clickable_wrap')
-  const wrapBtn = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [clickWrap])
-  wrapBtn.classList.add('button_main-wrap')
+  const { overlay, wrapBtn } = buildCta(opts.cta)
 
   const inForm = [input]
   if (email) inForm.push(email)
-  inForm.push(wrapper)
+  if (wrapper) inForm.push(wrapper)
   if (terms) inForm.push(termsWrap || terms)
-  inForm.push(wrapBtn)
-  const form = h('form', { 'data-ms-form': 'signup', 'data-ms-redirect': '/brand-dashboard' }, inForm)
+  if (wrapBtn) inForm.push(wrapBtn)
+  const formAttrs =
+    opts.msForm === false
+      ? {}
+      : { 'data-ms-form': opts.msForm || 'signup', 'data-ms-redirect': '/brand-dashboard' }
+  const form = h('form', formAttrs, inForm)
 
   const submits = []
   form.addEventListener('submit', (event) => {
@@ -2254,3 +2297,241 @@ test('r5-9: unchecking a custom terms checkbox regreys once the visual state set
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(overlayGated(f), true, 'the deferred render reads the settled state')
 })
+
+// ===========================================================================
+// Round 6 — the submit bridge is independent of the rules gate
+//
+// The live SIGN UP CTA is a type="button" overlay, and this script's click
+// bridge is the only thing that turns it into a submit. Removing the
+// validation component from the page removed the bridge with it, so Sign up
+// did nothing at all. The bridge now belongs to every form[data-ms-form]
+// carrying [ms-code-submit-button]; the gate still belongs to the wrapper.
+// ===========================================================================
+
+/** the whole CTA as authored: nothing the gate would have written to it */
+const ctaUntouched = (f) => overlayOpen(f)
+
+test('r6-1: an overlay CTA on a wrapperless Memberstack form still submits', () => {
+  const f = liveSetup({ wrapper: false, mount: onStaging() })
+
+  const click = dispatch(f.overlay, 'click')
+  assert.equal(click.defaultPrevented, false, 'the type=button click is left alone')
+  assert.equal(f.submits.length, 1, 'one synthetic submit reached the page (Memberstack) handler')
+  assert.equal(f.submits[0].stopped, false, 'no capture-phase blocker interfered')
+  assert.equal(ctaUntouched(f), true, 'no wrapper means no gating treatment')
+  assert.deepEqual(f.warnings, [], 'a wrapperless signup form is a legitimate shape')
+})
+
+test('r6-2: a fail-open wrapper (every toggle off) still submits on click', () => {
+  const f = liveSetup({ wrapper: ZERO_RULES })
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1)
+  assert.equal(ctaUntouched(f), true, 'fail open still means no gating treatment')
+})
+
+test('r6-3: a wrapperless native submitter under the marker gets no synthetic submit', () => {
+  const f = liveSetup({ wrapper: false, cta: 'native' })
+
+  assert.equal(f.wrapBtn.listenerCount('click'), 1, 'the bridge is bound')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'the browser owns a type=submit click; the bridge adds nothing')
+})
+
+test('r6-4: an anchor CTA is prevented and submits once', () => {
+  const f = liveSetup({ wrapper: false, cta: 'anchor' })
+
+  const click = dispatch(f.overlay, 'click')
+  assert.equal(click.defaultPrevented, true, 'the anchor must not navigate')
+  assert.equal(f.submits.length, 1)
+})
+
+test('r6-5: a form without data-ms-form is left entirely alone', () => {
+  const f = liveSetup({ wrapper: false, msForm: false })
+
+  assert.equal(f.form.listenerCount('submit'), 1, 'only the page own handler')
+  assert.equal(f.wrapBtn.listenerCount('click'), 0, 'no bridge on a non-Memberstack form')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0)
+})
+
+test('r6-6: a bridged form that gains a wrapper on rescan starts gating, once', () => {
+  const f = liveSetup({ wrapper: false })
+  const { wrapper } = buildWrapper(SIGNUP_RULES)
+  f.form.append(wrapper)
+  f.window.startersPasswordValidation.rescan()
+
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus one gate')
+  assert.equal(f.wrapBtn.listenerCount('click'), 1, 'still one bridge, not two')
+
+  type(f, 'weakpass')
+  const blocked = dispatch(f.form, 'submit')
+  assert.equal(blocked.stopped, true, 'the capture blocker now stops the submit')
+  assert.equal(f.submits.length, 0, 'the page handler never ran')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'and the click is blocked too')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'a satisfied form submits exactly once')
+})
+
+test('r6-7: a wrapperless signup click still arms the rejection watcher', async () => {
+  const f = liveSetup({
+    wrapper: false,
+    mount: { fetch: () => Promise.resolve(msFailure({ message: 'nope' })) },
+  })
+
+  dispatch(f.overlay, 'click')
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+
+  assert.equal(f.fail.style.display, 'block', 'the watcher was armed by the bridged click')
+})
+
+test('r6-8: the @release header and the exposed release property cannot drift apart', () => {
+  const header = source.match(/^\/\/ @release (v\d+\.\d+\.\d+)$/m)
+  assert.ok(header, 'the file header must carry an @release marker')
+  const app = mount(h('body', {}, []))
+  assert.equal(app.window.startersPasswordValidation.release, header[1])
+})
+
+test('r6-9: a wired form whose marker arrives later greys its CTA on rescan', () => {
+  // wired with no CTA at all: the old code snapshotted button === null here and
+  // the CTA could never grey, however many rescans ran
+  const f = liveSetup({ cta: 'none', mount: onStaging() })
+  assert.match(f.warnings.join(' '), /no \[ms-code-submit-button\]/, 'staging says so')
+
+  const { wrapBtn, overlay } = buildCta('overlay')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  const live = Object.assign({}, f, { wrapBtn, overlay })
+  assert.equal(overlayGated(live), true, 'the late CTA greys immediately, not on first input')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(live), true, 'and opens once the form is satisfied')
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1)
+})
+
+test('r6-10: a swapped CTA subtree moves the bridge and leaves the old root inert', () => {
+  const f = liveSetup({ wrapper: false })
+  const old = f.wrapBtn
+  old.remove()
+
+  const { wrapBtn, overlay } = buildCta('overlay')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the new control submits exactly once')
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the detached root has no live effect')
+})
+
+test('r6-11: a login form with the marker submits but arms no signup watcher', async () => {
+  const f = liveSetup({
+    wrapper: false,
+    msForm: 'login',
+    mount: { fetch: () => Promise.resolve(msFailure({ message: 'nope' })) },
+  })
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the CTA still works')
+
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+  assert.equal(f.fail.style.display, undefined, 'signup copy never lands on a login form')
+})
+
+test('r6-12: a wired non-signup form arms, and falls back to neutral copy', async () => {
+  const f = liveSetup({
+    msForm: 'reset-password',
+    mount: { fetch: () => Promise.resolve(msFailure({})) },
+  })
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  dispatch(f.form, 'submit')
+
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+
+  assert.equal(f.fail.style.display, 'block', 'a checklist-wired form still gets its watcher')
+  assert.equal(f.failText.textContent, 'Something went wrong. Please try again.')
+})
+
+test('r6-13: a click another script already refused is never turned into a submit', () => {
+  const prevented = liveSetup({ wrapper: false })
+  dispatch(prevented.overlay, 'click', { defaultPrevented: true })
+  assert.equal(prevented.submits.length, 0, 'the other script owns a click it preventDefaulted')
+
+  const aria = liveSetup({ wrapper: false })
+  aria.wrapBtn.setAttribute('aria-disabled', 'true')
+  dispatch(aria.overlay, 'click')
+  assert.equal(aria.submits.length, 0, 'an aria-disabled CTA is another script gating it')
+
+  const ariaControl = liveSetup({ wrapper: false })
+  ariaControl.overlay.setAttribute('aria-disabled', 'true')
+  dispatch(ariaControl.overlay, 'click')
+  assert.equal(ariaControl.submits.length, 0, 'on the control too')
+})
+
+test('r6-14: a foreign refusal survives our own render clearing it', () => {
+  // our gate is open and has painted the CTA open, so anything disabled on the
+  // CTA now was written by somebody else
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true, 'our gate is open')
+
+  f.wrapBtn.setAttribute('aria-disabled', 'true')
+  const click = dispatch(f.overlay, 'click')
+
+  assert.equal(f.submits.length, 0, 'the other script refused this click')
+  assert.equal(click.defaultPrevented, false, 'and owns it — we do not preventDefault')
+})
+
+test('r6-14: our own stale aria-disabled is not mistaken for a foreign refusal', () => {
+  // the gate was closed at the last render, so the disabled state on the CTA is
+  // ours; the fields are then filled with no event, exactly as a password
+  // manager can, and the click's own render is the first to see them
+  const f = liveSetup()
+  type(f, 'weakpass')
+  assert.equal(overlayGated(f), true, 'we wrote the disabled state')
+
+  f.input.value = VALID_PASSWORD
+  f.email.value = 'brand@example.com'
+  f.terms.checked = true
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the click renders open and submits once')
+})
+
+test('r6-15: rescan refreshes a checklist bridge on a form with no data-ms-form', () => {
+  const f = liveSetup({ cta: 'none', msForm: false })
+
+  const { wrapBtn, overlay } = buildCta('overlay')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  const live = Object.assign({}, f, { wrapBtn, overlay })
+  assert.equal(overlayGated(live), true, 'the late CTA greys even with no data-ms-form')
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus one gate')
+  assert.equal(wrapBtn.listenerCount('click'), 1, 'one bridge on the live root')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(live), true)
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1, 'exactly one synthetic submit')
+})
+
