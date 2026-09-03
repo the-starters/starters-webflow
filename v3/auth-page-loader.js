@@ -99,6 +99,29 @@
     // The marker the cutover runbook reads to tell this element apart from a
     // page-level auth-route.js tag during the overlap window.
     script.setAttribute('data-starters-auth-runtime', 'auth-route')
+    script.onerror = function () {
+      canInstall = false
+      try {
+        document.documentElement.setAttribute(
+          'data-auth-page-loader-error',
+          'auth-route-load-failed',
+        )
+        if (candidate === '/auth-route') {
+          document.documentElement.setAttribute(
+            'data-auth-route-error',
+            'auth-route-load-failed',
+          )
+        }
+      } catch (error) {}
+      try {
+        window.dispatchEvent(
+          new CustomEvent('starters:v3-auth-page-loader-error', {
+            detail: { stage: 'auth-route-load-failed' },
+          }),
+        )
+      } catch (error) {}
+      console.error('[v3-auth-page-loader] auth-route.js failed to load.')
+    }
     ;(document.head || document.documentElement).appendChild(script)
   }
 
@@ -118,6 +141,7 @@
       var raw = window.sessionStorage.getItem(TIMING_STORAGE_KEY)
       parsed = raw ? JSON.parse(raw) : null
     } catch (error) {
+      discardTiming()
       return null
     }
     if (!parsed) return null

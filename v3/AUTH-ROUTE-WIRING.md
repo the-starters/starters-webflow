@@ -126,8 +126,13 @@ moved to `get_build_profile_status` on 2026-08-04.
    `appendChild`), so page-level controllers still execute after them.
 
    A false answer must emit none of `wf-xano`, the Xano SDK, PostHog helpers,
-   validation, `opportunities-3.0.js`, project controllers, dashboard action
-   items, Brand account, Algolia environment, or `wf-algolia`. **Keep
+   `utils/wf-validate.js`, `opportunities-3.0.js`, project controllers,
+   dashboard action items, Brand account, Algolia environment, or `wf-algolia`.
+   Preserve the login-page validation owners, including
+   `global-embeds/form-embeds/form-validation/email-validation.js` and
+   `global-embeds/form-embeds/password-validation/password-validation.js`.
+   They are not the unrelated `utils/wf-validate.js` opportunity-form helper.
+   **Keep
    `v3/signup-attribution.js` out of this block and unconditional sitewide.**
    Its `captureUrlParams()` writes `utm_*`, `fbclid`, and the `_fbc`/`_fbp`
    copies on every page load, and a paid click can land directly on
@@ -430,7 +435,11 @@ Production stays silent apart from the configuration errors in the table above.
   the three auth paths, whether `/login` still gets `redirect="/auth-route"`
   depends on where step 6's cutover stands: during the overlap window the
   page-level tag still supplies it, and once the page-level tags are removed a
-  blocked loader means no router at all. Record which state was tested.
+  blocked loader means no router at all. Record which state was tested. Also
+  confirm `html[data-auth-page-loader-error="auth-route-load-failed"]`, the
+  `starters:v3-auth-page-loader-error` event, and the console error are present;
+  `/auth-route` must also expose
+  `html[data-auth-route-error="auth-route-load-failed"]`.
 - Walk step 6 in order. Step 6.3 records delivery evidence only (the loader's
   own `script[data-starters-auth-runtime="auth-route"]` element, its exact
   `@v1.59.506` src, a successful response, and a matching served-byte hash);
@@ -444,6 +453,12 @@ Production stays silent apart from the configuration errors in the table above.
   modals still return to their `starters-ms-redirect` marker destinations.
 - Back up page-level code before installing the script.
 - Run `node --test v3/auth-route.test.js v3/auth-page-loader.test.js`.
+- Submit each login form and record the privacy-safe
+  `starters:v3-auth-route-timing` stages. Confirm the receipt contains only
+  `startedAt` before `/auth-route`, gains only `redirectedAt` at handoff, and is
+  consumed on the destination. Confirm `destination-load.elapsedMs` includes
+  the destination page load, is finite, is at most 120000, and no timing event
+  contains a member ID, email, cookie, Xano token, or requested destination.
 - Verify login with `next=/dashboard` for Talent, paid Brand, Test Brand, and
   Brand Free in both incomplete-quiz and completed-quiz states.
 - Verify the four Talent funnel states on staging with the console open: a member

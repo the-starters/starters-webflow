@@ -25,6 +25,8 @@ function loadLoader(options = {}) {
       receipt.redirectedAt = options.redirectedAt
     }
     storage.set(TIMING_KEY, JSON.stringify(receipt))
+  } else if (options.rawReceipt !== undefined) {
+    storage.set(TIMING_KEY, options.rawReceipt)
   }
 
   function makeParent() {
@@ -38,6 +40,10 @@ function loadLoader(options = {}) {
 
   const head = makeParent()
   const documentElement = makeParent()
+  documentElement.attributes = {}
+  documentElement.setAttribute = function (name, value) {
+    this.attributes[name] = value
+  }
   const document = {
     currentScript: Object.prototype.hasOwnProperty.call(
       options,
@@ -222,6 +228,35 @@ test('an underivable base fails closed and re-admits the app block', () => {
   }
 })
 
+test('a failed auth-router request becomes observable and re-admits the app block', () => {
+  const { appended, document, errors, events, window } = loadLoader({
+    pathname: '/auth-route',
+  })
+
+  assert.equal(appended.length, 1)
+  appended[0].onerror()
+
+  assert.equal(
+    document.documentElement.attributes['data-auth-page-loader-error'],
+    'auth-route-load-failed',
+  )
+  assert.equal(
+    document.documentElement.attributes['data-auth-route-error'],
+    'auth-route-load-failed',
+  )
+  assert.equal(
+    window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(
+      '/auth-route',
+    ),
+    true,
+  )
+  assert.equal(events.at(-1).type, 'starters:v3-auth-page-loader-error')
+  assert.deepEqual({ ...events.at(-1).detail }, {
+    stage: 'auth-route-load-failed',
+  })
+  assert.match(errors.at(-1), /auth-route\.js failed to load/)
+})
+
 // The site-head block asks after this script has finished executing, when
 // document.currentScript is null. The answer must not change then.
 // Reading the receipt consumes it, so there is no safe public entry point: a
@@ -348,10 +383,21 @@ test('stale timing is removed without emitting a destination event', () => {
   assert.equal(storage.has(TIMING_KEY), false)
 })
 
+test('an unparseable timing receipt is discarded', () => {
+  const { events, listeners, marks, storage } = loadLoader({
+    pathname: '/starter-dashboard',
+    rawReceipt: '{not-json',
+  })
+
+  assert.equal(listeners.load, undefined)
+  assert.equal(events.length, 0)
+  assert.equal(marks.length, 0)
+  assert.equal(storage.has(TIMING_KEY), false)
+})
+
 test('header and exported release markers match', () => {
   const { window } = loadLoader()
   const marker = source.match(/@release\s+(v\d+\.\d+\.\d+)/)
   assert.ok(marker)
   assert.equal(window.StartersV3AuthPageLoader.release, marker[1])
 })
-
