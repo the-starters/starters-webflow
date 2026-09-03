@@ -1,6 +1,6 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation
 //
-// @release v1.59.502
+// @release v1.59.504
 //
 // Password validation — configured entirely from wrapper attributes so a
 // Webflow component instance can pick its own rule set with no code changes.
@@ -67,7 +67,7 @@
   var RULE_ATTR = PREFIX + 'rule';
   var ICON_ATTR = PREFIX + 'icon';
   var DEFAULT_COUNT = 8;
-  var RELEASE = 'v1.59.502';
+  var RELEASE = 'v1.59.504';
   var WIRED_FLAG = '__startersPasswordValidation';
   var BRIDGE_FLAG = '__startersPasswordBridge';
   var SUBMIT_BUTTON_SELECTOR = '[ms-code-submit-button]';
