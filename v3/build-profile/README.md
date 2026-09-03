@@ -191,6 +191,10 @@ contract enables the paid consult in the payload even when fallback hydration
 left the hidden paid-call radio on `no`; a blank, zero, malformed, or
 out-of-range rate behind that hidden radio keeps the no-paid-consult
 compatibility state instead of blocking a submit the member cannot repair. It
+also treats the monthly-retainer section as profile-type-inapplicable on
+Consult: hidden hydrated radio/rate values always submit `retainer: false` and
+`retainer_rate: 0`. Full Profile continues to validate an enabled retainer.
+It
 enforces the
 [whole-dollar price contract](../profile-form/README.md#whole-dollar-price-contract)
 on the hourly, retainer, paid-call, and service prices before it builds the

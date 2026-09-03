@@ -214,7 +214,18 @@ const authoredProfileFeedbackCopy = new Map();
 
 function setProfileFeedbackMessage(modalName, message) {
 	const target = qs(`[data-modal-target="${modalName}"]`);
-	const messageElement = target ? qs('p', target) : null;
+	const explicitMessage = target ? qs('[data-profile-feedback-message]', target) : null;
+	const fallbackParagraph = target ? qs('p', target) : null;
+	const fallbackIsLeaf = fallbackParagraph && (
+		typeof fallbackParagraph.childElementCount === 'number'
+			? fallbackParagraph.childElementCount === 0
+			: !fallbackParagraph.children || fallbackParagraph.children.length === 0
+	);
+	const messageElement = explicitMessage || (
+		fallbackIsLeaf
+			? fallbackParagraph
+			: null
+	);
 	if (!messageElement) return;
 	if (!authoredProfileFeedbackCopy.has(modalName)) {
 		authoredProfileFeedbackCopy.set(modalName, messageElement.textContent);

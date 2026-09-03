@@ -104,7 +104,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 18005, sha256: '3149dd4b5675de32f24aea858d892d0efa1ffb892c2e874e733934bc509bb3c2',
+    characters: 18151, sha256: 'e5baebfcccd1aca558d5e000a8ab918b0ee5b75cf58d108c8fbab3244ad7695c',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 267: '          ' }), terminalNewlinesRemoved: 0,
@@ -1373,7 +1373,7 @@ test('build submit writer sends one normalized payload through the authored form
     ['tagline', 'Profile tagline'], ['pro-headline', 'Profile headline'], ['bio-html', '<p>Bio</p>'],
     ['best-fit-1', 'Startups'], ['rate', '126'], ['availability-option', '11-20'],
     ['availability', 'availability-id'], ['full-time-placement', 'yes'],
-    ['free-consulting-calls', 'no'], ['paid-consulting-calls', 'no'],
+    ['free-consulting-calls', 'no'], ['paid-consulting-calls', 'yes'],
     ['paid-call-description', 'Strategy call'], ['paid-call-rate', '200'],
     ['offer-monthly-retainers', 'yes'], ['rate-retainer', '2500'],
     ['service', JSON.stringify({ name: 'Audit', price: 500 })],
@@ -1413,7 +1413,7 @@ test('build submit writer sends one normalized payload through the authored form
       return { ok: true, async json() { return { ok: true } } }
     },
   })
-  context.window.location = { pathname: '/build-profile/consult' }
+  context.window.location = { pathname: '/build-profile/full-profile' }
   context.window.intlTelInput = { getInstance() { return { getNumber() { return '+15550000000' } } } }
 
   run('v3/build-profile/submit-writer.js', context)

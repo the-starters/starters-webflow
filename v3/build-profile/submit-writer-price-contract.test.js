@@ -451,8 +451,8 @@ test('a consult profile ignores the hidden retainer radio over data the contract
   )
   await inContract.submit.click()
   assert.equal(inContract.requests.length, 1)
-  assert.equal(inContract.requests[0].body.retainer, true)
-  assert.equal(inContract.requests[0].body.retainer_rate, 5000)
+  assert.equal(inContract.requests[0].body.retainer, false)
+  assert.equal(inContract.requests[0].body.retainer_rate, 0)
 })
 
 test('Full Profile still rejects an enabled out-of-range monthly retainer', async () => {

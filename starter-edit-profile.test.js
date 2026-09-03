@@ -1003,6 +1003,34 @@ async function testAnAuthFailureNeverInheritsAPriceMessage() {
 	assert.equal(environment.errorFeedback.textContent, 'Your profile could not be saved.')
 }
 
+// A shared modal may keep an icon or styled span inside its paragraph. Neither a
+// price-specific reveal nor the generic retry path may flatten that authored
+// subtree by assigning textContent through the paragraph wrapper.
+async function testFeedbackMessagesNeverFlattenNestedAuthoredMarkup() {
+	const service = ['service', JSON.stringify({ name: '', price: '500' })]
+	const environment = createEnvironment(async () => {
+		throw new Error('offline')
+	}, {
+		stepIndex: 6,
+		additionalFormValues: [service],
+	})
+	const icon = { kind: 'authored-icon' }
+	const authored = environment.errorFeedback.textContent
+	environment.errorFeedback.children = [icon]
+	environment.errorFeedback.childElementCount = 1
+
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.equal(environment.errorFeedback.textContent, authored)
+	assert.deepEqual(environment.errorFeedback.children, [icon])
+
+	service[1] = JSON.stringify({ name: 'Audit', price: '500' })
+	await submit(environment)
+	assert.equal(environment.requests.length, 1)
+	assert.equal(environment.errorFeedback.textContent, authored)
+	assert.deepEqual(environment.errorFeedback.children, [icon])
+}
+
 // A canonical Hourly_Rate stored before the contract narrowed is real member data
 // this page must not repair. It hydrates unchanged, blocks every resave before any
 // Xano request while it is still out of contract, and only the member's own
@@ -1795,6 +1823,7 @@ Promise.all([
   testCorrectedPriceSavesAfterAReportedPriceFailure(),
   testAPriceMessageNeverSurvivesIntoAnUnrelatedFailure(),
   testAnAuthFailureNeverInheritsAPriceMessage(),
+  testFeedbackMessagesNeverFlattenNestedAuthoredMarkup(),
   testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt(),
   testClearingAServicePriceRemovesThatService(),
   testANonBlankMalformedServicePriceStillBlocksTheStep(),
