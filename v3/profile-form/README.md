@@ -86,10 +86,13 @@ whichever way hydration left the radio, rather than blocking a submit the member
 Wherever a blank is the compatibility-empty state, the canonical zero these same writers persist for
 that field is that same state: a blank or zero profile-type-inapplicable Hourly Rate round-trips as the
 zero compatibility value instead of being read back as an authored price, while a required or
-applicable Hourly Rate still rejects zero. Service prices and names live in hidden capture inputs, so
-their failures report through the authored error modal rather than native constraint validation. A
-reported price failure is cleared before the next attempt, so a corrected whole-dollar value saves
-without a page reload. No invalid value is silently clamped.
+applicable Hourly Rate still rejects zero. Service prices and names live in hidden capture inputs, where
+focus and native constraint validation paint nothing, so their failures name themselves in the
+authored feedback surface instead: the Edit Profile step opens its authored error modal and Build
+Profile writes the same message into the `[build-profile-error]` panel it already reveals. A reported
+price failure, and any message it left behind, is cleared before the next attempt, so a corrected
+whole-dollar value saves without a page reload and no later failure inherits the previous cause. No
+invalid value is silently clamped.
 
 Until the cutover installs this candidate foundation, the published body still live on
 `/starter-edit-profile` re-formats every rate it claims to two decimals on blur, which no whole-dollar

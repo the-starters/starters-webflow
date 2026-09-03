@@ -170,12 +170,12 @@
       }
     },
     "v3/build-profile/submit-writer.js": {
-      "candidateCharacters": 15697,
-      "candidateSha256": "a687e2179dac9016e07213332d0102c599c4197ad73490e6724ae9bfecd7d49f",
+      "candidateCharacters": 16952,
+      "candidateSha256": "b4c6999b83b749de77d826db4ffe5ab747286b723094fd56e2fcd2f0d280807a",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileSubmitWriter",
-        "restoreTrailingWhitespace": { "227": "          " },
+        "restoreTrailingWhitespace": { "250": "          " },
         "terminalNewlinesRemoved": 0,
         "liveCaptureAsset": "v3/profile-form/build-submit-writer-published.capture.txt"
       }

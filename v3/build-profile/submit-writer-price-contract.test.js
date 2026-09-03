@@ -11,6 +11,7 @@ class Element {
     this.style = {}
     this.attrs = new Map()
     this.listeners = new Map()
+    this.textContent = ''
     this.validationMessage = ''
     this.focusCount = 0
     this.reportValidityCount = 0
@@ -48,6 +49,10 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   submit.closest = () => step
   const success = new Element()
   const error = new Element()
+  // Mirrors the authored Webflow error state: a `.w-form-fail` wrapper whose
+  // single child div carries the copy the member reads.
+  const errorMessage = new Element()
+  errorMessage.textContent = 'Something went wrong. Please try again.'
   const inputs = Object.fromEntries([
     ['[name="rate"]', new Element(values.rate)],
     ['[name="rate-retainer"]', new Element(values['rate-retainer'])],
@@ -77,6 +82,7 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
     }
     if (scope === form && selector === '[form-submit]') return submit
     if (scope === form && inputs[selector]) return inputs[selector]
+    if (scope === error && selector === 'p, div') return errorMessage
     return null
   }
   class FormData {
@@ -113,7 +119,7 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   }
   vm.runInNewContext(SOURCE, context, { filename: 'submit-writer.js' })
   domReady.forEach((callback) => callback())
-  return { submit, step, success, error, inputs, requests, loaderStates }
+  return { form, submit, step, success, error, errorMessage, inputs, requests, loaderStates }
 }
 
 test('sets native whole-dollar constraints on each direct price input', () => {
@@ -166,21 +172,25 @@ test('persists exact maximums and converts service values once without rounding'
   assert.equal(payload.services['service-1'].price, 50000)
 })
 
-test('consult Paid Call accepts $1 and $1,000, rejects $1.01, and converts to no hidden precision', async () => {
+test('consult Paid Call accepts $1 and $1,000 and converts to no hidden precision', async () => {
   for (const value of ['1', '1000']) {
     const result = load({ 'paid-call-rate': value }, '/build-profile/consult')
     await result.submit.click()
     assert.equal(result.requests.length, 1)
     assert.equal(result.requests[0].body.paid_call_rate, Number(value))
   }
-  const invalid = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '1.01' }, '/build-profile/full')
-  await invalid.submit.click()
-  assert.equal(invalid.requests.length, 0)
 
   const hidden = load({ 'paid-call-rate': '1.01' }, '/build-profile/consult')
   await hidden.submit.click()
   assert.equal(hidden.requests.length, 1)
   assert.equal(hidden.requests[0].body.paid_call_rate, null)
+})
+
+test('Full Profile rejects a selected Paid Call rate that is not a whole dollar', async () => {
+  const invalid = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '1.01' }, '/build-profile/full')
+  await invalid.submit.click()
+  assert.equal(invalid.requests.length, 0)
+  assert.match(invalid.inputs['[name="paid-call-rate"]'].validationMessage, /\$1 to \$1,000/)
 })
 
 test('a collapsed section keeps its compatibility value instead of blocking the submit', async () => {
@@ -208,6 +218,9 @@ test('a consult profile treats the canonical zero paid-call rate as no paid cons
     assert.equal(result.error.style.display, 'none')
   }
 
+})
+
+test('Full Profile rejects a selected Paid Call rate of zero', async () => {
   const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '0' }, '/build-profile/full')
   await selected.submit.click()
   assert.equal(selected.requests.length, 0)
@@ -237,6 +250,9 @@ test('a consult profile never enables or blocks on hidden paid-call data the con
     assert.equal(result.inputs['[name="paid-call-rate"]'].reportValidityCount, 0)
   }
 
+})
+
+test('Full Profile reports a selected out-of-range Paid Call rate on its own visible control', async () => {
   const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '2500' }, '/build-profile/full')
   await selected.submit.click()
   assert.equal(selected.requests.length, 0)
@@ -287,6 +303,9 @@ test('a consult profile round-trips the canonical zero hourly rate it persists',
     assert.equal(result.error.style.display, 'none')
   }
 
+})
+
+test('Full Profile rejects a required hourly rate of zero', async () => {
   const fullProfile = load({ rate: '0' }, '/build-profile/full')
   await fullProfile.submit.click()
   assert.equal(fullProfile.requests.length, 0)
@@ -300,6 +319,66 @@ test('a consult profile still enables an in-contract hidden paid-call rate', asy
   assert.equal(result.requests.length, 1)
   assert.equal(result.requests[0].body.paid_call, true)
   assert.equal(result.requests[0].body.paid_call_rate, 250)
+})
+
+// A service price and name live in hidden JSON capture inputs, so focus() and
+// reportValidity() on them paint nothing. The blocked submit must still tell the
+// member which value stopped it through the authored error panel.
+test('a service price failure names itself in the authored error panel', async () => {
+  const price = load({ service: JSON.stringify({ name: 'Audit', price: '500.50' }) })
+  await price.submit.click()
+  assert.equal(price.requests.length, 0)
+  assert.equal(price.error.style.display, 'block')
+  assert.equal(
+    price.errorMessage.textContent,
+    'Use a whole-dollar service price from $1 to $50,000.',
+  )
+  assert.equal(price.inputs['#service'].reportValidityCount, 0)
+
+  const range = load({ service: JSON.stringify({ name: 'Audit', price: '50001' }) })
+  await range.submit.click()
+  assert.equal(range.requests.length, 0)
+  assert.equal(range.errorMessage.textContent, 'Use a whole-dollar service price from $1 to $50,000.')
+
+  const unnamed = load({ service: JSON.stringify({ name: '', price: '500' }) })
+  await unnamed.submit.click()
+  assert.equal(unnamed.requests.length, 0)
+  assert.equal(
+    unnamed.errorMessage.textContent,
+    'A service name is required when a service price is set.',
+  )
+})
+
+test('a corrected retry clears the previous price message and custom validity', async () => {
+  const result = load({ service: JSON.stringify({ name: 'Audit', price: '500.50' }) })
+  await result.submit.click()
+  assert.equal(result.requests.length, 0)
+  assert.match(result.errorMessage.textContent, /whole-dollar service price/)
+
+  result.form.values.service = JSON.stringify({ name: 'Audit', price: '500' })
+  await result.submit.click()
+  assert.equal(result.requests.length, 1, result.errorMessage.textContent)
+  assert.equal(result.requests[0].body.services['service-1'].price, 500)
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
+  assert.equal(result.inputs['[name="rate"]'].validationMessage, '')
+})
+
+// A price message must never outlive the attempt that produced it: the next
+// failure has its own cause and the authored copy owns the generic case.
+test('a later non-price failure restores the authored error copy', async () => {
+  const result = load(
+    { service: JSON.stringify({ name: 'Audit', price: '500.50' }) },
+    '/build-profile/full',
+    { respond: () => { throw new Error('offline') } },
+  )
+  await result.submit.click()
+  assert.match(result.errorMessage.textContent, /whole-dollar service price/)
+
+  result.form.values.service = JSON.stringify({ name: 'Audit', price: '500' })
+  await result.submit.click()
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
 })
 
 test('a rejected canonical request clears the loader behind the authored error state', async () => {

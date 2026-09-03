@@ -30,9 +30,27 @@
       error.style.display = 'none';
       let savedBuildResult = null;
 
+      // Service prices and names live in hidden JSON capture inputs, so a failure
+      // reported through one paints nothing: no focus, no native bubble. Those
+      // failures own the authored error panel's own message instead, the same way
+      // the Edit Profile step routes its mirrored service prices to the authored
+      // modal, so a blocked submit always says which price stopped it.
+      const errorMessage = qs('[build-profile-error-message]', error) || qs('p, div', error) || error;
+      const authoredErrorMessage = errorMessage.textContent;
+      const PRICE_CONTROL_SELECTORS = [
+        '[name="rate"]', '[name="rate-retainer"]', '[name="paid-call-rate"]',
+        '#service', '#service-2', '#service-3',
+      ];
+
+      function resetSubmitFeedback() {
+        errorMessage.textContent = authoredErrorMessage;
+        PRICE_CONTROL_SELECTORS.forEach((selector) => qs(selector, form)?.setCustomValidity?.(''));
+      }
+
       // custom form submission handler
       formSubmit.addEventListener('click', async function (e) {
         e.preventDefault();
+        resetSubmitFeedback();
 
         const data = Object.fromEntries(new FormData(form));
 
@@ -53,6 +71,7 @@
           console.log("Normalized Data:", result);
         } catch (submitError) {
           setLoader(false, formSubmit.closest('[data-form="step"]'));
+          if (submitError?.panelMessage) errorMessage.textContent = submitError.panelMessage;
           success.style.display = 'none';
           error.style.display = 'block';
           console.error('[build-profile] submit failed', submitError?.code || 'SUBMIT_FAILED');
@@ -68,10 +87,13 @@
           return value;
         };
 
-        const priceError = (field, message, code) => {
-          field?.setCustomValidity?.(message);
-          field?.focus?.();
-          field?.reportValidity?.();
+        const priceError = (field, message, code, mirror) => {
+          if (mirror || !field) {
+            throw Object.assign(new Error(message), { code, panelMessage: message });
+          }
+          field.setCustomValidity?.(message);
+          field.focus?.();
+          field.reportValidity?.();
           throw Object.assign(new Error(message), { code });
         };
 
@@ -93,14 +115,14 @@
         };
 
         const wholeDollar = (value, contract) => {
-          const { min, max, label, selector } = contract;
+          const { min, max, label, selector, mirror } = contract;
           const field = qs(selector, form);
           const failure = wholeDollarFailure(value, contract);
           if (failure) {
             const message = failure === 'PRICE_REQUIRED'
               ? `${label} is required.`
               : `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
-            return priceError(field, message, failure);
+            return priceError(field, message, failure, mirror);
           }
           field?.setCustomValidity?.('');
           const raw = String(value ?? '').trim();
@@ -138,13 +160,14 @@
         function requiredServicesFields(data, selector) {
           if (!data || (!String(data.name ?? '').trim() && !String(data.price ?? '').trim())) return null;
           if (!String(data.name ?? '').trim()) {
-            return priceError(qs(selector, form), 'A service name is required when a service price is set.', 'SERVICE_NAME_REQUIRED');
+            return priceError(qs(selector, form), 'A service name is required when a service price is set.', 'SERVICE_NAME_REQUIRED', true);
           }
           data.price = wholeDollar(data.price, {
             min: 1,
             max: 50000,
             label: 'service price',
             selector,
+            mirror: true,
           });
           return data;
         }

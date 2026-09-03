@@ -460,6 +460,20 @@
   /* UI helpers (legacy step semantics)                                  */
   /* ------------------------------------------------------------------ */
 
+  // Remembers the authored copy the first time the shared error step is revealed,
+  // so every path that reveals it restores that copy and only a rate-aware caller
+  // can replace it. Otherwise one transition's remediation message would still be
+  // on screen for the next, unrelated failure.
+  let authoredTransitionErrorCopy = null
+
+  function restoreTransitionErrorCopy(step) {
+    const errorEl = step ? qs('[error-text-element]', step) : null
+    if (!errorEl) return null
+    if (authoredTransitionErrorCopy === null) authoredTransitionErrorCopy = errorEl.textContent
+    errorEl.textContent = authoredTransitionErrorCopy
+    return errorEl
+  }
+
   function switchStep(step) {
     let stepElement = null
     qsa('[availability-step]').forEach(function (el) {
@@ -470,25 +484,18 @@
         el.style.display = 'none'
       }
     })
+    if (step === 'config-request-error') restoreTransitionErrorCopy(stepElement)
     return stepElement
   }
 
-  // Matches the page's shared `[data-custom-loader]` contract.
-  // Remembers the authored copy once so the rate-specific remediation message can
-  // be swapped in and back out without inventing a fallback for every other failure.
-  let authoredTransitionErrorCopy = null
-
   function showTransitionError(error) {
     const step = switchStep('config-request-error')
-    const errorEl = step && qs('[error-text-element]', step)
-    if (!errorEl) return
-    if (authoredTransitionErrorCopy === null) authoredTransitionErrorCopy = errorEl.textContent
-    errorEl.textContent =
-      error && error.code === PAID_CALL_RATE_UNSUPPORTED
-        ? ERROR_TEXT_PAID_CALL_RATE
-        : authoredTransitionErrorCopy
+    if (!error || error.code !== PAID_CALL_RATE_UNSUPPORTED) return
+    const errorEl = step ? qs('[error-text-element]', step) : null
+    if (errorEl) errorEl.textContent = ERROR_TEXT_PAID_CALL_RATE
   }
 
+  // Matches the page's shared `[data-custom-loader]` contract.
   function setLoader(state, wrapper) {
     const loader = qs('[data-custom-loader]', wrapper || undefined)
     if (!loader) return

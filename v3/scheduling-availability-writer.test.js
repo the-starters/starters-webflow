@@ -1599,6 +1599,34 @@ test('a blocked paid-call rate still stops the disconnect where Designer authore
   assert.equal(result.dom.steps['success-disconnect'].style.display, 'none')
 })
 
+// The error step is shared. Once a blocked transition has replaced its copy with
+// the paid-call remediation message, the next unrelated failure that reveals the
+// same step must not still be telling the member to fix their rate.
+test('a stale paid-call remediation message never survives into an unrelated failure', async () => {
+  const routes = blockedPaidRateRoutes(100100)
+  routes['/scheduler/configurations/update/v3'] = () => ({
+    status: 200,
+    body: { response: { status: 400 } },
+  })
+  const result = loadWriter({ storage: TZ_CACHED, routes })
+  await settle()
+
+  result.clickAction(result.dom.buttons.disconnectConfirm)
+  result.clickAction(result.dom.buttons.disconnectCalendar)
+  await settle()
+  assert.match(result.dom.errorText.textContent, /paid call rate/i)
+
+  result.dom.fields.days[0].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.match(result.dom.errorText.textContent, /contact support/)
+  assert.doesNotMatch(result.dom.errorText.textContent, /paid call rate/i)
+})
+
 test('a calendar failure unrelated to the paid-call rate keeps the authored generic copy', async () => {
   const result = loadWriter({
     storage: TZ_CACHED,

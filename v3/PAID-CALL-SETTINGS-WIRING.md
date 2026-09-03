@@ -141,6 +141,8 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - `data-paid-call-card-state="on|off"` on the Paid card scope
 - `data-paid-call-rate-source="legacy_v2"` only while a valid imported suggestion is displayed;
   otherwise empty
+- `data-paid-call-rate-state="correction-required"` while an active service's stored rate is outside
+  the whole-dollar contract; otherwise empty
 - `data-paid-call-duration-required="60"`
 - `data-paid-call-duration-current` — the stored duration in minutes, empty with no active service
 - `data-paid-call-editor-open="true|false"` — card and stable-contract wiring only
@@ -150,9 +152,16 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - Xano `nylas_configurations_v3` table `#104` is the canonical Paid Call authority.
 - Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`).
 - An active service in `services[]` is the confirmed V3 authority. It wins over any imported
-  suggestion. A service rate is displayable only when it is USD and has an exact whole-dollar integer
-  `price_cents` from 100 through 100000 (`price_cents % 100 === 0`); invalid active data renders and
-  prefills as `Not set` without inventing a fallback.
+  suggestion. A service rate is bookable only when it is USD and has an exact whole-dollar integer
+  `price_cents` from 100 through 100000 (`price_cents % 100 === 0`).
+- An active service whose stored rate fails that check is never presented as bookable. The browser
+  does not repair or overwrite it: the canonical value survives until the Starter submits a valid
+  replacement. The card sets `data-paid-call-bookable="false"` and
+  `data-paid-call-rate-state="correction-required"`, renders the stored USD amount so the offending
+  value is named rather than reading as an unset rate, leaves the rate field blank so no invalid
+  value can be resubmitted by accident, and says "Paid calls are not bookable: update this service to
+  a whole-dollar rate from $1 to $1,000." A stored rate that is not a positive USD integer number of
+  cents still renders `Not set` without inventing a fallback, under the same correction state.
 - With no active service, the GET may return a top-level `suggestion`. The browser accepts it only
   when it is USD, uses a whole-dollar integer amount from 100 through 100000 cents, has
   `source: "legacy_v2"`, and has `requires_confirmation: true`. A valid suggestion replaces the
