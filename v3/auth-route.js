@@ -484,12 +484,13 @@
             if (
               target.closest(
                 'button[type="submit"], input[type="submit"], ' +
-                  '[data-ms-button="submit"]',
+                  '[data-ms-button="submit"], [data-ms-auth-provider]',
               )
             ) {
-              // Memberstack provider buttons can complete a click-driven login
-              // without firing submit. Restart the receipt for that attempt so
-              // it cannot inherit a rejected password attempt from this page.
+              // Memberstack's `[data-ms-auth-provider]` controls are links, and
+              // they complete a click-driven login without ever firing submit
+              // on this form. Restart the receipt for that attempt so it cannot
+              // inherit a rejected password attempt from this page.
               beginLoginTiming()
             }
           })

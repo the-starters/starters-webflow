@@ -1147,6 +1147,33 @@ test('a submit-control click restarts timing after a rejected attempt', () => {
   }
 })
 
+// `[data-ms-auth-provider]` is Memberstack's click-driven provider control (an
+// anchor — see quiz-main/quiz-main.js), so it completes a login without ever
+// firing submit on this form. Without a restart here, the provider attempt
+// inherits the `startedAt` of an earlier rejected password on the same page
+// visit, and /auth-route confirms that stale receipt as one duration.
+test('a provider-control click restarts timing a rejected password left behind', () => {
+  for (const control of [
+    formControl({ tag: 'a', attributes: { 'data-ms-auth-provider': 'google' } }),
+    formControl({
+      tag: 'div',
+      classes: ['clickable_btn'],
+      attributes: { 'data-ms-auth-provider': 'facebook' },
+    }),
+  ]) {
+    const harness = loadRouter({ pathname: '/login' })
+    const rejectedAt = 1700000000000
+    harness.forms[0].dispatch('submit')
+    harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: rejectedAt }))
+
+    harness.forms[0].dispatch('click', { target: control })
+
+    const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
+    assert.notEqual(receipt.startedAt, rejectedAt, control.tag)
+    assert.deepEqual(Object.keys(receipt), ['startedAt'], control.tag)
+  }
+})
+
 // `.clickable_btn` is the generic Webflow Clickable Wrap overlay and sits on
 // non-submitting buttons all over this site, including the login CTA while the
 // password rules still fail. A click on one is not a login attempt, so it must

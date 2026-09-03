@@ -71,9 +71,9 @@ moved to `get_build_profile_status` on 2026-08-04.
       them, and a hand-reconstructed block is not a rollback.
    2. **Install the loader with the page-level tags still in place.** Both are
       safe simultaneously: `auth-route.js` boot-guards on
-      `window.__startersV3AuthRouterBooted` (`v3/auth-route.js:75`), so exactly
-      one of the two copies executes and the other returns at its first
-      statement. **One auth-router execution is the expected result of this
+      `window.__startersV3AuthRouterBooted`, the first statement inside its own
+      IIFE in `v3/auth-route.js`, so exactly one of the two copies executes and
+      the other returns immediately. **One auth-router execution is the expected result of this
       step, not evidence that the loader failed.** This overlap window is the
       intended state.
    3. **Prove loader DELIVERY on all three auth paths.** During overlap the
