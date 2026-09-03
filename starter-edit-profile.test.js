@@ -64,8 +64,10 @@ function createEnvironment(fetchImpl, {
   requiredCaptureFields = [],
   additionalFormValues = [],
   canonicalPhone = '',
+  simulateProfileHydrationAfterDomReady = false,
 } = {}) {
   const domReady = []
+  const profileDataCallbacks = []
   const modalEvents = { success: 0, error: 0 }
   const modalApiCalls = []
   const memberAuthUpdates = []
@@ -154,6 +156,10 @@ function createEnvironment(fetchImpl, {
     },
   })
   const counterWrapper = new Target()
+  const retainerDescription = new Target()
+  const retainerRate = new Target()
+  retainerDescription.querySelectorAll = () => []
+  retainerRate.querySelectorAll = () => []
   counterWrapper.querySelector = (selector) => selector === '.count-input' ? counter : null
   counterInput.closest = (selector) => selector === '.form_input-wr' ? counterWrapper : null
 
@@ -241,6 +247,8 @@ function createEnvironment(fetchImpl, {
       if (selector === '[data-modal-target="edit-form-error"]') return errorTarget
       if (selector === '#email') return globalFields.email
       if (selector === '#phone' || selector === 'input[name="phone"]') return globalFields.phone
+      if (selector === '[data-monthly-retainers-description]') return retainerDescription
+      if (selector === '[data-monthly-retainers-rate]') return retainerRate
       if (selector === `[data-form="step"][data-index="${stepIndex}"]`) return step
       return null
     },
@@ -276,7 +284,7 @@ function createEnvironment(fetchImpl, {
       data: { step_1: { phone: canonicalPhone } },
     },
     MEMBER: currentMember,
-    waitProfileData() {},
+    waitProfileData(callback) { profileDataCallbacks.push(callback) },
     waitForMember(callback) { callback(this.MEMBER) },
     clearTimeout() {},
     setTimeout: setTimeoutImpl,
@@ -358,6 +366,13 @@ function createEnvironment(fetchImpl, {
   if (documentReadyState === 'loading') {
     domParsed = true
     domReady.forEach((listener) => listener())
+  }
+  if (simulateProfileHydrationAfterDomReady) {
+    Object.values(stepFields).forEach((field) => {
+      field.disabled = false
+      field.attributes.delete('aria-disabled')
+    })
+    profileDataCallbacks.forEach((callback) => callback(window.activeProfile))
   }
 
   return {
@@ -692,6 +707,24 @@ async function testStepSixDisablesLegacyPaidCallControlsAndLinksCanonicalSetting
   assert.ok(notice)
   assert.equal(notice.children[0].href, '/starter-dashboard#calendar')
   assert.equal(notice.children[0].textContent, 'Call Settings')
+}
+
+async function testStepSixReappliesCallOwnershipAfterProfileHydration() {
+  const environment = saved({
+    stepIndex: 6,
+    simulateProfileHydrationAfterDomReady: true,
+  })
+  const controlSelectors = [
+    '[name="free-consulting-calls"]',
+    '[name="free-call-description"]',
+    '[name="paid-consulting-calls"]',
+    '[name="paid-call-description"]',
+    '[name="paid-call-rate"]',
+  ]
+  controlSelectors.forEach((selector) => {
+    assert.equal(environment.fields[selector].disabled, true)
+    assert.equal(environment.fields[selector].getAttribute('aria-disabled'), 'true')
+  })
 }
 
 async function testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone() {
@@ -1284,6 +1317,7 @@ Promise.all([
   testStepSixNeverWritesPaidCallAuthority(),
   testStepSixNeverWritesFreeCallAuthority(),
   testStepSixDisablesLegacyPaidCallControlsAndLinksCanonicalSettings(),
+  testStepSixReappliesCallOwnershipAfterProfileHydration(),
   testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
   testPhoneCountryChangeCountsAsAMemberEdit(),
   testEnabledOptionalRatesNeverSilentlyPersistZero(),

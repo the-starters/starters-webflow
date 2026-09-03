@@ -5,7 +5,7 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
  *
- * @release v1.59.465
+ * @release v1.59.499
  */
 
 (() => {
@@ -1659,6 +1659,9 @@ onDomReady(() => {
 			retainerToggle();
 			paidCallToggle();
 			freeCallToggle();
+			// Profile hydration updates legacy call controls after DOM ready. Re-apply
+			// dashboard ownership after those values have landed so they stay locked.
+			configureCanonicalCallSettings();
 			console.log("retainer/paidCall/freeCall toggles initialized");
 		});
 
