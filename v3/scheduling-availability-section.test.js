@@ -2925,8 +2925,9 @@ test('calendar-preview keeps the selected slot and re-expresses it when the time
 
 test('calendar-preview resolves the browser timezone fallback once, not per rendered slot', async () => {
   const intl = intlWithLocalTimezone('America/Los_Angeles')
+  const firstSlot = futureUtcSlot(17, 0)
   const slots = [0, 1, 2, 3, 4, 5].map((offset) => ({
-    start_time: Math.floor(Date.UTC(2026, 8, 2 + offset, 17, 0) / 1000),
+    start_time: firstSlot + offset * 24 * 60 * 60,
   }))
   const { dom } = loadSection({
     intl,
@@ -2944,7 +2945,9 @@ test('calendar-preview resolves the browser timezone fallback once, not per rend
   )
   assert.equal(intl.localZoneReads, 1)
 
-  dom.calendarPreview.querySelector('[data-preview-date="2026-09-04"]').click()
+  dom.calendarPreview
+    .querySelector(`[data-preview-date="${slotDateKey(slots[2].start_time, 'America/Los_Angeles')}"]`)
+    .click()
   assert.equal(intl.localZoneReads, 1)
 })
 
