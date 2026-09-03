@@ -602,12 +602,13 @@ function signupForm(opts = {}) {
 /** profile/security shape: no marker, native submit inside the wrap */
 function profileForm(opts = {}) {
   const theme = opts.theme === undefined ? 'black' : opts.theme
-  const submitSpinner = spinner({
-    'data-ms-loader': '',
+  const submitSpinnerAttrs = {
     'aria-hidden': 'true',
     'data-button-spinner': '',
     class: 'w-layout-vflex button_icon-spinner',
-  })
+  }
+  if (!opts.noLoader) submitSpinnerAttrs['data-ms-loader'] = ''
+  const submitSpinner = spinner(submitSpinnerAttrs)
   const control = h('button', { type: 'submit', class: 'clickable_btn' })
   const wrap = h(
     'div',
@@ -638,33 +639,88 @@ function resetForm() {
   return { form, control }
 }
 
+/** reset shape without the marker: the /login page's bare native form */
+function loginForm() {
+  const control = h('input', {
+    type: 'submit',
+    'data-wait': 'Please wait...',
+    value: 'Log in',
+    class: 'button dark w-button',
+  })
+  const form = h('form', { 'data-ms-form': 'login', class: 'auth_form-block' }, [
+    h('input', {
+      class: 'form_input w-input',
+      name: 'Work-Email',
+      type: 'email',
+      id: 'Work-Email',
+      'data-ms-member': 'email',
+      required: '',
+    }),
+    h('input', {
+      class: 'form_input w-input',
+      name: 'Password',
+      type: 'password',
+      id: 'Password',
+      'data-ms-member': 'password',
+      required: '',
+    }),
+    control,
+  ])
+  return { form, control }
+}
+
 /**
- * Memberstack stand-in: consumes the form's submit, then shows the page's
- * single loader. No DOM event marks submit start or end, which is the whole
- * reason the component watches the loader instead.
+ * Memberstack stand-in: consumes the form's submit, then shows the loader. No
+ * DOM event marks submit start or end, which is the whole reason the component
+ * watches the loader instead.
+ *
+ * initLoader() caches `document.querySelector('[data-ms-loader]')` once at
+ * page init and every show is `_showLoader(cached)`, so a marker moved later
+ * changes nothing; only a page that authored none re-queries live and falls
+ * back to the injected full-screen overlay. `opts.cache: false` models that
+ * empty cache explicitly; by default the stand-in caches at construction, so
+ * construct it after mount and before any submit.
  */
-function memberstack(root, form) {
-  const state = { submits: 0 }
-  const loader = () => root.querySelector('[data-ms-loader]')
+function memberstack(root, form, opts = {}) {
+  const state = { submits: 0, overlayShows: 0, overlayRemovals: 0 }
+  const live = () => root.querySelector('[data-ms-loader]')
+  const cached = opts.cache === false ? null : live()
   form.addEventListener('submit', (event) => {
     event.preventDefault()
     state.submits += 1
-    const el = loader()
+    if (cached) {
+      cached.style.display = 'block'
+      return
+    }
+    const el = live()
     if (el) el.style.display = 'block'
+    else state.overlayShows += 1
   })
   return {
+    cached,
     get submits() {
       return state.submits
     },
+    get overlayShows() {
+      return state.overlayShows
+    },
+    get overlayRemovals() {
+      return state.overlayRemovals
+    },
     submit: () => dispatch(form, 'submit'),
     hide: () => {
-      const el = loader()
+      const el = live()
       if (el) el.style.display = 'none'
+      else state.overlayRemovals += 1
+      if (cached) cached.style.display = 'none'
     },
   }
 }
 
 const body = (children) => h('body', {}, children)
+
+/** every element currently carrying the Memberstack loader marker */
+const loaders = (root) => root.querySelectorAll('[data-ms-loader]')
 
 /** every attribute this component may write, read off one element */
 const marksOf = (el) => ({
@@ -676,6 +732,20 @@ const marksOf = (el) => ({
   ariaDisabled: el.getAttribute('aria-disabled'),
   ariaMark: el.getAttribute('data-memberstack-loader-aria'),
 })
+
+/** an element this component has never written to */
+const NO_MARKS = {
+  theme: null,
+  themeMark: null,
+  busy: null,
+  busyMark: null,
+  loading: null,
+  ariaDisabled: null,
+  ariaMark: null,
+}
+
+/** a Button Wrap sitting at its authored theme, nothing else written */
+const IDLE_WRAP = Object.assign({}, NO_MARKS, { theme: 'black' })
 
 // ---------------------------------------------------------------------------
 // Scenarios
@@ -1198,6 +1268,8 @@ test('the reset-password form, which shows no spinner, submits every time', asyn
     ariaDisabled: null,
     ariaMark: null,
   })
+  assert.deepEqual(loaders(root), [], 'a form with no Spinner carries no marker')
+  assert.equal(ms.overlayShows, 3, 'Memberstack falls back to its own overlay every time')
   assert.equal(app.warnings.length, 0)
 })
 
@@ -1566,4 +1638,392 @@ test('an unfilled checklist form blocks Enter and neither script dresses the but
   assert.equal(w.submitWrap.hasAttribute('aria-busy'), false)
   assert.equal(w.submitWrap.hasAttribute('data-ms-loading'), false)
   assert.equal(w.control.hasAttribute('data-memberstack-loader-aria'), false)
+})
+
+// ---------------------------------------------------------------------------
+// The loader follows the submitting form
+//
+// MIRROR mode: the page authored a [data-ms-loader], so Memberstack pinned it
+// and the marker can never move. MOVE mode: it authored none, so every
+// show/hide re-queries live and the marker can be placed at submit time.
+// ---------------------------------------------------------------------------
+
+/** the homepage shape: the signup modal's loader above an account form */
+function anchoredPage() {
+  const s = signupForm()
+  const p = profileForm({ noLoader: true })
+  return { s, p, root: body([s.form, p.form]) }
+}
+
+/** the account-page shape: profile form and signup form, neither anchored */
+function unanchoredPage() {
+  const s = signupForm({ noLoader: true })
+  const p = profileForm({ noLoader: true })
+  return { s, p, root: body([s.form, p.form]) }
+}
+
+test('saving a profile spins the Save button, not the closed signup modal', async () => {
+  const { s, p, root } = anchoredPage()
+  const app = mount(root)
+  const signup = memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
+
+  profile.submit()
+  assert.equal(profile.submits, 1)
+  assert.equal(signup.submits, 0)
+  assert.equal(profile.overlayShows, 0)
+  await flush()
+
+  assert.equal(p.submitSpinner.style.display, 'block', 'the Save button spins')
+  assert.equal(s.submitSpinner.style.display, 'block', 'Memberstack still lights the pinned one')
+  assert.deepEqual(loaders(root), [s.submitSpinner], 'the marker never moves')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP, 'the closed modal is not greyed out')
+  assert.deepEqual(marksOf(s.control), NO_MARKS)
+  assert.deepEqual(marksOf(p.wrap), IDLE_WRAP)
+  assert.deepEqual(marksOf(p.control), NO_MARKS)
+
+  profile.hide()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'none')
+  assert.equal(s.submitSpinner.style.display, 'none')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+  assert.deepEqual(marksOf(p.wrap), IDLE_WRAP)
+  assert.equal(app.warnings.length, 0)
+})
+
+test('the signup button on that same page still greys out for its own submit', async () => {
+  const { s, p, root } = anchoredPage()
+  mount(root)
+  const signup = memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
+
+  profile.submit()
+  await flush()
+  profile.hide()
+  await flush()
+
+  signup.submit()
+  await flush()
+  assert.deepEqual(marksOf(s.submitWrap), {
+    theme: 'disabled',
+    themeMark: 'black',
+    busy: 'true',
+    busyMark: '',
+    loading: 'true',
+    ariaDisabled: null,
+    ariaMark: null,
+  })
+  assert.equal(s.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(p.submitSpinner.style.display, 'none', 'the Save button is not dragged along')
+
+  signup.hide()
+  await flush()
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+  assert.equal(s.control.hasAttribute('aria-disabled'), false)
+
+  profile.submit()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'block')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+})
+
+test('the pinned loader is only watched once a second form needs it', async () => {
+  const { s, p, root } = anchoredPage()
+  mount(root)
+  const signup = memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
+
+  assert.equal(observerCount(s.submitSpinner), 1, 'its own form watches it')
+
+  signup.submit()
+  await flush()
+  assert.equal(observerCount(s.submitSpinner), 1, 'its own submit needs no mirror')
+  signup.hide()
+  await flush()
+
+  profile.submit()
+  await flush()
+  assert.equal(observerCount(s.submitSpinner), 2)
+  profile.hide()
+  await flush()
+
+  profile.submit()
+  await flush()
+  assert.equal(observerCount(s.submitSpinner), 2, 'the mirror is installed once')
+
+  assert.equal(observerCount(p.submitSpinner), 0)
+  assert.equal(observerCount(p.wrap), 0)
+  assert.equal(observerCount(p.control), 0)
+})
+
+test('submitting a second form mid-flight hands the spin over', async () => {
+  const { s, p, root } = anchoredPage()
+  mount(root)
+  const signup = memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
+
+  profile.submit()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'block')
+
+  signup.submit()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'none', 'the Save button is released')
+  assert.equal(s.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(s.control.getAttribute('aria-disabled'), 'true')
+
+  signup.hide()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'none')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+  assert.deepEqual(marksOf(p.wrap), IDLE_WRAP)
+})
+
+test('a loader shown by no submit at all still dresses its own button', async () => {
+  const { s, p, root } = anchoredPage()
+  mount(root)
+  memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
+
+  profile.submit()
+  await flush()
+  profile.hide()
+  await flush()
+
+  s.submitSpinner.style.display = 'block'
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'none', 'no submit asked for a mirror')
+  assert.equal(s.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(s.control.getAttribute('aria-disabled'), 'true')
+
+  s.submitSpinner.style.display = 'none'
+  await flush()
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+  assert.equal(s.control.hasAttribute('aria-disabled'), false)
+})
+
+test('a native login form on an anchored page leaves every button alone', async () => {
+  const s = signupForm()
+  const l = loginForm()
+  const root = body([s.form, l.form])
+  const app = mount(root)
+  const login = memberstack(root, l.form)
+
+  login.submit()
+  await flush()
+
+  assert.equal(login.submits, 1)
+  assert.equal(login.overlayShows, 0, 'the pin lights the signup spinner instead')
+  assert.deepEqual(loaders(root), [s.submitSpinner], 'the marker is not taken away')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+  assert.deepEqual(marksOf(l.control), NO_MARKS)
+  assert.equal(l.form.hasAttribute('data-ms-loading'), false)
+  assert.equal(app.warnings.length, 0)
+})
+
+test('a mirrored spin settles instead of flickering', async () => {
+  const { s, p, root } = anchoredPage()
+  mount(root)
+  memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
+
+  const snapshot = () => [
+    s.submitSpinner.style.display,
+    p.submitSpinner.style.display,
+    marksOf(s.submitWrap),
+    marksOf(p.wrap),
+  ]
+
+  profile.submit()
+  await flush()
+  const shown = snapshot()
+  await flush()
+  await flush()
+  assert.deepEqual(snapshot(), shown)
+
+  profile.hide()
+  await flush()
+  const hidden = snapshot()
+  await flush()
+  await flush()
+  assert.deepEqual(snapshot(), hidden)
+})
+
+test('removing the authored loader later does not start moving the marker', async () => {
+  const { s, p, root } = anchoredPage()
+  const app = mount(root)
+  const profile = memberstack(root, p.form)
+
+  s.submitSpinner.removeAttribute('data-ms-loader')
+  app.window.startersMemberstackLoader.rescan()
+
+  profile.submit()
+  await flush()
+  assert.deepEqual(loaders(root), [], 'the marker is never authored by this script')
+  assert.equal(profile.overlayShows, 0, 'Memberstack still uses what it cached')
+  assert.equal(p.submitSpinner.style.display, 'block')
+})
+
+test('with no authored loader the profile save spins its own button', async () => {
+  const { s, p, root } = unanchoredPage()
+  const app = mount(root)
+  const signup = memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
+
+  let atBubble = null
+  p.form.addEventListener('submit', () => {
+    atBubble = loaders(root)
+  })
+
+  profile.submit()
+  assert.deepEqual(atBubble, [p.submitSpinner], 'placed before Memberstack looks for it')
+  await flush()
+
+  assert.equal(signup.submits, 0)
+  assert.equal(profile.overlayShows, 0, 'no full-screen overlay')
+  assert.equal(p.submitSpinner.style.display, 'block')
+  assert.equal(s.submitSpinner.style.display, '')
+  assert.equal(s.submitSpinner.hasAttribute('data-ms-loader'), false)
+  assert.deepEqual(marksOf(p.wrap), IDLE_WRAP)
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+
+  profile.hide()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'none')
+  assert.equal(app.warnings.length, 0)
+})
+
+test('the marker follows whichever form was submitted last', async () => {
+  const { s, p, root } = unanchoredPage()
+  mount(root)
+  const signup = memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
+
+  profile.submit()
+  await flush()
+  profile.hide()
+  await flush()
+
+  signup.submit()
+  assert.deepEqual(loaders(root), [s.submitSpinner], 'the marker moved to the signup form')
+  assert.equal(p.submitSpinner.hasAttribute('data-ms-loader'), false)
+  await flush()
+  assert.equal(s.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(s.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(p.submitSpinner.style.display, 'none')
+
+  signup.submit()
+  assert.equal(signup.submits, 1, 'the repeat submit is swallowed')
+  assert.deepEqual(loaders(root), [s.submitSpinner], 'and it re-routes nothing')
+
+  signup.hide()
+  await flush()
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+
+  profile.submit()
+  assert.deepEqual(loaders(root), [p.submitSpinner], 'and back again')
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'block')
+})
+
+test('a native login form with nowhere to spin falls back to the overlay', async () => {
+  const p = profileForm({ noLoader: true })
+  const l = loginForm()
+  const root = body([p.form, l.form])
+  const app = mount(root)
+  const profile = memberstack(root, p.form)
+  const login = memberstack(root, l.form)
+
+  profile.submit()
+  await flush()
+  assert.deepEqual(loaders(root), [p.submitSpinner])
+  const profileDisplay = p.submitSpinner.style.display
+
+  login.submit()
+  await flush()
+  assert.deepEqual(loaders(root), [], 'the marker leaves the form that is not submitting')
+  assert.equal(login.overlayShows, 1, 'Memberstack shows its own full-screen overlay')
+  assert.equal(p.submitSpinner.style.display, profileDisplay, 'untouched by the login submit')
+  assert.deepEqual(marksOf(l.control), NO_MARKS)
+
+  login.hide()
+  assert.equal(login.overlayRemovals, 1)
+  assert.equal(app.warnings.length, 0)
+})
+
+test('the marker never lands on the sign-in link next to the CTA', async () => {
+  const f = signupForm({ noLoader: true })
+  const root = body([f.form])
+  mount(root)
+  const ms = memberstack(root, f.form)
+
+  ms.submit()
+  assert.deepEqual(loaders(root), [f.submitSpinner])
+  assert.equal(f.linkSpinner.hasAttribute('data-ms-loader'), false)
+  await flush()
+
+  assert.equal(f.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(f.control.getAttribute('aria-disabled'), 'true')
+  assert.deepEqual(marksOf(f.linkWrap), IDLE_WRAP)
+  assert.equal(f.linkSpinner.style.display, '')
+})
+
+test('a loader authored after load does not start mirroring it', async () => {
+  const f = signupForm({ noLoader: true })
+  const stray = h('div', {})
+  const root = body([f.form, stray])
+  const app = mount(root)
+  const ms = memberstack(root, f.form)
+
+  stray.setAttribute('data-ms-loader', '')
+  app.window.startersMemberstackLoader.rescan()
+
+  ms.submit()
+  assert.deepEqual(loaders(root), [f.submitSpinner], 'the stray marker is taken away')
+  await flush()
+  assert.equal(f.submitSpinner.style.display, 'block')
+  assert.equal(ms.overlayShows, 0)
+})
+
+test('repeated rescans still leave exactly one loader marker', async () => {
+  const { s, p, root } = unanchoredPage()
+  const app = mount(root)
+  const wired = p.form.listenerCount('submit')
+  const profile = memberstack(root, p.form)
+
+  app.window.startersMemberstackLoader.rescan()
+  app.window.startersMemberstackLoader.rescan()
+  assert.equal(p.form.listenerCount('submit'), wired + 1, 'only the stand-in was added')
+
+  profile.submit()
+  await flush()
+  assert.deepEqual(loaders(root), [p.submitSpinner])
+  assert.equal(profile.submits, 1)
+  assert.equal(s.submitSpinner.hasAttribute('data-ms-loader'), false)
+})
+
+test('with password-validation loaded the marker still follows the click', async () => {
+  const w = pvWorld({ form: { noLoader: true } })
+
+  dispatch(w.control, 'click')
+  assert.deepEqual(loaders(w.root), [w.submitSpinner])
+  await flush()
+  assert.equal(w.ms.submits, 1)
+  assert.equal(w.ms.overlayShows, 0)
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(w.control.getAttribute('aria-disabled'), 'true')
+
+  const before = w.warnings.length
+  dispatch(w.control, 'click')
+  assert.equal(w.ms.submits, 1)
+  const fresh = w.warnings.slice(before)
+  assert.equal(fresh.length, 1, fresh.join(' | '))
+  assert.ok(fresh[0].includes(REFUSED), fresh[0])
+
+  w.ms.hide()
+  await flush()
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 2)
+  assert.deepEqual(loaders(w.root), [w.submitSpinner])
 })

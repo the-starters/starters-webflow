@@ -8,6 +8,12 @@
 // button's Pending look is driven off a MutationObserver on the Spinner
 // ([data-button-spinner]) inside the form's Button Wrap (.button_main-wrap).
 //
+// Memberstack pins the loader it cached at init, so on a page that authors one
+// the attribute cannot be moved. Both paths ship: a page with an authored
+// [data-ms-loader] keeps it in place and this script mirrors that element's
+// show/hide onto the submitting form's Spinner; a page with none gets the
+// attribute moved onto the submitting form's Spinner at submit time.
+//
 // While Pending the wrap carries data-button-theme="disabled" (the grey look),
 // aria-busy="true" (existing CSS turns that into cursor: wait) and
 // data-ms-loading="true"; the clickable control carries aria-disabled="true".
@@ -57,9 +63,20 @@
   var BUSY_MARK = 'data-memberstack-loader-busy';
   var ARIA_MARK = 'data-memberstack-loader-aria';
 
+  var LOADER_ATTR = 'data-ms-loader';
+  var LOADER_SELECTOR = '[data-ms-loader]';
+
   var AUTH_KINDS = ['login', 'signup', 'forgot-password', 'reset-password'];
 
   var REASSERT_ATTRS = [THEME_ATTR, BUSY_ATTR, LOADING_ATTR, ARIA_ATTR];
+
+  // The Anchor is whatever Memberstack cached. Resolved once: a rescan must not
+  // flip the page between mirroring and moving.
+  var anchor = null;
+  var anchorResolved = false;
+  var anchorObserved = false;
+  var lastSubmitter = null;
+  var mirrored = null;
 
   // --- resolving the form's Button -----------------------------------------
 
@@ -146,6 +163,9 @@
   function sync(record) {
     var display = record.spinner.style.display;
     var shown = display !== '' && display !== 'none';
+    // The pinned Anchor lights up for every form on the page; Pending belongs
+    // to the one that submitted.
+    if (shown && record.spinner === anchor && lastSubmitter && lastSubmitter !== record) return;
     if (shown && !record.pending) enterPending(record);
     else if (!shown && record.pending) leavePending(record);
   }
@@ -197,6 +217,53 @@
     observer.observe(record.spinner, { attributes: true, attributeFilter: ['style'] });
   }
 
+  // --- loader routing -------------------------------------------------------
+
+  // MOVE mode only. A form with no Spinner clears the page instead, so
+  // Memberstack falls back to its own overlay for that submit.
+  function route(record) {
+    var marked = document.querySelectorAll(LOADER_SELECTOR);
+    for (var i = 0; i < marked.length; i++) {
+      if (marked[i] !== record.spinner) marked[i].removeAttribute(LOADER_ATTR);
+    }
+    if (record.spinner && !record.spinner.hasAttribute(LOADER_ATTR)) {
+      record.spinner.setAttribute(LOADER_ATTR, '');
+    }
+  }
+
+  // Reads the Anchor's live display, never the mutation batch. Writes only
+  // where the value differs, and keeps at most one mirrored Spinner lit.
+  function mirror() {
+    var display = anchor.style.display;
+    var shown = display !== '' && display !== 'none';
+    var target = shown && lastSubmitter ? lastSubmitter.spinner : null;
+    if (target === anchor) target = null;
+
+    if (mirrored && mirrored !== target && mirrored.style.display !== 'none') {
+      mirrored.style.display = 'none';
+    }
+    if (target) {
+      if (target.style.display !== display) target.style.display = display;
+      mirrored = target;
+    } else {
+      mirrored = null;
+    }
+    // A hide ends the submit, so a later show nobody asked for lights nothing.
+    if (!shown) lastSubmitter = null;
+  }
+
+  // Installed from the capture-phase submit, which runs before Memberstack
+  // writes display, so the first show is already watched.
+  function observeAnchor() {
+    if (anchorObserved) return;
+    if (typeof MutationObserver === 'undefined') return;
+    anchorObserved = true;
+    var observer = new MutationObserver(function () {
+      mirror();
+    });
+    observer.observe(anchor, { attributes: true, attributeFilter: ['style'] });
+  }
+
   // --- submit ---------------------------------------------------------------
 
   function onSubmit(record, event) {
@@ -205,7 +272,12 @@
       event.stopImmediatePropagation();
       return;
     }
-    // Routing (the loader follows the submitting form) lands here next.
+    lastSubmitter = record;
+    if (anchor) {
+      if (record.spinner && record.spinner !== anchor) observeAnchor();
+    } else {
+      route(record);
+    }
   }
 
   // Capture phase, so a repeat submit dies before Memberstack or any peer
@@ -221,6 +293,11 @@
   // --- discovery ------------------------------------------------------------
 
   function init() {
+    if (!anchorResolved) {
+      anchorResolved = true;
+      anchor = document.querySelector(LOADER_SELECTOR);
+    }
+
     var forms = document.querySelectorAll(MS_FORM_SELECTOR);
 
     for (var i = 0; i < forms.length; i++) {
