@@ -731,6 +731,19 @@ for (const controllerPath of controllerPaths) {
     app.clock.advance(1600)
     assert.match(app.editEndDateInput.validationMessage, /end month/i)
 
+    assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-01'), true)
+    assert.match(app.editStartDateInput.validationMessage, /end month/i)
+    assert.match(app.editEndDateInput.validationMessage, /end month/i)
+
+    app.editCurrentWorkCheckbox.checked = true
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.equal(app.editEndDateInput.validationMessage, '')
+
+    app.editCurrentWorkCheckbox.checked = false
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.match(app.editStartDateInput.validationMessage, /end month/i)
+    assert.match(app.editEndDateInput.validationMessage, /end month/i)
+
     assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-12'), true)
     assert.equal(app.editStartDateInput.validationMessage, '')
     assert.equal(app.editEndDateInput.validationMessage, '')
@@ -755,6 +768,19 @@ for (const controllerPath of controllerPaths) {
     assert.equal(app.endDateInput.reportValidityCalls, 1)
 
     app.clock.advance(1600)
+    assert.match(app.endDateInput.validationMessage, /end month/i)
+
+    assert.equal(chooseNativeMonth(app.endDateInput, '2025-01'), true)
+    assert.match(app.startDateInput.validationMessage, /end month/i)
+    assert.match(app.endDateInput.validationMessage, /end month/i)
+
+    app.currentWorkCheckbox.checked = true
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.equal(app.endDateInput.validationMessage, '')
+
+    app.currentWorkCheckbox.checked = false
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.match(app.startDateInput.validationMessage, /end month/i)
     assert.match(app.endDateInput.validationMessage, /end month/i)
 
     assert.equal(chooseNativeMonth(app.endDateInput, '2025-12'), true)

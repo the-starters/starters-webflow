@@ -163,7 +163,7 @@ function reportStarterProfileCompanyMonthRangeError(endInput) {
   if (endInput && typeof endInput.reportValidity === 'function') endInput.reportValidity();
 }
 
-function syncStarterProfileCompanyMonthRange(startInput, endInput) {
+function syncStarterProfileCompanyMonthRange(startInput, endInput, isCurrent) {
   if (!startInput || !endInput) return;
 
   // Do not constrain either native month picker from the other field. Reciprocal
@@ -172,7 +172,11 @@ function syncStarterProfileCompanyMonthRange(startInput, endInput) {
   // rejecting a completed start month that is later than its end month.
   endInput.removeAttribute('min');
   startInput.removeAttribute('max');
-  setStarterProfileCompanyMonthRangeError(startInput, endInput, false);
+  setStarterProfileCompanyMonthRangeError(
+    startInput,
+    endInput,
+    !isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent)
+  );
 }
 
 function isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent) {
@@ -187,7 +191,11 @@ function bindStarterProfileCompanyMonthRange(startInput, endInput, currentCheckb
   if (!startInput || !endInput) return;
 
   const syncRange = function () {
-    syncStarterProfileCompanyMonthRange(startInput, endInput);
+    syncStarterProfileCompanyMonthRange(
+      startInput,
+      endInput,
+      !!(currentCheckbox && currentCheckbox.checked)
+    );
   };
 
   startInput.addEventListener('input', syncRange);
