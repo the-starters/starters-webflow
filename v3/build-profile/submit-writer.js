@@ -52,6 +52,7 @@
           const result = await submitFreelancerData(data);
           console.log("Normalized Data:", result);
         } catch (submitError) {
+          setLoader(false, formSubmit.closest('[data-form="step"]'));
           success.style.display = 'none';
           error.style.display = 'block';
           console.error('[build-profile] submit failed', submitError?.code || 'SUBMIT_FAILED');
@@ -74,20 +75,30 @@
           throw Object.assign(new Error(message), { code });
         };
 
-        const wholeDollar = (value, { min, max, label, selector, allowBlank = false }) => {
-          const field = qs(selector, form);
-          const message = `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
+        const wholeDollarFailure = (value, { min, max, allowBlank = false }) => {
           const raw = String(value ?? '').trim();
-          if (!raw) {
-            if (allowBlank) return null;
-            return priceError(field, `${label} is required.`, 'PRICE_REQUIRED');
-          }
-          if (!/^[0-9]+$/.test(raw)) return priceError(field, message, 'PRICE_NOT_INTEGER');
+          if (!raw) return allowBlank ? null : 'PRICE_REQUIRED';
+          if (!/^[0-9]+$/.test(raw)) return 'PRICE_NOT_INTEGER';
           const number = Number(raw);
-          if (!Number.isSafeInteger(number)) return priceError(field, message, 'PRICE_NOT_INTEGER');
-          if (number < min || number > max) return priceError(field, message, 'PRICE_OUT_OF_RANGE');
+          if (!Number.isSafeInteger(number)) return 'PRICE_NOT_INTEGER';
+          if (number < min || number > max) return 'PRICE_OUT_OF_RANGE';
+          return null;
+        };
+
+        const wholeDollar = (value, contract) => {
+          const { min, max, label, selector } = contract;
+          const field = qs(selector, form);
+          const failure = wholeDollarFailure(value, contract);
+          if (failure) {
+            const message = failure === 'PRICE_REQUIRED'
+              ? `${label} is required.`
+              : `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
+            return priceError(field, message, failure);
+          }
+          const raw = String(value ?? '').trim();
+          if (!raw) return null;
           field?.setCustomValidity?.('');
-          return number;
+          return Number(raw);
         };
 
         const parseJson = (value) => {
@@ -145,22 +156,23 @@
         };
 
         const isConsultProfile = String(window.location?.pathname || "").replace(/\/+$/, "") === "/build-profile/consult";
+        const PAID_CALL_PRICE = {
+          min: 1,
+          max: 1000,
+          label: 'paid call rate',
+          selector: '[name="paid-call-rate"]',
+        };
         const paidCallSelected = toBool(formData["paid-consulting-calls"]) === true;
-        const paidCallRaw = String(formData["paid-call-rate"] ?? '').trim();
-        const paidCallAuthored = paidCallRaw !== '' && !/^0+$/.test(paidCallRaw);
-        const paidCallEnabled = paidCallSelected || (isConsultProfile && paidCallAuthored);
         // A toggle-owned rate is only authored while its own section says yes. Once the
         // toggle is off the control is collapsed, so its stale text is neither visible
         // nor editable and must never block the whole submit behind a price failure the
-        // member cannot see or reach. A blank value and the canonical zero sentinel both
-        // already meant the compatibility value, so neither one enables a paid consult.
+        // member cannot see or reach. Only a rate the contract already accepts can
+        // stand in for the collapsed consult toggle; every other value, blank included,
+        // keeps the compatibility state instead of enabling a paid consult.
+        const paidCallInContract = wholeDollarFailure(formData["paid-call-rate"], PAID_CALL_PRICE) === null;
+        const paidCallEnabled = paidCallSelected || (isConsultProfile && paidCallInContract);
         const paidCallRate = paidCallEnabled
-          ? wholeDollar(formData["paid-call-rate"], {
-              min: 1,
-              max: 1000,
-              label: 'paid call rate',
-              selector: '[name="paid-call-rate"]',
-            })
+          ? wholeDollar(formData["paid-call-rate"], PAID_CALL_PRICE)
           : null;
 
         const fullProfile = !isConsultProfile;
@@ -232,8 +244,8 @@
           free_call: toBool(formData["free-consulting-calls"]),
           free_call_desc: formData["free-call-description"] || "",
 
-          // The authored paid-call control is hidden in the consult flow. A positive
-          // member-entered rate is therefore the reliable enablement signal even if
+          // The authored paid-call control is hidden in the consult flow. An in-contract
+          // whole-dollar rate is therefore the reliable enablement signal even if
           // fallback hydration left the hidden radio on "no".
           paid_call: paidCallEnabled,
           paid_call_desc: formData["paid-call-description"] || "",
@@ -271,10 +283,6 @@
             });
 
             if (!response.ok) {
-              setLoader(false, step);
-              success.style.display = 'none';
-              error.style.display = 'block';
-
               const errorText = await response.text();
               throw new Error(`Xano request failed: ${response.status} ${errorText}`);
             }
@@ -290,14 +298,7 @@
           const photoUpload = window.StartersBuildProfilePhotoUpload;
           if (photoUpload?.hasPendingUpload?.()) {
             photoUpload.markProfileSaved();
-            try {
-              await photoUpload.commitPending();
-            } catch (photoError) {
-              setLoader(false, step);
-              success.style.display = 'none';
-              error.style.display = 'block';
-              throw photoError;
-            }
+            await photoUpload.commitPending();
           }
 
           // update Member customFields, if even one of them was changed

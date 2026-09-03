@@ -77,11 +77,18 @@ says yes; a collapsed Monthly Retainer or Paid Call section keeps its existing z
 compatibility state instead of blocking the submit on text the member cannot see, and its stale text is
 never forwarded unvalidated: Edit Profile sends the canonical zero only alongside the toggle it is
 turning off and otherwise omits the field. On Build Profile Consult, where the paid-call radio is
-hidden, only a positive authored rate enables the paid consult, so the canonical zero rate stays the
-no-paid-consult compatibility state. A blank
+hidden, only a rate that already satisfies this contract enables the paid consult, so a canonical zero,
+blank, malformed, or out-of-range rate behind that hidden control stays the no-paid-consult
+compatibility state rather than blocking the submit. A blank
 profile-type-inapplicable Hourly Rate keeps the same zero compatibility state. Service prices and names
 live in hidden capture inputs, so their failures report through the authored error modal rather than
 native constraint validation. No invalid value is silently clamped.
+
+Until the cutover installs this candidate foundation, the published body still live on
+`/starter-edit-profile` re-formats every rate it claims to two decimals on blur, which no whole-dollar
+value can survive. `starter-edit-profile.js` therefore owns the rate-input contract for that page: it
+claims each price control and provides the page's shared rate setup, so the hourly, retainer, and
+cloned Custom Service price rows keep the authored whole-dollar text they are validated against.
 
 ## Verification
 

@@ -170,8 +170,8 @@
       }
     },
     "v3/build-profile/submit-writer.js": {
-      "candidateCharacters": 14982,
-      "candidateSha256": "e6d0830d750abbf0bb5b1514aefbcbecde22a1738b2215ac050db739494bd0d0",
+      "candidateCharacters": 15036,
+      "candidateSha256": "daf2b32e6a43c64a9606f19a2e55cd3ba73877d86932142e1c2b40c57fc9aad3",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileSubmitWriter",

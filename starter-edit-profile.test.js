@@ -28,6 +28,12 @@ class Target {
     this.reportValidityCount = 0
     this.validationMessage = ''
     this.children = []
+    this.classNames = new Set()
+    this.classList = {
+      add: (value) => { this.classNames.add(value) },
+      remove: (value) => { this.classNames.delete(value) },
+      contains: (value) => this.classNames.has(value),
+    }
   }
 
   addEventListener(type, listener) {
@@ -66,6 +72,7 @@ function createEnvironment(fetchImpl, {
   requiredCaptureFields = [],
   additionalFormValues = [],
   canonicalPhone = '',
+  liveRateFormatter = false,
   simulateProfileHydrationAfterDomReady = false,
   dirtyState = null,
 } = {}) {
@@ -87,6 +94,11 @@ function createEnvironment(fetchImpl, {
       valid: true,
     }, defaults, fieldOverrides[selector] || {})
     field.checkValidity = () => field.valid && (!field.required || String(field.value ?? '').trim() !== '')
+    const name = selector.match(/^\[name="([^"]+)"\]$/)?.[1]
+    if (name) {
+      field.name = name
+      field.setAttribute('name', name)
+    }
     return field
   }
 
@@ -146,6 +158,26 @@ function createEnvironment(fetchImpl, {
     ...field,
   }))
   const fields = { ...globalFields, ...stepFields }
+  const rateInputs = [
+    stepFields['[name="rate"]'],
+    stepFields['[name="rate-retainer"]'],
+  ].filter(Boolean)
+  // Mirrors the published shared foundation still live on the page
+  // (v3/profile-form/shared-foundation-published.capture.txt lines 42-72): it claims
+  // every unclaimed rate control and rewrites its value to two decimals on blur.
+  const liveRateFormatterCalls = []
+  function liveFormatRateInputs(wrapper = null) {
+    liveRateFormatterCalls.push(wrapper)
+    rateInputs
+      .filter((input) => !input.classList.contains('initialized'))
+      .forEach((input) => {
+        input.classList.add('initialized')
+        input.addEventListener('blur', () => {
+          const parsed = parseFloat(input.value)
+          input.value = Number.isNaN(parsed) ? '' : parsed.toFixed(2)
+        })
+      })
+  }
   const buttonText = { textContent: 'Submit' }
   const button = new Target()
   const step = Object.assign(new Target(), { dataset: { index: String(stepIndex) } })
@@ -195,7 +227,7 @@ function createEnvironment(fetchImpl, {
   }
   form.querySelector = () => null
   form.querySelectorAll = () => []
-  form.formValues = [
+  const buildFormValues = () => [
     ['email', globalFields.email.value],
     ['phone', globalFields.phone.value],
     ...(stepIndex === 1 ? [
@@ -230,6 +262,7 @@ function createEnvironment(fetchImpl, {
     ] : []),
     ...additionalFormValues,
   ]
+  Object.defineProperty(form, 'formValues', { get: buildFormValues })
 
   const successModal = new Target()
   const errorModal = new Target()
@@ -265,6 +298,7 @@ function createEnvironment(fetchImpl, {
     },
     querySelectorAll(selector) {
       if (selector === '[data-form="step"][data-index]') return [step]
+      if (selector === '[data-element="rate"]') return rateInputs
       if (selector === 'input.with-count:not(.initialized), textarea.with-count:not(.initialized)') {
         return domParsed ? [counterInput] : []
       }
@@ -345,6 +379,7 @@ function createEnvironment(fetchImpl, {
     window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
   }
   if (dirtyState) window.__tsProfileDirtyState = dirtyState
+  if (liveRateFormatter) window.formatRateInputs = liveFormatRateInputs
 
   const dollar = () => ({ each() {} })
   const sandbox = {
@@ -405,6 +440,8 @@ function createEnvironment(fetchImpl, {
     fields,
     focusTarget,
     window,
+    liveRateFormatterCalls,
+    runLiveRateFormatter: liveFormatRateInputs,
     switchMember(member) {
       currentMember = member
       authChangeListeners.forEach((listener) => listener({ data: member }))
@@ -963,6 +1000,56 @@ async function testStepSixPersistsEveryValidatedServiceSlot() {
 	})
 }
 
+// The published shared foundation is still live on this page and rewrites every
+// rate it claims to two decimals on blur, so a member who focuses a price control
+// and then saves must still persist the whole-dollar value they authored.
+async function testStepSixSavesAuthoredRatesWhileTheLiveFormatterIsPresent() {
+	const environment = saved({ stepIndex: 6, liveRateFormatter: true })
+	const rate = environment.fields['[name="rate"]']
+
+	await rate.dispatchEvent({ type: 'focus' })
+	await rate.dispatchEvent({ type: 'blur' })
+	assert.equal(rate.value, '125')
+
+	environment.runLiveRateFormatter()
+	await rate.dispatchEvent({ type: 'blur' })
+	assert.equal(rate.value, '125')
+
+	const payload = await submittedStepPayload(environment)
+	assert.equal(payload.Hourly_Rate, 125)
+	assert.equal(rate.validationMessage, '')
+	assert.deepEqual([
+		rate.getAttribute('type'),
+		rate.getAttribute('inputmode'),
+		rate.getAttribute('step'),
+		rate.getAttribute('min'),
+		rate.getAttribute('max'),
+	], ['number', 'numeric', '1', '1', '1000'])
+	assert.equal(environment.fields['[name="rate-retainer"]'].getAttribute('max'), '25000')
+}
+
+// Service rows are cloned after load and formatted through the page global, so the
+// contract this page validates has to reach them instead of the live rewriter.
+async function testClonedServicePriceRowsGetTheWholeDollarContract() {
+	const environment = saved({ stepIndex: 6, liveRateFormatter: true })
+	const clonedPrice = Object.assign(new Target(), { value: '500' })
+	clonedPrice.setAttribute('name', 'price-2')
+	const clonedRow = new Target()
+	clonedRow.querySelectorAll = (selector) => selector === '[data-element="rate"]' ? [clonedPrice] : []
+
+	environment.window.formatRateInputs(clonedRow)
+	await clonedPrice.dispatchEvent({ type: 'blur' })
+
+	assert.equal(clonedPrice.value, '500')
+	assert.equal(clonedPrice.classList.contains('initialized'), true)
+	assert.deepEqual([
+		clonedPrice.getAttribute('type'),
+		clonedPrice.getAttribute('step'),
+		clonedPrice.getAttribute('min'),
+		clonedPrice.getAttribute('max'),
+	], ['number', '1', '1', '50000'])
+}
+
 async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
   const consultPayload = await submittedStepPayload(saved({
     stepIndex: 6,
@@ -1518,6 +1605,8 @@ Promise.all([
 	testStepSixPriceContractSurvivesABlankServiceCaptureField(),
 	testServiceFailuresExplainThemselvesInTheErrorModal(),
 	testCollapsedRetainerSectionNeverBlocksStepSix(),
+	testStepSixSavesAuthoredRatesWhileTheLiveFormatterIsPresent(),
+	testClonedServicePriceRowsGetTheWholeDollarContract(),
 	testStepSixPersistsEveryValidatedServiceSlot(),
   testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
   testReviewerStepUsesCanonicalBuildProfileShape(),

@@ -183,7 +183,10 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   rounded or partially parsed: it must satisfy the shared
   [whole-dollar price contract](v3/profile-form/README.md#whole-dollar-price-contract),
   which the step enforces on the hourly, retainer, and custom-service prices
-  before it issues the PATCH. Only the member switching Retainer off clears that
+  before it issues the PATCH. The page also owns the rate-input setup for those
+  controls instead of delegating to the live shared formatter that rewrites an
+  authored rate to two decimals, so the whole-dollar text a member types is the
+  text the contract validates. Only the member switching Retainer off clears that
   service's now-hidden description and rate. Hydrating the stored profile runs the same
   show/hide and required-attribute pass without clearing, so a stored retainer
   description survives every reload instead of being blanked into the next save.

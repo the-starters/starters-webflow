@@ -186,13 +186,19 @@ These live blocks stay unchanged while Elvin owns availability, booking, and pai
 
 The extracted final submit writer is now a declared behavior-change candidate. It
 keeps the existing normalized profile payload, availability fields, and paid-call
-fields. On Consult, a non-zero member-entered paid-call rate enables the paid
-consult in the payload even when fallback hydration left the hidden paid-call
-radio on `no`. It enforces the
+fields. On Consult, a member-entered paid-call rate that already satisfies the
+contract enables the paid consult in the payload even when fallback hydration
+left the hidden paid-call radio on `no`; a blank, zero, malformed, or
+out-of-range rate behind that hidden radio keeps the no-paid-consult
+compatibility state instead of blocking a submit the member cannot repair. It
+enforces the
 [whole-dollar price contract](../profile-form/README.md#whole-dollar-price-contract)
 on the hourly, retainer, paid-call, and service prices before it builds the
 request, instead of rounding a parsed number, and reveals the authored error
-block when a submit does not complete.
+block when a submit does not complete. Every failure — a rejected price, a
+rejected request, a non-ok response, a malformed success body, or a failed photo
+commit — clears the step loader as it reveals that block, so the error state is
+never left behind a spinner.
 Its other behavior changes are the reviewer-alias compatibility described above
 and the profile-save and pending-photo commit gate described in
 [Profile-photo upload contract](#profile-photo-upload-contract). The separate

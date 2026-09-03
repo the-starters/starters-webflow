@@ -25,7 +25,7 @@ class Element {
   async click() { return this.listeners.get('click')?.({ preventDefault() {} }) }
 }
 
-function load(overrides = {}, pathname = '/build-profile/full') {
+function load(overrides = {}, pathname = '/build-profile/full', { respond = null } = {}) {
   const values = {
     email: 'starter@example.test',
     'first-name': 'Test',
@@ -44,6 +44,8 @@ function load(overrides = {}, pathname = '/build-profile/full') {
   const form = new Element()
   form.values = values
   const submit = new Element()
+  const step = new Element()
+  submit.closest = () => step
   const success = new Element()
   const error = new Element()
   const inputs = Object.fromEntries([
@@ -55,6 +57,7 @@ function load(overrides = {}, pathname = '/build-profile/full') {
     ['#service-3', new Element(values['service-3'])],
   ])
   const requests = []
+  const loaderStates = []
   const MEMBER = {
     id: 'mem_test',
     auth: { email: values.email },
@@ -95,9 +98,10 @@ function load(overrides = {}, pathname = '/build-profile/full') {
     waitForMember: (callback) => callback(MEMBER),
     qs,
     FormData,
-    setLoader() {},
+    setLoader(state, wrapper) { loaderStates.push({ state, wrapper }) },
     xanoAuthFetch: async (url, init) => {
       requests.push({ url, body: JSON.parse(init.body) })
+      if (respond) return respond(url, init)
       return { ok: true, status: 200, json: async () => ({ saved: true }) }
     },
     console: { log() {}, warn() {}, error() {} },
@@ -109,7 +113,7 @@ function load(overrides = {}, pathname = '/build-profile/full') {
   }
   vm.runInNewContext(SOURCE, context, { filename: 'submit-writer.js' })
   domReady.forEach((callback) => callback())
-  return { submit, success, error, inputs, requests }
+  return { submit, step, success, error, inputs, requests, loaderStates }
 }
 
 test('sets native whole-dollar constraints on each direct price input', () => {
@@ -169,9 +173,14 @@ test('consult Paid Call accepts $1 and $1,000, rejects $1.01, and converts to no
     assert.equal(result.requests.length, 1)
     assert.equal(result.requests[0].body.paid_call_rate, Number(value))
   }
-  const invalid = load({ 'paid-call-rate': '1.01' }, '/build-profile/consult')
+  const invalid = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '1.01' }, '/build-profile/consult')
   await invalid.submit.click()
   assert.equal(invalid.requests.length, 0)
+
+  const hidden = load({ 'paid-call-rate': '1.01' }, '/build-profile/consult')
+  await hidden.submit.click()
+  assert.equal(hidden.requests.length, 1)
+  assert.equal(hidden.requests[0].body.paid_call_rate, null)
 })
 
 test('a collapsed section keeps its compatibility value instead of blocking the submit', async () => {
@@ -212,4 +221,75 @@ test('disabled and non-owned blank rates preserve compatibility zero without acc
   assert.equal(consult.requests[0].body.hourly_rate, 0)
   assert.equal(consult.requests[0].body.retainer_rate, 0)
   assert.equal(consult.requests[0].body.paid_call_rate, null)
+})
+
+test('a consult profile never enables or blocks on hidden paid-call data the contract rejects', async () => {
+  for (const stale of ['2500', '1.50', '1,000', '$50', '1e2', '-5', '   ', '9007199254740993']) {
+    const result = load({ 'paid-call-rate': stale }, '/build-profile/consult')
+    await result.submit.click()
+    assert.equal(
+      result.requests.length, 1,
+      `${stale}: ${result.inputs['[name="paid-call-rate"]'].validationMessage}`,
+    )
+    assert.equal(result.requests[0].body.paid_call, false)
+    assert.equal(result.requests[0].body.paid_call_rate, null)
+    assert.equal(result.error.style.display, 'none')
+    assert.equal(result.inputs['[name="paid-call-rate"]'].reportValidityCount, 0)
+  }
+
+  const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '2500' }, '/build-profile/consult')
+  await selected.submit.click()
+  assert.equal(selected.requests.length, 0)
+  assert.equal(selected.error.style.display, 'block')
+  assert.match(selected.inputs['[name="paid-call-rate"]'].validationMessage, /\$1 to \$1,000/)
+  assert.equal(selected.inputs['[name="paid-call-rate"]'].reportValidityCount, 1)
+})
+
+test('a consult profile still enables an in-contract hidden paid-call rate', async () => {
+  const result = load({ 'paid-call-rate': '250' }, '/build-profile/consult')
+  await result.submit.click()
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.requests[0].body.paid_call, true)
+  assert.equal(result.requests[0].body.paid_call_rate, 250)
+})
+
+test('a rejected canonical request clears the loader behind the authored error state', async () => {
+  const result = load({}, '/build-profile/full', {
+    respond: () => { throw new Error('offline') },
+  })
+  await result.submit.click()
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(result.success.style.display, 'none')
+  assert.deepEqual(result.loaderStates, [
+    { state: true, wrapper: result.step },
+    { state: false, wrapper: result.step },
+  ])
+})
+
+test('a malformed success body clears the loader behind the authored error state', async () => {
+  const result = load({}, '/build-profile/full', {
+    respond: () => ({ ok: true, status: 200, json: async () => { throw new Error('bad body') } }),
+  })
+  await result.submit.click()
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(result.success.style.display, 'none')
+  assert.deepEqual(result.loaderStates, [
+    { state: true, wrapper: result.step },
+    { state: false, wrapper: result.step },
+  ])
+})
+
+test('a non-ok canonical response clears the loader behind the authored error state', async () => {
+  const result = load({}, '/build-profile/full', {
+    respond: () => ({ ok: false, status: 500, text: async () => 'server error' }),
+  })
+  await result.submit.click()
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.error.style.display, 'block')
+  assert.deepEqual(result.loaderStates, [
+    { state: true, wrapper: result.step },
+    { state: false, wrapper: result.step },
+  ])
 })

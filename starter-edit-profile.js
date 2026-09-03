@@ -303,18 +303,43 @@ function setLoader(state, wrapper) {
 	loader.style.opacity = state ? '1' : '0';
 }
 
-function formatRateInputs() {
-	if (typeof window.formatRateInputs === 'function') {
-		window.formatRateInputs();
-		return;
-	}
+const PRICE_CONTRACTS = Object.freeze({
+	Hourly_Rate: Object.freeze({ min: 1, max: 1000, label: 'hourly rate' }),
+	Retainer_Rate: Object.freeze({ min: 1, max: 25000, label: 'monthly retainer rate' }),
+	Paid_Call_Rate: Object.freeze({ min: 1, max: 1000, label: 'paid call rate' }),
+	Services: Object.freeze({ min: 1, max: 50000, label: 'service price' }),
+});
 
-	qsa('[data-element="rate"]').forEach((input) => {
-		input.setAttribute('type', 'number');
-		input.setAttribute('inputmode', 'numeric');
-		input.setAttribute('step', '1');
+function rateInputContract(input) {
+	const name = String(input?.getAttribute?.('name') || '');
+	if (name === 'rate') return PRICE_CONTRACTS.Hourly_Rate;
+	if (name === 'rate-retainer') return PRICE_CONTRACTS.Retainer_Rate;
+	if (name === 'paid-call-rate') return PRICE_CONTRACTS.Paid_Call_Rate;
+	return PRICE_CONTRACTS.Services;
+}
+
+function applyRateInputContract(input, contract) {
+	if (!input) return;
+	input.setAttribute('type', 'number');
+	input.setAttribute('inputmode', 'numeric');
+	input.setAttribute('step', '1');
+	input.setAttribute('min', String(contract.min));
+	input.setAttribute('max', String(contract.max));
+}
+
+// The published shared foundation rewrites every authored rate through
+// parseFloat().toFixed(2) on blur, which turns 125 into 125.00 and leaves no
+// value a whole-dollar contract can accept. This page therefore owns the
+// rate-input contract for the prices it validates: claiming each control keeps
+// that formatter off them, and owning the page global keeps the same contract on
+// the service rows other page scripts clone.
+function formatRateInputs(wrapper = null) {
+	qsa('[data-element="rate"]', wrapper).forEach((input) => {
+		input.classList?.add?.('initialized');
+		applyRateInputContract(input, rateInputContract(input));
 	});
 }
+window.formatRateInputs = formatRateInputs;
 
 function stepElement(stepIndex) {
 	return qs(`[data-form="step"][data-index="${stepIndex}"]`);
@@ -574,11 +599,6 @@ onDomReady(function () {
 
 		/* SUBMIT METHODS */
 		const PATCH_ENDPOINT = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/edit_profile/update/';
-		const PRICE_CONTRACTS = Object.freeze({
-			Hourly_Rate: Object.freeze({ min: 1, max: 1000, label: 'hourly rate' }),
-			Retainer_Rate: Object.freeze({ min: 1, max: 25000, label: 'monthly retainer rate' }),
-			Services: Object.freeze({ min: 1, max: 50000, label: 'service price' }),
-		});
 		const STEP_PAYLOAD_MAP = {
 			1: {
 				First_Name: 'first-name',
@@ -645,13 +665,7 @@ onDomReady(function () {
 				{ selector: '[name="rate"]', contract: PRICE_CONTRACTS.Hourly_Rate },
 				{ selector: '[name="rate-retainer"]', contract: PRICE_CONTRACTS.Retainer_Rate },
 			].forEach(({ selector, contract }) => {
-				const input = qs(selector, stepElement(6));
-				if (!input) return;
-				input.setAttribute('type', 'number');
-				input.setAttribute('inputmode', 'numeric');
-				input.setAttribute('step', '1');
-				input.setAttribute('min', String(contract.min));
-				input.setAttribute('max', String(contract.max));
+				applyRateInputContract(qs(selector, stepElement(6)), contract);
 			});
 		}
 
