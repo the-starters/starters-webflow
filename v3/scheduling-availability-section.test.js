@@ -2408,6 +2408,38 @@ function formatSlotTime(start, timeZone) {
   }).format(new Date(start * 1000))
 }
 
+function slotDateKey(start, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone,
+  }).formatToParts(new Date(start * 1000))
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function formatSlotSummary(start, timeZone) {
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZone,
+  }).format(new Date(start * 1000))
+}
+
+function formatSlotDate(start, timeZone) {
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone,
+  }).format(new Date(start * 1000))
+}
+
 test('calendar-preview timezone selector converts slots without a write or another availability read', async () => {
   const start = futureUtcSlot()
   const { dom, calls } = loadSection({
@@ -2622,8 +2654,10 @@ test('calendar-preview reuses the timezone selector node and keeps its focus acr
 })
 
 test('calendar-preview keeps the selected slot and re-expresses it when the timezone changes', async () => {
-  const firstSlot = Math.floor(Date.UTC(2026, 8, 2, 4, 30) / 1000)
-  const secondSlot = Math.floor(Date.UTC(2026, 8, 4, 1, 0) / 1000)
+  const firstSlot = futureUtcSlot()
+  const secondSlot = futureUtcSlot(1, 0) + 2 * 24 * 60 * 60
+  const manilaDateKey = slotDateKey(secondSlot, 'Asia/Manila')
+  const newYorkDateKey = slotDateKey(secondSlot, 'America/New_York')
   const { dom, calls } = loadSection({
     serverState: FREE_ONLY_SERVER_STATE,
     getRoutes: {
@@ -2635,11 +2669,11 @@ test('calendar-preview keeps the selected slot and re-expresses it when the time
   })
   await settle()
 
-  dom.calendarPreview.querySelector('[data-preview-date="2026-09-04"]').click()
+  dom.calendarPreview.querySelector(`[data-preview-date="${manilaDateKey}"]`).click()
   dom.calendarPreview.querySelector(`[data-preview-slot-start="${secondSlot}"]`).click()
   assert.equal(
     dom.calendarPreview.querySelector('[data-availability-element="preview-selection"]').textContent,
-    'Selected: Fri, Sep 04, 09:00 AM',
+    `Selected: ${formatSlotSummary(secondSlot, 'Asia/Manila')}`,
   )
 
   const initialReads = calls.filter((call) => call.path === '/scheduler/get_availability/v3').length
@@ -2652,19 +2686,21 @@ test('calendar-preview keeps the selected slot and re-expresses it when the time
 
   assert.equal(
     dom.calendarPreview.querySelector('[data-availability-element="preview-selection"]').textContent,
-    'Selected: Thu, Sep 03, 09:00 PM',
+    `Selected: ${formatSlotSummary(secondSlot, 'America/New_York')}`,
   )
   const timesColumn = dom.calendarPreview.querySelector(
     '[data-availability-element="preview-times-column"]',
   )
-  assert.equal(timesColumn.children[0].textContent, 'Thu, Sep 3')
+  assert.equal(timesColumn.children[0].textContent, formatSlotDate(secondSlot, 'America/New_York'))
   const selectedButton = dom.calendarPreview.querySelector(
     `[data-preview-slot-start="${secondSlot}"]`,
   )
   assert.equal(selectedButton.getAttribute('aria-pressed'), 'true')
-  assert.equal(selectedButton.textContent, '9:00 PM')
+  assert.equal(selectedButton.textContent, formatSlotTime(secondSlot, 'America/New_York'))
   assert.equal(
-    dom.calendarPreview.querySelector('[data-preview-date="2026-09-03"]').getAttribute('aria-pressed'),
+    dom.calendarPreview
+      .querySelector(`[data-preview-date="${newYorkDateKey}"]`)
+      .getAttribute('aria-pressed'),
     'true',
   )
   assert.equal(
