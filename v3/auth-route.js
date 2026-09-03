@@ -513,10 +513,14 @@
   // quiz-main/quiz-main.js), so their placement relative to the auth forms is
   // not something this router can assume. Delegating from `document` keeps the
   // login-restarts / signup-drops split wherever the control actually sits.
-  // A provider control owned by neither form cannot be attributed to either
-  // flow, so it drops the receipt: a measurement lost is recoverable, a rejected
-  // password reported as a login-to-destination duration is not. A plain submit
-  // button outside both forms belongs to some unrelated form and is left alone.
+  //
+  // Ownership is the NEAREST auth form, resolved in one `closest` call so a
+  // nested form follows real selector-list semantics rather than the order the
+  // branches happen to be written in. These pages exist to log a member in, so a
+  // provider control with no owning auth form is a login attempt: it restarts
+  // the receipt, which contains a rejected password's timestamp just as a clear
+  // would while still measuring the flow. A plain submit button outside both
+  // forms belongs to some unrelated form and is left alone.
   function bindAttemptClicks() {
     if (
       typeof document.addEventListener !== 'function' ||
@@ -536,15 +540,22 @@
       ) {
         return
       }
-      if (target.closest('[data-ms-form="login"]')) {
-        beginLoginTiming()
-        return
-      }
-      if (target.closest('[data-ms-form="signup"]')) {
+      var owner = target.closest(
+        '[data-ms-form="login"], [data-ms-form="signup"]',
+      )
+      var kind =
+        owner && typeof owner.getAttribute === 'function'
+          ? owner.getAttribute('data-ms-form')
+          : null
+      if (kind === 'signup') {
         clearLoginTiming()
         return
       }
-      if (target.closest('[data-ms-auth-provider]')) clearLoginTiming()
+      if (kind === 'login') {
+        beginLoginTiming()
+        return
+      }
+      if (target.closest('[data-ms-auth-provider]')) beginLoginTiming()
     })
   }
 

@@ -220,12 +220,14 @@ Memberstack's `[data-ms-auth-provider]` controls are links that complete a login
 without ever firing submit, and nothing pins where they sit relative to the auth
 forms — `quiz-main/quiz-main.js` collects them document-wide, not as form
 descendants. The router therefore delegates the click from `document` rather
-than from either form: a provider control inside `[data-ms-form="login"]`
-restarts the receipt, one inside `[data-ms-form="signup"]` drops it, and one
-owned by neither form also drops it, because it cannot be attributed to either
-flow and a lost measurement is recoverable where an inflated one is not. A plain
-submit button outside both forms belongs to some unrelated form and is ignored.
-The router
+than from either form, and attributes the control to its *nearest* owning auth
+form in one `closest` call, so nested markup follows real selector-list
+semantics. A provider control owned by `[data-ms-form="signup"]` drops the
+receipt; every other provider click on these pages restarts it, whether it sits
+inside `[data-ms-form="login"]` or outside both forms — a login page exists to
+log a member in, and a restart overwrites a rejected password's `startedAt` just
+as completely as a clear while still measuring the flow. A plain submit button
+outside both forms belongs to some unrelated form and is ignored. The router
 emits fixed `performance.mark()` names for router boot, Memberstack ready,
 member snapshot, token trade, status read, and redirect request. The sitewide
 loader emits `destination-load` on the final non-auth page and consumes the
@@ -236,8 +238,8 @@ token, or requested destination.
 Only a completed login-to-destination flow can be measured. `/auth-route` stamps
 `redirectedAt` on the receipt at the moment it hands off, and the loader refuses
 to emit `destination-load` for a receipt without it. A login page boot clears
-any receipt it finds, every attempt that is not a login-form attempt clears it —
-a signup submit, a signup control, an unattributable provider control — and the
+any receipt it finds, every signup attempt clears it — a signup submit, or any
+attempt control owned by the signup form — and the
 logged-out bounce back to `/login` clears it too, so a rejected password or an
 abandoned login page can never be read later as a login-to-destination
 duration.
@@ -556,16 +558,15 @@ Production stays silent apart from the configuration errors in the table above.
   contains a member ID, email, cookie, Xano token, or requested destination.
   Then submit the signup form on `/login` and confirm it routes through
   `/auth-route` while emitting no `login-submit` stage and leaving no receipt.
-- Record where the Memberstack provider controls actually sit, which is the one
-  thing the runtime cannot infer. On `/login`, submit a wrong password, read
+- Exercise the provider control, whose measurement must not depend on where it
+  sits. On `/login`, submit a wrong password, read
   `sessionStorage['thestarters:v3-auth-route-timing']` and note its `startedAt`,
-  then click the provider control and read the key again. It must either hold a
-  later `startedAt` (the control sits inside `[data-ms-form="login"]`, and
-  provider logins are measured) or be gone (the control sits outside both auth
-  forms, and provider logins are deliberately unmeasured). It must never still
-  hold the rejected attempt's `startedAt`. Record which of the two you saw, and
-  run `document.querySelector('[data-ms-auth-provider]').closest('[data-ms-form]')`
-  to record the owning form, or `null`, alongside it.
+  then click the provider control and read the key again: it must hold a later
+  `startedAt`, never the rejected attempt's. Complete that provider login and
+  confirm the destination emits one `destination-load`. Then run
+  `document.querySelector('[data-ms-auth-provider]').closest('[data-ms-form]')`
+  and record the owning form, or `null` — the restart is required either way,
+  and this records which markup the release actually shipped against.
 - Verify login with `next=/dashboard` for Talent, paid Brand, Test Brand, and
   Brand Free in both incomplete-quiz and completed-quiz states.
 - Verify the four Talent funnel states on staging with the console open: a member

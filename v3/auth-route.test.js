@@ -1135,10 +1135,10 @@ function matchesSimpleSelector(node, simple) {
 }
 
 // `owner` is the `data-ms-form` kind of the auth form this control is nested
-// inside, or null for a control that sits outside both auth forms. `closest`
-// walks that real ancestor chain, so a listener that reaches a control only
-// through its owning form and one delegated from `document` are told apart here
-// rather than both being handed a match.
+// inside, or null for a control that sits outside both auth forms. Pass an array
+// to nest forms, nearest first. `closest` walks that real ancestor chain and
+// returns the NEAREST match across the whole selector list, the way the browser
+// does, so branch order in the router cannot stand in for ancestor distance.
 function formControl({
   tag = 'button',
   classes = [],
@@ -1147,12 +1147,18 @@ function formControl({
 } = {}) {
   const node = { tag, classes, attributes, owner }
   const chain = [node]
-  if (owner) {
+  for (const kind of [].concat(owner || [])) {
     chain.push({
       tag: 'form',
       classes: [],
-      attributes: { 'data-ms-form': owner },
+      attributes: { 'data-ms-form': kind },
     })
+  }
+  for (const candidate of chain) {
+    candidate.getAttribute = (name) =>
+      Object.prototype.hasOwnProperty.call(candidate.attributes, name)
+        ? candidate.attributes[name]
+        : null
   }
   node.closest = (selector) => {
     const simples = selector
@@ -1228,11 +1234,11 @@ test('a provider-control click restarts timing a rejected password left behind',
 
 // quiz-main/quiz-main.js reaches these controls with a document-wide query, not
 // through the signup form it configures beside them, so nothing pins them as
-// descendants of either auth form on /login. A control that is not inside an
-// auth form cannot be attributed to the login flow or the signup flow, so the
-// receipt is dropped: an unmeasured provider login costs a number, while
-// inheriting the rejected password's `startedAt` reports a wrong one.
-test('a provider-control click outside both auth forms drops the receipt', () => {
+// descendants of either auth form on /login. A login page exists to log a member
+// in, so a provider control with no owning auth form is a login attempt and must
+// be measured like one — dropping the receipt there would leave every provider
+// login permanently unmeasured if that is where the markup puts them.
+test('a provider-control click outside both auth forms restarts timing', () => {
   const harness = loadRouter({ pathname: '/login' })
   const rejectedAt = 1700000000000
   harness.forms[0].dispatch('submit')
@@ -1246,11 +1252,47 @@ test('a provider-control click outside both auth forms drops the receipt', () =>
     }),
   })
 
+  const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
+  assert.notEqual(receipt.startedAt, rejectedAt)
+  assert.deepEqual(Object.keys(receipt), ['startedAt'])
+  assert.ok(harness.marks.includes('starters:v3-auth-route:login-submit'))
+})
+
+// Ownership is the NEAREST auth form. Two sequential `closest` calls would let
+// whichever branch is written first win regardless of ancestor distance, so a
+// signup form nested inside the login form would start a login receipt for a
+// signup attempt — the inflation this receipt's rules exist to prevent.
+test('a control in a signup form nested inside the login form drops the receipt', () => {
+  const harness = loadRouter({ pathname: '/login' })
+  const rejectedAt = 1700000000000
+  harness.forms[0].dispatch('submit')
+  harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: rejectedAt }))
+
+  harness.dispatchDocument('click', {
+    target: formControl({
+      tag: 'a',
+      attributes: { 'data-ms-auth-provider': 'google' },
+      owner: ['signup', 'login'],
+    }),
+  })
+
   assert.equal(harness.storage.has(TIMING_KEY), false)
-  assert.equal(
-    harness.marks.includes('starters:v3-auth-route:login-submit'),
-    false,
-  )
+})
+
+// The mirror case: a login form nested inside a signup form still measures.
+test('a control in a login form nested inside the signup form restarts timing', () => {
+  const harness = loadRouter({ pathname: '/login' })
+  harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
+
+  harness.dispatchDocument('click', {
+    target: formControl({
+      tag: 'a',
+      attributes: { 'data-ms-auth-provider': 'google' },
+      owner: ['login', 'signup'],
+    }),
+  })
+
+  assert.notEqual(JSON.parse(harness.storage.get(TIMING_KEY)).startedAt, 1)
 })
 
 // Delegating from `document` reaches every click on the page, including forms
@@ -2471,5 +2513,61 @@ test('the router and the loader agree on the whole timing protocol', async () =>
   const prefix = login.marks[0].slice(0, -'login-submit'.length)
   assert.deepEqual(destination.marks, [prefix + 'destination-load'])
   // The loader consumes the receipt, so nothing survives for the next page.
+  assert.deepEqual([...storage.keys()], [])
+})
+
+// The provider path is the one intent-required flow whose measurement depends on
+// markup this repo does not pin, so prove it end to end at the placement that
+// would otherwise lose it: a control owned by neither auth form. The receipt it
+// starts has to survive /auth-route's confirmation and reach `destination-load`
+// exactly like a password login's.
+test('an off-form provider login is measured through to destination load', async () => {
+  const storage = new Map()
+  const clock = makeClock()
+  const member = talentMember()
+
+  const login = loadRouter({ pathname: '/login', storage, clock })
+  login.forms[0].dispatch('submit')
+  const rejectedAt = clock.now()
+
+  await clock.advance(60000)
+  login.dispatchDocument('click', {
+    target: formControl({
+      tag: 'a',
+      attributes: { 'data-ms-auth-provider': 'google' },
+    }),
+  })
+  assert.equal(
+    JSON.parse(storage.get(TIMING_KEY)).startedAt,
+    clock.now(),
+    'the provider attempt owns the receipt, not the rejected password',
+  )
+
+  await clock.advance(9000)
+  const route = loadRouter({
+    pathname: '/auth-route',
+    storage,
+    clock,
+    member,
+    memberReady: Promise.resolve(member),
+    xano: { statusBody: ONBOARDED },
+  })
+  await flush()
+  assert.equal(route.location.replaced, '/starter-dashboard')
+
+  const destination = runDestinationLoader({
+    storage,
+    clock,
+    pathname: route.location.replaced,
+  })
+
+  assert.equal(destination.events.length, 1)
+  assert.deepEqual({ ...destination.events[0].detail }, {
+    stage: 'destination-load',
+    elapsedMs: 9000,
+  })
+  // The 60s the member spent on the rejected password is excluded, which is the
+  // whole point of restarting rather than inheriting.
+  assert.ok(clock.now() - rejectedAt > 60000)
   assert.deepEqual([...storage.keys()], [])
 })
