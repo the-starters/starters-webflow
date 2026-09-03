@@ -118,12 +118,24 @@ node --test v3/password-recovery.test.js
 ## Login router
 
 `auth-route.js` owns post-login and post-signup routing for V3 without changing
-the shared Memberstack plan redirects used by V2. Install it only on the V3
-`/login`, `/starter-login`, and `/auth-route` pages, after the sitewide
-`route-guard.js` that owns the shared stable plan-role contract. It runs on the
-V3 Webflow staging hostname and both custom domains; see
+the shared Memberstack plan redirects used by V2. The blocking site-head
+`auth-page-loader.js` inserts it only on the V3 `/login`, `/starter-login`, and
+`/auth-route` pages — immediately on the two login paths, which only need the
+form's `/auth-route` redirect written, and after DOMContentLoaded on
+`/auth-route`, which reads the guard's role contract. Keep the static deferred
+sitewide `route-guard.js` unconditional and ahead of the loader because it owns
+the shared stable plan-role contract and completes before DOMContentLoaded.
+Keep `signup-attribution.js`, both `utils/posthog-*.js` helpers,
+`native-form-diagnostics.js` — the sitewide observer that owns the
+`brand_login` and `talent_login` receipts — and the
+login/password/email validation owners outside
+the minimal-controller conditional. Remove the old page-level `auth-route.js`
+tags only through the overlap, delivery, and one-path-at-a-time behavior proof
+in the wiring guide. It runs on the V3 Webflow staging hostname and both custom
+domains; see
 [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
-installation, error contract, and release gate. The versioned
+installation, error contract, privacy-safe login timing evidence, and release
+gate. The versioned
 [V3 Member Access Matrix](ACCESS-MATRIX.md) maps stable plan IDs to roles and
 documents route access plus the separate Webflow, content, and Xano enforcement
 layers.

@@ -382,6 +382,21 @@ it gets.
    `v3/auth-route.js` and `opportunities-3.0.js`. This includes opportunity
    pages: opp30 detects the guard through `html[data-route-guard]` and defers
    its access decisions to it.
+
+   The tag is **static, parser-inserted, `defer`red, and unconditional** on
+   every page — this is the live installed state and the authoritative contract
+   the [auth-route gate](AUTH-ROUTE-WIRING.md#release-gate) verifies:
+
+   ```html
+   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/route-guard.js"></script>
+   ```
+
+   `defer` keeps the head from blocking on it while still guaranteeing it runs
+   before `DOMContentLoaded`, which is what `v3/auth-page-loader.js` relies on
+   when it waits for that event before inserting `auth-route.js` on
+   `/auth-route`. Never move this tag behind a conditional or a dynamic insert:
+   every controller that reads `window.StartersV3RouteGuard` fails open to a
+   `null` role if the guard has not executed by the time its own tag runs.
 2. Do not install it on V2.
 3. Give guarded pages an error block keyed by `html[data-route-guard-error]`
    (same visible pattern as `/auth-route`). Optionally pre-hide protected

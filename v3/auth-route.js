@@ -1,11 +1,19 @@
 /**
  * V3 login router.
  *
- * @release v1.59.441
+ * @release v1.59.507
  *
- * Install on the V3 login pages (/login and /starter-login) and /auth-route
- * only. Every V3 login form must redirect to /auth-route so shared Memberstack
- * plan redirects can remain unchanged for V2.
+ * Loaded by the site-head v3/auth-page-loader.js on the V3 login pages
+ * (/login and /starter-login) and /auth-route only. Every V3 login form must
+ * redirect to /auth-route so shared Memberstack plan redirects can remain
+ * unchanged for V2. v3/route-guard.js is delivered only from its static
+ * parser-inserted deferred sitewide tag. Only the /auth-route branch below
+ * reads the guard's role contract, so the loader waits for DOMContentLoaded
+ * there — the deferred guard has completed by then, and only there is the guard
+ * guaranteed to execute before this file. On the two login paths the loader
+ * inserts immediately, so this file usually executes BEFORE the deferred guard;
+ * that branch only writes the form redirect and never reads the role contract.
+ * The loader never inserts a second copy of the guard.
  *
  * Talent members additionally get a funnel-position check here, because
  * /auth-route is the one page every Talent login passes through. The product
@@ -101,6 +109,11 @@
   // one it accepts from a `next`.
   var COMPLETE_PROFILE_PATH = '/complete-profile'
   var NEXT_STORAGE_KEY = 'thestarters:v3-auth-next'
+  // Timing carries timestamps only. It never stores member IDs, emails,
+  // Memberstack cookies, Xano tokens, or requested destinations.
+  var TIMING_STORAGE_KEY = 'thestarters:v3-auth-route-timing'
+  var TIMING_MARK_PREFIX = 'starters:v3-auth-route:'
+  var TIMING_MAX_AGE_MS = 120000
   // Written by v3/brand-account-controller.js the moment a profile submit's
   // durable member write resolves, and read here as "done" so the Memberstack →
   // Xano webhook's catch-up window cannot bounce a fresh completer back onto the
@@ -186,6 +199,100 @@
 
   function describe(error) {
     return (error && error.message) || String(error)
+  }
+
+  // The stored receipt, or null when there is none, it is unreadable, it has no
+  // usable `startedAt`, or it is past the two-minute ceiling.
+  function readLoginTiming() {
+    try {
+      var raw = window.sessionStorage.getItem(TIMING_STORAGE_KEY)
+      var parsed = raw ? JSON.parse(raw) : null
+      if (!parsed || typeof parsed !== 'object') return null
+      var startedAt = Number(parsed.startedAt)
+      if (!Number.isFinite(startedAt)) return null
+      if (Date.now() - startedAt > TIMING_MAX_AGE_MS) return null
+      return parsed
+    } catch (error) {
+      return null
+    }
+  }
+
+  function timingStartedAt() {
+    var receipt = readLoginTiming()
+    return receipt === null ? null : Number(receipt.startedAt)
+  }
+
+  // `provider` is the only thing the receipt records beyond timestamps, and it
+  // is a boolean about the attempt's SHAPE, not about the member or the chosen
+  // provider: a provider login leaves the site and comes back through a fresh
+  // page load, so it is the one attempt whose flow can still be in progress
+  // while a login page boots (see configureLoginForms).
+  function writeLoginTiming(viaProvider) {
+    var receipt = { startedAt: Date.now() }
+    if (viaProvider) receipt.provider = true
+    try {
+      window.sessionStorage.setItem(TIMING_STORAGE_KEY, JSON.stringify(receipt))
+    } catch (error) {}
+    timingMark('login-submit')
+  }
+
+  function beginLoginTiming() {
+    writeLoginTiming(false)
+  }
+
+  function beginProviderLoginTiming() {
+    writeLoginTiming(true)
+  }
+
+  function clearLoginTiming() {
+    try {
+      window.sessionStorage.removeItem(TIMING_STORAGE_KEY)
+    } catch (error) {}
+  }
+
+  function providerAttemptInFlight() {
+    var receipt = readLoginTiming()
+    return receipt !== null && receipt.provider === true
+  }
+
+  // A receipt only becomes readable evidence once /auth-route actually hands
+  // off. Without `redirectedAt` the loader discards it, so a rejected password
+  // or an abandoned login page can never be reported later as a
+  // login-to-destination duration.
+  function confirmRedirectTiming() {
+    var startedAt = timingStartedAt()
+    if (startedAt === null) return
+    try {
+      window.sessionStorage.setItem(
+        TIMING_STORAGE_KEY,
+        JSON.stringify({ startedAt: startedAt, redirectedAt: Date.now() }),
+      )
+    } catch (error) {}
+  }
+
+  function timingMark(stage) {
+    var markName = TIMING_MARK_PREFIX + stage
+    try {
+      if (window.performance && typeof window.performance.mark === 'function') {
+        window.performance.mark(markName)
+      }
+    } catch (error) {}
+
+    var startedAt = timingStartedAt()
+    var detail = { stage: stage }
+    if (startedAt !== null)
+      detail.elapsedMs = Math.max(0, Date.now() - startedAt)
+    try {
+      window.dispatchEvent(
+        new CustomEvent('starters:v3-auth-route-timing', { detail: detail }),
+      )
+    } catch (error) {}
+  }
+
+  function requestRedirect(destination) {
+    confirmRedirectTiming()
+    timingMark('redirect-request')
+    window.location.replace(destination)
   }
 
   /**
@@ -368,6 +475,16 @@
   }
 
   function configureLoginForms() {
+    // A login page is the start of a flow, never the middle of one, with one
+    // exception: a provider login leaves the site and returns through a fresh
+    // page load — that is why Memberstack has to stash `data-ms-redirect` in
+    // session storage — and that return can land back on a login path before
+    // Memberstack honors the stash. That receipt is the flow still in progress,
+    // so it survives; every other receipt still here belongs to an earlier
+    // attempt that never reached /auth-route, and a provider receipt past the
+    // two-minute ceiling is no longer in flight either.
+    if (!providerAttemptInFlight()) clearLoginTiming()
+
     var queryValue = new URLSearchParams(window.location.search).get('next')
     var queryDestination = localPath(queryValue)
     if (queryDestination) {
@@ -384,12 +501,86 @@
     // the form directly, which covers Enter-key submits and outranks both the
     // stored override and the server value. Keep `data-ms-redirect` too: it is
     // what carries the destination through the click-driven provider flows.
+    //
+    // Timing measures the login-to-destination interval, so only the login form
+    // starts a receipt. The signup form on these pages routes through
+    // /auth-route on the same attributes above, but account creation, Turnstile,
+    // and plan assignment make it a structurally different and longer flow;
+    // measuring it under the `login-submit` stage would inflate the number this
+    // receipt exists to report. It still has to DROP the receipt: a signup
+    // attempt leaving this page is the one flow that would otherwise let a
+    // rejected password on the same visit be confirmed at /auth-route as a
+    // login-to-destination duration. The kind is read off the form itself, the
+    // same nearest-kind dispatch the delegated click handler does below.
     document
       .querySelectorAll('[data-ms-form="login"], [data-ms-form="signup"]')
       .forEach(function (form) {
         form.setAttribute('data-ms-redirect', ROUTE_PATH)
         form.setAttribute('redirect', ROUTE_PATH)
+        bindAttemptSubmit(
+          form,
+          form.getAttribute('data-ms-form') === 'signup'
+            ? clearLoginTiming
+            : beginLoginTiming,
+        )
       })
+    bindAttemptClicks()
+  }
+
+  function bindAttemptSubmit(form, onAttempt) {
+    if (
+      typeof form.addEventListener !== 'function' ||
+      form.__startersAuthTimingBound
+    ) {
+      return
+    }
+    form.__startersAuthTimingBound = true
+    form.addEventListener('submit', onAttempt)
+  }
+
+  // Memberstack's `[data-ms-auth-provider]` controls are links that complete a
+  // login without ever submitting a form, and this site's other consumer of them
+  // collects them document-wide rather than as form descendants (see
+  // quiz-main/quiz-main.js), so their placement relative to the auth forms is
+  // not something this router can assume. Delegating from `document` keeps the
+  // login-restarts / signup-drops split wherever the control actually sits.
+  //
+  // Ownership is the NEAREST auth form, resolved in one `closest` call so a
+  // nested form follows real selector-list semantics rather than the order the
+  // branches happen to be written in. These pages exist to log a member in, so a
+  // provider control with no owning auth form is a login attempt: it restarts
+  // the receipt, which contains a rejected password's timestamp just as a clear
+  // would while still measuring the flow. A plain submit button outside both
+  // forms belongs to some unrelated form and is left alone.
+  function bindAttemptClicks() {
+    if (
+      typeof document.addEventListener !== 'function' ||
+      document.__startersAuthTimingBound
+    ) {
+      return
+    }
+    document.__startersAuthTimingBound = true
+    document.addEventListener('click', function (event) {
+      var target = event && event.target
+      if (!target || typeof target.closest !== 'function') return
+      // Native and Memberstack submit controls continue through the form's
+      // `submit` event, which is the single timing boundary for those attempts.
+      // Provider links do not submit the form, so only they need click handling.
+      var provider = target.closest('[data-ms-auth-provider]')
+      if (!provider || typeof provider.closest !== 'function') return
+      var owner = provider.closest(
+        '[data-ms-form="login"], [data-ms-form="signup"]',
+      )
+      var kind =
+        owner && typeof owner.getAttribute === 'function'
+          ? owner.getAttribute('data-ms-form')
+          : null
+      if (kind === 'signup') {
+        clearLoginTiming()
+        return
+      }
+      beginProviderLoginTiming()
+    })
   }
 
   function waitForMemberstack() {
@@ -477,23 +668,32 @@
     var memberstackToken = await memberstack.getMemberCookie()
     if (!memberstackToken) throw new Error('No Memberstack session cookie')
 
-    var response = await window.fetch(
-      XANO_AUTH_BASE +
-        TRADE_TOKEN_PATH +
-        '?token=' +
-        encodeURIComponent(memberstackToken),
-      { signal: signal },
-    )
-    var data = await response.json().catch(function () {
-      return null
-    })
-    if (!response.ok) {
-      throw new Error('Xano token trade failed with ' + response.status)
+    // The `-end` mark lives in a `finally` so the stage is paired for every
+    // outcome, not just the happy path: an HTTP error, an unusable body, a
+    // rejected fetch, and the shared budget's abort all end the trade, and a
+    // consumer pairing stages must never be left holding an open interval.
+    timingMark('token-trade-start')
+    try {
+      var response = await window.fetch(
+        XANO_AUTH_BASE +
+          TRADE_TOKEN_PATH +
+          '?token=' +
+          encodeURIComponent(memberstackToken),
+        { signal: signal },
+      )
+      var data = await response.json().catch(function () {
+        return null
+      })
+      if (!response.ok) {
+        throw new Error('Xano token trade failed with ' + response.status)
+      }
+      var token =
+        typeof data === 'string' ? data : data && (data.authToken || data.token)
+      if (!token) throw new Error('Xano token trade returned no token')
+      return token
+    } finally {
+      timingMark('token-trade-end')
     }
-    var token =
-      typeof data === 'string' ? data : data && (data.authToken || data.token)
-    if (!token) throw new Error('Xano token trade returned no token')
-    return token
   }
 
   /**
@@ -523,17 +723,23 @@
 
   async function readFunnelState(memberstack, signal) {
     var token = await tradeForXanoToken(memberstack, signal)
-    var response = await window.fetch(
-      XANO_ONBOARDING_BASE + BUILD_PROFILE_STATUS_PATH,
-      { headers: { Authorization: 'Bearer ' + token }, signal: signal },
-    )
-    if (!response.ok) {
-      throw new Error('get_build_profile_status responded ' + response.status)
+    // Paired in a `finally` for the same reason as the token trade above.
+    timingMark('status-read-start')
+    try {
+      var response = await window.fetch(
+        XANO_ONBOARDING_BASE + BUILD_PROFILE_STATUS_PATH,
+        { headers: { Authorization: 'Bearer ' + token }, signal: signal },
+      )
+      if (!response.ok) {
+        throw new Error('get_build_profile_status responded ' + response.status)
+      }
+      var data = await response.json().catch(function () {
+        return null
+      })
+      return funnelStateFrom(data)
+    } finally {
+      timingMark('status-read-end')
     }
-    var data = await response.json().catch(function () {
-      return null
-    })
-    return funnelStateFrom(data)
   }
 
   /**
@@ -609,17 +815,23 @@
 
   async function readBrandProfileState(memberstack, signal) {
     var token = await tradeForXanoToken(memberstack, signal)
-    var response = await window.fetch(
-      XANO_ONBOARDING_BASE + BRAND_PROFILE_STATUS_PATH,
-      { headers: { Authorization: 'Bearer ' + token }, signal: signal },
-    )
-    if (!response.ok) {
-      throw new Error('get_brand_profile_status responded ' + response.status)
+    // Paired in a `finally` for the same reason as the token trade above.
+    timingMark('status-read-start')
+    try {
+      var response = await window.fetch(
+        XANO_ONBOARDING_BASE + BRAND_PROFILE_STATUS_PATH,
+        { headers: { Authorization: 'Bearer ' + token }, signal: signal },
+      )
+      if (!response.ok) {
+        throw new Error('get_brand_profile_status responded ' + response.status)
+      }
+      var data = await response.json().catch(function () {
+        return null
+      })
+      return brandProfileStateFrom(data)
+    } finally {
+      timingMark('status-read-end')
     }
-    var data = await response.json().catch(function () {
-      return null
-    })
-    return brandProfileStateFrom(data)
   }
 
   /**
@@ -664,20 +876,27 @@
   }
 
   async function routeAuthenticatedMember() {
+    timingMark('router-boot')
     var memberstack = await waitForMemberstack()
     if (!memberstack) {
       showConfigurationError('memberstack-unavailable')
       return
     }
+    timingMark('memberstack-ready')
 
+    // One authoritative read. `window.memberReady` on this site resolves an
+    // empty object for every visitor, logged in or not, so it carries no
+    // identity to reuse — see global-embeds/session-video/README.md.
     var response = await memberstack.getCurrentMember()
     var member = response && response.data
+    timingMark('member-snapshot')
     if (!member || !member.id) {
+      clearLoginTiming()
       var loginNext = consumeRequestedDestination()
       var loginUrl = loginNext
         ? LOGIN_PATH + '?next=' + encodeURIComponent(loginNext)
         : LOGIN_PATH
-      window.location.replace(loginUrl)
+      requestRedirect(loginUrl)
       return
     }
 
@@ -700,7 +919,7 @@
             BUILD_PROFILE_PATH +
             '.',
         )
-        window.location.replace(BUILD_PROFILE_PATH)
+        requestRedirect(BUILD_PROFILE_PATH)
         return
       }
       if (state === FUNNEL_ONBOARDING) {
@@ -710,7 +929,7 @@
             (requested ? ' instead of ' + requested : '') +
             '.',
         )
-        window.location.replace(ONBOARDING_PATH)
+        requestRedirect(ONBOARDING_PATH)
         return
       }
       note('funnel state "' + state + '"; routing normally.')
@@ -730,7 +949,7 @@
             (requested ? ' instead of ' + requested : '') +
             '.',
         )
-        window.location.replace(COMPLETE_PROFILE_PATH)
+        requestRedirect(COMPLETE_PROFILE_PATH)
         return
       }
       note('brand profile state "' + brandState + '"; routing normally.')
@@ -743,13 +962,13 @@
     }
 
     note('routing to ' + destination + '.')
-    window.location.replace(destination)
+    requestRedirect(destination)
   }
 
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/auth-route.test.js drift guard asserts they match.
-    release: 'v1.59.441',
+    release: 'v1.59.507',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
     hasCompletedQuiz: hasCompletedQuiz,
@@ -779,7 +998,17 @@
 
   if (!APPROVED_HOSTS.has(window.location.hostname)) return
   if (isLoginPath(window.location.pathname)) {
-    configureLoginForms()
+    // The loader inserts this file dynamically, so it can execute before the
+    // parser has reached the login form. Without this guard the form query
+    // matches nothing, the /auth-route redirect attributes are never written,
+    // and the login falls through to the shared Memberstack plan redirect.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', configureLoginForms, {
+        once: true,
+      })
+    } else {
+      configureLoginForms()
+    }
     return
   }
   if (window.location.pathname === ROUTE_PATH) {
