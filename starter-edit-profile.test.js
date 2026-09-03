@@ -956,6 +956,93 @@ async function testServiceFailuresExplainThemselvesInTheErrorModal() {
 	assert.match(invalidPrice.errorFeedback.textContent, /\$1 to \$50,000/)
 }
 
+// The error modal is shared. A price message written for one blocked save must
+// never still be on screen for the next, unrelated failure, which has its own cause.
+async function testAPriceMessageNeverSurvivesIntoAnUnrelatedFailure() {
+	let failRequest = false
+	const service = ['service', JSON.stringify({ name: 'Audit', price: '0' })]
+	const environment = createEnvironment(async () => {
+		if (failRequest) throw new Error('offline')
+		return { ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) }
+	}, {
+		stepIndex: 6,
+		additionalFormValues: [service],
+	})
+
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.match(environment.errorFeedback.textContent, /\$1 to \$50,000/)
+
+	service[1] = JSON.stringify({ name: 'Audit', price: '500' })
+	failRequest = true
+	await submit(environment)
+	assert.equal(environment.requests.length, 1)
+	assert.equal(environment.modalEvents.error, 2)
+	assert.equal(environment.errorFeedback.textContent, 'Your profile could not be saved.')
+}
+
+// An auth failure reveals the same modal without writing a message of its own, so
+// it must not inherit the price remediation copy from an earlier blocked save.
+async function testAnAuthFailureNeverInheritsAPriceMessage() {
+	const service = ['service', JSON.stringify({ name: '', price: '500' })]
+	const environment = createEnvironment(async () => {
+		throw new Error('fetch must not run')
+	}, {
+		stepIndex: 6,
+		additionalFormValues: [service],
+	})
+
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.match(environment.errorFeedback.textContent, /service name is required/i)
+
+	service[1] = JSON.stringify({ name: 'Audit', price: '500' })
+	environment.switchMember(null)
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.equal(environment.errorFeedback.textContent, 'Your profile could not be saved.')
+}
+
+// A canonical Hourly_Rate stored before the contract narrowed is real member data
+// this page must not repair. It hydrates unchanged, blocks every resave before any
+// Xano request while it is still out of contract, and only the member's own
+// whole-dollar replacement clears the stale validity and reaches Xano.
+async function testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt() {
+	const environment = createEnvironment(async () => ({
+		ok: true,
+		status: 200,
+		json: async () => ({ saved: true, projection_pending: false }),
+	}), {
+		stepIndex: 6,
+		fieldOverrides: { '[name="rate"]': { value: '2500' } },
+	})
+	const rate = environment.fields['[name="rate"]']
+	assert.equal(rate.value, '2500', 'hydration must not rewrite the stored outlier')
+	assert.equal(rate.getAttribute('max'), '1000')
+
+	for (const attempt of [1, 2]) {
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `attempt ${attempt} must not reach Xano`)
+		assert.match(rate.validationMessage, /\$1 to \$1,000/)
+		assert.equal(rate.value, '2500', 'the stored outlier is never silently rewritten')
+	}
+
+	for (const invalid of ['1001', '2500.00', '1,000', '$900']) {
+		rate.value = invalid
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `${invalid} must not reach Xano`)
+		assert.match(rate.validationMessage, /\$1 to \$1,000/)
+	}
+
+	rate.value = '900'
+	await submit(environment)
+	assert.equal(environment.requests.length, 1, rate.validationMessage)
+	const [, options] = environment.requests[0]
+	assert.equal(JSON.parse(options.body).Hourly_Rate, 900)
+	assert.equal(rate.validationMessage, '')
+	assert.equal(environment.errorFeedback.textContent, 'Your profile could not be saved.')
+}
+
 // A collapsed retainer section must not block the step, and must not forward the
 // stale text of a control the member cannot see as an unvalidated Xano value.
 async function testCollapsedRetainerSectionNeverBlocksStepSix() {
@@ -1668,6 +1755,9 @@ Promise.all([
   testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
   testConsultCanonicalZeroHourlyRateSurvivesSaveReloadSave(),
   testCorrectedPriceSavesAfterAReportedPriceFailure(),
+  testAPriceMessageNeverSurvivesIntoAnUnrelatedFailure(),
+  testAnAuthFailureNeverInheritsAPriceMessage(),
+  testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
   testRejectedFetch(),

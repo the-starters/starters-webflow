@@ -207,10 +207,19 @@ function decorateProfileFeedback(modalName, receipt) {
 	return receipt;
 }
 
+// The feedback modals are shared, so a message written for one reveal must never
+// still be on screen for the next. The authored copy is memoized the first time a
+// modal is painted and restored whenever a reveal supplies no message of its own.
+const authoredProfileFeedbackCopy = new Map();
+
 function setProfileFeedbackMessage(modalName, message) {
 	const target = qs(`[data-modal-target="${modalName}"]`);
 	const messageElement = target ? qs('p', target) : null;
-	if (messageElement && message) messageElement.textContent = message;
+	if (!messageElement) return;
+	if (!authoredProfileFeedbackCopy.has(modalName)) {
+		authoredProfileFeedbackCopy.set(modalName, messageElement.textContent);
+	}
+	messageElement.textContent = message || authoredProfileFeedbackCopy.get(modalName);
 }
 
 function configureCanonicalCallSettings() {
@@ -244,7 +253,8 @@ function configureCanonicalCallSettings() {
 	step.appendChild(notice);
 }
 
-function openProfileFeedback(modalName, trigger) {
+function openProfileFeedback(modalName, trigger, message) {
+	setProfileFeedbackMessage(modalName, message);
 	const modalApi = window.lumos?.modal;
 	if (typeof modalApi?.open === 'function') {
 		modalApi.open(modalName);
@@ -703,8 +713,7 @@ onDomReady(function () {
 			const message = failure.message;
 			failure.field?.setCustomValidity?.(message);
 			if (failure.mirror || !failure.field) {
-				setProfileFeedbackMessage('edit-form-error', message);
-				openProfileFeedback('edit-form-error', openErrorModal);
+				openProfileFeedback('edit-form-error', openErrorModal, message);
 				return message;
 			}
 			failure.field?.focus?.();
@@ -1056,14 +1065,14 @@ onDomReady(function () {
 					resource_id: result?.id || result?.profile_id || window.activeProfile?.id || '',
 					projection_pending: result?.projection_pending === true,
 				});
-				setProfileFeedbackMessage(
+				decorateProfileFeedback('edit-form-success', diagnostic);
+				openProfileFeedback(
 					'edit-form-success',
+					openSuccessModal,
 					result?.projection_pending === true
 						? 'Your profile was saved. Public profile changes can take a moment to appear.'
 						: 'Your profile was saved.',
 				);
-				decorateProfileFeedback('edit-form-success', diagnostic);
-				openProfileFeedback('edit-form-success', openSuccessModal);
 			} catch (error) {
 				const authChanged = error?.code === 'MEMBER_SCOPE_CHANGED';
 				diagnostic = recordProfileDiagnostic(diagnostic, {

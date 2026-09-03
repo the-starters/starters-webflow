@@ -89,9 +89,14 @@ zero compatibility value instead of being read back as an authored price, while 
 applicable Hourly Rate still rejects zero. Service prices and names live in hidden capture inputs, where
 focus and native constraint validation paint nothing, so their failures name themselves in the
 authored feedback surface instead: the Edit Profile step opens its authored error modal and Build
-Profile writes the same message into the `[build-profile-error]` panel it already reveals. A reported
-price failure, and any message it left behind, is cleared before the next attempt, so a corrected
-whole-dollar value saves without a page reload and no later failure inherits the previous cause. No
+Profile writes the same message into the `[build-profile-error]` panel it already reveals. Both
+surfaces are shared, so both memoize their authored copy and restore it at the single boundary every
+reveal goes through: only the reveal that carries a message of its own replaces it. A reported price
+failure, and any message it left behind, is therefore cleared before the next attempt, so a corrected
+whole-dollar value saves without a page reload and no later failure — a rejected save, an auth
+failure — inherits the previous cause. A canonical rate stored before these ranges narrowed is member
+data neither page repairs: it hydrates unchanged and blocks every save before any Xano request until
+the member supplies a whole-dollar replacement of their own. No
 invalid value is silently clamped.
 
 Until the cutover installs this candidate foundation, the published body still live on
