@@ -407,12 +407,23 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     for (const handler of elements.companySubmit.handlersFor('click')) await handler(clickEvent)
   }
 
+  function selectCompany({ name, domain = `${name.toLowerCase()}.example`, entityId = 1, source = 'platform', logoUrl = '' }) {
+    elements.companyInput.value = name
+    elements.companyInput.dataset.selectedCompanyName = name
+    elements.companyInput.dataset.selectedCompanyDomain = domain
+    elements.companyInput.dataset.selectedCompanyEntityId = String(entityId)
+    elements.companyInput.dataset.selectedCompanySource = source
+    elements.companyInput.dataset.selectedCompanyLogoUrl = logoUrl
+  }
+
+  async function submitAdd() {
+    const clickEvent = { type: 'click', preventDefault() {} }
+    for (const handler of elements.addCompanyButton.handlersFor('click')) await handler(clickEvent)
+    for (const handler of elements.companySubmit.handlersFor('click')) await handler(clickEvent)
+  }
+
   async function addCompany({ companyName, startDate, endDate, currentWork = false }) {
-    elements.companyInput.value = companyName
-    elements.companyInput.dataset.selectedCompanyName = companyName
-    elements.companyInput.dataset.selectedCompanyDomain = `${companyName.toLowerCase()}.example`
-    elements.companyInput.dataset.selectedCompanyEntityId = '1'
-    elements.companyInput.dataset.selectedCompanySource = 'platform'
+    selectCompany({ name: companyName })
     elements.jobTitleInput.value = 'Engineer'
     elements.startDateInput.value = startDate
     elements.endDateInput.value = endDate
@@ -423,9 +434,7 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
       elements.currentWorkCheckbox.dispatchEvent({ type: 'change' })
     }
 
-    const clickEvent = { type: 'click', preventDefault() {} }
-    for (const handler of elements.addCompanyButton.handlersFor('click')) await handler(clickEvent)
-    for (const handler of elements.companySubmit.handlersFor('click')) await handler(clickEvent)
+    await submitAdd()
   }
 
   return {
@@ -438,6 +447,8 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     openEditFor,
     saveEdit,
     addCompany,
+    selectCompany,
+    submitAdd,
     mutationPayloads: () => fetchCalls
       .filter((call) => call.init.body)
       .map((call) => JSON.parse(call.init.body)),
@@ -793,6 +804,94 @@ for (const controllerPath of controllerPaths) {
     assert.equal(added.start_date, '2025-06')
     assert.equal(added.end_date, '2025-12')
     assert.equal(app.endDateInput.validationMessage, '')
+  })
+
+  test(`${controllerPath} preserves a custom company through both range correction orders and current work`, async () => {
+    const identity = { name: 'Northstar Workshop', domain: '', entityId: 0, source: 'custom', logoUrl: '' }
+    const dated = bootCompanyController(controllerPath)
+    await dated.ready()
+
+    dated.selectCompany(identity)
+    dated.jobTitleInput.value = 'Founder'
+
+    // Start-first invalid range, corrected by changing the end month.
+    assert.equal(chooseNativeMonth(dated.startDateInput, '2025-06'), true)
+    assert.equal(chooseNativeMonth(dated.endDateInput, '2024-12'), true)
+    await dated.submitAdd()
+    assert.equal(dated.mutationPayloads().length, 0)
+    assert.match(dated.endDateInput.validationMessage, /end month/i)
+    assert.equal(chooseNativeMonth(dated.endDateInput, '2025-12'), true)
+    assert.equal(dated.endDateInput.validationMessage, '')
+
+    // End-first invalid range, corrected by changing the start month. Only the
+    // final corrected state is sent.
+    assert.equal(chooseNativeMonth(dated.endDateInput, '2024-12'), true)
+    await dated.submitAdd()
+    assert.equal(dated.mutationPayloads().length, 0)
+    assert.match(dated.startDateInput.validationMessage, /end month/i)
+    assert.equal(chooseNativeMonth(dated.startDateInput, '2024-06'), true)
+    assert.equal(dated.startDateInput.validationMessage, '')
+    await dated.submitAdd()
+
+    const datedPayloads = dated.mutationPayloads()
+    assert.equal(datedPayloads.length, 1)
+    assert.deepEqual(
+      {
+        company_name: datedPayloads[0].company_name,
+        company_domain: datedPayloads[0].company_domain,
+        company_entity_id: datedPayloads[0].company_entity_id,
+        company_source: datedPayloads[0].company_source,
+        start_date: datedPayloads[0].start_date,
+        end_date: datedPayloads[0].end_date,
+        current_work: datedPayloads[0].current_work,
+      },
+      {
+        company_name: identity.name,
+        company_domain: '',
+        company_entity_id: 0,
+        company_source: 'custom',
+        start_date: '2024-06',
+        end_date: '2024-12',
+        current_work: false,
+      },
+    )
+
+    const current = bootCompanyController(controllerPath)
+    await current.ready()
+    current.selectCompany(identity)
+    current.jobTitleInput.value = 'Founder'
+    assert.equal(chooseNativeMonth(current.startDateInput, '2026-01'), true)
+    assert.equal(chooseNativeMonth(current.endDateInput, '2026-08'), true)
+    current.currentWorkCheckbox.checked = true
+    current.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+
+    assert.equal(current.endDateInput.value, '')
+    assert.equal(current.endDateInput.getAttribute('disabled'), 'disabled')
+    assert.equal(current.endDateInput.classList.contains('is-disabled'), true)
+
+    await current.submitAdd()
+    const currentPayloads = current.mutationPayloads()
+    assert.equal(currentPayloads.length, 1)
+    assert.deepEqual(
+      {
+        company_name: currentPayloads[0].company_name,
+        company_domain: currentPayloads[0].company_domain,
+        company_entity_id: currentPayloads[0].company_entity_id,
+        company_source: currentPayloads[0].company_source,
+        start_date: currentPayloads[0].start_date,
+        end_date: currentPayloads[0].end_date,
+        current_work: currentPayloads[0].current_work,
+      },
+      {
+        company_name: identity.name,
+        company_domain: '',
+        company_entity_id: 0,
+        company_source: 'custom',
+        start_date: '2026-01',
+        end_date: 'Present',
+        current_work: true,
+      },
+    )
   })
 
   test(`${controllerPath} ignores cross-field bounds left behind by an earlier edit`, async () => {
