@@ -303,18 +303,44 @@ function setLoader(state, wrapper) {
 	loader.style.opacity = state ? '1' : '0';
 }
 
-function formatRateInputs() {
-	if (typeof window.formatRateInputs === 'function') {
-		window.formatRateInputs();
-		return;
-	}
+const PRICE_CONTRACTS = Object.freeze({
+	Hourly_Rate: Object.freeze({ min: 1, max: 1000, label: 'hourly rate' }),
+	Retainer_Rate: Object.freeze({ min: 1, max: 25000, label: 'monthly retainer rate' }),
+	Paid_Call_Rate: Object.freeze({ min: 1, max: 1000, label: 'paid call rate' }),
+	Services: Object.freeze({ min: 1, max: 50000, label: 'service price' }),
+});
 
-	qsa('[data-element="rate"]').forEach((input) => {
-		input.setAttribute('type', 'number');
-		input.setAttribute('inputmode', 'numeric');
-		input.setAttribute('step', '1');
+function isCompatibilityEmptyRate(value) {
+	const raw = String(value ?? '').trim();
+	return raw === '' || /^0+$/.test(raw);
+}
+
+function rateInputContract(input) {
+	const name = String(input?.getAttribute?.('name') || '');
+	if (name === 'rate') return PRICE_CONTRACTS.Hourly_Rate;
+	if (name === 'rate-retainer') return PRICE_CONTRACTS.Retainer_Rate;
+	if (name === 'paid-call-rate') return PRICE_CONTRACTS.Paid_Call_Rate;
+	return PRICE_CONTRACTS.Services;
+}
+
+function applyRateInputContract(input, contract) {
+	if (!input) return;
+	input.setAttribute('type', 'number');
+	input.setAttribute('inputmode', 'numeric');
+	input.setAttribute('step', '1');
+	input.setAttribute('min', String(contract.min));
+	input.setAttribute('max', String(contract.max));
+}
+
+// The published shared foundation rewrites whole dollars to two decimals on
+// blur. This page owns its rate inputs so authored integer text remains intact.
+function formatRateInputs(wrapper = null) {
+	qsa('[data-element="rate"]', wrapper).forEach((input) => {
+		input.classList?.add?.('initialized');
+		applyRateInputContract(input, rateInputContract(input));
 	});
 }
+window.formatRateInputs = formatRateInputs;
 
 function stepElement(stepIndex) {
 	return qs(`[data-form="step"][data-index="${stepIndex}"]`);
@@ -574,11 +600,6 @@ onDomReady(function () {
 
 		/* SUBMIT METHODS */
 		const PATCH_ENDPOINT = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/edit_profile/update/';
-		const PRICE_CONTRACTS = Object.freeze({
-			Hourly_Rate: Object.freeze({ min: 1, max: 1000, label: 'hourly rate' }),
-			Retainer_Rate: Object.freeze({ min: 1, max: 25000, label: 'monthly retainer rate' }),
-			Services: Object.freeze({ min: 1, max: 50000, label: 'service price' }),
-		});
 		const STEP_PAYLOAD_MAP = {
 			1: {
 				First_Name: 'first-name',
@@ -645,19 +666,16 @@ onDomReady(function () {
 				{ selector: '[name="rate"]', contract: PRICE_CONTRACTS.Hourly_Rate },
 				{ selector: '[name="rate-retainer"]', contract: PRICE_CONTRACTS.Retainer_Rate },
 			].forEach(({ selector, contract }) => {
-				const input = qs(selector, stepElement(6));
-				if (!input) return;
-				input.setAttribute('type', 'number');
-				input.setAttribute('inputmode', 'numeric');
-				input.setAttribute('step', '1');
-				input.setAttribute('min', String(contract.min));
-				input.setAttribute('max', String(contract.max));
+				applyRateInputContract(qs(selector, stepElement(6)), contract);
 			});
 		}
 
-		function wholeDollar(value, contract, { allowBlank = false } = {}) {
+		// Optional or profile-inapplicable fields round-trip the zero sentinel that
+		// this writer persists for an authored blank. Applicable fields stay strict.
+		function wholeDollar(value, contract, { optional = false } = {}) {
 			const raw = String(value ?? '').trim();
-			if (!raw) return allowBlank ? { valid: true, value: null } : { valid: false, code: 'PRICE_REQUIRED' };
+			if (optional && isCompatibilityEmptyRate(raw)) return { valid: true, value: null };
+			if (!raw) return { valid: false, code: 'PRICE_REQUIRED' };
 			if (!/^[0-9]+$/.test(raw)) return { valid: false, code: 'PRICE_NOT_INTEGER' };
 			const number = Number(raw);
 			if (!Number.isSafeInteger(number)) return { valid: false, code: 'PRICE_NOT_INTEGER' };
@@ -696,7 +714,7 @@ onDomReady(function () {
 			let hourly = { valid: true, value: null };
 			if (Object.prototype.hasOwnProperty.call(payload, 'Hourly_Rate')) {
 				hourly = wholeDollar(payload.Hourly_Rate, PRICE_CONTRACTS.Hourly_Rate, {
-					allowBlank: hourlyField?.required === false,
+					optional: hourlyField?.required === false,
 				});
 				if (!hourly.valid) {
 					return { ...hourly, field: hourlyField, message: priceMessage(PRICE_CONTRACTS.Hourly_Rate) };
@@ -1063,7 +1081,7 @@ onDomReady(function () {
 
 			OPTIONAL_CANONICAL_RATES.forEach(({ field, isOptional }) => {
 				if (!Object.prototype.hasOwnProperty.call(payload, field)) return;
-				if (String(payload[field] ?? '').trim() !== '') return;
+				if (!isCompatibilityEmptyRate(payload[field])) return;
 				if (!isOptional(payload, step)) return;
 
 				payload[field] = 0;

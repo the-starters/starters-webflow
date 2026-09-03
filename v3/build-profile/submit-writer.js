@@ -52,6 +52,7 @@
           const result = await submitFreelancerData(data);
           console.log("Normalized Data:", result);
         } catch (submitError) {
+          setLoader(false, formSubmit.closest('[data-form="step"]'));
           success.style.display = 'none';
           error.style.display = 'block';
           console.error('[build-profile] submit failed', submitError?.code || 'SUBMIT_FAILED');
@@ -74,20 +75,38 @@
           throw Object.assign(new Error(message), { code });
         };
 
-        const wholeDollar = (value, { min, max, label, selector, allowBlank = false }) => {
-          const field = qs(selector, form);
-          const message = `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
+        // A rate whose control is off or inapplicable to this profile type keeps its
+        // compatibility-empty state. This covers both a blank and the canonical zero
+        // persisted for that blank.
+        const compatibilityEmptyRate = (value) => {
           const raw = String(value ?? '').trim();
-          if (!raw) {
-            if (allowBlank) return null;
-            return priceError(field, `${label} is required.`, 'PRICE_REQUIRED');
-          }
-          if (!/^[0-9]+$/.test(raw)) return priceError(field, message, 'PRICE_NOT_INTEGER');
+          return raw === '' || /^0+$/.test(raw);
+        };
+
+        const wholeDollarFailure = (value, { min, max, optional = false }) => {
+          const raw = String(value ?? '').trim();
+          if (optional && compatibilityEmptyRate(raw)) return null;
+          if (!raw) return 'PRICE_REQUIRED';
+          if (!/^[0-9]+$/.test(raw)) return 'PRICE_NOT_INTEGER';
           const number = Number(raw);
-          if (!Number.isSafeInteger(number)) return priceError(field, message, 'PRICE_NOT_INTEGER');
-          if (number < min || number > max) return priceError(field, message, 'PRICE_OUT_OF_RANGE');
+          if (!Number.isSafeInteger(number)) return 'PRICE_NOT_INTEGER';
+          if (number < min || number > max) return 'PRICE_OUT_OF_RANGE';
+          return null;
+        };
+
+        const wholeDollar = (value, contract) => {
+          const { min, max, label, selector, optional = false } = contract;
+          const field = qs(selector, form);
+          const failure = wholeDollarFailure(value, contract);
+          if (failure) {
+            const message = failure === 'PRICE_REQUIRED'
+              ? `${label} is required.`
+              : `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
+            return priceError(field, message, failure);
+          }
+          if (optional && compatibilityEmptyRate(value)) return null;
           field?.setCustomValidity?.('');
-          return number;
+          return Number(String(value ?? '').trim());
         };
 
         const parseJson = (value) => {
@@ -145,22 +164,20 @@
         };
 
         const isConsultProfile = String(window.location?.pathname || "").replace(/\/+$/, "") === "/build-profile/consult";
+        const PAID_CALL_PRICE = {
+          min: 1,
+          max: 1000,
+          label: 'paid call rate',
+          selector: '[name="paid-call-rate"]',
+        };
         const paidCallSelected = toBool(formData["paid-consulting-calls"]) === true;
-        const paidCallRaw = String(formData["paid-call-rate"] ?? '').trim();
-        const paidCallAuthored = paidCallRaw !== '' && !/^0+$/.test(paidCallRaw);
-        const paidCallEnabled = paidCallSelected || (isConsultProfile && paidCallAuthored);
-        // A toggle-owned rate is only authored while its own section says yes. Once the
-        // toggle is off the control is collapsed, so its stale text is neither visible
-        // nor editable and must never block the whole submit behind a price failure the
-        // member cannot see or reach. A blank value and the canonical zero sentinel both
-        // already meant the compatibility value, so neither one enables a paid consult.
+        // Consult authors no paid-call section. Its hidden radio must not make stale,
+        // invalid data block a submit the member cannot repair. A valid stored rate is
+        // the only enablement signal on Consult; authored profile types stay strict.
+        const paidCallInContract = wholeDollarFailure(formData["paid-call-rate"], PAID_CALL_PRICE) === null;
+        const paidCallEnabled = isConsultProfile ? paidCallInContract : paidCallSelected;
         const paidCallRate = paidCallEnabled
-          ? wholeDollar(formData["paid-call-rate"], {
-              min: 1,
-              max: 1000,
-              label: 'paid call rate',
-              selector: '[name="paid-call-rate"]',
-            })
+          ? wholeDollar(formData["paid-call-rate"], PAID_CALL_PRICE)
           : null;
 
         const fullProfile = !isConsultProfile;
@@ -169,7 +186,7 @@
           max: 1000,
           label: 'hourly rate',
           selector: '[name="rate"]',
-          allowBlank: !fullProfile,
+          optional: !fullProfile,
         });
         const retainerEnabled = toBool(formData["offer-monthly-retainers"]) === true;
         const retainerRate = retainerEnabled
@@ -271,10 +288,6 @@
             });
 
             if (!response.ok) {
-              setLoader(false, step);
-              success.style.display = 'none';
-              error.style.display = 'block';
-
               const errorText = await response.text();
               throw new Error(`Xano request failed: ${response.status} ${errorText}`);
             }
@@ -290,14 +303,7 @@
           const photoUpload = window.StartersBuildProfilePhotoUpload;
           if (photoUpload?.hasPendingUpload?.()) {
             photoUpload.markProfileSaved();
-            try {
-              await photoUpload.commitPending();
-            } catch (photoError) {
-              setLoader(false, step);
-              success.style.display = 'none';
-              error.style.display = 'block';
-              throw photoError;
-            }
+            await photoUpload.commitPending();
           }
 
           // update Member customFields, if even one of them was changed

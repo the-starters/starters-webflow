@@ -76,12 +76,20 @@ its range stops before the Xano request. A toggle-owned rate is only validated w
 says yes; a collapsed Monthly Retainer or Paid Call section keeps its existing zero or null
 compatibility state instead of blocking the submit on text the member cannot see, and its stale text is
 never forwarded unvalidated: Edit Profile sends the canonical zero only alongside the toggle it is
-turning off and otherwise omits the field. On Build Profile Consult, where the paid-call radio is
-hidden, only a positive authored rate enables the paid consult, so the canonical zero rate stays the
-no-paid-consult compatibility state. A blank
-profile-type-inapplicable Hourly Rate keeps the same zero compatibility state. Service prices and names
+turning off and otherwise omits the field. Build Profile Consult authors no paid-call section, so the
+stored rate is the only enablement signal: an in-contract rate enables the paid consult whatever the
+hidden radio hydrated to. A blank, zero, malformed, unsafe, decimal, or out-of-range hidden rate keeps
+the no-paid-consult compatibility state instead of blocking a submit the member cannot repair. A
+profile-type-inapplicable Hourly Rate accepts both the authored blank and its persisted zero sentinel,
+so the next save can round-trip the same compatibility state. Applicable Hourly Rate fields still
+reject zero. Service prices and names
 live in hidden capture inputs, so their failures report through the authored error modal rather than
 native constraint validation. No invalid value is silently clamped.
+
+Until the cutover installs the candidate shared foundation, the published body on
+`/starter-edit-profile` rewrites each rate it claims to two decimals on blur. `starter-edit-profile.js`
+therefore owns the page's rate-input setup. It claims each price control and supplies the shared setup
+for cloned Custom Service rows, so authored whole-dollar text remains unchanged for validation.
 
 ## Verification
 

@@ -25,7 +25,7 @@ class Element {
   async click() { return this.listeners.get('click')?.({ preventDefault() {} }) }
 }
 
-function load(overrides = {}, pathname = '/build-profile/full') {
+function load(overrides = {}, pathname = '/build-profile/full', { respond = null } = {}) {
   const values = {
     email: 'starter@example.test',
     'first-name': 'Test',
@@ -44,6 +44,8 @@ function load(overrides = {}, pathname = '/build-profile/full') {
   const form = new Element()
   form.values = values
   const submit = new Element()
+  const step = new Element()
+  submit.closest = () => step
   const success = new Element()
   const error = new Element()
   const inputs = Object.fromEntries([
@@ -55,6 +57,7 @@ function load(overrides = {}, pathname = '/build-profile/full') {
     ['#service-3', new Element(values['service-3'])],
   ])
   const requests = []
+  const loaderStates = []
   const MEMBER = {
     id: 'mem_test',
     auth: { email: values.email },
@@ -95,9 +98,10 @@ function load(overrides = {}, pathname = '/build-profile/full') {
     waitForMember: (callback) => callback(MEMBER),
     qs,
     FormData,
-    setLoader() {},
+    setLoader(state, wrapper) { loaderStates.push({ state, wrapper }) },
     xanoAuthFetch: async (url, init) => {
       requests.push({ url, body: JSON.parse(init.body) })
+      if (respond) return respond(url, init)
       return { ok: true, status: 200, json: async () => ({ saved: true }) }
     },
     console: { log() {}, warn() {}, error() {} },
@@ -109,7 +113,7 @@ function load(overrides = {}, pathname = '/build-profile/full') {
   }
   vm.runInNewContext(SOURCE, context, { filename: 'submit-writer.js' })
   domReady.forEach((callback) => callback())
-  return { submit, success, error, inputs, requests }
+  return { submit, step, success, error, inputs, requests, loaderStates }
 }
 
 test('sets native whole-dollar constraints on each direct price input', () => {
@@ -162,7 +166,7 @@ test('persists exact maximums and converts service values once without rounding'
   assert.equal(payload.services['service-1'].price, 50000)
 })
 
-test('consult Paid Call accepts $1 and $1,000, rejects $1.01, and converts to no hidden precision', async () => {
+test('consult Paid Call accepts $1 and $1,000 and ignores invalid hidden data', async () => {
   for (const value of ['1', '1000']) {
     const result = load({ 'paid-call-rate': value }, '/build-profile/consult')
     await result.submit.click()
@@ -171,7 +175,9 @@ test('consult Paid Call accepts $1 and $1,000, rejects $1.01, and converts to no
   }
   const invalid = load({ 'paid-call-rate': '1.01' }, '/build-profile/consult')
   await invalid.submit.click()
-  assert.equal(invalid.requests.length, 0)
+  assert.equal(invalid.requests.length, 1)
+  assert.equal(invalid.requests[0].body.paid_call, false)
+  assert.equal(invalid.requests[0].body.paid_call_rate, null)
 })
 
 test('a collapsed section keeps its compatibility value instead of blocking the submit', async () => {
@@ -199,10 +205,13 @@ test('a consult profile treats the canonical zero paid-call rate as no paid cons
     assert.equal(result.error.style.display, 'none')
   }
 
-  const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '0' }, '/build-profile/consult')
-  await selected.submit.click()
-  assert.equal(selected.requests.length, 0)
-  assert.match(selected.inputs['[name="paid-call-rate"]'].validationMessage, /\$1 to \$1,000/)
+  for (const radio of ['no', 'yes']) {
+    const stale = load({ 'paid-consulting-calls': radio, 'paid-call-rate': '2500' }, '/build-profile/consult')
+    await stale.submit.click()
+    assert.equal(stale.requests.length, 1)
+    assert.equal(stale.requests[0].body.paid_call, false)
+    assert.equal(stale.requests[0].body.paid_call_rate, null)
+  }
 })
 
 test('disabled and non-owned blank rates preserve compatibility zero without accepting authored zero', async () => {
@@ -212,4 +221,36 @@ test('disabled and non-owned blank rates preserve compatibility zero without acc
   assert.equal(consult.requests[0].body.hourly_rate, 0)
   assert.equal(consult.requests[0].body.retainer_rate, 0)
   assert.equal(consult.requests[0].body.paid_call_rate, null)
+})
+
+test('a consult profile round-trips its canonical zero hourly rate', async () => {
+  for (const sentinel of ['', '0', '00', ' 0 ']) {
+    const result = load({ rate: sentinel }, '/build-profile/consult')
+    await result.submit.click()
+    assert.equal(result.requests.length, 1, sentinel)
+    assert.equal(result.requests[0].body.hourly_rate, 0)
+  }
+
+  const full = load({ rate: '0' })
+  await full.submit.click()
+  assert.equal(full.requests.length, 0)
+  assert.match(full.inputs['[name="rate"]'].validationMessage, /\$1 to \$1,000/)
+})
+
+test('request failures clear the loader behind the authored error state', async () => {
+  for (const respond of [
+    () => { throw new Error('offline') },
+    () => ({ ok: true, status: 200, json: async () => { throw new Error('bad body') } }),
+    () => ({ ok: false, status: 500, text: async () => 'server error' }),
+  ]) {
+    const result = load({}, '/build-profile/full', { respond })
+    await result.submit.click()
+    assert.equal(result.requests.length, 1)
+    assert.equal(result.error.style.display, 'block')
+    assert.equal(result.success.style.display, 'none')
+    assert.deepEqual(result.loaderStates, [
+      { state: true, wrapper: result.step },
+      { state: false, wrapper: result.step },
+    ])
+  }
 })
