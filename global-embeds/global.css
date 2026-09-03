@@ -602,8 +602,8 @@
     display: none !important;
   }
 
-  /* Webflow appends an empty Turnstile wrapper to every form; Memberstack forms never read its token */
-  form[data-ms-form] > div:has(> div > input[name='cf-turnstile-response']) {
+  /* Turnstile wrapper: Webflow-appended, Memberstack never reads the token */
+  form[data-ms-form] > div:has(input[name='cf-turnstile-response']) {
     display: none;
   }
 

@@ -30,6 +30,14 @@ forms runtime does this to every `form[data-turnstile-sitekey]`:
    (`jQuery.data(form, '.w-form').turnstileToken`), re-enables the buttons
    (`disabled = !!(sitekey && !turnstileToken)`) and clears `w-form-loading`.
 
+Memberstack forms (`form[data-ms-form]`) are armed like every other form, but
+they submit through Memberstack instead of Webflow, so the token is never used.
+The global stylesheet embed [`global-embeds/global.css`](../global.css) hides the
+appended Turnstile wrapper on those forms (search that file for
+`cf-turnstile-response`), because it otherwise counts as an extra flex item under
+the signup modal and account settings forms. That stylesheet is a body embed
+pasted into Webflow rather than a CDN script, so the live copy is edited by hand.
+
 A form carrying Webflow's `display-contents` class **generates no box**, so its
 `getBoundingClientRect()` is `0 × 0` and the observer never reports it as
 intersecting — not on load, not on scroll, not when the modal holding it opens.
