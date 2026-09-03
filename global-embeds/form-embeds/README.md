@@ -30,6 +30,14 @@ forms runtime does this to every `form[data-turnstile-sitekey]`:
    (`jQuery.data(form, '.w-form').turnstileToken`), re-enables the buttons
    (`disabled = !!(sitekey && !turnstileToken)`) and clears `w-form-loading`.
 
+Memberstack forms (`form[data-ms-form]`) are armed like every other form, but
+they submit through Memberstack instead of Webflow, so the token is never used.
+The global stylesheet embed [`global-embeds/global.css`](../global.css) hides the
+appended Turnstile wrapper on those forms (search that file for
+`cf-turnstile-response`), because it otherwise counts as an extra flex item under
+the signup modal and account settings forms. That stylesheet is a body embed
+pasted into Webflow rather than a CDN script, so the live copy is edited by hand.
+
 A form carrying Webflow's `display-contents` class **generates no box**, so its
 `getBoundingClientRect()` is `0 × 0` and the observer never reports it as
 intersecting — not on load, not on scroll, not when the modal holding it opens.
@@ -272,7 +280,7 @@ full inventory is in the root [`README.md`](../../README.md).
 | [`timepicker/timepicker.js`](timepicker/timepicker.js) | Time-input picker ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/timepicker)) |
 | [`checkbox-toggle/checkbox-toggle.js`](checkbox-toggle/checkbox-toggle.js) | Checkbox-driven visibility toggling ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/checkbox-toggle)) |
 | [`password-toggle/password-toggle.js`](password-toggle/password-toggle.js) | Show/hide password control ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-toggle)) |
-| [`password-validation/password-validation.js`](password-validation/password-validation.js) | Password-requirements checklist and whole-form CTA gating (password rules + terms + plausible email when present); disables the full `[ms-code-submit-button]` control set including Memberstack's `.clickable_btn` overlay, bridges an enabled non-submitting overlay click into a cancelable synthetic submit (never a native submission), and paints post-submit Memberstack/Turnstile rejections onto the form's `.w-form-fail` block; rule set configured per instance via `starters-password-validation-*` wrapper attributes ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation)) |
+| [`password-validation/password-validation.js`](password-validation/password-validation.js) | Password-requirements checklist and whole-form CTA gating (password rules + terms + plausible email when present); disables the full `[ms-code-submit-button]` control set including Memberstack's `.clickable_btn` overlay, bridges an enabled non-submitting overlay click into a cancelable synthetic submit (never a native submission); that bridge runs on every `form[data-ms-form]` carrying the marker whether or not a checklist is present, so the script must stay loaded site-wide wherever Memberstack forms use the Button component, and paints post-submit Memberstack/Turnstile rejections onto the form's `.w-form-fail` block; rule set configured per instance via `starters-password-validation-*` wrapper attributes ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation)) |
 | [`form-input-filter/form-input-filter.js`](form-input-filter/form-input-filter.js) | Input filtering and normalization ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-input-filter)) |
 | [`input-preview.js`](input-preview.js) | Echoes an input's value into a preview element ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/input-preview)) |
 

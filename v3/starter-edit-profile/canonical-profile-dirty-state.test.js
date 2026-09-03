@@ -48,32 +48,44 @@ function beforeUnload(window) {
   return event
 }
 
+function assertClean(window, message) {
+  const event = beforeUnload(window)
+  assert.equal(event.prevented, false, message)
+  assert.equal(event.returnValue, undefined, `${message} (leaves the leave-page prompt unrequested)`)
+}
+
+function assertPrompts(window, message) {
+  const event = beforeUnload(window)
+  assert.equal(event.prevented, true, message)
+  assert.equal(event.returnValue, true, `${message} (requests the browser-native leave-page prompt)`)
+}
+
 {
   const { window, document, state } = loadDirtyState()
   document.dispatch('input', { target: field(1) })
-  assert.equal(beforeUnload(window).prevented, false, 'hydration changes stay clean')
+  assertClean(window, 'hydration changes stay clean')
 
   state.finishHydration()
-  assert.equal(beforeUnload(window).prevented, false, 'unchanged navigation stays clean')
+  assertClean(window, 'unchanged navigation stays clean')
 
   state.runHydrationSync(() => {
     document.dispatch('input', { target: field(3), isTrusted: false })
   })
-  assert.equal(beforeUnload(window).prevented, false, 'explicit late hydration changes stay clean')
+  assertClean(window, 'explicit late hydration changes stay clean')
 
   document.dispatch('input', { target: field(3), isTrusted: false })
-  assert.equal(beforeUnload(window).prevented, true, 'synthetic events from user-driven custom controls mark dirty')
+  assertPrompts(window, 'synthetic events from user-driven custom controls mark dirty')
   state.setDirty(3, false)
-  assert.equal(beforeUnload(window).prevented, false, 'discarding the only local change clears the warning')
+  assertClean(window, 'discarding the only local change clears the warning')
 
   document.dispatch('change', { target: field(1), isTrusted: true })
-  assert.equal(beforeUnload(window).prevented, true, 'a real edit warns before navigation')
+  assertPrompts(window, 'a real edit prevents unguarded navigation')
 
   const save = state.beginSave(1)
-  assert.equal(beforeUnload(window).prevented, true, 'an in-flight save remains protected')
+  assertPrompts(window, 'an in-flight save remains protected')
   state.sealSave(save)
   state.finishSave(1, true, save)
-  assert.equal(beforeUnload(window).prevented, false, 'an accepted save clears its step')
+  assertClean(window, 'an accepted save clears its step')
 }
 
 {
@@ -82,12 +94,12 @@ function beforeUnload(window) {
   document.dispatch('input', { target: field(2) })
   const failedSave = state.beginSave(2)
   state.finishSave(2, false, failedSave)
-  assert.equal(beforeUnload(window).prevented, true, 'a failed save keeps the warning')
+  assertPrompts(window, 'a failed save keeps the warning')
 
   const retrySave = state.beginSave(2)
   state.sealSave(retrySave)
   state.finishSave(2, true, retrySave)
-  assert.equal(beforeUnload(window).prevented, false, 'a repeated successful save clears it')
+  assertClean(window, 'a repeated successful save clears it')
 }
 
 {
@@ -98,11 +110,11 @@ function beforeUnload(window) {
   const firstSave = state.beginSave(1)
   state.sealSave(firstSave)
   state.finishSave(1, true, firstSave)
-  assert.equal(beforeUnload(window).prevented, true, 'saving one step preserves another dirty step')
+  assertPrompts(window, 'saving one step preserves another dirty step')
   const secondSave = state.beginSave(2)
   state.sealSave(secondSave)
   state.finishSave(2, true, secondSave)
-  assert.equal(beforeUnload(window).prevented, false)
+  assertClean(window, 'clearing every dirty step leaves navigation clean')
 }
 
 {
@@ -114,7 +126,7 @@ function beforeUnload(window) {
   state.sealSave(save)
   document.dispatch('input', { target: field(1) })
   state.finishSave(1, true, save)
-  assert.equal(beforeUnload(window).prevented, true, 'an accepted save preserves edits made after its payload snapshot')
+  assertPrompts(window, 'an accepted save preserves edits made after its payload snapshot')
 }
 
 {
@@ -125,7 +137,7 @@ function beforeUnload(window) {
   document.dispatch('input', { target: field(1) })
   state.sealSave(save)
   state.finishSave(1, true, save)
-  assert.equal(beforeUnload(window).prevented, false, 'an accepted save clears edits included in its later payload snapshot')
+  assertClean(window, 'an accepted save clears edits included in its later payload snapshot')
 }
 
 console.log('Edit Profile dirty-state behavior passed')
