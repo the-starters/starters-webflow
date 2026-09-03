@@ -3916,11 +3916,12 @@
       const input = $('[data-end-project-reason]', form) || $('[data-end-project-reason]', modal)
       reason = String(input && input.value || '').trim()
       if (!reason) {
+        // `showReason` is only ever true on the pre-activation cancel branch,
+        // so this is the one copy the field can ask for. Started projects now
+        // always complete and never collect a reason.
         reviewError(
           modal,
-          view.action === 'cancel'
-            ? 'Tell us what happened before cancelling this project.'
-            : 'Give a reason for ending this project early.',
+          'Tell us what happened before cancelling this project.',
           validationDiagnostic('project_end', 'reason', 'MISSING_REASON'),
         )
         return
