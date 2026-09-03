@@ -13,8 +13,9 @@ live identities and candidate identities, plus the exact inverse transformation 
 each captured live body.
 
 Five candidates no longer reconstruct to their published bodies. `canonical-profile-loader.js`
-carries company logo and stable client identity hydration, `draft-state.js` carries the
-member-bound hydration fix,
+carries company logo and stable client identity hydration plus the
+[browser-native unsaved-change prompt request](../starter-edit-profile/README.md#unsaved-change-warning),
+`draft-state.js` carries the member-bound hydration fix,
 `submit-writer.js` carries the behavior changes owned by the
 [Build Profile documentation](../build-profile/README.md), `shared-foundation.js`
 adds a taxonomy value only through an explicit option click or an Enter press on a highlighted

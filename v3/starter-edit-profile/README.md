@@ -144,9 +144,12 @@ Company or Work Highlight draft removes only the revision that draft owns; it re
 the step to clean only when no other pending change remains. Saving one section never
 clears unsaved work in another section.
 
-The `beforeunload` handler prevents navigation only while at least one step is dirty
-or saving. An unchanged page and a fully accepted save navigate without a false
-browser warning.
+The `beforeunload` handler requests the browser-native leave-page prompt only while at
+least one step is dirty or saving. Requesting it takes both halves: `preventDefault()`
+and a non-empty legacy `event.returnValue` (`true`), because an empty `returnValue`
+leaves browsers that still key the prompt off that property silent. A clean page returns
+before either half, so an unchanged page, hydration, a fully accepted save, and a
+discarded draft navigate with `returnValue` unset and no false browser warning.
 
 The sanitized structural contract lives in `published-form-contract.json`.
 `published-form-contract.js` normalizes official Webflow element-tree evidence

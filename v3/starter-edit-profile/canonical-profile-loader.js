@@ -105,7 +105,7 @@
     window.addEventListener('beforeunload', (event) => {
         if (!profileDirtyState.isDirty()) return;
         event.preventDefault();
-        event.returnValue = '';
+        event.returnValue = true;
     });
 
     document.addEventListener('DOMContentLoaded', function () {
