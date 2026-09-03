@@ -33,7 +33,7 @@ Edit Profile Work Highlights controls. Do not replace it with a DOM marker or a
 first-loader-wins flag because Build and Edit intentionally share the same
 Designer selectors.
 
-`bio-editor.js`, `field-counters.js`, `company-autocomplete.js`, and
+`bio-editor.js`, `field-counters.js`, `company-autocomplete.js`, `work-dates.js`, and
 `company-experience-crud.js` have
 deliberately diverged from the inline bodies they were captured from. The bio limit is
 now 1500 **characters** rather than 300 words, the editor owns its counter group, and

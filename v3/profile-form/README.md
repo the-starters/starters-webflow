@@ -168,28 +168,27 @@ identically.
 The controllers convert the four existing Webflow date inputs to native
 `type="month"` controls. They remove the legacy jQuery UI datepicker attributes and
 correct each label association at runtime, without adding a second duration field or
-changing the Xano schema. The visible value is therefore `YYYY-MM`, while cards still
-render `Mon YYYY`.
+changing the Xano schema. Xano's existing `start_date`, `end_date`, and `current_work`
+fields remain the only authority for the tenure. The control value is `YYYY-MM`, the
+browser presents it as a localized month and year, and cards still render `Mon YYYY`.
 
 Stored dates are parsed into a real local `Date` before they hydrate the native month
 control. The parser accepts an exact full or three-letter month in
 `Month YYYY` (first of that month) and ISO `YYYY-MM-DD` with an optional valid
 `THH:MM:SS` suffix, fractional seconds, and `Z` or `+/-HH:MM` offset (that exact
 local calendar day, never a UTC shift). Because Xano records hold day-precision
-values as well as month-only ones, it also accepts `Month D YYYY` and
-`Month D, YYYY`. It rejects unknown month names, malformed ISO suffixes, invalid
-time or offset values, and an out-of-range day such as `Jan 32 2024` rather than
-coercing or rolling the value.
+values as well as month-only ones, it also accepts native `YYYY-MM`,
+`Month D YYYY`, `Month D, YYYY`, and numeric `M/D/YYYY` legacy values such as
+`04/22/2026`. It rejects unknown month names, malformed ISO suffixes, invalid time or
+offset values, and out-of-range dates rather than coercing or rolling the value.
 
-A string in none of those shapes can still be re-parsed with the legacy widget's own
-configured `dateFormat` during the migration window. A value neither path can parse
-yields no visible month value, so the field renders blank rather
-than hydrating an unrelated month and year. Nothing is lost when that happens: the
-baseline/serialize pair below re-submits the original stored string for a date field the
-member never touched.
+A string in none of those shapes yields no visible month value, so the field renders
+blank rather than hydrating an unrelated month and year. Nothing is lost when that
+happens: the baseline/serialize pair below re-submits the original stored string for a
+date field the member never touched.
 
 `Present` is a stored sentinel for a current role, not a date. It never reaches the
-picker and never becomes a baseline, so reopening a current role cannot turn the
+month control and never becomes a baseline, so reopening a current role cannot turn the
 sentinel into a calendar value, and clearing "I currently work here" cannot carry
 `Present` into an end-date field the member can see.
 
@@ -200,10 +199,14 @@ not rewrite the stored value. `Present`, blanks, and unknown legacy strings keep
 their existing behavior.
 
 Hydration also records the canonical string it came from next to the native month value.
-Opening a different role clears disabled state left by the prior modal. Input and change
-guards prevent late legacy widget activity from overwriting a month the member selected.
+Opening a different role clears disabled state and date bounds left by the prior modal.
+For a non-current role, the end month must be the same as or later than the start month;
+same-month tenures are valid. Native `min` and `max` bounds guide selection, and save-time
+validation rejects an inverted range even if the DOM bounds are bypassed. A current role
+disables the end-month control and stores `Present` through the existing `end_date` field.
+
 On save, a date field the member never touched re-serializes its original canonical string,
-and only a field whose visible value actually changed submits `YYYY-MM`. Editing an
+and only a field whose native month value actually changed submits `YYYY-MM`. Editing an
 unrelated field therefore cannot rewrite a stored legacy date.
 
 Run this coverage with:
