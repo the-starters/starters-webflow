@@ -16,11 +16,11 @@
  * `StartersV3AuthPageLoader.shouldLoadApplicationControllers()`. On every other
  * page the loader inserts nothing.
  *
- * It does NOT insert route-guard.js. The static parser-blocking sitewide
- * `route-guard.js` tag is the sole owner of guard delivery and of
- * guard-before-router ordering: it sits ahead of this file in the head, so it
- * has already executed on every page, including these three, before this script
- * body runs. Inserting a second copy would download 43 KB — a fresh download
+ * It does NOT insert route-guard.js. The static parser-inserted deferred
+ * `route-guard.js` tag is the sole owner of guard delivery. This loader waits
+ * for DOMContentLoaded before inserting auth-route.js; parser-inserted deferred
+ * scripts finish before that event, so the guard has executed first. Inserting
+ * a second copy would download 43 KB — a fresh download
  * whenever the two tags sit on different release refs — purely to hit the
  * guard's own boot guard and return.
  *
@@ -219,7 +219,17 @@
   window.StartersV3AuthPageLoader = api
 
   if (!approvedHost) return
-  installAuthRouter(pathname)
+  if (isAuthPath(pathname) && document.readyState === 'loading') {
+    window.addEventListener(
+      'DOMContentLoaded',
+      function () {
+        installAuthRouter(pathname)
+      },
+      { once: true },
+    )
+  } else {
+    installAuthRouter(pathname)
+  }
 
   var startedAt = consumeNavigationTiming(pathname)
   if (startedAt !== null) {

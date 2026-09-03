@@ -12,16 +12,17 @@ moved to `get_build_profile_status` on 2026-08-04.
 3. Keep the synchronous Memberstack V2 tag and the shared `window.memberReady`
    initializer in the site Head Code. They must execute before the loader.
 4. **Leave the sitewide `route-guard.js` tag exactly as it is** — a static,
-   parser-blocking, unconditional head tag on every page, ahead of the loader,
+   parser-inserted deferred, unconditional head tag on every page, ahead of the loader,
    per step 1 of [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md#webflow-install).
    It must never move behind `StartersV3AuthPageLoader` or any other
    CDN-dependent conditional. Same for `v3/signup-attribution.js` (see step 7).
 
    This tag is the **sole owner** of route-guard delivery and of
    guard-before-router ordering, on all three auth paths as well as everywhere
-   else. The loader never inserts a second copy: the static tag sits ahead of it
-   in the head, so the guard has already executed before the loader's script
-   body runs. A duplicate insertion would download 43 KB — uncached whenever the
+   else. The loader never inserts a second copy. It waits for DOMContentLoaded
+   before inserting `auth-route.js`; parser-inserted deferred scripts complete
+   before that event, so the static guard has executed first. A duplicate
+   insertion would download 43 KB — uncached whenever the
    two tags sit on different release refs — only to hit the guard's own boot
    guard and return.
 
@@ -42,7 +43,8 @@ moved to `get_build_profile_status` on 2026-08-04.
    `/starter-login`, and `/auth-route`. On every other path it inserts nothing.
    It never inserts `route-guard.js` (step 4). If the loader cannot read its own
    `src` it installs nothing rather than falling back to a different release
-   ref.
+   ref. On an auth path it waits for DOMContentLoaded before inserting the
+   router, which preserves the current deferred route-guard-before-router order.
 
    ```html
    <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/auth-page-loader.js"></script>
@@ -428,11 +430,13 @@ Production stays silent apart from the configuration errors in the table above.
 - Confirm the site head loads Memberstack, `memberReady`, the unconditional
   static `route-guard.js` tag and `signup-attribution.js`, then
   `auth-page-loader.js`, then the conditional controller block.
-- Confirm the `route-guard.js` tag is still static, parser-blocking, and outside
+- Confirm the `route-guard.js` tag is still static, parser-inserted with defer, and outside
   every conditional, on every page.
 - Confirm the static `route-guard.js` tag executes before `auth-route.js` on
   all three auth paths, and that the loader requests `auth-route.js` only —
   exactly one `route-guard.js` request per auth page load, from the static tag.
+  Confirm the loader appends its router only after DOMContentLoaded, after the
+  deferred guard has exported `window.StartersV3RouteGuard`.
 - Confirm `/auth-route` requests no unrelated application controller, and that
   `signup-attribution.js` IS still requested on `/login` and `/starter-login`.
   Land on `/login?utm_source=gate-check&fbclid=gate-check` and confirm the

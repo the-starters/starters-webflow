@@ -122,6 +122,11 @@ function loadLoader(options = {}) {
     window,
   })
 
+  if (!options.holdDomContentLoaded && listeners.DOMContentLoaded) {
+    document.readyState = 'interactive'
+    listeners.DOMContentLoaded()
+  }
+
   return {
     appended,
     clock,
@@ -162,8 +167,31 @@ test('auth paths install only the auth router, from the loader own release ref',
   }
 })
 
-// The sitewide route-guard.js tag stays parser-inserted in the site head so it
-// keeps executing before page-level controllers that read
+test('auth router waits until the deferred route guard has executed', () => {
+  const harness = loadLoader({
+    pathname: '/auth-route',
+    holdDomContentLoaded: true,
+  })
+
+  assert.equal(harness.appended.length, 0)
+  harness.window.StartersV3RouteGuard = { release: 'existing-static-guard' }
+  harness.document.readyState = 'interactive'
+  harness.listeners.DOMContentLoaded()
+
+  assert.equal(harness.appended.length, 1)
+  assert.equal(
+    harness.window.StartersV3RouteGuard.release,
+    'existing-static-guard',
+  )
+  assert.equal(
+    harness.appended[0].attributes['data-starters-auth-runtime'],
+    'auth-route',
+  )
+})
+
+// The sitewide route-guard.js tag stays parser-inserted with defer in the site
+// head. The loader waits for DOMContentLoaded, so the guard executes before the
+// injected router and before page-level controllers that read
 // window.StartersV3RouteGuard. Injecting it here would make it non-blocking and
 // silently hand those controllers a null role.
 test('non-auth pages install nothing and admit the existing app block', () => {
@@ -236,7 +264,7 @@ test('an underivable base fails closed and re-admits the app block', () => {
 // re-admit the block. The answer must keep describing what the page actually
 // loaded.
 test('a failed auth-router request becomes observable', () => {
-  const { appended, document, errors, events, listeners, window } = loadLoader({
+  const { appended, document, errors, events, window } = loadLoader({
     pathname: '/auth-route',
   })
 
@@ -247,11 +275,6 @@ test('a failed auth-router request becomes observable', () => {
     document.documentElement.attributes['data-auth-page-loader-error'],
     'auth-route-load-failed',
   )
-  assert.equal(
-    document.documentElement.attributes['data-auth-route-error'],
-    undefined,
-  )
-  listeners.DOMContentLoaded()
   assert.equal(
     document.documentElement.attributes['data-auth-route-error'],
     'auth-route-load-failed',
@@ -274,15 +297,12 @@ test('a failed auth-router request becomes observable', () => {
 // /auth-route's visible error block over a working router would show the member
 // a failure state on a login that is routing correctly.
 test('a failed request over an already-booted router raises no routing error', () => {
-  const { appended, document, errors, events, listeners, window } = loadLoader({
+  const { appended, document, errors, events } = loadLoader({
     pathname: '/auth-route',
+    routerBooted: true,
   })
 
   appended[0].onerror()
-  // The child can fail before the later page-level fallback executes. The
-  // fallback boots during parsing, before DOMContentLoaded.
-  window.__startersV3AuthRouterBooted = true
-  listeners.DOMContentLoaded()
 
   assert.equal(
     document.documentElement.attributes['data-auth-route-error'],
