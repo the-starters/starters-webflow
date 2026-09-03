@@ -15,9 +15,9 @@
 
             function setCurrentWorkState(isCurrent) {
                 if (isCurrent) {
-                    if (endDateInput.value && endDateInput.value !== 'Present') {
-                        previousEndDate = endDateInput.value;
-                    }
+                    previousEndDate = endDateInput.value && endDateInput.value !== 'Present'
+                        ? endDateInput.value
+                        : '';
 
                     endDateInput.value = endDateInput.type === 'month' ? '' : 'Present';
                     endDateInput.setAttribute('disabled', 'disabled');
@@ -27,8 +27,13 @@
                     endDateInput.classList.remove('is-disabled');
 
                     endDateInput.value = previousEndDate;
+                    previousEndDate = '';
                 }
             }
+
+            endDateInput.addEventListener('starter:work-date-operation-reset', function () {
+                previousEndDate = '';
+            });
 
             endDateInput.addEventListener('focus', function () {
                 if (currentWorkCheckbox.checked) {

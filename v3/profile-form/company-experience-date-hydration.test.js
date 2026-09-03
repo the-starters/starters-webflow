@@ -340,9 +340,16 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     },
   })
 
-  vm.runInContext(fs.readFileSync(path.join(__dirname, relativePath), 'utf8'), context, {
-    filename: relativePath,
-  })
+  const workDatesPath = '../build-profile/work-dates.js'
+  const scripts = relativePath.includes('/build-profile/')
+    ? [workDatesPath, relativePath]
+    : [relativePath, workDatesPath]
+
+  for (const scriptPath of scripts) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, scriptPath), 'utf8'), context, {
+      filename: scriptPath,
+    })
+  }
   domReadyHandlers.forEach((handler) => handler())
 
   // The shared datepicker embed re-reads whatever text is sitting in the field
@@ -381,7 +388,7 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     for (const handler of elements.companySubmit.handlersFor('click')) await handler(clickEvent)
   }
 
-  async function addCompany({ companyName, startDate, endDate }) {
+  async function addCompany({ companyName, startDate, endDate, currentWork = false }) {
     elements.companyInput.value = companyName
     elements.companyInput.dataset.selectedCompanyName = companyName
     elements.companyInput.dataset.selectedCompanyDomain = `${companyName.toLowerCase()}.example`
@@ -392,6 +399,10 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     elements.endDateInput.value = endDate
     elements.startDateInput.dispatchEvent({ type: 'input' })
     elements.endDateInput.dispatchEvent({ type: 'input' })
+    if (elements.currentWorkCheckbox.checked !== currentWork) {
+      elements.currentWorkCheckbox.checked = currentWork
+      elements.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    }
 
     const clickEvent = { type: 'click', preventDefault() {} }
     for (const handler of elements.addCompanyButton.handlersFor('click')) await handler(clickEvent)
@@ -408,6 +419,9 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     openEditFor,
     saveEdit,
     addCompany,
+    mutationPayloads: () => fetchCalls
+      .filter((call) => call.init.body)
+      .map((call) => JSON.parse(call.init.body)),
     ready: () => bootPromise,
     markPickersReady() {
       if (startPicker.input.type === 'month') startPicker.destroyed = true
@@ -437,6 +451,33 @@ for (const controllerPath of controllerPaths) {
     assert.equal(app.endDateInput.value, '')
     assert.equal(app.startDateInput.getAttribute('max'), null)
     assert.equal(app.endDateInput.getAttribute('min'), null)
+  })
+
+  test(`${controllerPath} does not restore an end month from a prior addition`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    await app.addCompany({
+      companyName: 'Acme',
+      startDate: '2024-01',
+      endDate: '2024-12',
+      currentWork: true,
+    })
+
+    app.currentWorkCheckbox.checked = true
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    app.currentWorkCheckbox.checked = false
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.equal(app.endDateInput.value, '')
+
+    await app.addCompany({
+      companyName: 'Globex',
+      startDate: '2025-01',
+      endDate: '2025-12',
+    })
+
+    const secondPayload = app.mutationPayloads().find((payload) => payload.company_name === 'Globex')
+    assert.equal(secondPayload.end_date, '2025-12')
   })
 
   test(`${controllerPath} recomputes native bounds between edit operations`, async () => {
@@ -470,6 +511,35 @@ for (const controllerPath of controllerPaths) {
 
     assert.equal(app.editStartDateInput.getAttribute('max'), null)
     assert.equal(app.editEndDateInput.getAttribute('min'), null)
+  })
+
+  test(`${controllerPath} does not restore an end month from a prior edit`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    app.openEditFor({
+      id: 22,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '2024-01',
+      end_date: '2024-12',
+    })
+    app.editCurrentWorkCheckbox.checked = true
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+    await app.saveEdit()
+    app.clock.advance(1600)
+
+    app.openEditFor({
+      id: 23,
+      company_name: 'Globex',
+      job_title: 'Designer',
+      start_date: '2025-01',
+      current_work: true,
+    })
+    app.editCurrentWorkCheckbox.checked = false
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+
+    assert.equal(app.editEndDateInput.value, '')
   })
 
   test(`${controllerPath} restores the stored dates after the picker rewrites them on open`, async () => {

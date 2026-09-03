@@ -879,6 +879,7 @@ function starterProfileCompanyMonthYearLabel(value) {
           }
         }
 
+        if (endDateInput) endDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
         syncStarterProfileCompanyMonthRange(startDateInput, endDateInput, false);
 
         updateAddCompanyButtonState();
@@ -900,6 +901,7 @@ function starterProfileCompanyMonthYearLabel(value) {
       function openEditCompany(company) {
         if (!editCompanyWrapper || !company) return;
 
+        if (editEndDateInput) editEndDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
         editCompanyWrapper.dataset.id = company.id || '';
         const rawStartDate = company.start_date || '';
         const rawEndDate = company.current_work ? 'Present' : (company.end_date || '');
@@ -1001,6 +1003,7 @@ function starterProfileCompanyMonthYearLabel(value) {
           }
 
           setCheckboxState(editCurrentWorkCheckbox, false);
+          if (editEndDateInput) editEndDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
           syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, false);
 
           editStartDateBaseline = null;
