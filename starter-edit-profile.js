@@ -213,11 +213,13 @@ function setProfileFeedbackMessage(modalName, message) {
 	if (messageElement && message) messageElement.textContent = message;
 }
 
-function configureCanonicalPaidCallSettings() {
+function configureCanonicalCallSettings() {
 	const step = qs('[data-form="step"][data-index="6"]');
 	if (!step) return;
 
 	const controls = qsa([
+		'[name="free-consulting-calls"]',
+		'[name="free-call-description"]',
 		'[name="paid-consulting-calls"]',
 		'[name="paid-call-description"]',
 		'[name="paid-call-rate"]',
@@ -233,10 +235,10 @@ function configureCanonicalPaidCallSettings() {
 	if (qs('[data-paid-call-profile-notice]', step) || typeof document.createElement !== 'function') return;
 	const notice = document.createElement('p');
 	notice.setAttribute('data-paid-call-profile-notice', '');
-	notice.textContent = 'Paid Call pricing is managed in ';
+	notice.textContent = 'Free and Paid Call settings are managed in ';
 	const link = document.createElement('a');
 	link.href = PAID_CALL_SETTINGS_URL;
-	link.textContent = 'Paid Call Settings';
+	link.textContent = 'Call Settings';
 	notice.appendChild(link);
 	notice.appendChild(document.createTextNode('.'));
 	step.appendChild(notice);
@@ -612,8 +614,6 @@ onDomReady(function () {
 				Availability: 'availability-option',
 				Availability_ID: 'availability',
 				Open_to_Full_Time: 'full-time-placement',
-				Free_Call_Enabled: 'free-consulting-calls',
-				Free_Call_Description: 'free-call-description',
 				Retainer_Enabled: 'offer-monthly-retainers',
 				Retainer_Description: 'description-retainer',
 				Retainer_Rate: 'rate-retainer',
@@ -1724,6 +1724,6 @@ onDomReady(() => {
 			});
 		}
 
-		configureCanonicalPaidCallSettings();
+		configureCanonicalCallSettings();
 	});
 })();

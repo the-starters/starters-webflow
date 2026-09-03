@@ -1987,6 +1987,99 @@ test('general item shows an edit button but hides remove; a newly created draft 
   assert.notEqual(savedCard.children[1].style.display, 'none') // headline back
 })
 
+test('an added window normalizes hour-only timepicker values before the availability request', async () => {
+  const { dom, calls } = loadSection()
+  await settle()
+
+  dom.createBtn.click()
+  await settle()
+
+  const draftCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  const formWrapper = draftCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[3].children[1].checked = true // Wednesday
+  form.children[4].children[1].checked = true // Thursday
+  form.querySelector('[name=start-time]').value = '10'
+  form.querySelector('[name=end-time]').value = '14'
+
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  const updateCall = calls.filter((call) => call.path === '/starter/update_availability/v3').at(-1)
+  assert.ok(updateCall)
+  const saved = Object.values(updateCall.body.availability.items).find(
+    (item) => item.days.length === 2 && item.days.includes(3) && item.days.includes(4),
+  )
+  assert.ok(saved)
+  assert.equal(saved.start, '10:00')
+  assert.equal(saved.end, '14:00')
+})
+
+test('an added window zero-pads a one-digit hour before the availability request', async () => {
+  const { dom, calls } = loadSection()
+  await settle()
+
+  dom.createBtn.click()
+  await settle()
+
+  const draftCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  const formWrapper = draftCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[0].children[1].checked = true // Sunday
+  form.querySelector('[name=start-time]').value = '9:30'
+  form.querySelector('[name=end-time]').value = '14'
+
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  const updateCall = calls.filter((call) => call.path === '/starter/update_availability/v3').at(-1)
+  assert.ok(updateCall)
+  const saved = Object.values(updateCall.body.availability.items).find((item) => item.days.includes(0))
+  assert.ok(saved)
+  assert.equal(saved.start, '09:30')
+  assert.equal(saved.end, '14:00')
+})
+
+test('invalid or non-ascending times stay editable and never send an availability request', async () => {
+  const cases = [
+    ['25', '14'],
+    ['10', '10:60'],
+    ['14:00', '14:00'],
+    ['15:00', '14:00'],
+  ]
+
+  for (const [start, end] of cases) {
+    const { dom, calls, state } = loadSection()
+    await settle()
+    const before = JSON.stringify(state.availability)
+
+    dom.createBtn.click()
+    await settle()
+
+    const draftCard = dom.list.children.find(
+      (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+    )
+    const formWrapper = draftCard.children[2]
+    const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+    form.children[0].children[1].checked = true
+    form.querySelector('[name=start-time]').value = start
+    form.querySelector('[name=end-time]').value = end
+
+    formWrapper.children[0].children[1].children[1].click()
+    await settle()
+
+    assert.equal(calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+    assert.equal(JSON.stringify(state.availability), before)
+    assert.equal(dom.notif.steps['request-error'].style.display, '')
+    assert.match(dom.notif.errorText.textContent, /valid start and end time/i)
+    assert.ok(dom.list.children.includes(draftCard), 'invalid draft remains editable')
+  }
+})
+
 test('populateItemForm marks selected day checkboxes with the Webflow checked-skin class', async () => {
   const { dom } = loadSection({
     serverState: {
