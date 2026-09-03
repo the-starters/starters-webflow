@@ -92,7 +92,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({ 4: '  ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/starter-edit-profile/canonical-profile-loader.js': Object.freeze({
-    characters: 19419, sha256: '432b1cb971772518877a5070b060b0eaa2ca39cc1b39f473d6cc3b38d83d3be2',
+    characters: 23572, sha256: '20cce4b6dce5889d9d6c28c30ac94308dc289a6bd8b4d371d61e2b079c7dbd64',
     guardKey: 'canonicalProfileLoader',
     liveCaptureAsset: 'v3/profile-form/edit-canonical-profile-loader-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
@@ -230,6 +230,8 @@ const EXPECTED_COMPLETE_REGISTRATIONS = Object.freeze({
   '/starter-edit-profile': Object.freeze([
     ['document', 'DOMContentLoaded', 'v3/profile-form/incremental-dropdowns.js'],
     ['document', 'DOMContentLoaded', 'v3/starter-edit-profile/locations.js'],
+    ['document', 'input', 'v3/starter-edit-profile/canonical-profile-loader.js'],
+    ['document', 'change', 'v3/starter-edit-profile/canonical-profile-loader.js'],
     ['window', 'beforeunload', 'v3/starter-edit-profile/canonical-profile-loader.js'],
     ['document', 'DOMContentLoaded', 'v3/starter-edit-profile/canonical-profile-loader.js'],
     ['document', 'DOMContentLoaded', 'v3/build-profile/profile-photo.js'],

@@ -130,7 +130,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/build-profile/submit-diagnostics.js` — Build Profile submit outcome observer; it keeps diagnostics in the console, leaves the coupled writer unchanged, and never navigates: the authored success-state CTA owns the move to `/starter-onboarding`
 - `v3/starter-edit-profile/` — source-controlled Starter Edit Profile browser controllers; the authoritative extraction scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md)
 - `v3/starter-edit-profile/locations.js` — Starter Edit Profile country, state, and city controller
-- `v3/starter-edit-profile/canonical-profile-loader.js` — read-only canonical Xano hydration for authored Starter Edit Profile fields
+- `v3/starter-edit-profile/canonical-profile-loader.js` — canonical Xano hydration and step-scoped unsaved-change state; the detailed warning contract lives in [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md#unsaved-change-warning)
 - `v3/starter-edit-profile/portfolio-crud.js` — provenance-locked Edit Profile portfolio mutation controller
 - `v3/starter-edit-profile/portfolio-list.js` — provenance-locked Edit Profile portfolio list controller
 - `v3/starter-edit-profile/company-autocomplete.js` — provenance-locked Edit Profile company autocomplete

@@ -117,6 +117,36 @@ whatever a duplicate name contributed. Never widen those two lookups back to a
 `[name=…]` or document-wide query: a hidden duplicate would win by document order
 and submit a stale contact value the member cannot see.
 
+### Unsaved-change warning
+
+`canonical-profile-loader.js` owns one page-level dirty-state controller. Canonical
+hydration does not make the form dirty. `input` and `change` events, including
+synthetic events emitted by user-driven custom controls, mark only their containing
+`[data-form="step"][data-index]` section. Controller initialization and hydration
+dispatches must run through `runHydrationSync()` so those synthetic events stay
+clean. Inputs outside the profile steps cannot arm the warning.
+
+After validation, the main writer calls `beginSave(stepIndex)` before its first async
+save stage and passes the returned revision token to
+`finishSave(stepIndex, saved, token)` after the operation settles. Once the request
+payload is complete, `sealSave(token)` moves the accepted revision boundary to that
+snapshot. Only an explicit canonical `saved: true` response clears edits included in
+the snapshot. A failed request or an edit made after the snapshot stays dirty, and an
+active request remains protected.
+
+The Companies and Work Highlights controllers use the same step-scoped contract for
+steps 3 and 4 and mark their draft-queue mutations directly. They accept their own
+revision after all canonical mutations for that submission succeed, before the
+follow-up list refresh. Work Highlights permit only one in-flight submit and remove
+only the exact snapshotted drafts, leaving later drafts queued. Discarding a local
+Company or Work Highlight draft removes only the revision that draft owns; it returns
+the step to clean only when no other pending change remains. Saving one section never
+clears unsaved work in another section.
+
+The `beforeunload` handler prevents navigation only while at least one step is dirty
+or saving. An unchanged page and a fully accepted save navigate without a false
+browser warning.
+
 The sanitized structural contract lives in `published-form-contract.json`.
 `published-form-contract.js` normalizes official Webflow element-tree evidence
 plus the authenticated published-page control inventory without retaining field

@@ -255,14 +255,21 @@ function openProfileFeedback(modalName, trigger) {
 }
 
 function waitProfileData(callback) {
+	const runHydrationCallback = (profile) => {
+		const dirtyState = window.__tsProfileDirtyState;
+		if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+			return dirtyState.runHydrationSync(() => callback(profile));
+		}
+		return callback(profile);
+	};
 	if (typeof window.waitProfileData === 'function') {
-		return window.waitProfileData(callback);
+		return window.waitProfileData(runHydrationCallback);
 	}
 
 	const startedAt = Date.now();
 	const poll = () => {
 		if (window.activeProfile) {
-			callback(window.activeProfile);
+			runHydrationCallback(window.activeProfile);
 			return;
 		}
 		if (Date.now() - startedAt < 10000) window.setTimeout(poll, 100);
@@ -642,6 +649,9 @@ onDomReady(function () {
 				submitButton.addEventListener('click', async (event) => {
 					event.preventDefault();
 					const replayProof = stepIndex === 1 ? takePersonalDetailsReplay(form) : null;
+					let saveStarted = false;
+					let saveToken = null;
+					let canonicalSaveAccepted = false;
 					try {
 						const validation = validateOwnedStep(stepIndex, { report: true });
 						if (!validation.valid) {
@@ -655,15 +665,18 @@ onDomReady(function () {
 							return;
 						}
 
-						await submitStep(stepIndex, submitButton, replayProof);
+						saveToken = window.__tsProfileDirtyState?.beginSave(stepIndex);
+						saveStarted = true;
+						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof, saveToken);
 					} finally {
+						if (saveStarted) window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted, saveToken);
 						rejectReplayProof(replayProof);
 					}
 				});
 			});
 		}
 
-		async function submitStep(stepIndex, submitButton, replayProof = null) {
+		async function submitStep(stepIndex, submitButton, replayProof = null, saveToken = null) {
 			setSubmitLoading(submitButton, true);
 			let memberScope;
 			try {
@@ -782,6 +795,12 @@ onDomReady(function () {
 				return;
 			}
 
+			// The payload now owns every edit made through this point. Keep the
+			// active-save warning that began before async preparation, but move its
+			// accepted revision boundary to this exact payload snapshot. An edit
+			// after this line is not in the request and must remain dirty.
+			window.__tsProfileDirtyState?.sealSave?.(saveToken);
+
 			// if (!localStorage.getItem('editSubmit') || localStorage.getItem('editSubmit') !== 'true') {
 			// 	console.log(`Step ${stepIndex} submit skipped (disabled by localStorage).`);
 			// 	setTimeout(() => {
@@ -819,6 +838,7 @@ onDomReady(function () {
 				return;
 			}
 
+			let canonicalSaveAccepted = false;
 			try {
 				acceptReplayProof(replayProof);
 				requestStarted = true;
@@ -840,6 +860,7 @@ onDomReady(function () {
 					failureCode = 'SAVE_CONTRACT_ERROR';
 					throw new Error('Profile update did not confirm the save contract.');
 				}
+				canonicalSaveAccepted = true;
 
 				// update Member customFields, if even one of them was changed
 				if (stepIndex === 1) {
@@ -900,6 +921,7 @@ onDomReady(function () {
 			} finally {
 				setSubmitLoading(submitButton, false);
 			}
+			return canonicalSaveAccepted;
 		}
 
 		// Optional rate controls clear their visible values when their owning toggle is

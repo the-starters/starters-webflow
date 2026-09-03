@@ -13,9 +13,13 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   const tags = []
   const inputListeners = {}
   const dropdownListeners = {}
+  let hydrationSyncDepth = 0
+  let dirtyEvents = 0
   const valueInput = {
     value: '',
-    dispatchEvent() {},
+    dispatchEvent(event) {
+      if (hydrationSyncDepth === 0 && (event.type === 'input' || event.type === 'change')) dirtyEvents += 1
+    },
   }
   const tagTemplate = {
     cloneNode() {
@@ -79,7 +83,9 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
     console,
     crypto: { randomUUID: () => `id-${++nextId}` },
     document,
-    Event: class Event {},
+    Event: class Event {
+      constructor(type) { this.type = type }
+    },
     MEMBER: { id: 'member-1' },
     qsa(selector, root) {
       if (selector === '[logo-search-input]') return [input]
@@ -103,6 +109,16 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
     waitForMember(callback) { callback() },
     waitProfileData(callback) { callback() },
     window: {
+      __tsProfileDirtyState: {
+        runHydrationSync(callback) {
+          hydrationSyncDepth += 1
+          try {
+            return callback()
+          } finally {
+            hydrationSyncDepth -= 1
+          }
+        },
+      },
       xanoAuthFetch: async () => ({
         ok: true,
         json: async () => companyFetch ? companyFetch : companies,
@@ -117,6 +133,7 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   return {
     input,
     valueInput,
+    getDirtyEvents() { return dirtyEvents },
     clickResult(selection, { deleteResult = false } = {}) {
       let isAdded = deleteResult
       const item = {
@@ -180,17 +197,35 @@ test('Build Profile preserves a hydrated company logo in the serialized selectio
 
 test('Edit Profile preserves a hydrated API company logo in the serialized selection', async () => {
   const logoUrl = 'https://logos.example/acme.svg'
-  const { valueInput } = createHarness(
+  const harness = createHarness(
     path.join(__dirname, '../starter-edit-profile/company-autocomplete.js'),
     [{ id: 42, company_entity_id: 9, company_name: 'Acme', company_domain: 'acme.example', company_logo_url: logoUrl }],
   )
   await new Promise((resolve) => setImmediate(resolve))
 
-  const serialized = JSON.parse(valueInput.value)
+  const serialized = JSON.parse(harness.valueInput.value)
   const company = serialized['client-42']
   assert.equal(company.logo_url, logoUrl)
   assert.equal(company.client_row_id, 42)
   assert.equal(company.company_entity_id, 9)
+  assert.equal(harness.getDirtyEvents(), 0)
+})
+
+test('Edit Profile user selection stays dirty after clean async hydration', async () => {
+  const harness = createHarness(
+    path.join(__dirname, '../starter-edit-profile/company-autocomplete.js'),
+    [{ id: 42, company_name: 'Acme', company_domain: 'acme.example' }],
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.getDirtyEvents(), 0)
+
+  harness.selectCompany({
+    name: 'Later Company',
+    domain: 'later.example',
+    company_entity_id: 17,
+    source: 'platform',
+  })
+  assert.equal(harness.getDirtyEvents(), 2)
 })
 
 test('Edit Profile hydration does not append a case-variant duplicate after a custom selection', async () => {
@@ -301,11 +336,12 @@ for (const [label, file] of [
   })
 }
 
-function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], initialCompanies = [] } = {}) {
+function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], companyGetStatuses = [], initialCompanies = [] } = {}) {
   let readyPromise
   let baselineTimer
   const requests = []
   const modalCounts = { success: 0, error: 0 }
+  const dirtyStateCalls = []
   const renderedCards = []
   const canonicalCompanies = initialCompanies.map((company) => ({ ...company }))
 
@@ -419,6 +455,16 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
         }
         return { ok: false, status, json: async () => ({ message: 'Company creation failed' }) }
       }
+      if (url.includes('/companies?member_id=')) {
+        const status = companyGetStatuses.shift() || 200
+        return {
+          ok: status >= 200 && status < 300,
+          status,
+          json: async () => status >= 200 && status < 300
+            ? { companies: canonicalCompanies, starter_id: 'starter-1' }
+            : { message: 'Company refresh failed' },
+        }
+      }
       return { ok: true, json: async () => ({ companies: canonicalCompanies, starter_id: 'starter-1' }) }
     },
     jQuery: undefined,
@@ -438,7 +484,13 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     setInterval() { return 0 },
     clearInterval() {},
     waitForMember(callback) { readyPromise = callback() },
-    window: {},
+    window: {
+      __tsProfileDirtyState: {
+        markDirty(stepIndex) { dirtyStateCalls.push(['dirty', stepIndex]) },
+        beginSave(stepIndex) { dirtyStateCalls.push(['begin', stepIndex]) },
+        finishSave(stepIndex, saved) { dirtyStateCalls.push(['finish', stepIndex, saved]) },
+      },
+    },
   }
 
   vm.runInNewContext(fs.readFileSync(file, 'utf8'), context, { filename: file })
@@ -456,6 +508,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     editCompanyInput,
     requests,
     modalCounts,
+    dirtyStateCalls,
     renderedCards,
     select,
     selectCustom(input, name = 'Private QA Company') {
@@ -563,12 +616,17 @@ test('Edit Profile keeps pending work and shows an error when Also Worked With f
   assert.equal(harness.modalCounts.success, 0)
   assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 1)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 0)
+  assert.deepEqual(harness.dirtyStateCalls, [['dirty', 3], ['begin', 3], ['finish', 3, false]])
 
   await harness.submitAll()
   assert.equal(harness.modalCounts.error, 1)
   assert.equal(harness.modalCounts.success, 1)
   assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 2)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
+  assert.deepEqual(harness.dirtyStateCalls, [
+    ['dirty', 3], ['begin', 3], ['finish', 3, false],
+    ['begin', 3], ['finish', 3, true],
+  ])
 })
 
 test('Edit Profile refreshes committed creates after a later create fails', async () => {
@@ -594,6 +652,22 @@ test('Edit Profile refreshes committed creates after a later create fails', asyn
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 3)
 })
 
+test('Edit Profile clears its accepted Company revision when the follow-up refresh fails', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    deferredWrites: true,
+    companyCreateStatuses: [200],
+    companyGetStatuses: [200, 200, 500],
+  })
+  await harness.start()
+  harness.prepareAdd()
+  await harness.queueAdd()
+  await harness.submitAll()
+
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
+  assert.deepEqual(harness.dirtyStateCalls, [['dirty', 3], ['begin', 3], ['finish', 3, true]])
+})
+
 test('Edit Profile atomically pairs a replacement create with its pending deletion at the three-company limit', async () => {
   const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
   const existingCompanies = [1, 2, 3].map((id) => ({
@@ -612,6 +686,7 @@ test('Edit Profile atomically pairs a replacement create with its pending deleti
   await harness.queueDelete(existingCompanies[2])
   harness.selectCustom(harness.companyInput)
   await harness.queueAdd()
+  assert.deepEqual(harness.dirtyStateCalls, [['dirty', 3], ['dirty', 3]])
   await harness.submitAll()
 
   const createRequests = harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST')

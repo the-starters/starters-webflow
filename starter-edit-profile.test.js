@@ -65,6 +65,7 @@ function createEnvironment(fetchImpl, {
   additionalFormValues = [],
   canonicalPhone = '',
   simulateProfileHydrationAfterDomReady = false,
+  dirtyState = null,
 } = {}) {
   const domReady = []
   const profileDataCallbacks = []
@@ -333,6 +334,7 @@ function createEnvironment(fetchImpl, {
   if (workflowDiagnosticsReady) {
     window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
   }
+  if (dirtyState) window.__tsProfileDirtyState = dirtyState
 
   const dollar = () => ({ each() {} })
   const sandbox = {
@@ -564,6 +566,46 @@ async function testNon2xx() {
   assert.deepEqual(environment.modalApiCalls, ['edit-form-error'])
   assert.equal(environment.button.style.pointerEvents, '')
   assert.equal(environment.button.style.opacity, '')
+}
+
+async function testSaveLifecycleUpdatesDirtyState() {
+  const calls = []
+  const dirtyState = {
+    beginSave(stepIndex) {
+      const token = { stepIndex }
+      calls.push(['begin', stepIndex])
+      return token
+    },
+    sealSave(token) { calls.push(['seal', token.stepIndex]) },
+    finishSave(stepIndex, saved) { calls.push(['finish', stepIndex, saved]) },
+  }
+  const request = deferred()
+  const environment = createEnvironment(() => request.promise, { stepIndex: 2, dirtyState })
+  const submission = submit(environment)
+  await new Promise(setImmediate)
+
+  assert.deepEqual(calls, [['begin', 2], ['seal', 2]], 'the warning starts early and seals at the payload snapshot')
+  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) })
+  await submission
+  assert.deepEqual(calls, [['begin', 2], ['seal', 2], ['finish', 2, true]])
+
+  const failedCalls = []
+  const failedState = {
+    beginSave(stepIndex) {
+      const token = { stepIndex }
+      failedCalls.push(['begin', stepIndex])
+      return token
+    },
+    sealSave(token) { failedCalls.push(['seal', token.stepIndex]) },
+    finishSave(stepIndex, saved) { failedCalls.push(['finish', stepIndex, saved]) },
+  }
+  const failed = createEnvironment(async () => ({
+    ok: false,
+    status: 500,
+    json: async () => ({ message: 'failed' }),
+  }), { stepIndex: 2, dirtyState: failedState })
+  await submit(failed)
+  assert.deepEqual(failedCalls, [['begin', 2], ['seal', 2], ['finish', 2, false]])
 }
 
 async function testCanonicalSaveWithPendingProjectionNeverShowsWholeFormFailure() {
@@ -1309,6 +1351,7 @@ Promise.all([
   testSecondSaveStillFailsClosedWhenMemberSwitchesMidRequest(),
   testEarlyLoadInitializesCountersAfterParsing(),
   testNon2xx(),
+  testSaveLifecycleUpdatesDirtyState(),
   testCanonicalSaveWithPendingProjectionNeverShowsWholeFormFailure(),
   testSuccessfulHttpWithoutCanonicalSaveConfirmationFailsClosed(),
   testCanonicalSaveWithoutExplicitProjectionStateFailsClosed(),

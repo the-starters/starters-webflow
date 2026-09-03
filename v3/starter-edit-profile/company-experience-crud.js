@@ -121,6 +121,38 @@ function starterProfileCompanyMonthYearLabel(value) {
   return `${parts[0]} ${parts[parts.length - 1]}`;
 }
 
+function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteDraftIds, alsoWorkedWithChanged) {
+    return Boolean(createDrafts.length || updateDrafts.size || deleteDraftIds.size || alsoWorkedWithChanged);
+}
+
+function createStarterEditCompanyDraftDirtyController(options) {
+    const revisions = new Map();
+    let discardedRevision = null;
+    function dirtyState() {
+        return typeof options.getDirtyState === 'function' ? options.getDirtyState() : options.dirtyState;
+    }
+    return {
+        queue(draftId) {
+            const token = dirtyState()?.captureRevision?.(options.stepIndex);
+            if (token) revisions.set(String(draftId), token);
+        },
+        discard(draftId) {
+            const key = String(draftId);
+            const token = revisions.get(key);
+            revisions.delete(key);
+            if (token && (!discardedRevision || token.revision > discardedRevision.revision)) discardedRevision = token;
+            if (options.hasPendingChanges()) return;
+            dirtyState()?.discardRevision?.(options.stepIndex, discardedRevision, false);
+            discardedRevision = null;
+        },
+        commit(draftIds) {
+            draftIds.forEach(function (draftId) {
+                revisions.delete(String(draftId));
+            });
+        },
+    };
+}
+
 /**
  * GitHub-owned copy of the Starter Edit Profile Webflow controller block.
  * Original live inline body SHA-256: 1224636b9f1167c5534957407d3451640b8d5b17e52f4930011e17f5a0eb8664
@@ -262,6 +294,18 @@ function starterProfileCompanyMonthYearLabel(value) {
             let pendingCreateDrafts = [];
             let pendingUpdateDrafts = new Map();
             let pendingDeleteDraftIds = new Set();
+            const companyDraftDirtyController = createStarterEditCompanyDraftDirtyController({
+                getDirtyState: function () { return window.__tsProfileDirtyState; },
+                stepIndex: 3,
+                hasPendingChanges: function () {
+                    return hasStarterEditCompanyPendingChanges(
+                        pendingCreateDrafts,
+                        pendingUpdateDrafts,
+                        pendingDeleteDraftIds,
+                        hasAlsoWorkedWithChanges()
+                    );
+                },
+            });
 
             const textEl = addBtn ? qs('div:first-child', addBtn) : null;
             const defaultButtonText = textEl ? textEl.textContent : 'add company';
@@ -610,9 +654,16 @@ function starterProfileCompanyMonthYearLabel(value) {
                 if (!firstCompanyInput) return;
 
                 firstCompanyInput.value = companiesCount > 0 ? 'true' : '';
-
-                firstCompanyInput.dispatchEvent(new Event('change', { bubbles: true }));
-                firstCompanyInput.dispatchEvent(new Event('input', { bubbles: true }));
+                const dispatchSync = function () {
+                    firstCompanyInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    firstCompanyInput.dispatchEvent(new Event('input', { bubbles: true }));
+                };
+                const dirtyState = window.__tsProfileDirtyState;
+                if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+                    dirtyState.runHydrationSync(dispatchSync);
+                } else {
+                    dispatchSync();
+                }
             }
 
             async function renderCompanies() {
@@ -834,13 +885,14 @@ function starterProfileCompanyMonthYearLabel(value) {
 
             async function commitAlsoWorkedWith() {
                 if (!hasAlsoWorkedWithChanges()) return;
+                const submittedAlsoWorkedWith = alsoWorkedWithInput.value;
 
                 const request = () => fetch(XANO_SET_ALSO_WORKED_WITH_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         member_id: MEMBER.id,
-                        also_worked_with: alsoWorkedWithInput.value,
+                        also_worked_with: submittedAlsoWorkedWith,
                     }),
                 });
                 const diagnostics = window.StartersNativeFormDiagnostics;
@@ -860,7 +912,7 @@ function starterProfileCompanyMonthYearLabel(value) {
                     throw new Error((data && data.message) || `Also worked with save failed (${response.status})`);
                 }
 
-                alsoWorkedWithBaseline = alsoWorkedWithInput.value;
+                alsoWorkedWithBaseline = submittedAlsoWorkedWith;
             }
 
             function triggerFieldEvents(input) {
@@ -1048,14 +1100,20 @@ function starterProfileCompanyMonthYearLabel(value) {
             function queueCompanyDeletion(id) {
                 if (isDraftCompanyId(id)) {
                     removeCreateDraft(id);
+                    companyDraftDirtyController.discard(id);
                     return;
                 }
 
+                window.__tsProfileDirtyState?.markDirty?.(3);
                 pendingDeleteDraftIds.add(String(id));
                 pendingUpdateDrafts.delete(String(id));
             }
 
             function clearAllDraftQueues() {
+                companyDraftDirtyController.commit(
+                    pendingCreateDrafts.map(function (draft) { return draft.id; })
+                        .concat(Array.from(pendingUpdateDrafts.keys()))
+                );
                 pendingCreateDrafts = [];
                 pendingUpdateDrafts = new Map();
                 pendingDeleteDraftIds = new Set();
@@ -1197,13 +1255,17 @@ function starterProfileCompanyMonthYearLabel(value) {
                         textEl.textContent = 'Saving...';
 
                         if (isDraftCompanyId(companyId)) {
+                            window.__tsProfileDirtyState?.markDirty?.(3);
                             pendingCreateDrafts = pendingCreateDrafts.map(function (draft) {
                                 return draft.id === companyId
                                     ? { ...draft, ...payload, id: companyId, type: 'create', is_draft: true, pending_type: 'create' }
                                     : draft;
                             });
+                            companyDraftDirtyController.queue(companyId);
                         } else {
+                            window.__tsProfileDirtyState?.markDirty?.(3);
                             pendingUpdateDrafts.set(String(companyId), payload);
+                            companyDraftDirtyController.queue(companyId);
                         }
                         await renderCompanies();
 
@@ -1300,13 +1362,16 @@ function starterProfileCompanyMonthYearLabel(value) {
                         clearAddCompanyFeedbackTimeout();
                         updateAddBtnState();
 
-                        pendingCreateDrafts.push({
+                        window.__tsProfileDirtyState?.markDirty?.(3);
+                        const draft = {
                             id: `draft_${Date.now()}_${Math.random()}`,
                             type: 'create',
                             is_draft: true,
                             pending_type: 'create',
                             ...payload,
-                        });
+                        };
+                        pendingCreateDrafts.push(draft);
+                        companyDraftDirtyController.queue(draft.id);
                         await renderCompanies();
 
                         resetCompanyFields();
@@ -1344,7 +1409,10 @@ function starterProfileCompanyMonthYearLabel(value) {
                 if (!hasPendingCompanyChanges && !hasAlsoWorkedWithChanges()) return;
                 if (isSubmitting) return;
 
+                let saved = false;
+                let saveToken = null;
                 try {
+                    saveToken = window.__tsProfileDirtyState?.beginSave(3);
                     isSubmitting = true;
                     submitAction = 'submitting';
                     updateAddBtnState();
@@ -1376,6 +1444,7 @@ function starterProfileCompanyMonthYearLabel(value) {
                     await commitDeleteCompanyDrafts();
 
                     clearAllDraftQueues();
+                    saved = true;
                     await renderCompanies();
 
                     if (editFormSuccessTrigger) editFormSuccessTrigger.dispatchEvent(new Event('click', { bubbles: true }));
@@ -1384,6 +1453,7 @@ function starterProfileCompanyMonthYearLabel(value) {
                     await renderCompanies();
                     if (editFormErrorTrigger) editFormErrorTrigger.dispatchEvent(new Event('click', { bubbles: true }));
                 } finally {
+                    window.__tsProfileDirtyState?.finishSave(3, saved, saveToken);
                     isSubmitting = false;
                     submitAction = '';
 
@@ -1399,6 +1469,11 @@ function starterProfileCompanyMonthYearLabel(value) {
             if (alsoWorkedWithInput) {
                 alsoWorkedWithInput.addEventListener('input', updateCompanySubmitState);
                 alsoWorkedWithInput.addEventListener('change', updateCompanySubmitState);
+                alsoWorkedWithInput.addEventListener('starter:also-worked-with-hydrated', function () {
+                    alsoWorkedWithBaseline = alsoWorkedWithInput.value;
+                    alsoWorkedWithBaselineReady = true;
+                    updateCompanySubmitState();
+                });
 
                 setTimeout(function () {
                     alsoWorkedWithBaseline = alsoWorkedWithInput.value;
