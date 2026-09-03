@@ -103,6 +103,9 @@ function loadLoader(options = {}) {
       events.push(event)
     },
   }
+  if (options.routerBooted) {
+    window.__startersV3AuthRouterBooted = true
+  }
 
   vm.runInNewContext(source, {
     Array,
@@ -228,7 +231,11 @@ test('an underivable base fails closed and re-admits the app block', () => {
   }
 })
 
-test('a failed auth-router request becomes observable and re-admits the app block', () => {
+// The site head consumes shouldLoadApplicationControllers synchronously via
+// document.write while the parser is blocked, so a later network error cannot
+// re-admit the block. The answer must keep describing what the page actually
+// loaded.
+test('a failed auth-router request becomes observable', () => {
   const { appended, document, errors, events, window } = loadLoader({
     pathname: '/auth-route',
   })
@@ -248,12 +255,36 @@ test('a failed auth-router request becomes observable and re-admits the app bloc
     window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(
       '/auth-route',
     ),
-    true,
+    false,
   )
   assert.equal(events.at(-1).type, 'starters:v3-auth-page-loader-error')
   assert.deepEqual({ ...events.at(-1).detail }, {
     stage: 'auth-route-load-failed',
   })
+  assert.match(errors.at(-1), /auth-route\.js failed to load/)
+})
+
+// Step 6's overlap window: the parser-inserted page-level tag wins the boot
+// guard and is routing the member when this copy's request fails. Painting
+// /auth-route's visible error block over a working router would show the member
+// a failure state on a login that is routing correctly.
+test('a failed request over an already-booted router raises no routing error', () => {
+  const { appended, document, errors, events } = loadLoader({
+    pathname: '/auth-route',
+    routerBooted: true,
+  })
+
+  appended[0].onerror()
+
+  assert.equal(
+    document.documentElement.attributes['data-auth-route-error'],
+    undefined,
+  )
+  assert.equal(
+    document.documentElement.attributes['data-auth-page-loader-error'],
+    'auth-route-load-failed',
+  )
+  assert.equal(events.at(-1).type, 'starters:v3-auth-page-loader-error')
   assert.match(errors.at(-1), /auth-route\.js failed to load/)
 })
 
@@ -383,16 +414,21 @@ test('stale timing is removed without emitting a destination event', () => {
   assert.equal(storage.has(TIMING_KEY), false)
 })
 
-test('an unparseable timing receipt is discarded', () => {
-  const { events, listeners, marks, storage } = loadLoader({
-    pathname: '/starter-dashboard',
-    rawReceipt: '{not-json',
-  })
+// Consume-and-discard has to hold for every stored value, not just the ones
+// JSON.parse rejects: `null`, `0`, and `""` all parse successfully to something
+// unusable, and a retained receipt is re-read on every later page load.
+test('an unusable timing receipt is discarded', () => {
+  for (const rawReceipt of ['{not-json', 'null', '0', 'false', '""']) {
+    const { events, listeners, marks, storage } = loadLoader({
+      pathname: '/starter-dashboard',
+      rawReceipt,
+    })
 
-  assert.equal(listeners.load, undefined)
-  assert.equal(events.length, 0)
-  assert.equal(marks.length, 0)
-  assert.equal(storage.has(TIMING_KEY), false)
+    assert.equal(listeners.load, undefined, rawReceipt)
+    assert.equal(events.length, 0, rawReceipt)
+    assert.equal(marks.length, 0, rawReceipt)
+    assert.equal(storage.has(TIMING_KEY), false, rawReceipt)
+  }
 })
 
 test('header and exported release markers match', () => {

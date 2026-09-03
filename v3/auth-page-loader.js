@@ -100,13 +100,17 @@
     // page-level auth-route.js tag during the overlap window.
     script.setAttribute('data-starters-auth-runtime', 'auth-route')
     script.onerror = function () {
-      canInstall = false
       try {
         document.documentElement.setAttribute(
           'data-auth-page-loader-error',
           'auth-route-load-failed',
         )
-        if (candidate === '/auth-route') {
+        // `/auth-route`'s visible error block keys on data-auth-route-error, so
+        // it may only be raised when no router booted. During the step 6
+        // overlap window the page-level tag has already won the boot guard and
+        // is routing the member; a failed request for this copy is a delivery
+        // diagnostic there, not a routing failure.
+        if (candidate === '/auth-route' && !window.__startersV3AuthRouterBooted) {
           document.documentElement.setAttribute(
             'data-auth-route-error',
             'auth-route-load-failed',
@@ -144,8 +148,8 @@
       discardTiming()
       return null
     }
-    if (!parsed) return null
     discardTiming()
+    if (!parsed) return null
 
     var startedAt = Number(parsed.startedAt)
     // `redirectedAt` is stamped by /auth-route immediately before it hands off.

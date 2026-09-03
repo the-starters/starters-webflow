@@ -387,9 +387,20 @@ routing cannot continue:
 | `role-contract-unavailable` | The sitewide route guard role contract is missing or loaded after the auth router |
 | `memberstack-unavailable` | Memberstack did not become available within 10 seconds |
 | `unexpected-error` | Member lookup or routing failed unexpectedly |
+| `auth-route-load-failed` | The loader's `auth-route.js` request failed and no router had booted |
 
-Each error also dispatches `starters:v3-auth-route-error` on `window` with
-`detail.code`. For browser-console diagnostics, the script exposes
+Each error in the table above except `auth-route-load-failed` also dispatches
+`starters:v3-auth-route-error` on `window` with `detail.code`.
+`auth-route-load-failed` is the one value that does not originate in
+`auth-route.js` — the loader raises it, so it carries the loader's own
+`starters:v3-auth-page-loader-error` event with `detail.stage` instead of
+`detail.code`. The loader always dispatches that event and logs a console error
+when its child request fails, and additionally sets
+`html[data-auth-page-loader-error="auth-route-load-failed"]`; it adds
+`html[data-auth-route-error]` only on `/auth-route` and only when
+`window.__startersV3AuthRouterBooted` is false, so during the step 6 overlap
+window a failed request for the loader's copy never paints the visible error
+block over the page-level tag that is already routing the member. For browser-console diagnostics, the script exposes
 `window.StartersV3AuthRouter` with `activePlanIds`, `memberRole`,
 `memberRoleError`, `roleHome`, `localPath`, `destinationFor`, `hasCompletedQuiz`,
 and `brandFreeHome`, plus the funnel helpers `stagingHost`,
@@ -435,11 +446,21 @@ Production stays silent apart from the configuration errors in the table above.
   the three auth paths, whether `/login` still gets `redirect="/auth-route"`
   depends on where step 6's cutover stands: during the overlap window the
   page-level tag still supplies it, and once the page-level tags are removed a
-  blocked loader means no router at all. Record which state was tested. Also
-  confirm `html[data-auth-page-loader-error="auth-route-load-failed"]`, the
-  `starters:v3-auth-page-loader-error` event, and the console error are present;
-  `/auth-route` must also expose
-  `html[data-auth-route-error="auth-route-load-failed"]`.
+  blocked loader means no router at all. Record which state was tested. The
+  loader's error surface stays silent here: it never executed, so expect no
+  `data-auth-page-loader-error`, no `starters:v3-auth-page-loader-error` event,
+  and a clean console.
+- Separately, block `.../v3/auth-route.js` in devtools while leaving
+  `auth-page-loader.js` reachable, and load each auth path. The loader executes,
+  its child request fails, and
+  `html[data-auth-page-loader-error="auth-route-load-failed"]`, the
+  `starters:v3-auth-page-loader-error` event with
+  `detail.stage="auth-route-load-failed"`, and the console error must all be
+  present. On `/auth-route`, `html[data-auth-route-error="auth-route-load-failed"]`
+  appears only when no router booted: with the page-level tag still installed
+  during the overlap window it must stay absent and the page must keep routing
+  normally, and once the page-level tags are removed it must appear. Record
+  which state was tested.
 - Walk step 6 in order. Step 6.3 records delivery evidence only (the loader's
   own `script[data-starters-auth-runtime="auth-route"]` element, its exact
   `@v1.59.506` src, a successful response, and a matching served-byte hash);
