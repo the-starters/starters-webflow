@@ -19,7 +19,8 @@ moved to `get_build_profile_status` on 2026-08-04.
 
    This tag is the **sole owner** of route-guard delivery and of
    guard-before-router ordering, on all three auth paths as well as everywhere
-   else. The loader never inserts a second copy. It waits for DOMContentLoaded
+   else. The loader never inserts a second copy. On `/auth-route` — the one path
+   whose router reads the guard's role contract — it waits for DOMContentLoaded
    before inserting `auth-route.js`; parser-inserted deferred scripts complete
    before that event, so the static guard has executed first. A duplicate
    insertion would download 43 KB — uncached whenever the
@@ -43,8 +44,14 @@ moved to `get_build_profile_status` on 2026-08-04.
    `/starter-login`, and `/auth-route`. On every other path it inserts nothing.
    It never inserts `route-guard.js` (step 4). If the loader cannot read its own
    `src` it installs nothing rather than falling back to a different release
-   ref. On an auth path it waits for DOMContentLoaded before inserting the
+   ref. On `/auth-route` it waits for DOMContentLoaded before inserting the
    router, which preserves the current deferred route-guard-before-router order.
+   On `/login` and `/starter-login` it inserts immediately, so the fetch
+   overlaps the body parse: those pages only need the router to write
+   `redirect="/auth-route"` onto the form, they never read the guard contract,
+   and a member can submit the form as soon as it paints. Delaying the insert
+   there would leave a submit window in which the login falls through to the
+   shared Memberstack plan redirect.
 
    ```html
    <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/auth-page-loader.js"></script>
@@ -127,7 +134,7 @@ moved to `get_build_profile_status` on 2026-08-04.
    still blocked on it (`document.write` from the inline head script, not
    `appendChild`), so page-level controllers still execute after them.
 
-   A false answer must emit none of `wf-xano`, the Xano SDK, PostHog helpers,
+   A false answer must emit none of `wf-xano`, the Xano SDK,
    `utils/wf-validate.js`, `opportunities-3.0.js`, project controllers,
    dashboard action items, Brand account, Algolia environment, or `wf-algolia`.
    Preserve the login-page validation owners, including
@@ -140,7 +147,22 @@ moved to `get_build_profile_status` on 2026-08-04.
    copies on every page load, and a paid click can land directly on
    `/login?utm_source=…`; omitting it there would drop attribution for any
    signup later in that session. Its signup-transition watch already excludes
-   both login paths by name, so nothing else about it runs there. Keep the
+   both login paths by name, so nothing else about it runs there.
+
+   **Keep both PostHog helper tags out of this block and unconditional sitewide
+   too**, for the same sitewide-capture reason: `utils/posthog-identity.js` and
+   `utils/posthog-track.js` are deferred site-wide helpers, not application
+   controllers ([README](../README.md#analytics-helpers-utils)).
+   `posthog-identity.js` owns the logged-out `posthog.reset()` that stops a
+   shared browser chaining new anonymous events to the previous member's
+   `mem_*` distinct id, and `/login` is exactly where `route-guard.js` sends
+   every logged-out or expired session; without it the head snippet keeps
+   autocapturing that page under the old member. `posthog-track.js` captures
+   uncaught errors and unhandled promise rejections sitewide, so omitting it
+   would go dark on the three pages this wiring changes — the pages where a
+   loader or child-asset failure is most likely.
+
+   Keep the
    remaining controllers' existing order and inline configuration unchanged
    when the answer is true. Build the complete candidate from a fresh
    full-block readback and preserve every non-controller sentinel.
@@ -430,23 +452,30 @@ Production stays silent apart from the configuration errors in the table above.
 - Confirm the site head loads Memberstack, `memberReady`, the unconditional
   static `route-guard.js` tag and `signup-attribution.js`, then
   `auth-page-loader.js`, then the conditional controller block.
-- Confirm the `route-guard.js` tag is still static, parser-inserted with defer, and outside
-  every conditional, on every page.
+- Confirm the `route-guard.js` tag is still static, parser-inserted with defer,
+  and outside every conditional, on every page — the shape recorded in step 1
+  of [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md#webflow-install).
 - Confirm the static `route-guard.js` tag executes before `auth-route.js` on
   all three auth paths, and that the loader requests `auth-route.js` only —
   exactly one `route-guard.js` request per auth page load, from the static tag.
-  Confirm the loader appends its router only after DOMContentLoaded, after the
-  deferred guard has exported `window.StartersV3RouteGuard`.
+  On `/auth-route`, confirm the loader appends its router only after
+  DOMContentLoaded, once the deferred guard has exported
+  `window.StartersV3RouteGuard`. On `/login` and `/starter-login`, confirm the
+  opposite: the `auth-route.js` request starts during head parsing, well before
+  DOMContentLoaded, so the form is configured as early as possible.
 - Confirm `/auth-route` requests no unrelated application controller, and that
-  `signup-attribution.js` IS still requested on `/login` and `/starter-login`.
-  Land on `/login?utm_source=gate-check&fbclid=gate-check` and confirm the
-  attribution cookies are written.
+  `signup-attribution.js` and both PostHog helpers ARE still requested on
+  `/login` and `/starter-login`. Land on
+  `/login?utm_source=gate-check&fbclid=gate-check` and confirm the attribution
+  cookies are written. Sign out from a member session, land on `/login`, and
+  confirm `posthog.get_distinct_id()` is no longer the previous `mem_*` id.
 - Confirm the loader requests nothing on a non-auth page, and that
   `route-guard.js` there executes before every page-level controller.
   Spot-check `/build-profile/select-profile`: `html[data-route-guard]` must be
   set before `build-profile-redirect.js` runs.
 - With the loader URL blocked in devtools, confirm every page still emits
-  `route-guard.js`, `signup-attribution.js`, and the full controller block. On
+  `route-guard.js`, `signup-attribution.js`, both PostHog helpers, and the full
+  controller block. On
   the three auth paths, whether `/login` still gets `redirect="/auth-route"`
   depends on where step 6's cutover stands: during the overlap window the
   page-level tag still supplies it, and once the page-level tags are removed a

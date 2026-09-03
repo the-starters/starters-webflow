@@ -1091,27 +1091,95 @@ test('login submit starts the cross-navigation timing receipt', () => {
   )
 })
 
-test('a known submit-control click restarts timing after a rejected attempt', () => {
-  const harness = loadRouter({ pathname: '/login' })
-  const submitControl = {
-    closest(selector) {
-      assert.match(selector, /clickable_btn/)
-      return this
-    },
+// `closest` really evaluates the production selector against the control, so
+// widening the selector fails these cases instead of passing on a double that
+// answers "matched" no matter what it was asked.
+function matchesSimpleSelector(node, simple) {
+  const parts = simple.match(/^([a-z]+)?((?:\.[\w-]+|\[[^\]]+\])*)$/)
+  assert.ok(parts, 'unsupported selector: ' + simple)
+  if (parts[1] && parts[1] !== node.tag) return false
+  return (parts[2].match(/\.[\w-]+|\[[^\]]+\]/g) || []).every((qualifier) => {
+    if (qualifier.startsWith('.')) {
+      return node.classes.includes(qualifier.slice(1))
+    }
+    const pair = qualifier.slice(1, -1).match(/^([\w-]+)(?:="([^"]*)")?$/)
+    assert.ok(pair, 'unsupported attribute selector: ' + qualifier)
+    const value = node.attributes[pair[1]]
+    if (value === undefined) return false
+    return pair[2] === undefined || value === pair[2]
+  })
+}
+
+function formControl({ tag = 'button', classes = [], attributes = {} } = {}) {
+  const node = { tag, classes, attributes }
+  node.closest = (selector) =>
+    selector
+      .split(',')
+      .map((simple) => simple.trim())
+      .filter(Boolean)
+      .some((simple) => matchesSimpleSelector(node, simple))
+      ? node
+      : null
+  return node
+}
+
+test('a submit-control click restarts timing after a rejected attempt', () => {
+  for (const control of [
+    formControl({ tag: 'button', attributes: { type: 'submit' } }),
+    formControl({ tag: 'input', attributes: { type: 'submit' } }),
+    formControl({
+      tag: 'div',
+      attributes: { 'data-ms-button': 'submit' },
+    }),
+  ]) {
+    const harness = loadRouter({ pathname: '/login' })
+    harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
+
+    harness.forms[0].dispatch('click', { target: control })
+
+    const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
+    assert.notEqual(receipt.startedAt, 1, control.tag)
+    assert.deepEqual(Object.keys(receipt), ['startedAt'], control.tag)
+    assert.ok(
+      harness.marks.includes('starters:v3-auth-route:login-submit'),
+      control.tag,
+    )
   }
-  const ordinaryControl = { closest: () => null }
+})
 
-  harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
-  harness.forms[0].dispatch('click', { target: ordinaryControl })
-  assert.equal(JSON.parse(harness.storage.get(TIMING_KEY)).startedAt, 1)
+// `.clickable_btn` is the generic Webflow Clickable Wrap overlay and sits on
+// non-submitting buttons all over this site, including the login CTA while the
+// password rules still fail. A click on one is not a login attempt, so it must
+// not overwrite the receipt or emit a login-submit mark.
+test('a non-submit control click leaves the timing receipt alone', () => {
+  for (const control of [
+    formControl({ tag: 'button', classes: ['clickable_btn'] }),
+    formControl({
+      tag: 'button',
+      classes: ['clickable_btn'],
+      attributes: { type: 'button' },
+    }),
+    formControl({ tag: 'a', classes: ['clickable_link'] }),
+    formControl({ tag: 'button', attributes: { type: 'reset' } }),
+    formControl({ tag: 'div', attributes: { 'data-ms-button': 'google' } }),
+  ]) {
+    const harness = loadRouter({ pathname: '/login' })
+    harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
 
-  harness.forms[0].dispatch('click', { target: submitControl })
-  const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
-  assert.notEqual(receipt.startedAt, 1)
-  assert.deepEqual(Object.keys(receipt), ['startedAt'])
-  assert.ok(
-    harness.marks.includes('starters:v3-auth-route:login-submit'),
-  )
+    harness.forms[0].dispatch('click', { target: control })
+
+    const label = control.tag + '.' + control.classes.join('.')
+    assert.equal(
+      JSON.parse(harness.storage.get(TIMING_KEY)).startedAt,
+      1,
+      label,
+    )
+    assert.equal(
+      harness.marks.includes('starters:v3-auth-route:login-submit'),
+      false,
+      label,
+    )
+  }
 })
 
 // The loader inserts this file dynamically from the site head, so it can run

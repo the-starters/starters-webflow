@@ -17,12 +17,16 @@
  * page the loader inserts nothing.
  *
  * It does NOT insert route-guard.js. The static parser-inserted deferred
- * `route-guard.js` tag is the sole owner of guard delivery. This loader waits
- * for DOMContentLoaded before inserting auth-route.js; parser-inserted deferred
- * scripts finish before that event, so the guard has executed first. Inserting
- * a second copy would download 43 KB — a fresh download
- * whenever the two tags sit on different release refs — purely to hit the
- * guard's own boot guard and return.
+ * `route-guard.js` tag is the sole owner of guard delivery. Only `/auth-route`
+ * reads the guard's role contract, so only there does this loader wait for
+ * DOMContentLoaded before inserting auth-route.js; parser-inserted deferred
+ * scripts finish before that event, so the guard has executed first. The two
+ * login paths only configure the login form's `/auth-route` redirect and never
+ * touch the guard contract, so their insert happens immediately and its fetch
+ * overlaps the body parse — the form has to carry `redirect="/auth-route"`
+ * before the member can submit it. Inserting a second copy of the guard would
+ * download 43 KB — a fresh download whenever the two tags sit on different
+ * release refs — purely to hit the guard's own boot guard and return.
  *
  * The inserted script has `async = false`, so it keeps insertion order against
  * anything else inserted dynamically.
@@ -44,7 +48,8 @@
     'thestarters.com',
     'www.thestarters.com',
   ])
-  var AUTH_PATHS = new Set(['/login', '/starter-login', '/auth-route'])
+  var ROUTE_PAGE_PATH = '/auth-route'
+  var AUTH_PATHS = new Set(['/login', '/starter-login', ROUTE_PAGE_PATH])
   var AUTH_ROUTE_PATH = 'v3/auth-route.js'
   var TIMING_STORAGE_KEY = 'thestarters:v3-auth-route-timing'
   var TIMING_MARK_PREFIX = 'starters:v3-auth-route:'
@@ -100,42 +105,27 @@
     // page-level auth-route.js tag during the overlap window.
     script.setAttribute('data-starters-auth-runtime', 'auth-route')
     script.onerror = function () {
-      function paintRouteErrorIfStillUnbooted() {
-        if (
-          candidate !== '/auth-route' ||
-          window.__startersV3AuthRouterBooted
-        ) {
-          return
-        }
-        try {
-          document.documentElement.setAttribute(
-            'data-auth-route-error',
-            'auth-route-load-failed',
-          )
-        } catch (error) {}
-      }
-
       try {
         document.documentElement.setAttribute(
           'data-auth-page-loader-error',
           'auth-route-load-failed',
         )
       } catch (error) {}
-      // The page-level fallback sits after the site head during overlap. Its
-      // parser-inserted script can boot after this dynamic request has already
-      // failed. Wait until parsing finishes, then recheck the boot guard before
-      // painting a visible routing failure over the page.
+      // Only /auth-route has a visible routing-failure block, and it is only
+      // honest while no router owns the page. The /auth-route insert happens
+      // after DOMContentLoaded, by which point a parser-inserted page-level
+      // fallback has already executed and set the boot guard, so this single
+      // read cannot paint over a copy that is routing the member.
       if (
-        document.readyState === 'loading' &&
-        typeof window.addEventListener === 'function'
+        candidate === ROUTE_PAGE_PATH &&
+        !window.__startersV3AuthRouterBooted
       ) {
-        window.addEventListener(
-          'DOMContentLoaded',
-          paintRouteErrorIfStillUnbooted,
-          { once: true },
-        )
-      } else {
-        paintRouteErrorIfStillUnbooted()
+        try {
+          document.documentElement.setAttribute(
+            'data-auth-route-error',
+            'auth-route-load-failed',
+          )
+        } catch (error) {}
       }
       try {
         window.dispatchEvent(
@@ -219,7 +209,11 @@
   window.StartersV3AuthPageLoader = api
 
   if (!approvedHost) return
-  if (isAuthPath(pathname) && document.readyState === 'loading') {
+  // /auth-route is the only path whose router reads the deferred guard's role
+  // contract, so it is the only one that has to wait for the guard. Waiting on
+  // a login path would instead delay `redirect="/auth-route"` past the point
+  // where the member can already submit the form.
+  if (pathname === ROUTE_PAGE_PATH && document.readyState === 'loading') {
     window.addEventListener(
       'DOMContentLoaded',
       function () {

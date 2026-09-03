@@ -7,9 +7,11 @@
  * (/login and /starter-login) and /auth-route only. Every V3 login form must
  * redirect to /auth-route so shared Memberstack plan redirects can remain
  * unchanged for V2. v3/route-guard.js executes first, and only from its static
- * parser-inserted deferred sitewide tag. The loader waits for DOMContentLoaded,
- * so the guard has completed before auth-route.js is inserted; the loader never
- * inserts a second copy of it.
+ * parser-inserted deferred sitewide tag. Only the /auth-route branch below
+ * reads the guard's role contract, so the loader waits for DOMContentLoaded
+ * there — the deferred guard has completed by then — and inserts immediately on
+ * the two login paths, whose only job is writing the form redirect. The loader
+ * never inserts a second copy of the guard.
  *
  * Talent members additionally get a funnel-position check here, because
  * /auth-route is the one page every Talent login passes through. The product
@@ -482,7 +484,7 @@
             if (
               target.closest(
                 'button[type="submit"], input[type="submit"], ' +
-                  '[data-ms-button="submit"], .clickable_btn',
+                  '[data-ms-button="submit"]',
               )
             ) {
               // Memberstack provider buttons can complete a click-driven login

@@ -119,11 +119,14 @@ node --test v3/password-recovery.test.js
 
 `auth-route.js` owns post-login and post-signup routing for V3 without changing
 the shared Memberstack plan redirects used by V2. The blocking site-head
-`auth-page-loader.js` inserts it after DOMContentLoaded only on the V3 `/login`,
-`/starter-login`, and `/auth-route` pages. Keep the static deferred sitewide
-`route-guard.js` unconditional and ahead of the loader because it owns the
-shared stable plan-role contract and completes before DOMContentLoaded. Keep
-`signup-attribution.js` and the login/password/email validation owners outside
+`auth-page-loader.js` inserts it only on the V3 `/login`, `/starter-login`, and
+`/auth-route` pages — immediately on the two login paths, which only need the
+form's `/auth-route` redirect written, and after DOMContentLoaded on
+`/auth-route`, which reads the guard's role contract. Keep the static deferred
+sitewide `route-guard.js` unconditional and ahead of the loader because it owns
+the shared stable plan-role contract and completes before DOMContentLoaded.
+Keep `signup-attribution.js`, both `utils/posthog-*.js` helpers, and the
+login/password/email validation owners outside
 the minimal-controller conditional. Remove the old page-level `auth-route.js`
 tags only through the overlap, delivery, and one-path-at-a-time behavior proof
 in the wiring guide. It runs on the V3 Webflow staging hostname and both custom

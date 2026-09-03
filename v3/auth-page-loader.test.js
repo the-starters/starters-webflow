@@ -167,6 +167,25 @@ test('auth paths install only the auth router, from the loader own release ref',
   }
 })
 
+// Only /auth-route reads the guard's role contract. A login page's router job
+// is writing `redirect="/auth-route"` onto the form, and the member can submit
+// that form as soon as it paints, so its fetch has to start during head parsing
+// rather than after the whole body is parsed.
+test('login paths insert the router while the document is still parsing', () => {
+  for (const pathname of ['/login', '/starter-login']) {
+    const harness = loadLoader({ pathname, holdDomContentLoaded: true })
+
+    assert.equal(harness.document.readyState, 'loading', pathname)
+    assert.equal(harness.appended.length, 1, pathname)
+    assert.equal(
+      harness.appended[0].src,
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v9.8.7/v3/auth-route.js',
+      pathname,
+    )
+    assert.equal(harness.listeners.DOMContentLoaded, undefined, pathname)
+  }
+})
+
 test('auth router waits until the deferred route guard has executed', () => {
   const harness = loadLoader({
     pathname: '/auth-route',
@@ -190,10 +209,9 @@ test('auth router waits until the deferred route guard has executed', () => {
 })
 
 // The sitewide route-guard.js tag stays parser-inserted with defer in the site
-// head. The loader waits for DOMContentLoaded, so the guard executes before the
-// injected router and before page-level controllers that read
-// window.StartersV3RouteGuard. Injecting it here would make it non-blocking and
-// silently hand those controllers a null role.
+// head, so it executes before every page-level controller that reads
+// window.StartersV3RouteGuard. Injecting a copy from here would make guard
+// delivery non-blocking and silently hand those controllers a null role.
 test('non-auth pages install nothing and admit the existing app block', () => {
   for (const pathname of [
     '/starter-dashboard',
@@ -300,6 +318,28 @@ test('a failed request over an already-booted router raises no routing error', (
   const { appended, document, errors, events } = loadLoader({
     pathname: '/auth-route',
     routerBooted: true,
+  })
+
+  appended[0].onerror()
+
+  assert.equal(
+    document.documentElement.attributes['data-auth-route-error'],
+    undefined,
+  )
+  assert.equal(
+    document.documentElement.attributes['data-auth-page-loader-error'],
+    'auth-route-load-failed',
+  )
+  assert.equal(events.at(-1).type, 'starters:v3-auth-page-loader-error')
+  assert.match(errors.at(-1), /auth-route\.js failed to load/)
+})
+
+// A login page has no `/auth-route` error block to show, and its own visible
+// state is the form. A child failure there is delivery diagnostics only.
+test('a failed request on a login path raises no routing error', () => {
+  const { appended, document, errors, events } = loadLoader({
+    pathname: '/login',
+    holdDomContentLoaded: true,
   })
 
   appended[0].onerror()
