@@ -165,11 +165,14 @@ Both route copies of the company-experience controller
 Full Profile, Consult, and Edit Profile work-experience modals hydrate and save
 identically.
 
-Stored dates are parsed into a real local `Date` before they reach
-`datepicker('setDate', …)`. jQuery UI treats a bare string as its relative-offset
-syntax rather than a calendar date, so a stored `Jan 2024` was read as a day offset and
-hydrated the picker on an unrelated month and year (`Mar 2032` in production Work
-Experience QA). The parser accepts an exact full or three-letter month in
+The controllers convert the four existing Webflow date inputs to native
+`type="month"` controls. They remove the legacy jQuery UI datepicker attributes and
+correct each label association at runtime, without adding a second duration field or
+changing the Xano schema. The visible value is therefore `YYYY-MM`, while cards still
+render `Mon YYYY`.
+
+Stored dates are parsed into a real local `Date` before they hydrate the native month
+control. The parser accepts an exact full or three-letter month in
 `Month YYYY` (first of that month) and ISO `YYYY-MM-DD` with an optional valid
 `THH:MM:SS` suffix, fractional seconds, and `Z` or `+/-HH:MM` offset (that exact
 local calendar day, never a UTC shift). Because Xano records hold day-precision
@@ -178,11 +181,9 @@ values as well as month-only ones, it also accepts `Month D YYYY` and
 time or offset values, and an out-of-range day such as `Jan 32 2024` rather than
 coercing or rolling the value.
 
-A string in none of those shapes is re-parsed with the widget's own configured
-`dateFormat`. That format is set on the Webflow markup for each input, not here, so the
-widget is the only thing that can recognize a value it wrote itself; jQuery UI's
-`parseDate` throws on a mismatch instead of reading the string as a day offset. A value
-neither path can parse yields no picker value at all, so the field renders blank rather
+A string in none of those shapes can still be re-parsed with the legacy widget's own
+configured `dateFormat` during the migration window. A value neither path can parse
+yields no visible month value, so the field renders blank rather
 than hydrating an unrelated month and year. Nothing is lost when that happens: the
 baseline/serialize pair below re-submits the original stored string for a date field the
 member never touched.
@@ -198,14 +199,12 @@ month-only, and day-precision values render as `Mon YYYY`; for example,
 not rewrite the stored value. `Present`, blanks, and unknown legacy strings keep
 their existing behavior.
 
-Hydration also records the canonical string it came from next to the value the picker
-rendered from it. Opening a different role clears date bounds and disabled state left by
-the prior modal. If jQuery UI initializes after the modal opens, the controller rehydrates
-the stored dates once the two pickers are ready. Input, change, and calendar-selection
-guards prevent that late pass from overwriting a date the member already typed or picked.
+Hydration also records the canonical string it came from next to the native month value.
+Opening a different role clears disabled state left by the prior modal. Input and change
+guards prevent late legacy widget activity from overwriting a month the member selected.
 On save, a date field the member never touched re-serializes its original canonical string,
-and only a field whose visible value actually changed submits the picker's value. Editing
-an unrelated field therefore cannot rewrite a stored date to the picker's own formatting.
+and only a field whose visible value actually changed submits `YYYY-MM`. Editing an
+unrelated field therefore cannot rewrite a stored legacy date.
 
 Run this coverage with:
 

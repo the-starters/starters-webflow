@@ -19,7 +19,7 @@
                         previousEndDate = endDateInput.value;
                     }
 
-                    endDateInput.value = 'Present';
+                    endDateInput.value = endDateInput.type === 'month' ? '' : 'Present';
                     endDateInput.setAttribute('disabled', 'disabled');
                     endDateInput.classList.add('is-disabled');
                 } else {
@@ -46,4 +46,3 @@
         initWorkDateFields('#company-end', '#company-current');
         initWorkDateFields('#edit-company-end', '#edit-company-current');
     });
-

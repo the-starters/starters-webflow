@@ -42,6 +42,11 @@ function starterProfileCompanyDatepickerValue(value) {
         }
     }
 
+    const nativeMonthMatch = text.match(/^(\d{4})-(\d{2})$/);
+    if (nativeMonthMatch) {
+        return localCalendarDate(Number(nativeMonthMatch[1]), Number(nativeMonthMatch[2]) - 1, 1);
+    }
+
     const monthDayYearMatch = text.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
     if (monthDayYearMatch) {
         const monthIndex = monthIndexForName(monthDayYearMatch[1]);
@@ -83,6 +88,15 @@ function starterProfileCompanyDatepickerDate(input, value) {
 }
 
 function setStarterProfileCompanyDatepickerDate(input, value) {
+    if (input && input.type === 'month') {
+        if (isStarterProfileCompanyPresentDate(value)) return;
+        const date = starterProfileCompanyDatepickerDate(input, value);
+        input.value = date
+            ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+            : '';
+        return;
+    }
+
     if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
     if (isStarterProfileCompanyPresentDate(value)) return;
 
@@ -90,6 +104,30 @@ function setStarterProfileCompanyDatepickerDate(input, value) {
         jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerDate(input, value));
     } catch (error) {
         // The value may not match the widget's configured dateFormat.
+    }
+}
+
+function enableStarterProfileCompanyMonthInput(input, labelText) {
+    if (!input) return;
+
+    if (typeof jQuery !== 'undefined' && jQuery.fn && jQuery.fn.datepicker && jQuery(input).data('datepicker')) {
+        try {
+            jQuery(input).datepicker('destroy');
+        } catch (error) {
+            // The native month control is still safe when the old widget is already detached.
+        }
+    }
+
+    input.removeAttribute('data-input-datepicker');
+    input.removeAttribute('data-input-datepicker-role');
+    input.removeAttribute('data-format');
+    input.type = 'month';
+    input.setAttribute('aria-label', labelText);
+
+    const label = document.querySelector(`label[for="${input.id}"]`) || input.closest('[form-group]')?.querySelector('label');
+    if (label) {
+        label.htmlFor = input.id;
+        label.textContent = labelText;
     }
 }
 
@@ -191,6 +229,11 @@ function createStarterEditCompanyDraftDirtyController(options) {
             const editStartDateInput = qs('#edit-company-start');
             const editEndDateInput = qs('#edit-company-end');
             const editCurrentWorkCheckbox = qs('#edit-company-current');
+
+            enableStarterProfileCompanyMonthInput(startDateInput, 'Start month and year');
+            enableStarterProfileCompanyMonthInput(endDateInput, 'End month and year');
+            enableStarterProfileCompanyMonthInput(editStartDateInput, 'Start month and year');
+            enableStarterProfileCompanyMonthInput(editEndDateInput, 'End month and year');
 
             const modalEdit = qs('[data-modal-target="company-edit"]');
             const modalEditTrigger = qs('[data-modal-trigger="company-edit"]');
@@ -435,6 +478,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
 
             function isEditCompanyDatepickerReady(input) {
                 if (!input) return true;
+                if (input.type === 'month') return true;
                 if (typeof jQuery === 'undefined' || !jQuery.fn || !jQuery.fn.datepicker) return false;
 
                 return !!jQuery(input).data('datepicker');
@@ -444,6 +488,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
             // the shared embed pairs these inputs with its own `onSelect`, fires neither `input` nor
             // `change`. Chain onto that callback so a picked date still counts as user input.
             function guardEditCompanyDateSelection(input, markChanged) {
+                if (input && input.type === 'month') return true;
                 if (!input || !isEditCompanyDatepickerReady(input)) return false;
 
                 try {
