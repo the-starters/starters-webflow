@@ -212,7 +212,11 @@ The login form starts a timestamp-only receipt in session storage. The signup
 form on the same page gets the identical `/auth-route` redirect attributes but
 never starts a receipt: a signup spans account creation, Turnstile, and plan
 assignment, so counting it under the `login-submit` stage would inflate the
-login-to-destination duration this receipt exists to report. The router
+login-to-destination duration this receipt exists to report. It *discards* any
+receipt it finds instead, so a signup attempt cannot carry an earlier rejected
+password on the same page visit through to `/auth-route`. Both forms treat a
+click on `[data-ms-auth-provider]` as an attempt, because Memberstack's
+provider controls are links that complete without ever firing submit. The router
 emits fixed `performance.mark()` names for router boot, Memberstack ready,
 member snapshot, token trade, status read, and redirect request. The sitewide
 loader emits `destination-load` on the final non-auth page and consumes the
@@ -223,9 +227,10 @@ token, or requested destination.
 Only a completed login-to-destination flow can be measured. `/auth-route` stamps
 `redirectedAt` on the receipt at the moment it hands off, and the loader refuses
 to emit `destination-load` for a receipt without it. A login page boot clears
-any receipt it finds, and the logged-out bounce back to `/login` clears it too,
-so a rejected password or an abandoned login page can never be read later as a
-login-to-destination duration.
+any receipt it finds, a signup attempt on that page clears it, and the
+logged-out bounce back to `/login` clears it too, so a rejected password or an
+abandoned login page can never be read later as a login-to-destination
+duration.
 
 The loader validates and **consumes** the receipt at its own boot on the
 destination page, keeping only `startedAt`, and emits on `load`. `elapsedMs` is
@@ -471,14 +476,17 @@ Production stays silent apart from the configuration errors in the table above.
 - Confirm the `route-guard.js` tag is still static, parser-inserted with defer,
   and outside every conditional, on every page — the shape recorded in step 1
   of [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md#webflow-install).
-- Confirm the static `route-guard.js` tag executes before `auth-route.js` on
-  all three auth paths, and that the loader requests `auth-route.js` only —
-  exactly one `route-guard.js` request per auth page load, from the static tag.
-  On `/auth-route`, confirm the loader appends its router only after
-  DOMContentLoaded, once the deferred guard has exported
-  `window.StartersV3RouteGuard`. On `/login` and `/starter-login`, confirm the
-  opposite: the `auth-route.js` request starts during head parsing, well before
-  DOMContentLoaded, so the form is configured as early as possible.
+- Confirm the loader requests `auth-route.js` only — exactly one
+  `route-guard.js` request per auth page load, from the static tag. On
+  `/auth-route`, confirm the static `route-guard.js` tag *executes* before
+  `auth-route.js`: the loader appends its router only after DOMContentLoaded,
+  once the deferred guard has exported `window.StartersV3RouteGuard`. On
+  `/login` and `/starter-login`, expect the reverse execution order and do not
+  fail the gate on it — the loader appends the router during head parsing, so
+  `auth-route.js` normally executes before the deferred guard. Confirm only
+  that its *request* starts during head parsing, well before DOMContentLoaded,
+  so the form is configured as early as possible. That branch never reads the
+  guard's role contract, so guard-after-router is correct there.
 - Confirm `/auth-route` requests no unrelated application controller, and that
   `signup-attribution.js`, `native-form-diagnostics.js`, and both PostHog
   helpers ARE still requested on

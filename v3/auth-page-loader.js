@@ -83,8 +83,11 @@
   var canInstall = approvedHost && base !== null
   var pathname = (window.location && window.location.pathname) || ''
 
+  // `candidate` defaults to the path this loader booted on, so the site-head
+  // call answers correctly whether or not it passes the pathname.
   function shouldLoadApplicationControllers(candidate) {
-    if (!isAuthPath(candidate)) return true
+    var target = candidate === undefined ? pathname : candidate
+    if (!isAuthPath(target)) return true
     return !canInstall
   }
 

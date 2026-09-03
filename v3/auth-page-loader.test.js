@@ -374,6 +374,38 @@ test('the loader publishes no timing entry point', () => {
   ])
 })
 
+// The header comment spells the site-head call with empty parens, so an
+// operator will copy it that way. Without a default the answer would be true on
+// exactly the three pages this release exists to keep minimal, and the full
+// controller block would load beside the auth runtime.
+test('the controller answer defaults to the path the loader booted on', () => {
+  for (const pathname of ['/login', '/starter-login', '/auth-route']) {
+    const { window } = loadLoader({ pathname })
+    assert.equal(
+      window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(),
+      false,
+      pathname,
+    )
+  }
+
+  const { window } = loadLoader({ pathname: '/starter-dashboard' })
+  assert.equal(
+    window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(),
+    true,
+  )
+})
+
+// A loader that cannot install its own runtime must admit the full block even
+// on an auth path, and the defaulted call has to answer the same way.
+test('the defaulted controller answer admits the block when the loader cannot install', () => {
+  const { window } = loadLoader({ pathname: '/login', currentScript: null })
+
+  assert.equal(
+    window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(),
+    true,
+  )
+})
+
 test('the controller answer survives losing document.currentScript', () => {
   const { window, document } = loadLoader({ pathname: '/login' })
 

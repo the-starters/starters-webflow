@@ -1234,8 +1234,6 @@ test('a signup form on a login page starts no login timing receipt', () => {
     'data-ms-redirect': '/auth-route',
     redirect: '/auth-route',
   })
-  assert.equal(signup.hasListener('submit'), false)
-  assert.equal(signup.hasListener('click'), false)
 
   signup.dispatch('submit')
   signup.dispatch('click', {
@@ -1252,6 +1250,56 @@ test('a signup form on a login page starts no login timing receipt', () => {
   // form's kind and not a disabled feature.
   harness.forms[0].dispatch('submit')
   assert.equal(harness.storage.has(TIMING_KEY), true)
+})
+
+// A rejected password leaves `{startedAt}` behind — nothing on the login page
+// clears it, because the member never left. If the member then signs up
+// instead, that receipt reaches /auth-route, is stamped `redirectedAt`, and the
+// destination loader reports the rejected attempt plus the whole signup as one
+// login-to-destination duration. The signup attempt has to drop it.
+test('a signup attempt discards a rejected password receipt without measuring itself', () => {
+  for (const attempt of [
+    (signup) => signup.dispatch('submit'),
+    (signup) =>
+      signup.dispatch('click', {
+        target: formControl({
+          tag: 'a',
+          attributes: { 'data-ms-auth-provider': 'google' },
+        }),
+      }),
+    (signup) =>
+      signup.dispatch('click', {
+        target: formControl({ tag: 'button', attributes: { type: 'submit' } }),
+      }),
+  ]) {
+    const harness = loadRouter({ pathname: '/login' })
+    const rejectedAt = 1700000000000
+    harness.forms[0].dispatch('submit')
+    harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: rejectedAt }))
+    harness.marks.length = 0
+
+    attempt(harness.forms[1])
+
+    assert.equal(harness.storage.has(TIMING_KEY), false)
+    assert.equal(
+      harness.marks.includes('starters:v3-auth-route:login-submit'),
+      false,
+    )
+  }
+})
+
+// A click that is not an attempt — the generic Webflow overlay, a reset button —
+// must leave a live login receipt alone, or an ordinary interaction inside the
+// signup modal would silently drop a real measurement.
+test('a non-attempt click in the signup form leaves the receipt alone', () => {
+  const harness = loadRouter({ pathname: '/login' })
+  harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
+
+  harness.forms[1].dispatch('click', {
+    target: formControl({ tag: 'button', classes: ['clickable_btn'] }),
+  })
+
+  assert.equal(JSON.parse(harness.storage.get(TIMING_KEY)).startedAt, 1)
 })
 
 // The loader inserts this file dynamically from the site head, so it can run

@@ -6,12 +6,14 @@
  * Loaded by the site-head v3/auth-page-loader.js on the V3 login pages
  * (/login and /starter-login) and /auth-route only. Every V3 login form must
  * redirect to /auth-route so shared Memberstack plan redirects can remain
- * unchanged for V2. v3/route-guard.js executes first, and only from its static
+ * unchanged for V2. v3/route-guard.js is delivered only from its static
  * parser-inserted deferred sitewide tag. Only the /auth-route branch below
  * reads the guard's role contract, so the loader waits for DOMContentLoaded
- * there — the deferred guard has completed by then — and inserts immediately on
- * the two login paths, whose only job is writing the form redirect. The loader
- * never inserts a second copy of the guard.
+ * there — the deferred guard has completed by then, and only there is the guard
+ * guaranteed to execute before this file. On the two login paths the loader
+ * inserts immediately, so this file usually executes BEFORE the deferred guard;
+ * that branch only writes the form redirect and never reads the role contract.
+ * The loader never inserts a second copy of the guard.
  *
  * Talent members additionally get a funnel-position check here, because
  * /auth-route is the one page every Talent login passes through. The product
@@ -479,13 +481,29 @@
     // /auth-route on the same attributes above, but account creation, Turnstile,
     // and plan assignment make it a structurally different and longer flow;
     // measuring it under the `login-submit` stage would inflate the number this
-    // receipt exists to report.
+    // receipt exists to report. It still has to DROP the receipt: a signup
+    // attempt leaving this page is the one flow that would otherwise let a
+    // rejected password on the same visit be confirmed at /auth-route as a
+    // login-to-destination duration.
+    document.querySelectorAll('[data-ms-form="login"]').forEach(bindLoginTiming)
     document
-      .querySelectorAll('[data-ms-form="login"]')
-      .forEach(bindLoginTiming)
+      .querySelectorAll('[data-ms-form="signup"]')
+      .forEach(bindSignupTiming)
   }
 
   function bindLoginTiming(form) {
+    bindAttemptTiming(form, beginLoginTiming)
+  }
+
+  function bindSignupTiming(form) {
+    bindAttemptTiming(form, clearLoginTiming)
+  }
+
+  // `onAttempt` runs whenever this form starts an attempt, whether through a
+  // real submit or through a control that completes one without firing submit:
+  // Memberstack's `[data-ms-auth-provider]` controls are links, so a
+  // click-driven provider login never submits the form it sits in.
+  function bindAttemptTiming(form, onAttempt) {
     if (
       typeof form.addEventListener !== 'function' ||
       form.__startersAuthTimingBound
@@ -493,7 +511,7 @@
       return
     }
     form.__startersAuthTimingBound = true
-    form.addEventListener('submit', beginLoginTiming)
+    form.addEventListener('submit', onAttempt)
     form.addEventListener('click', function (event) {
       var target = event && event.target
       if (!target || typeof target.closest !== 'function') return
@@ -503,11 +521,7 @@
             '[data-ms-button="submit"], [data-ms-auth-provider]',
         )
       ) {
-        // Memberstack's `[data-ms-auth-provider]` controls are links, and they
-        // complete a click-driven login without ever firing submit on this
-        // form. Restart the receipt for that attempt so it cannot inherit a
-        // rejected password attempt from this page.
-        beginLoginTiming()
+        onAttempt()
       }
     })
   }
@@ -905,8 +919,6 @@
     brandProfileState: brandProfileState,
     completeProfilePath: COMPLETE_PROFILE_PATH,
     brandProfileMarkerKey: BRAND_PROFILE_MARKER_KEY,
-    timingStorageKey: TIMING_STORAGE_KEY,
-    timingMarkPrefix: TIMING_MARK_PREFIX,
     isLoginPath: isLoginPath,
     loginPaths: LOGIN_PATHS.slice(),
   }
