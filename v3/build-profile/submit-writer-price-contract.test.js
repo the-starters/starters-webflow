@@ -15,8 +15,10 @@ class Element {
     this.validationMessage = ''
     this.focusCount = 0
     this.reportValidityCount = 0
+    this.children = []
   }
   setAttribute(name, value) { this.attrs.set(name, String(value)) }
+  querySelector() { return this.children.length ? this.children[0] : null }
   getAttribute(name) { return this.attrs.get(name) ?? null }
   setCustomValidity(message) { this.validationMessage = String(message || '') }
   focus() { this.focusCount += 1 }
@@ -26,7 +28,7 @@ class Element {
   async click() { return this.listeners.get('click')?.({ preventDefault() {} }) }
 }
 
-function load(overrides = {}, pathname = '/build-profile/full', { respond = null } = {}) {
+function load(overrides = {}, pathname = '/build-profile/full', { respond = null, errorPanelHoldsMarkup = false } = {}) {
   const values = {
     email: 'starter@example.test',
     'first-name': 'Test',
@@ -53,6 +55,11 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   // single child div carries the copy the member reads.
   const errorMessage = new Element()
   errorMessage.textContent = 'Something went wrong. Please try again.'
+  // The authored panel is not guaranteed to be `.w-form-fail > div(text)`. When its
+  // first p/div is a wrapper holding an icon beside the copy, nothing may write
+  // through it: assigning textContent would delete the icon for the session.
+  const errorPanelIcon = new Element()
+  if (errorPanelHoldsMarkup) errorMessage.children.push(errorPanelIcon)
   const inputs = Object.fromEntries([
     ['[name="rate"]', new Element(values.rate)],
     ['[name="rate-retainer"]', new Element(values['rate-retainer'])],
@@ -119,7 +126,7 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   }
   vm.runInNewContext(SOURCE, context, { filename: 'submit-writer.js' })
   domReady.forEach((callback) => callback())
-  return { form, submit, step, success, error, errorMessage, inputs, requests, loaderStates }
+  return { form, submit, step, success, error, errorMessage, errorPanelIcon, inputs, requests, loaderStates }
 }
 
 test('sets native whole-dollar constraints on each direct price input', () => {
@@ -379,6 +386,105 @@ test('a later non-price failure restores the authored error copy', async () => {
   assert.equal(result.requests.length, 1)
   assert.equal(result.error.style.display, 'block')
   assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
+})
+
+// Clearing a custom-service price is the only remove gesture these forms author.
+// It must empty the slot, not block the whole submit on the service being deleted.
+test('clearing a service price removes that service instead of blocking the submit', async () => {
+  const cleared = load({
+    service: JSON.stringify({ name: 'Audit', price: '' }),
+    'service-2': JSON.stringify({ name: 'Workshop', price: '750' }),
+  })
+  await cleared.submit.click()
+  assert.equal(cleared.requests.length, 1, cleared.errorMessage.textContent)
+  assert.equal(cleared.requests[0].body.services['service-1'], null)
+  assert.deepEqual(cleared.requests[0].body.services['service-2'], { name: 'Workshop', price: 750 })
+  assert.equal(cleared.error.style.display, 'none')
+
+  for (const price of ['   ', null, undefined]) {
+    const blank = load({ service: JSON.stringify({ name: 'Audit', price }) })
+    await blank.submit.click()
+    assert.equal(blank.requests.length, 1, `${price}: ${blank.errorMessage.textContent}`)
+    assert.equal(blank.requests[0].body.services['service-1'], null)
+  }
+})
+
+test('a non-blank malformed service price still blocks before any request', async () => {
+  for (const price of ['0', '500.50', '50001', '1,000', '$50', '1e2', '-5']) {
+    const result = load({ service: JSON.stringify({ name: 'Audit', price }) })
+    await result.submit.click()
+    assert.equal(result.requests.length, 0, `${price} must not reach Xano`)
+    assert.equal(result.error.style.display, 'block')
+    assert.match(result.errorMessage.textContent, /whole-dollar service price/)
+  }
+
+  const unnamed = load({ service: JSON.stringify({ name: '', price: '500' }) })
+  await unnamed.submit.click()
+  assert.equal(unnamed.requests.length, 0)
+  assert.match(unnamed.errorMessage.textContent, /service name is required/i)
+})
+
+// The consult flow authors no monthly-retainer section, so its hidden radio is not
+// an answer and its hidden text is neither visible nor editable.
+test('a consult profile ignores the hidden retainer radio over data the contract rejects', async () => {
+  for (const stale of ['30000', '0', '1.50', '1,000', '$50', '1e2', '-5', '   ', '9007199254740993']) {
+    for (const radio of ['yes', 'no']) {
+      const result = load(
+        { 'offer-monthly-retainers': radio, 'rate-retainer': stale },
+        '/build-profile/consult',
+      )
+      await result.submit.click()
+      assert.equal(
+        result.requests.length, 1,
+        `${radio}/${stale}: ${result.inputs['[name="rate-retainer"]'].validationMessage}`,
+      )
+      assert.equal(result.requests[0].body.retainer, false)
+      assert.equal(result.requests[0].body.retainer_rate, 0)
+      assert.equal(result.error.style.display, 'none')
+      assert.equal(result.inputs['[name="rate-retainer"]'].reportValidityCount, 0)
+    }
+  }
+
+  const inContract = load(
+    { 'offer-monthly-retainers': 'no', 'rate-retainer': '5000' },
+    '/build-profile/consult',
+  )
+  await inContract.submit.click()
+  assert.equal(inContract.requests.length, 1)
+  assert.equal(inContract.requests[0].body.retainer, true)
+  assert.equal(inContract.requests[0].body.retainer_rate, 5000)
+})
+
+test('Full Profile still rejects an enabled out-of-range monthly retainer', async () => {
+  const result = load({ 'offer-monthly-retainers': 'yes', 'rate-retainer': '30000' })
+  await result.submit.click()
+  assert.equal(result.requests.length, 0)
+  assert.equal(result.error.style.display, 'block')
+  assert.match(result.inputs['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+  assert.equal(result.inputs['[name="rate-retainer"]'].reportValidityCount, 1)
+})
+
+// A panel whose copy sits beside an icon must be revealed exactly as authored:
+// writing textContent through the wrapper would delete the icon for the session.
+test('an error panel holding nested markup is revealed without being flattened', async () => {
+  const result = load(
+    { service: JSON.stringify({ name: 'Audit', price: '500.50' }) },
+    '/build-profile/full',
+    { errorPanelHoldsMarkup: true },
+  )
+  const authored = result.errorMessage.textContent
+
+  await result.submit.click()
+  assert.equal(result.requests.length, 0)
+  assert.equal(result.error.style.display, 'block', 'the authored panel is still revealed')
+  assert.equal(result.errorMessage.textContent, authored)
+  assert.deepEqual(result.errorMessage.children, [result.errorPanelIcon])
+
+  result.form.values.service = JSON.stringify({ name: 'Audit', price: '500' })
+  await result.submit.click()
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.errorMessage.textContent, authored)
+  assert.deepEqual(result.errorMessage.children, [result.errorPanelIcon])
 })
 
 test('a rejected canonical request clears the loader behind the authored error state', async () => {

@@ -35,15 +35,26 @@
       // failures own the authored error panel's own message instead, the same way
       // the Edit Profile step routes its mirrored service prices to the authored
       // modal, so a blocked submit always says which price stopped it.
-      const errorMessage = qs('[build-profile-error-message]', error) || qs('p, div', error) || error;
-      const authoredErrorMessage = errorMessage.textContent;
+      // Only an explicit hook, or a leaf the panel authored as its copy, may be
+      // written through. Anything holding markup of its own — an icon beside the
+      // text, a wrapper — is left alone: the panel is revealed exactly as authored
+      // rather than flattened into a single text node for the rest of the session.
+      const errorMessageHook = qs('[build-profile-error-message]', error);
+      const errorMessageLeaf = errorMessageHook || qs('p, div', error);
+      const errorMessage = errorMessageHook
+        || (errorMessageLeaf && !errorMessageLeaf.querySelector?.('*') ? errorMessageLeaf : null);
+      const authoredErrorMessage = errorMessage ? errorMessage.textContent : '';
       const PRICE_CONTROL_SELECTORS = [
         '[name="rate"]', '[name="rate-retainer"]', '[name="paid-call-rate"]',
         '#service', '#service-2', '#service-3',
       ];
 
+      function paintErrorMessage(message) {
+        if (errorMessage) errorMessage.textContent = message || authoredErrorMessage;
+      }
+
       function resetSubmitFeedback() {
-        errorMessage.textContent = authoredErrorMessage;
+        paintErrorMessage(null);
         PRICE_CONTROL_SELECTORS.forEach((selector) => qs(selector, form)?.setCustomValidity?.(''));
       }
 
@@ -71,7 +82,7 @@
           console.log("Normalized Data:", result);
         } catch (submitError) {
           setLoader(false, formSubmit.closest('[data-form="step"]'));
-          if (submitError?.panelMessage) errorMessage.textContent = submitError.panelMessage;
+          paintErrorMessage(submitError?.panelMessage);
           success.style.display = 'none';
           error.style.display = 'block';
           console.error('[build-profile] submit failed', submitError?.code || 'SUBMIT_FAILED');
@@ -157,8 +168,11 @@
           };
         };
 
+        // Clearing the price is the only remove gesture these forms author, so an
+        // empty price empties the slot instead of blocking the submit on a service
+        // the member is deleting. A non-blank price is authored and stays strict.
         function requiredServicesFields(data, selector) {
-          if (!data || (!String(data.name ?? '').trim() && !String(data.price ?? '').trim())) return null;
+          if (!data || !String(data.price ?? '').trim()) return null;
           if (!String(data.name ?? '').trim()) {
             return priceError(qs(selector, form), 'A service name is required when a service price is set.', 'SERVICE_NAME_REQUIRED', true);
           }
@@ -214,14 +228,17 @@
           selector: '[name="rate"]',
           allowBlank: !fullProfile,
         });
-        const retainerEnabled = toBool(formData["offer-monthly-retainers"]) === true;
+        const RETAINER_PRICE = {
+          min: 1,
+          max: 25000,
+          label: 'monthly retainer rate',
+          selector: '[name="rate-retainer"]',
+        };
+        const retainerSelected = toBool(formData["offer-monthly-retainers"]) === true;
+        const retainerInContract = wholeDollarFailure(formData["rate-retainer"], RETAINER_PRICE) === null;
+        const retainerEnabled = isConsultProfile ? retainerInContract : retainerSelected;
         const retainerRate = retainerEnabled
-          ? wholeDollar(formData["rate-retainer"], {
-              min: 1,
-              max: 25000,
-              label: 'monthly retainer rate',
-              selector: '[name="rate-retainer"]',
-            })
+          ? wholeDollar(formData["rate-retainer"], RETAINER_PRICE)
           : 0;
 
         const payload = {

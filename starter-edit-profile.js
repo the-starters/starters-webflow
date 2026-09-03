@@ -705,6 +705,13 @@ onDomReady(function () {
 			return String(service?.name ?? '').trim();
 		}
 
+		// Clearing the price is the only remove gesture these forms author, so an empty
+		// price empties the slot instead of blocking the step on a service the member is
+		// deleting. A non-blank price is authored and stays strict.
+		function servicePriceAuthored(service) {
+			return String(service?.price ?? '').trim() !== '';
+		}
+
 		// Services live in hidden JSON capture inputs, so a price failure there cannot
 		// surface through native constraint validation. Those failures, and any failure
 		// whose control is absent, own the authored error modal instead, the same way
@@ -768,7 +775,7 @@ onDomReady(function () {
 			}
 
 			for (const [slot, service] of Object.entries(services)) {
-				if (!service || (!serviceName(service) && !String(service.price ?? '').trim())) continue;
+				if (!servicePriceAuthored(service)) continue;
 				const serviceField = qs(`#${slot === 'service-1' ? 'service' : slot}`, form);
 				if (!serviceName(service)) {
 					return {
@@ -908,9 +915,9 @@ onDomReady(function () {
 
 				if (Object.prototype.hasOwnProperty.call(payload, 'Services')) {
 					payload.Services = JSON.stringify({
-						"service-1": serviceName(service1) ? service1 : null,
-						"service-2": serviceName(service2) ? service2 : null,
-						"service-3": serviceName(service3) ? service3 : null,
+						"service-1": servicePriceAuthored(service1) ? service1 : null,
+						"service-2": servicePriceAuthored(service2) ? service2 : null,
+						"service-3": servicePriceAuthored(service3) ? service3 : null,
 					});
 				}
 			}

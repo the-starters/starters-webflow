@@ -1043,6 +1043,44 @@ async function testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt() 
 	assert.equal(environment.errorFeedback.textContent, 'Your profile could not be saved.')
 }
 
+// Clearing a custom-service price is the only remove gesture these forms author.
+// It must empty that slot, not block the step on the service being deleted.
+async function testClearingAServicePriceRemovesThatService() {
+	const payload = await submittedStepPayload(saved({
+		stepIndex: 6,
+		additionalFormValues: [
+			['service', JSON.stringify({ name: 'Audit', price: '' })],
+			['service-2', JSON.stringify({ name: 'Workshop', price: '750' })],
+		],
+	}))
+	const services = JSON.parse(payload.Services)
+	assert.equal(services['service-1'], null)
+	assert.deepEqual(services['service-2'], { name: 'Workshop', price: 750 })
+	assert.equal(services['service-3'], null)
+
+	for (const price of ['   ', null, undefined]) {
+		const blank = await submittedStepPayload(saved({
+			stepIndex: 6,
+			additionalFormValues: [['service', JSON.stringify({ name: 'Audit', price })]],
+		}))
+		assert.equal(JSON.parse(blank.Services)['service-1'], null, `price ${price}`)
+	}
+}
+
+async function testANonBlankMalformedServicePriceStillBlocksTheStep() {
+	for (const price of ['0', '500.50', '50001', '1,000', '$50', '1e2', '-5']) {
+		const environment = createEnvironment(async () => {
+			throw new Error('fetch must not run')
+		}, {
+			stepIndex: 6,
+			additionalFormValues: [['service', JSON.stringify({ name: 'Audit', price })]],
+		})
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `service ${price} must not send`)
+		assert.match(environment.errorFeedback.textContent, /\$1 to \$50,000/)
+	}
+}
+
 // A collapsed retainer section must not block the step, and must not forward the
 // stale text of a control the member cannot see as an unvalidated Xano value.
 async function testCollapsedRetainerSectionNeverBlocksStepSix() {
@@ -1758,6 +1796,8 @@ Promise.all([
   testAPriceMessageNeverSurvivesIntoAnUnrelatedFailure(),
   testAnAuthFailureNeverInheritsAPriceMessage(),
   testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt(),
+  testClearingAServicePriceRemovesThatService(),
+  testANonBlankMalformedServicePriceStillBlocksTheStep(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
   testRejectedFetch(),
