@@ -3684,7 +3684,6 @@
         showReason: true,
         requireReason: true,
         showReview: false,
-        showToggle: false,
       }
     }
     // A row left in `termination_requested` by the retired two-sided flow keeps
@@ -3704,7 +3703,6 @@
         showReason: false,
         requireReason: false,
         showReview: false,
-        showToggle: false,
       }
     }
     return {
@@ -3717,7 +3715,6 @@
       showReason: false,
       requireReason: false,
       showReview: role === 'brand' && !project.has_review,
-      showToggle: false,
     }
   }
 
@@ -3801,8 +3798,9 @@
       })
     }
     setEndProjectVisible(parts.reasonWrap, view.showReason)
-    setEndProjectVisible(parts.toggle, view.showToggle)
-    if (parts.toggle && view.toggle) parts.toggle.textContent = view.toggle
+    // Active projects no longer have a second end mode, but an authored
+    // toggle can still exist during Designer/CDN rollout skew: keep it hidden.
+    setEndProjectVisible(parts.toggle, false)
     const starterName = String(project && project.starter_name || '').trim()
     if (starterName) paintProjectReviewStarterName(modal, starterName)
     // The Webflow button is a Clickable Wrap: a bare `clickable_btn` overlay
@@ -3862,10 +3860,6 @@
         role,
         resolve,
         get view() { return view },
-        toggle() {
-          // The authored toggle can remain during rollout skew, but active
-          // projects no longer have a second end mode.
-        },
       }
       showProjectModal(PROJECT_END_MODAL_ID, modal)
     })
@@ -4572,10 +4566,10 @@
       const toggle = target && target.closest
         ? target.closest('[data-end-project-mode-toggle]')
         : null
+      // A stale authored toggle must never submit the dialog or follow its href.
       if (toggle) {
         event.preventDefault()
         event.stopPropagation()
-        if (activeEndProjectRequest) activeEndProjectRequest.toggle()
         return
       }
       const action = target && target.closest

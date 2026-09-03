@@ -7297,9 +7297,10 @@ test('binding a live wrap force-hides a leftover nested Spinner', async () => {
 })
 
 // The end-project modal replaces the native prompt/confirm intent capture.
-// These cases pin first-action finalization, the fixed early-end reason,
-// the review-timing rule, and the prompt fallback for pages that
-// were published before the modal markup shipped.
+// These cases pin first-action finalization, unified completion for both roles
+// on started projects, the narrow reuse of a stranded `termination_requested`
+// row's recorded reason, the review-timing rule, and the prompt fallback for
+// pages that were published before the modal markup shipped.
 function endProjectDom(overrides = {}) {
   const end = el('a', { 'wf-xano-link': 'project-end', href: '#' })
   const label = el('div', { class: 'button_main-text' })

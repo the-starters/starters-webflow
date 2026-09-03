@@ -1078,9 +1078,9 @@ hidden. Every matching control stays hidden for a terminal project. This prevent
 one stale control from surviving when the selector finds another control first.
 The primary control's label and mutation follow canonical lifecycle state, except
 that canonical `status=pending` takes precedence over a more specific
-`lifecycle_state` and always exposes one authorized cancel action. Active projects
-can complete or terminate. Early End has no text input; the controller sends a
-fixed internal reason required by the endpoint. Pre-activation
+`lifecycle_state` and always exposes one authorized cancel action. A started project's End
+Project action always means completion for both roles; there is no early-end
+mode and no end reason is sent. Pre-activation
 projects can cancel only with a required note that records what happened for
 admin operations. The cancel note becomes the project action reason and
 lifecycle-event payload; it is not written to `core_reviews_v3`, does not appear
@@ -1090,21 +1090,22 @@ to match V2. No counterparty confirmation is required. Terminal projects expose
 no lifecycle action.
 
 The lifecycle intent opens the separate Webflow-authored
-`data-modal-target="end-project"` dialog on both role dashboards. The Brand
-component opens active projects in completion-and-review mode; the Starter
-component opens them in early-end mode. An authored
-`[data-end-project-mode-toggle]` lets either role switch between completing the
-work and ending it early. Use `[data-end-project-title]` and
+`data-modal-target="end-project"` dialog on both role dashboards. Both the
+Brand and the Starter component open a started project in completion mode; the
+Brand additionally gets the optional review fields. No authored control switches
+end modes. A legacy `[data-end-project-mode-toggle]` left in the Designer stays
+hidden and inert, so a rollout skew cannot resurrect the retired early-end
+intent. Use `[data-end-project-title]` and
 `[data-end-project-subtitle]` for the state-specific copy,
 `[data-end-project-reason-wrap]` around `[data-end-project-reason]` for the
 pre-activation cancel note, and
 `[data-end-project-review]` around the Brand-only rating and public-review
-fields. The controller shows those review fields only for Brand completion and
-hides them for early end. It also hides the reason field for early end. Add
-`project-element="project-name"` and
+fields. The controller shows those review fields only for a Brand completing a
+started project, and hides the reason field outside pre-activation cancellation.
+Add `project-element="project-name"` and
 `project-element="project-id"` (or the equivalent `data-end-project-bind`
-values) to display the active project's canonical title and numeric ID in both
-modes. When the Starter component places these bindings in its reused
+values) to display the active project's canonical title and numeric ID in every
+state. When the Starter component places these bindings in its reused
 `[booking-element-wrap][display-flex]` rows, the controller reveals each
 populated row as flex after binding the identity. The controller removes native
 `required` constraints while a group is hidden. It restores the reason
@@ -1118,7 +1119,8 @@ can instead keep its caption in a nested `div` or `span`. Pre-activation
 projects paint the cancel-note view and never show review fields. If the
 separate modal markup is absent during a Designer/CDN rollout skew, the native
 prompt flow requires the same cancel note so the lifecycle action is not
-stranded or submitted without its admin record.
+stranded or submitted without its admin record, and a started project asks a
+single completion confirmation.
 
 Rows left in `completion_requested` or `termination_requested` by the retired
 two-sided flow remain actionable. They do not show a waiting label, disable the
@@ -1159,7 +1161,7 @@ They accept the live `Feedback` field and the legacy `Public-Feedback` field
 during the authored surface transition.
 
 The Brand end-project form offers its rating and public-review fields only for
-normal completion, not early end or cancellation. The review is optional. If
+completion, not the legacy stranded-termination cleanup or cancellation. The review is optional. If
 the Brand enters either a rating or review text, JavaScript requires both a 1–5
 rating and a 10–4,000 character review before posting the project action. When
 the action response reaches `completed`, the controller submits the review to
