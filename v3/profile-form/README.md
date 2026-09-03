@@ -19,31 +19,15 @@ carries company logo and stable client identity hydration plus the
 `submit-writer.js` carries the behavior changes owned by the
 [Build Profile documentation](../build-profile/README.md), `shared-foundation.js`
 adds a taxonomy value only through an explicit option click or an Enter press on a highlighted
-option, so typing an exact option name never selects it on fill, on a comma, or on blur,
+option, so typing an exact option name never selects it on fill, on a comma, or on blur, and
+applies the [whole-dollar price contract](#whole-dollar-price-contract) to every rate input instead
+of stripping symbols and re-formatting the authored value,
 and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on
 every input and change, including when the member clears the field. Their transformations are recorded as
 `whitespace_plus_idempotency_guard_plus_behavior_change` and name immutable published-body captures.
 Tests still pin each candidate length and SHA-256, prove the published length, body hash, and
 complete-embed hash from its capture, and fail if a declared change stops diverging from the published
 body.
-
-## Whole-dollar price contract
-
-Profile price inputs preserve the member's authored text until validation. They do not strip symbols,
-round decimals, or convert exponent notation. The native inputs use `type="number"`,
-`inputmode="numeric"`, and `step="1"`. Hourly and Paid Call rates allow `$1` through `$1,000`,
-Monthly Retainer allows `$1` through `$25,000`, and each Custom Service allows `$1` through `$50,000`.
-An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, unsafe integer, or value outside
-its range stops before the Xano request. A toggle-owned rate is only validated while its own section
-says yes; a collapsed Monthly Retainer or Paid Call section keeps its existing zero or null
-compatibility state instead of blocking the submit on text the member cannot see, and its stale text is
-never forwarded unvalidated: Edit Profile sends the canonical zero only alongside the toggle it is
-turning off and otherwise omits the field. On Build Profile Consult, where the paid-call radio is
-hidden, only a positive authored rate enables the paid consult, so the canonical zero rate stays the
-no-paid-consult compatibility state. A blank
-profile-type-inapplicable Hourly Rate keeps the same zero compatibility state. Service prices and names
-live in hidden capture inputs, so their failures report through the authored error modal rather than
-native constraint validation. No invalid value is silently clamped.
 
 `inline-extraction-cutover-candidate.json` binds each source body to its authenticated published body
 length, SHA-256, complete-embed SHA-256, script index, component instance, and node or complete
@@ -80,6 +64,24 @@ The extraction does not move the form into JavaScript. It does not change the se
 owner or Step 4 portfolio owner. A future `wf-xano` conversion requires a separate declarative contract
 and must not be combined with this ownership cutover, which changes no behavior beyond the five
 declared candidate changes recorded above.
+
+## Whole-dollar price contract
+
+Profile price inputs preserve the member's authored text until validation. They do not strip symbols,
+round decimals, or convert exponent notation. The native inputs use `type="number"`,
+`inputmode="numeric"`, and `step="1"`. Hourly and Paid Call rates allow `$1` through `$1,000`,
+Monthly Retainer allows `$1` through `$25,000`, and each Custom Service allows `$1` through `$50,000`.
+An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, unsafe integer, or value outside
+its range stops before the Xano request. A toggle-owned rate is only validated while its own section
+says yes; a collapsed Monthly Retainer or Paid Call section keeps its existing zero or null
+compatibility state instead of blocking the submit on text the member cannot see, and its stale text is
+never forwarded unvalidated: Edit Profile sends the canonical zero only alongside the toggle it is
+turning off and otherwise omits the field. On Build Profile Consult, where the paid-call radio is
+hidden, only a positive authored rate enables the paid consult, so the canonical zero rate stays the
+no-paid-consult compatibility state. A blank
+profile-type-inapplicable Hourly Rate keeps the same zero compatibility state. Service prices and names
+live in hidden capture inputs, so their failures report through the authored error modal rather than
+native constraint validation. No invalid value is silently clamped.
 
 ## Verification
 
