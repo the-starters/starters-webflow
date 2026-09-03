@@ -117,6 +117,24 @@ whatever a duplicate name contributed. Never widen those two lookups back to a
 `[name=…]` or document-wide query: a hidden duplicate would win by document order
 and submit a stale contact value the member cannot see.
 
+### Unsaved-change warning
+
+`canonical-profile-loader.js` owns one page-level dirty-state controller. Canonical
+hydration does not make the form dirty. Native `input` and `change` events mark only
+their containing `[data-form="step"][data-index]` section. Inputs outside the profile
+steps cannot arm the warning.
+
+The main writer calls `beginSave(stepIndex)` immediately before its Xano request and
+calls `finishSave(stepIndex, saved)` after the response settles. Only the explicit
+canonical `saved: true` response clears that step. A failed request stays dirty, and
+an active request remains protected. The Companies and Work Highlights controllers
+use the same contract for steps 3 and 4. Saving one section never clears unsaved work
+in another section.
+
+The `beforeunload` handler prevents navigation only while at least one step is dirty
+or saving. An unchanged page and a fully accepted save navigate without a false
+browser warning.
+
 The sanitized structural contract lives in `published-form-contract.json`.
 `published-form-contract.js` normalizes official Webflow element-tree evidence
 plus the authenticated published-page control inventory without retaining field

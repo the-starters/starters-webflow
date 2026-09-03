@@ -55,6 +55,7 @@ test('portfolio submit shows instant-live update copy until the shared modal clo
     closeEventTarget,
   })
   const committed = []
+  let committedCallback = 0
 
   await context.commitStarterEditPortfolioDrafts({
     createDrafts: [],
@@ -65,9 +66,11 @@ test('portfolio submit shows instant-live update copy until the shared modal clo
     clearAllDraftQueues() {},
     async renderPortfolios() {},
     successController,
+    onCommitted() { committedCallback += 1 },
   })
 
   assert.deepEqual(committed, [['update', 312], ['delete']])
+  assert.equal(committedCallback, 1)
   assert.equal(shownCopy[0].heading, 'Highlight submitted')
   assert.equal(
     shownCopy[0].message,

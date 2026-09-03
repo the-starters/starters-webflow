@@ -819,8 +819,11 @@ onDomReady(function () {
 				return;
 			}
 
+			const profileDirtyState = window.__tsProfileDirtyState;
+			let canonicalSaveAccepted = false;
 			try {
 				acceptReplayProof(replayProof);
+				profileDirtyState?.beginSave(stepIndex);
 				requestStarted = true;
 				const response = await fetch(`${PATCH_ENDPOINT}${memberScope.member.id}`, {
 					method: 'PATCH',
@@ -840,6 +843,7 @@ onDomReady(function () {
 					failureCode = 'SAVE_CONTRACT_ERROR';
 					throw new Error('Profile update did not confirm the save contract.');
 				}
+				canonicalSaveAccepted = true;
 
 				// update Member customFields, if even one of them was changed
 				if (stepIndex === 1) {
@@ -898,6 +902,7 @@ onDomReady(function () {
 					error_code: diagnostic?.error_code || 'WORKFLOW_ERROR',
 				});
 			} finally {
+				window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted);
 				setSubmitLoading(submitButton, false);
 			}
 		}

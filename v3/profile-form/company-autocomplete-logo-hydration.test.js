@@ -306,6 +306,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
   let baselineTimer
   const requests = []
   const modalCounts = { success: 0, error: 0 }
+  const dirtyStateCalls = []
   const renderedCards = []
   const canonicalCompanies = initialCompanies.map((company) => ({ ...company }))
 
@@ -438,7 +439,12 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     setInterval() { return 0 },
     clearInterval() {},
     waitForMember(callback) { readyPromise = callback() },
-    window: {},
+    window: {
+      __tsProfileDirtyState: {
+        beginSave(stepIndex) { dirtyStateCalls.push(['begin', stepIndex]) },
+        finishSave(stepIndex, saved) { dirtyStateCalls.push(['finish', stepIndex, saved]) },
+      },
+    },
   }
 
   vm.runInNewContext(fs.readFileSync(file, 'utf8'), context, { filename: file })
@@ -456,6 +462,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     editCompanyInput,
     requests,
     modalCounts,
+    dirtyStateCalls,
     renderedCards,
     select,
     selectCustom(input, name = 'Private QA Company') {
@@ -563,12 +570,17 @@ test('Edit Profile keeps pending work and shows an error when Also Worked With f
   assert.equal(harness.modalCounts.success, 0)
   assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 1)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 0)
+  assert.deepEqual(harness.dirtyStateCalls, [['begin', 3], ['finish', 3, false]])
 
   await harness.submitAll()
   assert.equal(harness.modalCounts.error, 1)
   assert.equal(harness.modalCounts.success, 1)
   assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 2)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
+  assert.deepEqual(harness.dirtyStateCalls, [
+    ['begin', 3], ['finish', 3, false],
+    ['begin', 3], ['finish', 3, true],
+  ])
 })
 
 test('Edit Profile refreshes committed creates after a later create fails', async () => {

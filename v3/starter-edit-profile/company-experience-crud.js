@@ -1344,7 +1344,9 @@ function starterProfileCompanyMonthYearLabel(value) {
                 if (!hasPendingCompanyChanges && !hasAlsoWorkedWithChanges()) return;
                 if (isSubmitting) return;
 
+                let saved = false;
                 try {
+                    window.__tsProfileDirtyState?.beginSave(3);
                     isSubmitting = true;
                     submitAction = 'submitting';
                     updateAddBtnState();
@@ -1377,6 +1379,7 @@ function starterProfileCompanyMonthYearLabel(value) {
 
                     clearAllDraftQueues();
                     await renderCompanies();
+                    saved = true;
 
                     if (editFormSuccessTrigger) editFormSuccessTrigger.dispatchEvent(new Event('click', { bubbles: true }));
                 } catch (error) {
@@ -1384,6 +1387,7 @@ function starterProfileCompanyMonthYearLabel(value) {
                     await renderCompanies();
                     if (editFormErrorTrigger) editFormErrorTrigger.dispatchEvent(new Event('click', { bubbles: true }));
                 } finally {
+                    window.__tsProfileDirtyState?.finishSave(3, saved);
                     isSubmitting = false;
                     submitAction = '';
 

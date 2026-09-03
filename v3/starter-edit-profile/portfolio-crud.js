@@ -82,6 +82,7 @@ async function commitStarterEditPortfolioDrafts(options) {
   await options.commitDeleteDrafts();
   options.clearAllDraftQueues();
   await options.renderPortfolios();
+  if (options.onCommitted) options.onCommitted();
   options.successController.showForSubmit(options.updateDrafts.length);
 }
 
@@ -1143,11 +1144,14 @@ async function commitStarterEditPortfolioDrafts(options) {
         const finalSubmitButton = portfolioSubmit || editSubmit || createSubmit;
 
         if (!pendingCreateDrafts.length && !pendingUpdateDrafts.size && !pendingDeleteDraftIds.size) {
+          window.__tsProfileDirtyState?.finishSave(4, true);
           successController.showForSubmit(0);
           return;
         }
 
+        let saved = false;
         try {
+          window.__tsProfileDirtyState?.beginSave(4);
           setPortfolioSubmitLoading(finalSubmitButton, true);
 
           const createDrafts = pendingCreateDrafts.slice();
@@ -1162,11 +1166,13 @@ async function commitStarterEditPortfolioDrafts(options) {
             clearAllDraftQueues: clearAllDraftQueues,
             renderPortfolios: renderPortfolios,
             successController: successController,
+            onCommitted: function () { saved = true; },
           });
         } catch (error) {
           console.error(error);
           openNotifyModal(getErrorMessage(error, 'Portfolio save failed'));
         } finally {
+          window.__tsProfileDirtyState?.finishSave(4, saved);
           setPortfolioSubmitLoading(finalSubmitButton, false);
           updatePortfolioSubmitState();
         }

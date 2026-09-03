@@ -2,7 +2,63 @@
     var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
     if (!profileFormControllers.canonicalProfileLoader) {
     profileFormControllers.canonicalProfileLoader = true;
+    var profileDirtyState = window.__tsProfileDirtyState;
+    if (!profileDirtyState) {
+    profileDirtyState = (function () {
+        var hydrating = true;
+        var dirtySteps = new Set();
+        var savingSteps = new Set();
+
+        function stepKey(value) {
+            var normalized = String(value ?? '').trim();
+            return normalized || 'profile';
+        }
+
+        function stepFromTarget(target) {
+            var step = target && typeof target.closest === 'function'
+                ? target.closest('[data-form="step"][data-index]')
+                : null;
+            return step?.getAttribute?.('data-index') || null;
+        }
+
+        function isDirty() {
+            return dirtySteps.size > 0 || savingSteps.size > 0;
+        }
+
+        var state = {
+            finishHydration: function () {
+                hydrating = false;
+                dirtySteps.clear();
+            },
+            markDirty: function (stepIndex) {
+                if (!hydrating) dirtySteps.add(stepKey(stepIndex));
+            },
+            beginSave: function (stepIndex) {
+                savingSteps.add(stepKey(stepIndex));
+            },
+            finishSave: function (stepIndex, saved) {
+                var key = stepKey(stepIndex);
+                savingSteps.delete(key);
+                if (saved) dirtySteps.delete(key);
+                else dirtySteps.add(key);
+            },
+            isDirty: isDirty,
+        };
+
+        function recordEdit(event) {
+            if (hydrating) return;
+            var stepIndex = stepFromTarget(event.target);
+            if (stepIndex) state.markDirty(stepIndex);
+        }
+
+        document.addEventListener('input', recordEdit, true);
+        document.addEventListener('change', recordEdit, true);
+        return state;
+    })();
+    window.__tsProfileDirtyState = profileDirtyState;
+    }
     window.addEventListener('beforeunload', (event) => {
+        if (!profileDirtyState.isDirty()) return;
         event.preventDefault();
         event.returnValue = '';
     });
@@ -55,6 +111,7 @@
                             ensureStepsInProfile(activeProfile, steps);
                             restoreFieldsData(activeProfile);
                             updateCounterFields();
+                            profileDirtyState.finishHydration();
 
                             setTimeout(() => {
                                 setLoader(false);
