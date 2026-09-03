@@ -166,6 +166,16 @@ class FakeElement {
   handlersFor(type) { return this.listeners.get(type) || [] }
 }
 
+function chooseNativeMonth(input, value) {
+  const min = input.getAttribute('min')
+  const max = input.getAttribute('max')
+  if ((min && value < min) || (max && value > max)) return false
+  input.value = value
+  input.dispatchEvent({ type: 'input' })
+  input.dispatchEvent({ type: 'change' })
+  return true
+}
+
 // Mirrors the two jQuery UI behaviours this controller depends on: `setDate`
 // runs the value through `_restrictMinMax`, and cross-field bounds installed by
 // the shared start/end pair outlive any value change.
@@ -480,7 +490,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(secondPayload.end_date, '2025-12')
   })
 
-  test(`${controllerPath} recomputes native bounds between edit operations`, async () => {
+  test(`${controllerPath} keeps native month controls unconstrained between edit operations`, async () => {
     const app = bootCompanyController(controllerPath)
     await app.ready()
 
@@ -492,8 +502,8 @@ for (const controllerPath of controllerPaths) {
       end_date: '2024-12',
     })
 
-    assert.equal(app.editEndDateInput.getAttribute('min'), '2024-01')
-    assert.equal(app.editStartDateInput.getAttribute('max'), '2024-12')
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     app.openEditFor({
       id: 21,
@@ -503,8 +513,8 @@ for (const controllerPath of controllerPaths) {
       end_date: '2025-03',
     })
 
-    assert.equal(app.editEndDateInput.getAttribute('min'), '2025-03')
-    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-03')
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     await app.saveEdit()
     app.clock.advance(1600)
@@ -542,7 +552,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(app.editEndDateInput.value, '')
   })
 
-  test(`${controllerPath} resyncs bounds without changing a legacy baseline`, async () => {
+  test(`${controllerPath} keeps a legacy baseline without reinstalling native bounds`, async () => {
     const app = bootCompanyController(controllerPath)
     await app.ready()
 
@@ -560,7 +570,8 @@ for (const controllerPath of controllerPaths) {
     app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
 
     assert.equal(app.editEndDateInput.value, '2025-12')
-    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-12')
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
 
     await app.saveEdit()
     assert.equal(app.lastRequestPayload().end_date, 'Dec 2025')
@@ -621,22 +632,23 @@ for (const controllerPath of controllerPaths) {
       end_date: '2025-01',
     })
 
-    assert.equal(app.editEndDateInput.getAttribute('min'), '2026-08')
-    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-01')
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     const requestsBeforeInvalidSave = app.fetchCalls.length
     await app.saveEdit()
     assert.equal(app.fetchCalls.length, requestsBeforeInvalidSave)
 
-    app.editEndDateInput.value = '2026-08'
-    app.editEndDateInput.dispatchEvent({ type: 'input' })
-    assert.equal(app.editStartDateInput.getAttribute('max'), '2026-08')
+    assert.equal(chooseNativeMonth(app.editStartDateInput, '2025-06'), true)
+    assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-12'), true)
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     await app.saveEdit()
     const payload = app.lastRequestPayload()
 
-    assert.equal(payload.start_date, '2026-08')
-    assert.equal(payload.end_date, '2026-08')
+    assert.equal(payload.start_date, '2025-06')
+    assert.equal(payload.end_date, '2025-12')
   })
 
   test(`${controllerPath} ignores cross-field bounds left behind by an earlier edit`, async () => {

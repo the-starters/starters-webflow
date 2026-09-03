@@ -148,17 +148,15 @@ function serializeStarterProfileCompanyDate(input, baseline) {
   return currentValue;
 }
 
-function syncStarterProfileCompanyMonthRange(startInput, endInput, isCurrent) {
+function syncStarterProfileCompanyMonthRange(startInput, endInput) {
   if (!startInput || !endInput) return;
 
-  const startValue = startInput.value.trim();
-  const endValue = endInput.value.trim();
-
-  if (startValue) endInput.setAttribute('min', startValue);
-  else endInput.removeAttribute('min');
-
-  if (!isCurrent && endValue) startInput.setAttribute('max', endValue);
-  else startInput.removeAttribute('max');
+  // Do not constrain either native month picker from the other field. Reciprocal
+  // min/max bounds can trap an existing or inverted range: neither side can move
+  // far enough to repair it. The save handlers below remain the authority for
+  // rejecting a completed start month that is later than its end month.
+  endInput.removeAttribute('min');
+  startInput.removeAttribute('max');
 }
 
 function isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent) {
