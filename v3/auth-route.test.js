@@ -161,12 +161,21 @@ function loadRouter(options = {}) {
   const formAttributes = { login: {}, signup: {} }
   function makeForm(kind) {
     const listeners = {}
+    // A real form carries its own `data-ms-form`, which is how the router reads
+    // back the kind of each form the one combined query returned.
+    const own = { 'data-ms-form': kind }
     return {
       kind,
       hasListener(name) {
         return typeof listeners[name] === 'function'
       },
+      getAttribute(name) {
+        return Object.prototype.hasOwnProperty.call(own, name)
+          ? own[name]
+          : null
+      },
       setAttribute(name, value) {
+        own[name] = value
         formAttributes[kind][name] = value
         attributes[name] = value
       },
@@ -1251,7 +1260,11 @@ test('a provider-control click restarts timing a rejected password left behind',
 
     const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
     assert.notEqual(receipt.startedAt, rejectedAt, control.tag)
-    assert.deepEqual(Object.keys(receipt), ['startedAt'], control.tag)
+    assert.deepEqual(
+      Object.keys(receipt).sort(),
+      ['provider', 'startedAt'],
+      control.tag,
+    )
   }
 })
 
@@ -1277,7 +1290,7 @@ test('a provider-control click outside both auth forms restarts timing', () => {
 
   const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
   assert.notEqual(receipt.startedAt, rejectedAt)
-  assert.deepEqual(Object.keys(receipt), ['startedAt'])
+  assert.deepEqual(Object.keys(receipt).sort(), ['provider', 'startedAt'])
   assert.ok(harness.marks.includes('starters:v3-auth-route:login-submit'))
 })
 
@@ -1499,6 +1512,72 @@ test('a login page boot discards a receipt from an attempt that never routed', (
   })
 
   assert.equal(harness.storage.has(TIMING_KEY), false)
+})
+
+// A provider login leaves the site and returns through a fresh page load — the
+// reason Memberstack stashes `data-ms-redirect` in session storage at all — and
+// that return can land back on a login path before Memberstack honors the
+// stash. The boot clear must not eat the receipt of the flow still in progress,
+// or every provider login would be permanently unmeasured.
+test('a login page boot keeps a provider attempt still in flight', async () => {
+  const clock = makeClock()
+  const storage = new Map()
+  const login = loadRouter({ pathname: '/login', storage, clock })
+
+  login.dispatchDocument('click', {
+    target: formControl({
+      tag: 'a',
+      attributes: { 'data-ms-auth-provider': 'google' },
+      owner: 'login',
+    }),
+  })
+  const startedAt = JSON.parse(storage.get(TIMING_KEY)).startedAt
+
+  // The OAuth round trip, then the return page load booting the router again.
+  await clock.advance(8000)
+  loadRouter({ pathname: '/login', storage, clock })
+
+  assert.equal(JSON.parse(storage.get(TIMING_KEY)).startedAt, startedAt)
+})
+
+// The exception is "in flight", not "provider". Past the shared two-minute
+// ceiling the round trip is over however it ended, so the receipt is stale like
+// any other and the boot clear takes it.
+test('a login page boot discards a provider receipt past the ceiling', async () => {
+  const clock = makeClock()
+  const storage = new Map()
+  const login = loadRouter({ pathname: '/login', storage, clock })
+
+  login.dispatchDocument('click', {
+    target: formControl({
+      tag: 'a',
+      attributes: { 'data-ms-auth-provider': 'google' },
+      owner: 'login',
+    }),
+  })
+
+  await clock.advance(120001)
+  loadRouter({ pathname: '/login', storage, clock })
+
+  assert.equal(storage.has(TIMING_KEY), false)
+})
+
+// A password attempt is not in flight when its login page boots: the member
+// never left, so anything still here is an attempt that failed or was
+// abandoned, and confirming it later would report a rejected password's wait as
+// a login-to-destination duration.
+test('a login page boot still discards a password attempt receipt', async () => {
+  const clock = makeClock()
+  const storage = new Map()
+  const login = loadRouter({ pathname: '/login', storage, clock })
+
+  login.forms[0].dispatch('submit')
+  assert.equal(storage.has(TIMING_KEY), true)
+
+  await clock.advance(8000)
+  loadRouter({ pathname: '/login', storage, clock })
+
+  assert.equal(storage.has(TIMING_KEY), false)
 })
 
 test('auth route confirms the receipt only as it hands off to the destination', async () => {
@@ -1857,6 +1936,60 @@ test('a rejected read, a failed trade, and a tokenless trade all fail open', asy
   assert.equal(tokenless.location.replaced, '/starter-dashboard')
   assert.equal(callsTo(tradeFailed.fetchCalls, STATUS_URL).length, 0)
   assert.equal(callsTo(tokenless.fetchCalls, STATUS_URL).length, 0)
+})
+
+// Every `-start` mark has to be answered by its `-end`. Without that a consumer
+// pairing stages is left holding an interval that never closes, and a failed or
+// abandoned Xano read is only inferable from a mark that is absent. The routing
+// destination is unaffected (every case here fails open), so this is about the
+// evidence the receipt advertises.
+test('a failed Xano read still closes the timing stage it opened', async () => {
+  const TRADE = ['token-trade-start', 'token-trade-end']
+  const READ = ['status-read-start', 'status-read-end']
+  const cases = [
+    ['an HTTP error status read', { xano: { getStatus: 500 } }, TRADE.concat(READ)],
+    ['a rejected status read', { xano: { getRejects: true } }, TRADE.concat(READ)],
+    [
+      'an unparseable status body',
+      { xano: { getMalformedJson: true } },
+      TRADE.concat(READ),
+    ],
+    ['an HTTP error token trade', { xano: { tradeStatus: 401 } }, TRADE],
+    ['a tokenless token trade', { xano: { tradeBody: { nothing: true } } }, TRADE],
+    [
+      'an HTTP error brand status read',
+      {
+        member: {
+          id: 'member-brand',
+          planConnections: [plan('pln_dorxata-test-brand-plan-777r02pa')],
+        },
+        xano: { brandStatus: 500 },
+      },
+      TRADE.concat(READ),
+    ],
+    // A stage that never opened must not be closed either: the cookie read
+    // throws before `token-trade-start`, so neither mark belongs in the stream.
+    [
+      'a Memberstack cookie failure before the trade',
+      { cookieRejects: true, xano: { statusBody: ONBOARDED } },
+      [],
+    ],
+  ]
+
+  for (const [label, options, expected] of cases) {
+    const harness = loadRouter({
+      pathname: '/auth-route',
+      member: talentMember(),
+      ...options,
+    })
+
+    await flush()
+    assert.ok(harness.location.replaced, label)
+    const stages = harness.marks
+      .map((mark) => mark.slice('starters:v3-auth-route:'.length))
+      .filter((stage) => TRADE.concat(READ).includes(stage))
+    assert.deepEqual(stages, expected, label)
+  }
 })
 
 test('a member with no Memberstack cookie never reaches Xano and routes normally', async () => {
@@ -2594,5 +2727,68 @@ test('an off-form provider login is measured through to destination load', async
   // The 60s the member spent on the rejected password is excluded, which is the
   // whole point of restarting rather than inheriting.
   assert.ok(clock.now() - rejectedAt > 60000)
+  assert.deepEqual([...storage.keys()], [])
+})
+
+// The provider round trip is a full navigation away and back — Memberstack has
+// to stash `data-ms-redirect` in session storage precisely because the page it
+// was clicked on is gone — so the return can boot the router on a login path
+// again before the stash is honored. Both real modules over one storage and one
+// clock: the receipt has to survive that second login-page boot and still be
+// reported once at the destination, or provider logins are measured nowhere.
+test('a provider round trip landing back on the login page is still measured', async () => {
+  const storage = new Map()
+  const clock = makeClock()
+  const member = talentMember()
+
+  const login = loadRouter({ pathname: '/login', storage, clock })
+  login.forms[0].dispatch('submit')
+  const rejectedAt = clock.now()
+
+  await clock.advance(60000)
+  login.dispatchDocument('click', {
+    target: formControl({
+      tag: 'a',
+      attributes: { 'data-ms-auth-provider': 'google' },
+      owner: 'login',
+    }),
+  })
+  const startedAt = clock.now()
+
+  // The OAuth round trip returns to /login, and the router boots there again.
+  await clock.advance(8000)
+  const returned = loadRouter({ pathname: '/login', storage, clock })
+  assert.equal(JSON.parse(storage.get(TIMING_KEY)).startedAt, startedAt)
+  assert.deepEqual(returned.formAttributes.login, {
+    'data-ms-redirect': '/auth-route',
+    redirect: '/auth-route',
+  })
+
+  await clock.advance(1000)
+  const route = loadRouter({
+    pathname: '/auth-route',
+    storage,
+    clock,
+    member,
+    memberReady: Promise.resolve(member),
+    xano: { statusBody: ONBOARDED },
+  })
+  await flush()
+  assert.equal(route.location.replaced, '/starter-dashboard')
+
+  const destination = runDestinationLoader({
+    storage,
+    clock,
+    pathname: route.location.replaced,
+  })
+
+  assert.equal(destination.events.length, 1)
+  assert.deepEqual({ ...destination.events[0].detail }, {
+    stage: 'destination-load',
+    elapsedMs: 9000,
+  })
+  // The 60s spent on the rejected password before the provider click is still
+  // excluded: surviving the boot is not the same as inheriting a stale start.
+  assert.equal(startedAt - rejectedAt, 60000)
   assert.deepEqual([...storage.keys()], [])
 })

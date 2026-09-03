@@ -201,33 +201,58 @@
     return (error && error.message) || String(error)
   }
 
-  function timingStartedAt() {
+  // The stored receipt, or null when there is none, it is unreadable, it has no
+  // usable `startedAt`, or it is past the two-minute ceiling.
+  function readLoginTiming() {
     try {
       var raw = window.sessionStorage.getItem(TIMING_STORAGE_KEY)
       var parsed = raw ? JSON.parse(raw) : null
-      var startedAt = parsed && Number(parsed.startedAt)
+      if (!parsed || typeof parsed !== 'object') return null
+      var startedAt = Number(parsed.startedAt)
       if (!Number.isFinite(startedAt)) return null
       if (Date.now() - startedAt > TIMING_MAX_AGE_MS) return null
-      return startedAt
+      return parsed
     } catch (error) {
       return null
     }
   }
 
-  function beginLoginTiming() {
+  function timingStartedAt() {
+    var receipt = readLoginTiming()
+    return receipt === null ? null : Number(receipt.startedAt)
+  }
+
+  // `provider` is the only thing the receipt records beyond timestamps, and it
+  // is a boolean about the attempt's SHAPE, not about the member or the chosen
+  // provider: a provider login leaves the site and comes back through a fresh
+  // page load, so it is the one attempt whose flow can still be in progress
+  // while a login page boots (see configureLoginForms).
+  function writeLoginTiming(viaProvider) {
+    var receipt = { startedAt: Date.now() }
+    if (viaProvider) receipt.provider = true
     try {
-      window.sessionStorage.setItem(
-        TIMING_STORAGE_KEY,
-        JSON.stringify({ startedAt: Date.now() }),
-      )
+      window.sessionStorage.setItem(TIMING_STORAGE_KEY, JSON.stringify(receipt))
     } catch (error) {}
     timingMark('login-submit')
+  }
+
+  function beginLoginTiming() {
+    writeLoginTiming(false)
+  }
+
+  function beginProviderLoginTiming() {
+    writeLoginTiming(true)
   }
 
   function clearLoginTiming() {
     try {
       window.sessionStorage.removeItem(TIMING_STORAGE_KEY)
     } catch (error) {}
+  }
+
+  function providerAttemptInFlight() {
+    var receipt = readLoginTiming()
+    return receipt !== null && receipt.provider === true
   }
 
   // A receipt only becomes readable evidence once /auth-route actually hands
@@ -450,9 +475,15 @@
   }
 
   function configureLoginForms() {
-    // A login page is the start of a flow, never the middle of one. Any receipt
-    // still here belongs to an earlier attempt that never reached /auth-route.
-    clearLoginTiming()
+    // A login page is the start of a flow, never the middle of one, with one
+    // exception: a provider login leaves the site and returns through a fresh
+    // page load — that is why Memberstack has to stash `data-ms-redirect` in
+    // session storage — and that return can land back on a login path before
+    // Memberstack honors the stash. That receipt is the flow still in progress,
+    // so it survives; every other receipt still here belongs to an earlier
+    // attempt that never reached /auth-route, and a provider receipt past the
+    // two-minute ceiling is no longer in flight either.
+    if (!providerAttemptInFlight()) clearLoginTiming()
 
     var queryValue = new URLSearchParams(window.location.search).get('next')
     var queryDestination = localPath(queryValue)
@@ -470,13 +501,7 @@
     // the form directly, which covers Enter-key submits and outranks both the
     // stored override and the server value. Keep `data-ms-redirect` too: it is
     // what carries the destination through the click-driven provider flows.
-    document
-      .querySelectorAll('[data-ms-form="login"], [data-ms-form="signup"]')
-      .forEach(function (form) {
-        form.setAttribute('data-ms-redirect', ROUTE_PATH)
-        form.setAttribute('redirect', ROUTE_PATH)
-      })
-
+    //
     // Timing measures the login-to-destination interval, so only the login form
     // starts a receipt. The signup form on these pages routes through
     // /auth-route on the same attributes above, but account creation, Turnstile,
@@ -485,16 +510,19 @@
     // receipt exists to report. It still has to DROP the receipt: a signup
     // attempt leaving this page is the one flow that would otherwise let a
     // rejected password on the same visit be confirmed at /auth-route as a
-    // login-to-destination duration.
+    // login-to-destination duration. The kind is read off the form itself, the
+    // same nearest-kind dispatch the delegated click handler does below.
     document
-      .querySelectorAll('[data-ms-form="login"]')
+      .querySelectorAll('[data-ms-form="login"], [data-ms-form="signup"]')
       .forEach(function (form) {
-        bindAttemptSubmit(form, beginLoginTiming)
-      })
-    document
-      .querySelectorAll('[data-ms-form="signup"]')
-      .forEach(function (form) {
-        bindAttemptSubmit(form, clearLoginTiming)
+        form.setAttribute('data-ms-redirect', ROUTE_PATH)
+        form.setAttribute('redirect', ROUTE_PATH)
+        bindAttemptSubmit(
+          form,
+          form.getAttribute('data-ms-form') === 'signup'
+            ? clearLoginTiming
+            : beginLoginTiming,
+        )
       })
     bindAttemptClicks()
   }
@@ -551,7 +579,7 @@
         clearLoginTiming()
         return
       }
-      beginLoginTiming()
+      beginProviderLoginTiming()
     })
   }
 
@@ -640,25 +668,32 @@
     var memberstackToken = await memberstack.getMemberCookie()
     if (!memberstackToken) throw new Error('No Memberstack session cookie')
 
+    // The `-end` mark lives in a `finally` so the stage is paired for every
+    // outcome, not just the happy path: an HTTP error, an unusable body, a
+    // rejected fetch, and the shared budget's abort all end the trade, and a
+    // consumer pairing stages must never be left holding an open interval.
     timingMark('token-trade-start')
-    var response = await window.fetch(
-      XANO_AUTH_BASE +
-        TRADE_TOKEN_PATH +
-        '?token=' +
-        encodeURIComponent(memberstackToken),
-      { signal: signal },
-    )
-    var data = await response.json().catch(function () {
-      return null
-    })
-    if (!response.ok) {
-      throw new Error('Xano token trade failed with ' + response.status)
+    try {
+      var response = await window.fetch(
+        XANO_AUTH_BASE +
+          TRADE_TOKEN_PATH +
+          '?token=' +
+          encodeURIComponent(memberstackToken),
+        { signal: signal },
+      )
+      var data = await response.json().catch(function () {
+        return null
+      })
+      if (!response.ok) {
+        throw new Error('Xano token trade failed with ' + response.status)
+      }
+      var token =
+        typeof data === 'string' ? data : data && (data.authToken || data.token)
+      if (!token) throw new Error('Xano token trade returned no token')
+      return token
+    } finally {
+      timingMark('token-trade-end')
     }
-    var token =
-      typeof data === 'string' ? data : data && (data.authToken || data.token)
-    if (!token) throw new Error('Xano token trade returned no token')
-    timingMark('token-trade-end')
-    return token
   }
 
   /**
@@ -688,19 +723,23 @@
 
   async function readFunnelState(memberstack, signal) {
     var token = await tradeForXanoToken(memberstack, signal)
+    // Paired in a `finally` for the same reason as the token trade above.
     timingMark('status-read-start')
-    var response = await window.fetch(
-      XANO_ONBOARDING_BASE + BUILD_PROFILE_STATUS_PATH,
-      { headers: { Authorization: 'Bearer ' + token }, signal: signal },
-    )
-    if (!response.ok) {
-      throw new Error('get_build_profile_status responded ' + response.status)
+    try {
+      var response = await window.fetch(
+        XANO_ONBOARDING_BASE + BUILD_PROFILE_STATUS_PATH,
+        { headers: { Authorization: 'Bearer ' + token }, signal: signal },
+      )
+      if (!response.ok) {
+        throw new Error('get_build_profile_status responded ' + response.status)
+      }
+      var data = await response.json().catch(function () {
+        return null
+      })
+      return funnelStateFrom(data)
+    } finally {
+      timingMark('status-read-end')
     }
-    var data = await response.json().catch(function () {
-      return null
-    })
-    timingMark('status-read-end')
-    return funnelStateFrom(data)
   }
 
   /**
@@ -776,19 +815,23 @@
 
   async function readBrandProfileState(memberstack, signal) {
     var token = await tradeForXanoToken(memberstack, signal)
+    // Paired in a `finally` for the same reason as the token trade above.
     timingMark('status-read-start')
-    var response = await window.fetch(
-      XANO_ONBOARDING_BASE + BRAND_PROFILE_STATUS_PATH,
-      { headers: { Authorization: 'Bearer ' + token }, signal: signal },
-    )
-    if (!response.ok) {
-      throw new Error('get_brand_profile_status responded ' + response.status)
+    try {
+      var response = await window.fetch(
+        XANO_ONBOARDING_BASE + BRAND_PROFILE_STATUS_PATH,
+        { headers: { Authorization: 'Bearer ' + token }, signal: signal },
+      )
+      if (!response.ok) {
+        throw new Error('get_brand_profile_status responded ' + response.status)
+      }
+      var data = await response.json().catch(function () {
+        return null
+      })
+      return brandProfileStateFrom(data)
+    } finally {
+      timingMark('status-read-end')
     }
-    var data = await response.json().catch(function () {
-      return null
-    })
-    timingMark('status-read-end')
-    return brandProfileStateFrom(data)
   }
 
   /**

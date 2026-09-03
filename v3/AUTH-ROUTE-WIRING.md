@@ -229,20 +229,36 @@ log a member in, and a restart overwrites a rejected password's `startedAt` just
 as completely as a clear while still measuring the flow. A plain submit button
 outside both forms belongs to some unrelated form and is ignored. The router
 emits fixed `performance.mark()` names for router boot, Memberstack ready,
-member snapshot, token trade, status read, and redirect request. The sitewide
-loader emits `destination-load` on the final non-auth page and consumes the
-receipt. The receipt contains only `startedAt` and, once confirmed,
-`redirectedAt`. Events and marks never contain a member ID, email, cookie, Xano
-token, or requested destination.
+member snapshot, token trade, status read, and redirect request. The token trade
+and the status read each emit a `-start` and a matching `-end`, and the `-end`
+fires however the read ended — a body, an HTTP error, a rejected request, or the
+8s budget's abort — so a consumer pairing the two never holds an interval that
+cannot close. The sitewide loader emits `destination-load` on the final non-auth
+page and consumes the receipt. The receipt carries `startedAt`, a
+`provider: true` flag while a provider attempt is in flight, and `redirectedAt`
+once confirmed — timestamps and one boolean about the attempt's shape, nothing
+else. Events and marks never contain a member ID, email, cookie, Xano token, or
+requested destination.
 
 Only a completed login-to-destination flow can be measured. `/auth-route` stamps
 `redirectedAt` on the receipt at the moment it hands off, and the loader refuses
 to emit `destination-load` for a receipt without it. A login page boot clears
-any receipt it finds, every signup attempt clears it — a signup submit, or any
-attempt control owned by the signup form — and the
+any receipt it finds bar the one exception below, every signup attempt clears
+it — a signup submit, or any attempt control owned by the signup form — and the
 logged-out bounce back to `/login` clears it too, so a rejected password or an
 abandoned login page can never be read later as a login-to-destination
 duration.
+
+The boot clear has exactly one exception, and it is the reason the receipt
+records `provider`. A provider login is a full navigation away and back — which
+is *why* Memberstack has to stash `data-ms-redirect` in session storage — and
+that return can boot the router on a login path again before the stash is
+honored. An unconditional boot clear would eat the receipt of the flow still in
+progress and leave every provider login unmeasured, so a provider attempt inside
+the two-minute ceiling survives a login-page boot. Nothing else does: a password
+attempt's receipt is still cleared (the member never left, so it failed or was
+abandoned), and a provider receipt past the ceiling is cleared too, because by
+then the round trip has ended however it ended.
 
 The loader validates and **consumes** the receipt at its own boot on the
 destination page, keeping only `startedAt`, and emits on `load`. `elapsedMs` is
@@ -551,19 +567,22 @@ Production stays silent apart from the configuration errors in the table above.
 - Back up page-level code before installing the script.
 - Run `node --test v3/auth-route.test.js v3/auth-page-loader.test.js`.
 - Submit each login form and record the privacy-safe
-  `starters:v3-auth-route-timing` stages. Confirm the receipt contains only
-  `startedAt` before `/auth-route`, gains only `redirectedAt` at handoff, and is
-  consumed on the destination. Confirm `destination-load.elapsedMs` includes
-  the destination page load, is finite, is at most 120000, and no timing event
-  contains a member ID, email, cookie, Xano token, or requested destination.
+  `starters:v3-auth-route-timing` stages. Confirm a password attempt's receipt
+  contains only `startedAt` before `/auth-route`, gains only `redirectedAt` at
+  handoff, and is consumed on the destination. Confirm
+  `destination-load.elapsedMs` includes the destination page load, is finite, is
+  at most 120000, and no timing event contains a member ID, email, cookie, Xano
+  token, or requested destination.
   Then submit the signup form on `/login` and confirm it routes through
   `/auth-route` while emitting no `login-submit` stage and leaving no receipt.
 - Exercise the provider control, whose measurement must not depend on where it
   sits. On `/login`, submit a wrong password, read
   `sessionStorage['thestarters:v3-auth-route-timing']` and note its `startedAt`,
   then click the provider control and read the key again: it must hold a later
-  `startedAt`, never the rejected attempt's. Complete that provider login and
-  confirm the destination emits one `destination-load`. Then run
+  `startedAt` alongside `provider: true`, never the rejected attempt's. Complete
+  that provider login and confirm the destination emits one `destination-load`.
+  If the provider return lands on a login page first, confirm the key still holds
+  that same `startedAt` after that page has loaded. Then run
   `document.querySelector('[data-ms-auth-provider]').closest('[data-ms-form]')`
   and record the owning form, or `null` — the restart is required either way,
   and this records which markup the release actually shipped against.
