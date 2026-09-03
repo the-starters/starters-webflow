@@ -128,6 +128,11 @@ that choice is valid with `source: custom`, an empty entity ID, an empty domain,
 and an empty logo. Free typing without selecting a result or that custom choice
 is invalid.
 
+Build Profile Work Experience creates, updates, and deletes are draft-stage
+mutations. Each request sends `defer_projection: true`; the final Build Profile
+submit remains the single owner of the complete Hire-page projection. Starter
+Edit Profile keeps its immediate-save and asynchronous-projection contract.
+
 If the member types over the selected name, the picker clears all stored
 selection metadata so an old identity cannot be attached to new free text.
 Editing an existing Work Experience row hydrates its entity ID, source, domain,
