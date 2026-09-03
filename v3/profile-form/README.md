@@ -204,7 +204,10 @@ Opening a different role clears disabled state and any date bounds left by the p
 The two controls intentionally do not set reciprocal native `min` and `max` bounds. Those
 bounds can trap an existing or inverted range and stop a member from repairing either month.
 For a non-current role, save-time validation still requires the end month to be the same as
-or later than the start month; same-month tenures are valid. A current role disables the
+or later than the start month; same-month tenures are valid. A rejected range sets a custom
+validity message on both month controls and reports it on the end-month control, so the
+member sees which pair is wrong for as long as it stays wrong; touching either month, the
+current-role checkbox, or reopening the modal clears it. A current role disables the
 end-month control and stores `Present` through the existing `end_date` field.
 
 On save, a date field the member never touched re-serializes its original canonical string,

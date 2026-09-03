@@ -148,6 +148,21 @@ function serializeStarterProfileCompanyDate(input, baseline) {
     return currentValue;
 }
 
+const STARTER_PROFILE_COMPANY_MONTH_RANGE_MESSAGE =
+    'End month must be the same as or later than the start month.';
+
+function setStarterProfileCompanyMonthRangeError(startInput, endInput, isInvalid) {
+    const message = isInvalid ? STARTER_PROFILE_COMPANY_MONTH_RANGE_MESSAGE : '';
+
+    [startInput, endInput].forEach(function (input) {
+        if (input && typeof input.setCustomValidity === 'function') input.setCustomValidity(message);
+    });
+}
+
+function reportStarterProfileCompanyMonthRangeError(endInput) {
+    if (endInput && typeof endInput.reportValidity === 'function') endInput.reportValidity();
+}
+
 function syncStarterProfileCompanyMonthRange(startInput, endInput) {
     if (!startInput || !endInput) return;
 
@@ -157,6 +172,7 @@ function syncStarterProfileCompanyMonthRange(startInput, endInput) {
     // rejecting a completed start month that is later than its end month.
     endInput.removeAttribute('min');
     startInput.removeAttribute('max');
+    setStarterProfileCompanyMonthRangeError(startInput, endInput, false);
 }
 
 function isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent) {
@@ -171,7 +187,7 @@ function bindStarterProfileCompanyMonthRange(startInput, endInput, currentCheckb
     if (!startInput || !endInput) return;
 
     const syncRange = function () {
-        syncStarterProfileCompanyMonthRange(startInput, endInput, !!(currentCheckbox && currentCheckbox.checked));
+        syncStarterProfileCompanyMonthRange(startInput, endInput);
     };
 
     startInput.addEventListener('input', syncRange);
@@ -1046,7 +1062,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
                 }
 
                 if (endDateInput) endDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
-                syncStarterProfileCompanyMonthRange(startDateInput, endDateInput, false);
+                syncStarterProfileCompanyMonthRange(startDateInput, endDateInput);
 
                 updateAddBtnState();
             }
@@ -1102,7 +1118,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
                         editEndDateBaseline = starterProfileCompanyDateBaseline(editEndDateInput, rawEndDate);
                     }
 
-                    syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, !!company.current_work);
+                    syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput);
                 }
 
                 if (editCompanyInput) {
@@ -1170,7 +1186,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
 
                     setCheckboxState(editCurrentWorkCheckbox, false);
                     if (editEndDateInput) editEndDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
-                    syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, false);
+                    syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput);
 
                     editStartDateBaseline = null;
                     editEndDateBaseline = null;
@@ -1340,6 +1356,8 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     if (!isStarterProfileCompanyMonthRangeValid(editStartDateInput, editEndDateInput, payload.current_work)) {
                         showFieldError(editStartDateInput.closest('[form-group]'));
                         showFieldError(editEndDateInput.closest('[form-group]'));
+                        setStarterProfileCompanyMonthRangeError(editStartDateInput, editEndDateInput, true);
+                        reportStarterProfileCompanyMonthRangeError(editEndDateInput);
                         isValid = false;
                     }
 
@@ -1439,9 +1457,12 @@ function createStarterEditCompanyDraftDirtyController(options) {
                         isValid = false;
                     }
 
-                    if (!isStarterProfileCompanyMonthRangeValid(startDateInput, endDateInput, payload.current_work)) {
+                    const isAddMonthRangeInvalid = !isStarterProfileCompanyMonthRangeValid(startDateInput, endDateInput, payload.current_work);
+
+                    if (isAddMonthRangeInvalid) {
                         showFieldError(startDateInput.closest('[form-group]'));
                         showFieldError(endDateInput.closest('[form-group]'));
+                        setStarterProfileCompanyMonthRangeError(startDateInput, endDateInput, true);
                         isValid = false;
                     }
 
@@ -1457,6 +1478,8 @@ function createStarterEditCompanyDraftDirtyController(options) {
                         } else {
                             console.warn("Current accordion not found");
                         }
+
+                        if (isAddMonthRangeInvalid) reportStarterProfileCompanyMonthRangeError(endDateInput);
 
                         return;
                     }
