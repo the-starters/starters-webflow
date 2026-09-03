@@ -8,6 +8,10 @@ const routeGuardSource = fs.readFileSync(
   require.resolve('./route-guard.js'),
   'utf8',
 )
+const loaderSource = fs.readFileSync(
+  require.resolve('./auth-page-loader.js'),
+  'utf8',
+)
 
 const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
@@ -175,7 +179,9 @@ function loadRouter(options = {}) {
     }
   }
   const forms = [makeForm('login'), makeForm('signup')]
-  const storage = new Map()
+  // Shareable so one test can hand a receipt from the real router to the real
+  // loader over a single session storage.
+  const storage = options.storage || new Map()
   if (options.storedDestination) {
     storage.set('thestarters:v3-auth-next', options.storedDestination)
   }
@@ -211,7 +217,7 @@ function loadRouter(options = {}) {
       storage.set(key, value)
     },
   }
-  const clock = options.clock ? makeClock() : null
+  const clock = options.clock === true ? makeClock() : options.clock || null
   const fetchCalls = []
   const aborted = []
   const logs = { info: [], warn: [], error: [] }
@@ -374,6 +380,11 @@ function loadRouter(options = {}) {
     document.readyState = 'interactive'
     if (documentListeners.DOMContentLoaded) documentListeners.DOMContentLoaded()
   }
+  // The provider-control listener is delegated from `document`, so a click test
+  // has to enter through the same door the browser uses.
+  function dispatchDocument(name, event) {
+    if (documentListeners[name]) documentListeners[name](event)
+  }
 
   class FakeDate extends Date {
     static now() {
@@ -406,6 +417,7 @@ function loadRouter(options = {}) {
     attributes,
     formAttributes,
     clock,
+    dispatchDocument,
     fetchCalls,
     finishParsing,
     forms,
@@ -1122,32 +1134,55 @@ function matchesSimpleSelector(node, simple) {
   })
 }
 
-function formControl({ tag = 'button', classes = [], attributes = {} } = {}) {
-  const node = { tag, classes, attributes }
-  node.closest = (selector) =>
-    selector
+// `owner` is the `data-ms-form` kind of the auth form this control is nested
+// inside, or null for a control that sits outside both auth forms. `closest`
+// walks that real ancestor chain, so a listener that reaches a control only
+// through its owning form and one delegated from `document` are told apart here
+// rather than both being handed a match.
+function formControl({
+  tag = 'button',
+  classes = [],
+  attributes = {},
+  owner = null,
+} = {}) {
+  const node = { tag, classes, attributes, owner }
+  const chain = [node]
+  if (owner) {
+    chain.push({
+      tag: 'form',
+      classes: [],
+      attributes: { 'data-ms-form': owner },
+    })
+  }
+  node.closest = (selector) => {
+    const simples = selector
       .split(',')
       .map((simple) => simple.trim())
       .filter(Boolean)
-      .some((simple) => matchesSimpleSelector(node, simple))
-      ? node
-      : null
+    for (const candidate of chain) {
+      if (simples.some((simple) => matchesSimpleSelector(candidate, simple))) {
+        return candidate
+      }
+    }
+    return null
+  }
   return node
 }
 
 test('a submit-control click restarts timing after a rejected attempt', () => {
   for (const control of [
-    formControl({ tag: 'button', attributes: { type: 'submit' } }),
-    formControl({ tag: 'input', attributes: { type: 'submit' } }),
+    formControl({ tag: 'button', attributes: { type: 'submit' }, owner: 'login' }),
+    formControl({ tag: 'input', attributes: { type: 'submit' }, owner: 'login' }),
     formControl({
       tag: 'div',
       attributes: { 'data-ms-button': 'submit' },
+      owner: 'login',
     }),
   ]) {
     const harness = loadRouter({ pathname: '/login' })
     harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
 
-    harness.forms[0].dispatch('click', { target: control })
+    harness.dispatchDocument('click', { target: control })
 
     const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
     assert.notEqual(receipt.startedAt, 1, control.tag)
@@ -1161,16 +1196,21 @@ test('a submit-control click restarts timing after a rejected attempt', () => {
 
 // `[data-ms-auth-provider]` is Memberstack's click-driven provider control (an
 // anchor — see quiz-main/quiz-main.js), so it completes a login without ever
-// firing submit on this form. Without a restart here, the provider attempt
+// firing submit on the form. Without a restart here, the provider attempt
 // inherits the `startedAt` of an earlier rejected password on the same page
 // visit, and /auth-route confirms that stale receipt as one duration.
 test('a provider-control click restarts timing a rejected password left behind', () => {
   for (const control of [
-    formControl({ tag: 'a', attributes: { 'data-ms-auth-provider': 'google' } }),
+    formControl({
+      tag: 'a',
+      attributes: { 'data-ms-auth-provider': 'google' },
+      owner: 'login',
+    }),
     formControl({
       tag: 'div',
       classes: ['clickable_btn'],
       attributes: { 'data-ms-auth-provider': 'facebook' },
+      owner: 'login',
     }),
   ]) {
     const harness = loadRouter({ pathname: '/login' })
@@ -1178,12 +1218,52 @@ test('a provider-control click restarts timing a rejected password left behind',
     harness.forms[0].dispatch('submit')
     harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: rejectedAt }))
 
-    harness.forms[0].dispatch('click', { target: control })
+    harness.dispatchDocument('click', { target: control })
 
     const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
     assert.notEqual(receipt.startedAt, rejectedAt, control.tag)
     assert.deepEqual(Object.keys(receipt), ['startedAt'], control.tag)
   }
+})
+
+// quiz-main/quiz-main.js reaches these controls with a document-wide query, not
+// through the signup form it configures beside them, so nothing pins them as
+// descendants of either auth form on /login. A control that is not inside an
+// auth form cannot be attributed to the login flow or the signup flow, so the
+// receipt is dropped: an unmeasured provider login costs a number, while
+// inheriting the rejected password's `startedAt` reports a wrong one.
+test('a provider-control click outside both auth forms drops the receipt', () => {
+  const harness = loadRouter({ pathname: '/login' })
+  const rejectedAt = 1700000000000
+  harness.forms[0].dispatch('submit')
+  harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: rejectedAt }))
+  harness.marks.length = 0
+
+  harness.dispatchDocument('click', {
+    target: formControl({
+      tag: 'a',
+      attributes: { 'data-ms-auth-provider': 'google' },
+    }),
+  })
+
+  assert.equal(harness.storage.has(TIMING_KEY), false)
+  assert.equal(
+    harness.marks.includes('starters:v3-auth-route:login-submit'),
+    false,
+  )
+})
+
+// Delegating from `document` reaches every click on the page, including forms
+// this router does not own. Only auth attempts may touch the receipt.
+test('a submit control in an unrelated form leaves the receipt alone', () => {
+  const harness = loadRouter({ pathname: '/login' })
+  harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
+
+  harness.dispatchDocument('click', {
+    target: formControl({ tag: 'button', attributes: { type: 'submit' } }),
+  })
+
+  assert.equal(JSON.parse(harness.storage.get(TIMING_KEY)).startedAt, 1)
 })
 
 // `.clickable_btn` is the generic Webflow Clickable Wrap overlay and sits on
@@ -1192,20 +1272,25 @@ test('a provider-control click restarts timing a rejected password left behind',
 // not overwrite the receipt or emit a login-submit mark.
 test('a non-submit control click leaves the timing receipt alone', () => {
   for (const control of [
-    formControl({ tag: 'button', classes: ['clickable_btn'] }),
+    formControl({ tag: 'button', classes: ['clickable_btn'], owner: 'login' }),
     formControl({
       tag: 'button',
       classes: ['clickable_btn'],
       attributes: { type: 'button' },
+      owner: 'login',
     }),
-    formControl({ tag: 'a', classes: ['clickable_link'] }),
-    formControl({ tag: 'button', attributes: { type: 'reset' } }),
-    formControl({ tag: 'div', attributes: { 'data-ms-button': 'google' } }),
+    formControl({ tag: 'a', classes: ['clickable_link'], owner: 'login' }),
+    formControl({ tag: 'button', attributes: { type: 'reset' }, owner: 'login' }),
+    formControl({
+      tag: 'div',
+      attributes: { 'data-ms-button': 'google' },
+      owner: 'login',
+    }),
   ]) {
     const harness = loadRouter({ pathname: '/login' })
     harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
 
-    harness.forms[0].dispatch('click', { target: control })
+    harness.dispatchDocument('click', { target: control })
 
     const label = control.tag + '.' + control.classes.join('.')
     assert.equal(
@@ -1236,8 +1321,12 @@ test('a signup form on a login page starts no login timing receipt', () => {
   })
 
   signup.dispatch('submit')
-  signup.dispatch('click', {
-    target: formControl({ tag: 'button', attributes: { type: 'submit' } }),
+  harness.dispatchDocument('click', {
+    target: formControl({
+      tag: 'button',
+      attributes: { type: 'submit' },
+      owner: 'signup',
+    }),
   })
 
   assert.equal(harness.storage.has(TIMING_KEY), false)
@@ -1259,17 +1348,22 @@ test('a signup form on a login page starts no login timing receipt', () => {
 // login-to-destination duration. The signup attempt has to drop it.
 test('a signup attempt discards a rejected password receipt without measuring itself', () => {
   for (const attempt of [
-    (signup) => signup.dispatch('submit'),
-    (signup) =>
-      signup.dispatch('click', {
+    (harness) => harness.forms[1].dispatch('submit'),
+    (harness) =>
+      harness.dispatchDocument('click', {
         target: formControl({
           tag: 'a',
           attributes: { 'data-ms-auth-provider': 'google' },
+          owner: 'signup',
         }),
       }),
-    (signup) =>
-      signup.dispatch('click', {
-        target: formControl({ tag: 'button', attributes: { type: 'submit' } }),
+    (harness) =>
+      harness.dispatchDocument('click', {
+        target: formControl({
+          tag: 'button',
+          attributes: { type: 'submit' },
+          owner: 'signup',
+        }),
       }),
   ]) {
     const harness = loadRouter({ pathname: '/login' })
@@ -1278,7 +1372,7 @@ test('a signup attempt discards a rejected password receipt without measuring it
     harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: rejectedAt }))
     harness.marks.length = 0
 
-    attempt(harness.forms[1])
+    attempt(harness)
 
     assert.equal(harness.storage.has(TIMING_KEY), false)
     assert.equal(
@@ -1295,8 +1389,12 @@ test('a non-attempt click in the signup form leaves the receipt alone', () => {
   const harness = loadRouter({ pathname: '/login' })
   harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
 
-  harness.forms[1].dispatch('click', {
-    target: formControl({ tag: 'button', classes: ['clickable_btn'] }),
+  harness.dispatchDocument('click', {
+    target: formControl({
+      tag: 'button',
+      classes: ['clickable_btn'],
+      owner: 'signup',
+    }),
   })
 
   assert.equal(JSON.parse(harness.storage.get(TIMING_KEY)).startedAt, 1)
@@ -2253,27 +2351,125 @@ test('the router and the site-head loader export one release value', () => {
     addEventListener() {},
     dispatchEvent() {},
   }
-  vm.runInNewContext(
-    fs.readFileSync(require.resolve('./auth-page-loader.js'), 'utf8'),
-    {
-      Array,
-      CustomEvent: class {},
-      JSON,
-      Number,
-      Set,
-      String,
-      console: { error() {} },
-      document: {
-        currentScript: { src: 'https://cdn.example.test/v3/auth-page-loader.js' },
-        head: { appendChild: (node) => node },
-        documentElement: { appendChild: (node) => node },
-        readyState: 'complete',
-        createElement: () => ({ setAttribute() {} }),
-      },
-      window: loaderWindow,
+  vm.runInNewContext(loaderSource, {
+    Array,
+    CustomEvent: class {},
+    JSON,
+    Number,
+    Set,
+    String,
+    console: { error() {} },
+    document: {
+      currentScript: { src: 'https://cdn.example.test/v3/auth-page-loader.js' },
+      head: { appendChild: (node) => node },
+      documentElement: { appendChild: (node) => node },
+      readyState: 'complete',
+      createElement: () => ({ setAttribute() {} }),
     },
-  )
+    window: loaderWindow,
+  })
 
   assert.match(api.release, /^v\d+\.\d+\.\d+$/)
   assert.equal(loaderWindow.StartersV3AuthPageLoader.release, api.release)
+})
+
+// Boots the REAL loader on a destination page over a caller-supplied session
+// storage and clock, so a receipt the real router wrote is read back by the code
+// that actually reads it in production rather than by a restatement of it.
+function runDestinationLoader({ storage, clock, pathname }) {
+  const marks = []
+  const events = []
+  class FakeDate extends Date {
+    static now() {
+      return clock.now()
+    }
+  }
+  const window = {
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname },
+    sessionStorage: {
+      getItem: (key) => storage.get(key) || null,
+      removeItem: (key) => storage.delete(key),
+    },
+    performance: { mark: (name) => marks.push(name) },
+    addEventListener() {},
+    dispatchEvent: (event) => events.push(event),
+  }
+  vm.runInNewContext(loaderSource, {
+    Array,
+    CustomEvent: class {
+      constructor(type, init) {
+        this.type = type
+        this.detail = init.detail
+      }
+    },
+    Date: FakeDate,
+    JSON,
+    Number,
+    Set,
+    String,
+    console: { error() {} },
+    document: {
+      currentScript: { src: 'https://cdn.example.test/v3/auth-page-loader.js' },
+      head: { appendChild: (node) => node },
+      documentElement: { appendChild: (node) => node, setAttribute() {} },
+      readyState: 'complete',
+      createElement: () => ({ setAttribute() {} }),
+    },
+    window,
+  })
+  return { events, marks }
+}
+
+// The timing receipt is a two-file protocol: v3/auth-route.js is its only writer
+// and v3/auth-page-loader.js its only reader, and each hardcodes the storage
+// key, the mark prefix, and the 120s max age. Every unit test on either side
+// asserts against its own copy of those literals, so a one-sided edit to any of
+// the three leaves both suites green while `destination-load` silently stops
+// firing in production — no error, no console line, nothing for the gate to see
+// beyond "no timing events". This runs both real modules over one session
+// storage and one clock, login submit through destination load, so drift in any
+// of the three fails here.
+test('the router and the loader agree on the whole timing protocol', async () => {
+  const storage = new Map()
+  const clock = makeClock()
+  const member = talentMember()
+
+  const login = loadRouter({ pathname: '/login', storage, clock })
+  login.forms[0].dispatch('submit')
+
+  // Just inside the shared ceiling. If the loader's max age drifted below the
+  // router's, the router would still confirm this receipt and the loader would
+  // discard it, emitting nothing.
+  await clock.advance(119000)
+
+  const route = loadRouter({
+    pathname: '/auth-route',
+    storage,
+    clock,
+    member,
+    memberReady: Promise.resolve(member),
+    xano: { statusBody: ONBOARDED },
+  })
+  await flush()
+  assert.equal(route.location.replaced, '/starter-dashboard')
+
+  const destination = runDestinationLoader({
+    storage,
+    clock,
+    pathname: route.location.replaced,
+  })
+
+  assert.equal(destination.events.length, 1)
+  assert.equal(destination.events[0].type, 'starters:v3-auth-route-timing')
+  assert.deepEqual({ ...destination.events[0].detail }, {
+    stage: 'destination-load',
+    elapsedMs: 119000,
+  })
+  // Both mark names come from the executed modules, so the prefix the router
+  // writes has to be the prefix the loader writes.
+  assert.deepEqual(login.marks, ['starters:v3-auth-route:login-submit'])
+  const prefix = login.marks[0].slice(0, -'login-submit'.length)
+  assert.deepEqual(destination.marks, [prefix + 'destination-load'])
+  // The loader consumes the receipt, so nothing survives for the next page.
+  assert.deepEqual([...storage.keys()], [])
 })

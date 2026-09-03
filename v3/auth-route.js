@@ -485,25 +485,18 @@
     // attempt leaving this page is the one flow that would otherwise let a
     // rejected password on the same visit be confirmed at /auth-route as a
     // login-to-destination duration.
-    document.querySelectorAll('[data-ms-form="login"]').forEach(bindLoginTiming)
+    document.querySelectorAll('[data-ms-form="login"]').forEach(function (form) {
+      bindAttemptSubmit(form, beginLoginTiming)
+    })
     document
       .querySelectorAll('[data-ms-form="signup"]')
-      .forEach(bindSignupTiming)
+      .forEach(function (form) {
+        bindAttemptSubmit(form, clearLoginTiming)
+      })
+    bindAttemptClicks()
   }
 
-  function bindLoginTiming(form) {
-    bindAttemptTiming(form, beginLoginTiming)
-  }
-
-  function bindSignupTiming(form) {
-    bindAttemptTiming(form, clearLoginTiming)
-  }
-
-  // `onAttempt` runs whenever this form starts an attempt, whether through a
-  // real submit or through a control that completes one without firing submit:
-  // Memberstack's `[data-ms-auth-provider]` controls are links, so a
-  // click-driven provider login never submits the form it sits in.
-  function bindAttemptTiming(form, onAttempt) {
+  function bindAttemptSubmit(form, onAttempt) {
     if (
       typeof form.addEventListener !== 'function' ||
       form.__startersAuthTimingBound
@@ -512,17 +505,46 @@
     }
     form.__startersAuthTimingBound = true
     form.addEventListener('submit', onAttempt)
-    form.addEventListener('click', function (event) {
+  }
+
+  // Memberstack's `[data-ms-auth-provider]` controls are links that complete a
+  // login without ever submitting a form, and this site's other consumer of them
+  // collects them document-wide rather than as form descendants (see
+  // quiz-main/quiz-main.js), so their placement relative to the auth forms is
+  // not something this router can assume. Delegating from `document` keeps the
+  // login-restarts / signup-drops split wherever the control actually sits.
+  // A provider control owned by neither form cannot be attributed to either
+  // flow, so it drops the receipt: a measurement lost is recoverable, a rejected
+  // password reported as a login-to-destination duration is not. A plain submit
+  // button outside both forms belongs to some unrelated form and is left alone.
+  function bindAttemptClicks() {
+    if (
+      typeof document.addEventListener !== 'function' ||
+      document.__startersAuthTimingBound
+    ) {
+      return
+    }
+    document.__startersAuthTimingBound = true
+    document.addEventListener('click', function (event) {
       var target = event && event.target
       if (!target || typeof target.closest !== 'function') return
       if (
-        target.closest(
+        !target.closest(
           'button[type="submit"], input[type="submit"], ' +
             '[data-ms-button="submit"], [data-ms-auth-provider]',
         )
       ) {
-        onAttempt()
+        return
       }
+      if (target.closest('[data-ms-form="login"]')) {
+        beginLoginTiming()
+        return
+      }
+      if (target.closest('[data-ms-form="signup"]')) {
+        clearLoginTiming()
+        return
+      }
+      if (target.closest('[data-ms-auth-provider]')) clearLoginTiming()
     })
   }
 

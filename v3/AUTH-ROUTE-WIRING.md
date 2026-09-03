@@ -214,9 +214,18 @@ never starts a receipt: a signup spans account creation, Turnstile, and plan
 assignment, so counting it under the `login-submit` stage would inflate the
 login-to-destination duration this receipt exists to report. It *discards* any
 receipt it finds instead, so a signup attempt cannot carry an earlier rejected
-password on the same page visit through to `/auth-route`. Both forms treat a
-click on `[data-ms-auth-provider]` as an attempt, because Memberstack's
-provider controls are links that complete without ever firing submit. The router
+password on the same page visit through to `/auth-route`.
+
+Memberstack's `[data-ms-auth-provider]` controls are links that complete a login
+without ever firing submit, and nothing pins where they sit relative to the auth
+forms — `quiz-main/quiz-main.js` collects them document-wide, not as form
+descendants. The router therefore delegates the click from `document` rather
+than from either form: a provider control inside `[data-ms-form="login"]`
+restarts the receipt, one inside `[data-ms-form="signup"]` drops it, and one
+owned by neither form also drops it, because it cannot be attributed to either
+flow and a lost measurement is recoverable where an inflated one is not. A plain
+submit button outside both forms belongs to some unrelated form and is ignored.
+The router
 emits fixed `performance.mark()` names for router boot, Memberstack ready,
 member snapshot, token trade, status read, and redirect request. The sitewide
 loader emits `destination-load` on the final non-auth page and consumes the
@@ -227,7 +236,8 @@ token, or requested destination.
 Only a completed login-to-destination flow can be measured. `/auth-route` stamps
 `redirectedAt` on the receipt at the moment it hands off, and the loader refuses
 to emit `destination-load` for a receipt without it. A login page boot clears
-any receipt it finds, a signup attempt on that page clears it, and the
+any receipt it finds, every attempt that is not a login-form attempt clears it —
+a signup submit, a signup control, an unattributable provider control — and the
 logged-out bounce back to `/login` clears it too, so a rejected password or an
 abandoned login page can never be read later as a login-to-destination
 duration.
@@ -546,6 +556,16 @@ Production stays silent apart from the configuration errors in the table above.
   contains a member ID, email, cookie, Xano token, or requested destination.
   Then submit the signup form on `/login` and confirm it routes through
   `/auth-route` while emitting no `login-submit` stage and leaving no receipt.
+- Record where the Memberstack provider controls actually sit, which is the one
+  thing the runtime cannot infer. On `/login`, submit a wrong password, read
+  `sessionStorage['thestarters:v3-auth-route-timing']` and note its `startedAt`,
+  then click the provider control and read the key again. It must either hold a
+  later `startedAt` (the control sits inside `[data-ms-form="login"]`, and
+  provider logins are measured) or be gone (the control sits outside both auth
+  forms, and provider logins are deliberately unmeasured). It must never still
+  hold the rejected attempt's `startedAt`. Record which of the two you saw, and
+  run `document.querySelector('[data-ms-auth-provider]').closest('[data-ms-form]')`
+  to record the owning form, or `null`, alongside it.
 - Verify login with `next=/dashboard` for Talent, paid Brand, Test Brand, and
   Brand Free in both incomplete-quiz and completed-quiz states.
 - Verify the four Talent funnel states on staging with the console open: a member
