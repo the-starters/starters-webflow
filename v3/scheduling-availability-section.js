@@ -690,10 +690,15 @@
     const avails = availability.items
     for (const id in avails) {
       if (!Object.prototype.hasOwnProperty.call(avails, id)) continue
+      const avail = avails[id]
+      // `general` is retained canonically when overrides cover every base day
+      // so an override removal can restore its original schedule. Nylas open
+      // hours cannot contain an empty window, so omit only that special item.
+      if (id === 'general' && avail.days.length === 0) continue
       availabilityArray.push({
-        days: avails[id].days,
-        start: avails[id].start,
-        end: avails[id].end,
+        days: avail.days,
+        start: avail.start,
+        end: avail.end,
       })
     }
     return availabilityArray
@@ -727,6 +732,16 @@
       })
     }
     return claimed
+  }
+
+  function reconcileGeneralDays() {
+    const general = availability.items.general
+    if (!general) return
+    const baseDays = Array.isArray(general.defaultDays) ? general.defaultDays : general.days
+    const claimed = computeOverrides()
+    general.days = baseDays.filter(function (day) {
+      return claimed.indexOf(day) === -1
+    })
   }
 
   function writeAvailabilityCache() {
@@ -2160,23 +2175,19 @@
 
     const availId = form.dataset.availabilityId || id || 'general'
     const avail = { days: selectedDays, start: startTime, end: endTime }
+    const previousAvailability = JSON.parse(JSON.stringify(availability))
+    let canonicalSaved = false
 
     setRequestBusy(true)
     try {
-      if (availId !== 'general') {
-        const general = availability.items.general
-        if (general) {
-          general.days = general.days.filter(function (day) {
-            return avail.days.indexOf(day) === -1
-          })
-          availability.items.general = general
-        }
-      } else {
+      if (availId === 'general') {
         avail.defaultDays = avail.days
       }
 
       availability.items[availId] = avail
+      if (availId !== 'general') reconcileGeneralDays()
       await updateAvail()
+      canonicalSaved = true
 
       if (grantId) {
         const updated = await updateConfigs()
@@ -2194,6 +2205,11 @@
       console.log('[scheduling-section] availability saved', { id: availId, avail: avail })
       openNotification('availability-saved')
     } catch (error) {
+      if (!canonicalSaved) {
+        availability = previousAvailability
+        window.STARTER_AVAILABILITY = previousAvailability
+        renderAvailabilityItems()
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] availability save failed:', error && error.message)
       showNotificationError(ERROR_TEXT_ITEM_SAVE)
@@ -2210,17 +2226,15 @@
     const removed = availability.items[id]
     const general = availability.items.general
     if (!removed || !general) return false
-    removed.days.forEach(function (day) {
-      if (general.defaultDays && general.defaultDays.indexOf(day) > -1) {
-        general.days.push(day)
-      }
-    })
-    availability.items.general = general
+    const previousAvailability = JSON.parse(JSON.stringify(availability))
+    let canonicalSaved = false
     delete availability.items[id]
+    reconcileGeneralDays()
 
     setRequestBusy(true)
     try {
       await updateAvail()
+      canonicalSaved = true
       if (grantId) {
         const updated = await updateConfigs()
         if (!updated) {
@@ -2236,6 +2250,11 @@
       console.log('[scheduling-section] availability removed', { id: id })
       return true
     } catch (error) {
+      if (!canonicalSaved) {
+        availability = previousAvailability
+        window.STARTER_AVAILABILITY = previousAvailability
+        renderAvailabilityItems()
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] availability remove failed:', error && error.message)
       return false
