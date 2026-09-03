@@ -2044,6 +2044,126 @@ test('an added window zero-pads a one-digit hour before the availability request
   assert.equal(saved.end, '14:00')
 })
 
+test('an override may cover the last general day without sending an empty window to Nylas', async () => {
+  const baseline = {
+    items: {
+      general: { days: [4], start: '12:00', end: '17:00', defaultDays: [3, 4] },
+      existing: { days: [3], start: '12:00', end: '17:00' },
+    },
+    manager: 'calendar',
+  }
+  const { dom, calls, state } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'starter@example.com',
+      calendarId: 'primary',
+      availability: baseline,
+      configs: [{ config_id: 'cfg-free', grant_id: 'grant-1', duration: 30, is_paid: false, active: true }],
+    },
+  })
+  await settle()
+
+  dom.createBtn.click()
+  await settle()
+  const draftCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && !['general', 'existing'].includes(el.dataset.id),
+  )
+  const formWrapper = draftCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[4].children[1].checked = true
+  form.querySelector('[name=start-time]').value = '10:00'
+  form.querySelector('[name=end-time]').value = '14:00'
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  assert.deepEqual(state.availability.items.general, {
+    days: [],
+    start: '12:00',
+    end: '17:00',
+    defaultDays: [3, 4],
+  })
+  const configUpdate = calls.find((call) => call.path === '/scheduler/configurations/update/v3')
+  assert.ok(configUpdate)
+  const providerHours = configUpdate.body.in_availability.availability_rules.default_open_hours
+  assert.equal(providerHours.some((window) => window.days.length === 0), false)
+  assert.deepEqual(providerHours.map((window) => window.days), [[3], [4]])
+})
+
+test('editing an override restores its previous default day', async () => {
+  const baseline = {
+    items: {
+      general: { days: [4], start: '12:00', end: '17:00', defaultDays: [3, 4] },
+      existing: { days: [3], start: '10:00', end: '14:00' },
+    },
+    manager: 'calendar',
+  }
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'starter@example.com',
+      calendarId: 'primary',
+      availability: baseline,
+      configs: [{ config_id: 'cfg-free', grant_id: 'grant-1', duration: 30, is_paid: false, active: true }],
+    },
+  })
+  await settle()
+
+  const card = dom.list.children.find((el) => el.dataset.id === 'existing')
+  card.children[0].children[2].children[0].click()
+  const formWrapper = card.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[3].children[1].checked = false
+  form.children[4].children[1].checked = true
+  form.querySelector('[name=start-time]').value = '10:00'
+  form.querySelector('[name=end-time]').value = '14:00'
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  const update = calls.find((call) => call.path === '/starter/update_availability/v3')
+  assert.deepEqual(update.body.availability.items.general.days, [3])
+  assert.deepEqual(update.body.availability.items.existing.days, [4])
+  const configUpdate = calls.find((call) => call.path === '/scheduler/configurations/update/v3')
+  assert.deepEqual(
+    configUpdate.body.in_availability.availability_rules.default_open_hours.map((window) => window.days),
+    [[3], [4]],
+  )
+})
+
+test('a failed canonical override save restores the pre-submit availability model and cards', async () => {
+  const baseline = {
+    items: {
+      general: { days: [4], start: '12:00', end: '17:00', defaultDays: [3, 4] },
+      existing: { days: [3], start: '12:00', end: '17:00' },
+    },
+    manager: 'calendar',
+  }
+  const expectedBaseline = JSON.parse(JSON.stringify(baseline))
+  const { dom, calls, window } = loadSection({
+    serverState: { availability: baseline },
+    postRoutes: {
+      '/starter/update_availability/v3': () => ({ status: 400, body: { message: 'rejected' } }),
+    },
+  })
+  await settle()
+
+  dom.createBtn.click()
+  await settle()
+  const draftCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && !['general', 'existing'].includes(el.dataset.id),
+  )
+  const formWrapper = draftCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[4].children[1].checked = true
+  form.querySelector('[name=start-time]').value = '10:00'
+  form.querySelector('[name=end-time]').value = '14:00'
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  assert.equal(JSON.stringify(window.STARTER_AVAILABILITY), JSON.stringify(expectedBaseline))
+  assert.deepEqual(dom.list.children.filter((card) => card.dataset.id).map((card) => card.dataset.id), ['general', 'existing'])
+  assert.equal(calls.some((call) => call.path === '/scheduler/configurations/update/v3'), false)
+})
+
 test('invalid or non-ascending times stay editable and never send an availability request', async () => {
   const cases = [
     ['25', '14'],
@@ -3734,16 +3854,18 @@ test('open-item-remove updates all active configurations without replacing paid 
   })
 })
 
-test('open-item-remove switches to the error step on failure without removing the card', async () => {
-  const { dom, warnings } = loadSection({
+test('open-item-remove restores the model and card when the canonical save fails', async () => {
+  const baseline = {
+    items: {
+      general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] },
+      override1: { days: [4], start: '10:00', end: '11:00' },
+    },
+    manager: null,
+  }
+  const expectedBaseline = JSON.parse(JSON.stringify(baseline))
+  const { dom, warnings, window } = loadSection({
     serverState: {
-      availability: {
-        items: {
-          general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] },
-          override1: { days: [4], start: '10:00', end: '11:00' },
-        },
-        manager: null,
-      },
+      availability: baseline,
     },
     postRoutes: {
       '/starter/update_availability/v3': () => ({ status: 500, body: null }),
@@ -3763,6 +3885,7 @@ test('open-item-remove switches to the error step on failure without removing th
   assert.ok(dom.notif.errorText.textContent.length > 0)
   assert.equal(dom.notif.itemRemoveBtn.closest('.call-sched_button-group').style.pointerEvents, '')
   assert.ok(dom.list.children.find((el) => el.dataset.id === 'override1'), 'override1 was not removed')
+  assert.equal(JSON.stringify(window.STARTER_AVAILABILITY), JSON.stringify(expectedBaseline))
   assert.ok(warnings.some((w) => w.includes('availability remove failed')))
 })
 

@@ -173,12 +173,14 @@ function createPicker(input, ready) {
   return {
     input,
     ready,
+    destroyed: false,
     minDate: null,
     maxDate: null,
     dateFormat: null,
     date: null,
     onSelect: null,
     setDate(value) {
+      if (this.destroyed) return;
       let next = value instanceof Date ? new Date(value.getTime()) : null
 
       if (next && this.minDate && next < this.minDate) next = new Date(this.minDate.getTime())
@@ -191,6 +193,7 @@ function createPicker(input, ready) {
     // it to `onSelect`. It fires no `input` and, because the shared embed always supplies
     // an `onSelect` for a start/end pair, no `change` either.
     select(value) {
+      if (this.destroyed) return;
       this.date = value instanceof Date ? new Date(value.getTime()) : null
       this.input.value = this.date ? formatPickerValue(this.date) : ''
       if (typeof this.onSelect === 'function') {
@@ -210,6 +213,12 @@ function createJQuery(pickers) {
     datepicker(action, value) {
       const picker = pickers.get(element)
       if (!picker || !picker.ready) throw new Error('datepicker is not initialized')
+
+      if (action === 'destroy') {
+        picker.destroyed = true
+        picker.ready = false
+        return undefined
+      }
 
       if (action === 'option') {
         if (typeof value === 'string') return picker[value]
@@ -242,6 +251,12 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
 
   const elements = {
     companyList: new FakeElement(),
+    companyInput: new FakeElement(),
+    jobTitleInput: new FakeElement(),
+    startDateInput: new FakeElement(),
+    endDateInput: new FakeElement(),
+    currentWorkCheckbox: new FakeElement(),
+    addCompanyButton: new FakeElement(),
     editCompanyWrapper: new FakeElement(),
     editCompanyInput: new FakeElement(),
     editJobTitleInput: new FakeElement(),
@@ -250,6 +265,7 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     editCurrentWorkCheckbox: new FakeElement(),
     modalEdit: new FakeElement(),
     modalEditTrigger: new FakeElement(),
+    modalEditClose: new FakeElement(),
     saveCompanyEditButton: new FakeElement(),
     companySubmit: new FakeElement(),
     firstCompanyInput: new FakeElement(),
@@ -261,11 +277,21 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
 
   const startPicker = createPicker(elements.editStartDateInput, pickerReady)
   const endPicker = createPicker(elements.editEndDateInput, pickerReady)
+  const addStartPicker = createPicker(elements.startDateInput, pickerReady)
+  const addEndPicker = createPicker(elements.endDateInput, pickerReady)
   pickers.set(elements.editStartDateInput, startPicker)
   pickers.set(elements.editEndDateInput, endPicker)
+  pickers.set(elements.startDateInput, addStartPicker)
+  pickers.set(elements.endDateInput, addEndPicker)
 
   const bySelector = new Map([
     ['.company-list', elements.companyList],
+    ['#company-name', elements.companyInput],
+    ['#company-position', elements.jobTitleInput],
+    ['#company-start', elements.startDateInput],
+    ['#company-end', elements.endDateInput],
+    ['#company-current', elements.currentWorkCheckbox],
+    ['#add-company', elements.addCompanyButton],
     ['#first-company', elements.firstCompanyInput],
     ['#edit-company-wrapper', elements.editCompanyWrapper],
     ['#edit-company-name', elements.editCompanyInput],
@@ -287,7 +313,10 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     window: {},
     MEMBER: { id: 'member-1' },
     jQuery: createJQuery(pickers),
-    qs: (selector, scope) => (scope ? null : bySelector.get(selector) || null),
+    qs: (selector, scope) => {
+      if (scope === elements.modalEdit && selector === '[data-modal-close]') return elements.modalEditClose
+      return scope ? null : bySelector.get(selector) || null
+    },
     waitForMember: (callback) => {
       bootPromise = callback()
     },
@@ -306,13 +335,21 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
       addEventListener(type, handler) {
         if (type === 'DOMContentLoaded') domReadyHandlers.push(handler)
       },
+      querySelector() { return null },
       createElement: () => new FakeElement(),
     },
   })
 
-  vm.runInContext(fs.readFileSync(path.join(__dirname, relativePath), 'utf8'), context, {
-    filename: relativePath,
-  })
+  const workDatesPath = '../build-profile/work-dates.js'
+  const scripts = relativePath.includes('/build-profile/')
+    ? [workDatesPath, relativePath]
+    : [relativePath, workDatesPath]
+
+  for (const scriptPath of scripts) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, scriptPath), 'utf8'), context, {
+      filename: scriptPath,
+    })
+  }
   domReadyHandlers.forEach((handler) => handler())
 
   // The shared datepicker embed re-reads whatever text is sitting in the field
@@ -351,6 +388,27 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     for (const handler of elements.companySubmit.handlersFor('click')) await handler(clickEvent)
   }
 
+  async function addCompany({ companyName, startDate, endDate, currentWork = false }) {
+    elements.companyInput.value = companyName
+    elements.companyInput.dataset.selectedCompanyName = companyName
+    elements.companyInput.dataset.selectedCompanyDomain = `${companyName.toLowerCase()}.example`
+    elements.companyInput.dataset.selectedCompanyEntityId = '1'
+    elements.companyInput.dataset.selectedCompanySource = 'platform'
+    elements.jobTitleInput.value = 'Engineer'
+    elements.startDateInput.value = startDate
+    elements.endDateInput.value = endDate
+    elements.startDateInput.dispatchEvent({ type: 'input' })
+    elements.endDateInput.dispatchEvent({ type: 'input' })
+    if (elements.currentWorkCheckbox.checked !== currentWork) {
+      elements.currentWorkCheckbox.checked = currentWork
+      elements.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    }
+
+    const clickEvent = { type: 'click', preventDefault() {} }
+    for (const handler of elements.addCompanyButton.handlersFor('click')) await handler(clickEvent)
+    for (const handler of elements.companySubmit.handlersFor('click')) await handler(clickEvent)
+  }
+
   return {
     ...elements,
     startPicker,
@@ -360,16 +418,154 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     clobberOnModalOpen,
     openEditFor,
     saveEdit,
+    addCompany,
+    mutationPayloads: () => fetchCalls
+      .filter((call) => call.init.body)
+      .map((call) => JSON.parse(call.init.body)),
     ready: () => bootPromise,
     markPickersReady() {
-      startPicker.ready = true
-      endPicker.ready = true
+      if (startPicker.input.type === 'month') startPicker.destroyed = true
+      if (endPicker.input.type === 'month') endPicker.destroyed = true
+      if (!startPicker.destroyed) startPicker.ready = true
+      if (!endPicker.destroyed) endPicker.ready = true
     },
     lastRequestPayload: () => JSON.parse(fetchCalls[fetchCalls.length - 1].init.body),
   }
 }
 
 for (const controllerPath of controllerPaths) {
+  test(`${controllerPath} clears native bounds between consecutive additions`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    await app.addCompany({ companyName: 'Acme', startDate: '2024-01', endDate: '2024-12' })
+
+    assert.equal(app.startDateInput.value, '')
+    assert.equal(app.endDateInput.value, '')
+    assert.equal(app.startDateInput.getAttribute('max'), null)
+    assert.equal(app.endDateInput.getAttribute('min'), null)
+
+    await app.addCompany({ companyName: 'Globex', startDate: '2025-01', endDate: '2025-12' })
+
+    assert.equal(app.startDateInput.value, '')
+    assert.equal(app.endDateInput.value, '')
+    assert.equal(app.startDateInput.getAttribute('max'), null)
+    assert.equal(app.endDateInput.getAttribute('min'), null)
+  })
+
+  test(`${controllerPath} does not restore an end month from a prior addition`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    await app.addCompany({
+      companyName: 'Acme',
+      startDate: '2024-01',
+      endDate: '2024-12',
+      currentWork: true,
+    })
+
+    app.currentWorkCheckbox.checked = true
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    app.currentWorkCheckbox.checked = false
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.equal(app.endDateInput.value, '')
+
+    await app.addCompany({
+      companyName: 'Globex',
+      startDate: '2025-01',
+      endDate: '2025-12',
+    })
+
+    const secondPayload = app.mutationPayloads().find((payload) => payload.company_name === 'Globex')
+    assert.equal(secondPayload.end_date, '2025-12')
+  })
+
+  test(`${controllerPath} recomputes native bounds between edit operations`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    app.openEditFor({
+      id: 20,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '2024-01',
+      end_date: '2024-12',
+    })
+
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2024-01')
+    assert.equal(app.editStartDateInput.getAttribute('max'), '2024-12')
+
+    app.openEditFor({
+      id: 21,
+      company_name: 'Globex',
+      job_title: 'Designer',
+      start_date: '2025-03',
+      end_date: '2025-03',
+    })
+
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2025-03')
+    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-03')
+
+    await app.saveEdit()
+    app.clock.advance(1600)
+
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+  })
+
+  test(`${controllerPath} does not restore an end month from a prior edit`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    app.openEditFor({
+      id: 22,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '2024-01',
+      end_date: '2024-12',
+    })
+    app.editCurrentWorkCheckbox.checked = true
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+    await app.saveEdit()
+    app.clock.advance(1600)
+
+    app.openEditFor({
+      id: 23,
+      company_name: 'Globex',
+      job_title: 'Designer',
+      start_date: '2025-01',
+      current_work: true,
+    })
+    app.editCurrentWorkCheckbox.checked = false
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+
+    assert.equal(app.editEndDateInput.value, '')
+  })
+
+  test(`${controllerPath} resyncs bounds without changing a legacy baseline`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    app.openEditFor({
+      id: 24,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: 'Jan 2024',
+      end_date: 'Dec 2025',
+    })
+
+    app.editCurrentWorkCheckbox.checked = true
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+    app.editCurrentWorkCheckbox.checked = false
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+
+    assert.equal(app.editEndDateInput.value, '2025-12')
+    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-12')
+
+    await app.saveEdit()
+    assert.equal(app.lastRequestPayload().end_date, 'Dec 2025')
+  })
+
   test(`${controllerPath} restores the stored dates after the picker rewrites them on open`, async () => {
     const app = bootCompanyController(controllerPath)
     const drift = new Date(2026, 7, 29)
@@ -383,14 +579,64 @@ for (const controllerPath of controllerPaths) {
       end_date: 'Dec 2024',
     })
 
-    assert.equal(app.editStartDateInput.value, 'Jan 01 2024')
-    assert.equal(app.editEndDateInput.value, 'Dec 01 2024')
+    assert.equal(app.editStartDateInput.value, '2024-01')
+    assert.equal(app.editEndDateInput.value, '2024-12')
 
     await app.saveEdit()
     const payload = app.lastRequestPayload()
 
     assert.equal(payload.start_date, 'Jan 2024')
     assert.equal(payload.end_date, 'Dec 2024')
+  })
+
+  test(`${controllerPath} hydrates and preserves untouched numeric legacy dates`, async () => {
+    const app = bootCompanyController(controllerPath)
+
+    app.openEditFor({
+      id: 8,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '04/22/2026',
+      end_date: '04/30/2026',
+    })
+
+    assert.equal(app.editStartDateInput.value, '2026-04')
+    assert.equal(app.editEndDateInput.value, '2026-04')
+
+    await app.saveEdit()
+    const payload = app.lastRequestPayload()
+
+    assert.equal(payload.start_date, '04/22/2026')
+    assert.equal(payload.end_date, '04/30/2026')
+  })
+
+  test(`${controllerPath} blocks an inverted range and saves it once corrected`, async () => {
+    const app = bootCompanyController(controllerPath)
+
+    app.openEditFor({
+      id: 10,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '2026-08',
+      end_date: '2025-01',
+    })
+
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2026-08')
+    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-01')
+
+    const requestsBeforeInvalidSave = app.fetchCalls.length
+    await app.saveEdit()
+    assert.equal(app.fetchCalls.length, requestsBeforeInvalidSave)
+
+    app.editEndDateInput.value = '2026-08'
+    app.editEndDateInput.dispatchEvent({ type: 'input' })
+    assert.equal(app.editStartDateInput.getAttribute('max'), '2026-08')
+
+    await app.saveEdit()
+    const payload = app.lastRequestPayload()
+
+    assert.equal(payload.start_date, '2026-08')
+    assert.equal(payload.end_date, '2026-08')
   })
 
   test(`${controllerPath} ignores cross-field bounds left behind by an earlier edit`, async () => {
@@ -408,8 +654,9 @@ for (const controllerPath of controllerPaths) {
       end_date: 'Jun 2022',
     })
 
-    assert.equal(app.editStartDateInput.value, 'Mar 01 2021')
-    assert.equal(app.startPicker.maxDate, null)
+    assert.equal(app.editStartDateInput.value, '2021-03')
+    // A detached legacy widget may retain private bounds, but it cannot affect
+    // the native month control.
 
     await app.saveEdit()
     assert.equal(app.lastRequestPayload().start_date, 'Mar 2021')
@@ -430,7 +677,7 @@ for (const controllerPath of controllerPaths) {
 
     assert.equal(app.editEndDateInput.getAttribute('disabled'), null)
     assert.equal(app.editEndDateInput.classList.contains('is-disabled'), false)
-    assert.equal(app.editEndDateInput.value, 'Mar 01 2022')
+    assert.equal(app.editEndDateInput.value, '2022-03')
   })
 
   test(`${controllerPath} rehydrates once a late-loading jQuery UI initializes the picker`, async () => {
@@ -445,7 +692,7 @@ for (const controllerPath of controllerPaths) {
       end_date: 'Dec 2024',
     })
 
-    assert.equal(app.editStartDateInput.value, 'Jan 2024')
+    assert.equal(app.editStartDateInput.value, '2024-01')
 
     app.clock.advance(50)
     app.markPickersReady()
@@ -453,8 +700,8 @@ for (const controllerPath of controllerPaths) {
     app.endPicker.setDate(drift)
     app.clock.advance(500)
 
-    assert.equal(app.editStartDateInput.value, 'Jan 01 2024')
-    assert.equal(app.editEndDateInput.value, 'Dec 01 2024')
+    assert.equal(app.editStartDateInput.value, '2024-01')
+    assert.equal(app.editEndDateInput.value, '2024-12')
 
     await app.saveEdit()
     const payload = app.lastRequestPayload()
@@ -474,18 +721,18 @@ for (const controllerPath of controllerPaths) {
       end_date: 'Dec 2024',
     })
 
-    app.editStartDateInput.value = 'Feb 2025'
-    app.editEndDateInput.value = 'Mar 2026'
+    app.editStartDateInput.value = '2025-02'
+    app.editEndDateInput.value = '2026-03'
     app.editStartDateInput.dispatchEvent({ type: 'input' })
     app.editEndDateInput.dispatchEvent({ type: 'input' })
     app.markPickersReady()
     app.clock.advance(500)
 
-    assert.equal(app.editStartDateInput.value, 'Feb 2025')
-    assert.equal(app.editEndDateInput.value, 'Mar 2026')
+    assert.equal(app.editStartDateInput.value, '2025-02')
+    assert.equal(app.editEndDateInput.value, '2026-03')
   })
 
-  test(`${controllerPath} keeps a calendar pick made while the other picker is still loading`, async () => {
+  test(`${controllerPath} keeps a native month edit while the legacy picker is still loading`, async () => {
     const app = bootCompanyController(controllerPath, { pickerReady: false })
 
     app.openEditFor({
@@ -496,22 +743,20 @@ for (const controllerPath of controllerPaths) {
       end_date: 'Dec 2024',
     })
 
-    app.startPicker.ready = true
-    app.clock.advance(100)
-
-    app.startPicker.select(new Date(2025, 1, 3))
-    assert.equal(app.editStartDateInput.value, 'Feb 03 2025')
+    app.editStartDateInput.value = '2024-02'
+    app.editStartDateInput.dispatchEvent({ type: 'input' })
+    assert.equal(app.editStartDateInput.value, '2024-02')
 
     app.endPicker.ready = true
     app.clock.advance(500)
 
-    assert.equal(app.editStartDateInput.value, 'Feb 03 2025')
-    assert.equal(app.editEndDateInput.value, 'Dec 01 2024')
+    assert.equal(app.editStartDateInput.value, '2024-02')
+    assert.equal(app.editEndDateInput.value, '2024-12')
 
     await app.saveEdit()
     const payload = app.lastRequestPayload()
 
-    assert.equal(payload.start_date, 'Feb 03 2025')
+    assert.equal(payload.start_date, '2024-02')
     assert.equal(payload.end_date, 'Dec 2024')
   })
 
@@ -526,13 +771,13 @@ for (const controllerPath of controllerPaths) {
       end_date: 'Dec 2024',
     })
 
-    app.editStartDateInput.value = 'Feb 2025'
+    app.editStartDateInput.value = '2025-02'
     app.editStartDateInput.dispatchEvent({ type: 'change' })
     app.markPickersReady()
     app.clock.advance(500)
 
-    assert.equal(app.editStartDateInput.value, 'Feb 2025')
-    assert.equal(app.editEndDateInput.value, 'Dec 01 2024')
+    assert.equal(app.editStartDateInput.value, '2025-02')
+    assert.equal(app.editEndDateInput.value, '2024-12')
   })
 
   test(`${controllerPath} hydrates month-year dates without relative-day drift`, () => {
@@ -562,6 +807,7 @@ for (const controllerPath of controllerPaths) {
 
     assert.equal(context.starterProfileCompanyMonthYearLabel('2026-08-03T00:00:00.000Z'), 'Aug 2026')
     assert.equal(context.starterProfileCompanyMonthYearLabel('2026-08-31'), 'Aug 2026')
+    assert.equal(context.starterProfileCompanyMonthYearLabel('2026-08'), 'Aug 2026')
     assert.equal(context.starterProfileCompanyMonthYearLabel('Jan 2024'), 'Jan 2024')
     assert.equal(context.starterProfileCompanyMonthYearLabel('April 22, 2026'), 'Apr 2026')
     assert.equal(context.starterProfileCompanyMonthYearLabel('Present'), 'Present')
@@ -569,6 +815,16 @@ for (const controllerPath of controllerPaths) {
     assert.equal(context.starterProfileCompanyMonthYearLabel('unknown'), 'unknown')
     assert.equal(context.starterProfileCompanyMonthYearLabel('Marching 2024'), 'Marching 2024')
     assert.equal(context.starterProfileCompanyMonthYearLabel('2026-08-03TBD'), '2026-08-03TBD')
+  })
+
+  test(`${controllerPath} accepts a native month input without inventing a day`, () => {
+    const { context } = loadDateContract(controllerPath)
+    const value = context.starterProfileCompanyDatepickerValue('2026-08')
+
+    assert.equal(value.getFullYear(), 2026)
+    assert.equal(value.getMonth(), 7)
+    assert.equal(value.getDate(), 1)
+    assert.equal(context.starterProfileCompanyDatepickerValue('2026-13'), null)
   })
 
   for (const [rawValue, expectedMonth, expectedDay] of [
@@ -602,7 +858,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(context.starterProfileCompanyDatepickerValue('2026-08-03T12:00:00+14:30'), null)
   })
 
-  test(`${controllerPath} hydrates a value written in the widget's own dateFormat`, () => {
+  test(`${controllerPath} hydrates a numeric legacy date without the widget`, () => {
     const { context, getCapturedDate, getParseDateCalls } = loadDateContract(controllerPath, {
       dateFormat: 'mm/dd/yy',
     })
@@ -615,7 +871,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(capturedDate.getMonth(), 3)
     assert.equal(capturedDate.getDate(), 22)
     assert.equal(input.value, 'Apr 22 2026')
-    assert.deepEqual(getParseDateCalls(), [{ format: 'mm/dd/yy', value: '04/22/2026' }])
+    assert.deepEqual(getParseDateCalls(), [])
   })
 
   test(`${controllerPath} prefers the canonical shapes over the widget dateFormat`, () => {
@@ -654,14 +910,17 @@ for (const controllerPath of controllerPaths) {
     assert.equal(input.value, '')
   })
 
-  test(`${controllerPath} hydrates nothing when the widget has no configured dateFormat`, () => {
+  test(`${controllerPath} hydrates a numeric legacy date without a configured widget format`, () => {
     const { context, getCapturedDate, getParseDateCalls } = loadDateContract(controllerPath)
     const input = { value: '04/22/2026' }
 
     context.setStarterProfileCompanyDatepickerDate(input, input.value)
 
-    assert.equal(getCapturedDate(), null)
-    assert.equal(input.value, '')
+    const capturedDate = getCapturedDate()
+    assert.equal(capturedDate.getFullYear(), 2026)
+    assert.equal(capturedDate.getMonth(), 3)
+    assert.equal(capturedDate.getDate(), 22)
+    assert.equal(input.value, 'Apr 22 2026')
     assert.deepEqual(getParseDateCalls(), [])
   })
 

@@ -57,8 +57,9 @@ Edit controller and racing its write. Structural Webflow cleanup must still
 remove the obsolete nested Build component; the code gate is the runtime safety
 boundary until that component repair is published.
 
-`company-autocomplete.js` and `company-experience-crud.js` deliberately diverge from
-the live bodies they were captured from. Their shared Build Profile contracts are owned
+`company-autocomplete.js`, `company-experience-crud.js`, and the shared
+`../build-profile/work-dates.js` deliberately diverge from the live bodies they were
+captured from. Their shared Build Profile contracts are owned
 by [Company selection logo persistence](../profile-form/README.md#company-selection-logo-persistence)
 and [Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
 

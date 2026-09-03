@@ -42,6 +42,16 @@ function starterProfileCompanyDatepickerValue(value) {
         }
     }
 
+    const nativeMonthMatch = text.match(/^(\d{4})-(\d{2})$/);
+    if (nativeMonthMatch) {
+        return localCalendarDate(Number(nativeMonthMatch[1]), Number(nativeMonthMatch[2]) - 1, 1);
+    }
+
+    const numericDateMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (numericDateMatch) {
+        return localCalendarDate(Number(numericDateMatch[3]), Number(numericDateMatch[1]) - 1, Number(numericDateMatch[2]));
+    }
+
     const monthDayYearMatch = text.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
     if (monthDayYearMatch) {
         const monthIndex = monthIndexForName(monthDayYearMatch[1]);
@@ -83,6 +93,15 @@ function starterProfileCompanyDatepickerDate(input, value) {
 }
 
 function setStarterProfileCompanyDatepickerDate(input, value) {
+    if (input && input.type === 'month') {
+        if (isStarterProfileCompanyPresentDate(value)) return;
+        const date = starterProfileCompanyDatepickerDate(input, value);
+        input.value = date
+            ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+            : '';
+        return;
+    }
+
     if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
     if (isStarterProfileCompanyPresentDate(value)) return;
 
@@ -90,6 +109,30 @@ function setStarterProfileCompanyDatepickerDate(input, value) {
         jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerDate(input, value));
     } catch (error) {
         // The value may not match the widget's configured dateFormat.
+    }
+}
+
+function enableStarterProfileCompanyMonthInput(input, labelText) {
+    if (!input) return;
+
+    if (typeof jQuery !== 'undefined' && jQuery.fn && jQuery.fn.datepicker && jQuery(input).data('datepicker')) {
+        try {
+            jQuery(input).datepicker('destroy');
+        } catch (error) {
+            // The native month control is still safe when the old widget is already detached.
+        }
+    }
+
+    input.removeAttribute('data-input-datepicker');
+    input.removeAttribute('data-input-datepicker-role');
+    input.removeAttribute('data-format');
+    input.type = 'month';
+    input.setAttribute('aria-label', labelText);
+
+    const label = document.querySelector(`label[for="${input.id}"]`) || input.closest('[form-group]')?.querySelector('label');
+    if (label) {
+        label.htmlFor = input.id;
+        label.textContent = labelText;
     }
 }
 
@@ -103,6 +146,43 @@ function serializeStarterProfileCompanyDate(input, baseline) {
     const currentValue = input ? input.value.trim() : '';
     if (baseline && currentValue === baseline.pickerValue) return baseline.rawValue;
     return currentValue;
+}
+
+function syncStarterProfileCompanyMonthRange(startInput, endInput, isCurrent) {
+    if (!startInput || !endInput) return;
+
+    const startValue = startInput.value.trim();
+    const endValue = endInput.value.trim();
+
+    if (startValue) endInput.setAttribute('min', startValue);
+    else endInput.removeAttribute('min');
+
+    if (!isCurrent && endValue) startInput.setAttribute('max', endValue);
+    else startInput.removeAttribute('max');
+}
+
+function isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent) {
+    if (isCurrent || !startInput || !endInput) return true;
+
+    const startValue = startInput.value.trim();
+    const endValue = endInput.value.trim();
+    return !startValue || !endValue || startValue <= endValue;
+}
+
+function bindStarterProfileCompanyMonthRange(startInput, endInput, currentCheckbox) {
+    if (!startInput || !endInput) return;
+
+    const syncRange = function () {
+        syncStarterProfileCompanyMonthRange(startInput, endInput, !!(currentCheckbox && currentCheckbox.checked));
+    };
+
+    startInput.addEventListener('input', syncRange);
+    startInput.addEventListener('change', syncRange);
+    endInput.addEventListener('input', syncRange);
+    endInput.addEventListener('change', syncRange);
+    endInput.addEventListener('starter:work-date-value-restored', syncRange);
+    if (currentCheckbox) currentCheckbox.addEventListener('change', syncRange);
+    syncRange();
 }
 
 function starterProfileCompanyMonthYearLabel(value) {
@@ -191,6 +271,13 @@ function createStarterEditCompanyDraftDirtyController(options) {
             const editStartDateInput = qs('#edit-company-start');
             const editEndDateInput = qs('#edit-company-end');
             const editCurrentWorkCheckbox = qs('#edit-company-current');
+
+            enableStarterProfileCompanyMonthInput(startDateInput, 'Start month and year');
+            enableStarterProfileCompanyMonthInput(endDateInput, 'End month and year');
+            enableStarterProfileCompanyMonthInput(editStartDateInput, 'Start month and year');
+            enableStarterProfileCompanyMonthInput(editEndDateInput, 'End month and year');
+            bindStarterProfileCompanyMonthRange(startDateInput, endDateInput, currentWorkCheckbox);
+            bindStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, editCurrentWorkCheckbox);
 
             const modalEdit = qs('[data-modal-target="company-edit"]');
             const modalEditTrigger = qs('[data-modal-trigger="company-edit"]');
@@ -435,6 +522,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
 
             function isEditCompanyDatepickerReady(input) {
                 if (!input) return true;
+                if (input.type === 'month') return true;
                 if (typeof jQuery === 'undefined' || !jQuery.fn || !jQuery.fn.datepicker) return false;
 
                 return !!jQuery(input).data('datepicker');
@@ -444,6 +532,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
             // the shared embed pairs these inputs with its own `onSelect`, fires neither `input` nor
             // `change`. Chain onto that callback so a picked date still counts as user input.
             function guardEditCompanyDateSelection(input, markChanged) {
+                if (input && input.type === 'month') return true;
                 if (!input || !isEditCompanyDatepickerReady(input)) return false;
 
                 try {
@@ -958,6 +1047,9 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     }
                 }
 
+                if (endDateInput) endDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
+                syncStarterProfileCompanyMonthRange(startDateInput, endDateInput, false);
+
                 updateAddBtnState();
             }
 
@@ -977,6 +1069,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
             function openEditCompany(company) {
                 if (!editCompanyWrapper || !company) return;
 
+                if (editEndDateInput) editEndDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
                 editCompanyWrapper.dataset.id = company.id || '';
                 const rawStartDate = company.start_date || '';
                 const rawEndDate = company.current_work ? 'Present' : (company.end_date || '');
@@ -1010,6 +1103,8 @@ function createStarterEditCompanyDraftDirtyController(options) {
                         editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
                         editEndDateBaseline = starterProfileCompanyDateBaseline(editEndDateInput, rawEndDate);
                     }
+
+                    syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, !!company.current_work);
                 }
 
                 if (editCompanyInput) {
@@ -1076,6 +1171,8 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     }
 
                     setCheckboxState(editCurrentWorkCheckbox, false);
+                    if (editEndDateInput) editEndDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
+                    syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, false);
 
                     editStartDateBaseline = null;
                     editEndDateBaseline = null;
@@ -1242,6 +1339,12 @@ function createStarterEditCompanyDraftDirtyController(options) {
                         isValid = false;
                     }
 
+                    if (!isStarterProfileCompanyMonthRangeValid(editStartDateInput, editEndDateInput, payload.current_work)) {
+                        showFieldError(editStartDateInput.closest('[form-group]'));
+                        showFieldError(editEndDateInput.closest('[form-group]'));
+                        isValid = false;
+                    }
+
                     if (!isValid) return;
 
                     const textEl = saveCompanyEditButton.querySelector('.button_main-text');
@@ -1335,6 +1438,12 @@ function createStarterEditCompanyDraftDirtyController(options) {
 
                     if (!payload.job_title) {
                         showFieldError(jobTitleInput.closest('[form-group]'));
+                        isValid = false;
+                    }
+
+                    if (!isStarterProfileCompanyMonthRangeValid(startDateInput, endDateInput, payload.current_work)) {
+                        showFieldError(startDateInput.closest('[form-group]'));
+                        showFieldError(endDateInput.closest('[form-group]'));
                         isValid = false;
                     }
 
