@@ -9,6 +9,7 @@
         var dirtySteps = new Set();
         var dirtyRevisions = new Map();
         var savingSteps = new Map();
+        var hydrationSyncDepth = 0;
 
         function stepKey(value) {
             var normalized = String(value ?? '').trim();
@@ -38,6 +39,21 @@
                 dirtyRevisions.set(key, (dirtyRevisions.get(key) || 0) + 1);
                 dirtySteps.add(key);
             },
+            setDirty: function (stepIndex, dirty) {
+                if (dirty) {
+                    state.markDirty(stepIndex);
+                    return;
+                }
+                dirtySteps.delete(stepKey(stepIndex));
+            },
+            runHydrationSync: function (callback) {
+                hydrationSyncDepth += 1;
+                try {
+                    return callback();
+                } finally {
+                    hydrationSyncDepth -= 1;
+                }
+            },
             beginSave: function (stepIndex) {
                 var key = stepKey(stepIndex);
                 var token = { key: key, revision: dirtyRevisions.get(key) || 0 };
@@ -66,7 +82,7 @@
         };
 
         function recordEdit(event) {
-            if (hydrating || event.isTrusted === false) return;
+            if (hydrating || hydrationSyncDepth > 0) return;
             var stepIndex = stepFromTarget(event.target);
             if (stepIndex) state.markDirty(stepIndex);
         }

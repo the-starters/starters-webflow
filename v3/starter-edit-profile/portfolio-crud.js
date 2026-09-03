@@ -70,6 +70,10 @@ function getStoredPortfolioCoverId(images) {
   return coverImage ? Number(coverImage.id) : null;
 }
 
+function hasStarterEditPortfolioPendingChanges(createDrafts, updateDrafts, deleteDraftIds) {
+  return Boolean(createDrafts.length || updateDrafts.size || deleteDraftIds.size);
+}
+
 function removeCommittedPortfolioDrafts(pending, committed) {
   const createDrafts = pending.createDrafts.filter(function (draft) {
     return !committed.createDrafts.includes(draft);
@@ -294,6 +298,15 @@ async function commitStarterEditPortfolioDrafts(options) {
         pendingUpdateDrafts.delete(String(portfolioId));
       }
 
+      function reconcilePortfolioDirtyState() {
+        const hasPendingChanges = hasStarterEditPortfolioPendingChanges(
+          pendingCreateDrafts,
+          pendingUpdateDrafts,
+          pendingDeleteDraftIds
+        );
+        window.__tsProfileDirtyState?.setDirty?.(4, hasPendingChanges);
+      }
+
       function getDraftPortfolioById(portfolioId) {
         const normalizedId = String(portfolioId || '').trim();
         if (!normalizedId) return null;
@@ -318,7 +331,6 @@ async function commitStarterEditPortfolioDrafts(options) {
 
       function queuePortfolioDeletion(portfolio) {
         if (!portfolio || !portfolio.id) return;
-        window.__tsProfileDirtyState?.markDirty?.(4);
 
         if (portfolio.is_draft) {
           if (portfolio.pending_type === 'update') {
@@ -326,9 +338,11 @@ async function commitStarterEditPortfolioDrafts(options) {
           } else {
             removeCreateDraft(portfolio.id);
           }
+          reconcilePortfolioDirtyState();
           return;
         }
 
+        window.__tsProfileDirtyState?.markDirty?.(4);
         pendingDeleteDraftIds.add(String(portfolio.id));
         removeUpdateDraft(portfolio.id);
       }
@@ -927,8 +941,16 @@ async function commitStarterEditPortfolioDrafts(options) {
             firstPortfolioInp.value = '';
           }
 
-          firstPortfolioInp.dispatchEvent(new Event('change', { bubbles: true }));
-          firstPortfolioInp.dispatchEvent(new Event('input', { bubbles: true }));
+          const dispatchSync = function () {
+            firstPortfolioInp.dispatchEvent(new Event('change', { bubbles: true }));
+            firstPortfolioInp.dispatchEvent(new Event('input', { bubbles: true }));
+          };
+          const dirtyState = window.__tsProfileDirtyState;
+          if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+            dirtyState.runHydrationSync(dispatchSync);
+          } else {
+            dispatchSync();
+          }
         }
 
         if (!mergedPortfolios.length) {

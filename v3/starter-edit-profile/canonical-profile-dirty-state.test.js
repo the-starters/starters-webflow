@@ -56,8 +56,15 @@ function beforeUnload(window) {
   state.finishHydration()
   assert.equal(beforeUnload(window).prevented, false, 'unchanged navigation stays clean')
 
+  state.runHydrationSync(() => {
+    document.dispatch('input', { target: field(3), isTrusted: false })
+  })
+  assert.equal(beforeUnload(window).prevented, false, 'explicit late hydration changes stay clean')
+
   document.dispatch('input', { target: field(3), isTrusted: false })
-  assert.equal(beforeUnload(window).prevented, false, 'late synthetic hydration changes stay clean')
+  assert.equal(beforeUnload(window).prevented, true, 'synthetic events from user-driven custom controls mark dirty')
+  state.setDirty(3, false)
+  assert.equal(beforeUnload(window).prevented, false, 'discarding the only local change clears the warning')
 
   document.dispatch('change', { target: field(1), isTrusted: true })
   assert.equal(beforeUnload(window).prevented, true, 'a real edit warns before navigation')

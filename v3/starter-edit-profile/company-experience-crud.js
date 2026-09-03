@@ -121,6 +121,10 @@ function starterProfileCompanyMonthYearLabel(value) {
   return `${parts[0]} ${parts[parts.length - 1]}`;
 }
 
+function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteDraftIds, alsoWorkedWithChanged) {
+    return Boolean(createDrafts.length || updateDrafts.size || deleteDraftIds.size || alsoWorkedWithChanged);
+}
+
 /**
  * GitHub-owned copy of the Starter Edit Profile Webflow controller block.
  * Original live inline body SHA-256: 1224636b9f1167c5534957407d3451640b8d5b17e52f4930011e17f5a0eb8664
@@ -610,9 +614,16 @@ function starterProfileCompanyMonthYearLabel(value) {
                 if (!firstCompanyInput) return;
 
                 firstCompanyInput.value = companiesCount > 0 ? 'true' : '';
-
-                firstCompanyInput.dispatchEvent(new Event('change', { bubbles: true }));
-                firstCompanyInput.dispatchEvent(new Event('input', { bubbles: true }));
+                const dispatchSync = function () {
+                    firstCompanyInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    firstCompanyInput.dispatchEvent(new Event('input', { bubbles: true }));
+                };
+                const dirtyState = window.__tsProfileDirtyState;
+                if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+                    dirtyState.runHydrationSync(dispatchSync);
+                } else {
+                    dispatchSync();
+                }
             }
 
             async function renderCompanies() {
@@ -1046,13 +1057,24 @@ function starterProfileCompanyMonthYearLabel(value) {
                 });
             }
 
+            function reconcileCompanyDirtyState() {
+                const hasPendingChanges = hasStarterEditCompanyPendingChanges(
+                    pendingCreateDrafts,
+                    pendingUpdateDrafts,
+                    pendingDeleteDraftIds,
+                    hasAlsoWorkedWithChanges()
+                );
+                window.__tsProfileDirtyState?.setDirty?.(3, hasPendingChanges);
+            }
+
             function queueCompanyDeletion(id) {
-                window.__tsProfileDirtyState?.markDirty?.(3);
                 if (isDraftCompanyId(id)) {
                     removeCreateDraft(id);
+                    reconcileCompanyDirtyState();
                     return;
                 }
 
+                window.__tsProfileDirtyState?.markDirty?.(3);
                 pendingDeleteDraftIds.add(String(id));
                 pendingUpdateDrafts.delete(String(id));
             }
