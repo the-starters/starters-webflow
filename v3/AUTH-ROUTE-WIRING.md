@@ -226,15 +226,18 @@ semantics. A provider control owned by `[data-ms-form="signup"]` drops the
 receipt; every other provider click on these pages restarts it, whether it sits
 inside `[data-ms-form="login"]` or outside both forms — a login page exists to
 log a member in, and a restart overwrites a rejected password's `startedAt` just
-as completely as a clear while still measuring the flow. A plain submit button
-outside both forms belongs to some unrelated form and is ignored. The router
-emits fixed `performance.mark()` names for router boot, Memberstack ready,
-member snapshot, token trade, status read, and redirect request. The token trade
-and the status read each emit a `-start` and a matching `-end`, and the `-end`
-fires however the read ended — a body, an HTTP error, a rejected request, or the
-8s budget's abort — so a consumer pairing the two never holds an interval that
-cannot close. The sitewide loader emits `destination-load` on the final non-auth
-page and consumes the receipt. The receipt carries `startedAt`, a
+as completely as a clear while still measuring the flow. The delegated listener
+matches nothing else: a native or `[data-ms-button="submit"]` control —
+including the empty `button.clickable_btn` wrap CTA, which is a real native
+submitter — is left to the form's own `submit` event, so one attempt is counted
+once rather than at both the click and the submit it triggers. The router emits
+fixed `performance.mark()` names for router boot, Memberstack ready, member
+snapshot, token trade, status read, and redirect request. The token trade and
+the status read each emit a `-start` and a matching `-end`, and the `-end`
+fires however the read ended — a body, an HTTP error, a rejected request, or
+the 8s budget's abort — so a consumer pairing the two never holds an interval
+that cannot close. The sitewide loader emits `destination-load` on the final
+non-auth page and consumes the receipt. The receipt carries `startedAt`, a
 `provider: true` flag while a provider attempt is in flight, and `redirectedAt`
 once confirmed — timestamps and one boolean about the attempt's shape, nothing
 else. Events and marks never contain a member ID, email, cookie, Xano token, or
@@ -572,7 +575,10 @@ Production stays silent apart from the configuration errors in the table above.
   handoff, and is consumed on the destination. Confirm
   `destination-load.elapsedMs` includes the destination page load, is finite, is
   at most 120000, and no timing event contains a member ID, email, cookie, Xano
-  token, or requested destination.
+  token, or requested destination. Confirm one attempt records exactly one
+  `login-submit`: click the CTA once and check
+  `performance.getEntriesByName('starters:v3-auth-route:login-submit').length`
+  is 1, not 2.
   Then submit the signup form on `/login` and confirm it routes through
   `/auth-route` while emitting no `login-submit` stage and leaving no receipt.
 - Exercise the provider control, whose measurement must not depend on where it
