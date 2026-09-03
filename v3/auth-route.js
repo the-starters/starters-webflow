@@ -3,9 +3,10 @@
  *
  * @release v1.59.441
  *
- * Install on the V3 login pages (/login and /starter-login) and /auth-route
- * only. Every V3 login form must redirect to /auth-route so shared Memberstack
- * plan redirects can remain unchanged for V2.
+ * Loaded by the site-head v3/auth-page-loader.js on the V3 login pages
+ * (/login and /starter-login) and /auth-route only. Every V3 login form must
+ * redirect to /auth-route so shared Memberstack plan redirects can remain
+ * unchanged for V2. The loader executes v3/route-guard.js first.
  *
  * Talent members additionally get a funnel-position check here, because
  * /auth-route is the one page every Talent login passes through. The product
@@ -101,6 +102,11 @@
   // one it accepts from a `next`.
   var COMPLETE_PROFILE_PATH = '/complete-profile'
   var NEXT_STORAGE_KEY = 'thestarters:v3-auth-next'
+  // Timing carries timestamps only. It never stores member IDs, emails,
+  // Memberstack cookies, Xano tokens, or requested destinations.
+  var TIMING_STORAGE_KEY = 'thestarters:v3-auth-route-timing'
+  var TIMING_MARK_PREFIX = 'starters:v3-auth-route:'
+  var TIMING_MAX_AGE_MS = 120000
   // Written by v3/brand-account-controller.js the moment a profile submit's
   // durable member write resolves, and read here as "done" so the Memberstack →
   // Xano webhook's catch-up window cannot bounce a fresh completer back onto the
@@ -186,6 +192,53 @@
 
   function describe(error) {
     return (error && error.message) || String(error)
+  }
+
+  function timingStartedAt() {
+    try {
+      var raw = window.sessionStorage.getItem(TIMING_STORAGE_KEY)
+      var parsed = raw ? JSON.parse(raw) : null
+      var startedAt = parsed && Number(parsed.startedAt)
+      if (!Number.isFinite(startedAt)) return null
+      if (Date.now() - startedAt > TIMING_MAX_AGE_MS) return null
+      return startedAt
+    } catch (error) {
+      return null
+    }
+  }
+
+  function beginLoginTiming() {
+    try {
+      window.sessionStorage.setItem(
+        TIMING_STORAGE_KEY,
+        JSON.stringify({ startedAt: Date.now() }),
+      )
+    } catch (error) {}
+    timingMark('login-submit')
+  }
+
+  function timingMark(stage) {
+    var markName = TIMING_MARK_PREFIX + stage
+    try {
+      if (window.performance && typeof window.performance.mark === 'function') {
+        window.performance.mark(markName)
+      }
+    } catch (error) {}
+
+    var startedAt = timingStartedAt()
+    var detail = { stage: stage }
+    if (startedAt !== null) detail.elapsedMs = Math.max(0, Date.now() - startedAt)
+    try {
+      window.dispatchEvent(
+        new CustomEvent('starters:v3-auth-route-timing', { detail: detail }),
+      )
+    } catch (error) {}
+    return detail
+  }
+
+  function requestRedirect(destination) {
+    timingMark('redirect-request')
+    window.location.replace(destination)
   }
 
   /**
@@ -389,7 +442,35 @@
       .forEach(function (form) {
         form.setAttribute('data-ms-redirect', ROUTE_PATH)
         form.setAttribute('redirect', ROUTE_PATH)
+        if (
+          typeof form.addEventListener === 'function' &&
+          !form.__startersAuthTimingBound
+        ) {
+          form.__startersAuthTimingBound = true
+          form.addEventListener('submit', beginLoginTiming)
+        }
       })
+  }
+
+  function memberFromSnapshot(value) {
+    if (value && value.id) return value
+    if (value && value.data && value.data.id) return value.data
+    return null
+  }
+
+  async function currentMemberSnapshot(memberstack) {
+    var shared = window.memberReady
+    if (shared && typeof shared.then === 'function') {
+      try {
+        var sharedMember = memberFromSnapshot(await shared)
+        if (sharedMember) return sharedMember
+      } catch (error) {
+        warn('shared member snapshot failed; reading Memberstack directly.')
+      }
+    }
+
+    var response = await memberstack.getCurrentMember()
+    return memberFromSnapshot(response)
   }
 
   function waitForMemberstack() {
@@ -477,6 +558,7 @@
     var memberstackToken = await memberstack.getMemberCookie()
     if (!memberstackToken) throw new Error('No Memberstack session cookie')
 
+    timingMark('token-trade-start')
     var response = await window.fetch(
       XANO_AUTH_BASE +
         TRADE_TOKEN_PATH +
@@ -493,6 +575,7 @@
     var token =
       typeof data === 'string' ? data : data && (data.authToken || data.token)
     if (!token) throw new Error('Xano token trade returned no token')
+    timingMark('token-trade-end')
     return token
   }
 
@@ -523,6 +606,7 @@
 
   async function readFunnelState(memberstack, signal) {
     var token = await tradeForXanoToken(memberstack, signal)
+    timingMark('status-read-start')
     var response = await window.fetch(
       XANO_ONBOARDING_BASE + BUILD_PROFILE_STATUS_PATH,
       { headers: { Authorization: 'Bearer ' + token }, signal: signal },
@@ -533,6 +617,7 @@
     var data = await response.json().catch(function () {
       return null
     })
+    timingMark('status-read-end')
     return funnelStateFrom(data)
   }
 
@@ -609,6 +694,7 @@
 
   async function readBrandProfileState(memberstack, signal) {
     var token = await tradeForXanoToken(memberstack, signal)
+    timingMark('status-read-start')
     var response = await window.fetch(
       XANO_ONBOARDING_BASE + BRAND_PROFILE_STATUS_PATH,
       { headers: { Authorization: 'Bearer ' + token }, signal: signal },
@@ -619,6 +705,7 @@
     var data = await response.json().catch(function () {
       return null
     })
+    timingMark('status-read-end')
     return brandProfileStateFrom(data)
   }
 
@@ -664,20 +751,22 @@
   }
 
   async function routeAuthenticatedMember() {
+    timingMark('router-boot')
     var memberstack = await waitForMemberstack()
     if (!memberstack) {
       showConfigurationError('memberstack-unavailable')
       return
     }
+    timingMark('memberstack-ready')
 
-    var response = await memberstack.getCurrentMember()
-    var member = response && response.data
+    var member = await currentMemberSnapshot(memberstack)
+    timingMark('member-snapshot')
     if (!member || !member.id) {
       var loginNext = consumeRequestedDestination()
       var loginUrl = loginNext
         ? LOGIN_PATH + '?next=' + encodeURIComponent(loginNext)
         : LOGIN_PATH
-      window.location.replace(loginUrl)
+      requestRedirect(loginUrl)
       return
     }
 
@@ -700,7 +789,7 @@
             BUILD_PROFILE_PATH +
             '.',
         )
-        window.location.replace(BUILD_PROFILE_PATH)
+        requestRedirect(BUILD_PROFILE_PATH)
         return
       }
       if (state === FUNNEL_ONBOARDING) {
@@ -710,7 +799,7 @@
             (requested ? ' instead of ' + requested : '') +
             '.',
         )
-        window.location.replace(ONBOARDING_PATH)
+        requestRedirect(ONBOARDING_PATH)
         return
       }
       note('funnel state "' + state + '"; routing normally.')
@@ -730,7 +819,7 @@
             (requested ? ' instead of ' + requested : '') +
             '.',
         )
-        window.location.replace(COMPLETE_PROFILE_PATH)
+        requestRedirect(COMPLETE_PROFILE_PATH)
         return
       }
       note('brand profile state "' + brandState + '"; routing normally.')
@@ -743,7 +832,7 @@
     }
 
     note('routing to ' + destination + '.')
-    window.location.replace(destination)
+    requestRedirect(destination)
   }
 
   var api = {
@@ -772,6 +861,8 @@
     brandProfileState: brandProfileState,
     completeProfilePath: COMPLETE_PROFILE_PATH,
     brandProfileMarkerKey: BRAND_PROFILE_MARKER_KEY,
+    timingStorageKey: TIMING_STORAGE_KEY,
+    timingMarkPrefix: TIMING_MARK_PREFIX,
     isLoginPath: isLoginPath,
     loginPaths: LOGIN_PATHS.slice(),
   }

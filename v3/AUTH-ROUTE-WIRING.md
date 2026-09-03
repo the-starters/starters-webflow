@@ -1,32 +1,52 @@
 # V3 Auth Route Wiring
 
-Status: Live. Verified on 2026-07-31 loading on `/login` from jsDelivr
-`@latest`. The Talent funnel check described below moved to the
-`get_build_profile_status` endpoint on 2026-08-04; that migration and the
-`/starter-login` embed both still need a staging pass. The embeds are page-level
-and pinned, so a new tag does not reach the site on its own — bump both embeds.
+Status: Live router. The minimal `auth-page-loader.js` site-head wiring is a
+release candidate and is not live yet. The Talent funnel check described below
+moved to `get_build_profile_status` on 2026-08-04.
 
 ## Webflow
 
 1. Create a V3 utility page with slug `/auth-route`.
 2. Give the page a visible loading state and an error block keyed by
    `html[data-auth-route-error]`.
-3. Load sitewide `v3/route-guard.js` before `v3/auth-route.js`. The auth router
-   consumes the guard's exported stable plan-role contract and fails closed if
-   that contract is unavailable.
-4. Load `v3/auth-route.js` on `/login`, `/starter-login`, and `/auth-route`.
-5. **New install required (2026-08-03):** `/starter-login` is a real V3 login page
-   with its own `[data-ms-form="login"]` and had no `auth-route.js` embed, so
-   logins from it skipped `/auth-route` entirely and fell through to the shared
-   Memberstack plan redirect. Add the same page-level head embed `/login`
-   already has, pinned to the same tag. This is a page-level embed and does not
-   arrive with a new jsDelivr tag on its own.
-6. Do not add the script to `/sign-up`. `v3/starters-ms-redirect.js` owns signup
+3. Keep the synchronous Memberstack V2 tag and the shared `window.memberReady`
+   initializer in the site Head Code. They must execute before the loader.
+4. Install `v3/auth-page-loader.js` once in the site Head Code with a normal
+   blocking script tag, after `memberReady` and before the conditional
+   application block. Do not add `defer`; the condition must be available to
+   the following inline block. Use the same release ref as its child assets.
+   The loader inserts `route-guard.js` first, then `auth-route.js`, on `/login`,
+   `/starter-login`, and `/auth-route`.
+
+   ```html
+   <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/auth-page-loader.js"></script>
+   ```
+5. Remove the old static sitewide `route-guard.js` tag and all page-level
+   `auth-route.js` tags after the loader is installed. Duplicate boot guards
+   prevent double behavior during a staged readback, but duplicates are not the
+   intended final state.
+6. Put the unrelated site application-controller tags behind this exact test:
+
+   ```js
+   window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(
+     window.location.pathname,
+   )
+   ```
+
+   A false answer must emit none of `wf-xano`, the Xano SDK, PostHog helpers,
+   validation, `opportunities-3.0.js`, project controllers, dashboard action
+   items, Brand account, signup attribution, Algolia environment, or
+   `wf-algolia`. Keep their existing order and inline configuration unchanged
+   when the answer is true. Build the complete candidate from a fresh full-block
+   readback and preserve every non-controller sentinel.
+7. `/starter-login` is a real V3 login page. The loader includes it in the same
+   minimal path as `/login`, so both forms pass through `/auth-route`.
+8. Do not add the router to `/sign-up`. `v3/starters-ms-redirect.js` owns signup
    form redirects through its `starters-ms-redirect` markers and skips any form
    that already carries a non-empty `redirect` attribute; configuring `/sign-up`
    here would set that attribute first and silently disable the marker system.
-7. Do not install either script on V2.
-8. The auth script changes V3 login/signup forms to
+9. Do not install either script on V2.
+10. The auth script changes V3 login/signup forms to
    `data-ms-redirect="/auth-route"`. It also sets a plain
    `redirect="/auth-route"` attribute on the same forms, because Memberstack only
    picks up `data-ms-redirect` from a click listener, so an Enter-key submit
@@ -46,6 +66,25 @@ router configures the form for a session about to be created — but note that a
 bounce leaves the `next` this router just stored in session storage unconsumed.
 That is harmless; it is re-validated against the role allowlist at `/auth-route`
 on the next real login.
+
+## Timing evidence
+
+The login form starts a timestamp-only receipt in session storage. The router
+emits fixed `performance.mark()` names for router boot, Memberstack ready,
+member snapshot, token trade, status read, and redirect request. The sitewide
+loader emits `destination-load` on the final non-auth page and consumes the
+receipt. The receipt contains only `startedAt`. Events and marks never contain a
+member ID, email, cookie, Xano token, or requested destination.
+
+Listen for `starters:v3-auth-route-timing`. Its detail contains `stage` and,
+when the cross-page receipt is present, `elapsedMs`. Receipts older than two
+minutes are discarded.
+
+The initial member read uses the existing `window.memberReady` value when it
+contains an authenticated member. It calls `getCurrentMember()` only when that
+promise is missing, rejects, or resolves without an authenticated member. This
+preserves a fresh logged-out check without duplicating successful site-head
+reads.
 
 ## Routing
 
@@ -239,6 +278,9 @@ and `brandFreeHome`, plus the funnel helpers `stagingHost`,
 `onboardingPath`, `buildProfilePath`, and `checkBudgetMs`, the login-page scope
 helpers `isLoginPath` and `loginPaths`, and `release` (the shipping tag; see the
 release-marker convention in [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md)).
+The loader exposes `window.StartersV3AuthPageLoader` with `isAuthPath`,
+`isApprovedHost`, `shouldLoadApplicationControllers`,
+`finishNavigationTiming`, `authPaths`, and `release`.
 
 `funnelStateFrom` replaced `onboardingStateFrom` in v1.59.82: it takes a status
 body rather than a freelancer envelope and answers `'build-profile'`,
@@ -252,10 +294,13 @@ Production stays silent apart from the configuration errors in the table above.
 ## Release Gate
 
 - Confirm `/auth-route` and its visible error state exist in Webflow.
-- Confirm sitewide `route-guard.js` loads before page-level `auth-route.js`.
-- Confirm the new `/starter-login` embed is installed and pinned to the same tag
-  as the `/login` embed, and that a login from `/starter-login` passes through
-  `/auth-route` rather than the shared plan redirect.
+- Confirm the site head loads Memberstack, `memberReady`, then
+  `auth-page-loader.js`.
+- Confirm the loader requests `route-guard.js` before `auth-route.js` from one
+  release ref on all three auth paths.
+- Confirm `/auth-route` requests no unrelated application controller.
+- Confirm `/starter-login` passes through `/auth-route` rather than the shared
+  plan redirect.
 - Confirm `/sign-up` still has NO `auth-route.js` embed, and that its signup
   modals still return to their `starters-ms-redirect` marker destinations.
 - Back up page-level code before installing the script.

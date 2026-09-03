@@ -155,10 +155,17 @@ function loadRouter(options = {}) {
   // assertions read.
   const formAttributes = { login: {}, signup: {} }
   function makeForm(kind) {
+    const listeners = {}
     return {
       setAttribute(name, value) {
         formAttributes[kind][name] = value
         attributes[name] = value
+      },
+      addEventListener(name, callback) {
+        listeners[name] = callback
+      },
+      dispatch(name) {
+        if (listeners[name]) listeners[name]()
       },
     }
   }
@@ -200,6 +207,9 @@ function loadRouter(options = {}) {
   const fetchCalls = []
   const aborted = []
   const logs = { info: [], warn: [], error: [] }
+  const marks = []
+  const events = []
+  let getCurrentMemberCalls = 0
 
   // Only wired when a test asks for Xano (`xano: {...}`). Everything else keeps
   // a window without `fetch`, which is exactly how the funnel check behaves in
@@ -275,8 +285,15 @@ function loadRouter(options = {}) {
     },
     URL,
     URLSearchParams,
-    dispatchEvent() {},
+    dispatchEvent(event) {
+      events.push(event)
+    },
     location,
+    performance: {
+      mark(name) {
+        marks.push(name)
+      },
+    },
     sessionStorage,
     setInterval: clock ? clock.setInterval : setInterval,
     setTimeout: clock ? clock.setTimeout : setTimeout,
@@ -299,7 +316,10 @@ function loadRouter(options = {}) {
 
   function memberstackFor(member) {
     return {
-      getCurrentMember: async () => ({ data: member }),
+      getCurrentMember: async () => {
+        getCurrentMemberCalls += 1
+        return { data: member }
+      },
       getMemberCookie: async () => {
         if (options.cookieRejects) throw new Error('memberstack failure')
         return options.loggedOutCookie ? null : options.memberCookie || 'ms-jwt'
@@ -312,6 +332,9 @@ function loadRouter(options = {}) {
     }, options.memberstackDelayMs || 25)
   } else if (options.member) {
     window.$memberstackDom = memberstackFor(options.member)
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'memberReady')) {
+    window.memberReady = options.memberReady
   }
   const document = {
     documentElement: {
@@ -356,8 +379,12 @@ function loadRouter(options = {}) {
     formAttributes,
     clock,
     fetchCalls,
+    forms,
+    getCurrentMemberCalls: () => getCurrentMemberCalls,
     location,
     logs,
+    marks,
+    events,
     storage,
     window,
   }
@@ -952,6 +979,91 @@ test('auth route waits for delayed Memberstack before resolving /dashboard', asy
   assert.equal(attributes['data-auth-route-error'], undefined)
   await new Promise((resolve) => setTimeout(resolve, 150))
   assert.equal(location.replaced, '/brand-dashboard')
+})
+
+test('auth route reuses an authenticated shared member snapshot', async () => {
+  const member = talentMember()
+  const harness = loadRouter({
+    pathname: '/auth-route',
+    member,
+    memberReady: Promise.resolve(member),
+    xano: { statusBody: ONBOARDED },
+  })
+
+  await flush()
+  assert.equal(harness.location.replaced, '/starter-dashboard')
+  assert.equal(harness.getCurrentMemberCalls(), 0)
+  assert.deepEqual(
+    harness.fetchCalls.map((call) => call.url.replace(/\?token=.*/, '?token=[redacted]')),
+    [TRADE_URL + '?token=[redacted]', STATUS_URL],
+  )
+})
+
+test('an empty shared member snapshot falls back to a live Memberstack read', async () => {
+  const harness = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    memberReady: Promise.resolve({}),
+    xano: { statusBody: ONBOARDED },
+  })
+
+  await flush()
+  assert.equal(harness.location.replaced, '/starter-dashboard')
+  assert.equal(harness.getCurrentMemberCalls(), 1)
+})
+
+test('late Memberstack still reuses the authenticated shared snapshot', async () => {
+  const member = talentMember()
+  const harness = loadRouter({
+    pathname: '/auth-route',
+    delayedMember: member,
+    memberstackDelayMs: 25,
+    memberReady: Promise.resolve(member),
+  })
+
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  assert.equal(harness.location.replaced, '/starter-dashboard')
+  assert.equal(harness.getCurrentMemberCalls(), 0)
+})
+
+test('router timing marks contain stage names only', async () => {
+  const member = talentMember()
+  const harness = loadRouter({
+    pathname: '/auth-route',
+    member,
+    memberReady: Promise.resolve(member),
+    xano: { statusBody: ONBOARDED },
+  })
+
+  await flush()
+  assert.deepEqual(harness.marks, [
+    'starters:v3-auth-route:router-boot',
+    'starters:v3-auth-route:memberstack-ready',
+    'starters:v3-auth-route:member-snapshot',
+    'starters:v3-auth-route:token-trade-start',
+    'starters:v3-auth-route:token-trade-end',
+    'starters:v3-auth-route:status-read-start',
+    'starters:v3-auth-route:status-read-end',
+    'starters:v3-auth-route:redirect-request',
+  ])
+  const serialized = JSON.stringify(harness.events)
+  assert.equal(serialized.includes(member.id), false)
+  assert.equal(serialized.includes('ms-jwt'), false)
+  assert.equal(serialized.includes('xano-token-abc'), false)
+})
+
+test('login submit starts the cross-navigation timing receipt', () => {
+  const harness = loadRouter({ pathname: '/login' })
+
+  harness.forms[0].dispatch('submit')
+  const receipt = JSON.parse(
+    harness.storage.get('thestarters:v3-auth-route-timing'),
+  )
+  assert.equal(typeof receipt.startedAt, 'number')
+  assert.deepEqual(Object.keys(receipt), ['startedAt'])
+  assert.ok(
+    harness.marks.includes('starters:v3-auth-route:login-submit'),
+  )
 })
 
 test('auth route preserves the stored destination from login', async () => {
