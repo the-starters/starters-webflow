@@ -876,6 +876,8 @@
       intent.title.length < 3 ||
       !Number.isInteger(intent.price_cents) ||
       intent.price_cents < 100 ||
+      intent.price_cents > 100000 ||
+      intent.price_cents % 100 !== 0 ||
       [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1
     ) {
       throw new Error('Canonical paid-call service cannot be preserved')
@@ -2623,6 +2625,8 @@
     return Boolean(
       Number.isInteger(Number(config.price_cents)) &&
         Number(config.price_cents) >= 100 &&
+        Number(config.price_cents) <= 100000 &&
+        Number(config.price_cents) % 100 === 0 &&
         previewSyncReady(config),
     )
   }

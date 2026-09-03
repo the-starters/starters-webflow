@@ -12,6 +12,20 @@
       const formSubmit = form ? qs('[form-submit]', form) : null;
       if (!form || !formSubmit || !success || !error) return;
 
+      [
+        { selector: '[name="rate"]', min: 1, max: 1000 },
+        { selector: '[name="rate-retainer"]', min: 1, max: 25000 },
+        { selector: '[name="paid-call-rate"]', min: 1, max: 1000 },
+      ].forEach(({ selector, min, max }) => {
+        const input = qs(selector, form);
+        if (!input) return;
+        input.setAttribute('type', 'number');
+        input.setAttribute('inputmode', 'numeric');
+        input.setAttribute('step', '1');
+        input.setAttribute('min', String(min));
+        input.setAttribute('max', String(max));
+      });
+
       success.style.display = 'none';
       error.style.display = 'none';
       let savedBuildResult = null;
@@ -34,8 +48,14 @@
 
         console.log("Form Data:", data);
 
-        const result = await submitFreelancerData(data);
-        console.log("Normalized Data:", result);
+        try {
+          const result = await submitFreelancerData(data);
+          console.log("Normalized Data:", result);
+        } catch (submitError) {
+          success.style.display = 'none';
+          error.style.display = 'block';
+          console.error('[build-profile] submit failed', submitError?.code || 'SUBMIT_FAILED');
+        }
       });
 
       async function submitFreelancerData(formData) {
@@ -47,13 +67,31 @@
           return value;
         };
 
-        const toInteger = (value) => {
-          if (value === undefined || value === null || value === "") return null;
+        const priceError = (field, message, code) => {
+          field?.setCustomValidity?.(message);
+          field?.focus?.();
+          field?.reportValidity?.();
+          throw Object.assign(new Error(message), { code });
+        };
 
-          const number = Number(value);
-          if (Number.isNaN(number)) return null;
-
-          return Math.round(number);
+        const wholeDollar = (value, { min, max, label, selector, allowBlank = false }) => {
+          const raw = String(value ?? '').trim();
+          if (!raw) {
+            if (allowBlank) return null;
+            return priceError(qs(selector, form), `${label} is required.`, 'PRICE_REQUIRED');
+          }
+          if (!/^[0-9]+$/.test(raw)) {
+            return priceError(qs(selector, form), `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`, 'PRICE_NOT_INTEGER');
+          }
+          const number = Number(raw);
+          if (!Number.isSafeInteger(number)) {
+            return priceError(qs(selector, form), `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`, 'PRICE_NOT_INTEGER');
+          }
+          if (number < min || number > max) {
+            return priceError(qs(selector, form), `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`, 'PRICE_OUT_OF_RANGE');
+          }
+          qs(selector, form)?.setCustomValidity?.('');
+          return number;
         };
 
         const parseJson = (value) => {
@@ -84,16 +122,24 @@
           };
         };
 
-        function requiredServicesFields(data) {
-          if (!data || !data.name || !data.price) return null;
-
+        function requiredServicesFields(data, selector) {
+          if (!data || (!String(data.name ?? '').trim() && !String(data.price ?? '').trim())) return null;
+          if (!String(data.name ?? '').trim()) {
+            return priceError(qs(selector, form), 'A service name is required when a service price is set.', 'SERVICE_NAME_REQUIRED');
+          }
+          data.price = wholeDollar(data.price, {
+            min: 1,
+            max: 50000,
+            label: 'service price',
+            selector,
+          });
           return data;
         }
 
         const services = {
-          "service-1": requiredServicesFields(parseJson(formData.service)),
-          "service-2": requiredServicesFields(parseJson(formData["service-2"])),
-          "service-3": requiredServicesFields(parseJson(formData["service-3"])),
+          "service-1": requiredServicesFields(parseJson(formData.service), '#service'),
+          "service-2": requiredServicesFields(parseJson(formData["service-2"]), '#service-2'),
+          "service-3": requiredServicesFields(parseJson(formData["service-3"]), '#service-3'),
         };
 
         const reviewers = {
@@ -102,10 +148,34 @@
           "reviewer-3": normalizeReviewer(parseJson(formData["reviewer-3"])),
         };
 
-        const paidCallRate = toInteger(formData["paid-call-rate"]);
         const isConsultProfile = String(window.location?.pathname || "").replace(/\/+$/, "") === "/build-profile/consult";
-        const paidCallEnabled = toBool(formData["paid-consulting-calls"]) === true ||
-          (isConsultProfile && paidCallRate > 0);
+        const paidCallSelected = toBool(formData["paid-consulting-calls"]) === true;
+        const paidCallHasValue = String(formData["paid-call-rate"] ?? '').trim() !== '';
+        const paidCallEnabled = paidCallSelected || (isConsultProfile && paidCallHasValue);
+        const paidCallRate = wholeDollar(formData["paid-call-rate"], {
+          min: 1,
+          max: 1000,
+          label: 'paid call rate',
+          selector: '[name="paid-call-rate"]',
+          allowBlank: !paidCallEnabled,
+        });
+
+        const fullProfile = !isConsultProfile;
+        const hourlyRate = wholeDollar(formData.rate, {
+          min: 1,
+          max: 1000,
+          label: 'hourly rate',
+          selector: '[name="rate"]',
+          allowBlank: !fullProfile,
+        });
+        const retainerEnabled = toBool(formData["offer-monthly-retainers"]) === true;
+        const retainerRate = wholeDollar(formData["rate-retainer"], {
+          min: 1,
+          max: 25000,
+          label: 'monthly retainer rate',
+          selector: '[name="rate-retainer"]',
+          allowBlank: !retainerEnabled,
+        });
 
         const payload = {
           member_id: MEMBER.id || "",
@@ -148,7 +218,7 @@
           best_fit_2: formData["best-fit-2"] || "",
           best_fit_3: formData["best-fit-3"] || "",
 
-          hourly_rate: toInteger(formData.rate),
+          hourly_rate: hourlyRate === null && !fullProfile ? 0 : hourlyRate,
 
           availability: formData["availability-option"] || "",
           availability_id: formData.availability || "",
@@ -165,9 +235,9 @@
           paid_call_desc: formData["paid-call-description"] || "",
           paid_call_rate: paidCallRate,
 
-          retainer: toBool(formData["offer-monthly-retainers"]),
+          retainer: retainerEnabled,
           retainer_desc: formData["description-retainer"] || "",
-          retainer_rate: toInteger(formData["rate-retainer"]),
+          retainer_rate: retainerRate === null && !retainerEnabled ? 0 : retainerRate,
 
           services,
           reviewers,

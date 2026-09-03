@@ -459,6 +459,11 @@ empty. Learn interview links use the live V3
 `/learn/interviews-analyses/<slug>` CMS route; legacy
 `/learn/interviews/<slug>` records are normalized to that route while keeping
 their query parameters and fragment.
+V3 profile pricing uses whole-dollar USD validation at the browser and Xano boundaries. Hourly and
+Paid Call rates allow `$1` to `$1,000`, Monthly Retainer allows `$1` to `$25,000`, and Custom Services
+allow `$1` to `$50,000`. Invalid authored text is rejected before a request. It is never rounded,
+parsed partially, or silently clamped.
+
 The Memberstack session exchange accepts every response shape used by the
 shared V3 trade-token endpoint: a raw string, `{authToken}`, or `{token}`.
 

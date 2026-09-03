@@ -76,7 +76,7 @@ const EXPECTED_LIVE_CAPTURES = Object.freeze({
 
 const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
   'v3/profile-form/shared-foundation.js': Object.freeze({
-    characters: 22892, sha256: '7af566f3bd01f172416d0be37d5b669e9e80848049e980653b237d60d047a214',
+    characters: 22714, sha256: '76b0feb6c2d2b616bcf12be70b25eb5803d0252efa0b14936ad3837cb1ee3be9',
     liveCaptureAsset: 'v3/profile-form/shared-foundation-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 3: '  ', 81: ' ', 239: '      ' }), terminalNewlinesRemoved: 0,
   }),
@@ -104,7 +104,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 11438, sha256: '64bdb27d4834cd218ffe4b9dfd3777ebc0e00d0e8ea838f1106a2b503098a445',
+    characters: 14738, sha256: '226ce619f9125195480b5652e0dfa67ec3d1353e48e1f86a727d39233d81df10',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 219: '          ' }), terminalNewlinesRemoved: 0,
@@ -951,6 +951,35 @@ test('shared foundation owns the empty profile model without creating a form', (
   assert.equal(document.createdTags.includes('form'), false)
 })
 
+test('shared rate setup applies whole-dollar constraints without rewriting authored text', () => {
+  const hourly = new Element('input')
+  hourly.value = '1e2'
+  hourly.getAttribute = (name) => name === 'name' ? 'rate' : (hourly[name] ?? null)
+  const retainer = new Element('input')
+  retainer.value = '2,500'
+  retainer.getAttribute = (name) => name === 'name' ? 'rate-retainer' : (retainer[name] ?? null)
+  const service = new Element('input')
+  service.value = '$500'
+  service.getAttribute = (name) => name === 'name' ? '' : (service[name] ?? null)
+  const document = createDocument({
+    '[data-element="rate"]:not(.initialized)': [hourly, retainer, service],
+  })
+  const context = createBaseContext({ document })
+  run('v3/profile-form/shared-foundation.js', context)
+
+  context.formatRateInputs()
+
+  assert.deepEqual([hourly.value, retainer.value, service.value], ['1e2', '2,500', '$500'])
+  assert.deepEqual([hourly.max, retainer.max, service.max], ['1000', '25000', '50000'])
+  for (const input of [hourly, retainer, service]) {
+    assert.equal(input.type, 'number')
+    assert.equal(input.inputmode, 'numeric')
+    assert.equal(input.step, '1')
+    assert.equal(input.min, '1')
+    assert.equal(input.listeners.size, 0)
+  }
+})
+
 test('each deferred controller registers one boot and never creates a replacement form', async () => {
   const files = [
     'v3/profile-form/incremental-dropdowns.js',
@@ -1342,11 +1371,11 @@ test('build submit writer sends one normalized payload through the authored form
     ['tools', 'tool-id'], ['industries-option', 'SaaS'], ['industries', 'industry-id'],
     ['subcategories-option', 'Automation'], ['subcategories', 'subcategory-id'],
     ['tagline', 'Profile tagline'], ['pro-headline', 'Profile headline'], ['bio-html', '<p>Bio</p>'],
-    ['best-fit-1', 'Startups'], ['rate', '125.6'], ['availability-option', '11-20'],
+    ['best-fit-1', 'Startups'], ['rate', '126'], ['availability-option', '11-20'],
     ['availability', 'availability-id'], ['full-time-placement', 'yes'],
     ['free-consulting-calls', 'no'], ['paid-consulting-calls', 'no'],
-    ['paid-call-description', 'Strategy call'], ['paid-call-rate', '199.6'],
-    ['offer-monthly-retainers', 'yes'], ['rate-retainer', '2500.4'],
+    ['paid-call-description', 'Strategy call'], ['paid-call-rate', '200'],
+    ['offer-monthly-retainers', 'yes'], ['rate-retainer', '2500'],
     ['service', JSON.stringify({ name: 'Audit', price: 500 })],
     ['reviewer', JSON.stringify({ fname: 'Grace', lname: 'Hopper', job: 'CTO', company: 'Navy', email: 'grace@example.com' })],
     ['also-worked-with', JSON.stringify({ one: { name: 'Example' } })],

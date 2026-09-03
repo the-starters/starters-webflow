@@ -27,6 +27,16 @@ Tests still pin each candidate length and SHA-256, prove the published length, b
 complete-embed hash from its capture, and fail if a declared change stops diverging from the published
 body.
 
+## Whole-dollar price contract
+
+Profile price inputs preserve the member's authored text until validation. They do not strip symbols,
+round decimals, or convert exponent notation. The native inputs use `type="number"`,
+`inputmode="numeric"`, and `step="1"`. Hourly and Paid Call rates allow `$1` through `$1,000`,
+Monthly Retainer allows `$1` through `$25,000`, and each Custom Service allows `$1` through `$50,000`.
+An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, unsafe integer, or value outside
+its range stops before the Xano request. Disabled or profile-type-inapplicable blank rates keep the
+existing zero or null compatibility state. No invalid value is silently clamped.
+
 `inline-extraction-cutover-candidate.json` binds each source body to its authenticated published body
 length, SHA-256, complete-embed SHA-256, script index, component instance, and node or complete
 custom-code location. `inline-extraction-loaders.CANDIDATE.html` serializes one ordered page Head Code loader

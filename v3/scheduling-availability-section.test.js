@@ -3372,7 +3372,7 @@ test('a free configuration stamped for another environment does not block canoni
   )
 })
 
-test('calendar-preview excludes paid services that are below $1 or failed provider sync', async () => {
+test('calendar-preview excludes paid services outside the whole-dollar $1 to $1,000 contract or failed provider sync', async () => {
   const { dom, calls } = loadSection({
     serverState: {
       grantId: 'grant-1',
@@ -3383,6 +3383,22 @@ test('calendar-preview excludes paid services that are below $1 or failed provid
           config_id: 'cfg-paid-too-low',
           duration: 60,
           price_cents: 99,
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+        {
+          config_id: 'cfg-paid-too-high',
+          duration: 60,
+          price_cents: 100100,
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+        {
+          config_id: 'cfg-paid-fractional',
+          duration: 60,
+          price_cents: 1050,
           is_paid: true,
           active: true,
           sync_status: 'ready',
@@ -3402,6 +3418,8 @@ test('calendar-preview excludes paid services that are below $1 or failed provid
 
   assert.equal(dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
   assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-too-low"]'), null)
+  assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-too-high"]'), null)
+  assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-fractional"]'), null)
   assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-failed"]'), null)
   assert.equal(
     calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,

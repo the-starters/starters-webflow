@@ -310,9 +310,9 @@ function formatRateInputs() {
 	}
 
 	qsa('[data-element="rate"]').forEach((input) => {
-		input.addEventListener('input', () => {
-			input.value = input.value.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
-		});
+		input.setAttribute('type', 'number');
+		input.setAttribute('inputmode', 'numeric');
+		input.setAttribute('step', '1');
 	});
 }
 
@@ -574,6 +574,11 @@ onDomReady(function () {
 
 		/* SUBMIT METHODS */
 		const PATCH_ENDPOINT = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/edit_profile/update/';
+		const PRICE_CONTRACTS = Object.freeze({
+			Hourly_Rate: Object.freeze({ min: 1, max: 1000, label: 'hourly rate' }),
+			Retainer_Rate: Object.freeze({ min: 1, max: 25000, label: 'monthly retainer rate' }),
+			Services: Object.freeze({ min: 1, max: 50000, label: 'service price' }),
+		});
 		const STEP_PAYLOAD_MAP = {
 			1: {
 				First_Name: 'first-name',
@@ -632,7 +637,80 @@ onDomReady(function () {
 			},
 		};
 
+		applyPriceInputContracts();
 		initStepSubmits();
+
+		function applyPriceInputContracts() {
+			[
+				{ selector: '[name="rate"]', contract: PRICE_CONTRACTS.Hourly_Rate },
+				{ selector: '[name="rate-retainer"]', contract: PRICE_CONTRACTS.Retainer_Rate },
+			].forEach(({ selector, contract }) => {
+				const input = qs(selector, stepElement(6));
+				if (!input) return;
+				input.setAttribute('type', 'number');
+				input.setAttribute('inputmode', 'numeric');
+				input.setAttribute('step', '1');
+				input.setAttribute('min', String(contract.min));
+				input.setAttribute('max', String(contract.max));
+			});
+		}
+
+		function wholeDollar(value, contract, { allowBlank = false } = {}) {
+			const raw = String(value ?? '').trim();
+			if (!raw) return allowBlank ? { valid: true, value: null } : { valid: false, code: 'PRICE_REQUIRED' };
+			if (!/^[0-9]+$/.test(raw)) return { valid: false, code: 'PRICE_NOT_INTEGER' };
+			const number = Number(raw);
+			if (!Number.isSafeInteger(number)) return { valid: false, code: 'PRICE_NOT_INTEGER' };
+			if (number < contract.min || number > contract.max) return { valid: false, code: 'PRICE_OUT_OF_RANGE' };
+			return { valid: true, value: number };
+		}
+
+		function priceMessage(contract) {
+			return `Use a whole-dollar ${contract.label} from $${contract.min.toLocaleString('en-US')} to $${contract.max.toLocaleString('en-US')}.`;
+		}
+
+		function reportPriceFailure(field, contract) {
+			const message = priceMessage(contract);
+			field?.setCustomValidity?.(message);
+			field?.focus?.();
+			field?.reportValidity?.();
+			return message;
+		}
+
+		function validateStepSixPrices(payload, services) {
+			const step = stepElement(6);
+			const hourlyField = qs('[name="rate"]', step);
+			const hourlyOptional = hourlyField?.required === false;
+			const hourly = wholeDollar(payload.Hourly_Rate, PRICE_CONTRACTS.Hourly_Rate, { allowBlank: hourlyOptional });
+			if (!hourly.valid) return { ...hourly, field: hourlyField, contract: PRICE_CONTRACTS.Hourly_Rate };
+			if (hourlyField) hourlyField.setCustomValidity?.('');
+
+			const retainerField = qs('[name="rate-retainer"]', step);
+			let retainer = { valid: true, value: null };
+			if (Object.prototype.hasOwnProperty.call(payload, 'Retainer_Rate') || payload.Retainer_Enabled === true) {
+				retainer = wholeDollar(payload.Retainer_Rate, PRICE_CONTRACTS.Retainer_Rate, {
+					allowBlank: payload.Retainer_Enabled === false,
+				});
+				if (!retainer.valid) return { ...retainer, field: retainerField, contract: PRICE_CONTRACTS.Retainer_Rate };
+				if (retainerField) retainerField.setCustomValidity?.('');
+			}
+
+			for (const [slot, service] of Object.entries(services)) {
+				if (!service || (!String(service.name ?? '').trim() && !String(service.price ?? '').trim())) continue;
+				const serviceField = qs(`#${slot === 'service-1' ? 'service' : slot}`, form);
+				const price = wholeDollar(service.price, PRICE_CONTRACTS.Services);
+				if (!String(service.name ?? '').trim()) {
+					return { valid: false, code: 'SERVICE_NAME_REQUIRED', field: serviceField, contract: PRICE_CONTRACTS.Services };
+				}
+				if (!price.valid) return { ...price, field: serviceField, contract: PRICE_CONTRACTS.Services };
+				service.price = price.value;
+				serviceField?.setCustomValidity?.('');
+			}
+
+			if (hourly.value !== null) payload.Hourly_Rate = hourly.value;
+			if (retainer.value !== null) payload.Retainer_Rate = retainer.value;
+			return { valid: true };
+		}
 
 		function initStepSubmits() {
 			qsa('[data-form="step"][data-index]').forEach((step) => {
@@ -700,8 +778,6 @@ onDomReady(function () {
 
 			const payload = getStepPayload(stepIndex);
 
-			normalizeOptionalCanonicalRates(payload, stepIndex);
-
 			// Country, State
 			if (payload.Country && payload.State_Province) {
 				const countrySelect = qs('#country');
@@ -724,27 +800,46 @@ onDomReady(function () {
 
 			// Services
 			if (payload.Services) {
-				let service1 = qs("#service");
-				service1 = service1 ? parseJson(service1.value) : null;
+				const serviceFormData = getFormDataObject();
+				const service1 = parseJson(serviceFormData.service);
+				const service2 = parseJson(serviceFormData["service-2"]);
+				const service3 = parseJson(serviceFormData["service-3"]);
 
-				let service2 = qs("#service-2");
-				service2 = service2 ? parseJson(service2.value) : null;
-
-				let service3 = qs("#service-3");
-				service3 = service3 ? parseJson(service3.value) : null;
-
-				function requiredServicesFields(name, price) {
-					if (!name || !price) return false;
-
-					return true;
+				const services = {
+					"service-1": service1,
+					"service-2": service2,
+					"service-3": service3,
+				};
+				const priceValidation = validateStepSixPrices(payload, services);
+				if (!priceValidation.valid) {
+					reportPriceFailure(priceValidation.field, priceValidation.contract);
+					recordProfileDiagnostic(null, {
+						result: 'failed',
+						stage: 'validation',
+						error_code: priceValidation.code,
+						request_started: false,
+					});
+					setSubmitLoading(submitButton, false);
+					return false;
 				}
 
 				payload.Services = JSON.stringify({
-					"service-1": requiredServicesFields(service1?.name, service1?.price) ? service1 : null,
-					"service-2": requiredServicesFields(service2?.name, service2?.price) ? service2 : null,
-					"service-3": requiredServicesFields(service3?.name, service3?.price) ? service3 : null,
+					"service-1": service1?.name ? service1 : null,
+					"service-2": service2?.name ? service2 : null,
+					"service-3": service3?.name ? service3 : null,
 				});
 			}
+
+			if (stepIndex === 6 && !Object.prototype.hasOwnProperty.call(payload, 'Services')) {
+				const priceValidation = validateStepSixPrices(payload, {});
+				if (!priceValidation.valid) {
+					reportPriceFailure(priceValidation.field, priceValidation.contract);
+					setSubmitLoading(submitButton, false);
+					return false;
+				}
+			}
+
+			normalizeOptionalCanonicalRates(payload, stepIndex);
 
 			// Reviewers. The native increment-dropdown component stores each slot as
 			// JSON in reviewer, reviewer-2, and reviewer-3 hidden fields. Keep the

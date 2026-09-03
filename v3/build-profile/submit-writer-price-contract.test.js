@@ -1,0 +1,184 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const test = require('node:test')
+const vm = require('node:vm')
+
+const SOURCE = fs.readFileSync(require.resolve('./submit-writer.js'), 'utf8')
+
+class Element {
+  constructor(value = '') {
+    this.value = value
+    this.style = {}
+    this.attrs = new Map()
+    this.listeners = new Map()
+    this.validationMessage = ''
+    this.focusCount = 0
+    this.reportValidityCount = 0
+  }
+  setAttribute(name, value) { this.attrs.set(name, String(value)) }
+  getAttribute(name) { return this.attrs.get(name) ?? null }
+  setCustomValidity(message) { this.validationMessage = String(message || '') }
+  focus() { this.focusCount += 1 }
+  reportValidity() { this.reportValidityCount += 1; return this.validationMessage === '' }
+  addEventListener(name, callback) { this.listeners.set(name, callback) }
+  closest() { return new Element() }
+  async click() { return this.listeners.get('click')?.({ preventDefault() {} }) }
+}
+
+function load(overrides = {}, pathname = '/build-profile/full') {
+  const values = {
+    email: 'starter@example.test',
+    'first-name': 'Test',
+    'last-name': 'Starter',
+    phone: '+15555550100',
+    rate: '100',
+    'offer-monthly-retainers': 'no',
+    'rate-retainer': '',
+    'paid-consulting-calls': 'no',
+    'paid-call-rate': '',
+    service: '',
+    'service-2': '',
+    'service-3': '',
+    ...overrides,
+  }
+  const form = new Element()
+  form.values = values
+  const submit = new Element()
+  const success = new Element()
+  const error = new Element()
+  const inputs = Object.fromEntries([
+    ['[name="rate"]', new Element(values.rate)],
+    ['[name="rate-retainer"]', new Element(values['rate-retainer'])],
+    ['[name="paid-call-rate"]', new Element(values['paid-call-rate'])],
+    ['#service', new Element(values.service)],
+    ['#service-2', new Element(values['service-2'])],
+    ['#service-3', new Element(values['service-3'])],
+  ])
+  const requests = []
+  const MEMBER = {
+    id: 'mem_test',
+    auth: { email: values.email },
+    customFields: {
+      'free-user': values['first-name'],
+      'last-name': values['last-name'],
+      phone: values.phone,
+    },
+  }
+  const qs = (selector, scope) => {
+    if (!scope) {
+      if (selector === '[build-profile-form]') return form
+      if (selector === '[build-profile-success]') return success
+      if (selector === '[build-profile-error]') return error
+      if (selector === 'input[name="phone"]') return new Element(values.phone)
+      return null
+    }
+    if (scope === form && selector === '[form-submit]') return submit
+    if (scope === form && inputs[selector]) return inputs[selector]
+    return null
+  }
+  class FormData {
+    constructor(owner) { this.values = Object.entries(owner.values) }
+    [Symbol.iterator]() { return this.values[Symbol.iterator]() }
+  }
+  const window = {
+    __tsProfileFormControllers: {},
+    location: { pathname },
+    intlTelInput: { getInstance: () => ({ getNumber: () => values.phone }) },
+    $memberstackDom: { updateMember: async () => {}, updateMemberAuth: async () => {} },
+  }
+  const domReady = []
+  const context = {
+    window,
+    document: { addEventListener: (name, callback) => { if (name === 'DOMContentLoaded') domReady.push(callback) } },
+    MEMBER,
+    activeProfile: { type: pathname.endsWith('/consult') ? 'consult' : 'full', type_id: 1 },
+    waitForMember: (callback) => callback(MEMBER),
+    qs,
+    FormData,
+    setLoader() {},
+    xanoAuthFetch: async (url, init) => {
+      requests.push({ url, body: JSON.parse(init.body) })
+      return { ok: true, status: 200, json: async () => ({ saved: true }) }
+    },
+    console: { log() {}, warn() {}, error() {} },
+    Date,
+    Math,
+    Number,
+    Object,
+    String,
+  }
+  vm.runInNewContext(SOURCE, context, { filename: 'submit-writer.js' })
+  domReady.forEach((callback) => callback())
+  return { submit, success, error, inputs, requests }
+}
+
+test('sets native whole-dollar constraints on each direct price input', () => {
+  const result = load()
+  assert.deepEqual(
+    ['[name="rate"]', '[name="rate-retainer"]', '[name="paid-call-rate"]'].map((selector) => ({
+      type: result.inputs[selector].getAttribute('type'),
+      inputmode: result.inputs[selector].getAttribute('inputmode'),
+      step: result.inputs[selector].getAttribute('step'),
+      min: result.inputs[selector].getAttribute('min'),
+      max: result.inputs[selector].getAttribute('max'),
+    })),
+    [
+      { type: 'number', inputmode: 'numeric', step: '1', min: '1', max: '1000' },
+      { type: 'number', inputmode: 'numeric', step: '1', min: '1', max: '25000' },
+      { type: 'number', inputmode: 'numeric', step: '1', min: '1', max: '1000' },
+    ],
+  )
+})
+
+test('rejects malformed and out-of-range authored prices before the canonical request', async () => {
+  const cases = [
+    { rate: '0' },
+    { rate: '1001' },
+    { rate: '1.5' },
+    { rate: '1e2' },
+    { 'offer-monthly-retainers': 'yes', 'rate-retainer': '25001' },
+    { service: JSON.stringify({ name: 'Audit', price: '50001' }) },
+  ]
+  for (const values of cases) {
+    const result = load(values)
+    await result.submit.click()
+    assert.equal(result.requests.length, 0, JSON.stringify(values))
+    assert.equal(result.error.style.display, 'block')
+  }
+})
+
+test('persists exact maximums and converts service values once without rounding', async () => {
+  const result = load({
+    rate: '1000',
+    'offer-monthly-retainers': 'yes',
+    'rate-retainer': '25000',
+    service: JSON.stringify({ name: 'Audit', price: '50000' }),
+  })
+  await result.submit.click()
+  assert.equal(result.requests.length, 1)
+  const payload = result.requests[0].body
+  assert.equal(payload.hourly_rate, 1000)
+  assert.equal(payload.retainer_rate, 25000)
+  assert.equal(payload.services['service-1'].price, 50000)
+})
+
+test('consult Paid Call accepts $1 and $1,000, rejects $1.01, and converts to no hidden precision', async () => {
+  for (const value of ['1', '1000']) {
+    const result = load({ 'paid-call-rate': value }, '/build-profile/consult')
+    await result.submit.click()
+    assert.equal(result.requests.length, 1)
+    assert.equal(result.requests[0].body.paid_call_rate, Number(value))
+  }
+  const invalid = load({ 'paid-call-rate': '1.01' }, '/build-profile/consult')
+  await invalid.submit.click()
+  assert.equal(invalid.requests.length, 0)
+})
+
+test('disabled and non-owned blank rates preserve compatibility zero without accepting authored zero', async () => {
+  const consult = load({ rate: '' }, '/build-profile/consult')
+  await consult.submit.click()
+  assert.equal(consult.requests.length, 1)
+  assert.equal(consult.requests[0].body.hourly_rate, 0)
+  assert.equal(consult.requests[0].body.retainer_rate, 0)
+  assert.equal(consult.requests[0].body.paid_call_rate, null)
+})
