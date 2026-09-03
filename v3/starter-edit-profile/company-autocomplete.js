@@ -123,11 +123,20 @@
       tagWrapper = qs('[also-worked-wrapper]', group);
 
       fetchAlsoWorkedWithCompanies(MEMBER.id).then(function (selectedCompanies) {
-        for (const uniqueId of Object.keys(selectedCompanies)) {
-          const company = selectedCompanies[uniqueId];
-          if (company.name) {
-            renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '', company.client_row_id, company.company_entity_id, company.source);
+        const hydrateSelections = function () {
+          for (const uniqueId of Object.keys(selectedCompanies)) {
+            const company = selectedCompanies[uniqueId];
+            if (company.name) {
+              renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '', company.client_row_id, company.company_entity_id, company.source);
+            }
           }
+          valueInput.dispatchEvent(new Event('starter:also-worked-with-hydrated', { bubbles: true }));
+        };
+        const dirtyState = window.__tsProfileDirtyState;
+        if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+          dirtyState.runHydrationSync(hydrateSelections);
+        } else {
+          hydrateSelections();
         }
       })
     }

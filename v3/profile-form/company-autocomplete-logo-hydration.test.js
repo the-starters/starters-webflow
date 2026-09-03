@@ -13,9 +13,13 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   const tags = []
   const inputListeners = {}
   const dropdownListeners = {}
+  let hydrationSyncDepth = 0
+  let dirtyEvents = 0
   const valueInput = {
     value: '',
-    dispatchEvent() {},
+    dispatchEvent(event) {
+      if (hydrationSyncDepth === 0 && (event.type === 'input' || event.type === 'change')) dirtyEvents += 1
+    },
   }
   const tagTemplate = {
     cloneNode() {
@@ -79,7 +83,9 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
     console,
     crypto: { randomUUID: () => `id-${++nextId}` },
     document,
-    Event: class Event {},
+    Event: class Event {
+      constructor(type) { this.type = type }
+    },
     MEMBER: { id: 'member-1' },
     qsa(selector, root) {
       if (selector === '[logo-search-input]') return [input]
@@ -103,6 +109,16 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
     waitForMember(callback) { callback() },
     waitProfileData(callback) { callback() },
     window: {
+      __tsProfileDirtyState: {
+        runHydrationSync(callback) {
+          hydrationSyncDepth += 1
+          try {
+            return callback()
+          } finally {
+            hydrationSyncDepth -= 1
+          }
+        },
+      },
       xanoAuthFetch: async () => ({
         ok: true,
         json: async () => companyFetch ? companyFetch : companies,
@@ -117,6 +133,7 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   return {
     input,
     valueInput,
+    getDirtyEvents() { return dirtyEvents },
     clickResult(selection, { deleteResult = false } = {}) {
       let isAdded = deleteResult
       const item = {
@@ -180,17 +197,35 @@ test('Build Profile preserves a hydrated company logo in the serialized selectio
 
 test('Edit Profile preserves a hydrated API company logo in the serialized selection', async () => {
   const logoUrl = 'https://logos.example/acme.svg'
-  const { valueInput } = createHarness(
+  const harness = createHarness(
     path.join(__dirname, '../starter-edit-profile/company-autocomplete.js'),
     [{ id: 42, company_entity_id: 9, company_name: 'Acme', company_domain: 'acme.example', company_logo_url: logoUrl }],
   )
   await new Promise((resolve) => setImmediate(resolve))
 
-  const serialized = JSON.parse(valueInput.value)
+  const serialized = JSON.parse(harness.valueInput.value)
   const company = serialized['client-42']
   assert.equal(company.logo_url, logoUrl)
   assert.equal(company.client_row_id, 42)
   assert.equal(company.company_entity_id, 9)
+  assert.equal(harness.getDirtyEvents(), 0)
+})
+
+test('Edit Profile user selection stays dirty after clean async hydration', async () => {
+  const harness = createHarness(
+    path.join(__dirname, '../starter-edit-profile/company-autocomplete.js'),
+    [{ id: 42, company_name: 'Acme', company_domain: 'acme.example' }],
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.getDirtyEvents(), 0)
+
+  harness.selectCompany({
+    name: 'Later Company',
+    domain: 'later.example',
+    company_entity_id: 17,
+    source: 'platform',
+  })
+  assert.equal(harness.getDirtyEvents(), 2)
 })
 
 test('Edit Profile hydration does not append a case-variant duplicate after a custom selection', async () => {

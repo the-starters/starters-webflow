@@ -125,6 +125,34 @@ function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteD
     return Boolean(createDrafts.length || updateDrafts.size || deleteDraftIds.size || alsoWorkedWithChanged);
 }
 
+function createStarterEditCompanyDraftDirtyController(options) {
+    const revisions = new Map();
+    let discardedRevision = null;
+    function dirtyState() {
+        return typeof options.getDirtyState === 'function' ? options.getDirtyState() : options.dirtyState;
+    }
+    return {
+        queue(draftId) {
+            const token = dirtyState()?.captureRevision?.(options.stepIndex);
+            if (token) revisions.set(String(draftId), token);
+        },
+        discard(draftId) {
+            const key = String(draftId);
+            const token = revisions.get(key);
+            revisions.delete(key);
+            if (token && (!discardedRevision || token.revision > discardedRevision.revision)) discardedRevision = token;
+            if (options.hasPendingChanges()) return;
+            dirtyState()?.discardRevision?.(options.stepIndex, discardedRevision, false);
+            discardedRevision = null;
+        },
+        commit(draftIds) {
+            draftIds.forEach(function (draftId) {
+                revisions.delete(String(draftId));
+            });
+        },
+    };
+}
+
 /**
  * GitHub-owned copy of the Starter Edit Profile Webflow controller block.
  * Original live inline body SHA-256: 1224636b9f1167c5534957407d3451640b8d5b17e52f4930011e17f5a0eb8664
@@ -266,6 +294,18 @@ function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteD
             let pendingCreateDrafts = [];
             let pendingUpdateDrafts = new Map();
             let pendingDeleteDraftIds = new Set();
+            const companyDraftDirtyController = createStarterEditCompanyDraftDirtyController({
+                getDirtyState: function () { return window.__tsProfileDirtyState; },
+                stepIndex: 3,
+                hasPendingChanges: function () {
+                    return hasStarterEditCompanyPendingChanges(
+                        pendingCreateDrafts,
+                        pendingUpdateDrafts,
+                        pendingDeleteDraftIds,
+                        hasAlsoWorkedWithChanges()
+                    );
+                },
+            });
 
             const textEl = addBtn ? qs('div:first-child', addBtn) : null;
             const defaultButtonText = textEl ? textEl.textContent : 'add company';
@@ -1057,20 +1097,10 @@ function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteD
                 });
             }
 
-            function reconcileCompanyDirtyState() {
-                const hasPendingChanges = hasStarterEditCompanyPendingChanges(
-                    pendingCreateDrafts,
-                    pendingUpdateDrafts,
-                    pendingDeleteDraftIds,
-                    hasAlsoWorkedWithChanges()
-                );
-                window.__tsProfileDirtyState?.setDirty?.(3, hasPendingChanges);
-            }
-
             function queueCompanyDeletion(id) {
                 if (isDraftCompanyId(id)) {
                     removeCreateDraft(id);
-                    reconcileCompanyDirtyState();
+                    companyDraftDirtyController.discard(id);
                     return;
                 }
 
@@ -1080,6 +1110,10 @@ function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteD
             }
 
             function clearAllDraftQueues() {
+                companyDraftDirtyController.commit(
+                    pendingCreateDrafts.map(function (draft) { return draft.id; })
+                        .concat(Array.from(pendingUpdateDrafts.keys()))
+                );
                 pendingCreateDrafts = [];
                 pendingUpdateDrafts = new Map();
                 pendingDeleteDraftIds = new Set();
@@ -1227,9 +1261,11 @@ function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteD
                                     ? { ...draft, ...payload, id: companyId, type: 'create', is_draft: true, pending_type: 'create' }
                                     : draft;
                             });
+                            companyDraftDirtyController.queue(companyId);
                         } else {
                             window.__tsProfileDirtyState?.markDirty?.(3);
                             pendingUpdateDrafts.set(String(companyId), payload);
+                            companyDraftDirtyController.queue(companyId);
                         }
                         await renderCompanies();
 
@@ -1327,13 +1363,15 @@ function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteD
                         updateAddBtnState();
 
                         window.__tsProfileDirtyState?.markDirty?.(3);
-                        pendingCreateDrafts.push({
+                        const draft = {
                             id: `draft_${Date.now()}_${Math.random()}`,
                             type: 'create',
                             is_draft: true,
                             pending_type: 'create',
                             ...payload,
-                        });
+                        };
+                        pendingCreateDrafts.push(draft);
+                        companyDraftDirtyController.queue(draft.id);
                         await renderCompanies();
 
                         resetCompanyFields();
@@ -1431,6 +1469,11 @@ function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteD
             if (alsoWorkedWithInput) {
                 alsoWorkedWithInput.addEventListener('input', updateCompanySubmitState);
                 alsoWorkedWithInput.addEventListener('change', updateCompanySubmitState);
+                alsoWorkedWithInput.addEventListener('starter:also-worked-with-hydrated', function () {
+                    alsoWorkedWithBaseline = alsoWorkedWithInput.value;
+                    alsoWorkedWithBaselineReady = true;
+                    updateCompanySubmitState();
+                });
 
                 setTimeout(function () {
                     alsoWorkedWithBaseline = alsoWorkedWithInput.value;

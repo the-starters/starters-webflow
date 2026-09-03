@@ -74,6 +74,47 @@ function hasStarterEditPortfolioPendingChanges(createDrafts, updateDrafts, delet
   return Boolean(createDrafts.length || updateDrafts.size || deleteDraftIds.size);
 }
 
+function createStarterEditPortfolioDraftDirtyController(options) {
+  const revisions = new Map();
+  let discardedRevision = null;
+  function dirtyState() {
+    return typeof options.getDirtyState === 'function' ? options.getDirtyState() : options.dirtyState;
+  }
+  return {
+    queue(draftId) {
+      const token = dirtyState()?.captureRevision?.(options.stepIndex);
+      if (token) revisions.set(String(draftId), token);
+    },
+    discard(draftId) {
+      const key = String(draftId);
+      const token = revisions.get(key);
+      revisions.delete(key);
+      if (token && (!discardedRevision || token.revision > discardedRevision.revision)) discardedRevision = token;
+      if (options.hasPendingChanges()) return;
+      dirtyState()?.discardRevision?.(options.stepIndex, discardedRevision, false);
+      discardedRevision = null;
+    },
+    commit(draftIds) {
+      draftIds.forEach(function (draftId) {
+        revisions.delete(String(draftId));
+      });
+    },
+  };
+}
+
+function createStarterEditPortfolioSubmitGuard() {
+  let active = false;
+  return {
+    begin() {
+      if (active) return false;
+      active = true;
+      return true;
+    },
+    finish() { active = false; },
+    isActive() { return active; },
+  };
+}
+
 function removeCommittedPortfolioDrafts(pending, committed) {
   const createDrafts = pending.createDrafts.filter(function (draft) {
     return !committed.createDrafts.includes(draft);
@@ -141,6 +182,14 @@ async function commitStarterEditPortfolioDrafts(options) {
         pendingDeleteDraftIds = new Set(),
         autoOpenedCreateDropdown = false,
         editFormResetTimer = null;
+      const portfolioSubmitGuard = createStarterEditPortfolioSubmitGuard();
+      const portfolioDraftDirtyController = createStarterEditPortfolioDraftDirtyController({
+        getDirtyState: function () { return window.__tsProfileDirtyState; },
+        stepIndex: 4,
+        hasPendingChanges: function () {
+          return hasStarterEditPortfolioPendingChanges(pendingCreateDrafts, pendingUpdateDrafts, pendingDeleteDraftIds);
+        },
+      });
 
       function getAssetUrl(value) {
         if (!value) return '';
@@ -298,15 +347,6 @@ async function commitStarterEditPortfolioDrafts(options) {
         pendingUpdateDrafts.delete(String(portfolioId));
       }
 
-      function reconcilePortfolioDirtyState() {
-        const hasPendingChanges = hasStarterEditPortfolioPendingChanges(
-          pendingCreateDrafts,
-          pendingUpdateDrafts,
-          pendingDeleteDraftIds
-        );
-        window.__tsProfileDirtyState?.setDirty?.(4, hasPendingChanges);
-      }
-
       function getDraftPortfolioById(portfolioId) {
         const normalizedId = String(portfolioId || '').trim();
         if (!normalizedId) return null;
@@ -338,7 +378,7 @@ async function commitStarterEditPortfolioDrafts(options) {
           } else {
             removeCreateDraft(portfolio.id);
           }
-          reconcilePortfolioDirtyState();
+          portfolioDraftDirtyController.discard(portfolio.id);
           return;
         }
 
@@ -360,6 +400,7 @@ async function commitStarterEditPortfolioDrafts(options) {
         pendingCreateDrafts = remaining.createDrafts;
         pendingUpdateDrafts = remaining.updateDrafts;
         pendingDeleteDraftIds = remaining.deleteDraftIds;
+        portfolioDraftDirtyController.commit(createDrafts.concat(updateDrafts).map(function (draft) { return draft.id; }));
       }
 
       function resetEditDraftState() {
@@ -625,7 +666,7 @@ async function commitStarterEditPortfolioDrafts(options) {
 
         const hasPendingChanges = Boolean(pendingCreateDrafts.length || pendingUpdateDrafts.size || pendingDeleteDraftIds.size);
         const hasFirstPortfolio = Boolean(firstPortfolioInp && firstPortfolioInp.value);
-        const canSubmit = hasPendingChanges && hasFirstPortfolio;
+        const canSubmit = hasPendingChanges && hasFirstPortfolio && !portfolioSubmitGuard.isActive();
 
         portfolioSubmit.style.opacity = canSubmit ? '1' : '0.5';
         portfolioSubmit.style.pointerEvents = canSubmit ? 'auto' : 'none';
@@ -1010,7 +1051,9 @@ async function commitStarterEditPortfolioDrafts(options) {
           if (!title) throw new Error('Please fill all required fields');
           if (selectedFiles.length === 0) throw new Error('Please upload at least one image');
           window.__tsProfileDirtyState?.markDirty?.(4);
-          pendingCreateDrafts.push(createCreateDraft());
+          const draft = createCreateDraft();
+          pendingCreateDrafts.push(draft);
+          portfolioDraftDirtyController.queue(draft.id);
           await renderPortfolios();
           resetCreateForm();
 
@@ -1039,13 +1082,16 @@ async function commitStarterEditPortfolioDrafts(options) {
             pendingCreateDrafts = pendingCreateDrafts.map(function (draft) {
               return draft.id === updatedDraft.id ? updatedDraft : draft;
             });
+            portfolioDraftDirtyController.queue(updatedDraft.id);
             closeModal();
             await renderPortfolios();
             return;
           }
 
           window.__tsProfileDirtyState?.markDirty?.(4);
-          pendingUpdateDrafts.set(String(activePortfolio.id), createUpdateDraft());
+          const updateDraft = createUpdateDraft();
+          pendingUpdateDrafts.set(String(activePortfolio.id), updateDraft);
+          portfolioDraftDirtyController.queue(updateDraft.id);
           closeModal();
           await renderPortfolios();
         } catch (error) {
@@ -1200,6 +1246,7 @@ async function commitStarterEditPortfolioDrafts(options) {
           successController.showForSubmit(0);
           return;
         }
+        if (!portfolioSubmitGuard.begin()) return;
 
         let saved = false;
         let saveToken = null;
@@ -1228,6 +1275,7 @@ async function commitStarterEditPortfolioDrafts(options) {
           openNotifyModal(getErrorMessage(error, 'Portfolio save failed'));
         } finally {
           window.__tsProfileDirtyState?.finishSave(4, saved, saveToken);
+          portfolioSubmitGuard.finish();
           setPortfolioSubmitLoading(finalSubmitButton, false);
           updatePortfolioSubmitState();
         }

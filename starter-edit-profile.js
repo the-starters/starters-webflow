@@ -255,14 +255,21 @@ function openProfileFeedback(modalName, trigger) {
 }
 
 function waitProfileData(callback) {
+	const runHydrationCallback = (profile) => {
+		const dirtyState = window.__tsProfileDirtyState;
+		if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+			return dirtyState.runHydrationSync(() => callback(profile));
+		}
+		return callback(profile);
+	};
 	if (typeof window.waitProfileData === 'function') {
-		return window.waitProfileData(callback);
+		return window.waitProfileData(runHydrationCallback);
 	}
 
 	const startedAt = Date.now();
 	const poll = () => {
 		if (window.activeProfile) {
-			callback(window.activeProfile);
+			runHydrationCallback(window.activeProfile);
 			return;
 		}
 		if (Date.now() - startedAt < 10000) window.setTimeout(poll, 100);

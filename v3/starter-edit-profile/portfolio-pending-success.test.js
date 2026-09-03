@@ -177,3 +177,14 @@ test('portfolio save cleanup preserves drafts queued after its snapshot', () => 
   assert.equal(remaining.updateDrafts.get('22'), untouchedUpdate)
   assert.deepEqual(Array.from(remaining.deleteDraftIds), ['32'])
 })
+
+test('portfolio submit guard rejects overlap until the active save finishes', () => {
+  const context = loadController()
+  const guard = context.createStarterEditPortfolioSubmitGuard()
+
+  assert.equal(guard.begin(), true)
+  assert.equal(guard.isActive(), true)
+  assert.equal(guard.begin(), false)
+  guard.finish()
+  assert.equal(guard.begin(), true)
+})

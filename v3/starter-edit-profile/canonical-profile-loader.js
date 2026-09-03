@@ -67,6 +67,15 @@
                 token.revision = dirtyRevisions.get(token.key) || 0;
                 return token;
             },
+            captureRevision: function (stepIndex) {
+                var key = stepKey(stepIndex);
+                return { key: key, revision: dirtyRevisions.get(key) || 0 };
+            },
+            discardRevision: function (stepIndex, token, hasOtherChanges) {
+                var key = stepKey(stepIndex);
+                if (hasOtherChanges || !token || token.key !== key) return;
+                if ((dirtyRevisions.get(key) || 0) === token.revision) dirtySteps.delete(key);
+            },
             finishSave: function (stepIndex, saved, token) {
                 var key = stepKey(stepIndex);
                 var saves = savingSteps.get(key);
