@@ -236,7 +236,7 @@ test('an underivable base fails closed and re-admits the app block', () => {
 // re-admit the block. The answer must keep describing what the page actually
 // loaded.
 test('a failed auth-router request becomes observable', () => {
-  const { appended, document, errors, events, window } = loadLoader({
+  const { appended, document, errors, events, listeners, window } = loadLoader({
     pathname: '/auth-route',
   })
 
@@ -247,6 +247,11 @@ test('a failed auth-router request becomes observable', () => {
     document.documentElement.attributes['data-auth-page-loader-error'],
     'auth-route-load-failed',
   )
+  assert.equal(
+    document.documentElement.attributes['data-auth-route-error'],
+    undefined,
+  )
+  listeners.DOMContentLoaded()
   assert.equal(
     document.documentElement.attributes['data-auth-route-error'],
     'auth-route-load-failed',
@@ -269,12 +274,15 @@ test('a failed auth-router request becomes observable', () => {
 // /auth-route's visible error block over a working router would show the member
 // a failure state on a login that is routing correctly.
 test('a failed request over an already-booted router raises no routing error', () => {
-  const { appended, document, errors, events } = loadLoader({
+  const { appended, document, errors, events, listeners, window } = loadLoader({
     pathname: '/auth-route',
-    routerBooted: true,
   })
 
   appended[0].onerror()
+  // The child can fail before the later page-level fallback executes. The
+  // fallback boots during parsing, before DOMContentLoaded.
+  window.__startersV3AuthRouterBooted = true
+  listeners.DOMContentLoaded()
 
   assert.equal(
     document.documentElement.attributes['data-auth-route-error'],

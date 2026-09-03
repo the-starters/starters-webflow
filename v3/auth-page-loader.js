@@ -100,23 +100,43 @@
     // page-level auth-route.js tag during the overlap window.
     script.setAttribute('data-starters-auth-runtime', 'auth-route')
     script.onerror = function () {
+      function paintRouteErrorIfStillUnbooted() {
+        if (
+          candidate !== '/auth-route' ||
+          window.__startersV3AuthRouterBooted
+        ) {
+          return
+        }
+        try {
+          document.documentElement.setAttribute(
+            'data-auth-route-error',
+            'auth-route-load-failed',
+          )
+        } catch (error) {}
+      }
+
       try {
         document.documentElement.setAttribute(
           'data-auth-page-loader-error',
           'auth-route-load-failed',
         )
-        // `/auth-route`'s visible error block keys on data-auth-route-error, so
-        // it may only be raised when no router booted. During the step 6
-        // overlap window the page-level tag has already won the boot guard and
-        // is routing the member; a failed request for this copy is a delivery
-        // diagnostic there, not a routing failure.
-        if (candidate === '/auth-route' && !window.__startersV3AuthRouterBooted) {
-          document.documentElement.setAttribute(
-            'data-auth-route-error',
-            'auth-route-load-failed',
-          )
-        }
       } catch (error) {}
+      // The page-level fallback sits after the site head during overlap. Its
+      // parser-inserted script can boot after this dynamic request has already
+      // failed. Wait until parsing finishes, then recheck the boot guard before
+      // painting a visible routing failure over the page.
+      if (
+        document.readyState === 'loading' &&
+        typeof window.addEventListener === 'function'
+      ) {
+        window.addEventListener(
+          'DOMContentLoaded',
+          paintRouteErrorIfStillUnbooted,
+          { once: true },
+        )
+      } else {
+        paintRouteErrorIfStillUnbooted()
+      }
       try {
         window.dispatchEvent(
           new CustomEvent('starters:v3-auth-page-loader-error', {

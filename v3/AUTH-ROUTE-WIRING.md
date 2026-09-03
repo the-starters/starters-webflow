@@ -450,8 +450,10 @@ Production stays silent apart from the configuration errors in the table above.
   loader's error surface stays silent here: it never executed, so expect no
   `data-auth-page-loader-error`, no `starters:v3-auth-page-loader-error` event,
   and a clean console.
-- Separately, block `.../v3/auth-route.js` in devtools while leaving
-  `auth-page-loader.js` reachable, and load each auth path. The loader executes,
+- Separately, block only the exact loader-inserted
+  `https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.506/v3/auth-route.js`
+  request in devtools while leaving `auth-page-loader.js` and the page-level
+  fallback tag's distinct URL reachable, then load each auth path. The loader executes,
   its child request fails, and
   `html[data-auth-page-loader-error="auth-route-load-failed"]`, the
   `starters:v3-auth-page-loader-error` event with

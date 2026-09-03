@@ -475,6 +475,21 @@
         ) {
           form.__startersAuthTimingBound = true
           form.addEventListener('submit', beginLoginTiming)
+          form.addEventListener('click', function (event) {
+            var target = event && event.target
+            if (!target || typeof target.closest !== 'function') return
+            if (
+              target.closest(
+                'button[type="submit"], input[type="submit"], ' +
+                  '[data-ms-button="submit"], .clickable_btn',
+              )
+            ) {
+              // Memberstack provider buttons can complete a click-driven login
+              // without firing submit. Restart the receipt for that attempt so
+              // it cannot inherit a rejected password attempt from this page.
+              beginLoginTiming()
+            }
+          })
         }
       })
   }

@@ -165,8 +165,8 @@ function loadRouter(options = {}) {
       addEventListener(name, callback) {
         listeners[name] = callback
       },
-      dispatch(name) {
-        if (listeners[name]) listeners[name]()
+      dispatch(name, event) {
+        if (listeners[name]) listeners[name](event)
       },
     }
   }
@@ -1085,6 +1085,29 @@ test('login submit starts the cross-navigation timing receipt', () => {
   harness.forms[0].dispatch('submit')
   const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
   assert.equal(typeof receipt.startedAt, 'number')
+  assert.deepEqual(Object.keys(receipt), ['startedAt'])
+  assert.ok(
+    harness.marks.includes('starters:v3-auth-route:login-submit'),
+  )
+})
+
+test('a known submit-control click restarts timing after a rejected attempt', () => {
+  const harness = loadRouter({ pathname: '/login' })
+  const submitControl = {
+    closest(selector) {
+      assert.match(selector, /clickable_btn/)
+      return this
+    },
+  }
+  const ordinaryControl = { closest: () => null }
+
+  harness.storage.set(TIMING_KEY, JSON.stringify({ startedAt: 1 }))
+  harness.forms[0].dispatch('click', { target: ordinaryControl })
+  assert.equal(JSON.parse(harness.storage.get(TIMING_KEY)).startedAt, 1)
+
+  harness.forms[0].dispatch('click', { target: submitControl })
+  const receipt = JSON.parse(harness.storage.get(TIMING_KEY))
+  assert.notEqual(receipt.startedAt, 1)
   assert.deepEqual(Object.keys(receipt), ['startedAt'])
   assert.ok(
     harness.marks.includes('starters:v3-auth-route:login-submit'),
