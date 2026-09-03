@@ -669,6 +669,10 @@ onDomReady(function () {
 			return `Use a whole-dollar ${contract.label} from $${contract.min.toLocaleString('en-US')} to $${contract.max.toLocaleString('en-US')}.`;
 		}
 
+		function serviceName(service) {
+			return String(service?.name ?? '').trim();
+		}
+
 		// Services live in hidden JSON capture inputs, so a price failure there cannot
 		// surface through native constraint validation. Those failures, and any failure
 		// whose control is absent, own the authored error modal instead, the same way
@@ -702,7 +706,9 @@ onDomReady(function () {
 
 			// A retainer rate is only authored while the toggle says yes. Every other
 			// state keeps the compatibility behavior of the collapsed section instead of
-			// blocking the whole step on a value the member cannot see or edit.
+			// blocking the whole step on a value the member cannot see or edit, and its
+			// stale text never reaches Xano unvalidated: the step either sends the
+			// canonical sentinel alongside the toggle it is turning off, or sends nothing.
 			const retainerField = qs('[name="rate-retainer"]', step);
 			let retainer = { valid: true, value: null };
 			if (payload.Retainer_Enabled === true) {
@@ -711,12 +717,15 @@ onDomReady(function () {
 					return { ...retainer, field: retainerField, message: priceMessage(PRICE_CONTRACTS.Retainer_Rate) };
 				}
 				retainerField?.setCustomValidity?.('');
+			} else if (Object.prototype.hasOwnProperty.call(payload, 'Retainer_Rate')) {
+				if (payload.Retainer_Enabled === false) payload.Retainer_Rate = '';
+				else delete payload.Retainer_Rate;
 			}
 
 			for (const [slot, service] of Object.entries(services)) {
-				if (!service || (!String(service.name ?? '').trim() && !String(service.price ?? '').trim())) continue;
+				if (!service || (!serviceName(service) && !String(service.price ?? '').trim())) continue;
 				const serviceField = qs(`#${slot === 'service-1' ? 'service' : slot}`, form);
-				if (!String(service.name ?? '').trim()) {
+				if (!serviceName(service)) {
 					return {
 						valid: false,
 						code: 'SERVICE_NAME_REQUIRED',
@@ -851,11 +860,11 @@ onDomReady(function () {
 					return false;
 				}
 
-				if (payload.Services) {
+				if (Object.prototype.hasOwnProperty.call(payload, 'Services')) {
 					payload.Services = JSON.stringify({
-						"service-1": service1?.name ? service1 : null,
-						"service-2": service2?.name ? service2 : null,
-						"service-3": service3?.name ? service3 : null,
+						"service-1": serviceName(service1) ? service1 : null,
+						"service-2": serviceName(service2) ? service2 : null,
+						"service-3": serviceName(service3) ? service3 : null,
 					});
 				}
 			}
