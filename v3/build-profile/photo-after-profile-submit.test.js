@@ -55,6 +55,7 @@ test('Build preserves Full Profile paid-call No while retrying photo saves', asy
       yield ['first-name', firstName]
       yield ['last-name', 'Starter']
       yield ['phone', '']
+      yield ['rate', '150']
       yield ['paid-consulting-calls', 'no']
       yield ['paid-call-rate', '200']
     }
@@ -103,15 +104,18 @@ test('Build preserves Full Profile paid-call No while retrying photo saves', asy
   domReady()
   const click = submit.listeners.get('click')
 
-  await assert.rejects(click({ preventDefault() {} }), /synthetic photo failure/)
+  // A failed photo commit surfaces through the authored error panel: the click
+  // handler reports the failure to the member instead of rejecting into an
+  // unhandled promise rejection.
+  await click({ preventDefault() {} })
   assert.equal(profileSaves, 1)
   assert.equal(submittedPayloads[0].paid_call, false)
-  assert.equal(submittedPayloads[0].paid_call_rate, 200)
+  assert.equal(submittedPayloads[0].paid_call_rate, null)
   assert.equal(photoAttempts, 1)
   assert.equal(failure.style.display, 'block')
   assert.equal(success.style.display, 'none')
 
-  await assert.rejects(click({ preventDefault() {} }), /synthetic photo failure/)
+  await click({ preventDefault() {} })
   assert.equal(profileSaves, 1)
   assert.equal(photoAttempts, 2)
   assert.equal(failure.style.display, 'block')
@@ -121,7 +125,7 @@ test('Build preserves Full Profile paid-call No while retrying photo saves', asy
   await click({ preventDefault() {} })
   assert.equal(profileSaves, 2)
   assert.equal(submittedPayloads[1].paid_call, false)
-  assert.equal(submittedPayloads[1].paid_call_rate, 200)
+  assert.equal(submittedPayloads[1].paid_call_rate, null)
   assert.equal(photoAttempts, 3)
   assert.equal(form.style.display, 'none')
   assert.equal(failure.style.display, 'none')
@@ -188,6 +192,7 @@ test('Build preserves canonical, draft, and mixed reviewer aliases on submit', a
     }
   }
   const window = {
+    location: { pathname: '/build-profile/consult' },
     intlTelInput: { getInstance: () => null },
     $memberstackDom: {
       async updateMember() {},
