@@ -67,7 +67,9 @@ function beforeUnload(window) {
   assert.equal(beforeUnload(window).prevented, false, 'discarding the only local change clears the warning')
 
   document.dispatch('change', { target: field(1), isTrusted: true })
-  assert.equal(beforeUnload(window).prevented, true, 'a real edit warns before navigation')
+  const dirtyNavigation = beforeUnload(window)
+  assert.equal(dirtyNavigation.prevented, true, 'a real edit prevents unguarded navigation')
+  assert.equal(dirtyNavigation.returnValue, true, 'a real edit requests the browser-native leave-page prompt')
 
   const save = state.beginSave(1)
   assert.equal(beforeUnload(window).prevented, true, 'an in-flight save remains protected')
