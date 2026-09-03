@@ -372,8 +372,8 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
 
   const companyInput = element('QA Wolf')
   const jobTitleInput = element('Engineer')
-  const startDateInput = element('Jan 2025')
-  const endDateInput = element('Aug 2026')
+  const startDateInput = element('2025-01')
+  const endDateInput = element('2026-08')
   const addButton = element()
   const companyList = element()
   companyList.appendChild = (card) => { renderedCards.push(card) }
@@ -427,6 +427,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     addEventListener(name, callback) {
       documentListeners.set(name, [...(documentListeners.get(name) || []), callback])
     },
+    querySelector() { return null },
     createElement() { return element() },
   }
   const context = {
@@ -522,8 +523,8 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     prepareAdd() {
       companyInput.value = 'QA Wolf'
       jobTitleInput.value = 'Engineer'
-      startDateInput.value = 'Jan 2025'
-      endDateInput.value = 'Aug 2026'
+      startDateInput.value = '2025-01'
+      endDateInput.value = '2026-08'
       select(companyInput)
     },
     async start() {
@@ -721,8 +722,8 @@ for (const [label, file, deferredWrites] of [
       ...expectedSelection,
       ...(label === 'Build Profile' ? { defer_projection: true } : {}),
       job_title: 'Engineer',
-      start_date: 'Jan 2025',
-      end_date: 'Aug 2026',
+      start_date: '2025-01',
+      end_date: '2026-08',
       current_work: false,
     })
 
