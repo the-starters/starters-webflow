@@ -200,11 +200,15 @@ not rewrite the stored value. `Present`, blanks, and unknown legacy strings keep
 their existing behavior.
 
 Hydration also records the canonical string it came from next to the native month value.
-Opening a different role clears disabled state and date bounds left by the prior modal.
-For a non-current role, the end month must be the same as or later than the start month;
-same-month tenures are valid. Native `min` and `max` bounds guide selection, and save-time
-validation rejects an inverted range even if the DOM bounds are bypassed. A current role
-disables the end-month control and stores `Present` through the existing `end_date` field.
+Opening a different role clears disabled state and any date bounds left by the prior modal.
+The two controls intentionally do not set reciprocal native `min` and `max` bounds. Those
+bounds can trap an existing or inverted range and stop a member from repairing either month.
+For a non-current role, save-time validation still requires the end month to be the same as
+or later than the start month; same-month tenures are valid. A rejected range sets a custom
+validity message on both month controls and reports it on the end-month control, so the
+member sees which pair is wrong for as long as it stays wrong; touching either month, the
+current-role checkbox, or reopening the modal clears it. A current role disables the
+end-month control and stores `Present` through the existing `end_date` field.
 
 On save, a date field the member never touched re-serializes its original canonical string,
 and only a field whose native month value actually changed submits `YYYY-MM`. Editing an

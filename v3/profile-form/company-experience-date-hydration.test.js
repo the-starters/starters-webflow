@@ -148,6 +148,15 @@ class FakeElement {
     this.classList = new FakeClassList()
     this.listeners = new Map()
     this.descendants = new Map()
+    this.validationMessage = ''
+    this.reportValidityCalls = 0
+  }
+  // Mirrors the constraint-validation surface the controller uses: a custom message
+  // persists on the control until it is explicitly cleared.
+  setCustomValidity(message) { this.validationMessage = String(message == null ? '' : message) }
+  reportValidity() {
+    this.reportValidityCalls += 1
+    return !this.validationMessage
   }
   setAttribute(name, value) { this.attrs[name] = String(value) }
   getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null }
@@ -164,6 +173,16 @@ class FakeElement {
     return true
   }
   handlersFor(type) { return this.listeners.get(type) || [] }
+}
+
+function chooseNativeMonth(input, value) {
+  const min = input.getAttribute('min')
+  const max = input.getAttribute('max')
+  if ((min && value < min) || (max && value > max)) return false
+  input.value = value
+  input.dispatchEvent({ type: 'input' })
+  input.dispatchEvent({ type: 'change' })
+  return true
 }
 
 // Mirrors the two jQuery UI behaviours this controller depends on: `setDate`
@@ -480,7 +499,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(secondPayload.end_date, '2025-12')
   })
 
-  test(`${controllerPath} recomputes native bounds between edit operations`, async () => {
+  test(`${controllerPath} keeps native month controls unconstrained between edit operations`, async () => {
     const app = bootCompanyController(controllerPath)
     await app.ready()
 
@@ -492,8 +511,8 @@ for (const controllerPath of controllerPaths) {
       end_date: '2024-12',
     })
 
-    assert.equal(app.editEndDateInput.getAttribute('min'), '2024-01')
-    assert.equal(app.editStartDateInput.getAttribute('max'), '2024-12')
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     app.openEditFor({
       id: 21,
@@ -503,8 +522,8 @@ for (const controllerPath of controllerPaths) {
       end_date: '2025-03',
     })
 
-    assert.equal(app.editEndDateInput.getAttribute('min'), '2025-03')
-    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-03')
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     await app.saveEdit()
     app.clock.advance(1600)
@@ -542,7 +561,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(app.editEndDateInput.value, '')
   })
 
-  test(`${controllerPath} resyncs bounds without changing a legacy baseline`, async () => {
+  test(`${controllerPath} keeps a legacy baseline without reinstalling native bounds`, async () => {
     const app = bootCompanyController(controllerPath)
     await app.ready()
 
@@ -560,7 +579,8 @@ for (const controllerPath of controllerPaths) {
     app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
 
     assert.equal(app.editEndDateInput.value, '2025-12')
-    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-12')
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
 
     await app.saveEdit()
     assert.equal(app.lastRequestPayload().end_date, 'Dec 2025')
@@ -621,22 +641,158 @@ for (const controllerPath of controllerPaths) {
       end_date: '2025-01',
     })
 
-    assert.equal(app.editEndDateInput.getAttribute('min'), '2026-08')
-    assert.equal(app.editStartDateInput.getAttribute('max'), '2025-01')
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     const requestsBeforeInvalidSave = app.fetchCalls.length
     await app.saveEdit()
     assert.equal(app.fetchCalls.length, requestsBeforeInvalidSave)
 
-    app.editEndDateInput.value = '2026-08'
-    app.editEndDateInput.dispatchEvent({ type: 'input' })
-    assert.equal(app.editStartDateInput.getAttribute('max'), '2026-08')
+    assert.equal(chooseNativeMonth(app.editStartDateInput, '2025-06'), true)
+    assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-12'), true)
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     await app.saveEdit()
     const payload = app.lastRequestPayload()
 
-    assert.equal(payload.start_date, '2026-08')
-    assert.equal(payload.end_date, '2026-08')
+    assert.equal(payload.start_date, '2025-06')
+    assert.equal(payload.end_date, '2025-12')
+  })
+
+  test(`${controllerPath} corrects a valid stored range starting from the end month`, async () => {
+    const app = bootCompanyController(controllerPath)
+
+    app.openEditFor({
+      id: 30,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '2024-01',
+      end_date: '2024-12',
+    })
+
+    assert.equal(app.editStartDateInput.value, '2024-01')
+    assert.equal(app.editEndDateInput.value, '2024-12')
+
+    assert.equal(chooseNativeMonth(app.editEndDateInput, '2023-08'), true)
+    assert.equal(chooseNativeMonth(app.editStartDateInput, '2023-05'), true)
+
+    await app.saveEdit()
+    const payload = app.lastRequestPayload()
+
+    assert.equal(payload.start_date, '2023-05')
+    assert.equal(payload.end_date, '2023-08')
+  })
+
+  test(`${controllerPath} corrects a valid stored range starting from the start month`, async () => {
+    const app = bootCompanyController(controllerPath)
+
+    app.openEditFor({
+      id: 31,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '2024-01',
+      end_date: '2024-12',
+    })
+
+    assert.equal(chooseNativeMonth(app.editStartDateInput, '2025-05'), true)
+    assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-09'), true)
+
+    await app.saveEdit()
+    const payload = app.lastRequestPayload()
+
+    assert.equal(payload.start_date, '2025-05')
+    assert.equal(payload.end_date, '2025-09')
+  })
+
+  test(`${controllerPath} keeps an inverted-range message on the edit modal until a month changes`, async () => {
+    const app = bootCompanyController(controllerPath)
+
+    app.openEditFor({
+      id: 32,
+      company_name: 'Acme',
+      job_title: 'Engineer',
+      start_date: '2024-01',
+      end_date: '2024-12',
+    })
+
+    assert.equal(chooseNativeMonth(app.editStartDateInput, '2025-06'), true)
+
+    const requestsBeforeInvalidSave = app.fetchCalls.length
+    await app.saveEdit()
+
+    assert.equal(app.fetchCalls.length, requestsBeforeInvalidSave)
+    assert.match(app.editStartDateInput.validationMessage, /end month/i)
+    assert.match(app.editEndDateInput.validationMessage, /end month/i)
+    assert.equal(app.editEndDateInput.reportValidityCalls, 1)
+
+    // The transient `is-error` flash is finished well inside this window; the
+    // message has to outlive it.
+    app.clock.advance(1600)
+    assert.match(app.editEndDateInput.validationMessage, /end month/i)
+
+    assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-01'), true)
+    assert.match(app.editStartDateInput.validationMessage, /end month/i)
+    assert.match(app.editEndDateInput.validationMessage, /end month/i)
+
+    app.editCurrentWorkCheckbox.checked = true
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.equal(app.editEndDateInput.validationMessage, '')
+
+    app.editCurrentWorkCheckbox.checked = false
+    app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.match(app.editStartDateInput.validationMessage, /end month/i)
+    assert.match(app.editEndDateInput.validationMessage, /end month/i)
+
+    assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-12'), true)
+    assert.equal(app.editStartDateInput.validationMessage, '')
+    assert.equal(app.editEndDateInput.validationMessage, '')
+
+    await app.saveEdit()
+    const payload = app.lastRequestPayload()
+
+    assert.equal(payload.start_date, '2025-06')
+    assert.equal(payload.end_date, '2025-12')
+  })
+
+  test(`${controllerPath} keeps an inverted-range message on the add form until a month changes`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    const payloadsBeforeInvalidAdd = app.mutationPayloads().length
+    await app.addCompany({ companyName: 'Acme', startDate: '2025-06', endDate: '2024-12' })
+
+    assert.equal(app.mutationPayloads().length, payloadsBeforeInvalidAdd)
+    assert.match(app.startDateInput.validationMessage, /end month/i)
+    assert.match(app.endDateInput.validationMessage, /end month/i)
+    assert.equal(app.endDateInput.reportValidityCalls, 1)
+
+    app.clock.advance(1600)
+    assert.match(app.endDateInput.validationMessage, /end month/i)
+
+    assert.equal(chooseNativeMonth(app.endDateInput, '2025-01'), true)
+    assert.match(app.startDateInput.validationMessage, /end month/i)
+    assert.match(app.endDateInput.validationMessage, /end month/i)
+
+    app.currentWorkCheckbox.checked = true
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.equal(app.endDateInput.validationMessage, '')
+
+    app.currentWorkCheckbox.checked = false
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.match(app.startDateInput.validationMessage, /end month/i)
+    assert.match(app.endDateInput.validationMessage, /end month/i)
+
+    assert.equal(chooseNativeMonth(app.endDateInput, '2025-12'), true)
+    assert.equal(app.startDateInput.validationMessage, '')
+    assert.equal(app.endDateInput.validationMessage, '')
+
+    await app.addCompany({ companyName: 'Globex', startDate: '2025-06', endDate: '2025-12' })
+
+    const added = app.mutationPayloads().find((payload) => payload.company_name === 'Globex')
+    assert.equal(added.start_date, '2025-06')
+    assert.equal(added.end_date, '2025-12')
+    assert.equal(app.endDateInput.validationMessage, '')
   })
 
   test(`${controllerPath} ignores cross-field bounds left behind by an earlier edit`, async () => {
