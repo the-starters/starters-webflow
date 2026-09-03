@@ -644,6 +644,7 @@ for (const [label, file, deferredWrites] of [
     const createRequest = addHarness.requests.find(({ options }) => options.method === 'POST')
     assert.deepEqual(JSON.parse(createRequest.options.body), {
       ...expectedSelection,
+      ...(label === 'Build Profile' ? { defer_projection: true } : {}),
       job_title: 'Engineer',
       start_date: 'Jan 2025',
       end_date: 'Aug 2026',
