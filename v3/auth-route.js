@@ -1,12 +1,14 @@
 /**
  * V3 login router.
  *
- * @release v1.59.441
+ * @release v1.59.504
  *
  * Loaded by the site-head v3/auth-page-loader.js on the V3 login pages
  * (/login and /starter-login) and /auth-route only. Every V3 login form must
  * redirect to /auth-route so shared Memberstack plan redirects can remain
- * unchanged for V2. The loader executes v3/route-guard.js first.
+ * unchanged for V2. v3/route-guard.js executes first: it is a static
+ * parser-blocking sitewide tag ahead of the loader, and the loader re-inserts
+ * it on these three paths so the ordering holds there on its own terms.
  *
  * Talent members additionally get a funnel-position check here, because
  * /auth-route is the one page every Talent login passes through. The product
@@ -478,27 +480,6 @@
       })
   }
 
-  function memberFromSnapshot(value) {
-    if (value && value.id) return value
-    if (value && value.data && value.data.id) return value.data
-    return null
-  }
-
-  async function currentMemberSnapshot(memberstack) {
-    var shared = window.memberReady
-    if (shared && typeof shared.then === 'function') {
-      try {
-        var sharedMember = memberFromSnapshot(await shared)
-        if (sharedMember) return sharedMember
-      } catch (error) {
-        warn('shared member snapshot failed; reading Memberstack directly.')
-      }
-    }
-
-    var response = await memberstack.getCurrentMember()
-    return memberFromSnapshot(response)
-  }
-
   function waitForMemberstack() {
     if (
       window.$memberstackDom &&
@@ -785,7 +766,11 @@
     }
     timingMark('memberstack-ready')
 
-    var member = await currentMemberSnapshot(memberstack)
+    // One authoritative read. `window.memberReady` on this site resolves an
+    // empty object for every visitor, logged in or not, so it carries no
+    // identity to reuse — see global-embeds/session-video/README.md.
+    var response = await memberstack.getCurrentMember()
+    var member = response && response.data
     timingMark('member-snapshot')
     if (!member || !member.id) {
       clearLoginTiming()
@@ -865,7 +850,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/auth-route.test.js drift guard asserts they match.
-    release: 'v1.59.441',
+    release: 'v1.59.504',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
     hasCompletedQuiz: hasCompletedQuiz,

@@ -1,27 +1,35 @@
 /**
  * Minimal V3 authentication-page runtime loader.
  *
- * @release v1.59.441
+ * @release v1.59.504
  *
- * Install once in the V3 site Head Code after Memberstack and the shared
- * `window.memberReady` initializer, and before the conditional site
- * application block. It replaces the page-level `auth-route.js` tags. It does
- * not replace the sitewide `route-guard.js` tag.
+ * Install once in the V3 site Head Code after Memberstack, the shared
+ * `window.memberReady` initializer, the unconditional sitewide
+ * `route-guard.js` tag, and `signup-attribution.js`, and before the
+ * conditional application block. It replaces the page-level `auth-route.js`
+ * tags and nothing else.
  *
  * On /login, /starter-login, and /auth-route it inserts route-guard.js and
- * then auth-route.js, and the site application block must skip itself through
+ * then auth-route.js, and the site application block skips the controllers
+ * unrelated to authentication and attribution through
  * `StartersV3AuthPageLoader.shouldLoadApplicationControllers()`. On every other
- * page the loader inserts nothing. The sitewide `route-guard.js` tag stays
- * inside that parser-blocking application block, so it keeps executing before
- * every page-level controller that reads `window.StartersV3RouteGuard`.
+ * page the loader inserts nothing.
+ *
+ * `route-guard.js` stays a static parser-blocking tag on every page, ahead of
+ * this file, so the sitewide stable plan-ID role contract never depends on a
+ * CDN round trip and never sits behind a conditional. Its own boot guard makes
+ * the copy inserted here inert; the insertion exists so the auth paths keep
+ * guard-before-router ordering on their own terms.
  *
  * Both dynamic scripts have `async = false`. Browsers can download them in
  * parallel but must execute them in insertion order, which preserves the
  * stable plan-ID role contract before the router consumes it.
  *
  * The loader only serves child assets from the release ref it was itself served
- * from. When it cannot read its own `src` it fails closed and installs nothing
- * rather than mixing refs.
+ * from. When it cannot read its own `src` it installs nothing, and
+ * `shouldLoadApplicationControllers()` then answers true so the site's own
+ * block still runs. A degraded loader must never leave a page with no runtime
+ * at all.
  */
 ;(function () {
   'use strict'
@@ -49,10 +57,6 @@
     return AUTH_PATHS.has(pathname || '')
   }
 
-  function shouldLoadApplicationControllers(pathname) {
-    return !isAuthPath(pathname)
-  }
-
   function loaderBase() {
     try {
       var current = document.currentScript
@@ -66,6 +70,18 @@
     }
   }
 
+  // Read while this script is still executing: `document.currentScript` is null
+  // by the time the inline site-head block asks the questions below.
+  var base = loaderBase()
+  var approvedHost = isApprovedHost(window.location && window.location.hostname)
+  var canInstall = approvedHost && base !== null
+  var pathname = (window.location && window.location.pathname) || ''
+
+  function shouldLoadApplicationControllers(candidate) {
+    if (!isAuthPath(candidate)) return true
+    return !canInstall
+  }
+
   function appendOrderedScript(src, name) {
     var script = document.createElement('script')
     script.src = src
@@ -76,10 +92,9 @@
     return script
   }
 
-  function install(pathname) {
-    if (!isAuthPath(pathname)) return []
-    var base = loaderBase()
-    if (!base) {
+  function install(candidate) {
+    if (!isAuthPath(candidate)) return []
+    if (base === null) {
       console.error(
         '[v3-auth-page-loader] Cannot read its own release base from ' +
           'document.currentScript; auth runtime not installed.',
@@ -98,8 +113,11 @@
     } catch (error) {}
   }
 
-  function finishNavigationTiming(pathname) {
-    if (isAuthPath(pathname)) return null
+  // Consumes the receipt where it is read, so a destination page the member
+  // abandons before `load` cannot leave it behind for an unrelated navigation
+  // to report as a login-to-destination duration.
+  function readNavigationTiming(candidate) {
+    if (isAuthPath(candidate)) return null
     var parsed
     try {
       var raw = window.sessionStorage.getItem(TIMING_STORAGE_KEY)
@@ -107,24 +125,24 @@
     } catch (error) {
       return null
     }
+    if (!parsed) return null
+    discardTiming()
 
-    var startedAt = parsed && Number(parsed.startedAt)
-    if (!Number.isFinite(startedAt)) return null
+    var startedAt = Number(parsed.startedAt)
     // `redirectedAt` is stamped by /auth-route immediately before it hands off.
     // Without it the receipt belongs to a login attempt that never reached the
-    // router — a rejected password, or a click away from the login page — and
-    // its elapsed time would not measure a login-to-destination navigation.
-    var redirectedAt = parsed && Number(parsed.redirectedAt)
-    var elapsedMs = Date.now() - startedAt
-    if (
-      !Number.isFinite(redirectedAt) ||
-      elapsedMs < 0 ||
-      elapsedMs > TIMING_MAX_AGE_MS
-    ) {
-      discardTiming()
+    // router — a rejected password, or a click away from the login page.
+    var redirectedAt = Number(parsed.redirectedAt)
+    if (!Number.isFinite(startedAt) || !Number.isFinite(redirectedAt)) {
       return null
     }
+    var elapsedMs = Date.now() - startedAt
+    if (elapsedMs < 0 || elapsedMs > TIMING_MAX_AGE_MS) return null
+    return elapsedMs
+  }
 
+  function emitNavigationTiming(elapsedMs) {
+    if (elapsedMs === null) return null
     try {
       if (window.performance && typeof window.performance.mark === 'function') {
         window.performance.mark(TIMING_MARK_PREFIX + 'destination-load')
@@ -137,35 +155,41 @@
         }),
       )
     } catch (error) {}
-    discardTiming()
     return elapsedMs
   }
 
+  function finishNavigationTiming(candidate) {
+    return emitNavigationTiming(readNavigationTiming(candidate))
+  }
+
   var api = {
-    release: 'v1.59.441',
+    release: 'v1.59.504',
     authPaths: Array.from(AUTH_PATHS),
     isApprovedHost: isApprovedHost,
     isAuthPath: isAuthPath,
     shouldLoadApplicationControllers: shouldLoadApplicationControllers,
+    readNavigationTiming: readNavigationTiming,
     finishNavigationTiming: finishNavigationTiming,
   }
   window.StartersV3AuthPageLoader = api
 
-  if (!isApprovedHost(window.location && window.location.hostname)) return
-  var pathname = (window.location && window.location.pathname) || ''
+  if (!approvedHost) return
   install(pathname)
 
   if (!isAuthPath(pathname)) {
-    if (document.readyState === 'complete') {
-      finishNavigationTiming(pathname)
-    } else if (typeof window.addEventListener === 'function') {
-      window.addEventListener(
-        'load',
-        function () {
-          finishNavigationTiming(pathname)
-        },
-        { once: true },
-      )
+    var pending = readNavigationTiming(pathname)
+    if (pending !== null) {
+      if (document.readyState === 'complete') {
+        emitNavigationTiming(pending)
+      } else if (typeof window.addEventListener === 'function') {
+        window.addEventListener(
+          'load',
+          function () {
+            emitNavigationTiming(pending)
+          },
+          { once: true },
+        )
+      }
     }
   }
 })()

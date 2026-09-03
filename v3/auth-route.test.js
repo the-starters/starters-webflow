@@ -998,49 +998,60 @@ test('auth route waits for delayed Memberstack before resolving /dashboard', asy
   assert.equal(location.replaced, '/brand-dashboard')
 })
 
-test('auth route reuses an authenticated shared member snapshot', async () => {
-  const member = talentMember()
-  const harness = loadRouter({
-    pathname: '/auth-route',
-    member,
-    memberReady: Promise.resolve(member),
-    xano: { statusBody: ONBOARDED },
-  })
-
-  await flush()
-  assert.equal(harness.location.replaced, '/starter-dashboard')
-  assert.equal(harness.getCurrentMemberCalls(), 0)
-  assert.deepEqual(
-    harness.fetchCalls.map((call) => call.url.replace(/\?token=.*/, '?token=[redacted]')),
-    [TRADE_URL + '?token=[redacted]', STATUS_URL],
-  )
-})
-
-test('an empty shared member snapshot falls back to a live Memberstack read', async () => {
+// Identity comes from one direct getCurrentMember() read. `window.memberReady`
+// on this site resolves an empty object for every visitor, logged in or not, so
+// its value carries no identity to reuse — see
+// global-embeds/session-video/README.md, which records a module that shipped
+// inert for its whole life on exactly that mistake.
+test('auth route resolves the member with exactly one direct Memberstack read', async () => {
   const harness = loadRouter({
     pathname: '/auth-route',
     member: talentMember(),
-    memberReady: Promise.resolve({}),
     xano: { statusBody: ONBOARDED },
   })
 
   await flush()
   assert.equal(harness.location.replaced, '/starter-dashboard')
   assert.equal(harness.getCurrentMemberCalls(), 1)
+  assert.deepEqual(
+    harness.fetchCalls.map((call) => call.url.replace(/\?token=.*/, '?token=[redacted]')),
+    [TRADE_URL + '?token=[redacted]', STATUS_URL],
+  )
 })
 
-test('late Memberstack still reuses the authenticated shared snapshot', async () => {
-  const member = talentMember()
+test('the site-head memberReady value is never treated as the member', async () => {
+  for (const memberReady of [
+    // What this site actually resolves, for every visitor.
+    Promise.resolve({}),
+    // A promise that never settles must not strand /auth-route on its loading
+    // state: nothing here may await it.
+    new Promise(() => {}),
+    Promise.reject(new Error('memberReady failed')).catch(() => ({})),
+  ]) {
+    const harness = loadRouter({
+      pathname: '/auth-route',
+      member: talentMember(),
+      memberReady,
+      xano: { statusBody: ONBOARDED },
+    })
+
+    await flush()
+    assert.equal(harness.location.replaced, '/starter-dashboard')
+    assert.equal(harness.getCurrentMemberCalls(), 1)
+  }
+})
+
+test('an unsettled memberReady does not strand a late-Memberstack login', async () => {
   const harness = loadRouter({
     pathname: '/auth-route',
-    delayedMember: member,
+    delayedMember: talentMember(),
     memberstackDelayMs: 25,
-    memberReady: Promise.resolve(member),
+    memberReady: new Promise(() => {}),
   })
 
   await new Promise((resolve) => setTimeout(resolve, 150))
   assert.equal(harness.location.replaced, '/starter-dashboard')
-  assert.equal(harness.getCurrentMemberCalls(), 0)
+  assert.equal(harness.getCurrentMemberCalls(), 1)
 })
 
 test('router timing marks contain stage names only', async () => {
@@ -1048,7 +1059,6 @@ test('router timing marks contain stage names only', async () => {
   const harness = loadRouter({
     pathname: '/auth-route',
     member,
-    memberReady: Promise.resolve(member),
     xano: { statusBody: ONBOARDED },
   })
 
@@ -2020,9 +2030,17 @@ test('the header @release marker matches the exported release property', () => {
 test('every script in this release carries the same release marker', () => {
   // A release that updates several files must stamp them all identically, or the
   // "which version is loaded?" console check answers differently per script.
+  // The site-head loader ships with the router, so it is in the same unit.
+  const loaderSource = fs.readFileSync(
+    require.resolve('./auth-page-loader.js'),
+    'utf8',
+  )
   const guardMarker = routeGuardSource.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
   const routerMarker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
+  const loaderMarker = loaderSource.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
   assert.ok(guardMarker, 'no @release line in route-guard.js')
   assert.ok(routerMarker, 'no @release line in auth-route.js')
+  assert.ok(loaderMarker, 'no @release line in auth-page-loader.js')
   assert.equal(guardMarker[1], routerMarker[1])
+  assert.equal(loaderMarker[1], routerMarker[1])
 })

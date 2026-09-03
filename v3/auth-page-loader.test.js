@@ -4,6 +4,10 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./auth-page-loader.js'), 'utf8')
+const routeGuardSource = fs.readFileSync(
+  require.resolve('./route-guard.js'),
+  'utf8',
+)
 const TIMING_KEY = 'thestarters:v3-auth-route-timing'
 const PINNED_SRC =
   'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v9.8.7/v3/auth-page-loader.js'
@@ -111,7 +115,7 @@ function loadLoader(options = {}) {
     window,
   })
 
-  return { appended, errors, events, listeners, marks, storage, window }
+  return { appended, document, errors, events, listeners, marks, storage, window }
 }
 
 test('auth paths install only route guard then auth router from one release ref', () => {
@@ -162,23 +166,67 @@ test('non-auth pages install nothing and admit the existing app block', () => {
   }
 })
 
-test('unapproved hosts install nothing', () => {
-  const { appended } = loadLoader({ hostname: 'lookalike-webflow.io.example' })
+// A loader that installs nothing must not also suppress the site's own
+// controller block, or an auth page ends up with no runtime at all: no
+// route-guard.js, no auth-route.js, no `redirect="/auth-route"` on the form,
+// and the login falls through to the shared Memberstack plan redirect.
+test('unapproved hosts install nothing and re-admit the app block', () => {
+  const { appended, window } = loadLoader({
+    hostname: 'lookalike-webflow.io.example',
+    pathname: '/login',
+  })
+
   assert.equal(appended.length, 0)
+  for (const pathname of ['/login', '/starter-login', '/auth-route', '/quiz']) {
+    assert.equal(
+      window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(pathname),
+      true,
+      pathname,
+    )
+  }
 })
 
-test('an underivable base fails closed instead of mixing release refs', () => {
+test('an underivable base fails closed and re-admits the app block', () => {
   for (const options of [
     { currentScript: null },
     { currentScript: {} },
     { loaderSrc: 'https://assets.example.com/bundles/site-head.js' },
   ]) {
-    const { appended, errors } = loadLoader({ pathname: '/login', ...options })
+    const label = JSON.stringify(options)
+    const { appended, errors, window } = loadLoader({
+      pathname: '/login',
+      ...options,
+    })
 
-    assert.deepEqual(appended, [], JSON.stringify(options))
-    assert.equal(errors.length, 1, JSON.stringify(options))
+    assert.deepEqual(appended, [], label)
+    assert.equal(errors.length, 1, label)
     assert.match(errors[0], /auth runtime not installed/)
+    for (const pathname of ['/login', '/starter-login', '/auth-route']) {
+      assert.equal(
+        window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(
+          pathname,
+        ),
+        true,
+        label + ' ' + pathname,
+      )
+    }
   }
+})
+
+// The site-head block asks after this script has finished executing, when
+// document.currentScript is null. The answer must not change then.
+test('the controller answer survives losing document.currentScript', () => {
+  const { window, document } = loadLoader({ pathname: '/login' })
+
+  document.currentScript = null
+  assert.equal(
+    window.StartersV3AuthPageLoader.shouldLoadApplicationControllers('/login'),
+    false,
+  )
+  assert.equal(
+    window.StartersV3AuthPageLoader.shouldLoadApplicationControllers('/quiz'),
+    true,
+  )
 })
 
 test('destination load emits timestamp-only timing and consumes the marker', () => {
@@ -207,10 +255,25 @@ test('a receipt the router never confirmed is discarded without an event', () =>
     startedAt: 1700000000000,
   })
 
-  listeners.load()
+  assert.equal(listeners.load, undefined)
   assert.equal(events.length, 0)
   assert.equal(marks.length, 0)
   assert.equal(storage.has(TIMING_KEY), false)
+})
+
+// The member hits stop or clicks away before `load`. The receipt must already
+// be gone, so the next page cannot report the abandoned load plus the
+// interstitial time as a login-to-destination duration.
+test('an abandoned destination load consumes the receipt and emits nothing', () => {
+  const { events, marks, storage } = loadLoader({
+    pathname: '/starter-dashboard',
+    startedAt: 1700000000000,
+    redirectedAt: 1700000004000,
+  })
+
+  assert.equal(storage.has(TIMING_KEY), false)
+  assert.equal(events.length, 0)
+  assert.equal(marks.length, 0)
 })
 
 test('auth pages preserve timing for the next navigation', () => {
@@ -231,7 +294,7 @@ test('stale timing is removed without emitting a destination event', () => {
     redirectedAt: 1699999004000,
   })
 
-  listeners.load()
+  assert.equal(listeners.load, undefined)
   assert.equal(events.length, 0)
   assert.equal(marks.length, 0)
   assert.equal(storage.has(TIMING_KEY), false)
@@ -242,4 +305,19 @@ test('header and exported release markers match', () => {
   const marker = source.match(/@release\s+(v\d+\.\d+\.\d+)/)
   assert.ok(marker)
   assert.equal(window.StartersV3AuthPageLoader.release, marker[1])
+})
+
+// The `@release` header is an owned text contract: the release process reads it
+// out of the served bytes with `curl | grep '@release'` and compares it against
+// the exported property. The route-guard family ships as one unit, so a release
+// that stamps one of them must stamp all of them, or the "which version is
+// loaded?" console check answers differently per script.
+test('the loader carries the same release marker as the route guard family', () => {
+  const loaderMarker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
+  const guardMarker = routeGuardSource.match(
+    /^ \* @release (v\d+\.\d+\.\d+)$/m,
+  )
+  assert.ok(loaderMarker, 'no @release line in auth-page-loader.js')
+  assert.ok(guardMarker, 'no @release line in route-guard.js')
+  assert.equal(loaderMarker[1], guardMarker[1])
 })
