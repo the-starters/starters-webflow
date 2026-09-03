@@ -16,7 +16,10 @@ in [README.md](README.md) and in the root
       `[name="rate"]` control is not required.
 - [x] Leave a blank rate whose owning control is still live unchanged, so an empty
       required rate keeps failing instead of persisting a zero rate.
-- [x] Pass every non-blank rate value through to Xano unrewritten.
+- [x] Pass every non-blank rate through to Xano as the member authored it, never
+      rounded or partially parsed, and stop an out-of-contract price before the
+      request. Contract:
+      [Whole-dollar price contract](../profile-form/README.md#whole-dollar-price-contract).
 - [x] Keep the authored Services and Rates markup intact while the controller disables
       the legacy Free and Paid Call controls and adds a link to Call Settings.
 - [x] Omit the legacy Free Call toggle and description plus the Paid Call toggle,
