@@ -334,6 +334,7 @@
     'starter/applications/submit': 'application_submitted',
     'starter/applications/update': 'application_updated',
     'invoices/cancel/v3': 'invoice_cancelled',
+    'invoices/final-cancel/v3': 'invoice_cancelled',
   }
 
   const DIAGNOSTIC_CALLS = {
@@ -352,6 +353,8 @@
     'brand/call-reviews/submit/v3': { workflow: 'call_review', resource_type: 'review' },
     'invoices/create/v3': { workflow: 'generate_invoice', resource_type: 'invoice' },
     'invoices/cancel/v3': { workflow: 'cancel_invoice', resource_type: 'invoice' },
+    'invoices/final-create/v3': { workflow: 'generate_invoice', resource_type: 'invoice' },
+    'invoices/final-cancel/v3': { workflow: 'cancel_invoice', resource_type: 'invoice' },
   }
   const responseDiagnostics = new WeakMap()
 
@@ -592,6 +595,8 @@
       call('brand/call-reviews/submit/v3', { body: payload, base: XANO_V3_BASE }),
     invoiceCreate: (payload) => call('invoices/create/v3', { body: payload }),
     invoiceCancel: (payload) => call('invoices/cancel/v3', { body: payload }),
+    invoiceFinalCreate: (payload) => call('invoices/final-create/v3', { body: payload }),
+    invoiceFinalCancel: (payload) => call('invoices/final-cancel/v3', { body: payload }),
     // starter / talent
     starterProfile: () => call('starter/profile/me', { body: {} }),
     starterMatchContext: () => call('starter/profile/match-context', { body: {} }),
@@ -1820,14 +1825,36 @@
   const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
   const INVOICE_NO_PROJECT_MESSAGE =
     'Open Generate Invoice from the project you want to bill, so we know which project to invoice.'
+  const INVOICE_FINAL_UNAVAILABLE_MESSAGE =
+    'The final invoice is not ready yet. Refresh the dashboard and try again.'
   let activeInvoiceProject = null
   let invoiceWorkflowBinding = null
+
+  function finalInvoicePlaceholder(project) {
+    if (!project || typeof project !== 'object') return null
+    if (
+      String(project.status || '').trim().toLowerCase() !== 'completed' ||
+      String(project.lifecycle_state || '').trim().toLowerCase() !== 'completed'
+    ) return null
+    const invoice = project.final_invoice
+    if (
+      !invoice ||
+      String(invoice.kind || '').trim().toLowerCase() !== 'stripe_invoice' ||
+      String(invoice.handoff_type || '').trim().toLowerCase() !== 'final' ||
+      String(invoice.sync_origin || '').trim().toLowerCase() !== 'v3'
+    ) return null
+    return invoice
+  }
 
   function invoiceProjectContext(card, authoritativeProject = null) {
     if (!card) return null
     const projectId = parseInt(card.getAttribute('data-wf-xano-id') || '', 10)
     if (!(projectId > 0)) return null
     const project = authoritativeProject || projectWorkflowItems.get(projectId) || {}
+    const completed =
+      String(project.status || '').trim().toLowerCase() === 'completed' ||
+      String(project.lifecycle_state || '').trim().toLowerCase() === 'completed'
+    const finalPlaceholder = finalInvoicePlaceholder(project)
     // Prefer a bound brand/company field — on the authored V3 project card that
     // field is wf-xano-bind="company_name". The "Title | Brand" heading split is
     // only a fallback, and a title containing a pipe makes the last segment the
@@ -1851,6 +1878,8 @@
         cardFieldText(card, 'hiring_manager_name') ||
         cardFieldText(card, 'party') ||
         cardFieldText(card, 'contact_name'),
+      invoiceMode: finalPlaceholder ? 'final' : (completed ? 'unavailable' : 'standard'),
+      finalInvoiceId: Number(finalPlaceholder && finalPlaceholder.id) || null,
     }
   }
 
@@ -1967,13 +1996,14 @@
     if (fail) fail.style.display = ''
   }
 
-  function invoiceIdempotencyKey(form, projectId) {
+  function invoiceIdempotencyKey(form, projectId, mode = 'standard') {
     if (form.dataset.invoiceIdempotencyKey) return form.dataset.invoiceIdempotencyKey
     const uuid =
       window.crypto && typeof window.crypto.randomUUID === 'function'
         ? window.crypto.randomUUID()
         : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
-    form.dataset.invoiceIdempotencyKey = 'invoice-v3-' + projectId + '-' + uuid
+    const prefix = mode === 'final' ? 'final-invoice-v3-' : 'invoice-v3-'
+    form.dataset.invoiceIdempotencyKey = prefix + projectId + '-' + uuid
     return form.dataset.invoiceIdempotencyKey
   }
 
@@ -2056,12 +2086,12 @@
     const link = invoicePaymentLinkEl(modal)
     if (!link) return
     const linkWrap = invoicePaymentLinkWrap(link)
-    const paymentLink = result && result.payment_link
+    const paymentLink = String(result && (result.payment_link || result.invoice_link) || '').trim()
     if (!paymentLink) {
       // The authored anchor still points at its "#invoice-payment-link"
       // placeholder, so showing it would be a dead pay button.
       linkWrap.style.display = 'none'
-      console.warn('[opp30:invoice] invoice created without a payment_link; pay CTA hidden', result)
+      console.warn('[opp30:invoice] invoice created without a payable link; pay CTA hidden', result)
       return
     }
     link.href = paymentLink
@@ -2294,6 +2324,14 @@
         )
         return
       }
+      if (context.invoiceMode === 'unavailable') {
+        invoiceError(
+          modal,
+          INVOICE_FINAL_UNAVAILABLE_MESSAGE,
+          validationDiagnostic('generate_invoice', 'invoice', 'FINAL_INVOICE_NOT_READY'),
+        )
+        return
+      }
 
       const amountInput = $('#Amount', form) || $('[name="Amount"]', form)
       const descriptionInput = $('#Description', form) || $('[name="Description"]', form)
@@ -2313,11 +2351,14 @@
       binding.submitControl = submit
       setInvoiceSubmitDisabled(submit, true)
       try {
-        const result = await API.invoiceCreate({
+        const createInvoice = context.invoiceMode === 'final'
+          ? API.invoiceFinalCreate
+          : API.invoiceCreate
+        const result = await createInvoice({
           project_id: context.projectId,
           amount,
           description: descriptionInput ? descriptionInput.value.trim() : '',
-          idempotency_key: invoiceIdempotencyKey(form, context.projectId),
+          idempotency_key: invoiceIdempotencyKey(form, context.projectId, context.invoiceMode),
         })
         if (!invoiceWorkflowBindingCurrent(binding)) return
         paintInvoiceSuccess(modal, result, context, amount)
@@ -3270,17 +3311,22 @@
     })
   }
 
-  function projectInvoiceCancelKey(action, invoiceId) {
+  function projectInvoiceCancelKey(action, invoice) {
     if (action.dataset.invoiceCancelKey) return action.dataset.invoiceCancelKey
+    const invoiceId = Number(invoice && invoice.id)
     const uuid =
       window.crypto && typeof window.crypto.randomUUID === 'function'
         ? window.crypto.randomUUID()
         : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
-    action.dataset.invoiceCancelKey = 'invoice-cancel-ui:' + invoiceId + ':' + uuid
+    const prefix = String(invoice && invoice.kind || '').toLowerCase() === 'stripe_invoice' &&
+      String(invoice && invoice.handoff_type || '').toLowerCase() === 'final'
+      ? 'final-invoice-cancel-ui:'
+      : 'invoice-cancel-ui:'
+    action.dataset.invoiceCancelKey = prefix + invoiceId + ':' + uuid
     return action.dataset.invoiceCancelKey
   }
 
-  async function resolveProjectInvoiceActionId(action, card) {
+  async function resolveProjectInvoiceAction(action, card) {
     try {
       const project = await currentProjectContext(card)
       decorateProjectInvoiceActions(card, project)
@@ -3302,7 +3348,7 @@
         Number.isInteger(invoiceId) &&
         invoiceId > 0,
       )
-      return eligible ? invoiceId : 0
+      return eligible ? invoice : null
     } catch (error) {
       showProjectActionFeedback(
         action,
@@ -3310,28 +3356,33 @@
         true,
         diagnosticForError(error),
       )
-      return 0
+      return null
     }
   }
 
   async function cancelProjectInvoice(action, card) {
     if (projectWorkflowRole !== 'starter') return false
-    const invoiceId = await resolveProjectInvoiceActionId(action, card)
+    const invoice = await resolveProjectInvoiceAction(action, card)
+    const invoiceId = Number(invoice && invoice.id)
     if (!invoiceId || projectInvoiceCancellationLocks.has(invoiceId)) {
       return false
     }
-    const confirmation = window.prompt(
-      'Type CANCEL to cancel this invoice. The payment link will stop working.',
-    )
+    const isFinalInvoice =
+      String(invoice.kind || '').toLowerCase() === 'stripe_invoice' &&
+      String(invoice.handoff_type || '').toLowerCase() === 'final'
+    const confirmation = window.prompt(isFinalInvoice
+      ? 'Type CANCEL to void this final invoice. The hosted invoice will stop accepting payment.'
+      : 'Type CANCEL to cancel this invoice. The payment link will stop working.')
     if (confirmation !== 'CANCEL') return false
 
     projectInvoiceCancellationLocks.add(invoiceId)
     setProjectActionWaiting(action, true)
     try {
-      await API.invoiceCancel({
+      const cancelInvoice = isFinalInvoice ? API.invoiceFinalCancel : API.invoiceCancel
+      await cancelInvoice({
         invoice_id: invoiceId,
         expected_status: 'unpaid',
-        idempotency_key: projectInvoiceCancelKey(action, invoiceId),
+        idempotency_key: projectInvoiceCancelKey(action, invoice),
         dry_run: false,
       })
       showProjectWorkflowFeedback('Invoice cancelled.')
