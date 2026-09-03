@@ -83,26 +83,23 @@
     return !canInstall
   }
 
-  function appendOrderedScript(src, name) {
-    var script = document.createElement('script')
-    script.src = src
-    script.async = false
-    script.defer = false
-    script.setAttribute('data-starters-auth-runtime', name)
-    ;(document.head || document.documentElement).appendChild(script)
-    return script
-  }
-
-  function install(candidate) {
-    if (!isAuthPath(candidate)) return []
+  function installAuthRouter(candidate) {
+    if (!isAuthPath(candidate)) return
     if (base === null) {
       console.error(
         '[v3-auth-page-loader] Cannot read its own release base from ' +
           'document.currentScript; auth runtime not installed.',
       )
-      return []
+      return
     }
-    return [appendOrderedScript(base + AUTH_ROUTE_PATH, 'auth-route')]
+    var script = document.createElement('script')
+    script.src = base + AUTH_ROUTE_PATH
+    script.async = false
+    script.defer = false
+    // The marker the cutover runbook reads to tell this element apart from a
+    // page-level auth-route.js tag during the overlap window.
+    script.setAttribute('data-starters-auth-runtime', 'auth-route')
+    ;(document.head || document.documentElement).appendChild(script)
   }
 
   function discardTiming() {
@@ -146,9 +143,9 @@
   // matches its `destination-load` label and includes the destination page load
   // it is named after.
   function emitNavigationTiming(startedAt) {
-    if (startedAt === null) return null
+    if (startedAt === null) return
     var elapsedMs = Date.now() - startedAt
-    if (!withinBudget(elapsedMs)) return null
+    if (!withinBudget(elapsedMs)) return
 
     try {
       if (window.performance && typeof window.performance.mark === 'function') {
@@ -162,7 +159,6 @@
         }),
       )
     } catch (error) {}
-    return elapsedMs
   }
 
   var api = {
@@ -175,7 +171,7 @@
   window.StartersV3AuthPageLoader = api
 
   if (!approvedHost) return
-  install(pathname)
+  installAuthRouter(pathname)
 
   var startedAt = consumeNavigationTiming(pathname)
   if (startedAt !== null) {

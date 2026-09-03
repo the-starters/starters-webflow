@@ -256,7 +256,6 @@
         new CustomEvent('starters:v3-auth-route-timing', { detail: detail }),
       )
     } catch (error) {}
-    return detail
   }
 
   function requestRedirect(destination) {

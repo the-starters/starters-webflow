@@ -56,24 +56,49 @@ moved to `get_build_profile_status` on 2026-08-04.
    shared Memberstack plan redirect, skipping the Talent funnel check and the
    `next` allowlist. Run it in this order instead:
 
-   1. **Save a readback first.** Copy the current saved head/page blocks for
-      `/login`, `/starter-login`, and `/auth-route` verbatim. These are the
-      rollback targets; nothing below is reversible without them.
+   1. **Save an exact readback first.** Copy the current saved head/page blocks
+      for `/login`, `/starter-login`, and `/auth-route` verbatim, byte for
+      byte. These are the rollback targets; nothing below is reversible without
+      them, and a hand-reconstructed block is not a rollback.
    2. **Install the loader with the page-level tags still in place.** Both are
       safe simultaneously: `auth-route.js` boot-guards on
-      `window.__startersV3AuthRouterBooted` (`v3/auth-route.js:75`), so
-      whichever copy executes first wins and the second returns immediately.
-      This overlap window is the intended state, not a defect.
-   3. **Prove the loader on all three auth paths.** On each of `/login`,
-      `/starter-login`, and `/auth-route`, confirm a network request for
-      `auth-route.js` carrying `data-starters-auth-runtime="auth-route"` from
-      the loader's own release ref, and confirm
-      `window.StartersV3AuthRouter.release` reports the expected tag. On the two
-      login pages also confirm the form carries both `data-ms-redirect` and
-      `redirect` set to `/auth-route`, and complete one real login end to end.
-   4. **Remove the page-level tags only after that proof**, one path at a time,
-      re-confirming the same evidence after each removal.
-   5. **Rollback** is restoring the step-1 readback for the affected path
+      `window.__startersV3AuthRouterBooted` (`v3/auth-route.js:75`), so exactly
+      one of the two copies executes and the other returns at its first
+      statement. **One auth-router execution is the expected result of this
+      step, not evidence that the loader failed.** This overlap window is the
+      intended state.
+   3. **Prove loader DELIVERY on all three auth paths.** During overlap the
+      boot guard hides which copy ran, so this step deliberately proves
+      delivery only. On each of `/login`, `/starter-login`, and `/auth-route`:
+
+      - Find the loader's own element, not any page-level tag:
+        `document.querySelector('script[data-starters-auth-runtime="auth-route"]').src`
+        must be exactly
+        `https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.506/v3/auth-route.js`.
+      - That request must have a successful (2xx, non-`from disk cache`-only)
+        network response in the Network panel.
+      - The served bytes must match the release: compare
+        `shasum -a 256` of `curl -fsS <that exact URL>` against the same hash
+        taken from the tagged file in this repo.
+
+      Do **not** read `window.StartersV3AuthRouter.release`, the form's
+      `data-ms-redirect`/`redirect` attributes, or an end-to-end login as proof
+      of the loader here. A parser-inserted page-level tag is reached before
+      the loader's `appendChild`ed script can finish fetching, so it wins the
+      boot guard and every one of those observations describes the page-level
+      copy — the very fallback this cutover is removing.
+   4. **Prove loader BEHAVIOR with the fallback disabled, one path at a time.**
+      This is the actual gate, and it is the first step that observes the
+      loader's copy executing. For one path: remove its page-level
+      `auth-route.js` tag, then confirm `window.StartersV3AuthRouter.release`
+      reports `v1.59.506`, the form carries both `data-ms-redirect` and
+      `redirect` set to `/auth-route`, and one real login completes end to end
+      through `/auth-route`. Repeat per path; do not batch.
+   5. **Scope.** Steps 2–4 all edit and save Webflow custom code. They are out
+      of scope for this repository change and must not be performed until a
+      later, explicitly authorized Webflow save/publish window. Nothing in this
+      release touches Webflow.
+   6. **Rollback** is restoring the step-1 readback for the affected path
       verbatim. Do not hand-reconstruct a block.
 7. Put the application controllers that are unrelated to authentication and
    attribution behind this exact test, which **must fail open** when the loader
@@ -406,9 +431,13 @@ Production stays silent apart from the configuration errors in the table above.
   depends on where step 6's cutover stands: during the overlap window the
   page-level tag still supplies it, and once the page-level tags are removed a
   blocked loader means no router at all. Record which state was tested.
-- Walk step 6 in order and record the per-path proof before removing any
-  page-level `auth-route.js` tag. Keep the step-6.1 readback until the release
-  is signed off.
+- Walk step 6 in order. Step 6.3 records delivery evidence only (the loader's
+  own `script[data-starters-auth-runtime="auth-route"]` element, its exact
+  `@v1.59.506` src, a successful response, and a matching served-byte hash);
+  step 6.4 is the behavioral gate and is the first step that can observe the
+  loader's copy executing, one path at a time. Keep the step-6.1 readback until
+  the release is signed off. All of step 6 is deferred to a separately
+  authorized Webflow save/publish window; this release does not touch Webflow.
 - Confirm `/starter-login` passes through `/auth-route` rather than the shared
   plan redirect.
 - Confirm `/sign-up` still has NO `auth-route.js` embed, and that its signup
