@@ -1987,6 +1987,99 @@ test('general item shows an edit button but hides remove; a newly created draft 
   assert.notEqual(savedCard.children[1].style.display, 'none') // headline back
 })
 
+test('an added window normalizes hour-only timepicker values before the availability request', async () => {
+  const { dom, calls } = loadSection()
+  await settle()
+
+  dom.createBtn.click()
+  await settle()
+
+  const draftCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  const formWrapper = draftCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[3].children[1].checked = true // Wednesday
+  form.children[4].children[1].checked = true // Thursday
+  form.querySelector('[name=start-time]').value = '10'
+  form.querySelector('[name=end-time]').value = '14'
+
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  const updateCall = calls.filter((call) => call.path === '/starter/update_availability/v3').at(-1)
+  assert.ok(updateCall)
+  const saved = Object.values(updateCall.body.availability.items).find(
+    (item) => item.days.length === 2 && item.days.includes(3) && item.days.includes(4),
+  )
+  assert.ok(saved)
+  assert.equal(saved.start, '10:00')
+  assert.equal(saved.end, '14:00')
+})
+
+test('an added window zero-pads a one-digit hour before the availability request', async () => {
+  const { dom, calls } = loadSection()
+  await settle()
+
+  dom.createBtn.click()
+  await settle()
+
+  const draftCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  const formWrapper = draftCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[0].children[1].checked = true // Sunday
+  form.querySelector('[name=start-time]').value = '9:30'
+  form.querySelector('[name=end-time]').value = '14'
+
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  const updateCall = calls.filter((call) => call.path === '/starter/update_availability/v3').at(-1)
+  assert.ok(updateCall)
+  const saved = Object.values(updateCall.body.availability.items).find((item) => item.days.includes(0))
+  assert.ok(saved)
+  assert.equal(saved.start, '09:30')
+  assert.equal(saved.end, '14:00')
+})
+
+test('invalid or non-ascending times stay editable and never send an availability request', async () => {
+  const cases = [
+    ['25', '14'],
+    ['10', '10:60'],
+    ['14:00', '14:00'],
+    ['15:00', '14:00'],
+  ]
+
+  for (const [start, end] of cases) {
+    const { dom, calls, state } = loadSection()
+    await settle()
+    const before = JSON.stringify(state.availability)
+
+    dom.createBtn.click()
+    await settle()
+
+    const draftCard = dom.list.children.find(
+      (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+    )
+    const formWrapper = draftCard.children[2]
+    const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+    form.children[0].children[1].checked = true
+    form.querySelector('[name=start-time]').value = start
+    form.querySelector('[name=end-time]').value = end
+
+    formWrapper.children[0].children[1].children[1].click()
+    await settle()
+
+    assert.equal(calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+    assert.equal(JSON.stringify(state.availability), before)
+    assert.equal(dom.notif.steps['request-error'].style.display, '')
+    assert.match(dom.notif.errorText.textContent, /valid start and end time/i)
+    assert.ok(dom.list.children.includes(draftCard), 'invalid draft remains editable')
+  }
+})
+
 test('populateItemForm marks selected day checkboxes with the Webflow checked-skin class', async () => {
   const { dom } = loadSection({
     serverState: {
@@ -2408,6 +2501,38 @@ function formatSlotTime(start, timeZone) {
   }).format(new Date(start * 1000))
 }
 
+function slotDateKey(start, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone,
+  }).formatToParts(new Date(start * 1000))
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function formatSlotSummary(start, timeZone) {
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZone,
+  }).format(new Date(start * 1000))
+}
+
+function formatSlotDate(start, timeZone) {
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone,
+  }).format(new Date(start * 1000))
+}
+
 test('calendar-preview timezone selector converts slots without a write or another availability read', async () => {
   const start = futureUtcSlot()
   const { dom, calls } = loadSection({
@@ -2622,8 +2747,10 @@ test('calendar-preview reuses the timezone selector node and keeps its focus acr
 })
 
 test('calendar-preview keeps the selected slot and re-expresses it when the timezone changes', async () => {
-  const firstSlot = Math.floor(Date.UTC(2026, 8, 2, 4, 30) / 1000)
-  const secondSlot = Math.floor(Date.UTC(2026, 8, 4, 1, 0) / 1000)
+  const firstSlot = futureUtcSlot()
+  const secondSlot = futureUtcSlot(1, 0) + 2 * 24 * 60 * 60
+  const manilaDateKey = slotDateKey(secondSlot, 'Asia/Manila')
+  const newYorkDateKey = slotDateKey(secondSlot, 'America/New_York')
   const { dom, calls } = loadSection({
     serverState: FREE_ONLY_SERVER_STATE,
     getRoutes: {
@@ -2635,11 +2762,11 @@ test('calendar-preview keeps the selected slot and re-expresses it when the time
   })
   await settle()
 
-  dom.calendarPreview.querySelector('[data-preview-date="2026-09-04"]').click()
+  dom.calendarPreview.querySelector(`[data-preview-date="${manilaDateKey}"]`).click()
   dom.calendarPreview.querySelector(`[data-preview-slot-start="${secondSlot}"]`).click()
   assert.equal(
     dom.calendarPreview.querySelector('[data-availability-element="preview-selection"]').textContent,
-    'Selected: Fri, Sep 04, 09:00 AM',
+    `Selected: ${formatSlotSummary(secondSlot, 'Asia/Manila')}`,
   )
 
   const initialReads = calls.filter((call) => call.path === '/scheduler/get_availability/v3').length
@@ -2652,19 +2779,21 @@ test('calendar-preview keeps the selected slot and re-expresses it when the time
 
   assert.equal(
     dom.calendarPreview.querySelector('[data-availability-element="preview-selection"]').textContent,
-    'Selected: Thu, Sep 03, 09:00 PM',
+    `Selected: ${formatSlotSummary(secondSlot, 'America/New_York')}`,
   )
   const timesColumn = dom.calendarPreview.querySelector(
     '[data-availability-element="preview-times-column"]',
   )
-  assert.equal(timesColumn.children[0].textContent, 'Thu, Sep 3')
+  assert.equal(timesColumn.children[0].textContent, formatSlotDate(secondSlot, 'America/New_York'))
   const selectedButton = dom.calendarPreview.querySelector(
     `[data-preview-slot-start="${secondSlot}"]`,
   )
   assert.equal(selectedButton.getAttribute('aria-pressed'), 'true')
-  assert.equal(selectedButton.textContent, '9:00 PM')
+  assert.equal(selectedButton.textContent, formatSlotTime(secondSlot, 'America/New_York'))
   assert.equal(
-    dom.calendarPreview.querySelector('[data-preview-date="2026-09-03"]').getAttribute('aria-pressed'),
+    dom.calendarPreview
+      .querySelector(`[data-preview-date="${newYorkDateKey}"]`)
+      .getAttribute('aria-pressed'),
     'true',
   )
   assert.equal(

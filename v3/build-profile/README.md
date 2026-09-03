@@ -33,7 +33,7 @@ Edit Profile Work Highlights controls. Do not replace it with a DOM marker or a
 first-loader-wins flag because Build and Edit intentionally share the same
 Designer selectors.
 
-`bio-editor.js`, `field-counters.js`, `company-autocomplete.js`, and
+`bio-editor.js`, `field-counters.js`, `company-autocomplete.js`, `work-dates.js`, and
 `company-experience-crud.js` have
 deliberately diverged from the inline bodies they were captured from. The bio limit is
 now 1500 **characters** rather than 300 words, the editor owns its counter group, and
@@ -61,7 +61,14 @@ the legacy Memberstack/local draft initializes, it reads the canonical
 `starter/get` profile through the authenticated browser fetch, verifies the
 stable Memberstack ID before and after that read, maps the canonical
 fields to the seven-step draft shape, and fills only keys that are absent from
-the active draft. Existing draft keys always win, including intentional empty
+the active draft. It also replaces a legacy array-shaped `also-worked-with`
+draft with the canonical `Also_Worked_With_Picker` object. For an object-shaped
+company-picker draft, it preserves the selected set and enriches only matching
+entries with canonical company identity, source, and logo fields. Matching uses
+the entity ID first, then the domain, then a normalized name with a compatible
+source (the same source when the draft provides one); unmatched entries stay
+unchanged, and omitted canonical companies are not restored. Outside those
+company enrichment fields, existing draft keys win, including intentional empty
 or false values. Canonical reviewer fields are adapted to the native draft
 aliases (`fname`, `lname`, and `job`). At submit, the writer accepts those draft
 aliases, the canonical aliases (`first-name`, `last-name`, and `position`), or a

@@ -11,8 +11,9 @@
  *
  * WHAT IT DOES
  *  - The starter Xano id carrier used to key the public Algolia record lookup.
- *    Experiences and Clients are outside this file: Webflow CMS renders them
- *    natively for all viewers after the Phase 2 cutover.
+ *    Webflow-authored wf-xano wrappers render Experiences and Clients from the
+ *    public Xano taxonomy endpoint. This file only neutralizes unresolved
+ *    custom-Company links after those native templates render.
  *  - Booking wiring, which stays behind the Memberstack Brand gate; logged-out
  *    Book Call entry points are signup-only and never open the chooser.
  *  - Services call-card visibility. Anonymous viewers see only Free/Paid touts
@@ -1000,6 +1001,7 @@
           if (!records.some(function (record) {
               return record && record.type === 'childList' && record.addedNodes && record.addedNodes.length;
           })) return;
+          neutralizeUnavailableCompanyLinks();
           wireCallServiceCardsToDirectEntry();
           // Chooser rows and the back arrow arrive on the same late-node paths
           // as the cards. Both are guarded against rebinding, so re-running
@@ -1012,6 +1014,49 @@
           repaintCallSurfaces();
       });
       observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  /* ---- unresolved custom Company links ----
+     The public taxonomy endpoint intentionally renders pending-review custom
+     companies before they have a public Company page. wf-xano keeps the native
+     authored anchor, but an empty slug resolves its prefix to `/companies/`;
+     older pending projections can also expose a temporary `company-pending-*`
+     path. Both destinations misrepresent the visible card as a usable Company
+     profile. Keep the authored card and its content, but remove navigation.
+
+     This scan is restricted to rendered items in the two profile wrappers. It
+     never touches their hidden templates, valid Company links, or links in any
+     other list. Re-running it is a no-op because the href is removed once. */
+  function neutralizeUnavailableCompanyLinks() {
+      const selector = [
+          '[wf-xano-instance="starter-work-histories"] [wf-xano-item][href]',
+          '[wf-xano-instance="starter-clients"] [wf-xano-item][href]',
+      ].join(', ');
+
+      Array.from(document.querySelectorAll(selector)).forEach(function (link) {
+          const href = String(link.getAttribute('href') || '').trim();
+          if (!href) return;
+
+          let path = '';
+          try {
+              const base = window.location && window.location.href
+                  ? window.location.href
+                  : 'https://www.thestarters.com/';
+              path = new URL(href, base).pathname;
+          } catch (error) {
+              return;
+          }
+
+          const normalizedPath = path.replace(/\/+$/, '') || '/';
+          const unavailable = normalizedPath === '/companies' ||
+              path.indexOf('/companies/company-pending-') !== -1;
+          if (!unavailable) return;
+
+          link.removeAttribute('href');
+          link.removeAttribute('target');
+          link.setAttribute('aria-disabled', 'true');
+          link.setAttribute('data-company-link-unavailable', '');
+      });
   }
 
   function isBlockedProductionBookingSurface() {
@@ -1029,6 +1074,7 @@
   // Webflow authors the structural Book Call triggers and dialog. Canonical
   // environment-scoped discovery is the only code path that may enable them.
   setBookingButtonAvailable(false);
+  neutralizeUnavailableCompanyLinks();
   wireCallServiceCardsToDirectEntry();
   wireChooserRowsToEntryStamp();
   // Before any entry has happened there is no stamp, so the arrow starts
@@ -1563,8 +1609,9 @@
   }
   // The starter's Xano id is CMS-bound into the page ([data-starter-xano-id]
   // inside the native-binding wrapper); it keys the public search-record
-  // lookup. Experiences/clients render natively from the CMS since the
-  // Phase 2 cutover, so no runtime fetch supplies this id anymore.
+  // lookup. Separate Webflow-authored wf-xano wrappers render Experiences and
+  // Clients from the public Xano taxonomy endpoint, so this file does not fetch
+  // those lists itself.
   const STARTER_XANO_ID_READY = Promise.resolve((function () {
       const carrier = document.querySelector('[data-starter-xano-id]');
       const value = carrier ? parseInt(carrier.textContent, 10) : NaN;

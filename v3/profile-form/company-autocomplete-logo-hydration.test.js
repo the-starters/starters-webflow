@@ -13,9 +13,13 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   const tags = []
   const inputListeners = {}
   const dropdownListeners = {}
+  let hydrationSyncDepth = 0
+  let dirtyEvents = 0
   const valueInput = {
     value: '',
-    dispatchEvent() {},
+    dispatchEvent(event) {
+      if (hydrationSyncDepth === 0 && (event.type === 'input' || event.type === 'change')) dirtyEvents += 1
+    },
   }
   const tagTemplate = {
     cloneNode() {
@@ -79,7 +83,9 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
     console,
     crypto: { randomUUID: () => `id-${++nextId}` },
     document,
-    Event: class Event {},
+    Event: class Event {
+      constructor(type) { this.type = type }
+    },
     MEMBER: { id: 'member-1' },
     qsa(selector, root) {
       if (selector === '[logo-search-input]') return [input]
@@ -103,6 +109,16 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
     waitForMember(callback) { callback() },
     waitProfileData(callback) { callback() },
     window: {
+      __tsProfileDirtyState: {
+        runHydrationSync(callback) {
+          hydrationSyncDepth += 1
+          try {
+            return callback()
+          } finally {
+            hydrationSyncDepth -= 1
+          }
+        },
+      },
       xanoAuthFetch: async () => ({
         ok: true,
         json: async () => companyFetch ? companyFetch : companies,
@@ -117,6 +133,7 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   return {
     input,
     valueInput,
+    getDirtyEvents() { return dirtyEvents },
     clickResult(selection, { deleteResult = false } = {}) {
       let isAdded = deleteResult
       const item = {
@@ -180,17 +197,35 @@ test('Build Profile preserves a hydrated company logo in the serialized selectio
 
 test('Edit Profile preserves a hydrated API company logo in the serialized selection', async () => {
   const logoUrl = 'https://logos.example/acme.svg'
-  const { valueInput } = createHarness(
+  const harness = createHarness(
     path.join(__dirname, '../starter-edit-profile/company-autocomplete.js'),
     [{ id: 42, company_entity_id: 9, company_name: 'Acme', company_domain: 'acme.example', company_logo_url: logoUrl }],
   )
   await new Promise((resolve) => setImmediate(resolve))
 
-  const serialized = JSON.parse(valueInput.value)
+  const serialized = JSON.parse(harness.valueInput.value)
   const company = serialized['client-42']
   assert.equal(company.logo_url, logoUrl)
   assert.equal(company.client_row_id, 42)
   assert.equal(company.company_entity_id, 9)
+  assert.equal(harness.getDirtyEvents(), 0)
+})
+
+test('Edit Profile user selection stays dirty after clean async hydration', async () => {
+  const harness = createHarness(
+    path.join(__dirname, '../starter-edit-profile/company-autocomplete.js'),
+    [{ id: 42, company_name: 'Acme', company_domain: 'acme.example' }],
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.getDirtyEvents(), 0)
+
+  harness.selectCompany({
+    name: 'Later Company',
+    domain: 'later.example',
+    company_entity_id: 17,
+    source: 'platform',
+  })
+  assert.equal(harness.getDirtyEvents(), 2)
 })
 
 test('Edit Profile hydration does not append a case-variant duplicate after a custom selection', async () => {
@@ -301,13 +336,14 @@ for (const [label, file] of [
   })
 }
 
-function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [] } = {}) {
+function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], companyGetStatuses = [], initialCompanies = [] } = {}) {
   let readyPromise
   let baselineTimer
   const requests = []
   const modalCounts = { success: 0, error: 0 }
+  const dirtyStateCalls = []
   const renderedCards = []
-  const canonicalCompanies = []
+  const canonicalCompanies = initialCompanies.map((company) => ({ ...company }))
 
   function element(value = '') {
     const listeners = new Map()
@@ -336,8 +372,8 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
 
   const companyInput = element('QA Wolf')
   const jobTitleInput = element('Engineer')
-  const startDateInput = element('Jan 2025')
-  const endDateInput = element('Aug 2026')
+  const startDateInput = element('2025-01')
+  const endDateInput = element('2026-08')
   const addButton = element()
   const companyList = element()
   companyList.appendChild = (card) => { renderedCards.push(card) }
@@ -351,6 +387,10 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
   const editCurrentCheckbox = element()
   editCurrentCheckbox.checked = true
   const saveEditButton = element()
+  const removeSubmitButton = element()
+  const removeModal = element()
+  const removeModalTrigger = element()
+  const removeModalClose = element()
   const companySubmit = element()
   const firstCompanyInput = element('true')
   const alsoWorkedWithInput = element('{}')
@@ -373,6 +413,9 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     ['#edit-company-end', editEndDateInput],
     ['#edit-company-current', editCurrentCheckbox],
     ['[save-company-edit]', saveEditButton],
+    ['[company-remove-submit]', removeSubmitButton],
+    ['[data-modal-target="company-remove"]', removeModal],
+    ['[data-modal-trigger="company-remove"]', removeModalTrigger],
     ['[data-edit-submit="companies"]', companySubmit],
     ['#first-company', firstCompanyInput],
     ['#also-worked-with', alsoWorkedWithStatuses.length ? alsoWorkedWithInput : null],
@@ -384,6 +427,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     addEventListener(name, callback) {
       documentListeners.set(name, [...(documentListeners.get(name) || []), callback])
     },
+    querySelector() { return null },
     createElement() { return element() },
   }
   const context = {
@@ -412,6 +456,16 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
         }
         return { ok: false, status, json: async () => ({ message: 'Company creation failed' }) }
       }
+      if (url.includes('/companies?member_id=')) {
+        const status = companyGetStatuses.shift() || 200
+        return {
+          ok: status >= 200 && status < 300,
+          status,
+          json: async () => status >= 200 && status < 300
+            ? { companies: canonicalCompanies, starter_id: 'starter-1' }
+            : { message: 'Company refresh failed' },
+        }
+      }
       return { ok: true, json: async () => ({ companies: canonicalCompanies, starter_id: 'starter-1' }) }
     },
     jQuery: undefined,
@@ -419,6 +473,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     qs(selector, root) {
       if (selector === 'div:first-child' && root === addButton) return { textContent: 'Add company' }
       if (selector === '.company-card' && root === companyList) return companyTemplate
+      if (selector === '[data-modal-close]' && root === removeModal) return removeModalClose
       return elements.get(selector) || null
     },
     qsa() { return [] },
@@ -430,7 +485,13 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     setInterval() { return 0 },
     clearInterval() {},
     waitForMember(callback) { readyPromise = callback() },
-    window: {},
+    window: {
+      __tsProfileDirtyState: {
+        markDirty(stepIndex) { dirtyStateCalls.push(['dirty', stepIndex]) },
+        beginSave(stepIndex) { dirtyStateCalls.push(['begin', stepIndex]) },
+        finishSave(stepIndex, saved) { dirtyStateCalls.push(['finish', stepIndex, saved]) },
+      },
+    },
   }
 
   vm.runInNewContext(fs.readFileSync(file, 'utf8'), context, { filename: file })
@@ -448,13 +509,22 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     editCompanyInput,
     requests,
     modalCounts,
+    dirtyStateCalls,
     renderedCards,
     select,
+    selectCustom(input, name = 'Private QA Company') {
+      input.value = name
+      input.dataset.selectedCompanyName = name
+      input.dataset.selectedCompanyDomain = ''
+      input.dataset.selectedCompanyLogoUrl = ''
+      input.dataset.selectedCompanyEntityId = '0'
+      input.dataset.selectedCompanySource = 'custom'
+    },
     prepareAdd() {
       companyInput.value = 'QA Wolf'
       jobTitleInput.value = 'Engineer'
-      startDateInput.value = 'Jan 2025'
-      endDateInput.value = 'Aug 2026'
+      startDateInput.value = '2025-01'
+      endDateInput.value = '2026-08'
       select(companyInput)
     },
     async start() {
@@ -464,6 +534,22 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     },
     async queueAdd() {
       await addButton.listeners.get('click')[0]({ preventDefault() {} })
+    },
+    async queueDelete(company) {
+      const card = element()
+      card.dataset.id = String(company.id)
+      card.dataset.company = JSON.stringify(company)
+      const removeButton = element()
+      await companyList.listeners.get('click')[0]({
+        target: {
+          closest(selector) {
+            if (selector === '.company-card') return card
+            if (selector === '[company-remove-open]') return removeButton
+            return null
+          },
+        },
+      })
+      await removeSubmitButton.listeners.get('click')[0]({ preventDefault() {} })
     },
     changeAlsoWorkedWith(value) {
       alsoWorkedWithInput.value = JSON.stringify(value)
@@ -531,12 +617,17 @@ test('Edit Profile keeps pending work and shows an error when Also Worked With f
   assert.equal(harness.modalCounts.success, 0)
   assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 1)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 0)
+  assert.deepEqual(harness.dirtyStateCalls, [['dirty', 3], ['begin', 3], ['finish', 3, false]])
 
   await harness.submitAll()
   assert.equal(harness.modalCounts.error, 1)
   assert.equal(harness.modalCounts.success, 1)
   assert.equal(harness.requests.filter(({ url }) => url.includes('/starter/set_also_worked_with')).length, 2)
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
+  assert.deepEqual(harness.dirtyStateCalls, [
+    ['dirty', 3], ['begin', 3], ['finish', 3, false],
+    ['begin', 3], ['finish', 3, true],
+  ])
 })
 
 test('Edit Profile refreshes committed creates after a later create fails', async () => {
@@ -562,6 +653,52 @@ test('Edit Profile refreshes committed creates after a later create fails', asyn
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 3)
 })
 
+test('Edit Profile clears its accepted Company revision when the follow-up refresh fails', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    deferredWrites: true,
+    companyCreateStatuses: [200],
+    companyGetStatuses: [200, 200, 500],
+  })
+  await harness.start()
+  harness.prepareAdd()
+  await harness.queueAdd()
+  await harness.submitAll()
+
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
+  assert.deepEqual(harness.dirtyStateCalls, [['dirty', 3], ['begin', 3], ['finish', 3, true]])
+})
+
+test('Edit Profile atomically pairs a replacement create with its pending deletion at the three-company limit', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const existingCompanies = [1, 2, 3].map((id) => ({
+    id,
+    company_name: `Existing ${id}`,
+    company_domain: `existing-${id}.example`,
+    company_entity_id: 100 + id,
+    company_source: 'platform',
+    job_title: 'Engineer',
+    start_date: 'Jan 2025',
+    end_date: 'Aug 2026',
+    current_work: false,
+  }))
+  const harness = createCrudHarness(file, { deferredWrites: true, initialCompanies: existingCompanies })
+  await harness.start()
+  await harness.queueDelete(existingCompanies[2])
+  harness.selectCustom(harness.companyInput)
+  await harness.queueAdd()
+  assert.deepEqual(harness.dirtyStateCalls, [['dirty', 3], ['dirty', 3]])
+  await harness.submitAll()
+
+  const createRequests = harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST')
+  const deleteRequests = harness.requests.filter(({ url, options }) => url.endsWith('/3') && options.method === 'DELETE')
+  assert.equal(createRequests.length, 1)
+  assert.equal(deleteRequests.length, 0)
+  assert.equal(JSON.parse(createRequests[0].options.body).replace_companies_id, 3)
+  assert.equal(harness.modalCounts.success, 1)
+  assert.equal(harness.modalCounts.error, 0)
+})
+
 for (const [label, file, deferredWrites] of [
   ['Build Profile', path.join(__dirname, '../build-profile/company-experience-crud.js'), false],
   ['Edit Profile', path.join(__dirname, '../starter-edit-profile/company-experience-crud.js'), true],
@@ -583,9 +720,10 @@ for (const [label, file, deferredWrites] of [
     const createRequest = addHarness.requests.find(({ options }) => options.method === 'POST')
     assert.deepEqual(JSON.parse(createRequest.options.body), {
       ...expectedSelection,
+      ...(label === 'Build Profile' ? { defer_projection: true } : {}),
       job_title: 'Engineer',
-      start_date: 'Jan 2025',
-      end_date: 'Aug 2026',
+      start_date: '2025-01',
+      end_date: '2026-08',
       current_work: false,
     })
 
@@ -599,6 +737,7 @@ for (const [label, file, deferredWrites] of [
     assert.equal(updateRequest.url.endsWith('/company-7'), true)
     assert.deepEqual(JSON.parse(updateRequest.options.body), {
       ...expectedSelection,
+      ...(label === 'Build Profile' ? { defer_projection: true } : {}),
       job_title: 'Lead Engineer',
       start_date: 'Jan 2025',
       end_date: 'Present',
@@ -671,3 +810,25 @@ for (const [label, file, deferredWrites] of [
     assert.doesNotMatch(payload.company_logo_url, /company-placeholder/)
   })
 }
+
+test('Build Profile defers projection when deleting Company experience', async () => {
+  const file = path.join(__dirname, '../build-profile/company-experience-crud.js')
+  const company = {
+    id: 7,
+    company_name: 'QA Wolf',
+    company_domain: 'qawolf.com',
+    company_entity_id: 73,
+    company_source: 'platform',
+    job_title: 'Engineer',
+    start_date: 'Jan 2025',
+    end_date: 'Aug 2026',
+    current_work: false,
+  }
+  const harness = createCrudHarness(file, { deferredWrites: false, initialCompanies: [company] })
+  await harness.start()
+  await harness.queueDelete(company)
+
+  const deleteRequest = harness.requests.find(({ options }) => options.method === 'DELETE')
+  assert.equal(deleteRequest.url.endsWith('/7'), true)
+  assert.deepEqual(JSON.parse(deleteRequest.options.body), { defer_projection: true })
+})

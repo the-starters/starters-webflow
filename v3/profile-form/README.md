@@ -113,7 +113,10 @@ creates, updates, and deletes. A rejected mutation stops the sequence, shows the
 authored error state, and does not show success. Completed mutations leave their
 pending queue as they succeed, while uncommitted mutations remain queued for a
 later retry. After a partial Work Experience save, the list refreshes canonical
-rows and retains only the unsaved local drafts.
+rows and retains only the unsaved local drafts. When a save includes both a
+create and a deletion, the create sends the deleted row as
+`replace_companies_id` so Xano can replace it atomically at the three-company
+limit; the browser does not send a separate delete for that paired row.
 
 The single-company Work History picker stores the selected `name`, `domain`,
 `logo_url`, `company_entity_id`, and `source` on its authored input. The Build
@@ -124,6 +127,11 @@ valid. Each result list also includes an explicit `Use custom company` choice;
 that choice is valid with `source: custom`, an empty entity ID, an empty domain,
 and an empty logo. Free typing without selecting a result or that custom choice
 is invalid.
+
+Build Profile Work Experience creates, updates, and deletes are draft-stage
+mutations. Each request sends `defer_projection: true`; the final Build Profile
+submit remains the single owner of the complete Hire-page projection. Starter
+Edit Profile keeps its immediate-save and asynchronous-projection contract.
 
 If the member types over the selected name, the picker clears all stored
 selection metadata so an old identity cannot be attached to new free text.
@@ -157,30 +165,30 @@ Both route copies of the company-experience controller
 Full Profile, Consult, and Edit Profile work-experience modals hydrate and save
 identically.
 
-Stored dates are parsed into a real local `Date` before they reach
-`datepicker('setDate', …)`. jQuery UI treats a bare string as its relative-offset
-syntax rather than a calendar date, so a stored `Jan 2024` was read as a day offset and
-hydrated the picker on an unrelated month and year (`Mar 2032` in production Work
-Experience QA). The parser accepts an exact full or three-letter month in
+The controllers convert the four existing Webflow date inputs to native
+`type="month"` controls. They remove the legacy jQuery UI datepicker attributes and
+correct each label association at runtime, without adding a second duration field or
+changing the Xano schema. Xano's existing `start_date`, `end_date`, and `current_work`
+fields remain the only authority for the tenure. The control value is `YYYY-MM`, the
+browser presents it as a localized month and year, and cards still render `Mon YYYY`.
+
+Stored dates are parsed into a real local `Date` before they hydrate the native month
+control. The parser accepts an exact full or three-letter month in
 `Month YYYY` (first of that month) and ISO `YYYY-MM-DD` with an optional valid
 `THH:MM:SS` suffix, fractional seconds, and `Z` or `+/-HH:MM` offset (that exact
 local calendar day, never a UTC shift). Because Xano records hold day-precision
-values as well as month-only ones, it also accepts `Month D YYYY` and
-`Month D, YYYY`. It rejects unknown month names, malformed ISO suffixes, invalid
-time or offset values, and an out-of-range day such as `Jan 32 2024` rather than
-coercing or rolling the value.
+values as well as month-only ones, it also accepts native `YYYY-MM`,
+`Month D YYYY`, `Month D, YYYY`, and numeric `M/D/YYYY` legacy values such as
+`04/22/2026`. It rejects unknown month names, malformed ISO suffixes, invalid time or
+offset values, and out-of-range dates rather than coercing or rolling the value.
 
-A string in none of those shapes is re-parsed with the widget's own configured
-`dateFormat`. That format is set on the Webflow markup for each input, not here, so the
-widget is the only thing that can recognize a value it wrote itself; jQuery UI's
-`parseDate` throws on a mismatch instead of reading the string as a day offset. A value
-neither path can parse yields no picker value at all, so the field renders blank rather
-than hydrating an unrelated month and year. Nothing is lost when that happens: the
-baseline/serialize pair below re-submits the original stored string for a date field the
-member never touched.
+A string in none of those shapes yields no visible month value, so the field renders
+blank rather than hydrating an unrelated month and year. Nothing is lost when that
+happens: the baseline/serialize pair below re-submits the original stored string for a
+date field the member never touched.
 
 `Present` is a stored sentinel for a current role, not a date. It never reaches the
-picker and never becomes a baseline, so reopening a current role cannot turn the
+month control and never becomes a baseline, so reopening a current role cannot turn the
 sentinel into a calendar value, and clearing "I currently work here" cannot carry
 `Present` into an end-date field the member can see.
 
@@ -190,14 +198,16 @@ month-only, and day-precision values render as `Mon YYYY`; for example,
 not rewrite the stored value. `Present`, blanks, and unknown legacy strings keep
 their existing behavior.
 
-Hydration also records the canonical string it came from next to the value the picker
-rendered from it. Opening a different role clears date bounds and disabled state left by
-the prior modal. If jQuery UI initializes after the modal opens, the controller rehydrates
-the stored dates once the two pickers are ready. Input, change, and calendar-selection
-guards prevent that late pass from overwriting a date the member already typed or picked.
+Hydration also records the canonical string it came from next to the native month value.
+Opening a different role clears disabled state and date bounds left by the prior modal.
+For a non-current role, the end month must be the same as or later than the start month;
+same-month tenures are valid. Native `min` and `max` bounds guide selection, and save-time
+validation rejects an inverted range even if the DOM bounds are bypassed. A current role
+disables the end-month control and stores `Present` through the existing `end_date` field.
+
 On save, a date field the member never touched re-serializes its original canonical string,
-and only a field whose visible value actually changed submits the picker's value. Editing
-an unrelated field therefore cannot rewrite a stored date to the picker's own formatting.
+and only a field whose native month value actually changed submits `YYYY-MM`. Editing an
+unrelated field therefore cannot rewrite a stored legacy date.
 
 Run this coverage with:
 

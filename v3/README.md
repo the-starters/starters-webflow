@@ -2867,6 +2867,13 @@ back to the button's ordinal position inside its known wrapper and logs one
 console warning per action. Prefer adding the wrapper attributes over relying
 on the fallback long-term.
 
+Availability time inputs accept an hour (`9` or `14`) or a 24-hour time with
+two minute digits (`9:30` or `09:30`). Before a write, the controller normalizes
+each accepted value to zero-padded `HH:MM` and requires the end to be later than
+the start. An invalid or non-ascending range opens the shared request-error
+notification, applies native custom validity to both authored inputs, keeps the
+inline form editable, and sends no availability request.
+
 The three `connect-btn-wrapper` actions follow the two-layer state matrix. With
 no connection, Connect Platform and Connect Google show. With a virtual Nylas
 grant, only Connect Google shows. With a Google-backed Nylas grant, only
@@ -2946,12 +2953,10 @@ canonical. The single-slot version of this query used by the Bookings pages
 the full sorted slot list via a new `getUpcomingTimeSlots`, so both stay in
 sync; that embed is deployed outside this repository.
 
-Known open items, tracked for a Designer/QA follow-up rather than blocking
-this module: the "Main schedule" tag's shown/hidden polarity for override vs.
+Known open item, tracked for a Designer/QA follow-up rather than blocking this
+module: the "Main schedule" tag's shown/hidden polarity for override vs.
 general items is a best-effort port of the old modal's logic, unverified
-against a real multi-item starter record; and the per-item time inputs'
-`data-input-timepicker` value format is assumed to be `HH:MM` but has no
-controller in this repo to confirm it.
+against a real multi-item starter record.
 
 Runtime contract:
 
@@ -3303,7 +3308,11 @@ The script never calculates points or rank in the browser. It trades the active
 Memberstack session for a Xano token and renders only the authenticated summary.
 When Xano reports `refreshing`, or a nominally ready payload lacks a rank/cohort,
 the position is withheld and both the overall-rank and primary-role cards are
-hidden. The `ineligible` and `quarantined` statuses likewise hide both cards and
+hidden. While that state remains active, the controller makes up to 60 summary
+requests, waiting 10 seconds after each nonterminal response except the last,
+so a scheduled rank rebuild can replace the authored refreshing state without a
+page reload. Polling stops immediately on every terminal state or request error.
+The `ineligible` and `quarantined` statuses likewise hide both cards and
 reveal their matching Designer-authored state blocks. Missing primary roles keep
 the overall-rank card and reveal the authored setup state inside the role card,
 except when Xano returns `consult_only: true`. Consult-only profiles have no

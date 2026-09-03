@@ -5,7 +5,7 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
  *
- * @release v1.59.465
+ * @release v1.59.499
  */
 
 (() => {
@@ -213,11 +213,13 @@ function setProfileFeedbackMessage(modalName, message) {
 	if (messageElement && message) messageElement.textContent = message;
 }
 
-function configureCanonicalPaidCallSettings() {
+function configureCanonicalCallSettings() {
 	const step = qs('[data-form="step"][data-index="6"]');
 	if (!step) return;
 
 	const controls = qsa([
+		'[name="free-consulting-calls"]',
+		'[name="free-call-description"]',
 		'[name="paid-consulting-calls"]',
 		'[name="paid-call-description"]',
 		'[name="paid-call-rate"]',
@@ -233,10 +235,10 @@ function configureCanonicalPaidCallSettings() {
 	if (qs('[data-paid-call-profile-notice]', step) || typeof document.createElement !== 'function') return;
 	const notice = document.createElement('p');
 	notice.setAttribute('data-paid-call-profile-notice', '');
-	notice.textContent = 'Paid Call pricing is managed in ';
+	notice.textContent = 'Free and Paid Call settings are managed in ';
 	const link = document.createElement('a');
 	link.href = PAID_CALL_SETTINGS_URL;
-	link.textContent = 'Paid Call Settings';
+	link.textContent = 'Call Settings';
 	notice.appendChild(link);
 	notice.appendChild(document.createTextNode('.'));
 	step.appendChild(notice);
@@ -253,14 +255,21 @@ function openProfileFeedback(modalName, trigger) {
 }
 
 function waitProfileData(callback) {
+	const runHydrationCallback = (profile) => {
+		const dirtyState = window.__tsProfileDirtyState;
+		if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+			return dirtyState.runHydrationSync(() => callback(profile));
+		}
+		return callback(profile);
+	};
 	if (typeof window.waitProfileData === 'function') {
-		return window.waitProfileData(callback);
+		return window.waitProfileData(runHydrationCallback);
 	}
 
 	const startedAt = Date.now();
 	const poll = () => {
 		if (window.activeProfile) {
-			callback(window.activeProfile);
+			runHydrationCallback(window.activeProfile);
 			return;
 		}
 		if (Date.now() - startedAt < 10000) window.setTimeout(poll, 100);
@@ -612,8 +621,6 @@ onDomReady(function () {
 				Availability: 'availability-option',
 				Availability_ID: 'availability',
 				Open_to_Full_Time: 'full-time-placement',
-				Free_Call_Enabled: 'free-consulting-calls',
-				Free_Call_Description: 'free-call-description',
 				Retainer_Enabled: 'offer-monthly-retainers',
 				Retainer_Description: 'description-retainer',
 				Retainer_Rate: 'rate-retainer',
@@ -642,6 +649,9 @@ onDomReady(function () {
 				submitButton.addEventListener('click', async (event) => {
 					event.preventDefault();
 					const replayProof = stepIndex === 1 ? takePersonalDetailsReplay(form) : null;
+					let saveStarted = false;
+					let saveToken = null;
+					let canonicalSaveAccepted = false;
 					try {
 						const validation = validateOwnedStep(stepIndex, { report: true });
 						if (!validation.valid) {
@@ -655,15 +665,18 @@ onDomReady(function () {
 							return;
 						}
 
-						await submitStep(stepIndex, submitButton, replayProof);
+						saveToken = window.__tsProfileDirtyState?.beginSave(stepIndex);
+						saveStarted = true;
+						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof, saveToken);
 					} finally {
+						if (saveStarted) window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted, saveToken);
 						rejectReplayProof(replayProof);
 					}
 				});
 			});
 		}
 
-		async function submitStep(stepIndex, submitButton, replayProof = null) {
+		async function submitStep(stepIndex, submitButton, replayProof = null, saveToken = null) {
 			setSubmitLoading(submitButton, true);
 			let memberScope;
 			try {
@@ -782,6 +795,12 @@ onDomReady(function () {
 				return;
 			}
 
+			// The payload now owns every edit made through this point. Keep the
+			// active-save warning that began before async preparation, but move its
+			// accepted revision boundary to this exact payload snapshot. An edit
+			// after this line is not in the request and must remain dirty.
+			window.__tsProfileDirtyState?.sealSave?.(saveToken);
+
 			// if (!localStorage.getItem('editSubmit') || localStorage.getItem('editSubmit') !== 'true') {
 			// 	console.log(`Step ${stepIndex} submit skipped (disabled by localStorage).`);
 			// 	setTimeout(() => {
@@ -819,6 +838,7 @@ onDomReady(function () {
 				return;
 			}
 
+			let canonicalSaveAccepted = false;
 			try {
 				acceptReplayProof(replayProof);
 				requestStarted = true;
@@ -840,6 +860,7 @@ onDomReady(function () {
 					failureCode = 'SAVE_CONTRACT_ERROR';
 					throw new Error('Profile update did not confirm the save contract.');
 				}
+				canonicalSaveAccepted = true;
 
 				// update Member customFields, if even one of them was changed
 				if (stepIndex === 1) {
@@ -900,6 +921,7 @@ onDomReady(function () {
 			} finally {
 				setSubmitLoading(submitButton, false);
 			}
+			return canonicalSaveAccepted;
 		}
 
 		// Optional rate controls clear their visible values when their owning toggle is
@@ -1659,6 +1681,9 @@ onDomReady(() => {
 			retainerToggle();
 			paidCallToggle();
 			freeCallToggle();
+			// Profile hydration updates legacy call controls after DOM ready. Re-apply
+			// dashboard ownership after those values have landed so they stay locked.
+			configureCanonicalCallSettings();
 			console.log("retainer/paidCall/freeCall toggles initialized");
 		});
 
@@ -1724,6 +1749,6 @@ onDomReady(() => {
 			});
 		}
 
-		configureCanonicalPaidCallSettings();
+		configureCanonicalCallSettings();
 	});
 })();

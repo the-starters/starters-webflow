@@ -64,8 +64,11 @@ function createEnvironment(fetchImpl, {
   requiredCaptureFields = [],
   additionalFormValues = [],
   canonicalPhone = '',
+  simulateProfileHydrationAfterDomReady = false,
+  dirtyState = null,
 } = {}) {
   const domReady = []
+  const profileDataCallbacks = []
   const modalEvents = { success: 0, error: 0 }
   const modalApiCalls = []
   const memberAuthUpdates = []
@@ -117,6 +120,8 @@ function createEnvironment(fetchImpl, {
     6: {
       '[name="rate"]': createField('[name="rate"]', { value: '125', required: publishedRequired(6, 'rate') }),
       '#availability-required': createField('#availability-required', { value: '1' }),
+      '[name="free-consulting-calls"]': createField('[name="free-consulting-calls"]', { value: 'yes' }),
+      '[name="free-call-description"]': createField('[name="free-call-description"]', { value: 'Legacy free description' }),
       '[name="paid-consulting-calls"]': createField('[name="paid-consulting-calls"]', { value: 'yes' }),
       '[name="paid-call-description"]': createField('[name="paid-call-description"]', { value: 'Legacy description' }),
       '[name="paid-call-rate"]': createField('[name="paid-call-rate"]', { value: '250' }),
@@ -152,6 +157,10 @@ function createEnvironment(fetchImpl, {
     },
   })
   const counterWrapper = new Target()
+  const retainerDescription = new Target()
+  const retainerRate = new Target()
+  retainerDescription.querySelectorAll = () => []
+  retainerRate.querySelectorAll = () => []
   counterWrapper.querySelector = (selector) => selector === '.count-input' ? counter : null
   counterInput.closest = (selector) => selector === '.form_input-wr' ? counterWrapper : null
 
@@ -167,8 +176,10 @@ function createEnvironment(fetchImpl, {
   step.querySelectorAll = (selector) => {
     if (selector === 'input, select, textarea') return Object.values(stepFields)
     if (selector === '[data-input-capture][required]') return captureFields
-    if (selector === '[name="paid-consulting-calls"],[name="paid-call-description"],[name="paid-call-rate"]') {
+    if (selector === '[name="free-consulting-calls"],[name="free-call-description"],[name="paid-consulting-calls"],[name="paid-call-description"],[name="paid-call-rate"]') {
       return [
+        stepFields['[name="free-consulting-calls"]'],
+        stepFields['[name="free-call-description"]'],
         stepFields['[name="paid-consulting-calls"]'],
         stepFields['[name="paid-call-description"]'],
         stepFields['[name="paid-call-rate"]'],
@@ -237,6 +248,8 @@ function createEnvironment(fetchImpl, {
       if (selector === '[data-modal-target="edit-form-error"]') return errorTarget
       if (selector === '#email') return globalFields.email
       if (selector === '#phone' || selector === 'input[name="phone"]') return globalFields.phone
+      if (selector === '[data-monthly-retainers-description]') return retainerDescription
+      if (selector === '[data-monthly-retainers-rate]') return retainerRate
       if (selector === `[data-form="step"][data-index="${stepIndex}"]`) return step
       return null
     },
@@ -272,7 +285,7 @@ function createEnvironment(fetchImpl, {
       data: { step_1: { phone: canonicalPhone } },
     },
     MEMBER: currentMember,
-    waitProfileData() {},
+    waitProfileData(callback) { profileDataCallbacks.push(callback) },
     waitForMember(callback) { callback(this.MEMBER) },
     clearTimeout() {},
     setTimeout: setTimeoutImpl,
@@ -321,6 +334,7 @@ function createEnvironment(fetchImpl, {
   if (workflowDiagnosticsReady) {
     window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
   }
+  if (dirtyState) window.__tsProfileDirtyState = dirtyState
 
   const dollar = () => ({ each() {} })
   const sandbox = {
@@ -354,6 +368,13 @@ function createEnvironment(fetchImpl, {
   if (documentReadyState === 'loading') {
     domParsed = true
     domReady.forEach((listener) => listener())
+  }
+  if (simulateProfileHydrationAfterDomReady) {
+    Object.values(stepFields).forEach((field) => {
+      field.disabled = false
+      field.attributes.delete('aria-disabled')
+    })
+    profileDataCallbacks.forEach((callback) => callback(window.activeProfile))
   }
 
   return {
@@ -547,6 +568,46 @@ async function testNon2xx() {
   assert.equal(environment.button.style.opacity, '')
 }
 
+async function testSaveLifecycleUpdatesDirtyState() {
+  const calls = []
+  const dirtyState = {
+    beginSave(stepIndex) {
+      const token = { stepIndex }
+      calls.push(['begin', stepIndex])
+      return token
+    },
+    sealSave(token) { calls.push(['seal', token.stepIndex]) },
+    finishSave(stepIndex, saved) { calls.push(['finish', stepIndex, saved]) },
+  }
+  const request = deferred()
+  const environment = createEnvironment(() => request.promise, { stepIndex: 2, dirtyState })
+  const submission = submit(environment)
+  await new Promise(setImmediate)
+
+  assert.deepEqual(calls, [['begin', 2], ['seal', 2]], 'the warning starts early and seals at the payload snapshot')
+  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) })
+  await submission
+  assert.deepEqual(calls, [['begin', 2], ['seal', 2], ['finish', 2, true]])
+
+  const failedCalls = []
+  const failedState = {
+    beginSave(stepIndex) {
+      const token = { stepIndex }
+      failedCalls.push(['begin', stepIndex])
+      return token
+    },
+    sealSave(token) { failedCalls.push(['seal', token.stepIndex]) },
+    finishSave(stepIndex, saved) { failedCalls.push(['finish', stepIndex, saved]) },
+  }
+  const failed = createEnvironment(async () => ({
+    ok: false,
+    status: 500,
+    json: async () => ({ message: 'failed' }),
+  }), { stepIndex: 2, dirtyState: failedState })
+  await submit(failed)
+  assert.deepEqual(failedCalls, [['begin', 2], ['seal', 2], ['finish', 2, false]])
+}
+
 async function testCanonicalSaveWithPendingProjectionNeverShowsWholeFormFailure() {
   for (const status of [200, 500]) {
     const environment = createEnvironment(async () => ({
@@ -657,9 +718,24 @@ async function testStepSixNeverWritesPaidCallAuthority() {
   assert.equal(Object.hasOwn(payload, 'Paid_Call_Rate'), false)
 }
 
+async function testStepSixNeverWritesFreeCallAuthority() {
+  const payload = await submittedStepPayload(saved({
+    stepIndex: 6,
+    additionalFormValues: [
+      ['free-consulting-calls', 'yes'],
+      ['free-call-description', 'Legacy profile form value'],
+    ],
+  }))
+
+  assert.equal(Object.hasOwn(payload, 'Free_Call_Enabled'), false)
+  assert.equal(Object.hasOwn(payload, 'Free_Call_Description'), false)
+}
+
 async function testStepSixDisablesLegacyPaidCallControlsAndLinksCanonicalSettings() {
   const environment = saved({ stepIndex: 6 })
   const controlSelectors = [
+    '[name="free-consulting-calls"]',
+    '[name="free-call-description"]',
     '[name="paid-consulting-calls"]',
     '[name="paid-call-description"]',
     '[name="paid-call-rate"]',
@@ -672,7 +748,25 @@ async function testStepSixDisablesLegacyPaidCallControlsAndLinksCanonicalSetting
   const notice = environment.step.children.find((child) => child.hasAttribute('data-paid-call-profile-notice'))
   assert.ok(notice)
   assert.equal(notice.children[0].href, '/starter-dashboard#calendar')
-  assert.equal(notice.children[0].textContent, 'Paid Call Settings')
+  assert.equal(notice.children[0].textContent, 'Call Settings')
+}
+
+async function testStepSixReappliesCallOwnershipAfterProfileHydration() {
+  const environment = saved({
+    stepIndex: 6,
+    simulateProfileHydrationAfterDomReady: true,
+  })
+  const controlSelectors = [
+    '[name="free-consulting-calls"]',
+    '[name="free-call-description"]',
+    '[name="paid-consulting-calls"]',
+    '[name="paid-call-description"]',
+    '[name="paid-call-rate"]',
+  ]
+  controlSelectors.forEach((selector) => {
+    assert.equal(environment.fields[selector].disabled, true)
+    assert.equal(environment.fields[selector].getAttribute('aria-disabled'), 'true')
+  })
 }
 
 async function testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone() {
@@ -1257,13 +1351,16 @@ Promise.all([
   testSecondSaveStillFailsClosedWhenMemberSwitchesMidRequest(),
   testEarlyLoadInitializesCountersAfterParsing(),
   testNon2xx(),
+  testSaveLifecycleUpdatesDirtyState(),
   testCanonicalSaveWithPendingProjectionNeverShowsWholeFormFailure(),
   testSuccessfulHttpWithoutCanonicalSaveConfirmationFailsClosed(),
   testCanonicalSaveWithoutExplicitProjectionStateFailsClosed(),
   testEveryOwnedSectionOpensSuccessModal(),
   testOptionalRatesPreserveCanonicalZeroSentinel(),
   testStepSixNeverWritesPaidCallAuthority(),
+  testStepSixNeverWritesFreeCallAuthority(),
   testStepSixDisablesLegacyPaidCallControlsAndLinksCanonicalSettings(),
+  testStepSixReappliesCallOwnershipAfterProfileHydration(),
   testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
   testPhoneCountryChangeCountsAsAMemberEdit(),
   testEnabledOptionalRatesNeverSilentlyPersistZero(),

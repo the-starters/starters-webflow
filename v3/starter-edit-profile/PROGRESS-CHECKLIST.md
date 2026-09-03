@@ -1,6 +1,6 @@
 # 🧭 Starter Profile Reliability Progress Checklist
 
-Last updated: 2026-09-01
+Last updated: 2026-09-03
 
 This checklist tracks release-safe implementation evidence for the
 `/starter-edit-profile` reliability workflow. The workspace operator checklist
@@ -18,15 +18,15 @@ in [README.md](README.md) and in the root
       required rate keeps failing instead of persisting a zero rate.
 - [x] Pass every non-blank rate value through to Xano unrewritten.
 - [x] Keep the authored Services and Rates markup intact while the controller disables
-      the legacy Paid Call controls and adds a link to the dashboard settings writer.
-- [x] Omit the legacy Paid Call toggle, description, and rate from every step 6 profile
-      payload.
+      the legacy Free and Paid Call controls and adds a link to Call Settings.
+- [x] Omit the legacy Free Call toggle and description plus the Paid Call toggle,
+      description, and rate from every step 6 profile payload.
 - [x] Require `saved: true` and a Boolean `projection_pending`, show success after the
       canonical save even when public projection is pending or reports a later non-2xx
       failure, and fail closed when a 2xx response omits either confirmation.
-- [x] Hydrate a stored work-experience date onto its correct calendar day instead of
-      letting jQuery UI read it as a relative day offset, and keep the `Present`
-      sentinel out of the picker. Contract:
+- [x] Hydrate supported stored work-experience dates into native month-and-year controls,
+      keep the `Present` sentinel out of the end-month control, and reject inverted
+      non-current ranges while allowing a same-month tenure. Contract:
       [Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
 - [x] Re-serialize an untouched work-experience date as its original canonical string,
       so editing another field cannot rewrite a stored date.
@@ -39,8 +39,8 @@ in [README.md](README.md) and in the root
 - [x] Resolve Personal Details email and phone by their step-scoped `#email` and
       `#phone` IDs so hidden duplicate-name controls cannot override the authored
       values. Contract: [Validation and submit ownership](README.md#validation-and-submit-ownership).
-- [x] Clear a declined service's description and rate only when the member switches
-      that toggle off, so hydration preserves stored Free Call and retainer copy.
+- [x] Clear a declined Retainer's description and rate only when the member switches
+      that toggle off, so hydration preserves stored retainer copy.
 - [x] Open the profile-photo chooser by mouse or keyboard when Webflow rendered the
       upload surface as something other than a native `<label>`. Contract:
       [Profile-photo upload contract](../build-profile/README.md#profile-photo-upload-contract).
@@ -55,7 +55,7 @@ in [README.md](README.md) and in the root
 
 ## 🧪 Automated evidence
 
-- [x] Legacy Paid Call controls are disabled and un-required, link to Paid Call
+- [x] Legacy Free and Paid Call controls are disabled and un-required, link to Call
       Settings, and never contribute fields to the step 6 payload.
 - [x] Disabled Retainer rates submit `0`, and configured Retainer rates on the same
       step submit unchanged.
@@ -66,17 +66,17 @@ in [README.md](README.md) and in the root
       or projection confirmation shows the error state.
 - [x] An optional blank Hourly Rate submits `0`, a populated Hourly Rate submits
       unchanged, and a required blank Hourly Rate issues no request at all.
-- [x] Both route copies of the company controller hydrate every shape the contract
-      accepts onto the right calendar day, refuse a value neither the canonical shapes
-      nor the widget's own `dateFormat` can parse, keep `Present` out of the picker and
-      the baseline, and preserve untouched canonical date strings while a changed field
-      still submits its new value.
+- [x] Both route copies of the company controller hydrate every supported canonical and
+      legacy shape into the right month, refuse invalid values, keep `Present` out of the
+      control and baseline, preserve untouched canonical date strings, submit changed
+      months as `YYYY-MM`, and enforce the shared range contract across consecutive add
+      and edit operations.
 - [x] Portfolio update submissions use the instant-live copy until close, while
       create-only and delete-only submissions keep the shared generic copy.
 - [x] An untouched canonical phone submits unchanged while an `input` or a
       `countrychange` submits the `intl-tel-input` value, and the authored contact
       controls win over hidden duplicate-name controls in the submit payload.
-- [x] Hydration keeps a declined service's stored description across repeated passes,
+- [x] Hydration keeps a declined Retainer's stored description across repeated passes,
       still hides and un-requires its controls, and only a member toggle clears it.
 - [x] A non-`<label>` upload surface opens the chooser on a mouse click and on `Enter`.
 - [x] Typing an exact taxonomy option name never selects it, and clearing a Custom
@@ -106,18 +106,19 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
 - [ ] No-mistakes review, tests, documentation, lint, PR, and CI pass with no findings.
 - [ ] Release the asset through the [release verification](README.md#release-verification)
       sequence, including the tag, jsDelivr purge, and served-byte comparison.
-- [ ] Confirm on the published page that legacy Paid Call controls are disabled, the
-      settings link routes to `/starter-dashboard#calendar`, no Paid Call profile
-      fields are sent, and turning retainers off saves canonical `0` without changing
-      stored Paid Call settings.
+- [ ] Confirm on the published page that legacy Free and Paid Call controls are
+      disabled, the settings link routes to `/starter-dashboard#calendar`, no Free or
+      Paid Call profile fields are sent, and turning retainers off saves canonical `0`
+      without changing stored Call Settings.
 - [ ] Confirm endpoint #1499 returns `saved: true` with a Boolean
       `projection_pending`; verify pending and complete projection states show profile
       success, including the documented canonical-save response with non-2xx status,
       and verify a 2xx response without the full contract fails closed.
-- [ ] Retest the published Work Experience flow: an existing record reopens on its
-      stored date, including a day-precision record on its exact day, a current role
-      still reads `Present`, and saving an unrelated field leaves both stored dates
-      unchanged in Xano.
+- [ ] Retest the published Work Experience flow: the four controls use native month-and-year
+      entry with correct labels; canonical, day-precision, and numeric legacy records reopen
+      on the right month; same-month tenures save; inverted ranges fail; a current role has
+      no editable end month; and saving an unrelated field leaves both stored dates unchanged
+      in Xano.
 - [ ] Retest an existing Work Highlight update in production against the
       [authoritative success-copy contract](README.md#in-place-loader-replacements),
       confirm the edit is live immediately, and confirm the shared generic copy

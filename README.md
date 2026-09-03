@@ -95,7 +95,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   contract lives in
   [`v3/AI-RECRUITER-WIRING.md`](v3/AI-RECRUITER-WIRING.md)
 - `v3/saved-starters-roles.js` — `/favorites` saved-list roles chips: one cloned paragraph per delimited role, so the wf-xano list matches the Algolia browse cards; authoritative behavior and constraints live in [`v3/README.md`](v3/README.md#saved-starters-roles-chips)
-- `v3/hire-profile.js` — `/hire/<slug>` runtime controller for booking, Services, rate cards, and page utilities. Experiences and Clients are native Webflow CMS sections; the authoritative ownership, wiring, dependencies, and verification contract is in [`v3/HIRE-PROFILE-WIRING.md`](v3/HIRE-PROFILE-WIRING.md)
+- `v3/hire-profile.js` — `/hire/<slug>` runtime controller for booking, Services, rate cards, Company-link safety, and page utilities; the authoritative ownership, wiring, dependencies, and verification contract is in [`v3/HIRE-PROFILE-WIRING.md`](v3/HIRE-PROFILE-WIRING.md)
 - `v3/free-call-booking.js` — GitHub-owned `/hire/<slug>` Free Call namespace for authenticated booking-profile/config reads, one-request chooser previews, the shared authored calendar, and canonical Xano booking-command submission inside native Designer modals; cutover scope and exclusions live in [`v3/HIRE-PROFILE-WIRING.md`](v3/HIRE-PROFILE-WIRING.md#inline-global-code-cutover-boundary)
 - `v3/profile-portfolio.js` — sole `/hire/<slug>` portfolio / case-study renderer for the section labelled "Highlights"; reads approved public Xano Portfolios (#28) via `Get_approved_portfolios`. It renders the card list and fills the Highlights modal with data only — the lumos modal system owns the dialog's presentation. The ownership split, attribute contract, and cutover live in [`v3/PROFILE-PORTFOLIO-WIRING.md`](v3/PROFILE-PORTFOLIO-WIRING.md)
 - `v3/agency-profile.js` — `/hire/<slug>` Agency section: agency name, team size, contract type, and average project size, read from the public Xano endpoint `profile/starter/agency/v1`; intro-video handling is implemented, but its Designer row remains dormant by product choice. `wf-xano` owns the fetch, text binds, and declarative card/row visibility; this script supplies the URL-path slug, fills the video row when present, and owns the section wrapper's hidden state so a collapsed section consumes no flex/grid gap. Because the authored loading spinner lives inside that wrapper, every profile, agency or not, briefly shows it before the section renders or collapses; keep the spinner short so the layout shifts little. The authoritative behavior, attribute contract, markup, install, and verification live in [`v3/AGENCY-PROFILE-WIRING.md`](v3/AGENCY-PROFILE-WIRING.md)
@@ -118,7 +118,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/build-profile/locations-consult.js` — Consult Build Profile country, state, and city controller
 - `v3/build-profile/locations-full-profile.js` — Full Profile country, state, and city controller
 - `v3/build-profile/profile-photo.js` — provenance-locked Build Profile photo controller
-- `v3/build-profile/canonical-profile-hydrator.js` — canonical Xano fallback for missing Memberstack/local Build Profile draft fields; loaded by the existing profile-photo asset without a Webflow block edit
+- `v3/build-profile/canonical-profile-hydrator.js` — canonical Xano fallback and legacy company-picker draft normalization for Build Profile; loaded by the existing profile-photo asset without a Webflow block edit
 - `v3/build-profile/portfolio-crud.js` — provenance-locked Build Profile portfolio mutation controller
 - `v3/build-profile/portfolio-list.js` — provenance-locked Build Profile portfolio list controller
 - `v3/build-profile/company-autocomplete.js` — provenance-locked Build Profile company autocomplete
@@ -130,7 +130,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/build-profile/submit-diagnostics.js` — Build Profile submit outcome observer; it keeps diagnostics in the console, leaves the coupled writer unchanged, and never navigates: the authored success-state CTA owns the move to `/starter-onboarding`
 - `v3/starter-edit-profile/` — source-controlled Starter Edit Profile browser controllers; the authoritative extraction scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md)
 - `v3/starter-edit-profile/locations.js` — Starter Edit Profile country, state, and city controller
-- `v3/starter-edit-profile/canonical-profile-loader.js` — read-only canonical Xano hydration for authored Starter Edit Profile fields
+- `v3/starter-edit-profile/canonical-profile-loader.js` — canonical Xano hydration and step-scoped unsaved-change state; the detailed warning contract lives in [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md#unsaved-change-warning)
 - `v3/starter-edit-profile/portfolio-crud.js` — provenance-locked Edit Profile portfolio mutation controller
 - `v3/starter-edit-profile/portfolio-list.js` — provenance-locked Edit Profile portfolio list controller
 - `v3/starter-edit-profile/company-autocomplete.js` — provenance-locked Edit Profile company autocomplete
@@ -151,8 +151,8 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   and blocks known edit mutations on non-Live hosts. The authoritative photo
   upload and release-gate contract lives in
   [`v3/build-profile/README.md`](v3/build-profile/README.md#profile-photo-upload-contract)
-- `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior; it requires the canonical `saved` response contract, treats public projection as asynchronous, and routes Paid Call pricing to the dashboard settings writer
-  migrated from the legacy Webflow footer. It keeps the existing Designer form
+- `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior; it requires the canonical `saved` response contract, treats public projection as asynchronous, and routes Free and Paid Call settings to their dashboard writers.
+  The controller was migrated from the legacy Webflow footer. It keeps the existing Designer form
   and modal markup, opens the existing success or error modal through the Lumos
   API, and uses its hidden modal triggers only when that API is unavailable. It
   shows success after Xano explicitly returns `saved: true` and a Boolean
@@ -173,17 +173,16 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   `Reviewers` object used by Build Profile before the authenticated Xano PATCH.
   If that native step is absent, the controller does not send `Reviewers`.
   On the Services and Rates step, a blank rate whose owning control is off —
-  Hourly Rate while the authored `[name="rate"]` control is not required, Paid
-  Call Rate with paid calls disabled, Retainer Rate with retainers disabled — is
+  Hourly Rate while the authored `[name="rate"]` control is not required or
+  Retainer Rate with retainers disabled — is
   sent as the canonical integer `0` rather than an empty string, because those
   controls clear their visible value when their toggle turns off. A blank rate
   whose control is still live is sent unchanged, so an empty required rate keeps
   failing instead of silently persisting a zero rate. Non-blank rate values are
-  never rewritten. Only the member switching a Retainer, Paid Call, or Free Call
-  toggle off clears that service's now-hidden description and rate. Hydrating the
-  stored profile runs the same show/hide and required-attribute pass without
-  clearing, so a stored Free Call or retainer description survives every reload
-  instead of being blanked into the next save.
+  never rewritten. Only the member switching Retainer off clears that service's
+  now-hidden description and rate. Hydrating the stored profile runs the same
+  show/hide and required-attribute pass without clearing, so a stored retainer
+  description survives every reload instead of being blanked into the next save.
   The Phone field is preserved byte-for-byte when the member does not touch it:
   the controller records the canonical `step_1.phone` value as the profile
   hydrates and submits it unchanged, and re-reads the value from `intl-tel-input`

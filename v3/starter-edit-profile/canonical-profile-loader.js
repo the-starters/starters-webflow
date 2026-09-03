@@ -2,7 +2,108 @@
     var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
     if (!profileFormControllers.canonicalProfileLoader) {
     profileFormControllers.canonicalProfileLoader = true;
+    var profileDirtyState = window.__tsProfileDirtyState;
+    if (!profileDirtyState) {
+    profileDirtyState = (function () {
+        var hydrating = true;
+        var dirtySteps = new Set();
+        var dirtyRevisions = new Map();
+        var savingSteps = new Map();
+        var hydrationSyncDepth = 0;
+
+        function stepKey(value) {
+            var normalized = String(value ?? '').trim();
+            return normalized || 'profile';
+        }
+
+        function stepFromTarget(target) {
+            var step = target && typeof target.closest === 'function'
+                ? target.closest('[data-form="step"][data-index]')
+                : null;
+            return step?.getAttribute?.('data-index') || null;
+        }
+
+        function isDirty() {
+            return dirtySteps.size > 0 || savingSteps.size > 0;
+        }
+
+        var state = {
+            finishHydration: function () {
+                hydrating = false;
+                dirtySteps.clear();
+                dirtyRevisions.clear();
+            },
+            markDirty: function (stepIndex) {
+                if (hydrating) return;
+                var key = stepKey(stepIndex);
+                dirtyRevisions.set(key, (dirtyRevisions.get(key) || 0) + 1);
+                dirtySteps.add(key);
+            },
+            setDirty: function (stepIndex, dirty) {
+                if (dirty) {
+                    state.markDirty(stepIndex);
+                    return;
+                }
+                dirtySteps.delete(stepKey(stepIndex));
+            },
+            runHydrationSync: function (callback) {
+                hydrationSyncDepth += 1;
+                try {
+                    return callback();
+                } finally {
+                    hydrationSyncDepth -= 1;
+                }
+            },
+            beginSave: function (stepIndex) {
+                var key = stepKey(stepIndex);
+                var token = { key: key, revision: dirtyRevisions.get(key) || 0 };
+                var saves = savingSteps.get(key) || new Set();
+                saves.add(token);
+                savingSteps.set(key, saves);
+                return token;
+            },
+            sealSave: function (token) {
+                if (!token || !token.key) return token;
+                token.revision = dirtyRevisions.get(token.key) || 0;
+                return token;
+            },
+            captureRevision: function (stepIndex) {
+                var key = stepKey(stepIndex);
+                return { key: key, revision: dirtyRevisions.get(key) || 0 };
+            },
+            discardRevision: function (stepIndex, token, hasOtherChanges) {
+                var key = stepKey(stepIndex);
+                if (hasOtherChanges || !token || token.key !== key) return;
+                if ((dirtyRevisions.get(key) || 0) === token.revision) dirtySteps.delete(key);
+            },
+            finishSave: function (stepIndex, saved, token) {
+                var key = stepKey(stepIndex);
+                var saves = savingSteps.get(key);
+                var completedSave = token;
+                if (!completedSave && saves) completedSave = saves.values().next().value;
+                if (saves && completedSave) saves.delete(completedSave);
+                if (saves && !saves.size) savingSteps.delete(key);
+                var savedRevision = completedSave ? completedSave.revision : dirtyRevisions.get(key) || 0;
+                if (saved && (dirtyRevisions.get(key) || 0) === savedRevision) dirtySteps.delete(key);
+                else dirtySteps.add(key);
+            },
+            isDirty: isDirty,
+        };
+
+        function recordEdit(event) {
+            if (hydrating || hydrationSyncDepth > 0) return;
+            var stepIndex = stepFromTarget(event.target);
+            if (stepIndex) state.markDirty(stepIndex);
+        }
+
+        document.addEventListener('input', recordEdit, true);
+        document.addEventListener('change', recordEdit, true);
+        return state;
+    })();
+    window.__tsProfileDirtyState = profileDirtyState;
+    }
     window.addEventListener('beforeunload', (event) => {
+        if (!profileDirtyState.isDirty()) return;
         event.preventDefault();
         event.returnValue = '';
     });
@@ -55,6 +156,7 @@
                             ensureStepsInProfile(activeProfile, steps);
                             restoreFieldsData(activeProfile);
                             updateCounterFields();
+                            profileDirtyState.finishHydration();
 
                             setTimeout(() => {
                                 setLoader(false);

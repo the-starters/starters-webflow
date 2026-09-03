@@ -42,6 +42,16 @@ function starterProfileCompanyDatepickerValue(value) {
         }
     }
 
+    const nativeMonthMatch = text.match(/^(\d{4})-(\d{2})$/);
+    if (nativeMonthMatch) {
+        return localCalendarDate(Number(nativeMonthMatch[1]), Number(nativeMonthMatch[2]) - 1, 1);
+    }
+
+    const numericDateMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (numericDateMatch) {
+        return localCalendarDate(Number(numericDateMatch[3]), Number(numericDateMatch[1]) - 1, Number(numericDateMatch[2]));
+    }
+
     const monthDayYearMatch = text.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
     if (monthDayYearMatch) {
         const monthIndex = monthIndexForName(monthDayYearMatch[1]);
@@ -83,6 +93,15 @@ function starterProfileCompanyDatepickerDate(input, value) {
 }
 
 function setStarterProfileCompanyDatepickerDate(input, value) {
+    if (input && input.type === 'month') {
+        if (isStarterProfileCompanyPresentDate(value)) return;
+        const date = starterProfileCompanyDatepickerDate(input, value);
+        input.value = date
+            ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+            : '';
+        return;
+    }
+
     if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
     if (isStarterProfileCompanyPresentDate(value)) return;
 
@@ -90,6 +109,30 @@ function setStarterProfileCompanyDatepickerDate(input, value) {
         jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerDate(input, value));
     } catch (error) {
         // The value may not match the widget's configured dateFormat.
+    }
+}
+
+function enableStarterProfileCompanyMonthInput(input, labelText) {
+    if (!input) return;
+
+    if (typeof jQuery !== 'undefined' && jQuery.fn && jQuery.fn.datepicker && jQuery(input).data('datepicker')) {
+        try {
+            jQuery(input).datepicker('destroy');
+        } catch (error) {
+            // The native month control is still safe when the old widget is already detached.
+        }
+    }
+
+    input.removeAttribute('data-input-datepicker');
+    input.removeAttribute('data-input-datepicker-role');
+    input.removeAttribute('data-format');
+    input.type = 'month';
+    input.setAttribute('aria-label', labelText);
+
+    const label = document.querySelector(`label[for="${input.id}"]`) || input.closest('[form-group]')?.querySelector('label');
+    if (label) {
+        label.htmlFor = input.id;
+        label.textContent = labelText;
     }
 }
 
@@ -103,6 +146,43 @@ function serializeStarterProfileCompanyDate(input, baseline) {
     const currentValue = input ? input.value.trim() : '';
     if (baseline && currentValue === baseline.pickerValue) return baseline.rawValue;
     return currentValue;
+}
+
+function syncStarterProfileCompanyMonthRange(startInput, endInput, isCurrent) {
+    if (!startInput || !endInput) return;
+
+    const startValue = startInput.value.trim();
+    const endValue = endInput.value.trim();
+
+    if (startValue) endInput.setAttribute('min', startValue);
+    else endInput.removeAttribute('min');
+
+    if (!isCurrent && endValue) startInput.setAttribute('max', endValue);
+    else startInput.removeAttribute('max');
+}
+
+function isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent) {
+    if (isCurrent || !startInput || !endInput) return true;
+
+    const startValue = startInput.value.trim();
+    const endValue = endInput.value.trim();
+    return !startValue || !endValue || startValue <= endValue;
+}
+
+function bindStarterProfileCompanyMonthRange(startInput, endInput, currentCheckbox) {
+    if (!startInput || !endInput) return;
+
+    const syncRange = function () {
+        syncStarterProfileCompanyMonthRange(startInput, endInput, !!(currentCheckbox && currentCheckbox.checked));
+    };
+
+    startInput.addEventListener('input', syncRange);
+    startInput.addEventListener('change', syncRange);
+    endInput.addEventListener('input', syncRange);
+    endInput.addEventListener('change', syncRange);
+    endInput.addEventListener('starter:work-date-value-restored', syncRange);
+    if (currentCheckbox) currentCheckbox.addEventListener('change', syncRange);
+    syncRange();
 }
 
 function starterProfileCompanyMonthYearLabel(value) {
@@ -119,6 +199,38 @@ function starterProfileCompanyMonthYearLabel(value) {
   if (parts.length < 2) return text;
 
   return `${parts[0]} ${parts[parts.length - 1]}`;
+}
+
+function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteDraftIds, alsoWorkedWithChanged) {
+    return Boolean(createDrafts.length || updateDrafts.size || deleteDraftIds.size || alsoWorkedWithChanged);
+}
+
+function createStarterEditCompanyDraftDirtyController(options) {
+    const revisions = new Map();
+    let discardedRevision = null;
+    function dirtyState() {
+        return typeof options.getDirtyState === 'function' ? options.getDirtyState() : options.dirtyState;
+    }
+    return {
+        queue(draftId) {
+            const token = dirtyState()?.captureRevision?.(options.stepIndex);
+            if (token) revisions.set(String(draftId), token);
+        },
+        discard(draftId) {
+            const key = String(draftId);
+            const token = revisions.get(key);
+            revisions.delete(key);
+            if (token && (!discardedRevision || token.revision > discardedRevision.revision)) discardedRevision = token;
+            if (options.hasPendingChanges()) return;
+            dirtyState()?.discardRevision?.(options.stepIndex, discardedRevision, false);
+            discardedRevision = null;
+        },
+        commit(draftIds) {
+            draftIds.forEach(function (draftId) {
+                revisions.delete(String(draftId));
+            });
+        },
+    };
 }
 
 /**
@@ -159,6 +271,13 @@ function starterProfileCompanyMonthYearLabel(value) {
             const editStartDateInput = qs('#edit-company-start');
             const editEndDateInput = qs('#edit-company-end');
             const editCurrentWorkCheckbox = qs('#edit-company-current');
+
+            enableStarterProfileCompanyMonthInput(startDateInput, 'Start month and year');
+            enableStarterProfileCompanyMonthInput(endDateInput, 'End month and year');
+            enableStarterProfileCompanyMonthInput(editStartDateInput, 'Start month and year');
+            enableStarterProfileCompanyMonthInput(editEndDateInput, 'End month and year');
+            bindStarterProfileCompanyMonthRange(startDateInput, endDateInput, currentWorkCheckbox);
+            bindStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, editCurrentWorkCheckbox);
 
             const modalEdit = qs('[data-modal-target="company-edit"]');
             const modalEditTrigger = qs('[data-modal-trigger="company-edit"]');
@@ -262,6 +381,18 @@ function starterProfileCompanyMonthYearLabel(value) {
             let pendingCreateDrafts = [];
             let pendingUpdateDrafts = new Map();
             let pendingDeleteDraftIds = new Set();
+            const companyDraftDirtyController = createStarterEditCompanyDraftDirtyController({
+                getDirtyState: function () { return window.__tsProfileDirtyState; },
+                stepIndex: 3,
+                hasPendingChanges: function () {
+                    return hasStarterEditCompanyPendingChanges(
+                        pendingCreateDrafts,
+                        pendingUpdateDrafts,
+                        pendingDeleteDraftIds,
+                        hasAlsoWorkedWithChanges()
+                    );
+                },
+            });
 
             const textEl = addBtn ? qs('div:first-child', addBtn) : null;
             const defaultButtonText = textEl ? textEl.textContent : 'add company';
@@ -391,6 +522,7 @@ function starterProfileCompanyMonthYearLabel(value) {
 
             function isEditCompanyDatepickerReady(input) {
                 if (!input) return true;
+                if (input.type === 'month') return true;
                 if (typeof jQuery === 'undefined' || !jQuery.fn || !jQuery.fn.datepicker) return false;
 
                 return !!jQuery(input).data('datepicker');
@@ -400,6 +532,7 @@ function starterProfileCompanyMonthYearLabel(value) {
             // the shared embed pairs these inputs with its own `onSelect`, fires neither `input` nor
             // `change`. Chain onto that callback so a picked date still counts as user input.
             function guardEditCompanyDateSelection(input, markChanged) {
+                if (input && input.type === 'month') return true;
                 if (!input || !isEditCompanyDatepickerReady(input)) return false;
 
                 try {
@@ -610,9 +743,16 @@ function starterProfileCompanyMonthYearLabel(value) {
                 if (!firstCompanyInput) return;
 
                 firstCompanyInput.value = companiesCount > 0 ? 'true' : '';
-
-                firstCompanyInput.dispatchEvent(new Event('change', { bubbles: true }));
-                firstCompanyInput.dispatchEvent(new Event('input', { bubbles: true }));
+                const dispatchSync = function () {
+                    firstCompanyInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    firstCompanyInput.dispatchEvent(new Event('input', { bubbles: true }));
+                };
+                const dirtyState = window.__tsProfileDirtyState;
+                if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+                    dirtyState.runHydrationSync(dispatchSync);
+                } else {
+                    dispatchSync();
+                }
             }
 
             async function renderCompanies() {
@@ -811,9 +951,14 @@ function starterProfileCompanyMonthYearLabel(value) {
                 return data;
             }
 
-            async function commitCreateCompanyDraft(draft) {
+            async function commitCreateCompanyDraft(draft, replaceCompanyId = '') {
                 const { id, type, is_draft, pending_type, ...companyFields } = draft;
-                return createCompany({ ...companyFields, freelancers_id: starter_xano_id });
+                const replaceId = Number(replaceCompanyId) || 0;
+                return createCompany({
+                    ...companyFields,
+                    freelancers_id: starter_xano_id,
+                    ...(replaceId ? { replace_companies_id: replaceId } : {}),
+                });
             }
 
             async function commitUpdateCompanyDraft(companyId, draftPayload) {
@@ -829,13 +974,14 @@ function starterProfileCompanyMonthYearLabel(value) {
 
             async function commitAlsoWorkedWith() {
                 if (!hasAlsoWorkedWithChanges()) return;
+                const submittedAlsoWorkedWith = alsoWorkedWithInput.value;
 
                 const request = () => fetch(XANO_SET_ALSO_WORKED_WITH_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         member_id: MEMBER.id,
-                        also_worked_with: alsoWorkedWithInput.value,
+                        also_worked_with: submittedAlsoWorkedWith,
                     }),
                 });
                 const diagnostics = window.StartersNativeFormDiagnostics;
@@ -855,7 +1001,7 @@ function starterProfileCompanyMonthYearLabel(value) {
                     throw new Error((data && data.message) || `Also worked with save failed (${response.status})`);
                 }
 
-                alsoWorkedWithBaseline = alsoWorkedWithInput.value;
+                alsoWorkedWithBaseline = submittedAlsoWorkedWith;
             }
 
             function triggerFieldEvents(input) {
@@ -901,6 +1047,9 @@ function starterProfileCompanyMonthYearLabel(value) {
                     }
                 }
 
+                if (endDateInput) endDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
+                syncStarterProfileCompanyMonthRange(startDateInput, endDateInput, false);
+
                 updateAddBtnState();
             }
 
@@ -920,6 +1069,7 @@ function starterProfileCompanyMonthYearLabel(value) {
             function openEditCompany(company) {
                 if (!editCompanyWrapper || !company) return;
 
+                if (editEndDateInput) editEndDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
                 editCompanyWrapper.dataset.id = company.id || '';
                 const rawStartDate = company.start_date || '';
                 const rawEndDate = company.current_work ? 'Present' : (company.end_date || '');
@@ -953,6 +1103,8 @@ function starterProfileCompanyMonthYearLabel(value) {
                         editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
                         editEndDateBaseline = starterProfileCompanyDateBaseline(editEndDateInput, rawEndDate);
                     }
+
+                    syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, !!company.current_work);
                 }
 
                 if (editCompanyInput) {
@@ -1019,6 +1171,8 @@ function starterProfileCompanyMonthYearLabel(value) {
                     }
 
                     setCheckboxState(editCurrentWorkCheckbox, false);
+                    if (editEndDateInput) editEndDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
+                    syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, false);
 
                     editStartDateBaseline = null;
                     editEndDateBaseline = null;
@@ -1043,14 +1197,20 @@ function starterProfileCompanyMonthYearLabel(value) {
             function queueCompanyDeletion(id) {
                 if (isDraftCompanyId(id)) {
                     removeCreateDraft(id);
+                    companyDraftDirtyController.discard(id);
                     return;
                 }
 
+                window.__tsProfileDirtyState?.markDirty?.(3);
                 pendingDeleteDraftIds.add(String(id));
                 pendingUpdateDrafts.delete(String(id));
             }
 
             function clearAllDraftQueues() {
+                companyDraftDirtyController.commit(
+                    pendingCreateDrafts.map(function (draft) { return draft.id; })
+                        .concat(Array.from(pendingUpdateDrafts.keys()))
+                );
                 pendingCreateDrafts = [];
                 pendingUpdateDrafts = new Map();
                 pendingDeleteDraftIds = new Set();
@@ -1179,6 +1339,12 @@ function starterProfileCompanyMonthYearLabel(value) {
                         isValid = false;
                     }
 
+                    if (!isStarterProfileCompanyMonthRangeValid(editStartDateInput, editEndDateInput, payload.current_work)) {
+                        showFieldError(editStartDateInput.closest('[form-group]'));
+                        showFieldError(editEndDateInput.closest('[form-group]'));
+                        isValid = false;
+                    }
+
                     if (!isValid) return;
 
                     const textEl = saveCompanyEditButton.querySelector('.button_main-text');
@@ -1192,13 +1358,17 @@ function starterProfileCompanyMonthYearLabel(value) {
                         textEl.textContent = 'Saving...';
 
                         if (isDraftCompanyId(companyId)) {
+                            window.__tsProfileDirtyState?.markDirty?.(3);
                             pendingCreateDrafts = pendingCreateDrafts.map(function (draft) {
                                 return draft.id === companyId
                                     ? { ...draft, ...payload, id: companyId, type: 'create', is_draft: true, pending_type: 'create' }
                                     : draft;
                             });
+                            companyDraftDirtyController.queue(companyId);
                         } else {
+                            window.__tsProfileDirtyState?.markDirty?.(3);
                             pendingUpdateDrafts.set(String(companyId), payload);
+                            companyDraftDirtyController.queue(companyId);
                         }
                         await renderCompanies();
 
@@ -1271,6 +1441,12 @@ function starterProfileCompanyMonthYearLabel(value) {
                         isValid = false;
                     }
 
+                    if (!isStarterProfileCompanyMonthRangeValid(startDateInput, endDateInput, payload.current_work)) {
+                        showFieldError(startDateInput.closest('[form-group]'));
+                        showFieldError(endDateInput.closest('[form-group]'));
+                        isValid = false;
+                    }
+
                     if (!isValid) {
                         const currentAccordion = addBtn.previousElementSibling;
                         if (currentAccordion && currentAccordion.classList.contains("profile-dropdown")) {
@@ -1295,13 +1471,16 @@ function starterProfileCompanyMonthYearLabel(value) {
                         clearAddCompanyFeedbackTimeout();
                         updateAddBtnState();
 
-                        pendingCreateDrafts.push({
+                        window.__tsProfileDirtyState?.markDirty?.(3);
+                        const draft = {
                             id: `draft_${Date.now()}_${Math.random()}`,
                             type: 'create',
                             is_draft: true,
                             pending_type: 'create',
                             ...payload,
-                        });
+                        };
+                        pendingCreateDrafts.push(draft);
+                        companyDraftDirtyController.queue(draft.id);
                         await renderCompanies();
 
                         resetCompanyFields();
@@ -1339,7 +1518,10 @@ function starterProfileCompanyMonthYearLabel(value) {
                 if (!hasPendingCompanyChanges && !hasAlsoWorkedWithChanges()) return;
                 if (isSubmitting) return;
 
+                let saved = false;
+                let saveToken = null;
                 try {
+                    saveToken = window.__tsProfileDirtyState?.beginSave(3);
                     isSubmitting = true;
                     submitAction = 'submitting';
                     updateAddBtnState();
@@ -1353,7 +1535,13 @@ function starterProfileCompanyMonthYearLabel(value) {
 
                     while (pendingCreateDrafts.length) {
                         const draft = pendingCreateDrafts[0];
-                        await commitCreateCompanyDraft(draft);
+                        // Pair a pending create with one pending deletion. Xano commits the
+                        // replacement atomically, so a profile already at the three-company
+                        // limit can replace a row without deleting it first or briefly exceeding
+                        // the limit.
+                        const replaceCompanyId = pendingDeleteDraftIds.values().next().value || '';
+                        await commitCreateCompanyDraft(draft, replaceCompanyId);
+                        if (replaceCompanyId) pendingDeleteDraftIds.delete(String(replaceCompanyId));
                         pendingCreateDrafts.shift();
                     }
 
@@ -1365,6 +1553,7 @@ function starterProfileCompanyMonthYearLabel(value) {
                     await commitDeleteCompanyDrafts();
 
                     clearAllDraftQueues();
+                    saved = true;
                     await renderCompanies();
 
                     if (editFormSuccessTrigger) editFormSuccessTrigger.dispatchEvent(new Event('click', { bubbles: true }));
@@ -1373,6 +1562,7 @@ function starterProfileCompanyMonthYearLabel(value) {
                     await renderCompanies();
                     if (editFormErrorTrigger) editFormErrorTrigger.dispatchEvent(new Event('click', { bubbles: true }));
                 } finally {
+                    window.__tsProfileDirtyState?.finishSave(3, saved, saveToken);
                     isSubmitting = false;
                     submitAction = '';
 
@@ -1388,6 +1578,11 @@ function starterProfileCompanyMonthYearLabel(value) {
             if (alsoWorkedWithInput) {
                 alsoWorkedWithInput.addEventListener('input', updateCompanySubmitState);
                 alsoWorkedWithInput.addEventListener('change', updateCompanySubmitState);
+                alsoWorkedWithInput.addEventListener('starter:also-worked-with-hydrated', function () {
+                    alsoWorkedWithBaseline = alsoWorkedWithInput.value;
+                    alsoWorkedWithBaselineReady = true;
+                    updateCompanySubmitState();
+                });
 
                 setTimeout(function () {
                     alsoWorkedWithBaseline = alsoWorkedWithInput.value;
