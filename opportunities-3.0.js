@@ -2372,7 +2372,6 @@
   const PROJECT_END_MODAL_ID = 'end-project'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
   const PROJECT_REVIEWABLE_STATES = new Set(['completed', 'terminated'])
-  const DEFAULT_EARLY_END_REASON = 'Project ended early'
   // Sent documents use recipient view/sign sessions. Completed documents use
   // a separate protected-PDF route and never mint a signing session.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
@@ -3664,9 +3663,10 @@
     return lifecycleState(project) === 'pending' ? 'cancel' : 'choose'
   }
 
-  // Ending finalizes on the first action. A Brand completion can save its
-  // optional review alongside the terminal project update; early end cannot.
-  function endProjectView(project, role, mode) {
+  // Ending a started project always completes it. A Brand can save an optional
+  // review alongside the terminal project update. The only remaining
+  // `terminate` path closes a row already stranded in the retired handshake.
+  function endProjectView(project, role) {
     const step = endProjectStep(project)
     const counterparty = role === 'brand' ? 'Starter' : 'Brand'
     if (step === 'cancel') {
@@ -3707,23 +3707,17 @@
         showToggle: false,
       }
     }
-    const early = mode === 'terminate'
     return {
       step,
-      action: early ? 'terminate' : 'complete',
-      reason: early ? DEFAULT_EARLY_END_REASON : '',
-      title: early ? 'End Project Early' : 'End Project & Review',
-      subtitle: early
-        ? 'This ends the project now and notifies the ' + counterparty + '.'
-        : 'This closes the project now and notifies the ' + counterparty + '.',
-      submit: early
-        ? 'End Project Early'
-        : role === 'brand' ? 'End Project and Submit Review' : 'Mark Work Complete',
+      action: 'complete',
+      reason: '',
+      title: role === 'brand' ? 'End Project & Review' : 'End Project',
+      subtitle: 'This completes the project now and notifies the ' + counterparty + '.',
+      submit: role === 'brand' ? 'End Project and Submit Review' : 'Mark Work Complete',
       showReason: false,
       requireReason: false,
-      showReview: !early && role === 'brand' && !project.has_review,
-      showToggle: true,
-      toggle: early ? 'The work is finished instead' : 'End this project early instead',
+      showReview: role === 'brand' && !project.has_review,
+      showToggle: false,
     }
   }
 
@@ -3853,8 +3847,7 @@
     const modal = endProjectModal()
     if (!modal) return null
     resolveEndProjectRequest(null)
-    let mode = role === 'brand' ? 'complete' : 'terminate'
-    let view = endProjectView(project, role, mode)
+    let view = endProjectView(project, role)
     const parts = paintEndProjectModal(modal, view, project)
     if (parts.form) {
       parts.form.reset()
@@ -3870,10 +3863,8 @@
         resolve,
         get view() { return view },
         toggle() {
-          if (!view.showToggle) return
-          mode = mode === 'terminate' ? 'complete' : 'terminate'
-          view = endProjectView(project, role, mode)
-          paintEndProjectModal(modal, view, project)
+          // The authored toggle can remain during rollout skew, but active
+          // projects no longer have a second end mode.
         },
       }
       showProjectModal(PROJECT_END_MODAL_ID, modal)
@@ -3898,11 +3889,8 @@
         ? { action: 'terminate', reason: pendingReason }
         : null
     }
-    if (confirmAction('Is the work complete? Select OK to close the project, or Cancel for Early End.')) {
-      return { action: 'complete', reason: '' }
-    }
-    return confirmAction('End this project early now?')
-      ? { action: 'terminate', reason: DEFAULT_EARLY_END_REASON }
+    return confirmAction('Complete this project now and notify the other party?')
+      ? { action: 'complete', reason: '' }
       : null
   }
 
