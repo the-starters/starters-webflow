@@ -37,9 +37,8 @@
 // enabled click on a non-submitting control dispatches a cancelable synthetic
 // submit event — what Memberstack's listener consumes — and never a native
 // submission (see triggerSubmit for why requestSubmit is unsafe). That bridge
-// is installed on EVERY form[data-ms-form] carrying [ms-code-submit-button],
-// wrapper or not — it is the only submit path such a CTA has, so a fail-open
-// form still submits; the click is gated only where a wrapper configures rules.
+// is installed on every form[data-ms-form] carrying [ms-code-submit-button],
+// gated only where a wrapper configures rules — a fail-open form still submits.
 // Disabling covers the wrap AND every overlay control inside it (native
 // `disabled` + aria-disabled), so the visible button can never stay live while
 // only the hidden one is gated.
@@ -67,6 +66,7 @@
   var RULE_ATTR = PREFIX + 'rule';
   var ICON_ATTR = PREFIX + 'icon';
   var DEFAULT_COUNT = 8;
+  var RELEASE = 'v1.59.502';
   var WIRED_FLAG = '__startersPasswordValidation';
   var BRIDGE_FLAG = '__startersPasswordBridge';
   var SUBMIT_BUTTON_SELECTOR = '[ms-code-submit-button]';
@@ -508,10 +508,9 @@
   }
 
   // --- submit bridge --------------------------------------------------------
-  // At most one submit and one click listener per form, wired or not. Both read
-  // form[WIRED_FLAG] at event time, so a form bridged pass-through and wired
-  // later by rescan() gates without re-binding. Callers own the opt-in: this
-  // adds listeners to any form handed to it.
+  // One submit + one click listener per form. Both read form[WIRED_FLAG] at
+  // event time, so a form bridged before it is wired starts gating without
+  // re-binding.
   function ensureBridge(form) {
     var bridge = form[BRIDGE_FLAG];
 
@@ -686,8 +685,8 @@
       return;
     }
 
-    var buttonRoot = form.querySelector(SUBMIT_BUTTON_SELECTOR);
-    if (!buttonRoot) {
+    var bridge = ensureBridge(form);
+    if (!bridge.root) {
       // Not fatal — the Enter-key blocker still gates the form — but it means
       // the visible CTA never greys out, which is always a wiring mistake.
       devWarn(
@@ -696,7 +695,7 @@
         form
       );
     }
-    var button = ensureBridge(form).button;
+    var button = bridge.button;
     if (button && !button.themeEl && !button.native) {
       // Nothing to grey and nothing to disable: the CTA will look and behave
       // identical whether the password passes or not.
@@ -704,7 +703,7 @@
         'the [ms-code-submit-button] CTA cannot be greyed out or disabled — it ' +
         'carries no ' + THEME_ATTR + ' and contains no button, input or link. ' +
         'The Enter key is still blocked.',
-        buttonRoot
+        bridge.root
       );
     }
 
@@ -796,8 +795,7 @@
     // is already gating). Such a wrapper is adopted into the existing
     // instance — copy, rows and icons — rather than re-wiring the form, so
     // the config and the listeners stay exactly where the first pass put them.
-    // render is read by the bridge's listeners at event time, so a form bridged
-    // before it was wired starts gating from this assignment on.
+    // render is read by the bridge at event time.
     form[WIRED_FLAG] = {
       wrappers: wrappers,
       render: render,
@@ -892,10 +890,7 @@
       setUp(instances[k].wrappers, instances[k].form);
     }
 
-    // The overlay CTA has no submit path of its own, so every Memberstack form
-    // carrying one gets the bridge — validated or not. data-ms-form is the
-    // opt-in: a non-Memberstack form using the same Button component is left
-    // entirely untouched, no listeners at all.
+    // The overlay CTA has no submit path of its own; data-ms-form is the opt-in.
     var msForms = document.querySelectorAll(MS_FORM_SELECTOR);
     for (var m = 0; m < msForms.length; m++) {
       if (msForms[m].querySelector(SUBMIT_BUTTON_SELECTOR)) ensureBridge(msForms[m]);
@@ -906,7 +901,7 @@
   // the one-shot init, so the page can ask for another pass. An already-wired
   // form is never re-wired, only extended with wrappers it has not seen, so
   // repeated calls stay harmless.
-  window.startersPasswordValidation = { rescan: init };
+  window.startersPasswordValidation = { rescan: init, release: RELEASE };
 
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);

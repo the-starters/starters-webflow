@@ -2354,7 +2354,7 @@ test('r6-2: a fail-open wrapper (every toggle off) still submits on click', () =
   assert.equal(ctaUntouched(f), true, 'fail open still means no gating treatment')
 })
 
-test('r6-3: a native submitter under the marker is never double-submitted', () => {
+test('r6-3: a wrapperless native submitter under the marker gets no synthetic submit', () => {
   const f = bridgeSetup({ cta: 'native' })
 
   assert.equal(f.ctaRoot.listenerCount('click'), 1, 'the bridge is bound')
@@ -2389,7 +2389,9 @@ test('r6-6: a bridged form that gains a wrapper on rescan starts gating, once', 
   assert.equal(f.ctaRoot.listenerCount('click'), 1, 'still one bridge, not two')
 
   type(f, 'weakpass')
-  assert.equal(dispatch(f.form, 'submit').defaultPrevented, true, 'the gate now blocks')
+  const blocked = dispatch(f.form, 'submit')
+  assert.equal(blocked.stopped, true, 'the capture blocker now stops the submit')
+  assert.equal(f.submits.length, 0, 'the page handler never ran')
   dispatch(f.control, 'click')
   assert.equal(f.submits.length, 0, 'and blocks the click too')
 
@@ -2412,4 +2414,11 @@ test('r6-7: a rejection after a wrapperless click still lands on the fail block'
   assert.equal(f.fail.style.display, 'block')
   assert.equal(f.fail.getAttribute('role'), 'alert')
   assert.equal(f.failText.textContent, 'That email is already registered.')
+})
+
+test('r6-8: the @release header and the exposed release property cannot drift apart', () => {
+  const header = source.match(/^\/\/ @release (v\d+\.\d+\.\d+)$/m)
+  assert.ok(header, 'the file header must carry an @release marker')
+  const app = mount(h('body', {}, []))
+  assert.equal(app.window.startersPasswordValidation.release, header[1])
 })
