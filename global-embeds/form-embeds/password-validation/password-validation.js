@@ -379,7 +379,7 @@
   // it, is adopted as ours — otherwise we could never open the button again.
   // Mirrors readAuthoredTheme's handling of a CTA authored already-grey.
   function adoptAuthoredState(button) {
-    if (peerHeld(button.root)) return;
+    if (peerHeld(button.root)) return false;
     // The same nodes foreignHold reads and setDisabled writes: a node we can
     // never claim is a hold we can never release.
     var nodes = buttonNodes(button);
@@ -392,16 +392,16 @@
         el.setAttribute(OWNS_NATIVE, '');
       }
     }
+    return true;
   }
 
   // Claiming state only earns its keep where a render can hand it back. A
   // bridge with no gate never re-opens the CTA, so what it found there stays
-  // foreign and the click stands down instead of overriding it. Once per
-  // button, so a later write by somebody else is never claimed.
+  // foreign and the click stands down instead of overriding it. The one-shot
+  // is spent only when adoption ran; a peer-held root gets another try later.
   function adoptWhenGated(bridge) {
     if (!bridge.gate || !bridge.button || bridge.button.adopted) return;
-    bridge.button.adopted = true;
-    adoptAuthoredState(bridge.button);
+    if (adoptAuthoredState(bridge.button)) bridge.button.adopted = true;
   }
 
   function setDisabled(button, isDisabled) {
@@ -420,10 +420,15 @@
         gateNative(nodes[i]);
       }
     } else {
-      // Release only what we own, and only look open when nobody else holds it.
-      var held = foreignHold(button);
-      if (!held) button.root.classList.remove('disabled');
-      if (themeEl && !held && button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
+      // While anyone else holds the CTA it looks dead and we release nothing;
+      // our marks wait for the first unheld open render.
+      if (foreignHold(button)) {
+        button.root.classList.add('disabled');
+        if (themeEl) themeEl.setAttribute(THEME_ATTR, DISABLED_THEME);
+        return;
+      }
+      button.root.classList.remove('disabled');
+      if (themeEl && button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
       for (i = 0; i < nodes.length; i++) {
         ungateAria(nodes[i]);
         ungateNative(nodes[i]);
@@ -658,14 +663,14 @@
           return;
         }
         // Foreign state survives our render; only our own marks are ever
-        // cleared. Read over the same nodes the render does, so a hold that
-        // greys the CTA can never leave the bridge submitting anyway.
-        var root = bridge.button.root;
-        var refused = event.defaultPrevented || foreignHold(bridge.button) ||
-          peerHeld(control) || foreignAria(control) || foreignNative(control);
-        if (refused) {
+        // cleared. One predicate, read over the same nodes the render uses.
+        if (event.defaultPrevented) {
+          devWarn('click already cancelled by another script', bridge.button.root);
+          return;
+        }
+        if (foreignHold(bridge.button)) {
           // A silently dead CTA is worth naming on staging.
-          devWarn('click refused by another script\'s disabled state on the CTA', root);
+          devWarn('click refused by another script\'s disabled state on the CTA', bridge.button.root);
           return;
         }
         if (isNativeSubmitter(control)) return;
@@ -852,6 +857,7 @@
     // Returns the verdict rather than stashing it, so no caller can ever
     // adjudicate on a copy that has gone stale.
     function render() {
+      adoptWhenGated(bridge);
       var value = input.value || '';
       var allPass = true;
 

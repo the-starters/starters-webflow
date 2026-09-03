@@ -2694,3 +2694,77 @@ test('r6-21: a foreign hold on a control other than the clicked one refuses the 
   assert.equal(f.submits.length, 0, 'the click on the open-looking overlay stands down')
   assert.equal(click.defaultPrevented, false, 'the other script owns it')
 })
+
+test('r6-22: a hold that appears after we opened greys the CTA on the next render', () => {
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.ok(overlayOpen(f), 'our gate opened the CTA')
+
+  // another script refuses on the wrap, with no mark of its own, after we opened
+  f.wrapBtn.setAttribute('aria-disabled', 'true')
+  type(f, VALID_PASSWORD)
+
+  assert.equal(theme(f.wrapBtn), 'disabled', 'the disabled look is applied, not merely kept')
+  assert.equal(f.wrapBtn.classList.contains('disabled'), true)
+  assert.equal(aria(f.wrapBtn), 'true', 'their refusal is untouched')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0)
+})
+
+test('r6-23: adoption is not spent while a peer holds the root; it happens once the peer lets go', () => {
+  const f = liveSetup({ cta: 'none' })
+  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
+  overlay.classList.add('clickable_btn')
+  const wrapBtn = h(
+    'div',
+    { 'ms-code-submit-button': '', 'data-button-theme': 'black', 'aria-disabled': 'true', 'data-form-flow-disabled': '' },
+    [overlay]
+  )
+  wrapBtn.classList.add('button_main-wrap')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 0, 'peer-held: refused')
+  assert.equal(aria(wrapBtn), 'true', 'and not adopted while the peer holds it')
+
+  wrapBtn.removeAttribute('data-form-flow-disabled')
+  type(f, VALID_PASSWORD)
+  assert.equal(aria(wrapBtn), null, 'the authored state is adopted once the peer lets go, and released')
+  assert.equal(theme(wrapBtn), 'black')
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1)
+})
+
+test('r6-24: our native disabled is not released while another node is foreign-held', () => {
+  const f = liveSetup({ cta: 'none' })
+  const hidden = h('button', { type: 'submit' }, ['SIGN UP'])
+  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
+  overlay.classList.add('clickable_btn')
+  const wrapBtn = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [hidden, overlay])
+  wrapBtn.classList.add('button_main-wrap')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(hidden.disabled, false, 'open: our native disable was released')
+
+  hidden.setAttribute('aria-disabled', 'true') // a foreign hold on the hidden control
+  type(f, 'weakpass')
+  assert.equal(hidden.disabled, true, 'closed: we disabled it again')
+  type(f, VALID_PASSWORD)
+  assert.equal(hidden.disabled, true, 'open but held: our native disable stays, so Enter cannot submit')
+  assert.equal(theme(wrapBtn), 'disabled')
+
+  hidden.removeAttribute('aria-disabled')
+  type(f, VALID_PASSWORD)
+  assert.equal(hidden.disabled, false, 'first unheld open render releases it')
+  assert.equal(theme(wrapBtn), 'black')
+})
