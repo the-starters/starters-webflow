@@ -152,13 +152,18 @@
         const paidCallSelected = toBool(formData["paid-consulting-calls"]) === true;
         const paidCallHasValue = String(formData["paid-call-rate"] ?? '').trim() !== '';
         const paidCallEnabled = paidCallSelected || (isConsultProfile && paidCallHasValue);
-        const paidCallRate = wholeDollar(formData["paid-call-rate"], {
-          min: 1,
-          max: 1000,
-          label: 'paid call rate',
-          selector: '[name="paid-call-rate"]',
-          allowBlank: !paidCallEnabled,
-        });
+        // A toggle-owned rate is only authored while its own section says yes. Once the
+        // toggle is off the control is collapsed, so its stale text is neither visible
+        // nor editable and must never block the whole submit behind a price failure the
+        // member cannot see or reach. Blank already meant the compatibility value.
+        const paidCallRate = paidCallEnabled
+          ? wholeDollar(formData["paid-call-rate"], {
+              min: 1,
+              max: 1000,
+              label: 'paid call rate',
+              selector: '[name="paid-call-rate"]',
+            })
+          : null;
 
         const fullProfile = !isConsultProfile;
         const hourlyRate = wholeDollar(formData.rate, {
@@ -169,13 +174,14 @@
           allowBlank: !fullProfile,
         });
         const retainerEnabled = toBool(formData["offer-monthly-retainers"]) === true;
-        const retainerRate = wholeDollar(formData["rate-retainer"], {
-          min: 1,
-          max: 25000,
-          label: 'monthly retainer rate',
-          selector: '[name="rate-retainer"]',
-          allowBlank: !retainerEnabled,
-        });
+        const retainerRate = retainerEnabled
+          ? wholeDollar(formData["rate-retainer"], {
+              min: 1,
+              max: 25000,
+              label: 'monthly retainer rate',
+              selector: '[name="rate-retainer"]',
+            })
+          : 0;
 
         const payload = {
           member_id: MEMBER.id || "",
@@ -218,7 +224,7 @@
           best_fit_2: formData["best-fit-2"] || "",
           best_fit_3: formData["best-fit-3"] || "",
 
-          hourly_rate: hourlyRate === null && !fullProfile ? 0 : hourlyRate,
+          hourly_rate: hourlyRate === null ? 0 : hourlyRate,
 
           availability: formData["availability-option"] || "",
           availability_id: formData.availability || "",
@@ -237,7 +243,7 @@
 
           retainer: retainerEnabled,
           retainer_desc: formData["description-retainer"] || "",
-          retainer_rate: retainerRate === null && !retainerEnabled ? 0 : retainerRate,
+          retainer_rate: retainerRate,
 
           services,
           reviewers,

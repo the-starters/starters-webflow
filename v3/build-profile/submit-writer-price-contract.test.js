@@ -174,6 +174,21 @@ test('consult Paid Call accepts $1 and $1,000, rejects $1.01, and converts to no
   assert.equal(invalid.requests.length, 0)
 })
 
+test('a collapsed section keeps its compatibility value instead of blocking the submit', async () => {
+  const retainer = load({ 'offer-monthly-retainers': 'no', 'rate-retainer': '30000' })
+  await retainer.submit.click()
+  assert.equal(retainer.requests.length, 1, retainer.inputs['[name="rate-retainer"]'].validationMessage)
+  assert.equal(retainer.requests[0].body.retainer, false)
+  assert.equal(retainer.requests[0].body.retainer_rate, 0)
+  assert.equal(retainer.error.style.display, 'none')
+
+  const paidCall = load({ 'paid-consulting-calls': 'no', 'paid-call-rate': '2500' })
+  await paidCall.submit.click()
+  assert.equal(paidCall.requests.length, 1, paidCall.inputs['[name="paid-call-rate"]'].validationMessage)
+  assert.equal(paidCall.requests[0].body.paid_call, false)
+  assert.equal(paidCall.requests[0].body.paid_call_rate, null)
+})
+
 test('disabled and non-owned blank rates preserve compatibility zero without accepting authored zero', async () => {
   const consult = load({ rate: '' }, '/build-profile/consult')
   await consult.submit.click()

@@ -669,40 +669,66 @@ onDomReady(function () {
 			return `Use a whole-dollar ${contract.label} from $${contract.min.toLocaleString('en-US')} to $${contract.max.toLocaleString('en-US')}.`;
 		}
 
-		function reportPriceFailure(field, contract) {
-			const message = priceMessage(contract);
-			field?.setCustomValidity?.(message);
-			field?.focus?.();
-			field?.reportValidity?.();
+		// Services live in hidden JSON capture inputs, so a price failure there cannot
+		// surface through native constraint validation. Those failures, and any failure
+		// whose control is absent, own the authored error modal instead, the same way
+		// mirrored step rules route to a visible owner. A blocked submit always says why.
+		function reportPriceFailure(failure) {
+			const message = failure.message;
+			failure.field?.setCustomValidity?.(message);
+			if (failure.mirror || !failure.field) {
+				setProfileFeedbackMessage('edit-form-error', message);
+				openProfileFeedback('edit-form-error', openErrorModal);
+				return message;
+			}
+			failure.field?.focus?.();
+			failure.field?.reportValidity?.();
 			return message;
 		}
 
 		function validateStepSixPrices(payload, services) {
 			const step = stepElement(6);
 			const hourlyField = qs('[name="rate"]', step);
-			const hourlyOptional = hourlyField?.required === false;
-			const hourly = wholeDollar(payload.Hourly_Rate, PRICE_CONTRACTS.Hourly_Rate, { allowBlank: hourlyOptional });
-			if (!hourly.valid) return { ...hourly, field: hourlyField, contract: PRICE_CONTRACTS.Hourly_Rate };
-			if (hourlyField) hourlyField.setCustomValidity?.('');
+			let hourly = { valid: true, value: null };
+			if (Object.prototype.hasOwnProperty.call(payload, 'Hourly_Rate')) {
+				hourly = wholeDollar(payload.Hourly_Rate, PRICE_CONTRACTS.Hourly_Rate, {
+					allowBlank: hourlyField?.required === false,
+				});
+				if (!hourly.valid) {
+					return { ...hourly, field: hourlyField, message: priceMessage(PRICE_CONTRACTS.Hourly_Rate) };
+				}
+				hourlyField?.setCustomValidity?.('');
+			}
 
+			// A retainer rate is only authored while the toggle says yes. Every other
+			// state keeps the compatibility behavior of the collapsed section instead of
+			// blocking the whole step on a value the member cannot see or edit.
 			const retainerField = qs('[name="rate-retainer"]', step);
 			let retainer = { valid: true, value: null };
-			if (Object.prototype.hasOwnProperty.call(payload, 'Retainer_Rate') || payload.Retainer_Enabled === true) {
-				retainer = wholeDollar(payload.Retainer_Rate, PRICE_CONTRACTS.Retainer_Rate, {
-					allowBlank: payload.Retainer_Enabled === false,
-				});
-				if (!retainer.valid) return { ...retainer, field: retainerField, contract: PRICE_CONTRACTS.Retainer_Rate };
-				if (retainerField) retainerField.setCustomValidity?.('');
+			if (payload.Retainer_Enabled === true) {
+				retainer = wholeDollar(payload.Retainer_Rate, PRICE_CONTRACTS.Retainer_Rate);
+				if (!retainer.valid) {
+					return { ...retainer, field: retainerField, message: priceMessage(PRICE_CONTRACTS.Retainer_Rate) };
+				}
+				retainerField?.setCustomValidity?.('');
 			}
 
 			for (const [slot, service] of Object.entries(services)) {
 				if (!service || (!String(service.name ?? '').trim() && !String(service.price ?? '').trim())) continue;
 				const serviceField = qs(`#${slot === 'service-1' ? 'service' : slot}`, form);
-				const price = wholeDollar(service.price, PRICE_CONTRACTS.Services);
 				if (!String(service.name ?? '').trim()) {
-					return { valid: false, code: 'SERVICE_NAME_REQUIRED', field: serviceField, contract: PRICE_CONTRACTS.Services };
+					return {
+						valid: false,
+						code: 'SERVICE_NAME_REQUIRED',
+						field: serviceField,
+						mirror: true,
+						message: 'A service name is required when a service price is set.',
+					};
 				}
-				if (!price.valid) return { ...price, field: serviceField, contract: PRICE_CONTRACTS.Services };
+				const price = wholeDollar(service.price, PRICE_CONTRACTS.Services);
+				if (!price.valid) {
+					return { ...price, field: serviceField, mirror: true, message: priceMessage(PRICE_CONTRACTS.Services) };
+				}
 				service.price = price.value;
 				serviceField?.setCustomValidity?.('');
 			}
@@ -798,8 +824,10 @@ onDomReady(function () {
 				}
 			};
 
-			// Services
-			if (payload.Services) {
+			// Services. Real FormData always carries the `service` capture field, so the
+			// price contract is owned by the step itself instead of by that field having
+			// a value. Otherwise a blank capture field skips every price check.
+			if (stepIndex === 6) {
 				const serviceFormData = getFormDataObject();
 				const service1 = parseJson(serviceFormData.service);
 				const service2 = parseJson(serviceFormData["service-2"]);
@@ -812,7 +840,7 @@ onDomReady(function () {
 				};
 				const priceValidation = validateStepSixPrices(payload, services);
 				if (!priceValidation.valid) {
-					reportPriceFailure(priceValidation.field, priceValidation.contract);
+					reportPriceFailure(priceValidation);
 					recordProfileDiagnostic(null, {
 						result: 'failed',
 						stage: 'validation',
@@ -823,19 +851,12 @@ onDomReady(function () {
 					return false;
 				}
 
-				payload.Services = JSON.stringify({
-					"service-1": service1?.name ? service1 : null,
-					"service-2": service2?.name ? service2 : null,
-					"service-3": service3?.name ? service3 : null,
-				});
-			}
-
-			if (stepIndex === 6 && !Object.prototype.hasOwnProperty.call(payload, 'Services')) {
-				const priceValidation = validateStepSixPrices(payload, {});
-				if (!priceValidation.valid) {
-					reportPriceFailure(priceValidation.field, priceValidation.contract);
-					setSubmitLoading(submitButton, false);
-					return false;
+				if (payload.Services) {
+					payload.Services = JSON.stringify({
+						"service-1": service1?.name ? service1 : null,
+						"service-2": service2?.name ? service2 : null,
+						"service-3": service3?.name ? service3 : null,
+					});
 				}
 			}
 

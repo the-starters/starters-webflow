@@ -305,8 +305,7 @@
     if (
       !displayableRate(suggestion) ||
       suggestion.source !== 'legacy_v2' ||
-      suggestion.requires_confirmation !== true ||
-      Number(suggestion.price_cents) % 100 !== 0
+      suggestion.requires_confirmation !== true
     ) return null
     return suggestion
   }
