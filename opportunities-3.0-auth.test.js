@@ -7297,9 +7297,10 @@ test('binding a live wrap force-hides a leftover nested Spinner', async () => {
 })
 
 // The end-project modal replaces the native prompt/confirm intent capture.
-// These cases pin first-action finalization, the fixed early-end reason,
-// the review-timing rule, and the prompt fallback for pages that
-// were published before the modal markup shipped.
+// These cases pin first-action finalization, unified completion for both roles
+// on started projects, the narrow reuse of a stranded `termination_requested`
+// row's recorded reason, the review-timing rule, and the prompt fallback for
+// pages that were published before the modal markup shipped.
 function endProjectDom(overrides = {}) {
   const end = el('a', { 'wf-xano-link': 'project-end', href: '#' })
   const label = el('div', { class: 'button_main-text' })
@@ -7453,14 +7454,12 @@ test('brand end-project modal completes and submits the review in one pass', asy
 
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
-  assert.match(dom.subtitle.textContent, /closes the project now/)
+  assert.match(dom.subtitle.textContent, /completes the project now/)
   assert.equal(dom.reviewGroup.style.display, '')
   assert.equal(dom.reasonWrap.style.display, 'none')
   assert.equal(dom.projectName.textContent, 'Launch Campaign')
   assert.equal(dom.projectId.textContent, '675')
-  // Ending finalizes on the first action now, so the early-end toggle stays
-  // available on an active project instead of being hidden behind a confirm.
-  assert.equal(dom.toggle.style.display, '')
+  assert.equal(dom.toggle.style.display, 'none')
 
   bridge.dispatchDocument('submit', {
     target: dom.form,
@@ -7476,7 +7475,7 @@ test('brand end-project modal completes and submits the review in one pass', asy
   assert.equal(reviewBody.review_text, 'Excellent collaboration overall.')
 })
 
-test('brand termination hides all text inputs and never submits a review', async () => {
+test('the retired active-project mode toggle cannot change Brand completion intent', async () => {
   const dom = endProjectDom({ reason: 'Scope changed' })
   let actionBody = null
   let reviewCount = 0
@@ -7502,7 +7501,7 @@ test('brand termination hides all text inputs and never submits a review', async
         return response({
           project: {
             id: 675,
-            lifecycle_state: 'terminated',
+            lifecycle_state: 'completed',
             lifecycle_version: 5,
             review_eligible: false,
             has_review: false,
@@ -7522,8 +7521,9 @@ test('brand termination hides all text inputs and never submits a review', async
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
   bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
-  assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
-  assert.equal(dom.reviewGroup.style.display, 'none')
+  assert.equal(dom.title.textContent, 'End Project & Review')
+  assert.equal(dom.toggle.style.display, 'none')
+  assert.equal(dom.reviewGroup.style.display, '')
   assert.equal(dom.reasonWrap.style.display, 'none')
   assert.equal(dom.projectName.textContent, 'Launch Campaign')
   assert.equal(dom.projectId.textContent, '675')
@@ -7535,10 +7535,9 @@ test('brand termination hides all text inputs and never submits a review', async
   })
 
   assert.ok(await waitFor(() => dom.label.textContent !== 'End Project'))
-  assert.equal(actionBody.action, 'terminate')
-  assert.equal(actionBody.reason, 'Project ended early')
-  assert.equal(reviewCount, 0)
-  assert.match(dom.label.textContent, /Project ended/)
+  assert.equal(actionBody.action, 'complete')
+  assert.equal(actionBody.reason, '')
+  assert.equal(reviewCount, 1)
 })
 
 test('starter end-project modal completes without review fields', async () => {
@@ -7575,15 +7574,14 @@ test('starter end-project modal completes without review fields', async () => {
   assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
 
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
-  assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
+  assert.ok(await waitFor(() => dom.title.textContent === 'End Project'))
   assert.equal(dom.reviewGroup.style.display, 'none')
   assert.equal(dom.reasonWrap.style.display, 'none')
   assert.equal(dom.projectName.textContent, 'Launch Campaign')
   assert.equal(dom.projectId.textContent, '675')
 
-  bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
-  assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
   assert.equal(dom.submitText.textContent, 'Mark Work Complete')
+  assert.equal(dom.toggle.style.display, 'none')
   assert.equal(dom.reviewGroup.style.display, 'none')
   assert.equal(dom.reasonWrap.style.display, 'none')
   assert.equal(dom.projectName.textContent, 'Launch Campaign')
@@ -7601,7 +7599,7 @@ test('starter end-project modal completes without review fields', async () => {
   assert.equal(actionBody.reason, '')
 })
 
-test('early-end mode hides the reason input and sends the fixed terminate reason', async () => {
+test('active project mode toggle is hidden and submits only completion', async () => {
   const dom = endProjectDom({ reason: '' })
   let actionBody = null
   const bridge = await loadBridge(
@@ -7623,7 +7621,7 @@ test('early-end mode hides the reason input and sends the fixed terminate reason
       if (url.includes('/projects/action/v3')) {
         actionBody = JSON.parse(init.body)
         return response({
-          project: { id: 675, lifecycle_state: 'terminated', lifecycle_version: 5 },
+          project: { id: 675, lifecycle_state: 'completed', lifecycle_version: 5 },
         })
       }
       throw new Error(`Unexpected request: ${url}`)
@@ -7636,9 +7634,10 @@ test('early-end mode hides the reason input and sends the fixed terminate reason
   assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
 
   bridge.dispatchDocument('click', clickEvent(dom.toggle).event)
-  assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
+  assert.equal(dom.title.textContent, 'End Project & Review')
+  assert.equal(dom.toggle.style.display, 'none')
   assert.equal(dom.reasonWrap.style.display, 'none')
-  assert.equal(dom.reviewGroup.style.display, 'none')
+  assert.equal(dom.reviewGroup.style.display, '')
 
   bridge.dispatchDocument('submit', {
     target: dom.form,
@@ -7646,8 +7645,8 @@ test('early-end mode hides the reason input and sends the fixed terminate reason
     stopPropagation() {},
   })
   assert.ok(await waitFor(() => actionBody !== null))
-  assert.equal(actionBody.action, 'terminate')
-  assert.equal(actionBody.reason, 'Project ended early')
+  assert.equal(actionBody.action, 'complete')
+  assert.equal(actionBody.reason, '')
 })
 
 test('end-project falls back to confirmation when the modal markup is absent', async () => {
@@ -7698,7 +7697,7 @@ test('end-project falls back to confirmation when the modal markup is absent', a
   assert.equal(actionBody.reason, '')
 })
 
-test('early-end fallback uses confirmation and sends the fixed reason', async () => {
+test('declining the one completion fallback leaves an active project unchanged', async () => {
   const dom = endProjectDom()
   dom.modal.attributes.delete('data-modal-target')
   let actionBody = null
@@ -7721,9 +7720,7 @@ test('early-end fallback uses confirmation and sends the fixed reason', async ()
       }
       if (url.includes('/projects/action/v3')) {
         actionBody = JSON.parse(init.body)
-        return response({
-          project: { id: 675, lifecycle_state: 'terminated', lifecycle_version: 5 },
-        })
+        return response({ project: { id: 675, lifecycle_state: 'completed', lifecycle_version: 5 } })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -7731,7 +7728,7 @@ test('early-end fallback uses confirmation and sends the fixed reason', async ()
   )
   bridge.window.confirm = (message) => {
     confirmations.push(message)
-    return confirmations.length === 2
+    return false
   }
   bridge.window.prompt = () => {
     throw new Error('early-end fallback must not expose a text input')
@@ -7740,10 +7737,9 @@ test('early-end fallback uses confirmation and sends the fixed reason', async ()
 
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
 
-  assert.ok(await waitFor(() => actionBody !== null))
-  assert.equal(confirmations.length, 2)
-  assert.equal(actionBody.action, 'terminate')
-  assert.equal(actionBody.reason, 'Project ended early')
+  await new Promise(setImmediate)
+  assert.equal(confirmations.length, 1)
+  assert.equal(actionBody, null)
 })
 
 test('cancel prompt fallback requires and returns the typed ops note', async (t) => {
@@ -7860,7 +7856,7 @@ test('hiding a modal group clears required so the form can still submit', async 
   )
   await new Promise(setImmediate)
 
-  // Starter early-end also hides the reason group and clears its constraint.
+  // Starter completion also hides the reason group and clears its constraint.
   const starterDom = endProjectDom()
   starterDom.reason.required = true
   const starterBridge = await loadBridge(
@@ -7878,12 +7874,12 @@ test('hiding a modal group clears required so the form can still submit', async 
   )
   assert.ok(await waitFor(() => starterDom.end.getAttribute('data-project-action') === 'end'))
   starterBridge.dispatchDocument('click', clickEvent(starterDom.end).event)
-  assert.ok(await waitFor(() => starterDom.title.textContent === 'End Project Early'))
+  assert.ok(await waitFor(() => starterDom.title.textContent === 'End Project'))
   assert.equal(starterDom.reasonWrap.style.display, 'none')
   assert.equal(starterDom.reason.required, false, 'a hidden required control cannot block submit')
 })
 
-test('starter early-end reveals the hidden Webflow project identity rows', async () => {
+test('starter completion reveals the hidden Webflow project identity rows', async () => {
   const dom = endProjectDom({ identityRowsHidden: true })
   const bridge = await loadBridge(
     async (input) => {
@@ -7906,7 +7902,7 @@ test('starter early-end reveals the hidden Webflow project identity rows', async
   assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
 
   bridge.dispatchDocument('click', clickEvent(dom.end).event)
-  assert.ok(await waitFor(() => dom.title.textContent === 'End Project Early'))
+  assert.ok(await waitFor(() => dom.title.textContent === 'End Project'))
 
   assert.equal(dom.projectName.textContent, 'Starter identity visibility regression')
   assert.equal(dom.projectId.textContent, '675')
