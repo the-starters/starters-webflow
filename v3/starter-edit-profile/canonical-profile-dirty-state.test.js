@@ -61,7 +61,7 @@ function beforeUnload(window) {
 
   const save = state.beginSave(1)
   assert.equal(beforeUnload(window).prevented, true, 'an in-flight save remains protected')
-
+  state.sealSave(save)
   state.finishSave(1, true, save)
   assert.equal(beforeUnload(window).prevented, false, 'an accepted save clears its step')
 }
@@ -75,6 +75,7 @@ function beforeUnload(window) {
   assert.equal(beforeUnload(window).prevented, true, 'a failed save keeps the warning')
 
   const retrySave = state.beginSave(2)
+  state.sealSave(retrySave)
   state.finishSave(2, true, retrySave)
   assert.equal(beforeUnload(window).prevented, false, 'a repeated successful save clears it')
 }
@@ -85,9 +86,11 @@ function beforeUnload(window) {
   document.dispatch('input', { target: field(1) })
   document.dispatch('input', { target: field(2) })
   const firstSave = state.beginSave(1)
+  state.sealSave(firstSave)
   state.finishSave(1, true, firstSave)
   assert.equal(beforeUnload(window).prevented, true, 'saving one step preserves another dirty step')
   const secondSave = state.beginSave(2)
+  state.sealSave(secondSave)
   state.finishSave(2, true, secondSave)
   assert.equal(beforeUnload(window).prevented, false)
 }
@@ -98,8 +101,21 @@ function beforeUnload(window) {
   document.dispatch('input', { target: field(1) })
   const save = state.beginSave(1)
   document.dispatch('input', { target: field(1) })
+  state.sealSave(save)
+  document.dispatch('input', { target: field(1) })
   state.finishSave(1, true, save)
-  assert.equal(beforeUnload(window).prevented, true, 'an accepted save preserves edits made after it began')
+  assert.equal(beforeUnload(window).prevented, true, 'an accepted save preserves edits made after its payload snapshot')
+}
+
+{
+  const { window, document, state } = loadDirtyState()
+  state.finishHydration()
+  document.dispatch('input', { target: field(1) })
+  const save = state.beginSave(1)
+  document.dispatch('input', { target: field(1) })
+  state.sealSave(save)
+  state.finishSave(1, true, save)
+  assert.equal(beforeUnload(window).prevented, false, 'an accepted save clears edits included in its later payload snapshot')
 }
 
 console.log('Edit Profile dirty-state behavior passed')

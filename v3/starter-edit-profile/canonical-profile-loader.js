@@ -46,6 +46,11 @@
                 savingSteps.set(key, saves);
                 return token;
             },
+            sealSave: function (token) {
+                if (!token || !token.key) return token;
+                token.revision = dirtyRevisions.get(token.key) || 0;
+                return token;
+            },
             finishSave: function (stepIndex, saved, token) {
                 var key = stepKey(stepIndex);
                 var saves = savingSteps.get(key);

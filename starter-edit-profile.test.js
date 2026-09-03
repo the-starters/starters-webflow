@@ -571,7 +571,12 @@ async function testNon2xx() {
 async function testSaveLifecycleUpdatesDirtyState() {
   const calls = []
   const dirtyState = {
-    beginSave(stepIndex) { calls.push(['begin', stepIndex]) },
+    beginSave(stepIndex) {
+      const token = { stepIndex }
+      calls.push(['begin', stepIndex])
+      return token
+    },
+    sealSave(token) { calls.push(['seal', token.stepIndex]) },
     finishSave(stepIndex, saved) { calls.push(['finish', stepIndex, saved]) },
   }
   const request = deferred()
@@ -579,14 +584,19 @@ async function testSaveLifecycleUpdatesDirtyState() {
   const submission = submit(environment)
   await new Promise(setImmediate)
 
-  assert.deepEqual(calls, [['begin', 2]], 'the warning stays active during the request')
+  assert.deepEqual(calls, [['begin', 2], ['seal', 2]], 'the warning starts early and seals at the payload snapshot')
   request.resolve({ ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) })
   await submission
-  assert.deepEqual(calls, [['begin', 2], ['finish', 2, true]])
+  assert.deepEqual(calls, [['begin', 2], ['seal', 2], ['finish', 2, true]])
 
   const failedCalls = []
   const failedState = {
-    beginSave(stepIndex) { failedCalls.push(['begin', stepIndex]) },
+    beginSave(stepIndex) {
+      const token = { stepIndex }
+      failedCalls.push(['begin', stepIndex])
+      return token
+    },
+    sealSave(token) { failedCalls.push(['seal', token.stepIndex]) },
     finishSave(stepIndex, saved) { failedCalls.push(['finish', stepIndex, saved]) },
   }
   const failed = createEnvironment(async () => ({
@@ -595,7 +605,7 @@ async function testSaveLifecycleUpdatesDirtyState() {
     json: async () => ({ message: 'failed' }),
   }), { stepIndex: 2, dirtyState: failedState })
   await submit(failed)
-  assert.deepEqual(failedCalls, [['begin', 2], ['finish', 2, false]])
+  assert.deepEqual(failedCalls, [['begin', 2], ['seal', 2], ['finish', 2, false]])
 }
 
 async function testCanonicalSaveWithPendingProjectionNeverShowsWholeFormFailure() {

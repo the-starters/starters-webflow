@@ -660,7 +660,7 @@ onDomReady(function () {
 
 						saveToken = window.__tsProfileDirtyState?.beginSave(stepIndex);
 						saveStarted = true;
-						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof);
+						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof, saveToken);
 					} finally {
 						if (saveStarted) window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted, saveToken);
 						rejectReplayProof(replayProof);
@@ -669,7 +669,7 @@ onDomReady(function () {
 			});
 		}
 
-		async function submitStep(stepIndex, submitButton, replayProof = null) {
+		async function submitStep(stepIndex, submitButton, replayProof = null, saveToken = null) {
 			setSubmitLoading(submitButton, true);
 			let memberScope;
 			try {
@@ -787,6 +787,12 @@ onDomReady(function () {
 				setSubmitLoading(submitButton, false);
 				return;
 			}
+
+			// The payload now owns every edit made through this point. Keep the
+			// active-save warning that began before async preparation, but move its
+			// accepted revision boundary to this exact payload snapshot. An edit
+			// after this line is not in the request and must remain dirty.
+			window.__tsProfileDirtyState?.sealSave?.(saveToken);
 
 			// if (!localStorage.getItem('editSubmit') || localStorage.getItem('editSubmit') !== 'true') {
 			// 	console.log(`Step ${stepIndex} submit skipped (disabled by localStorage).`);
