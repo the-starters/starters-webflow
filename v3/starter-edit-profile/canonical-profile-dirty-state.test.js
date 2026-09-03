@@ -56,7 +56,10 @@ function beforeUnload(window) {
   state.finishHydration()
   assert.equal(beforeUnload(window).prevented, false, 'unchanged navigation stays clean')
 
-  document.dispatch('change', { target: field(1) })
+  document.dispatch('input', { target: field(3), isTrusted: false })
+  assert.equal(beforeUnload(window).prevented, false, 'late synthetic hydration changes stay clean')
+
+  document.dispatch('change', { target: field(1), isTrusted: true })
   assert.equal(beforeUnload(window).prevented, true, 'a real edit warns before navigation')
 
   const save = state.beginSave(1)

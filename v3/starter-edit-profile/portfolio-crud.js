@@ -70,6 +70,24 @@ function getStoredPortfolioCoverId(images) {
   return coverImage ? Number(coverImage.id) : null;
 }
 
+function removeCommittedPortfolioDrafts(pending, committed) {
+  const createDrafts = pending.createDrafts.filter(function (draft) {
+    return !committed.createDrafts.includes(draft);
+  });
+  const updateDrafts = new Map(pending.updateDrafts);
+  const deleteDraftIds = new Set(pending.deleteDraftIds);
+
+  committed.updateDrafts.forEach(function (draft) {
+    const id = String(draft.id);
+    if (updateDrafts.get(id) === draft) updateDrafts.delete(id);
+  });
+  committed.deleteDraftIds.forEach(function (portfolioId) {
+    deleteDraftIds.delete(String(portfolioId));
+  });
+
+  return { createDrafts, updateDrafts, deleteDraftIds };
+}
+
 async function commitStarterEditPortfolioDrafts(options) {
   for (const draft of options.createDrafts) {
     await options.commitCreateDraft(draft);
@@ -79,10 +97,10 @@ async function commitStarterEditPortfolioDrafts(options) {
     await options.commitUpdateDraft(draft);
   }
 
-  await options.commitDeleteDrafts();
-  options.clearAllDraftQueues();
-  await options.renderPortfolios();
+  await options.commitDeleteDrafts(options.deleteDraftIds);
+  options.clearCommittedDrafts(options.createDrafts, options.updateDrafts, options.deleteDraftIds);
   if (options.onCommitted) options.onCommitted();
+  await options.renderPortfolios();
   options.successController.showForSubmit(options.updateDrafts.length);
 }
 
@@ -315,10 +333,19 @@ async function commitStarterEditPortfolioDrafts(options) {
         removeUpdateDraft(portfolio.id);
       }
 
-      function clearAllDraftQueues() {
-        pendingCreateDrafts = [];
-        pendingUpdateDrafts = new Map();
-        pendingDeleteDraftIds = new Set();
+      function clearCommittedDrafts(createDrafts, updateDrafts, deleteDraftIds) {
+        const remaining = removeCommittedPortfolioDrafts({
+          createDrafts: pendingCreateDrafts,
+          updateDrafts: pendingUpdateDrafts,
+          deleteDraftIds: pendingDeleteDraftIds,
+        }, {
+          createDrafts: createDrafts,
+          updateDrafts: updateDrafts,
+          deleteDraftIds: deleteDraftIds,
+        });
+        pendingCreateDrafts = remaining.createDrafts;
+        pendingUpdateDrafts = remaining.updateDrafts;
+        pendingDeleteDraftIds = remaining.deleteDraftIds;
       }
 
       function resetEditDraftState() {
@@ -1119,8 +1146,8 @@ async function commitStarterEditPortfolioDrafts(options) {
         }
       }
 
-      async function commitDeleteDrafts() {
-        for (const portfolioId of pendingDeleteDraftIds) {
+      async function commitDeleteDrafts(deleteDraftIds) {
+        for (const portfolioId of deleteDraftIds) {
           await deletePortfolio({
             id: Number(portfolioId),
             memberstack_id: MEMBER.id,
@@ -1160,14 +1187,16 @@ async function commitStarterEditPortfolioDrafts(options) {
 
           const createDrafts = pendingCreateDrafts.slice();
           const updateDrafts = Array.from(pendingUpdateDrafts.values());
+          const deleteDraftIds = Array.from(pendingDeleteDraftIds);
 
           await commitStarterEditPortfolioDrafts({
             createDrafts: createDrafts,
             updateDrafts: updateDrafts,
+            deleteDraftIds: deleteDraftIds,
             commitCreateDraft: commitCreateDraft,
             commitUpdateDraft: commitUpdateDraft,
             commitDeleteDrafts: commitDeleteDrafts,
-            clearAllDraftQueues: clearAllDraftQueues,
+            clearCommittedDrafts: clearCommittedDrafts,
             renderPortfolios: renderPortfolios,
             successController: successController,
             onCommitted: function () { saved = true; },

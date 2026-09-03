@@ -66,7 +66,7 @@
         };
 
         function recordEdit(event) {
-            if (hydrating) return;
+            if (hydrating || event.isTrusted === false) return;
             var stepIndex = stepFromTarget(event.target);
             if (stepIndex) state.markDirty(stepIndex);
         }

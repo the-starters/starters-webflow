@@ -834,13 +834,14 @@ function starterProfileCompanyMonthYearLabel(value) {
 
             async function commitAlsoWorkedWith() {
                 if (!hasAlsoWorkedWithChanges()) return;
+                const submittedAlsoWorkedWith = alsoWorkedWithInput.value;
 
                 const request = () => fetch(XANO_SET_ALSO_WORKED_WITH_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         member_id: MEMBER.id,
-                        also_worked_with: alsoWorkedWithInput.value,
+                        also_worked_with: submittedAlsoWorkedWith,
                     }),
                 });
                 const diagnostics = window.StartersNativeFormDiagnostics;
@@ -860,7 +861,7 @@ function starterProfileCompanyMonthYearLabel(value) {
                     throw new Error((data && data.message) || `Also worked with save failed (${response.status})`);
                 }
 
-                alsoWorkedWithBaseline = alsoWorkedWithInput.value;
+                alsoWorkedWithBaseline = submittedAlsoWorkedWith;
             }
 
             function triggerFieldEvents(input) {
@@ -1383,8 +1384,8 @@ function starterProfileCompanyMonthYearLabel(value) {
                     await commitDeleteCompanyDrafts();
 
                     clearAllDraftQueues();
-                    await renderCompanies();
                     saved = true;
+                    await renderCompanies();
 
                     if (editFormSuccessTrigger) editFormSuccessTrigger.dispatchEvent(new Event('click', { bubbles: true }));
                 } catch (error) {
