@@ -34,8 +34,12 @@ round decimals, or convert exponent notation. The native inputs use `type="numbe
 `inputmode="numeric"`, and `step="1"`. Hourly and Paid Call rates allow `$1` through `$1,000`,
 Monthly Retainer allows `$1` through `$25,000`, and each Custom Service allows `$1` through `$50,000`.
 An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, unsafe integer, or value outside
-its range stops before the Xano request. Disabled or profile-type-inapplicable blank rates keep the
-existing zero or null compatibility state. No invalid value is silently clamped.
+its range stops before the Xano request. A toggle-owned rate is only validated while its own section
+says yes; a collapsed Monthly Retainer or Paid Call section keeps its existing zero or null
+compatibility state instead of blocking the submit on text the member cannot see. A blank
+profile-type-inapplicable Hourly Rate keeps the same zero compatibility state. Service prices and names
+live in hidden capture inputs, so their failures report through the authored error modal rather than
+native constraint validation. No invalid value is silently clamped.
 
 `inline-extraction-cutover-candidate.json` binds each source body to its authenticated published body
 length, SHA-256, complete-embed SHA-256, script index, component instance, and node or complete

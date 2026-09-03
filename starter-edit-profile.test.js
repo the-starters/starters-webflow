@@ -881,6 +881,60 @@ async function testStepSixPersistsExactPriceBoundaries() {
 	assert.equal(JSON.parse(payload.Services)['service-1'].price, 50000)
 }
 
+async function testStepSixPriceContractSurvivesABlankServiceCaptureField() {
+	const environment = saved({
+		stepIndex: 6,
+		additionalFormValues: [
+			['service', ''],
+			['offer-monthly-retainers', 'yes'],
+			['rate-retainer', '0'],
+		],
+	})
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.equal(environment.fields['[name="rate-retainer"]'].reportValidityCount, 1)
+	assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+}
+
+async function testServiceFailuresExplainThemselvesInTheErrorModal() {
+	const missingName = saved({
+		stepIndex: 6,
+		additionalFormValues: [['service', JSON.stringify({ name: '', price: '500' })]],
+	})
+	await submit(missingName)
+	assert.equal(missingName.requests.length, 0)
+	assert.equal(missingName.modalEvents.error, 1)
+	assert.match(missingName.errorFeedback.textContent, /service name is required/i)
+
+	const invalidPrice = saved({
+		stepIndex: 6,
+		additionalFormValues: [['service', JSON.stringify({ name: 'Audit', price: '0' })]],
+	})
+	await submit(invalidPrice)
+	assert.equal(invalidPrice.requests.length, 0)
+	assert.equal(invalidPrice.modalEvents.error, 1)
+	assert.match(invalidPrice.errorFeedback.textContent, /\$1 to \$50,000/)
+}
+
+async function testCollapsedRetainerSectionNeverBlocksStepSix() {
+	const unsetToggle = await submittedStepPayload(saved({
+		stepIndex: 6,
+		additionalFormValues: [['rate-retainer', '   ']],
+	}))
+	assert.equal(unsetToggle.Retainer_Enabled, undefined)
+	assert.equal(unsetToggle.Retainer_Rate, '   ')
+
+	const legacyDisabledValue = await submittedStepPayload(saved({
+		stepIndex: 6,
+		additionalFormValues: [
+			['offer-monthly-retainers', 'no'],
+			['rate-retainer', '30000'],
+		],
+	}))
+	assert.equal(legacyDisabledValue.Retainer_Enabled, false)
+	assert.equal(legacyDisabledValue.Retainer_Rate, '30000')
+}
+
 async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
   const consultPayload = await submittedStepPayload(saved({
     stepIndex: 6,
@@ -1433,6 +1487,9 @@ Promise.all([
   testEnabledOptionalRatesNeverSilentlyPersistZero(),
 	testStepSixRejectsInvalidWholeDollarPricesBeforeFetch(),
 	testStepSixPersistsExactPriceBoundaries(),
+	testStepSixPriceContractSurvivesABlankServiceCaptureField(),
+	testServiceFailuresExplainThemselvesInTheErrorModal(),
+	testCollapsedRetainerSectionNeverBlocksStepSix(),
   testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
