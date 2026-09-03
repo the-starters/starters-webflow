@@ -126,6 +126,9 @@ const observerCount = (node) =>
 /** one macrotask turn, long enough for queued microtask deliveries */
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
+/** a real timer turn; outlives password-validation's setTimeout(render, 0) settle pass */
+const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms))
+
 class Text {
   constructor(value) {
     this.nodeType = 3
@@ -1576,7 +1579,7 @@ test('the checklist gate and the busy button hand the same CTA back and forth', 
   fill(w.email, 'brand@example.com')
   fill(w.password, 'Passw0rd!')
   check(w.terms)
-  await flush()
+  await tick()
   assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'black')
   assert.equal(w.control.hasAttribute('aria-disabled'), false)
 
