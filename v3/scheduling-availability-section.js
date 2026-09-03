@@ -69,6 +69,8 @@
   const NOTIFICATION_MODAL_ID = 'availability-notification'
   const ERROR_TEXT_ITEM_SAVE =
     "We couldn't save this availability window. Please try again or contact support."
+  const ERROR_TEXT_ITEM_TIME =
+    'Enter a valid start and end time. The end time must be later than the start time.'
   const ERROR_TEXT_ITEM_REMOVE =
     "We couldn't remove this availability window. Please try again or contact support."
   const ERROR_TEXT_CONNECT_PLATFORM =
@@ -218,6 +220,24 @@
 
   function qsa(selector, scope) {
     return (scope || document).querySelectorAll(selector)
+  }
+
+  function normalizeAvailabilityTime(value) {
+    const match = String(value == null ? '' : value).trim().match(/^(\d{1,2})(?::(\d{2}))?$/)
+    if (!match) return null
+    const hours = Number(match[1])
+    const minutes = match[2] == null ? 0 : Number(match[2])
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null
+    return String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0')
+  }
+
+  function availabilityTimeMinutes(value) {
+    const parts = value.split(':')
+    return Number(parts[0]) * 60 + Number(parts[1])
+  }
+
+  function setTimeInputValidity(input, message) {
+    if (input && typeof input.setCustomValidity === 'function') input.setCustomValidity(message || '')
   }
 
   function elSel(name) {
@@ -2122,8 +2142,24 @@
       return
     }
 
+    const startTime = normalizeAvailabilityTime(startInput.value)
+    const endTime = normalizeAvailabilityTime(endInput.value)
+    const timesAreValid =
+      Boolean(startTime && endTime) && availabilityTimeMinutes(startTime) < availabilityTimeMinutes(endTime)
+    if (!timesAreValid) {
+      setTimeInputValidity(startInput, ERROR_TEXT_ITEM_TIME)
+      setTimeInputValidity(endInput, ERROR_TEXT_ITEM_TIME)
+      showNotificationError(ERROR_TEXT_ITEM_TIME)
+      console.warn('[scheduling-section] valid ascending start and end times required')
+      return
+    }
+    setTimeInputValidity(startInput, '')
+    setTimeInputValidity(endInput, '')
+    startInput.value = startTime
+    endInput.value = endTime
+
     const availId = form.dataset.availabilityId || id || 'general'
-    const avail = { days: selectedDays, start: startInput.value, end: endInput.value }
+    const avail = { days: selectedDays, start: startTime, end: endTime }
 
     setRequestBusy(true)
     try {

@@ -117,6 +117,8 @@ function createEnvironment(fetchImpl, {
     6: {
       '[name="rate"]': createField('[name="rate"]', { value: '125', required: publishedRequired(6, 'rate') }),
       '#availability-required': createField('#availability-required', { value: '1' }),
+      '[name="free-consulting-calls"]': createField('[name="free-consulting-calls"]', { value: 'yes' }),
+      '[name="free-call-description"]': createField('[name="free-call-description"]', { value: 'Legacy free description' }),
       '[name="paid-consulting-calls"]': createField('[name="paid-consulting-calls"]', { value: 'yes' }),
       '[name="paid-call-description"]': createField('[name="paid-call-description"]', { value: 'Legacy description' }),
       '[name="paid-call-rate"]': createField('[name="paid-call-rate"]', { value: '250' }),
@@ -167,8 +169,10 @@ function createEnvironment(fetchImpl, {
   step.querySelectorAll = (selector) => {
     if (selector === 'input, select, textarea') return Object.values(stepFields)
     if (selector === '[data-input-capture][required]') return captureFields
-    if (selector === '[name="paid-consulting-calls"],[name="paid-call-description"],[name="paid-call-rate"]') {
+    if (selector === '[name="free-consulting-calls"],[name="free-call-description"],[name="paid-consulting-calls"],[name="paid-call-description"],[name="paid-call-rate"]') {
       return [
+        stepFields['[name="free-consulting-calls"]'],
+        stepFields['[name="free-call-description"]'],
         stepFields['[name="paid-consulting-calls"]'],
         stepFields['[name="paid-call-description"]'],
         stepFields['[name="paid-call-rate"]'],
@@ -657,9 +661,24 @@ async function testStepSixNeverWritesPaidCallAuthority() {
   assert.equal(Object.hasOwn(payload, 'Paid_Call_Rate'), false)
 }
 
+async function testStepSixNeverWritesFreeCallAuthority() {
+  const payload = await submittedStepPayload(saved({
+    stepIndex: 6,
+    additionalFormValues: [
+      ['free-consulting-calls', 'yes'],
+      ['free-call-description', 'Legacy profile form value'],
+    ],
+  }))
+
+  assert.equal(Object.hasOwn(payload, 'Free_Call_Enabled'), false)
+  assert.equal(Object.hasOwn(payload, 'Free_Call_Description'), false)
+}
+
 async function testStepSixDisablesLegacyPaidCallControlsAndLinksCanonicalSettings() {
   const environment = saved({ stepIndex: 6 })
   const controlSelectors = [
+    '[name="free-consulting-calls"]',
+    '[name="free-call-description"]',
     '[name="paid-consulting-calls"]',
     '[name="paid-call-description"]',
     '[name="paid-call-rate"]',
@@ -672,7 +691,7 @@ async function testStepSixDisablesLegacyPaidCallControlsAndLinksCanonicalSetting
   const notice = environment.step.children.find((child) => child.hasAttribute('data-paid-call-profile-notice'))
   assert.ok(notice)
   assert.equal(notice.children[0].href, '/starter-dashboard#calendar')
-  assert.equal(notice.children[0].textContent, 'Paid Call Settings')
+  assert.equal(notice.children[0].textContent, 'Call Settings')
 }
 
 async function testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone() {
@@ -1263,6 +1282,7 @@ Promise.all([
   testEveryOwnedSectionOpensSuccessModal(),
   testOptionalRatesPreserveCanonicalZeroSentinel(),
   testStepSixNeverWritesPaidCallAuthority(),
+  testStepSixNeverWritesFreeCallAuthority(),
   testStepSixDisablesLegacyPaidCallControlsAndLinksCanonicalSettings(),
   testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
   testPhoneCountryChangeCountsAsAMemberEdit(),
