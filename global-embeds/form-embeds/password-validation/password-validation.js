@@ -1,5 +1,7 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation
 //
+// @release v1.59.502
+//
 // Password validation — configured entirely from wrapper attributes so a
 // Webflow component instance can pick its own rule set with no code changes.
 //
@@ -34,10 +36,13 @@
 // type="button" overlay never fires the native submit path on its own, so an
 // enabled click on a non-submitting control dispatches a cancelable synthetic
 // submit event — what Memberstack's listener consumes — and never a native
-// submission (see triggerSubmit for why requestSubmit is unsafe). Disabling
-// covers the wrap AND every overlay control inside it (native `disabled` +
-// aria-disabled), so the visible button can never stay live while only the
-// hidden one is gated.
+// submission (see triggerSubmit for why requestSubmit is unsafe). That bridge
+// is installed on EVERY form[data-ms-form] carrying [ms-code-submit-button],
+// wrapper or not — it is the only submit path such a CTA has, so a fail-open
+// form still submits; the click is gated only where a wrapper configures rules.
+// Disabling covers the wrap AND every overlay control inside it (native
+// `disabled` + aria-disabled), so the visible button can never stay live while
+// only the hidden one is gated.
 //
 // Memberstack rejections after the click (duplicate email, 4xx/5xx, Turnstile,
 // network) used to be console-only. A submit that passes the gate arms a
@@ -63,6 +68,9 @@
   var ICON_ATTR = PREFIX + 'icon';
   var DEFAULT_COUNT = 8;
   var WIRED_FLAG = '__startersPasswordValidation';
+  var BRIDGE_FLAG = '__startersPasswordBridge';
+  var SUBMIT_BUTTON_SELECTOR = '[ms-code-submit-button]';
+  var MS_FORM_SELECTOR = 'form[data-ms-form]';
 
   // Rule predicates. Adding a rule is one entry here plus one Webflow
   // attribute — the key IS the attribute suffix and the row's rule value.
@@ -499,6 +507,62 @@
     };
   }
 
+  // --- submit bridge --------------------------------------------------------
+  // At most one submit and one click listener per form, wired or not. Both read
+  // form[WIRED_FLAG] at event time, so a form bridged pass-through and wired
+  // later by rescan() gates without re-binding. Callers own the opt-in: this
+  // adds listeners to any form handed to it.
+  function ensureBridge(form) {
+    var bridge = form[BRIDGE_FLAG];
+
+    if (!bridge) {
+      bridge = form[BRIDGE_FLAG] = { root: null, button: null, surface: failSurface(form) };
+
+      form.addEventListener('submit', function (event) {
+        // Recompute FIRST, then adjudicate on what came back.
+        var wired = form[WIRED_FLAG];
+        if (wired && !wired.render()) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return;
+        }
+        // A submit that goes through is Memberstack's to win or lose; watch for
+        // the loss so it lands on the form instead of the console.
+        if (form.getAttribute && form.getAttribute('data-ms-form') !== null) {
+          armOutcome(bridge.surface);
+        }
+      }, true);
+    }
+
+    if (bridge.root) return bridge;
+    var root = form.querySelector(SUBMIT_BUTTON_SELECTOR);
+    if (!root) return bridge;
+    bridge.root = root;
+    bridge.button = resolveButton(root, form);
+
+    // A control that is not a native submitter (type="button", an anchor, a div
+    // wrap) never fires the submit path on its own, so its click dispatches the
+    // submit event Memberstack consumes. A native submitter is left alone.
+    root.addEventListener('click', function (event) {
+      var wired = form[WIRED_FLAG];
+      var gate = wired ? wired.render() : true;
+      var control = clickedControl(event, bridge.button);
+      if (!gate) {
+        // A disabled native control never gets here; an anchor or a stale
+        // overlay still can, and must not navigate or submit.
+        if (event.preventDefault) event.preventDefault();
+        return;
+      }
+      if (isNativeSubmitter(control)) return;
+      if (control && control.matches && control.matches('a') && event.preventDefault) {
+        event.preventDefault();
+      }
+      triggerSubmit(form);
+    });
+
+    return bridge;
+  }
+
   function activeRules(wrapper) {
     var active = [];
     for (var i = 0; i < RULE_NAMES.length; i++) {
@@ -622,7 +686,7 @@
       return;
     }
 
-    var buttonRoot = form.querySelector('[ms-code-submit-button]');
+    var buttonRoot = form.querySelector(SUBMIT_BUTTON_SELECTOR);
     if (!buttonRoot) {
       // Not fatal — the Enter-key blocker still gates the form — but it means
       // the visible CTA never greys out, which is always a wiring mistake.
@@ -632,7 +696,7 @@
         form
       );
     }
-    var button = resolveButton(buttonRoot, form);
+    var button = ensureBridge(form).button;
     if (button && !button.themeEl && !button.native) {
       // Nothing to grey and nothing to disable: the CTA will look and behave
       // identical whether the password passes or not.
@@ -659,7 +723,6 @@
 
     var emailInput = form.querySelector('input[data-ms-member="email"]');
     var termsInput = form.querySelector('input[data-ms-member="terms-and-condition"]');
-    var surface = failSurface(form);
 
     // Returns the verdict rather than stashing it, so no caller can ever
     // adjudicate on a copy that has gone stale.
@@ -721,44 +784,6 @@
       if (typeof setTimeout === 'function') setTimeout(render, 0);
     });
 
-    form.addEventListener('submit', function (event) {
-      // Recompute FIRST, then adjudicate on what came back.
-      if (!render()) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        return;
-      }
-      // A submit that goes through is Memberstack's to win or lose; watch for
-      // the loss so it lands on the form instead of the console.
-      if (form.getAttribute && form.getAttribute('data-ms-form') !== null) {
-        armOutcome(surface);
-      }
-    }, true);
-
-    if (buttonRoot) {
-      // The click is a recompute point of its own, and the bridge for the
-      // live overlay: an enabled control that is not a native submitter
-      // (type="button", an anchor, a div wrap) never fires the submit path on
-      // its own, so its click runs the form's requestSubmit — the resulting
-      // submit event is what Memberstack consumes. An enabled native
-      // submitter is left entirely alone.
-      buttonRoot.addEventListener('click', function (event) {
-        var gate = render();
-        var control = clickedControl(event, button);
-        if (!gate) {
-          // A disabled native control never gets here; an anchor or a stale
-          // overlay still can, and must not navigate or submit.
-          if (event.preventDefault) event.preventDefault();
-          return;
-        }
-        if (isNativeSubmitter(control)) return;
-        if (control && control.matches && control.matches('a') && event.preventDefault) {
-          event.preventDefault();
-        }
-        triggerSubmit(form);
-      });
-    }
-
     // First paint: states every active rule, met or not.
     render();
 
@@ -771,8 +796,11 @@
     // is already gating). Such a wrapper is adopted into the existing
     // instance — copy, rows and icons — rather than re-wiring the form, so
     // the config and the listeners stay exactly where the first pass put them.
+    // render is read by the bridge's listeners at event time, so a form bridged
+    // before it was wired starts gating from this assignment on.
     form[WIRED_FLAG] = {
       wrappers: wrappers,
+      render: render,
       adopt: function (extra) {
         if (wrappers.indexOf(extra) !== -1) return;
         wrappers.push(extra);
@@ -862,6 +890,15 @@
 
     for (var k = 0; k < instances.length; k++) {
       setUp(instances[k].wrappers, instances[k].form);
+    }
+
+    // The overlay CTA has no submit path of its own, so every Memberstack form
+    // carrying one gets the bridge — validated or not. data-ms-form is the
+    // opt-in: a non-Memberstack form using the same Button component is left
+    // entirely untouched, no listeners at all.
+    var msForms = document.querySelectorAll(MS_FORM_SELECTOR);
+    for (var m = 0; m < msForms.length; m++) {
+      if (msForms[m].querySelector(SUBMIT_BUTTON_SELECTOR)) ensureBridge(msForms[m]);
     }
   }
 

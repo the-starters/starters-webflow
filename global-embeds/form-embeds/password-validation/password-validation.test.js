@@ -2254,3 +2254,162 @@ test('r5-9: unchecking a custom terms checkbox regreys once the visual state set
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(overlayGated(f), true, 'the deferred render reads the settled state')
 })
+
+// ===========================================================================
+// Round 6 — the submit bridge is independent of the rules gate
+//
+// The live SIGN UP CTA is a type="button" overlay, and this script's click
+// bridge is the only thing that turns it into a submit. Removing the
+// validation component from the page removed the bridge with it, so Sign up
+// did nothing at all. The bridge now belongs to every form[data-ms-form]
+// carrying [ms-code-submit-button]; the gate still belongs to the wrapper.
+// ===========================================================================
+
+/**
+ * A Memberstack signup form with the live Button component and, unlike
+ * liveSetup, no wrapper unless one is asked for.
+ * @param {{config?: object|null, cta?: 'overlay'|'native'|'anchor', msForm?: boolean, mount?: object}} [opts]
+ */
+function bridgeSetup(opts = {}) {
+  const input = h('input', { type: 'password', 'data-ms-member': 'password' })
+  const email = h('input', { type: 'email', 'data-ms-member': 'email' })
+  const terms = h('input', { type: 'checkbox', 'data-ms-member': 'terms-and-condition' })
+  terms.checked = false
+
+  let control
+  let ctaRoot
+  if (opts.cta === 'native') {
+    control = h('button', { type: 'submit', 'ms-code-submit-button': '' }, ['Sign up'])
+    ctaRoot = control
+  } else {
+    if (opts.cta === 'anchor') {
+      control = h('a', { href: '#' }, ['Sign up'])
+      control.classList.add('clickable_link')
+    } else {
+      control = h('button', { type: 'button' }, ['Sign up'])
+      control.classList.add('clickable_btn')
+    }
+    const clickWrap = h('div', {}, [control])
+    clickWrap.classList.add('clickable_wrap')
+    ctaRoot = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [clickWrap])
+    ctaRoot.classList.add('button_main-wrap')
+  }
+
+  const inForm = [input, email, terms]
+  let wrapper = null
+  let rows = null
+  if (opts.config) {
+    const built = buildWrapper(opts.config)
+    wrapper = built.wrapper
+    rows = built.rows
+    inForm.push(wrapper)
+  }
+  inForm.push(ctaRoot)
+
+  const form = h('form', opts.msForm === false ? {} : { 'data-ms-form': 'signup' }, inForm)
+  const submits = []
+  form.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submits.push(event)
+  })
+
+  const failText = h('div', {}, ['Something went wrong'])
+  const fail = h('div', {}, [failText])
+  fail.classList.add('w-form-fail')
+  const wForm = h('div', {}, [form, fail])
+  wForm.classList.add('w-form')
+
+  const app = mount(h('body', {}, [wForm]), opts.mount || {})
+  return Object.assign(
+    { form, input, email, terms, control, ctaRoot, wrapper, rows, submits, fail, failText },
+    app,
+  )
+}
+
+/** the CTA is exactly as authored: no gating treatment anywhere on it */
+const ctaUntouched = (f) =>
+  !f.ctaRoot.classList.contains('disabled') &&
+  f.ctaRoot.getAttribute('data-button-theme') === 'black' &&
+  f.ctaRoot.getAttribute('aria-disabled') === null &&
+  f.control.disabled === undefined &&
+  f.control.getAttribute('disabled') === null &&
+  f.control.getAttribute('aria-disabled') === null
+
+test('r6-1: an overlay CTA on a wrapperless Memberstack form still submits', () => {
+  const f = bridgeSetup({ mount: onStaging() })
+
+  const click = dispatch(f.control, 'click')
+  assert.equal(click.defaultPrevented, false, 'the type=button click is left alone')
+  assert.equal(f.submits.length, 1, 'one synthetic submit reached the page (Memberstack) handler')
+  assert.equal(f.submits[0].stopped, false, 'no capture-phase blocker interfered')
+  assert.equal(ctaUntouched(f), true, 'no wrapper means no gating treatment')
+  assert.deepEqual(f.warnings, [], 'a wrapperless signup form is a legitimate shape')
+})
+
+test('r6-2: a fail-open wrapper (every toggle off) still submits on click', () => {
+  const f = bridgeSetup({ config: ZERO_RULES })
+
+  dispatch(f.control, 'click')
+  assert.equal(f.submits.length, 1)
+  assert.equal(ctaUntouched(f), true, 'fail open still means no gating treatment')
+})
+
+test('r6-3: a native submitter under the marker is never double-submitted', () => {
+  const f = bridgeSetup({ cta: 'native' })
+
+  assert.equal(f.ctaRoot.listenerCount('click'), 1, 'the bridge is bound')
+  dispatch(f.control, 'click')
+  assert.equal(f.submits.length, 0, 'the browser owns a type=submit click; the bridge adds nothing')
+})
+
+test('r6-4: an anchor CTA is prevented and submits once', () => {
+  const f = bridgeSetup({ cta: 'anchor' })
+
+  const click = dispatch(f.control, 'click')
+  assert.equal(click.defaultPrevented, true, 'the anchor must not navigate')
+  assert.equal(f.submits.length, 1)
+})
+
+test('r6-5: a form without data-ms-form is left entirely alone', () => {
+  const f = bridgeSetup({ msForm: false })
+
+  assert.equal(f.form.listenerCount('submit'), 1, 'only the page own handler')
+  assert.equal(f.ctaRoot.listenerCount('click'), 0, 'no bridge on a non-Memberstack form')
+  dispatch(f.control, 'click')
+  assert.equal(f.submits.length, 0)
+})
+
+test('r6-6: a bridged form that gains a wrapper on rescan starts gating, once', () => {
+  const f = bridgeSetup()
+  const { wrapper } = buildWrapper(SIGNUP_RULES)
+  f.form.append(wrapper)
+  f.window.startersPasswordValidation.rescan()
+
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus one gate')
+  assert.equal(f.ctaRoot.listenerCount('click'), 1, 'still one bridge, not two')
+
+  type(f, 'weakpass')
+  assert.equal(dispatch(f.form, 'submit').defaultPrevented, true, 'the gate now blocks')
+  dispatch(f.control, 'click')
+  assert.equal(f.submits.length, 0, 'and blocks the click too')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  dispatch(f.control, 'click')
+  assert.equal(f.submits.length, 1, 'a satisfied form submits exactly once')
+})
+
+test('r6-7: a rejection after a wrapperless click still lands on the fail block', async () => {
+  const f = bridgeSetup({
+    mount: { fetch: () => Promise.resolve(msFailure({ message: 'That email is already registered.' })) },
+  })
+
+  dispatch(f.control, 'click')
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+
+  assert.equal(f.fail.style.display, 'block')
+  assert.equal(f.fail.getAttribute('role'), 'alert')
+  assert.equal(f.failText.textContent, 'That email is already registered.')
+})
