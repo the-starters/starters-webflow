@@ -29,6 +29,8 @@
   const TRADE_TOKEN_PATH = '/auth/trade-token/v3'
   const SUMMARY_PATH = '/starter/points/summary'
   const MEMBERSTACK_TIMEOUT_MS = 10000
+  const SUMMARY_REFRESH_INTERVAL_MS = 10000
+  const SUMMARY_REFRESH_MAX_ATTEMPTS = 60
   const ATTR = 'data-points-element'
   const selector = (name) => '[' + ATTR + '="' + name + '"]'
   const STATE_ELEMENTS = [
@@ -300,6 +302,34 @@
     return data
   }
 
+  function wait(milliseconds) {
+    return new Promise(function (resolve) {
+      global.setTimeout(resolve, milliseconds)
+    })
+  }
+
+  async function fetchSummaryUntilTerminal(memberstack, onSummary, options) {
+    const settings = options || {}
+    const intervalMs =
+      Number.isFinite(settings.intervalMs) && settings.intervalMs >= 0
+        ? settings.intervalMs
+        : SUMMARY_REFRESH_INTERVAL_MS
+    const maxAttempts =
+      Number.isInteger(settings.maxAttempts) && settings.maxAttempts > 0
+        ? settings.maxAttempts
+        : SUMMARY_REFRESH_MAX_ATTEMPTS
+    let summary = null
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      summary = await fetchSummary(memberstack)
+      onSummary(summary)
+      if (viewModel(summary).status !== 'refreshing') return summary
+      if (attempt + 1 < maxAttempts) await wait(intervalMs)
+    }
+
+    return summary
+  }
+
   async function mount() {
     const roots = Array.prototype.slice.call(
       global.document.querySelectorAll(selector('root')),
@@ -315,9 +345,10 @@
     }
 
     try {
-      const summary = await fetchSummary(memberstack)
-      roots.forEach(function (root) {
-        render(root, summary)
+      await fetchSummaryUntilTerminal(memberstack, function (summary) {
+        roots.forEach(function (root) {
+          render(root, summary)
+        })
       })
     } catch (error) {
       roots.forEach(renderError)
@@ -330,6 +361,7 @@
 
   const testApi = {
     fetchSummary,
+    fetchSummaryUntilTerminal,
     mount,
     ordinal,
     position,

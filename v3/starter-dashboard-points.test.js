@@ -496,3 +496,73 @@ test('summary fetch reuses the shared dashboard Xano token', async () => {
     global.getXanoAuthToken = previous.getXanoAuthToken
   }
 })
+
+test('refreshing summary is polled until the role rank is ready', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+  }
+  const responses = [
+    { total_points: 0, rank_status: 'refreshing' },
+    {
+      total_points: 0,
+      rank_status: 'ready',
+      overall_rank: 541,
+      overall_cohort_size: 720,
+      primary_role: {
+        label: 'AI Automation Expert',
+        rank: 9,
+        cohort_size: 10,
+      },
+    },
+  ]
+  const rendered = []
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => responses.shift(),
+  })
+
+  try {
+    const result = await api.fetchSummaryUntilTerminal(
+      {},
+      (summary) => rendered.push(summary.rank_status),
+      { intervalMs: 0, maxAttempts: 3 },
+    )
+
+    assert.deepEqual(rendered, ['refreshing', 'ready'])
+    assert.equal(result.primary_role.label, 'AI Automation Expert')
+  } finally {
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+  }
+})
+
+test('summary polling is bounded while refreshing persists', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+  }
+  let requestCount = 0
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.fetch = async () => {
+    requestCount += 1
+    return {
+      ok: true,
+      json: async () => ({ total_points: 0, rank_status: 'refreshing' }),
+    }
+  }
+
+  try {
+    const result = await api.fetchSummaryUntilTerminal({}, () => {}, {
+      intervalMs: 0,
+      maxAttempts: 3,
+    })
+
+    assert.equal(requestCount, 3)
+    assert.equal(result.rank_status, 'refreshing')
+  } finally {
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+  }
+})
