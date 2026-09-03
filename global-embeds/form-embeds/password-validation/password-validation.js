@@ -41,7 +41,10 @@
 // gated only where a wrapper configures rules — a fail-open form still submits.
 // Disabling covers the wrap AND every overlay control inside it (native
 // `disabled` + aria-disabled), so the visible button can never stay live while
-// only the hidden one is gated.
+// only the hidden one is gated. Each attribute we write is marked
+// `data-starters-pv-gated` and only ever cleared by us, so a refusal another
+// script wrote on the same CTA survives our renders — the bridge reads it and
+// stands down rather than submitting on that script's behalf.
 //
 // Memberstack rejections after the click (duplicate email, 4xx/5xx, Turnstile,
 // network) used to be console-only. A submit that is not blocked arms a

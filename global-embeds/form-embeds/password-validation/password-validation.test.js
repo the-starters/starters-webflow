@@ -2535,7 +2535,6 @@ test('r6-15: rescan refreshes a checklist bridge on a form with no data-ms-form'
   assert.equal(f.submits.length, 1, 'exactly one synthetic submit')
 })
 
-
 test('r6-16: a foreign refusal survives a render that runs before the click', () => {
   // real browsers fire the password field's focusout before the click, so the
   // render it triggers must not clear an aria-disabled we never wrote
