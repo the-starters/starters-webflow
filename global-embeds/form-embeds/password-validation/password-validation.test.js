@@ -2535,3 +2535,40 @@ test('r6-15: rescan refreshes a checklist bridge on a form with no data-ms-form'
   assert.equal(f.submits.length, 1, 'exactly one synthetic submit')
 })
 
+
+test('r6-16: a foreign refusal survives a render that runs before the click', () => {
+  // real browsers fire the password field's focusout before the click, so the
+  // render it triggers must not clear an aria-disabled we never wrote
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true, 'our gate is open')
+
+  f.wrapBtn.setAttribute('aria-disabled', 'true')
+  dispatch(f.input, 'focusout')
+  assert.equal(aria(f.wrapBtn), 'true', 'our render never removes what we did not write')
+
+  const click = dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'the other script refused this click')
+  assert.equal(click.defaultPrevented, false, 'and owns it — we do not preventDefault')
+})
+
+test('r6-16: aria-disabled that predates our gate is still there after we open', () => {
+  // another script marked the CTA before we ever gated it, so we never claimed
+  // that attribute and opening the gate must leave it alone
+  const f = liveSetup({ cta: 'none' })
+  const { wrapBtn, overlay } = buildCta('overlay')
+  wrapBtn.setAttribute('aria-disabled', 'true')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+
+  assert.equal(aria(wrapBtn), 'true', 'we did not write it, so we do not remove it')
+  assert.equal(aria(overlay), null, 'what we did write on the control is cleared')
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 0, 'and that refusal still stands the bridge down')
+})

@@ -289,6 +289,45 @@
     };
   }
 
+  // Ownership marker. Another script can disable the same CTA, and its refusal
+  // has to outlive our renders, so we only ever clear what we wrote ourselves.
+  var OWNED_ATTR = 'data-starters-pv-gated';
+
+  function ownsPart(el, part) {
+    var value = el && el.getAttribute ? el.getAttribute(OWNED_ATTR) : null;
+    return !!value && value.split(' ').indexOf(part) !== -1;
+  }
+
+  function claimPart(el, part) {
+    var value = el.getAttribute(OWNED_ATTR);
+    el.setAttribute(OWNED_ATTR, value ? value + ' ' + part : part);
+  }
+
+  function releasePart(el, part) {
+    var value = el.getAttribute(OWNED_ATTR);
+    if (!value) return;
+    var kept = [];
+    var parts = value.split(' ');
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i] && parts[i] !== part) kept.push(parts[i]);
+    }
+    if (kept.length) el.setAttribute(OWNED_ATTR, kept.join(' '));
+    else el.removeAttribute(OWNED_ATTR);
+  }
+
+  // Writing over a refusal we did not author would make it ours to clear.
+  function gateAria(el) {
+    if (isAriaDisabled(el)) return;
+    el.setAttribute('aria-disabled', 'true');
+    claimPart(el, 'aria');
+  }
+
+  function ungateAria(el) {
+    if (!ownsPart(el, 'aria')) return;
+    el.removeAttribute('aria-disabled');
+    releasePart(el, 'aria');
+  }
+
   function setDisabled(button, isDisabled) {
     if (!button) return;
     var themeEl = button.themeEl;
@@ -300,30 +339,32 @@
       button.root.classList.add('disabled');
       if (themeEl) {
         themeEl.setAttribute(THEME_ATTR, DISABLED_THEME);
-        if (controls.indexOf(themeEl) === -1) themeEl.setAttribute('aria-disabled', 'true');
+        if (controls.indexOf(themeEl) === -1) gateAria(themeEl);
       }
       for (i = 0; i < controls.length; i++) {
         el = controls[i];
-        el.setAttribute('aria-disabled', 'true');
-        if (isNativeControl(el)) {
+        gateAria(el);
+        if (isNativeControl(el) && !el.disabled) {
           el.disabled = true;
           el.setAttribute('disabled', 'disabled');
           el.setAttribute('tabindex', '-1');
+          claimPart(el, 'native');
         }
       }
     } else {
       button.root.classList.remove('disabled');
       if (themeEl) {
         if (button.theme !== null) themeEl.setAttribute(THEME_ATTR, button.theme);
-        if (controls.indexOf(themeEl) === -1) themeEl.removeAttribute('aria-disabled');
+        if (controls.indexOf(themeEl) === -1) ungateAria(themeEl);
       }
       for (i = 0; i < controls.length; i++) {
         el = controls[i];
-        el.removeAttribute('aria-disabled');
-        if (isNativeControl(el)) {
+        ungateAria(el);
+        if (isNativeControl(el) && ownsPart(el, 'native')) {
           el.disabled = false;
           el.removeAttribute('disabled');
           el.removeAttribute('tabindex');
+          releasePart(el, 'native');
         }
       }
     }
@@ -518,6 +559,10 @@
     return !!(el && el.getAttribute && el.getAttribute('aria-disabled') === 'true');
   }
 
+  function foreignAria(el) {
+    return isAriaDisabled(el) && !ownsPart(el, 'aria');
+  }
+
   // No gate installed means nothing holds the click back.
   function gateOpen(bridge) {
     return !bridge.gate || bridge.gate();
@@ -531,7 +576,7 @@
     var bridge = form[BRIDGE_FLAG];
 
     if (!bridge) {
-      bridge = form[BRIDGE_FLAG] = { button: null, gate: null, lastGate: null };
+      bridge = form[BRIDGE_FLAG] = { button: null, gate: null };
       var surface = failSurface(form);
 
       form.addEventListener('submit', function (event) {
@@ -553,16 +598,13 @@
       bridge.onClick = function (event) {
         if (!bridge.button || event.currentTarget !== bridge.button.root) return;
         var control = clickedControl(event, bridge.button);
-        // Ownership rule: our own gate writes aria-disabled/disabled on these
-        // same nodes, so what is on them only reads as another script's refusal
-        // where the last verdict we wrote was open (or we never wrote one).
-        var foreign = !bridge.gate || bridge.lastGate === true;
-        var refused = event.defaultPrevented || (foreign && (
-          isAriaDisabled(bridge.button.root) ||
-          isAriaDisabled(control) ||
-          !!(control && control.disabled)
-        ));
-        // Captured first: gateOpen re-renders, which clears their state too.
+        // Ownership rule: disabled state reads as another script's refusal only
+        // where OWNED_ATTR says we did not write it.
+        var refused = event.defaultPrevented ||
+          foreignAria(bridge.button.root) ||
+          foreignAria(control) ||
+          !!(control && control.disabled && !ownsPart(control, 'native'));
+        // Captured first: defaultPrevented only holds until gateOpen re-renders.
         if (!gateOpen(bridge)) {
           // A disabled native control never gets here; an anchor or a stale
           // overlay still can, and must not navigate or submit.
@@ -786,7 +828,6 @@
       var gate = allPass && emailSatisfied(emailInput) && termsSatisfied(termsInput);
       // Live read: a CTA that only arrives on a later rescan still greys.
       setDisabled(bridge.button, !gate);
-      bridge.lastGate = gate;
       return gate;
     }
     bridge.gate = render;
