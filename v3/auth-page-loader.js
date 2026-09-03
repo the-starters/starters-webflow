@@ -1,29 +1,31 @@
 /**
  * Minimal V3 authentication-page runtime loader.
  *
- * @release v1.59.504
+ * @release v1.59.506
  *
  * Install once in the V3 site Head Code after Memberstack, the shared
  * `window.memberReady` initializer, the unconditional sitewide
  * `route-guard.js` tag, and `signup-attribution.js`, and before the
- * conditional application block. It replaces the page-level `auth-route.js`
- * tags and nothing else.
+ * conditional application block. The page-level `auth-route.js` tag is the
+ * only tag it ever replaces, and only after the cutover proof in
+ * AUTH-ROUTE-WIRING.md.
  *
- * On /login, /starter-login, and /auth-route it inserts route-guard.js and
- * then auth-route.js, and the site application block skips the controllers
- * unrelated to authentication and attribution through
+ * On /login, /starter-login, and /auth-route it inserts auth-route.js, and the
+ * site application block skips the controllers unrelated to authentication and
+ * attribution through
  * `StartersV3AuthPageLoader.shouldLoadApplicationControllers()`. On every other
  * page the loader inserts nothing.
  *
- * `route-guard.js` stays a static parser-blocking tag on every page, ahead of
- * this file, so the sitewide stable plan-ID role contract never depends on a
- * CDN round trip and never sits behind a conditional. Its own boot guard makes
- * the copy inserted here inert; the insertion exists so the auth paths keep
- * guard-before-router ordering on their own terms.
+ * It does NOT insert route-guard.js. The static parser-blocking sitewide
+ * `route-guard.js` tag is the sole owner of guard delivery and of
+ * guard-before-router ordering: it sits ahead of this file in the head, so it
+ * has already executed on every page, including these three, before this script
+ * body runs. Inserting a second copy would download 43 KB — a fresh download
+ * whenever the two tags sit on different release refs — purely to hit the
+ * guard's own boot guard and return.
  *
- * Both dynamic scripts have `async = false`. Browsers can download them in
- * parallel but must execute them in insertion order, which preserves the
- * stable plan-ID role contract before the router consumes it.
+ * The inserted script has `async = false`, so it keeps insertion order against
+ * anything else inserted dynamically.
  *
  * The loader only serves child assets from the release ref it was itself served
  * from. When it cannot read its own `src` it installs nothing, and
@@ -43,7 +45,6 @@
     'www.thestarters.com',
   ])
   var AUTH_PATHS = new Set(['/login', '/starter-login', '/auth-route'])
-  var ROUTE_GUARD_PATH = 'v3/route-guard.js'
   var AUTH_ROUTE_PATH = 'v3/auth-route.js'
   var TIMING_STORAGE_KEY = 'thestarters:v3-auth-route-timing'
   var TIMING_MARK_PREFIX = 'starters:v3-auth-route:'
@@ -101,10 +102,7 @@
       )
       return []
     }
-    return [
-      appendOrderedScript(base + ROUTE_GUARD_PATH, 'route-guard'),
-      appendOrderedScript(base + AUTH_ROUTE_PATH, 'auth-route'),
-    ]
+    return [appendOrderedScript(base + AUTH_ROUTE_PATH, 'auth-route')]
   }
 
   function discardTiming() {
@@ -113,10 +111,10 @@
     } catch (error) {}
   }
 
-  // Consumes the receipt where it is read, so a destination page the member
-  // abandons before `load` cannot leave it behind for an unrelated navigation
-  // to report as a login-to-destination duration.
-  function readNavigationTiming(candidate) {
+  // Returns the login-submit timestamp and CONSUMES the receipt, so a
+  // destination page the member abandons before `load` cannot leave it behind
+  // for an unrelated navigation to report as a login-to-destination duration.
+  function consumeNavigationTiming(candidate) {
     if (isAuthPath(candidate)) return null
     var parsed
     try {
@@ -136,13 +134,22 @@
     if (!Number.isFinite(startedAt) || !Number.isFinite(redirectedAt)) {
       return null
     }
-    var elapsedMs = Date.now() - startedAt
-    if (elapsedMs < 0 || elapsedMs > TIMING_MAX_AGE_MS) return null
-    return elapsedMs
+    if (!withinBudget(Date.now() - startedAt)) return null
+    return startedAt
   }
 
-  function emitNavigationTiming(elapsedMs) {
-    if (elapsedMs === null) return null
+  function withinBudget(elapsedMs) {
+    return elapsedMs >= 0 && elapsedMs <= TIMING_MAX_AGE_MS
+  }
+
+  // Elapsed is measured HERE, not when the receipt was read, so the number
+  // matches its `destination-load` label and includes the destination page load
+  // it is named after.
+  function emitNavigationTiming(startedAt) {
+    if (startedAt === null) return null
+    var elapsedMs = Date.now() - startedAt
+    if (!withinBudget(elapsedMs)) return null
+
     try {
       if (window.performance && typeof window.performance.mark === 'function') {
         window.performance.mark(TIMING_MARK_PREFIX + 'destination-load')
@@ -158,38 +165,30 @@
     return elapsedMs
   }
 
-  function finishNavigationTiming(candidate) {
-    return emitNavigationTiming(readNavigationTiming(candidate))
-  }
-
   var api = {
-    release: 'v1.59.504',
+    release: 'v1.59.506',
     authPaths: Array.from(AUTH_PATHS),
     isApprovedHost: isApprovedHost,
     isAuthPath: isAuthPath,
     shouldLoadApplicationControllers: shouldLoadApplicationControllers,
-    readNavigationTiming: readNavigationTiming,
-    finishNavigationTiming: finishNavigationTiming,
   }
   window.StartersV3AuthPageLoader = api
 
   if (!approvedHost) return
   install(pathname)
 
-  if (!isAuthPath(pathname)) {
-    var pending = readNavigationTiming(pathname)
-    if (pending !== null) {
-      if (document.readyState === 'complete') {
-        emitNavigationTiming(pending)
-      } else if (typeof window.addEventListener === 'function') {
-        window.addEventListener(
-          'load',
-          function () {
-            emitNavigationTiming(pending)
-          },
-          { once: true },
-        )
-      }
+  var startedAt = consumeNavigationTiming(pathname)
+  if (startedAt !== null) {
+    if (document.readyState === 'complete') {
+      emitNavigationTiming(startedAt)
+    } else if (typeof window.addEventListener === 'function') {
+      window.addEventListener(
+        'load',
+        function () {
+          emitNavigationTiming(startedAt)
+        },
+        { once: true },
+      )
     }
   }
 })()

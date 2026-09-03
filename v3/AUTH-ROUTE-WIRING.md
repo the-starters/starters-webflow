@@ -17,6 +17,14 @@ moved to `get_build_profile_status` on 2026-08-04.
    It must never move behind `StartersV3AuthPageLoader` or any other
    CDN-dependent conditional. Same for `v3/signup-attribution.js` (see step 7).
 
+   This tag is the **sole owner** of route-guard delivery and of
+   guard-before-router ordering, on all three auth paths as well as everywhere
+   else. The loader never inserts a second copy: the static tag sits ahead of it
+   in the head, so the guard has already executed before the loader's script
+   body runs. A duplicate insertion would download 43 KB — uncached whenever the
+   two tags sit on different release refs — only to hit the guard's own boot
+   guard and return.
+
    `route-guard.js` owns the sitewide stable plan-ID role contract, and every
    page-level controller that reads `window.StartersV3RouteGuard` —
    `build-profile-redirect.js`, `complete-profile-redirect.js`,
@@ -30,19 +38,43 @@ moved to `get_build_profile_status` on 2026-08-04.
    blocking script tag, after `route-guard.js` and `memberReady` and before the
    conditional application block. Do not add `defer`; the condition must be
    available to the following inline block. Use the same release ref as its
-   child assets. The loader inserts `route-guard.js` then `auth-route.js`, and
-   only on `/login`, `/starter-login`, and `/auth-route`. On every other path it
-   inserts nothing. The `route-guard.js` insertion is inert against the static
-   tag (boot guard at `v3/route-guard.js:48`); it is there so the auth paths
-   keep guard-before-router ordering on their own terms. If the loader cannot
-   read its own `src` it installs nothing rather than falling back to a
-   different release ref.
+   child asset. The loader inserts `auth-route.js`, and only on `/login`,
+   `/starter-login`, and `/auth-route`. On every other path it inserts nothing.
+   It never inserts `route-guard.js` (step 4). If the loader cannot read its own
+   `src` it installs nothing rather than falling back to a different release
+   ref.
 
    ```html
    <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/auth-page-loader.js"></script>
    ```
-6. Remove the page-level `auth-route.js` tags after the loader is installed.
-   That is the only tag the loader replaces.
+6. **Overlap-safe cutover for the page-level `auth-route.js` tags.** The
+   page-level tag is the only tag the loader replaces, and it is the only
+   unconditional way `auth-route.js` reaches a login page. Do not remove it in
+   the same edit that installs the loader — a loader that 404s before the
+   jsDelivr purge lands, or that is CSP- or extension-blocked, would leave the
+   form with no `redirect="/auth-route"` at all and drop the login onto the
+   shared Memberstack plan redirect, skipping the Talent funnel check and the
+   `next` allowlist. Run it in this order instead:
+
+   1. **Save a readback first.** Copy the current saved head/page blocks for
+      `/login`, `/starter-login`, and `/auth-route` verbatim. These are the
+      rollback targets; nothing below is reversible without them.
+   2. **Install the loader with the page-level tags still in place.** Both are
+      safe simultaneously: `auth-route.js` boot-guards on
+      `window.__startersV3AuthRouterBooted` (`v3/auth-route.js:75`), so
+      whichever copy executes first wins and the second returns immediately.
+      This overlap window is the intended state, not a defect.
+   3. **Prove the loader on all three auth paths.** On each of `/login`,
+      `/starter-login`, and `/auth-route`, confirm a network request for
+      `auth-route.js` carrying `data-starters-auth-runtime="auth-route"` from
+      the loader's own release ref, and confirm
+      `window.StartersV3AuthRouter.release` reports the expected tag. On the two
+      login pages also confirm the form carries both `data-ms-redirect` and
+      `redirect` set to `/auth-route`, and complete one real login end to end.
+   4. **Remove the page-level tags only after that proof**, one path at a time,
+      re-confirming the same evidence after each removal.
+   5. **Rollback** is restoring the step-1 readback for the affected path
+      verbatim. Do not hand-reconstruct a block.
 7. Put the application controllers that are unrelated to authentication and
    attribution behind this exact test, which **must fail open** when the loader
    asset never arrived:
@@ -125,11 +157,12 @@ any receipt it finds, and the logged-out bounce back to `/login` clears it too,
 so a rejected password or an abandoned login page can never be read later as a
 login-to-destination duration.
 
-The loader reads, validates, and **consumes** the receipt at its own boot on the
-destination page, then emits on `load` from the value it captured. So
-`elapsedMs` measures login submit to destination document start, and a
-destination the member abandons before `load` yields no event at all rather than
-leaving an inflated receipt for the next navigation.
+The loader validates and **consumes** the receipt at its own boot on the
+destination page, keeping only `startedAt`, and emits on `load`. `elapsedMs` is
+measured in the `load` handler, so it spans login submit through the destination
+page's own load — the interval the label names — while a destination the member
+abandons before `load` yields no event at all rather than leaving an inflated
+receipt for the next navigation.
 
 Listen for `starters:v3-auth-route-timing`. Its detail contains `stage` and,
 when the cross-page receipt is present, `elapsedMs`. Receipts older than two
@@ -335,8 +368,9 @@ and `brandFreeHome`, plus the funnel helpers `stagingHost`,
 helpers `isLoginPath` and `loginPaths`, and `release` (the shipping tag; see the
 release-marker convention in [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md)).
 The loader exposes `window.StartersV3AuthPageLoader` with `isAuthPath`,
-`isApprovedHost`, `shouldLoadApplicationControllers`, `readNavigationTiming`,
-`finishNavigationTiming`, `authPaths`, and `release`.
+`isApprovedHost`, `shouldLoadApplicationControllers`, `authPaths`, and
+`release`. The timing receipt has no public entry point: reading it consumes
+it, so it is driven only from the loader's own boot path.
 
 `funnelStateFrom` replaced `onboardingStateFrom` in v1.59.82: it takes a status
 body rather than a freelancer envelope and answers `'build-profile'`,
@@ -355,8 +389,9 @@ Production stays silent apart from the configuration errors in the table above.
   `auth-page-loader.js`, then the conditional controller block.
 - Confirm the `route-guard.js` tag is still static, parser-blocking, and outside
   every conditional, on every page.
-- Confirm the loader requests `route-guard.js` before `auth-route.js` from one
-  release ref on all three auth paths.
+- Confirm the static `route-guard.js` tag executes before `auth-route.js` on
+  all three auth paths, and that the loader requests `auth-route.js` only —
+  exactly one `route-guard.js` request per auth page load, from the static tag.
 - Confirm `/auth-route` requests no unrelated application controller, and that
   `signup-attribution.js` IS still requested on `/login` and `/starter-login`.
   Land on `/login?utm_source=gate-check&fbclid=gate-check` and confirm the
@@ -366,9 +401,14 @@ Production stays silent apart from the configuration errors in the table above.
   Spot-check `/build-profile/select-profile`: `html[data-route-guard]` must be
   set before `build-profile-redirect.js` runs.
 - With the loader URL blocked in devtools, confirm every page still emits
-  `route-guard.js`, `signup-attribution.js`, and the full controller block, and
-  that `/login` still gets `redirect="/auth-route"` from the page-level
-  fallback path rather than nothing at all.
+  `route-guard.js`, `signup-attribution.js`, and the full controller block. On
+  the three auth paths, whether `/login` still gets `redirect="/auth-route"`
+  depends on where step 6's cutover stands: during the overlap window the
+  page-level tag still supplies it, and once the page-level tags are removed a
+  blocked loader means no router at all. Record which state was tested.
+- Walk step 6 in order and record the per-path proof before removing any
+  page-level `auth-route.js` tag. Keep the step-6.1 readback until the release
+  is signed off.
 - Confirm `/starter-login` passes through `/auth-route` rather than the shared
   plan redirect.
 - Confirm `/sign-up` still has NO `auth-route.js` embed, and that its signup

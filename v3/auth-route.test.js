@@ -2027,20 +2027,42 @@ test('the header @release marker matches the exported release property', () => {
   assert.equal(api.release, marker[1])
 })
 
-test('every script in this release carries the same release marker', () => {
-  // A release that updates several files must stamp them all identically, or the
-  // "which version is loaded?" console check answers differently per script.
-  // The site-head loader ships with the router, so it is in the same unit.
-  const loaderSource = fs.readFileSync(
-    require.resolve('./auth-page-loader.js'),
-    'utf8',
+// The router and the site-head loader ship as one unit: the loader requests
+// auth-route.js from its own release ref, so a release that stamps one and not
+// the other makes the served-byte check in ROUTE-GUARD-WIRING.md answer two
+// different versions for one deployment. Both values here come from the
+// executed modules, not from their source text. route-guard.js is deliberately
+// NOT in this unit — it is untouched by this release and keeps the marker that
+// shipped its current contents.
+test('the router and the site-head loader export one release value', () => {
+  const { api } = loadRouter({ pathname: '/test' })
+  const loaderWindow = {
+    location: { hostname: 'www.thestarters.com', pathname: '/test' },
+    sessionStorage: { getItem: () => null, removeItem() {} },
+    addEventListener() {},
+    dispatchEvent() {},
+  }
+  vm.runInNewContext(
+    fs.readFileSync(require.resolve('./auth-page-loader.js'), 'utf8'),
+    {
+      Array,
+      CustomEvent: class {},
+      JSON,
+      Number,
+      Set,
+      String,
+      console: { error() {} },
+      document: {
+        currentScript: { src: 'https://cdn.example.test/v3/auth-page-loader.js' },
+        head: { appendChild: (node) => node },
+        documentElement: { appendChild: (node) => node },
+        readyState: 'complete',
+        createElement: () => ({ setAttribute() {} }),
+      },
+      window: loaderWindow,
+    },
   )
-  const guardMarker = routeGuardSource.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  const routerMarker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  const loaderMarker = loaderSource.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  assert.ok(guardMarker, 'no @release line in route-guard.js')
-  assert.ok(routerMarker, 'no @release line in auth-route.js')
-  assert.ok(loaderMarker, 'no @release line in auth-page-loader.js')
-  assert.equal(guardMarker[1], routerMarker[1])
-  assert.equal(loaderMarker[1], routerMarker[1])
+
+  assert.match(api.release, /^v\d+\.\d+\.\d+$/)
+  assert.equal(loaderWindow.StartersV3AuthPageLoader.release, api.release)
 })

@@ -1,14 +1,14 @@
 /**
  * V3 login router.
  *
- * @release v1.59.504
+ * @release v1.59.506
  *
  * Loaded by the site-head v3/auth-page-loader.js on the V3 login pages
  * (/login and /starter-login) and /auth-route only. Every V3 login form must
  * redirect to /auth-route so shared Memberstack plan redirects can remain
- * unchanged for V2. v3/route-guard.js executes first: it is a static
- * parser-blocking sitewide tag ahead of the loader, and the loader re-inserts
- * it on these three paths so the ordering holds there on its own terms.
+ * unchanged for V2. v3/route-guard.js executes first, and only from its static
+ * parser-blocking sitewide tag, which sits ahead of the loader in the head; the
+ * loader never inserts a second copy of it.
  *
  * Talent members additionally get a funnel-position check here, because
  * /auth-route is the one page every Talent login passes through. The product
@@ -850,7 +850,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/auth-route.test.js drift guard asserts they match.
-    release: 'v1.59.504',
+    release: 'v1.59.506',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
     hasCompletedQuiz: hasCompletedQuiz,

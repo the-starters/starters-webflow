@@ -4,10 +4,6 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./auth-page-loader.js'), 'utf8')
-const routeGuardSource = fs.readFileSync(
-  require.resolve('./route-guard.js'),
-  'utf8',
-)
 const TIMING_KEY = 'thestarters:v3-auth-route-timing'
 const PINNED_SRC =
   'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v9.8.7/v3/auth-page-loader.js'
@@ -63,10 +59,12 @@ function loadLoader(options = {}) {
     },
   }
 
-  const now = options.now === undefined ? 1700000005000 : options.now
+  // Mutable so a test can advance the clock between the loader's boot and the
+  // `load` event, which is the only way to tell WHEN elapsedMs is measured.
+  const clock = { now: options.now === undefined ? 1700000005000 : options.now }
   class FakeDate extends Date {
     static now() {
-      return now
+      return clock.now
     }
   }
 
@@ -115,28 +113,39 @@ function loadLoader(options = {}) {
     window,
   })
 
-  return { appended, document, errors, events, listeners, marks, storage, window }
+  return {
+    appended,
+    clock,
+    document,
+    errors,
+    events,
+    listeners,
+    marks,
+    storage,
+    window,
+  }
 }
 
-test('auth paths install only route guard then auth router from one release ref', () => {
+// The static sitewide route-guard.js tag owns guard delivery and
+// guard-before-router ordering on every page, these three included. A second
+// copy from here could only re-download 43 KB to hit the guard's boot guard and
+// return, so auth-route.js is the only asset the loader inserts.
+test('auth paths install only the auth router, from the loader own release ref', () => {
   for (const pathname of ['/login', '/starter-login', '/auth-route']) {
     const { appended, window } = loadLoader({ pathname })
-    assert.equal(appended.length, 2, pathname)
-    assert.deepEqual(
-      appended.map((script) => script.attributes['data-starters-auth-runtime']),
-      ['route-guard', 'auth-route'],
+    assert.equal(appended.length, 1, pathname)
+    assert.equal(
+      appended[0].attributes['data-starters-auth-runtime'],
+      'auth-route',
       pathname,
     )
-    assert.deepEqual(
-      appended.map((script) => script.src),
-      [
-        'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v9.8.7/v3/route-guard.js',
-        'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v9.8.7/v3/auth-route.js',
-      ],
+    assert.equal(
+      appended[0].src,
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v9.8.7/v3/auth-route.js',
       pathname,
     )
-    assert.ok(appended.every((script) => script.async === false), pathname)
-    assert.ok(appended.every((script) => script.defer === false), pathname)
+    assert.equal(appended[0].async, false, pathname)
+    assert.equal(appended[0].defer, false, pathname)
     assert.equal(
       window.StartersV3AuthPageLoader.shouldLoadApplicationControllers(pathname),
       false,
@@ -215,6 +224,22 @@ test('an underivable base fails closed and re-admits the app block', () => {
 
 // The site-head block asks after this script has finished executing, when
 // document.currentScript is null. The answer must not change then.
+// Reading the receipt consumes it, so there is no safe public entry point: a
+// diagnostic call would destroy the measurement it was inspecting. The boot
+// path is the only driver.
+test('the loader publishes no timing entry point', () => {
+  const { window } = loadLoader({ pathname: '/starter-dashboard' })
+  const api = window.StartersV3AuthPageLoader
+
+  assert.deepEqual(Object.keys(api).sort(), [
+    'authPaths',
+    'isApprovedHost',
+    'isAuthPath',
+    'release',
+    'shouldLoadApplicationControllers',
+  ])
+})
+
 test('the controller answer survives losing document.currentScript', () => {
   const { window, document } = loadLoader({ pathname: '/login' })
 
@@ -229,24 +254,47 @@ test('the controller answer survives losing document.currentScript', () => {
   )
 })
 
-test('destination load emits timestamp-only timing and consumes the marker', () => {
-  const { events, listeners, marks, storage } = loadLoader({
+// The head script boots at +5s but the destination page is not loaded until
+// +7s. `destination-load` must report 7000, not the 5000 that was readable when
+// the receipt was consumed, or the number excludes the very interval it names.
+test('destination load measures through load, not the boot read', () => {
+  const { clock, events, listeners, marks, storage } = loadLoader({
     pathname: '/starter-dashboard',
     startedAt: 1700000000000,
     redirectedAt: 1700000004000,
   })
 
   assert.equal(typeof listeners.load, 'function')
+  assert.equal(storage.has(TIMING_KEY), false)
+  assert.equal(events.length, 0)
+
+  clock.now = 1700000007000
   listeners.load()
+
   assert.deepEqual(marks, ['starters:v3-auth-route:destination-load'])
   assert.equal(events.length, 1)
   assert.deepEqual({ ...events[0].detail }, {
     stage: 'destination-load',
-    elapsedMs: 5000,
+    elapsedMs: 7000,
   })
-  assert.equal(storage.has(TIMING_KEY), false)
   assert.equal(JSON.stringify(events).includes('member'), false)
   assert.equal(JSON.stringify(events).includes('token'), false)
+})
+
+// The ceiling has to hold at emit time too: a destination page that takes
+// longer than the receipt's whole lifetime to load has nothing honest to report.
+test('a load that arrives past the two-minute ceiling emits nothing', () => {
+  const { clock, events, listeners, marks } = loadLoader({
+    pathname: '/starter-dashboard',
+    startedAt: 1700000000000,
+    redirectedAt: 1700000004000,
+  })
+
+  clock.now = 1700000000000 + 120001
+  listeners.load()
+
+  assert.equal(events.length, 0)
+  assert.equal(marks.length, 0)
 })
 
 test('a receipt the router never confirmed is discarded without an event', () => {
@@ -307,17 +355,3 @@ test('header and exported release markers match', () => {
   assert.equal(window.StartersV3AuthPageLoader.release, marker[1])
 })
 
-// The `@release` header is an owned text contract: the release process reads it
-// out of the served bytes with `curl | grep '@release'` and compares it against
-// the exported property. The route-guard family ships as one unit, so a release
-// that stamps one of them must stamp all of them, or the "which version is
-// loaded?" console check answers differently per script.
-test('the loader carries the same release marker as the route guard family', () => {
-  const loaderMarker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  const guardMarker = routeGuardSource.match(
-    /^ \* @release (v\d+\.\d+\.\d+)$/m,
-  )
-  assert.ok(loaderMarker, 'no @release line in auth-page-loader.js')
-  assert.ok(guardMarker, 'no @release line in route-guard.js')
-  assert.equal(loaderMarker[1], guardMarker[1])
-})
