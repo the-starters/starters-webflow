@@ -576,6 +576,21 @@ Free Call, Paid Call, and Freelance behavior remain unchanged.
 CMS services stay visible until a separate cutover decision follows role-matched
 browser parity proof.
 
+## Taxonomy empty groups stay hidden
+
+[`hire-profile-taxonomy.css`](hire-profile-taxonomy.css) hides each authored
+`[xwf-empty-check]` group until its wf-xano list contains a rendered
+`[wf-xano-item]`. The rule does not hide, remove, or disable the wf-xano wrapper
+or its template. wf-xano can initialize and fetch while the ancestor is hidden,
+and the browser shows the group automatically when wf-xano inserts the first
+rendered item.
+
+Load the stylesheet once on the Hire template page:
+
+```html
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/hire-profile-taxonomy.css">
+```
+
 The separate `starter-retainer` wf-xano wrapper owns the canonical Retainer
 card. Its public source is `KZf7nFnk:profile/starter/retainer/v3` (endpoint
 `#5899`), which returns one item only when canonical `Retainer_Enabled` is true
