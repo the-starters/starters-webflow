@@ -1,6 +1,6 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation
 //
-// @release v1.59.511
+// @release v1.59.514
 //
 // Password validation — configured entirely from wrapper attributes so a
 // Webflow component instance can pick its own rule set with no code changes.
@@ -32,13 +32,19 @@
 // (input[data-ms-member="terms-and-condition"]) is checked when the form has
 // one, and the email (input[data-ms-member="email"]) looks like an email when
 // the form has one. Turnstile is deliberately not in this gate — it resolves
-// after the click, on Memberstack's side. Fields the form does not have gate
-// nothing. With no checklist configured, an auth form (login, signup,
-// forgot-password, reset-password) that CARRIES [ms-code-submit-button] still
-// gates on the fields it has, so a login or reset form is never submitted
-// blank; an auth form without the marker is neither bridged nor gated. The
-// gate re-reads the form's fields on every run, so an input swapped in after
-// load is adjudicated as soon as rescan() or regate(form) is called.
+// after the click, on Memberstack's side. The reset code
+// (input[data-ms-member="token"]) counts too: non-empty after trimming, and
+// this script checks its format no further (the input's own type may). Fields
+// the form does not have gate nothing. With no checklist configured, an auth
+// form (login, signup, forgot-password, reset-password) that CARRIES
+// [ms-code-submit-button] still gates on the fields it has, so a login or
+// reset form is never submitted blank; an auth form without the marker is
+// neither bridged nor gated. A checklist on such a form extends that gate
+// instead of replacing it, so a reset form with one opens only when the code
+// is in AND every rule passes. An auth form with no Gateable Field at all
+// stays open, and says so on staging. The gate re-reads the form's fields on
+// every run, so an input swapped in after load is adjudicated as soon as
+// rescan() or regate(form) is called.
 //
 // The live CTA is Memberstack's overlay: a `.clickable_btn` (type="button")
 // inside the [ms-code-submit-button] wrap, with the native submit hidden. A
@@ -81,7 +87,7 @@
   var RULE_ATTR = PREFIX + 'rule';
   var ICON_ATTR = PREFIX + 'icon';
   var DEFAULT_COUNT = 8;
-  var RELEASE = 'v1.59.511';
+  var RELEASE = 'v1.59.514';
   var WIRED_FLAG = '__startersPasswordValidation';
   var BRIDGE_FLAG = '__startersPasswordBridge';
   var SUBMIT_BUTTON_SELECTOR = '[ms-code-submit-button]';
@@ -472,6 +478,11 @@
     return !!(visual && visual.classList && visual.classList.contains('w--redirected-checked'));
   }
 
+  // Non-empty after trimming; a field the form does not have gates nothing.
+  function filled(input) {
+    return !input || (input.value || '').trim() !== '';
+  }
+
   // Memberstack's own kinds. Profile and security forms are bridged like any
   // marked form and a checklist wrapper still gates one on its rules, but the
   // required-fields gate below skips them: their kind is not in this list.
@@ -482,20 +493,32 @@
     return AUTH_KINDS.indexOf(kind) !== -1;
   }
 
+  // Read off gateFields so a new Gateable Field never has to be added here too.
+  function hasGateField(fields) {
+    for (var name in fields) {
+      if (fields[name]) return true;
+    }
+    return false;
+  }
+
   // The Gateable Fields recognised by their Memberstack attribute alone; a
   // field the form does not have is null and gates nothing.
   function gateFields(form) {
     return {
       password: form.querySelector('input[data-ms-member="password"]'),
       email: form.querySelector('input[data-ms-member="email"]'),
-      terms: form.querySelector('input[data-ms-member="terms-and-condition"]')
+      terms: form.querySelector('input[data-ms-member="terms-and-condition"]'),
+      token: form.querySelector('input[data-ms-member="token"]')
     };
   }
 
   // withRules is set by the checklist gate, whose rule predicates already
   // adjudicate the password — a second non-empty test there would be noise.
   function fieldsSatisfied(fields, withRules) {
-    if (!withRules && fields.password && (fields.password.value || '').trim() === '') return false;
+    if (!withRules && !filled(fields.password)) return false;
+    // The reset code is tested for presence only: only Memberstack can tell a
+    // real code from a made-up one.
+    if (!filled(fields.token)) return false;
     return emailSatisfied(fields.email) && termsSatisfied(fields.terms);
   }
 
@@ -776,6 +799,7 @@
     };
     bindOnce(bridge, fields.password, run);
     bindOnce(bridge, fields.email, run);
+    bindOnce(bridge, fields.token, run);
     // The terms listener fires at the target BEFORE Webflow's delegated
     // document handler updates the custom checkbox's visual class, so a
     // render in the same tick can read a stale w--redirected-checked (an
@@ -833,7 +857,19 @@
   function installFieldGate(form, bridge) {
     if (bridge.gate || !isAuthForm(form)) return;
     var fields = gateFields(form);
-    if (!fields.password && !fields.email && !fields.terms) return;
+    if (!hasGateField(fields)) {
+      // Fail-open by design, and never retracted: fields that arrive later are
+      // picked up by the rescan or regate path, not by this warning.
+      if (!bridge.warnedNoFields) {
+        bridge.warnedNoFields = true;
+        devWarn(
+          'nothing to gate on in this auth form yet: its CTA stays open until ' +
+          'a rescan or regate finds a field.',
+          form
+        );
+      }
+      return;
+    }
 
     // Returns the verdict rather than stashing it, so no caller can ever
     // adjudicate on a copy that has gone stale.
