@@ -613,9 +613,10 @@ The Free and Paid cards used to be duplicated Webflow CMS bindings, one authored
 variant per viewer state. They now render from **one native template per
 surface**: `starter-call-offers-header` in the hero and
 `starter-call-offers-services` in `#services`. Both wrappers read the dedicated
-public endpoint `profile/starter/calls/v3`, which returns at most one Free and
-one Paid item with `id`, `type`, `name`, `description`, `price` (whole dollars)
-and `public_available`. Webflow owns both templates; wf-xano clones them; this
+public source `KZf7nFnk:profile/starter/calls/v3` (endpoint `#6491`, `GET`,
+unauthenticated, one `starter_id` input), which returns at most one Free and one
+Paid item with `id`, `type`, `name`, `description`, `price` (whole dollars) and
+`public_available`. Webflow owns both templates; wf-xano clones them; this
 file only adds viewer state and routes clicks into the controllers that already
 own signup, booking, and owner settings. It never creates a card or a modal.
 
