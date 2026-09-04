@@ -3633,6 +3633,7 @@ test('the profile owner sees both wf-xano call skeletons with exact setup-requir
 
   for (const card of [xano.free, xano.paid]) {
     assert.equal(card.root.style.display, 'block')
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
     assert.equal(card.root.getAttribute('data-call-offer-state'), 'setup-required')
     assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
     assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
@@ -3644,6 +3645,105 @@ test('the profile owner sees both wf-xano call skeletons with exact setup-requir
   }
   assert.equal(xano.free.tooltipText.textContent, 'Connect your calendar to offer calls.')
   assert.equal(xano.paid.tooltipText.textContent, 'Connect your calendar to offer calls.')
+})
+
+test('the profile owner gets Default only for call cards that pass every readiness gate', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = ownerContext(page, ownerController(), { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult())
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.style.display, 'block')
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
+    assert.equal(card.tooltip.style.display, 'none')
+  }
+})
+
+test('owner cards are Disabled when Stripe is missing or either service is turned off', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: true,
+        availability_configured: true,
+        free_call_enabled: false,
+        bookable: false,
+      },
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: true,
+        availability_configured: true,
+        stripe_connect_linked: false,
+        stripe_charges_enabled: false,
+        stripe_readiness_fresh: false,
+        paid_call_enabled: true,
+        // Deliberately inconsistent upstream input: the explicit Stripe gates
+        // must still win over a stale aggregate bookable flag.
+        bookable: true,
+      },
+    }),
+  })
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult())
+  await settle()
+
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'setup-required')
+  assert.equal(xano.free.tooltipText.textContent, 'Enable your Free Call service.')
+  assert.equal(xano.free.settingsCta.style.display, 'block')
+
+  assert.equal(xano.paid.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'setup-required')
+  assert.equal(xano.paid.tooltipText.textContent, 'Connect Stripe to offer paid calls.')
+  assert.equal(xano.paid.stripeCta.style.display, 'block')
+  assert.equal(xano.paid.settingsCta.style.display, 'none')
+})
+
+test('the Paid owner card is Disabled when the service is off with every connection ready', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: true,
+        availability_configured: true,
+        stripe_connect_linked: true,
+        stripe_charges_enabled: true,
+        stripe_readiness_fresh: true,
+        paid_call_enabled: false,
+        bookable: false,
+      },
+    }),
+  })
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult())
+  await settle()
+
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Default')
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(xano.paid.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'setup-required')
+  assert.equal(xano.paid.tooltipText.textContent, 'Enable and price your Paid Call service.')
+  assert.equal(xano.paid.stripeCta.style.display, 'none')
+  assert.equal(xano.paid.settingsCta.style.display, 'block')
 })
 
 test('an owner settings lookup failure shows a neutral disabled card and only Call Settings', async () => {
@@ -3664,6 +3764,7 @@ test('an owner settings lookup failure shows a neutral disabled card and only Ca
 
   for (const card of [xano.free, xano.paid]) {
     assert.equal(card.root.style.display, 'block')
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
     assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-unavailable')
     assert.equal(card.root.getAttribute('has-connection'), null)
     assert.equal(card.root.getAttribute('no-connection'), null)
@@ -3736,6 +3837,7 @@ test('the owner setup card reads non-boolean readiness the same way the settings
   await settle()
 
   for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
     assert.equal(card.root.getAttribute('data-call-offer-state'), 'setup-required')
     assert.equal(card.tooltipText.textContent, 'Connect your calendar to offer calls.')
     assert.equal(card.calendarCta.style.display, 'block')
@@ -3824,9 +3926,9 @@ test('the legacy owner reveal stands down from the wf-xano card it now shares at
 test('the rate cards clone the authored card even when a wf-xano clone precedes it in the list', async () => {
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)
-  // Designer order is the one fact that decides this: the adapters stamp the
-  // same `data-service-card-state="Default"` the rate-card template lookup
-  // keys on, so a wrapper placed ahead of the authored card wins the lookup.
+  // Designer order used to decide this. An owner wf-xano card now stays
+  // `Disabled` until readiness resolves, and the rate-card lookup excludes
+  // every wf-xano wrapper regardless of its state.
   xano.wrapper.remove()
   page.servicesList.prepend(xano.wrapper)
   const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
@@ -3848,7 +3950,7 @@ test('the rate cards clone the authored card even when a wf-xano clone precedes 
 
   wfx.emit(callCardResult({ free: false, paid: false }))
   await settle()
-  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Default')
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
   assert.equal(xano.free.tooltip.style.display, 'block')
 
   resolveRecord({ rate: 135, 'retainer-rate': 0, 'retainer-enabled': false })
@@ -5368,6 +5470,9 @@ function ownerPaidSettings(overrides = {}) {
     readiness: {
       calendar_connected: true,
       availability_configured: true,
+      stripe_connect_linked: true,
+      stripe_charges_enabled: true,
+      stripe_readiness_fresh: true,
       paid_call_enabled: true,
       bookable: true,
     },

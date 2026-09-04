@@ -1488,6 +1488,14 @@
       const label = isPaid ? 'paid' : 'free';
       if (!settings || !Array.isArray(settings.services)) return null;
       if (!settings.readiness || settings.readiness.bookable !== true) return null;
+      const readiness = ownerReadinessOf(settings);
+      if (!readiness.calendar_connected || !readiness.availability_configured) return null;
+      if (isPaid) {
+          if (!readiness.stripe_connect_linked || !readiness.stripe_charges_enabled ||
+              !readiness.stripe_readiness_fresh || !readiness.paid_call_enabled) return null;
+      } else if (!readiness.free_call_enabled) {
+          return null;
+      }
 
       const active = settings.services.filter(function (service) {
           return service && service.active === true && service.config_id;
@@ -2095,6 +2103,7 @@
           card.removeAttribute('data-call-service-direct');
           card.setAttribute('data-call-owner-preview', '');
           if (record) {
+              card.setAttribute('data-service-card-state', 'Default');
               card.setAttribute('has-connection', type);
               card.removeAttribute('no-connection');
               card.setAttribute('data-call-offer-state', 'available');
@@ -2104,6 +2113,7 @@
                   node.setAttribute('aria-hidden', 'true');
               });
           } else if (settingsStatus !== 'loaded') {
+              card.setAttribute('data-service-card-state', 'Disabled');
               card.removeAttribute('has-connection');
               card.removeAttribute('no-connection');
               card.setAttribute(
@@ -2112,6 +2122,7 @@
               );
               configureOwnerSettingsUnavailable(card, settingsStatus === 'loading');
           } else {
+              card.setAttribute('data-service-card-state', 'Disabled');
               card.removeAttribute('has-connection');
               card.setAttribute('no-connection', type);
               card.setAttribute('data-call-offer-state', 'setup-required');
@@ -2151,7 +2162,10 @@
           }
 
           card.setAttribute('data-service-card', 'component');
-          card.setAttribute('data-service-card-state', 'Default');
+          card.setAttribute(
+              'data-service-card-state',
+              isProfileOwner(MEMBER) ? 'Disabled' : 'Default'
+          );
           card.setAttribute('data-xano-call-card', key);
           card.setAttribute('data-call-offer-type', type);
           card.setAttribute('data-type', type);
