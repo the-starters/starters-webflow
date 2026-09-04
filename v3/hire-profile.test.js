@@ -3753,6 +3753,79 @@ test('the rate cards clone the authored card even when a wf-xano clone precedes 
   assert.equal(built.getAttribute('data-xano-call-card'), null)
 })
 
+test('the rate cards refuse the wf-xano template that precedes the authored card', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  // The authored wf-xano template carries the same service-card pair and
+  // survives in the DOM once wf-xano runs, exactly as the sibling retainer
+  // fixture models it. It is not a `wf-xano-item`, so it is a second decoy
+  // the clone-source lookup has to reject on its own.
+  xano.template.setAttribute('data-service-card-state', 'Default')
+  const templateTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  templateTitle.textContent = 'Free Call'
+  xano.template.appendChild(templateTitle)
+  xano.wrapper.remove()
+  page.servicesList.prepend(xano.wrapper)
+
+  const context = makeContext({
+    page,
+    record: { rate: 135, 'retainer-rate': 0, 'retainer-enabled': false },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freelance = page.servicesList.querySelectorAll('[data-runtime-rate-card="freelance"]')
+  assert.equal(freelance.length, 1, 'the Freelance rate card must still be built')
+  const built = freelance[0]
+  assert.equal(
+    built.getAttribute('wf-xano-element'),
+    null,
+    'a rate card must not be cloned from the wf-xano template',
+  )
+  assert.equal(built.querySelector('[data-service-card-element="title"]').textContent, 'Freelance')
+})
+
+test('the owner setup CTA on a wf-xano call card is not cancelled by the direct-entry wiring', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({ grantId: null })
+  controller.authenticatedRequest = () => new Promise(() => {})
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  // The direct-entry listener is capture-phase and preventDefaults every click,
+  // so a click on the revealed setup anchor inside the card would be cancelled
+  // before the anchor ever navigates.
+  function clickCancelledBy(card) {
+    let prevented = false
+    const event = {
+      preventDefault: () => { prevented = true },
+      stopImmediatePropagation() {},
+    }
+    for (const listener of card.listeners.click || []) listener(event)
+    return prevented
+  }
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'setup-required')
+    assert.equal(card.calendarCta.style.display, 'block')
+    assert.equal(card.calendarCta.getAttribute('href'), '/starter-dashboard')
+    assert.equal(
+      clickCancelledBy(card.root),
+      false,
+      'the owner setup CTA must stay clickable',
+    )
+    assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+  }
+})
+
 test('a late wf-xano service card receives logged-out signup wiring without changing its template', async () => {
   const page = makePage()
   const cmsCard = makeElement('div', {
