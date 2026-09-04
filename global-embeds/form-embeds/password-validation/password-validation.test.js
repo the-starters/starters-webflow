@@ -2826,3 +2826,18 @@ test('r-regate: regate on an open gate leaves the CTA live', () => {
   dispatch(f.overlay, 'click')
   assert.equal(f.submits.length, 1, 'and it still submits')
 })
+
+test('r-regate: regate gates the CTA that replaced the one it was holding', () => {
+  const f = liveSetup()
+  assert.equal(overlayGated(f), true, 'an empty password gates the CTA')
+
+  // the peer hands the form back after the page swapped the whole Button out
+  f.wrapBtn.remove()
+  const swapped = buildCta('overlay')
+  f.form.append(swapped.wrapBtn)
+
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true)
+  assert.equal(overlayGated(swapped), true, 'the live CTA is the one gated')
+  dispatch(swapped.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'and it cannot submit while the gate is closed')
+})

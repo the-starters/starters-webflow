@@ -1050,6 +1050,8 @@
   function regate(form) {
     var bridge = form && form[BRIDGE_FLAG];
     if (!bridge || typeof bridge.gate !== 'function') return false;
+    // The CTA may have been swapped while the peer held it: gate the live root.
+    ensureBridge(form);
     bridge.gate();
     return true;
   }
