@@ -2613,6 +2613,22 @@ test('a submit another script cancels never holds the page', async () => {
   assert.equal(app.warnings.length, strayWarnings, app.warnings.join(' | '))
 })
 
+test("a back-button restore takes Memberstack's overlay off the page", async () => {
+  const f = signupForm({ noLoader: true })
+  const overlay = h('div', { 'data-ms-modal-loader': '' })
+  const root = body([f.form, overlay])
+  const app = mount(root, { hostname: STAGING })
+
+  app.firePageshow({ persisted: false })
+  await flush()
+  assert.equal(root.querySelector('[data-ms-modal-loader]'), overlay, 'a fresh show leaves it')
+
+  app.firePageshow({ persisted: true })
+  await flush()
+  assert.equal(root.querySelector('[data-ms-modal-loader]'), null, 'the restore clears it')
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
 test('a password-validation hand-back that throws still restores every button', async () => {
   const a = signupForm({ noLoader: true })
   const b = signupForm({ noLoader: true })

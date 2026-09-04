@@ -555,6 +555,9 @@
       if (isLit(mirrored)) mirrored.style.display = 'none';
       owner = null;
       mirrored = null;
+      // Memberstack's login success path redirects without hiding this.
+      var overlay = document.querySelector('[data-ms-modal-loader]');
+      if (overlay && typeof overlay.remove === 'function') overlay.remove();
       var forms = document.querySelectorAll(MS_FORM_SELECTOR);
       for (var i = 0; i < forms.length; i++) {
         var record = forms[i][WIRED_FLAG];
