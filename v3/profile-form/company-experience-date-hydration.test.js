@@ -221,7 +221,8 @@ function chooseMonth(input, value) {
   if (Number(yearLabel.textContent) !== targetYear) return false
 
   monthButtons[monthIndex].dispatchEvent({ type: 'click' })
-  return true
+  const month = new Date(targetYear, monthIndex, 1).toLocaleString('en-US', { month: 'short' })
+  return input.value === `${month} ${targetYear}`
 }
 
 function clearMonth(input) {
@@ -588,6 +589,35 @@ for (const controllerPath of controllerPaths) {
     assert.equal(payload.end_date, `${currentYear}-10`)
   })
 
+  test(`${controllerPath} disables end months before the selected start month`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    assert.equal(chooseMonth(app.startDateInput, '2024-05'), true)
+    assert.equal(app.endDateInput.getAttribute('min'), '2024-05')
+
+    const popup = app.endDateInput._starterProfileCompanyMonthPicker.popup
+    app.endDateInput.dispatchEvent({ type: 'click' })
+    const [previousYear] = popup.children[0].children
+    const monthButtons = popup.children[1].children
+
+    assert.equal(chooseMonth(app.endDateInput, '2020-01'), false)
+    assert.equal(popup.children[0].children[1].textContent, '2024')
+    assert.equal(previousYear.disabled, true)
+    assert.deepEqual(monthButtons.slice(0, 4).map((button) => button.disabled), [true, true, true, true])
+    assert.equal(monthButtons[4].disabled, false)
+    assert.equal(app.endDateInput.value, '')
+    assert.equal(chooseMonth(app.endDateInput, '2024-05'), true)
+
+    app.currentWorkCheckbox.checked = true
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.equal(app.endDateInput.getAttribute('min'), null)
+
+    app.currentWorkCheckbox.checked = false
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.equal(app.endDateInput.getAttribute('min'), '2024-05')
+  })
+
   test(`${controllerPath} keeps the edit picker inside its modal and keyboard reachable`, async () => {
     const app = bootCompanyController(controllerPath)
     await app.ready()
@@ -690,7 +720,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(secondPayload.end_date, '2025-12')
   })
 
-  test(`${controllerPath} keeps native month controls unconstrained between edit operations`, async () => {
+  test(`${controllerPath} refreshes the end-month minimum between edit operations`, async () => {
     const app = bootCompanyController(controllerPath)
     await app.ready()
 
@@ -702,7 +732,7 @@ for (const controllerPath of controllerPaths) {
       end_date: '2024-12',
     })
 
-    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2024-01')
     assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     app.openEditFor({
@@ -713,7 +743,7 @@ for (const controllerPath of controllerPaths) {
       end_date: '2025-03',
     })
 
-    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2025-03')
     assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     await app.saveEdit()
@@ -746,13 +776,17 @@ for (const controllerPath of controllerPaths) {
       start_date: '2025-01',
       current_work: true,
     })
+
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+
     app.editCurrentWorkCheckbox.checked = false
     app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
 
     assert.equal(app.editEndDateInput.value, '')
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2025-01')
   })
 
-  test(`${controllerPath} keeps a legacy baseline without reinstalling native bounds`, async () => {
+  test(`${controllerPath} keeps a legacy baseline while installing the end minimum`, async () => {
     const app = bootCompanyController(controllerPath)
     await app.ready()
 
@@ -771,7 +805,7 @@ for (const controllerPath of controllerPaths) {
 
     assert.equal(app.editEndDateInput.value, 'Dec 2025')
     assert.equal(app.editStartDateInput.getAttribute('max'), null)
-    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2024-01')
 
     await app.saveEdit()
     assert.equal(app.lastRequestPayload().end_date, 'Dec 2025')
@@ -832,7 +866,7 @@ for (const controllerPath of controllerPaths) {
       end_date: '2025-01',
     })
 
-    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2026-08')
     assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     const requestsBeforeInvalidSave = app.fetchCalls.length
@@ -841,7 +875,7 @@ for (const controllerPath of controllerPaths) {
 
     assert.equal(chooseMonth(app.editStartDateInput, '2025-06'), true)
     assert.equal(chooseMonth(app.editEndDateInput, '2025-12'), true)
-    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2025-06')
     assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
     await app.saveEdit()
@@ -851,7 +885,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(payload.end_date, '2025-12')
   })
 
-  test(`${controllerPath} corrects a valid stored range starting from the end month`, async () => {
+  test(`${controllerPath} blocks an earlier end month until the start month moves`, async () => {
     const app = bootCompanyController(controllerPath)
 
     app.openEditFor({
@@ -865,8 +899,10 @@ for (const controllerPath of controllerPaths) {
     assert.equal(app.editStartDateInput.value, 'Jan 2024')
     assert.equal(app.editEndDateInput.value, 'Dec 2024')
 
-    assert.equal(chooseMonth(app.editEndDateInput, '2023-08'), true)
+    assert.equal(chooseMonth(app.editEndDateInput, '2023-08'), false)
+    assert.equal(app.editEndDateInput.value, 'Dec 2024')
     assert.equal(chooseMonth(app.editStartDateInput, '2023-05'), true)
+    assert.equal(chooseMonth(app.editEndDateInput, '2023-08'), true)
 
     await app.saveEdit()
     const payload = app.lastRequestPayload()
@@ -923,7 +959,8 @@ for (const controllerPath of controllerPaths) {
     app.clock.advance(1600)
     assert.match(app.editEndDateInput.validationMessage, /end month/i)
 
-    assert.equal(chooseMonth(app.editEndDateInput, '2025-01'), true)
+    assert.equal(chooseMonth(app.editEndDateInput, '2025-01'), false)
+    assert.equal(app.editEndDateInput.value, 'Dec 2024')
     assert.match(app.editStartDateInput.validationMessage, /end month/i)
     assert.match(app.editEndDateInput.validationMessage, /end month/i)
 
@@ -951,8 +988,13 @@ for (const controllerPath of controllerPaths) {
     const app = bootCompanyController(controllerPath)
     await app.ready()
 
+    app.selectCompany({ name: 'Acme' })
+    app.jobTitleInput.value = 'Engineer'
+    assert.equal(chooseMonth(app.endDateInput, '2024-12'), true)
+    assert.equal(chooseMonth(app.startDateInput, '2025-06'), true)
+
     const payloadsBeforeInvalidAdd = app.mutationPayloads().length
-    await app.addCompany({ companyName: 'Acme', startDate: '2025-06', endDate: '2024-12' })
+    await app.submitAdd()
 
     assert.equal(app.mutationPayloads().length, payloadsBeforeInvalidAdd)
     assert.match(app.startDateInput.validationMessage, /end month/i)
@@ -963,7 +1005,8 @@ for (const controllerPath of controllerPaths) {
     app.clock.advance(1600)
     assert.match(app.endDateInput.validationMessage, /end month/i)
 
-    assert.equal(chooseMonth(app.endDateInput, '2025-01'), true)
+    assert.equal(chooseMonth(app.endDateInput, '2025-01'), false)
+    assert.equal(app.endDateInput.value, 'Dec 2024')
     assert.match(app.startDateInput.validationMessage, /end month/i)
     assert.match(app.endDateInput.validationMessage, /end month/i)
 
@@ -996,18 +1039,20 @@ for (const controllerPath of controllerPaths) {
     dated.selectCompany(identity)
     dated.jobTitleInput.value = 'Founder'
 
-    // Start-first invalid range, corrected by changing the end month.
-    assert.equal(chooseMonth(dated.startDateInput, '2025-06'), true)
+    // Inverted range staged end-first, corrected by moving the end month forward.
     assert.equal(chooseMonth(dated.endDateInput, '2024-12'), true)
+    assert.equal(chooseMonth(dated.startDateInput, '2025-06'), true)
     await dated.submitAdd()
     assert.equal(dated.mutationPayloads().length, 0)
     assert.match(dated.endDateInput.validationMessage, /end month/i)
     assert.equal(chooseMonth(dated.endDateInput, '2025-12'), true)
     assert.equal(dated.endDateInput.validationMessage, '')
 
-    // End-first invalid range, corrected by changing the start month. Only the
-    // final corrected state is sent.
+    // Inverted range staged end-first, corrected by moving the start month back.
+    // Only the final corrected state is sent.
+    assert.equal(clearMonth(dated.startDateInput), true)
     assert.equal(chooseMonth(dated.endDateInput, '2024-12'), true)
+    assert.equal(chooseMonth(dated.startDateInput, '2025-06'), true)
     await dated.submitAdd()
     assert.equal(dated.mutationPayloads().length, 0)
     assert.match(dated.startDateInput.validationMessage, /end month/i)

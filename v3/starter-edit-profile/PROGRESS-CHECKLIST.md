@@ -119,9 +119,10 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
       and verify a 2xx response without the full contract fails closed.
 - [ ] Retest the published Work Experience flow: the four controls open the month-only
       picker by mouse and by keyboard with correct labels; canonical, day-precision, and
-      numeric legacy records reopen on the right month; same-month tenures save; inverted
-      ranges fail; a current role has no editable end month; and saving an unrelated field
-      leaves both stored dates unchanged in Xano.
+      numeric legacy records reopen on the right month; the end picker greys out every
+      month before the selected start month and reopens unconstrained for a current role;
+      same-month tenures save; inverted ranges fail; a current role has no editable end
+      month; and saving an unrelated field leaves both stored dates unchanged in Xano.
 - [ ] Retest an existing Work Highlight update in production against the
       [authoritative success-copy contract](README.md#in-place-loader-replacements),
       confirm the edit is live immediately, and confirm the shared generic copy
