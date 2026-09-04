@@ -3607,6 +3607,54 @@ test('the profile owner sees both wf-xano call skeletons with exact setup-requir
   assert.equal(xano.paid.tooltipText.textContent, 'Connect your calendar to offer calls.')
 })
 
+test('the owner setup card reads non-boolean readiness the same way the settings modules do', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  // free-call-settings.js and paid-call-settings.js gate every readiness key
+  // on `=== true`, so a payload carrying the STRING "false" leaves the starter
+  // dashboard saying the calendar is not connected. The profile card must
+  // reach the same verdict rather than skipping to a later setup step.
+  const controller = ownerController({
+    grantId: null,
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: 'false',
+        availability_configured: 'false',
+        free_call_enabled: 'false',
+        bookable: false,
+      },
+      services: [],
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: 'false',
+        availability_configured: 'false',
+        stripe_connect_linked: 'false',
+        stripe_charges_enabled: 'false',
+        stripe_readiness_fresh: 'false',
+        paid_call_enabled: 'false',
+        bookable: false,
+      },
+      services: [],
+    }),
+  })
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'setup-required')
+    assert.equal(card.tooltipText.textContent, 'Connect your calendar to offer calls.')
+    assert.equal(card.calendarCta.style.display, 'block')
+    assert.equal(card.stripeCta.style.display, 'none')
+    assert.equal(card.settingsCta.style.display, 'none')
+  }
+})
+
 test('a late wf-xano service card receives logged-out signup wiring without changing its template', async () => {
   const page = makePage()
   const cmsCard = makeElement('div', {
