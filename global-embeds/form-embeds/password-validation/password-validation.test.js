@@ -3116,3 +3116,127 @@ test('t05-rescan: a sweep-gated form that gains a checklist ends up on the check
   type(f, VALID_PASSWORD)
   assert.equal(overlayOpen(f), true, 'and open on a password that meets them')
 })
+
+// ===========================================================================
+// Ticket 05 fixes — the gate reads the form it has now, and heals a CTA that
+// was greyed before an event-less fill.
+// ===========================================================================
+
+test('t05-swap: the gate reads the password input the form has now, not the one it bound', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+  fillEmail(f, 'brand@example.com')
+
+  const fresh = h('input', { type: 'password', 'data-ms-member': 'password' })
+  f.input.remove()
+  f.form.append(fresh)
+  f.window.startersPasswordValidation.rescan()
+
+  fresh.value = 'anything'
+  dispatch(fresh, 'input')
+  assert.equal(overlayOpen(f), true, 'the swapped-in input is the one that opens the CTA')
+
+  f.input.value = ''
+  dispatch(f.input, 'input')
+  assert.equal(overlayOpen(f), true, 'and the detached one adjudicates nothing')
+  assert.deepEqual(bindings(f.input), [1, 1, 1], 'though its listeners are still on it')
+
+  fresh.value = ''
+  dispatch(fresh, 'input')
+  assert.equal(overlayGated(f), true, 'clearing the live input greys it again')
+})
+
+test('t05-swap: regate re-adjudicates on the swapped-in input too', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+  fillEmail(f, 'brand@example.com')
+
+  const fresh = h('input', { type: 'password', 'data-ms-member': 'password' })
+  fresh.value = 'anything'
+  f.input.remove()
+  f.form.append(fresh)
+
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true, 'the form is bridged')
+  assert.equal(overlayOpen(f), true, 'and regate read the input the form has now')
+})
+
+test('t05-swap: a swapped-in field is bound exactly once across repeated rescans', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+
+  const fresh = h('input', { type: 'password', 'data-ms-member': 'password' })
+  f.input.remove()
+  f.form.append(fresh)
+  f.window.startersPasswordValidation.rescan()
+  f.window.startersPasswordValidation.rescan()
+
+  assert.deepEqual(bindings(fresh), [1, 1, 1], 'one listener set on the new input')
+  assert.deepEqual(bindings(f.email), [1, 1, 1], 'and the untouched email is never re-bound')
+})
+
+test('t05-wake: an event-less fill heals before the click reaches a disabled control', () => {
+  const f = nativeSetup('reset-password', { email: false, password: true })
+  assert.equal(f.control.disabled, true, 'greyed from first paint')
+
+  // a password manager writing the value with no event of any kind
+  f.input.value = 'secret'
+  assert.equal(f.control.disabled, true, 'nothing fired, so nothing has recomputed yet')
+
+  dispatch(f.form, 'mouseover')
+  assert.equal(f.control.disabled, false, 'the pointer approaching the CTA re-adjudicated it')
+  assert.equal(f.control.getAttribute('aria-disabled'), null)
+})
+
+test('t05-wake: focusin re-adjudicates a silently filled email', () => {
+  const f = nativeSetup('forgot-password')
+  assert.equal(f.control.disabled, true, 'greyed from first paint')
+
+  f.email.value = 'brand@example.com'
+  dispatch(f.email, 'focusin')
+  assert.equal(f.control.disabled, false, 'the gate re-read the field on the way in')
+})
+
+test('t05-wake: an already-open CTA is never re-rendered by a pointer moving over it', () => {
+  const f = nativeSetup('forgot-password')
+  f.email.value = 'brand@example.com'
+  dispatch(f.email, 'input')
+  assert.equal(f.control.disabled, false, 'open before the pointer arrives')
+
+  let renders = 0
+  const remove = f.control.classList.remove
+  f.control.classList.remove = (name) => {
+    renders += 1
+    return remove(name)
+  }
+  dispatch(f.form, 'mouseover')
+  dispatch(f.form, 'pointerdown')
+  dispatch(f.form, 'keydown')
+
+  assert.equal(renders, 0, 'an open CTA costs nothing per event')
+  assert.equal(f.control.disabled, false, 'and stays open')
+})
+
+test('t05-late: regate installs the gate when the fields arrived after init', () => {
+  const f = nativeSetup('reset-password', { email: false })
+  assert.equal(f.control.disabled, undefined, 'no Gateable Field at init, so no gate')
+
+  const password = h('input', { type: 'password', 'data-ms-member': 'password' })
+  f.form.append(password)
+
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true, 'the form was bridged')
+  assert.equal(f.control.disabled, true, 'and the late field gets it gated')
+
+  password.value = 'secret'
+  dispatch(password, 'input')
+  assert.equal(f.control.disabled, false, 'typing a password opens it')
+})
+
+test('t05-warn: a field-gated form whose CTA cannot be greyed says so once', () => {
+  const marker = h('div', { 'ms-code-submit-button': '' }, ['Log in'])
+  const email = h('input', { type: 'email', 'data-ms-member': 'email' })
+  const form = h('form', { 'data-ms-form': 'login' }, [email, marker])
+  const app = mount(h('body', {}, [form]), onStaging())
+
+  const dead = () => app.warnings.filter((w) => /cannot be greyed out or disabled/.test(w))
+  assert.equal(dead().length, 1, 'the field gate reports a CTA it can do nothing to')
+
+  app.window.startersPasswordValidation.rescan()
+  assert.equal(dead().length, 1, 'and a rescan does not repeat it')
+})
