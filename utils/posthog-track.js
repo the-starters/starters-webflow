@@ -43,11 +43,11 @@
   function wireErrorCapture() {
     if (window.__startersErrorsWired) return
     window.__startersErrorsWired = true
-    const send = (err) => {
+    const send = (err, extra) => {
       try {
         const posthog = window.posthog
         if (posthog && typeof posthog.captureException === 'function' && err) {
-          posthog.captureException(err, { platform: platform() })
+          posthog.captureException(err, Object.assign({ platform: platform() }, extra || {}))
         }
       } catch (e) {
         /* never break the page */
@@ -75,8 +75,26 @@
         return new Error('Unhandled rejection object')
       }
     }
-    window.addEventListener('error', (e) => send(e.error || new Error(e.message)))
-    window.addEventListener('unhandledrejection', (e) => send(rejectionError(e.reason)))
+    window.addEventListener('error', (e) => {
+      // Cross-origin script failures reach the page as a bare "Script error."
+      // with no error object and no source location — the browser strips the
+      // detail. They name no script, so forwarding them only files issues that
+      // point back at this listener. Drop the ones with nothing to triage.
+      if (!e.error && !e.filename) return
+      // window.onerror is an uncaught path, so mark it unhandled — captureException
+      // otherwise records every call as handled. A DOMException such as
+      // InvalidStateError is not an Error and carries no stack, so filename,
+      // lineno, and colno on the event are the only record of which script broke;
+      // forward them as properties because the error object cannot preserve them.
+      const props = { handled: false, mechanism: 'onerror' }
+      if (e.filename) props.filename = e.filename
+      if (e.lineno) props.lineno = e.lineno
+      if (e.colno) props.colno = e.colno
+      send(e.error || new Error(e.message), props)
+    })
+    window.addEventListener('unhandledrejection', (e) =>
+      send(rejectionError(e.reason), { handled: false, mechanism: 'onunhandledrejection' }),
+    )
   }
 
   // Sitewide form tracking: delegated `submit` listener fires `form_submitted`
