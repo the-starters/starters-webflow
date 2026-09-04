@@ -953,21 +953,21 @@
     if (!input) {
       devWarn(
         'wrapper found, but its form has no password input ' +
-        '(input[data-ms-member="password"]) — nothing to validate.',
+        '(input[data-ms-member="password"]), so there is no checklist to ' +
+        'validate; an auth form is still gated on the fields it has.',
         wrappers[0]
       );
       return;
     }
 
-    // Nothing to enforce anywhere: fail open — no gating, no rows or icons
-    // touched. The Memberstack submit bridge still applies. A forgotten
-    // component property must never brick signup, so the only signal is a
-    // staging-side console warning.
+    // No rules to enforce: the checklist fails open, no rows or icons touched.
+    // The submit bridge and an auth form's required-fields gate still apply.
     if (!wrapper) {
       devWarn(
         'zero active rules across all ' + wrappers.length + ' wrapper' +
-        (wrappers.length === 1 ? '' : 's') + ' in this form — every ' + PREFIX +
-        '* toggle is off or invalid, so this form is not being validated.',
+        (wrappers.length === 1 ? '' : 's') + ' in this form: every ' + PREFIX +
+        '* toggle is off or invalid, so this form\'s checklist is not being ' +
+        'validated; an auth form is still gated on the fields it has.',
         wrappers[0]
       );
       return;
