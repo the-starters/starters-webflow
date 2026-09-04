@@ -230,9 +230,9 @@
     // In MIRROR mode the Anchor, not this Spinner, is what a peer just put out.
     if (owner === record && ownedEl() === record.spinner) owner = null;
 
-    // password-validation re-adjudicates the gate on hand-back. regate is
-    // v1.59.510+ and declines a form it never bridged; rescan is the page-wide
-    // fallback.
+    // password-validation re-adjudicates the gate on hand-back. regate declines
+    // only a form it never bridged; rescan covers that and any release older
+    // than v1.59.510, which has no regate at all.
     var pv = window.startersPasswordValidation;
     if (!pv) return;
     var regated = typeof pv.regate === 'function' && pv.regate(record.form);

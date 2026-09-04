@@ -1047,12 +1047,14 @@
 
   // A peer that held this form's CTA hands it back here: one form's gate, not
   // a page-wide pass, so nothing re-prints the page-level staging warnings.
+  // Only a form this script never bridged declines; a bridged one with no
+  // checklist has nothing to re-adjudicate, which is still handled.
   function regate(form) {
     var bridge = form && form[BRIDGE_FLAG];
-    if (!bridge || typeof bridge.gate !== 'function') return false;
+    if (!bridge) return false;
     // The CTA may have been swapped while the peer held it: gate the live root.
     ensureBridge(form);
-    bridge.gate();
+    if (typeof bridge.gate === 'function') bridge.gate();
     return true;
   }
 

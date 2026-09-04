@@ -2787,6 +2787,22 @@ test('r-regate: regate is exposed and refuses a form it never bridged', () => {
   assert.equal(pv.regate(undefined), false)
 })
 
+test('r-regate: regate accepts a bridged form that has no checklist', () => {
+  const f = liveSetup({ wrapper: false, msForm: 'login', mount: onStaging() })
+  const orphans = () => f.warnings.filter((line) => line.includes('sit outside any wrapper')).length
+
+  // a login form: bridged for its Button, but with no rules to re-adjudicate
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true)
+
+  f.root.append(h('div', { 'starters-password-validation-rule': 'numbers' }))
+  f.window.startersPasswordValidation.regate(f.form)
+  f.window.startersPasswordValidation.regate(f.form)
+  assert.equal(orphans(), 0, f.warnings.join(' | '))
+
+  f.window.startersPasswordValidation.rescan()
+  assert.equal(orphans(), 1, 'only a page-wide pass reports it')
+})
+
 test('r-regate: regate puts back a gate a peer stripped off the CTA', () => {
   const f = liveSetup()
   assert.equal(overlayGated(f), true, 'an empty password gates the CTA')
