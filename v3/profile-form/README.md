@@ -20,6 +20,8 @@ carries company logo and stable client identity hydration plus the
 [Build Profile documentation](../build-profile/README.md), `shared-foundation.js`
 adds a taxonomy value only through an explicit option click or an Enter press on a highlighted
 option, so typing an exact option name never selects it on fill, on a comma, or on blur, and
+keeps delayed saved-value taxonomy hydration inside the Edit Profile dirty-state hydration guard, so
+the clean page does not report an unsaved Step 6 change before the member edits it, and
 applies the [whole-dollar price contract](#whole-dollar-price-contract) to every rate input instead
 of stripping symbols and re-formatting the authored value,
 and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on

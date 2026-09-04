@@ -786,7 +786,12 @@
       });
 
       waitProfileData(() => {
-        initializeWithValue();
+        const dirtyState = window.__tsProfileDirtyState;
+        if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+          dirtyState.runHydrationSync(initializeWithValue);
+        } else {
+          initializeWithValue();
+        }
       });
 
       toggleList(false);

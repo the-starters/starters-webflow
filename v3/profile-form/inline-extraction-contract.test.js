@@ -76,7 +76,7 @@ const EXPECTED_LIVE_CAPTURES = Object.freeze({
 
 const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
   'v3/profile-form/shared-foundation.js': Object.freeze({
-    characters: 22714, sha256: '76b0feb6c2d2b616bcf12be70b25eb5803d0252efa0b14936ad3837cb1ee3be9',
+    characters: 22939, sha256: '8c5a9a5a3c960fd5f79099a1e9b1839de116040bf6e1de20aa73073e9d115288',
     liveCaptureAsset: 'v3/profile-form/shared-foundation-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 3: '  ', 81: ' ', 239: '      ' }), terminalNewlinesRemoved: 0,
   }),
