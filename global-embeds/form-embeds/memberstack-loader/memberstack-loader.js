@@ -109,12 +109,19 @@
   // The one request this script witnessed: the record that opened it and the
   // [data-ms-loader] it lit or routed. Nothing else is ours to police.
   var owner = null;
-  var ownerEl = null;
   var mirrored = null;
 
-  function clearOwner() {
-    owner = null;
-    ownerEl = null;
+  // The element the open request lit: the pinned Anchor, or the Spinner it was
+  // routed to. Detached mid-request means no hide can ever reach it again, so
+  // the request stops being ours to police.
+  function ownedEl() {
+    if (!owner) return null;
+    var el = anchor || owner.spinner || null;
+    if (el && el.isConnected === false) {
+      owner = null;
+      return null;
+    }
+    return el;
   }
 
   // Lit is an inline display that is neither absent nor 'none'. Never throws:
@@ -220,7 +227,8 @@
     }
 
     record.pending = false;
-    if (owner === record) clearOwner();
+    // In MIRROR mode the Anchor, not this Spinner, is what a peer just put out.
+    if (owner === record && ownedEl() === record.spinner) owner = null;
 
     // password-validation re-adjudicates the gate on hand-back. regate is
     // v1.59.510+ and declines a form it never bridged; rescan is the page-wide
@@ -238,7 +246,7 @@
     // The pinned Anchor lights up for every form on the page; Pending belongs
     // to the one that submitted.
     if (shown && record.spinner === anchor && owner && owner !== record) return;
-    if (!shown && ownerEl === record.spinner) clearOwner();
+    if (!shown && ownedEl() === record.spinner) owner = null;
     // Pending is the auth forms' busy look; every form still routes and refuses.
     if (!record.isAuth) return;
     if (shown && !record.pending) enterPending(record);
@@ -295,11 +303,14 @@
   // --- loader routing -------------------------------------------------------
 
   // MOVE mode only. A form with no Spinner clears the page instead, so
-  // Memberstack falls back to its own overlay for that submit.
+  // Memberstack falls back to its own overlay for that submit. A stray left
+  // spinning is put out here: nothing lit at route time is ours, and once the
+  // marker moves off it no hide can reach it.
   function route(record) {
     var marked = document.querySelectorAll(LOADER_SELECTOR);
     for (var i = 0; i < marked.length; i++) {
       if (marked[i] === record.spinner) continue;
+      if (isLit(marked[i])) marked[i].style.display = 'none';
       marked[i].removeAttribute(LOADER_ATTR);
     }
     if (record.spinner && !record.spinner.hasAttribute(LOADER_ATTR)) {
@@ -310,13 +321,8 @@
   // A Memberstack hide carries no identity: it lands on whatever holds the
   // marker then, so only one request may be open per page. Only the element
   // this script lit or routed counts; a marker a peer lit is not ours.
-  // Never throws: a broken read must not cost the page its submit.
   function loaderBusy() {
-    try {
-      return isLit(ownerEl);
-    } catch (e) {
-      return false;
-    }
+    return isLit(ownedEl());
   }
 
   // Reads the Anchor's live display, never the mutation batch. Writes only
@@ -337,7 +343,7 @@
       mirrored = null;
     }
     // A hide ends the submit, so a later show nobody asked for lights nothing.
-    if (!shown) clearOwner();
+    if (!shown) owner = null;
   }
 
   // Installed from the capture-phase submit, which runs before Memberstack
@@ -372,12 +378,8 @@
       // Watched on every submit, or a request that ends on the Anchor alone
       // would leave ownership behind.
       observeAnchor();
-      ownerEl = anchor;
     } else {
       route(record);
-      // A Spinner-less form in MOVE mode owns nothing: Memberstack falls back
-      // to its own untracked overlay.
-      ownerEl = record.spinner || null;
     }
   }
 
@@ -535,9 +537,10 @@
   function onPageshow(event) {
     if (!event || !event.persisted) return;
     try {
-      if (isLit(ownerEl)) ownerEl.style.display = 'none';
+      var lit = ownedEl();
+      if (isLit(lit)) lit.style.display = 'none';
       if (isLit(mirrored)) mirrored.style.display = 'none';
-      clearOwner();
+      owner = null;
       mirrored = null;
       var forms = document.querySelectorAll(MS_FORM_SELECTOR);
       for (var i = 0; i < forms.length; i++) {

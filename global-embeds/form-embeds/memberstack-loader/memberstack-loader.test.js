@@ -242,6 +242,12 @@ class Element {
     for (let n = node; n; n = n.parentElement) if (n === this) return true
     return false
   }
+  /** in the document only while an ancestor chain reaches the mounted body */
+  get isConnected() {
+    for (let n = this; n; n = n.parentElement) if (n.tagName === 'BODY') return true
+    return false
+  }
+
   /** detach from the tree, so a swapped-out CTA subtree can be modelled */
   remove() {
     const parent = this.parentElement
@@ -2509,7 +2515,65 @@ test('a spinner left lit with no hide does not lock the next form out', async ()
   await flush()
   assert.equal(signup.submits, 1, 'the stranded spin blocks nothing')
   assert.deepEqual(loaders(root), [s.submitSpinner])
+  assert.equal(p.submitSpinner.style.display, 'none', 'and the stranded spin is put out')
   assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('a spinner taken off the page mid-request releases the page', async () => {
+  const { s, p, root } = unanchoredPage()
+  const app = mount(root, { hostname: STAGING })
+  const profile = memberstack(root, p.form, { cache: false })
+  const signup = memberstack(root, s.form, { cache: false })
+
+  profile.submit()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'block', 'the Save button spins')
+
+  // a modal or step flow swaps the CTA subtree out while the request is open
+  p.submitSpinner.remove()
+  await flush()
+
+  signup.submit()
+  await flush()
+  assert.equal(signup.submits, 1, 'no hide can ever reach the detached spinner')
+  assert.equal(s.submitSpinner.style.display, 'block')
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('a peer putting out the mirrored spinner does not open the page', async () => {
+  const hero = h('div', { id: 'hero', 'data-ms-loader': '' })
+  const a = signupForm({ noLoader: true })
+  const b = profileForm({ noLoader: true })
+  b.form.setAttribute('id', 'save')
+  const root = body([hero, a.form, b.form])
+  const app = mount(root, { hostname: STAGING })
+  const strayWarnings = app.warnings.length
+  const signup = memberstack(root, a.form)
+  const profile = memberstack(root, b.form)
+
+  signup.submit()
+  await flush()
+  assert.equal(hero.style.display, 'block', 'the pinned page loader is what lights')
+  assert.equal(a.submitSpinner.style.display, 'block', 'and the signup button mirrors it')
+
+  // opportunities-3.0.js blanks every [data-button-spinner] on modal-open
+  a.submitSpinner.style.display = 'none'
+  await flush()
+  assert.deepEqual(marksOf(a.submitWrap), IDLE_WRAP, 'the button comes back')
+
+  profile.submit()
+  await flush()
+  assert.equal(profile.submits, 0, 'the request Memberstack still has open holds the page')
+  const refusals = app.warnings.slice(strayWarnings)
+  assert.equal(refusals.length, 1, app.warnings.join(' | '))
+  assert.ok(refusals[0].includes(SUBMIT_REFUSED), refusals[0])
+  assert.ok(refusals[0].includes('form#save.auth_form-block'), refusals[0])
+
+  hero.style.display = 'none'
+  await flush()
+  profile.submit()
+  await flush()
+  assert.equal(profile.submits, 1, 'the ended request lets the next one through')
 })
 
 test('a page-level loader lit again after its request ended blocks nothing', async () => {
