@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.450
+ * @release v1.59.511
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -605,11 +605,15 @@
    *
    * Returns whether any surface's visibility state actually changed.
    */
-  function applyCallSurfaceAvailability(availability, onReveal) {
+  function applyCallSurfaceAvailability(availability, onReveal, includeSurface) {
       let changed = false;
 
       ['free', 'paid'].forEach(function (type) {
-          document.querySelectorAll('[has-connection="' + type + '"]').forEach(function (surface) {
+          document.querySelectorAll(
+              '[has-connection="' + type + '"], ' +
+              '[data-service-card="component"][data-type="' + type + '"]'
+          ).forEach(function (surface) {
+              if (includeSurface && !includeSurface(surface, type)) return;
               if (surface.hasAttribute('hidden') || surface.hasAttribute('data-runtime-call-template')) {
                   return;
               }
@@ -653,10 +657,23 @@
       // Same shared predicate as the painters and the chooser lookup, so one
       // record set cannot be read as free by one of them and as nothing by
       // another.
-      return applyCallSurfaceAvailability({
+      const availability = {
           free: !!recordForType(records, 'free'),
           paid: !!recordForType(records, 'paid'),
+      };
+      const changed = applyCallSurfaceAvailability(availability, function (surface, type) {
+          if (!surface.hasAttribute('data-xano-call-card')) return;
+          surface.setAttribute('has-connection', type);
+          surface.removeAttribute('no-connection');
+          surface.setAttribute('data-call-offer-state', 'available');
       });
+      document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (surface) {
+          const type = surface.getAttribute('data-type');
+          if (availability[type]) return;
+          surface.removeAttribute('has-connection');
+          surface.setAttribute('data-call-offer-state', 'hidden');
+      });
+      return changed;
   }
 
   function findReadyCallTypeCta(type) {
@@ -1351,6 +1368,7 @@
 
   const OWNER_FREE_SETTINGS_PATH = '/starter/free-call-settings/get/v3';
   const OWNER_PAID_SETTINGS_PATH = '/starter/paid-call-settings/get/v3';
+  let ownerCallSettingsSnapshot = null;
 
   /**
    * The viewer IS the starter whose profile this is.
@@ -1541,6 +1559,8 @@
               ownerRecordFrom(settings[0], false),
               ownerRecordFrom(settings[1], true),
           ].filter(Boolean);
+          ownerCallSettingsSnapshot = { free: settings[0], paid: settings[1], records: records };
+          applyOwnerCallCardStates(ownerCallSettingsSnapshot, records);
           if (!records.length) return;
 
           // Late hero and Services cards reach the owner too, so the re-run
@@ -1714,6 +1734,7 @@
      discovery before any booking surface opens. Starter members keep the
      live-derived owner toggles above. */
   let canonicalRetainerState = 'pending';
+  installXanoCallCardsAdapter();
   installXanoServiceCardsAdapter();
   installXanoRetainerCardAdapter();
 
@@ -1776,6 +1797,11 @@
       applyCallSurfaceAvailability(availability, function (surface, type) {
           surface.setAttribute('data-logged-out-call-tout', type);
           stripCallBookingRow(surface);
+      }, function (surface) {
+          // New wf-xano clones are governed by their own endpoint result. The
+          // Algolia booleans remain only for the untouched CMS comparison
+          // cards during the side-by-side canary.
+          return !surface.hasAttribute('data-xano-call-card');
       });
 
       return availability;
@@ -1799,6 +1825,244 @@
           if (getComputedStyle(card).display === 'none') return;
           card.style.cursor = 'pointer';
       });
+  }
+
+  /* XANO CALL CARDS
+     The Hire template owns one native Service Tout template in the hero and
+     one native Service Card template in #services. wf-xano renders the same
+     two-item public DTO into both wrappers. This adapter adds viewer state and
+     routes actions into the controllers that already own signup, booking, and
+     owner settings. It never creates a card or a modal. */
+  function installXanoCallCardsAdapter() {
+      window.WfXano = window.WfXano || [];
+      if (typeof window.WfXano.push !== 'function') return;
+
+      window.WfXano.push(function (wfx) {
+          if (!wfx || typeof wfx.get !== 'function') return;
+          ['starter-call-offers-header', 'starter-call-offers-services'].forEach(function (key) {
+              const instance = wfx.get(key);
+              if (!instance || typeof instance.on !== 'function' || !instance.root) return;
+
+              function applyResult(result) {
+                  Promise.resolve(memberReady).then(function () {
+                      adaptXanoCallCards(instance, key, result);
+                  }).catch(function (error) {
+                      console.warn('Xano call cards:', error);
+                  });
+              }
+
+              let receivedResult = false;
+              instance.on('results', function (result) {
+                  receivedResult = true;
+                  applyResult(result);
+              });
+              if (!receivedResult && typeof instance.getState === 'function') {
+                  const state = instance.getState();
+                  if (state && state.status === 'success' && state.data) applyResult(state.data);
+              }
+          });
+      });
+  }
+
+  function callOfferItemMap(result) {
+      const items = result && Array.isArray(result.items) ? result.items : [];
+      const byId = new Map();
+      items.forEach(function (item) {
+          if (!item || item.id == null) return;
+          const type = String(item.type || '').trim().toLowerCase();
+          if (type !== 'free' && type !== 'paid') return;
+          byId.set(String(item.id), item);
+      });
+      return byId;
+  }
+
+  function setCallOfferVisible(card, visible) {
+      if (visible) {
+          card.removeAttribute('data-canonical-call-unavailable');
+          card.removeAttribute('aria-hidden');
+          card.style.display = 'block';
+      } else {
+          card.setAttribute('data-canonical-call-unavailable', '');
+          card.setAttribute('aria-hidden', 'true');
+          card.style.display = 'none';
+      }
+  }
+
+  function setupMessageFor(type, settings) {
+      const readiness = settings && settings.readiness ? settings.readiness : {};
+      if (!readiness.calendar_connected) return 'Connect your calendar to offer calls.';
+      if (!readiness.availability_configured) return 'Add your availability to offer calls.';
+      if (type === 'paid') {
+          if (!readiness.stripe_connect_linked) return 'Connect Stripe to offer paid calls.';
+          if (!readiness.stripe_charges_enabled) return 'Finish your Stripe account setup to offer paid calls.';
+          if (!readiness.stripe_readiness_fresh) return 'Refresh your Stripe connection to offer paid calls.';
+          if (!readiness.paid_call_enabled) return 'Enable and price your Paid Call service.';
+      } else if (!readiness.free_call_enabled) {
+          return 'Enable your Free Call service.';
+      }
+      return 'Finish your call settings before this service can be booked.';
+  }
+
+  function callOfferTooltipNodes(card) {
+      const explicit = qsa('[data-call-offer-tooltip]', card);
+      if (explicit.length) return explicit;
+      const found = [];
+      qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (marker) {
+          let node = marker.parentElement;
+          while (node && node !== card) {
+              if (qs('[data-call-setup-action], [hover-cta]', node)) {
+                  if (found.indexOf(node) === -1) found.push(node);
+                  break;
+              }
+              node = node.parentElement;
+          }
+      });
+      return found;
+  }
+
+  function configureOwnerSetupActions(card, type, settings) {
+      const readiness = settings && settings.readiness ? settings.readiness : {};
+      const message = setupMessageFor(type, settings);
+      qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (node) {
+          node.textContent = message;
+      });
+      callOfferTooltipNodes(card).forEach(function (node) {
+          node.style.display = 'block';
+          node.removeAttribute('hidden');
+          node.setAttribute('aria-hidden', 'false');
+      });
+
+      const needsCalendar = !readiness.calendar_connected || !readiness.availability_configured;
+      const needsStripe = type === 'paid' && !needsCalendar &&
+          (!readiness.stripe_connect_linked || !readiness.stripe_charges_enabled ||
+              !readiness.stripe_readiness_fresh);
+      const neededAction = needsCalendar ? 'calendar' : (needsStripe ? 'stripe' : 'settings');
+      qsa('[hover-cta], [data-call-setup-action]', card).forEach(function (cta) {
+          const action = cta.getAttribute('data-call-setup-action') ||
+              (cta.hasAttribute('stripe-connect-url') || cta.hasAttribute('stripe-dashboard-url')
+                  ? 'stripe'
+                  : 'calendar');
+          const show = action === neededAction;
+          const wrap = cta.closest('[hover-cta-wrap]') || cta;
+          wrap.style.display = show ? 'block' : 'none';
+          if (!cta.getAttribute('href') || cta.getAttribute('href') === '#') {
+              cta.setAttribute('href', '/starter-dashboard');
+          }
+      });
+  }
+
+  function applyOwnerCallCardStates(snapshot, records) {
+      if (!isProfileOwner(MEMBER)) return;
+      const accepted = Array.isArray(records)
+          ? records
+          : (snapshot && Array.isArray(snapshot.records) ? snapshot.records : []);
+      document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (card) {
+          const type = card.getAttribute('data-type');
+          const settings = snapshot && snapshot[type];
+          const record = recordForType(accepted, type);
+          setCallOfferVisible(card, true);
+          card.removeAttribute('data-signup-trigger-element');
+          card.removeAttribute('data-signup-trigger-value');
+          card.removeAttribute('data-modal-trigger');
+          card.setAttribute('data-call-owner-preview', '');
+          if (record) {
+              card.setAttribute('has-connection', type);
+              card.removeAttribute('no-connection');
+              card.setAttribute('data-call-offer-state', 'available');
+              callOfferTooltipNodes(card).forEach(function (node) {
+                  node.style.display = 'none';
+                  node.setAttribute('hidden', 'hidden');
+                  node.setAttribute('aria-hidden', 'true');
+              });
+          } else {
+              card.removeAttribute('has-connection');
+              card.setAttribute('no-connection', type);
+              card.setAttribute('data-call-offer-state', 'setup-required');
+              configureOwnerSetupActions(card, type, settings);
+          }
+      });
+  }
+
+  function adaptXanoCallCards(instance, key, result) {
+      const itemsById = callOfferItemMap(result);
+      const cards = Array.from(qsa('[wf-xano-item]', instance.root)).filter(function (card) {
+          return card.closest('[wf-xano-element="wrapper"]') === instance.root;
+      });
+
+      cards.forEach(function (card) {
+          const item = itemsById.get(String(card.getAttribute('data-wf-xano-id') || ''));
+          if (!item) return;
+          const type = String(item.type || '').trim().toLowerCase();
+          if (type !== 'free' && type !== 'paid') return;
+          const title = qs('[data-service-card-element="title"]', card);
+          const description = qs('[data-service-card-element="description"]', card);
+          if (title) title.textContent = String(item.name || '');
+          if (description) description.textContent = String(item.description || '');
+          if (type === 'paid' && item.public_available === true) {
+              const amount = Number(item.price);
+              if (Number.isFinite(amount) && amount > 0) {
+                  const price = priceHookIn(card);
+                  if (price) paintRateElement(price, Math.round(amount * 100));
+              }
+          }
+
+          card.setAttribute('data-service-card', 'component');
+          card.setAttribute('data-service-card-state', 'Default');
+          card.setAttribute('data-xano-call-card', key);
+          card.setAttribute('data-call-offer-type', type);
+          card.setAttribute('data-type', type);
+          card.setAttribute('data-call-offer-state', 'pending');
+          card.removeAttribute('booking-popup-open');
+          card.removeAttribute('data-modal-trigger');
+      });
+
+      if (!MEMBER.id) {
+          const publicItems = Array.from(itemsById.values());
+          const freeItem = publicItems.find(function (item) { return item.type === 'free'; });
+          const paidItem = publicItems.find(function (item) { return item.type === 'paid'; });
+          const availability = {
+              free: !!(freeItem && freeItem.public_available === true),
+              paid: !!(paidItem && paidItem.public_available === true),
+          };
+          cards.forEach(function (card) {
+              const type = card.getAttribute('data-type');
+              const visible = !!availability[type];
+              setCallOfferVisible(card, visible);
+              card.setAttribute('data-call-offer-state', visible ? 'available' : 'hidden');
+              if (visible) {
+                  card.setAttribute('has-connection', type);
+                  card.setAttribute('data-signup-trigger-element', 'book-call');
+                  card.setAttribute('data-signup-trigger-value', type === 'paid' ? 'Paid Call' : 'Free Call');
+                  stripCallBookingRow(card);
+              } else {
+                  card.removeAttribute('has-connection');
+              }
+          });
+          if (availability.free || availability.paid) setLoggedOutBookingButtonAvailable();
+          markServiceCardsClickable();
+      } else if (isProfileOwner(MEMBER)) {
+          applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+      } else if (isBrandMember(MEMBER)) {
+          cards.forEach(function (card) {
+              setCallOfferVisible(card, false);
+              card.setAttribute('data-call-offer-state', 'pending');
+          });
+          // Canonical discovery can finish before wf-xano clones this card.
+          // Replay the already-installed set so a late clone does not stay in
+          // pending until some unrelated DOM mutation happens.
+          if (paintedCallState && Array.isArray(paintedCallState.configs)) {
+              syncCanonicalCallSurfaces(paintedCallState.configs);
+          }
+      } else {
+          cards.forEach(function (card) {
+              setCallOfferVisible(card, false);
+              card.setAttribute('data-call-offer-state', 'hidden');
+          });
+      }
+
+      wireCallServiceCardsToDirectEntry();
+      repaintCallSurfaces();
+      refreshEmptySectionNav();
   }
 
   /* XANO SERVICE CARDS (side-by-side CMS canary)
