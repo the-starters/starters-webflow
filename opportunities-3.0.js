@@ -1833,12 +1833,20 @@
   let activeInvoiceProject = null
   let invoiceWorkflowBinding = null
 
+  /**
+   * A projection may carry the canonical `lifecycle_state`, the legacy dashboard
+   * `status`, or both, so either saying `completed` completes the project.
+   */
+  function projectIsCompleted(project) {
+    if (!project || typeof project !== 'object') return false
+    return (
+      String(project.lifecycle_state || '').trim().toLowerCase() === 'completed' ||
+      String(project.status || '').trim().toLowerCase() === 'completed'
+    )
+  }
+
   function finalInvoicePlaceholder(project) {
-    if (!project || typeof project !== 'object') return null
-    if (
-      String(project.status || '').trim().toLowerCase() !== 'completed' ||
-      String(project.lifecycle_state || '').trim().toLowerCase() !== 'completed'
-    ) return null
+    if (!projectIsCompleted(project)) return null
     const invoice = project.final_invoice
     if (
       !invoice ||
@@ -1855,10 +1863,11 @@
     const projectId = parseInt(card.getAttribute('data-wf-xano-id') || '', 10)
     if (!(projectId > 0)) return null
     const project = authoritativeProject || projectWorkflowItems.get(projectId) || {}
-    const completed =
-      String(project.status || '').trim().toLowerCase() === 'completed' ||
-      String(project.lifecycle_state || '').trim().toLowerCase() === 'completed'
+    const completed = projectIsCompleted(project)
     const finalPlaceholder = finalInvoicePlaceholder(project)
+    // Stored placeholder values may only be reused once the projection marks the
+    // placeholder recoverable, so a stale amount cannot leak into a new submit.
+    const recoveryReady = Boolean(finalPlaceholder && finalPlaceholder.recovery_ready === true)
     // Prefer a bound brand/company field — on the authored V3 project card that
     // field is wf-xano-bind="company_name". The "Title | Brand" heading split is
     // only a fallback, and a title containing a pipe makes the last segment the
@@ -1884,14 +1893,10 @@
         cardFieldText(card, 'contact_name'),
       invoiceMode: finalPlaceholder ? 'final' : (completed ? 'unavailable' : 'standard'),
       finalInvoiceId: Number(finalPlaceholder && finalPlaceholder.id) || null,
-      finalInvoiceAmount:
-        finalPlaceholder && normalizeInvoiceAmount(finalPlaceholder.amount) !== null
-          ? normalizeInvoiceAmount(finalPlaceholder.amount)
-          : null,
-      finalInvoiceDescription:
-        finalPlaceholder && finalPlaceholder.recovery_ready === true
-          ? (normalizeFinalInvoiceDescription(finalPlaceholder.description) || '')
-          : '',
+      finalInvoiceAmount: recoveryReady ? normalizeInvoiceAmount(finalPlaceholder.amount) : null,
+      finalInvoiceDescription: recoveryReady
+        ? (normalizeFinalInvoiceDescription(finalPlaceholder.description) || '')
+        : '',
     }
   }
 
@@ -1902,6 +1907,16 @@
     const amount = Math.round(raw * 100) / 100
     if (amount < INVOICE_MIN_AMOUNT || amount > INVOICE_MAX_AMOUNT) return null
     return amount
+  }
+
+  /**
+   * The single payable-link contract shared by the success screen and the card
+   * rows: only an absolute https provider link may become a live pay target.
+   * @returns {string} the payable link, or '' when there is none to show.
+   */
+  function payableInvoiceLink(source) {
+    const link = String(source && (source.payment_link || source.invoice_link) || '').trim()
+    return /^https:\/\/[^\s]+$/i.test(link) ? link : ''
   }
 
   /** A final invoice requires the same trimmed 1..500 character contract as Xano. */
@@ -2119,7 +2134,7 @@
     const link = invoicePaymentLinkEl(modal)
     if (!link) return
     const linkWrap = invoicePaymentLinkWrap(link)
-    const paymentLink = String(result && (result.payment_link || result.invoice_link) || '').trim()
+    const paymentLink = payableInvoiceLink(result)
     if (!paymentLink) {
       // The authored anchor still points at its "#invoice-payment-link"
       // placeholder, so showing it would be a dead pay button.
@@ -3301,10 +3316,8 @@
           })
         }
 
-        const payableLink = String(
-          invoice && (invoice.payment_link || invoice.invoice_link) || '',
-        ).trim()
-        const hasPayableLink = /^https:\/\/[^\s]+$/i.test(payableLink)
+        const payableLink = payableInvoiceLink(invoice)
+        const hasPayableLink = Boolean(payableLink)
         $$('[wf-xano-link="payment_link"]', row).forEach((link) => {
           if (hasPayableLink) {
             link.setAttribute('href', payableLink)
@@ -3377,7 +3390,7 @@
       decorateProjectInvoiceActions(card, project)
       const row = action && action.closest && action.closest('[data-wf-xano-nest-clone]')
       const target = row && row.parentNode
-      if (!target || !target.matches(PROJECT_INVOICE_TARGET_SELECTOR)) return 0
+      if (!target || !target.matches(PROJECT_INVOICE_TARGET_SELECTOR)) return null
       const rows = Array.from(target.children || []).filter((candidate) =>
         candidate.hasAttribute && candidate.hasAttribute('data-wf-xano-nest-clone'),
       )

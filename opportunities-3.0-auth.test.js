@@ -5652,6 +5652,132 @@ test('invoice context selects only one canonical completed-project final placeho
   assert.equal(incomplete.invoiceMode, 'standard')
 })
 
+// A projection may carry only the canonical lifecycle_state, only the legacy
+// dashboard status, or two fields that disagree. Every one of those rows is
+// completed, so none of them may fall into the unreachable 'unavailable' mode
+// while its final placeholder is right there in the payload.
+test('either completed field alone routes a final placeholder to the final mode', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
+  const final = {
+    id: 961,
+    kind: 'stripe_invoice',
+    handoff_type: 'final',
+    sync_origin: 'v3',
+    status: 'unknown',
+  }
+  const completedShapes = [
+    { lifecycle_state: 'completed' },
+    { status: 'completed' },
+    { status: 'completed', lifecycle_state: 'terminated' },
+    { status: 'active', lifecycle_state: 'completed' },
+    { status: 'COMPLETED ' },
+  ]
+
+  for (const shape of completedShapes) {
+    const context = bridge.window.Opp30.invoiceProjectContext(card, {
+      id: 746,
+      ...shape,
+      final_invoice: final,
+    })
+    assert.equal(context.invoiceMode, 'final', JSON.stringify(shape))
+    assert.equal(context.finalInvoiceId, 961)
+
+    // The same row without a usable placeholder still fails closed, so the two
+    // predicates keep agreeing on what "completed" means.
+    const missing = bridge.window.Opp30.invoiceProjectContext(card, { id: 746, ...shape })
+    assert.equal(missing.invoiceMode, 'unavailable', JSON.stringify(shape))
+  }
+})
+
+// invoiceMode is only advisory until it changes the request, so the
+// lifecycle_state-only row has to reach invoices/final-create/v3 end to end.
+test('a lifecycle_state-only completed row submits through the final-create route', async () => {
+  const dom = invoiceSubmitDom()
+  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
+  const requests = []
+  const document = documentWith(dom.modal)
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/final-create/v3')) {
+        requests.push({ url, body: JSON.parse(init.body) })
+        return response({ invoice_id: 961, status: 'unpaid' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      querySelector: document.querySelector,
+      querySelectorAll: document.querySelectorAll,
+    },
+  )
+  const context = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    lifecycle_state: 'completed',
+    final_invoice: {
+      id: 961,
+      kind: 'stripe_invoice',
+      handoff_type: 'final',
+      sync_origin: 'v3',
+      status: 'unknown',
+    },
+  })
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.match(requests[0].url, /\/invoices\/final-create\/v3$/)
+  assert.equal(requests[0].body.project_id, 746)
+  assert.match(requests[0].body.idempotency_key, /^final-invoice-v3-746-/)
+  assert.ok(await waitFor(() => dom.modal.querySelector('.w-form-done').style.display === 'block'))
+  assert.ok(!dom.modal.querySelector('.w-form-fail').textContent)
+})
+
+// recovery_ready is the projection's own signal that the stored placeholder may
+// be reused. Without it a stale amount must not be prefilled and silently
+// billed, the way a member who only retypes the description would.
+test('a final placeholder that is not recovery_ready prefills neither amount nor description', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
+  const stale = {
+    id: 961,
+    kind: 'stripe_invoice',
+    handoff_type: 'final',
+    sync_origin: 'v3',
+    status: 'unknown',
+    amount: 125.25,
+    description: 'Original final work',
+  }
+
+  for (const recoveryReady of [undefined, false, 'true', 1]) {
+    const final_invoice = { ...stale }
+    if (recoveryReady !== undefined) final_invoice.recovery_ready = recoveryReady
+    const context = bridge.window.Opp30.invoiceProjectContext(card, {
+      id: 746,
+      status: 'completed',
+      lifecycle_state: 'completed',
+      final_invoice,
+    })
+    assert.equal(context.invoiceMode, 'final')
+    assert.equal(context.finalInvoiceAmount, null, String(recoveryReady))
+    assert.equal(context.finalInvoiceDescription, '', String(recoveryReady))
+
+    const dom = invoiceSubmitDom()
+    dom.amount.value = ''
+    dom.description.value = ''
+    bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
+    assert.equal(dom.amount.value, '')
+    assert.equal(dom.description.value, '')
+  }
+})
+
 test('final invoice description enforces the trimmed 1..500 character endpoint contract', async () => {
   const bridge = await loadBridge(async () => response({}))
   const normalize = bridge.window.Opp30.normalizeFinalInvoiceDescription
@@ -6163,6 +6289,41 @@ test('the success screen shows and hides the Stripe button, not just its overlay
   paintInvoiceSuccess(unpayable.modal, { status: 'unpaid' }, context, 10)
   assert.equal(unpayable.wrap.style.display, 'none')
   assert.equal(unpayable.link.href, '#invoice-payment-link')
+})
+
+// The success screen and the card rows read the same provider fields, so they
+// have to fail closed identically: a non-https or malformed value must never
+// become a live pay-button target.
+test('the success screen only accepts an absolute https provider link', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { paintInvoiceSuccess } = bridge.window.Opp30
+  const context = { brand: 'Northwind Coffee', title: 'Growth Marketing Lead' }
+
+  const payable = invoiceModalFixture()
+  paintInvoiceSuccess(
+    payable.modal,
+    { status: 'unpaid', invoice_link: 'https://invoice.stripe.com/i/final-test' },
+    context,
+    250,
+  )
+  assert.equal(payable.link.href, 'https://invoice.stripe.com/i/final-test')
+  assert.equal(payable.wrap.style.display, '')
+
+  const rejected = [
+    '/invoices/961',
+    'http://invoice.stripe.com/i/final-test',
+    'javascript:alert(1)',
+    'https://invoice.stripe.com/i/final test',
+    'invoice.stripe.com/i/final-test',
+    '',
+    '   ',
+  ]
+  for (const invoice_link of rejected) {
+    const fixture = invoiceModalFixture()
+    paintInvoiceSuccess(fixture.modal, { status: 'unpaid', invoice_link }, context, 250)
+    assert.equal(fixture.wrap.style.display, 'none', String(invoice_link))
+    assert.equal(fixture.link.href, '#invoice-payment-link', String(invoice_link))
+  }
 })
 
 // A member can bill several projects without reloading, and the first success
