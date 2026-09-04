@@ -114,6 +114,7 @@ function attachStarterProfileCompanyMonthPicker(input) {
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   let visibleYear = new Date().getFullYear();
   let minimumDate = null;
+  let minimumRefreshTimer = null;
   let open = false;
 
   if (!document.getElementById('starter-profile-company-month-picker-style')) {
@@ -154,7 +155,13 @@ function attachStarterProfileCompanyMonthPicker(input) {
     button.className = 'sp-company-month-picker__month';
     button.textContent = name;
     button.addEventListener('click', function () {
-      if (button.disabled) return;
+      refreshMinimum();
+      const candidate = new Date(visibleYear, monthIndex, 1);
+      if (button.disabled || isBeforeMinimum(candidate)) {
+        if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+        render();
+        return;
+      }
       input.value = `${name} ${visibleYear}`;
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -182,13 +189,30 @@ function attachStarterProfileCompanyMonthPicker(input) {
     return starterProfileCompanyDatepickerValue(input.value);
   }
 
+  function refreshMinimum() {
+    if (typeof input._starterProfileCompanyMinimumResolver !== 'function') return false;
+    const previousMinimum = minimumDate ? minimumDate.getTime() : null;
+    const resolvedMinimum = input._starterProfileCompanyMinimumResolver();
+    const resolvedDate = resolvedMinimum instanceof Date
+      ? resolvedMinimum
+      : starterProfileCompanyDatepickerValue(resolvedMinimum);
+    minimumDate = resolvedDate
+      ? new Date(resolvedDate.getFullYear(), resolvedDate.getMonth(), 1)
+      : null;
+    return previousMinimum !== (minimumDate ? minimumDate.getTime() : null);
+  }
+
+  function isBeforeMinimum(candidate) {
+    return !!minimumDate && candidate < minimumDate;
+  }
+
   function render() {
     const selected = selectedDate();
     yearLabel.textContent = String(visibleYear);
     previousYear.disabled = !!minimumDate && visibleYear <= minimumDate.getFullYear();
     monthButtons.forEach(function (entry) {
       const candidate = new Date(visibleYear, entry.monthIndex, 1);
-      entry.button.disabled = !!minimumDate && candidate < minimumDate;
+      entry.button.disabled = isBeforeMinimum(candidate);
       entry.button.setAttribute('aria-pressed', String(!!selected && selected.getFullYear() === visibleYear && selected.getMonth() === entry.monthIndex));
       entry.button.setAttribute('aria-label', `${monthNames[entry.monthIndex]} ${visibleYear}`);
     });
@@ -215,15 +239,7 @@ function attachStarterProfileCompanyMonthPicker(input) {
 
   function openPicker() {
     if (input.disabled) return;
-    if (typeof input._starterProfileCompanyMinimumResolver === 'function') {
-      const resolvedMinimum = input._starterProfileCompanyMinimumResolver();
-      const resolvedDate = resolvedMinimum instanceof Date
-        ? resolvedMinimum
-        : starterProfileCompanyDatepickerValue(resolvedMinimum);
-      minimumDate = resolvedDate
-        ? new Date(resolvedDate.getFullYear(), resolvedDate.getMonth(), 1)
-        : null;
-    }
+    refreshMinimum();
     const selected = selectedDate();
     visibleYear = selected ? selected.getFullYear() : new Date().getFullYear();
     if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
@@ -231,6 +247,13 @@ function attachStarterProfileCompanyMonthPicker(input) {
     popup.hidden = false;
     input.setAttribute('aria-expanded', 'true');
     open = true;
+    if (!minimumRefreshTimer) {
+      minimumRefreshTimer = setInterval(function () {
+        if (!open || !refreshMinimum()) return;
+        if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+        render();
+      }, 100);
+    }
     positionPicker();
     const selectedButton = monthButtons.find(function (entry) {
       return !entry.button.disabled && selected && selected.getFullYear() === visibleYear && selected.getMonth() === entry.monthIndex;
@@ -244,17 +267,31 @@ function attachStarterProfileCompanyMonthPicker(input) {
     popup.hidden = true;
     input.setAttribute('aria-expanded', 'false');
     open = false;
+    if (minimumRefreshTimer) {
+      clearInterval(minimumRefreshTimer);
+      minimumRefreshTimer = null;
+    }
   }
 
   previousYear.addEventListener('click', function () {
-    if (previousYear.disabled) return;
+    refreshMinimum();
+    if (previousYear.disabled || (minimumDate && visibleYear - 1 < minimumDate.getFullYear())) {
+      if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+      render();
+      return;
+    }
     visibleYear -= 1;
     render();
   });
   nextYear.addEventListener('click', function () { visibleYear += 1; render(); });
   todayButton.addEventListener('click', function () {
-    if (todayButton.disabled) return;
+    refreshMinimum();
     const today = new Date();
+    if (todayButton.disabled || isBeforeMinimum(new Date(today.getFullYear(), today.getMonth(), 1))) {
+      if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+      render();
+      return;
+    }
     visibleYear = today.getFullYear();
     input.value = `${monthNames[today.getMonth()]} ${visibleYear}`;
     input.dispatchEvent(new Event('input', { bubbles: true }));
