@@ -1018,6 +1018,11 @@
           // saved markup and focused fixtures.
           const type = card.getAttribute('data-type') || card.getAttribute('has-connection');
           if (type !== 'free' && type !== 'paid') return;
+          // The owner's own preview card is not a booking entry point: owners
+          // never self-book, so `openReadyCallType` can only ever fail for it.
+          // Binding anyway would cancel the setup CTA inside the card, because
+          // this listener is capture-phase and preventDefaults every click.
+          if (card.hasAttribute('data-call-owner-preview')) return;
           // A cloned DOM node copies attributes but not listeners. Track actual
           // listener ownership by element identity instead of trusting the
           // diagnostic attribute as the binding guard.
@@ -2391,11 +2396,15 @@
       const list = document.querySelector('#services .services-list_wrapper');
       // The clone source has to be the AUTHORED card. Every wf-xano adapter
       // stamps the same `data-service-card` / `data-service-card-state` pair on
-      // its rendered clones for styling parity, and those clones live in this
-      // same list, so an unqualified lookup would clone whichever one the
-      // Designer happened to place first and carry its call-offer tooltip and
-      // wf-xano identity onto the Freelance and Retainer cards.
-      const template = list ? list.querySelector('[data-service-card="component"][data-service-card-state="Default"]:not([wf-xano-item])') : null;
+      // its rendered clones for styling parity, and the authored wf-xano
+      // template carries that pair too and survives in the DOM — both live in
+      // this same list. Rejecting anything owned by a wf-xano wrapper covers
+      // both decoys for all three adapters, so the Designer's placement order
+      // cannot decide which element the Freelance and Retainer cards clone.
+      const template = list
+          ? Array.from(list.querySelectorAll('[data-service-card="component"][data-service-card-state="Default"]'))
+              .find(function (candidate) { return !candidate.closest('[wf-xano-element="wrapper"]'); })
+          : null;
       if (!list || !template) {
           console.warn('Rate services:', 'Card template not found');
           return;
