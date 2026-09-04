@@ -243,6 +243,16 @@ without adding a second duration field or changing the Xano schema. Xano's exist
 tenure. The visible value is `Mon YYYY`, a changed value is normalized to `YYYY-MM`
 for Xano, and cards continue to render `Mon YYYY`.
 
+The picker opens on a click and on `Enter`, `Space`, or `ArrowDown` from the field, and
+closes on `Escape`, on choosing a month, `Today`, or `Clear`, or on a mousedown outside
+it. Every close except the outside mousedown returns focus to the field. Inside the
+popup, `Tab` and `Shift+Tab` cycle through the year arrows, the twelve month buttons,
+`Today`, and `Clear` instead of leaving it, and the popup is appended into the
+surrounding work-experience modal when there is one, so a keyboard member cannot land
+behind the dialog. The popup is `position: fixed` and is re-measured against
+`window.visualViewport` on scroll, resize, and viewport change, so a pinch-zoomed or
+soft-keyboard-shrunk viewport keeps it on screen rather than clipping it off an edge.
+
 Stored dates are parsed into a real local `Date` before they hydrate the month picker.
 The parser accepts an exact full or three-letter month in
 `Month YYYY` (first of that month) and ISO `YYYY-MM-DD` with an optional valid
