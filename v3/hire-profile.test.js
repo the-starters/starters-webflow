@@ -3655,6 +3655,57 @@ test('the owner setup card reads non-boolean readiness the same way the settings
   }
 })
 
+test('the legacy owner reveal stands down from the wf-xano card it now shares attributes with', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  // The CMS comparison card the canary still keeps. It carries the same
+  // `no-connection="paid"` the adapter now stamps on its own card, so it is
+  // what proves the stand-down is scoped rather than a blanket disable.
+  const cmsCard = makeElement('div', { 'no-connection': 'paid' })
+  const cmsHoverText = makeElement('div', { 'hover-text': '' })
+  cmsHoverText.textContent = 'CMS placeholder'
+  cmsCard.appendChild(cmsHoverText)
+  page.servicesList.appendChild(cmsCard)
+
+  let resolveStarter
+  const starterReady = new Promise((resolve) => { resolveStarter = resolve })
+  const controller = ownerController({ grantId: null })
+  controller.getStarterByMemberId = () => starterReady
+  // The owner settings answer never lands, so `paintOwnerCallSurfaces` cannot
+  // re-run `applyOwnerCallCardStates` and quietly repair the overwrite. What
+  // the legacy block leaves behind is the terminal state under assertion.
+  controller.authenticatedRequest = () => new Promise(() => {})
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  context.stripe_charges = true
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+  assert.equal(xano.paid.root.getAttribute('no-connection'), 'paid')
+  assert.equal(xano.paid.tooltipText.textContent, 'Connect your calendar to offer calls.')
+
+  resolveStarter(null)
+  await settle()
+
+  assert.equal(
+    xano.paid.tooltipText.textContent,
+    'Connect your calendar to offer calls.',
+    'the legacy reveal must not rewrite the adapter-owned tooltip copy',
+  )
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'setup-required')
+  assert.equal(xano.paid.calendarCta.style.display, 'block')
+  assert.equal(xano.paid.settingsCta.style.display, 'none')
+  assert.equal(
+    cmsHoverText.textContent,
+    'Connect your calendar to start accepting paid consulting calls.',
+    'the legacy reveal still owns the CMS comparison card',
+  )
+  assert.equal(cmsCard.style.display, 'block')
+})
+
 test('a late wf-xano service card receives logged-out signup wiring without changing its template', async () => {
   const page = makePage()
   const cmsCard = makeElement('div', {
