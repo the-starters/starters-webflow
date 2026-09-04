@@ -835,7 +835,11 @@ test('a wrap with no authored theme ends up with no theme attribute at all', asy
 
   ms.submit()
   await flush()
-  assert.equal(f.submitWrap.getAttribute('data-memberstack-loader-theme'), '__none__')
+  assert.equal(
+    f.submitWrap.hasAttribute('data-memberstack-loader-theme'),
+    false,
+    'nothing was authored, so nothing is parked',
+  )
   assert.equal(f.submitWrap.getAttribute('data-button-theme'), 'disabled')
 
   ms.hide()

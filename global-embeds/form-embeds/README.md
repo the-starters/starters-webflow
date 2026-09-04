@@ -13,6 +13,8 @@ Webflow's own private form state to do it. That contract is documented here.
 [`memberstack-loader/memberstack-loader.js`](memberstack-loader/memberstack-loader.js)
 is the second exception. It has no docs-site page yet, so its contract lives in
 its own header block and in the inventory entry in the [root README](../../README.md).
+That header block is **authoritative**; where the root README entry and the
+header ever disagree, the header wins.
 
 The header block in [`turnstile-contents-fix.js`](turnstile-contents-fix.js) is
 **authoritative**. This document explains the model behind it; where the two ever

@@ -1,8 +1,11 @@
 // Memberstack loader: dresses a Memberstack auth form's Button as busy and
 // disabled while Memberstack shows its own spinner, and on hide restores it and
 // hands it back to password-validation, whose verdict may have moved meanwhile.
+// Hand-back needs password-validation v1.59.504 or newer; v1.59.510 or newer
+// hands one form back through regate() and so avoids repeating that script's
+// page-level staging warnings on every release.
 //
-// @release v1.59.509
+// @release v1.59.510
 //
 // Memberstack (DOM 1.2.0) fires no event for submit start or end. The only
 // signal it gives is inline display on the page's [data-ms-loader], so the
@@ -18,14 +21,19 @@
 // While Pending the wrap carries data-button-theme="disabled" (the grey look),
 // aria-busy="true" (site CSS may style it) and
 // data-ms-loading="true"; the clickable control carries aria-disabled="true".
-// The authored theme is parked on the wrap so hide can put it back.
+// The theme is always overwritten while Pending; an authored one is parked on
+// the wrap (data-memberstack-loader-theme) so hide can put it back, and a wrap
+// that had none ends up with no theme attribute at all.
 //
-// Only auth forms (data-ms-form login / signup / forgot-password /
-// reset-password) are touched. Every attribute this script may have to undo is
-// written alongside an ownership mark (data-memberstack-loader-theme, -busy,
-// -aria), and only marked attributes are ever removed, so a peer's hold (for
-// example password-validation.js's own aria-disabled) survives untouched.
-// Never author those marks in Webflow.
+// Pending — the busy look and the double-submit guard — applies to auth forms
+// only (data-ms-form login / signup / forgot-password / reset-password). Loader
+// routing and the one-request-at-a-time refusal below cover every Memberstack
+// form, profile and account forms included. Every attribute this script may
+// have to undo, other than the theme it always overwrites, is written alongside
+// an ownership mark (data-memberstack-loader-busy, -aria), and only marked
+// attributes are ever removed, so a peer's hold (for example
+// password-validation.js's own aria-disabled) survives untouched. Never author
+// data-memberstack-loader-theme, -busy or -aria in Webflow.
 //
 // A Memberstack hide carries no identity — it lands on whatever holds
 // [data-ms-loader] at that moment — so only one Memberstack request may be open
@@ -54,7 +62,7 @@
   if (window.__startersMemberstackLoaderInit) return;
   window.__startersMemberstackLoaderInit = true;
 
-  var RELEASE = 'v1.59.509';
+  var RELEASE = 'v1.59.510';
   var WIRED_FLAG = '__startersMemberstackLoader';
   var OBSERVED_FLAG = '__startersMemberstackLoaderObserved';
 
@@ -68,8 +76,6 @@
   var CONTROL_SELECTORS = ['.clickable_btn', 'button', 'input[type="submit"]'];
 
   var THEME_ATTR = 'data-button-theme';
-  // An authored data-button-theme="" is not the same as no attribute at all.
-  var NO_THEME = '__none__';
   var DISABLED_THEME = 'disabled';
   var BUSY_ATTR = 'aria-busy';
   var LOADING_ATTR = 'data-ms-loading';
@@ -151,8 +157,9 @@
 
   function enterPending(record) {
     var wrap = record.wrap;
-    var theme = wrap.getAttribute(THEME_ATTR);
-    wrap.setAttribute(THEME_MARK, theme === null ? NO_THEME : theme);
+    // The mark's presence is the record that a theme was authored; an authored
+    // data-button-theme="" is a value, not an absence.
+    if (wrap.hasAttribute(THEME_ATTR)) wrap.setAttribute(THEME_MARK, wrap.getAttribute(THEME_ATTR));
     wrap.setAttribute(THEME_ATTR, DISABLED_THEME);
 
     if (wrap.getAttribute(BUSY_ATTR) !== 'true') {
@@ -172,9 +179,8 @@
 
   function leavePending(record) {
     var wrap = record.wrap;
-    var authored = wrap.getAttribute(THEME_MARK);
-    if (authored === null || authored === NO_THEME) wrap.removeAttribute(THEME_ATTR);
-    else wrap.setAttribute(THEME_ATTR, authored);
+    if (wrap.hasAttribute(THEME_MARK)) wrap.setAttribute(THEME_ATTR, wrap.getAttribute(THEME_MARK));
+    else wrap.removeAttribute(THEME_ATTR);
     wrap.removeAttribute(THEME_MARK);
 
     if (wrap.hasAttribute(BUSY_MARK)) {
