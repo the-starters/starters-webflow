@@ -1,7 +1,7 @@
 /**
  * G2 proof Marquee — looping testimonial strip.
  *
- * @release v1.59.512
+ * @release v1.59.514
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. GSAP is assumed
  * as a page global — on the V3 site that is Webflow's native GSAP integration,
@@ -47,7 +47,7 @@
   if (window.__g2ProofMarqueeInited) return;
   window.__g2ProofMarqueeInited = true;
 
-  var RELEASE = 'v1.59.512';
+  var RELEASE = 'v1.59.514';
   // Set before anything can bail, so the running version is readable even
   // when GSAP never shows up. `armed` flips only once tweens exist.
   window.G2ProofMarquee = { release: RELEASE, armed: false };
