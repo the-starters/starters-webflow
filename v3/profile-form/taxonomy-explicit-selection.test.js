@@ -271,7 +271,7 @@ function node(tagName, attributes = {}, text = '') {
   return created
 }
 
-function createFixture({ isMulti = true, options: optionList } = {}) {
+function createFixture({ isMulti = true, maxSelections = 3, options: optionList, initialValue = '' } = {}) {
   const root = new Node('body')
   const listInstance = node('div', { 'fs-list-instance': 'skills' })
   root.append(listInstance)
@@ -287,10 +287,11 @@ function createFixture({ isMulti = true, options: optionList } = {}) {
 
   const input = node('input', {
     'ms-code-select': 'input',
-    'ms-code-select-max': '3',
+    'ms-code-select-max': String(maxSelections),
     'ms-code-select-min': '1',
   })
   const inputValue = node('input', { 'ms-code-select': 'input-value' })
+  inputValue.value = initialValue
   const inputRequired = node('input', { 'ms-code-select': 'input-required' })
   const list = node('div', { 'ms-code-select': 'list' })
   const newTagTemplate = node('div', { 'ms-code-select': 'tag-name-new' })
@@ -309,9 +310,10 @@ function createFixture({ isMulti = true, options: optionList } = {}) {
   return { root, wrapper, input, inputValue, inputRequired, list, selectedWrapper, optionSources }
 }
 
-function boot(fixtureOptions) {
+function boot(fixtureOptions = {}) {
   const fixture = createFixture(fixtureOptions)
   const timers = []
+  const intervals = []
   const documentListeners = new Map()
   const context = {
     console: { log() {}, warn() {}, error() {}, info() {}, debug() {} },
@@ -333,7 +335,10 @@ function boot(fixtureOptions) {
     fetch: async () => ({ ok: true, json: async () => [] }),
     qs: () => null,
     qsa: () => [],
-    setInterval: () => 1,
+    setInterval: (callback) => {
+      intervals.push(callback)
+      return intervals.length
+    },
     clearInterval() {},
     setTimeout: (callback, delay) => {
       timers.push({ callback, delay })
@@ -344,6 +349,7 @@ function boot(fixtureOptions) {
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
   }
   context.window = context
+  if (fixtureOptions.dirtyState) context.window.__tsProfileDirtyState = fixtureOptions.dirtyState
   context.window.matchMedia = () => ({ matches: false })
   context.$ = createJQuery(fixture.root)
   vm.createContext(context)
@@ -355,6 +361,11 @@ function boot(fixtureOptions) {
     context,
     // The controller defers its blur settle behind a 100ms timeout.
     flushTimers() {
+      while (timers.length) timers.shift().callback()
+    },
+    flushProfileHydration() {
+      context.activeProfile.last_update = 1
+      while (intervals.length) intervals.shift()()
       while (timers.length) timers.shift().callback()
     },
     renderedOption(name) {
@@ -374,6 +385,97 @@ function boot(fixtureOptions) {
     },
   }
 }
+
+test('late taxonomy hydration does not arm Edit Profile dirty state', () => {
+  let hydrationDepth = 0
+  let dirtyEvents = 0
+  let hydrationCalls = 0
+  const dirtyState = {
+    runHydrationSync(callback) {
+      hydrationCalls += 1
+      hydrationDepth += 1
+      try {
+        return callback()
+      } finally {
+        hydrationDepth -= 1
+      }
+    },
+  }
+  const harness = boot({
+    initialValue: 'skill-1',
+    options: [{ id: 'skill-1', name: 'Figma' }],
+    dirtyState,
+  })
+  const markDirty = () => {
+    if (hydrationDepth === 0) dirtyEvents += 1
+  }
+  harness.inputValue.addEventListener('input', markDirty)
+  harness.inputValue.addEventListener('change', markDirty)
+
+  harness.flushProfileHydration()
+
+  assert.equal(hydrationCalls, 1)
+  assert.equal(dirtyEvents, 0)
+  assert.deepEqual(harness.selectedTagNames(), ['Figma'])
+})
+
+test('hydration keeps saved taxonomy ids that no longer have a rendered option', () => {
+  const harness = boot({
+    initialValue: 'skill-a, skill-retired, skill-c',
+    options: [{ id: 'skill-a', name: 'Figma' }, { id: 'skill-c', name: 'Sketch' }],
+  })
+
+  harness.flushProfileHydration()
+
+  assert.deepEqual(harness.selectedTagNames(), ['Figma', 'Sketch'])
+  assert.equal(harness.inputValue.value, 'skill-a, skill-c, skill-retired')
+})
+
+test('editing a taxonomy after hydration still keeps the retired saved id', () => {
+  const harness = boot({
+    initialValue: 'skill-a, skill-retired',
+    options: [{ id: 'skill-a', name: 'Figma' }, { id: 'skill-c', name: 'Sketch' }],
+  })
+
+  harness.flushProfileHydration()
+  harness.renderedOption('Sketch').dispatchEvent('click')
+
+  assert.deepEqual(harness.selectedTagNames(), ['Figma', 'Sketch'])
+  assert.equal(harness.inputValue.value, 'skill-a, skill-c, skill-retired')
+})
+
+test('a max-one Function selector hydrates only one rendered saved id', () => {
+  const harness = boot({
+    isMulti: false,
+    maxSelections: 1,
+    initialValue: 'function-a, function-b',
+    options: [
+      { id: 'function-a', name: 'Marketing' },
+      { id: 'function-b', name: 'Design' },
+    ],
+  })
+
+  harness.flushProfileHydration()
+
+  assert.deepEqual(harness.selectedTagNames(), ['Marketing'])
+  assert.equal(harness.inputValue.value, 'function-a')
+  assert.equal(harness.inputRequired.value, 'function-a')
+})
+
+test('a max-one Availability selector drops unmatched saved ids', () => {
+  const harness = boot({
+    isMulti: false,
+    maxSelections: 1,
+    initialValue: 'availability-retired, availability-b',
+    options: [{ id: 'availability-b', name: '20 hours per week' }],
+  })
+
+  harness.flushProfileHydration()
+
+  assert.deepEqual(harness.selectedTagNames(), ['20 hours per week'])
+  assert.equal(harness.inputValue.value, 'availability-b')
+  assert.equal(harness.inputRequired.value, 'availability-b')
+})
 
 const OPTIONS = [
   { id: '1', name: 'Figma' },

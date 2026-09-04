@@ -248,6 +248,7 @@
       $wrapper.addClass('ready');
 
       let selectedOptions = [];
+      let preservedUnmatchedValues = [];
       let highlightedIndex = -1;
       let listOpenedByTap = false;
       let activeScrollTop = 0;
@@ -397,7 +398,8 @@
 
       function checkOnMin() {
         if ($input_value.length && MIN_SELECTIONS) {
-          const idsValue = selectedOptions.map((option) => option.id).join(', ');
+          const selectedIds = selectedOptions.map((option) => option.id);
+          const idsValue = selectedIds.join(', ');
 
           if (selectedOptions.length >= Number(MIN_SELECTIONS)) {
             if ($input_required.length) {
@@ -409,7 +411,7 @@
             }
           }
 
-          $input_value.val(idsValue);
+          $input_value.val(selectedIds.concat(preservedUnmatchedValues).join(', '));
 
           $input_value[0].dispatchEvent(
             new Event('change', {
@@ -643,11 +645,17 @@
             .map((v) => v.trim())
             .filter(Boolean);
 
+          preservedUnmatchedValues = [];
+
           initialValues.forEach((value) => {
+            if (!isMulti && selectedOptions.length) return;
+
             const matchingOption = options.find((option) => option.id === value || option.name === value);
 
             if (matchingOption) {
               addTag(matchingOption);
+            } else if (isMulti && !preservedUnmatchedValues.includes(value)) {
+              preservedUnmatchedValues.push(value);
             }
           });
 
@@ -786,7 +794,12 @@
       });
 
       waitProfileData(() => {
-        initializeWithValue();
+        const dirtyState = window.__tsProfileDirtyState;
+        if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+          dirtyState.runHydrationSync(initializeWithValue);
+        } else {
+          initializeWithValue();
+        }
       });
 
       toggleList(false);
