@@ -4,7 +4,10 @@
  * Captured read-only from /build-profile/consult on 2026-08-12.
  */
     // Handles work experience dates, including Present state and date validation.
-    document.addEventListener('DOMContentLoaded', function () {
+    let starterProfileWorkDatesBooted = false;
+    function bootStarterProfileWorkDates() {
+        if (starterProfileWorkDatesBooted) return;
+        starterProfileWorkDatesBooted = true;
         function initWorkDateFields(endSelector, checkboxSelector) {
             const endDateInput = qs(endSelector);
             const currentWorkCheckbox = qs(checkboxSelector);
@@ -51,4 +54,10 @@
 
         initWorkDateFields('#company-end', '#company-current');
         initWorkDateFields('#edit-company-end', '#edit-company-current');
-    });
+    }
+
+    if (!document.readyState || document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootStarterProfileWorkDates, { once: true });
+    } else {
+        bootStarterProfileWorkDates();
+    }

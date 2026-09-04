@@ -554,6 +554,11 @@ for (const controllerPath of controllerPaths) {
       assert.equal(input.getAttribute('role'), 'combobox')
       assert.ok(input._starterProfileCompanyMonthPicker)
     }
+
+    app.currentWorkCheckbox.checked = true
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.equal(app.endDateInput.getAttribute('disabled'), 'disabled')
+    assert.equal(app.endDateInput.value, 'Present')
   })
 
   test(`${controllerPath} opens a month-only grid and saves the selected months`, async () => {
