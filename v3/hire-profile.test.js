@@ -807,6 +807,33 @@ function addXanoCallCardsFixture(page, instanceKey = 'starter-call-offers-servic
   return { wrapper, template, free, paid, card }
 }
 
+function addLegacyHeaderCallCardsFixture(page) {
+  const wrapper = makeElement('div', { 'data-call-canary-legacy-wrapper': 'header' })
+  function card(type) {
+    const root = makeElement('div', {
+      'data-service-card': 'component',
+      'data-service-card-state': 'Default',
+      'data-type': type,
+      'has-connection': type,
+    })
+    const title = makeElement('div', { 'data-service-card-element': 'title' })
+    title.textContent = type === 'paid' ? 'Paid Call' : 'Free Call'
+    const description = makeElement('div', { 'data-service-card-element': 'description' })
+    description.textContent = 'Legacy description'
+    const price = makeElement('span', { 'data-millify': '', 'data-millify-raw': '0' })
+    price.textContent = '0'
+    root.appendChild(title)
+    root.appendChild(description)
+    root.appendChild(price)
+    wrapper.appendChild(root)
+    return { root, title, description, price }
+  }
+  const free = card('free')
+  const paid = card('paid')
+  page.root.appendChild(wrapper)
+  return { wrapper, free, paid }
+}
+
 function makeCallCardsWfXanoFixture(root, instanceKey = 'starter-call-offers-services') {
   let resultsHandler = null
   let latestResult = null
@@ -2377,6 +2404,7 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
     '[data-booking-unavailable]{display:none!important}' +
       '[data-booking-trigger-unavailable]{display:none!important}' +
       '[data-canonical-call-unavailable]{display:none!important}' +
+      '[data-call-offer-superseded]{display:none!important}' +
       '[data-booking-pass-through]{visibility:hidden!important}' +
       '[data-booking-pass-through] *{visibility:hidden!important}' +
       '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"])' +
@@ -3462,8 +3490,89 @@ test('wf-xano call cards use public Xano availability for logged-out signup pres
   assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
 })
 
+test('canonical call DTO replaces legacy Services cards and repaints the published Header fallback', async () => {
+  const page = makePage()
+  const legacyServicesFree = page.servicesList.querySelector('[has-connection="free"]')
+  const legacyServicesPaid = legacyServicesFree.cloneNode(true)
+  legacyServicesPaid.setAttribute('has-connection', 'paid')
+  legacyServicesPaid.setAttribute('data-type', 'paid')
+  page.servicesList.appendChild(legacyServicesPaid)
+  const legacyServicesDisabled = legacyServicesFree.cloneNode(true)
+  legacyServicesDisabled.removeAttribute('has-connection')
+  legacyServicesDisabled.removeAttribute('data-type')
+  legacyServicesDisabled.setAttribute('no-connection', 'paid')
+  page.servicesList.appendChild(legacyServicesDisabled)
+  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: {
+      rate: 0,
+      'retainer-enabled': false,
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': true,
+    },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: true, paid: true, price: 2 }))
+  await settle()
+
+  for (const card of [legacyServicesFree, legacyServicesPaid, legacyServicesDisabled]) {
+    assert.equal(card.style.display, 'none')
+    assert.equal(card.getAttribute('data-call-offer-superseded'), '')
+    assert.equal(card.getAttribute('aria-hidden'), 'true')
+  }
+  assert.equal(legacyHeader.free.root.style.display, 'block')
+  assert.equal(legacyHeader.paid.root.style.display, 'block')
+  assert.equal(legacyHeader.paid.title.textContent, 'Paid Consulting Call')
+  assert.equal(legacyHeader.paid.description.textContent, 'A focused paid session')
+  assert.equal(legacyHeader.paid.price.textContent, '2')
+  assert.equal(legacyHeader.paid.price.getAttribute('data-millify'), '2')
+  assert.equal(legacyHeader.free.root.getAttribute('data-signup-trigger-value'), 'Free Call')
+  assert.equal(
+    legacyHeader.paid.root.getAttribute('data-signup-trigger-value'),
+    'Paid Consulting Call',
+  )
+
+  wfx.emit(callCardResult({ free: true, paid: false }))
+  await settle()
+  assert.equal(legacyHeader.free.root.style.display, 'block')
+  assert.equal(legacyHeader.paid.root.style.display, 'none')
+  assert.equal(legacyHeader.paid.root.getAttribute('data-signup-trigger-element'), null)
+})
+
+test('a legacy Header rendered after canonical Services replays the latest public call DTO', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: true, paid: true, price: 2 }))
+  await settle()
+
+  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+  for (const callback of context.mutationObserverCallbacks) {
+    callback([{ type: 'childList', addedNodes: [legacyHeader.wrapper] }])
+  }
+  await settle()
+
+  assert.equal(legacyHeader.free.root.style.display, 'block')
+  assert.equal(legacyHeader.paid.root.style.display, 'block')
+  assert.equal(legacyHeader.paid.price.textContent, '2')
+  assert.equal(legacyHeader.paid.root.getAttribute('data-canonical-public-call'), 'paid')
+})
+
 test('the latest canonical wf-xano result controls logged-out Book Call across both wrappers', async () => {
   const page = makePage()
+  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
   const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')
   const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
   const servicesWfx = makeCallCardsWfXanoFixture(services.wrapper, 'starter-call-offers-services')
@@ -3487,6 +3596,8 @@ test('the latest canonical wf-xano result controls logged-out Book Call across b
   servicesWfx.emit(callCardResult({ free: true, paid: false }))
   await settle()
   assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+  assert.equal(legacyHeader.free.root.style.display, 'none')
+  assert.equal(legacyHeader.free.root.getAttribute('data-call-offer-superseded'), '')
 
   headerWfx.emit({ items: [] })
   await settle()
@@ -3563,6 +3674,7 @@ test('wf-xano call cards normalise the DTO call type before deciding logged-out 
 test('a non-owner talent keeps the wf-xano call cards hidden even though the profile owner has a grant', async () => {
   const page = makePage()
   addContractDialog(page)
+  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
   const xano = addXanoCallCardsFixture(page)
   const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
   // The legacy grant-only reveal still governs the untouched CMS comparison
@@ -3587,7 +3699,12 @@ test('a non-owner talent keeps the wf-xano call cards hidden even though the pro
 
   const cmsFreeCard = page.servicesList.querySelector('[has-connection="free"]:not([wf-xano-item])')
   assert.ok(cmsFreeCard, 'the CMS comparison card fixture must still be present')
-  assert.equal(cmsFreeCard.style.display, 'block', 'the legacy CMS reveal is unchanged')
+  assert.equal(cmsFreeCard.style.display, 'none', 'the superseded CMS call card stays hidden')
+  assert.equal(cmsFreeCard.getAttribute('data-call-offer-superseded'), '')
+  for (const card of [legacyHeader.free, legacyHeader.paid]) {
+    assert.equal(card.root.style.display, 'none')
+    assert.equal(card.root.getAttribute('data-call-offer-superseded'), '')
+  }
 })
 
 test('a late wf-xano Brand call card replays canonical discovery and opens only its matching type', async () => {
@@ -3670,6 +3787,7 @@ test('a late wf-xano Brand call card replays terminal empty discovery as hidden'
 
 test('the profile owner sees both wf-xano call skeletons with exact setup-required tooltip state', async () => {
   const page = makePage()
+  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
   const xano = addXanoCallCardsFixture(page)
   // The current Service Tout component exposes the tooltip title and CTA
   // hooks, but not a custom attribute on the tooltip root itself. The adapter
@@ -3707,6 +3825,9 @@ test('the profile owner sees both wf-xano call skeletons with exact setup-requir
   await settle()
   wfx.emit(callCardResult({ free: false, paid: false }))
   await settle()
+
+  assert.equal(legacyHeader.paid.title.textContent, 'Paid Consulting Call')
+  assert.equal(legacyHeader.paid.description.textContent, 'A focused paid session')
 
   for (const card of [xano.free, xano.paid]) {
     assert.equal(card.root.style.display, 'block')
@@ -4143,6 +4264,16 @@ test('the rate cards clone the authored card even when a wf-xano clone precedes 
   assert.equal(built.getAttribute('wf-xano-item'), null)
   assert.equal(built.getAttribute('data-wf-xano-id'), null)
   assert.equal(built.getAttribute('data-xano-call-card'), null)
+  assert.equal(
+    built.style.display,
+    'block',
+    'the generated rate card must override the hidden source card display',
+  )
+  assert.equal(
+    built.getAttribute('data-call-offer-superseded'),
+    null,
+    'the generated rate card must not inherit the hidden CMS rollback marker',
+  )
 })
 
 test('the rate cards refuse the wf-xano template that precedes the authored card', async () => {
