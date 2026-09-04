@@ -1036,9 +1036,16 @@
           card.removeAttribute('data-modal-trigger');
           card.setAttribute('data-call-service-direct', 'ready');
           card.addEventListener('click', function (event) {
+              // A clone can be observed before the wf-xano adapter resolves its
+              // viewer state. Re-check at click time so a later owner-preview
+              // stamp (or a released/hidden clone) cannot be trapped by this
+              // capture-phase shortcut.
+              if (card.hasAttribute('data-call-owner-preview')) return;
+              const liveType = card.getAttribute('data-type') || card.getAttribute('has-connection');
+              if (liveType !== 'free' && liveType !== 'paid') return;
               event.preventDefault();
               event.stopImmediatePropagation();
-              openReadyCallType(type);
+              openReadyCallType(liveType);
           }, true);
           directCallServiceCards.add(card);
       });
@@ -1576,22 +1583,35 @@
       if (!isProfileOwner(MEMBER)) return;
 
       try {
-          const settings = await Promise.all([
-              ownerSettings(OWNER_FREE_SETTINGS_PATH).catch(function (error) {
+          const settingsResults = await Promise.all([
+              ownerSettings(OWNER_FREE_SETTINGS_PATH).then(function (value) {
+                  return { status: 'loaded', value: value };
+              }).catch(function (error) {
                   console.warn('[hire-profile] the owner free-call settings lookup failed:', error);
-                  return null;
+                  return { status: 'error', value: null };
               }),
-              ownerSettings(OWNER_PAID_SETTINGS_PATH).catch(function (error) {
+              ownerSettings(OWNER_PAID_SETTINGS_PATH).then(function (value) {
+                  return { status: 'loaded', value: value };
+              }).catch(function (error) {
                   console.warn('[hire-profile] the owner paid-call settings lookup failed:', error);
-                  return null;
+                  return { status: 'error', value: null };
               }),
           ]);
+          const settings = [settingsResults[0].value, settingsResults[1].value];
 
           const records = [
               ownerRecordFrom(settings[0], false),
               ownerRecordFrom(settings[1], true),
           ].filter(Boolean);
-          ownerCallSettingsSnapshot = { free: settings[0], paid: settings[1], records: records };
+          ownerCallSettingsSnapshot = {
+              free: settings[0],
+              paid: settings[1],
+              status: {
+                  free: settingsResults[0].status,
+                  paid: settingsResults[1].status,
+              },
+              records: records,
+          };
           applyOwnerCallCardStates(ownerCallSettingsSnapshot, records);
           if (!records.length) return;
 
@@ -1924,6 +1944,26 @@
       }
   }
 
+  function releaseXanoCallCard(card) {
+      [
+          'data-xano-call-card',
+          'data-service-card',
+          'data-service-card-state',
+          'data-call-offer-type',
+          'data-type',
+          'data-call-offer-state',
+          'data-call-owner-preview',
+          'data-call-service-direct',
+          'has-connection',
+          'no-connection',
+          'data-signup-trigger-element',
+          'data-signup-trigger-value',
+      ].forEach(function (attribute) {
+          card.removeAttribute(attribute);
+      });
+      setCallOfferVisible(card, false);
+  }
+
   /**
    * Normalize the owner call-settings readiness payload to strict booleans.
    *
@@ -2010,6 +2050,32 @@
       });
   }
 
+  function configureOwnerSettingsUnavailable(card, loading) {
+      const message = loading
+          ? 'Call settings are loading. Open Call Settings if this continues.'
+          : 'Call settings could not be loaded. Refresh or open Call Settings.';
+      qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (node) {
+          node.textContent = message;
+      });
+      callOfferTooltipNodes(card).forEach(function (node) {
+          node.style.display = 'block';
+          node.removeAttribute('hidden');
+          node.setAttribute('aria-hidden', 'false');
+      });
+      qsa('[hover-cta], [data-call-setup-action]', card).forEach(function (cta) {
+          const action = cta.getAttribute('data-call-setup-action') ||
+              (cta.hasAttribute('stripe-connect-url') || cta.hasAttribute('stripe-dashboard-url')
+                  ? 'stripe'
+                  : 'calendar');
+          const show = action === 'settings';
+          const wrap = cta.closest('[hover-cta-wrap]') || cta;
+          wrap.style.display = show ? 'block' : 'none';
+          if (show && (!cta.getAttribute('href') || cta.getAttribute('href') === '#')) {
+              cta.setAttribute('href', '/starter-dashboard');
+          }
+      });
+  }
+
   function applyOwnerCallCardStates(snapshot, records) {
       if (!isProfileOwner(MEMBER)) return;
       const accepted = Array.isArray(records)
@@ -2018,11 +2084,15 @@
       document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (card) {
           const type = card.getAttribute('data-type');
           const settings = snapshot && snapshot[type];
+          const settingsStatus = snapshot && snapshot.status
+              ? snapshot.status[type]
+              : 'loading';
           const record = recordForType(accepted, type);
           setCallOfferVisible(card, true);
           card.removeAttribute('data-signup-trigger-element');
           card.removeAttribute('data-signup-trigger-value');
           card.removeAttribute('data-modal-trigger');
+          card.removeAttribute('data-call-service-direct');
           card.setAttribute('data-call-owner-preview', '');
           if (record) {
               card.setAttribute('has-connection', type);
@@ -2033,6 +2103,14 @@
                   node.setAttribute('hidden', 'hidden');
                   node.setAttribute('aria-hidden', 'true');
               });
+          } else if (settingsStatus !== 'loaded') {
+              card.removeAttribute('has-connection');
+              card.removeAttribute('no-connection');
+              card.setAttribute(
+                  'data-call-offer-state',
+                  settingsStatus === 'loading' ? 'settings-loading' : 'settings-unavailable'
+              );
+              configureOwnerSettingsUnavailable(card, settingsStatus === 'loading');
           } else {
               card.removeAttribute('has-connection');
               card.setAttribute('no-connection', type);
@@ -2047,12 +2125,19 @@
       const cards = Array.from(qsa('[wf-xano-item]', instance.root)).filter(function (card) {
           return card.closest('[wf-xano-element="wrapper"]') === instance.root;
       });
+      const adapted = [];
 
       cards.forEach(function (card) {
           const item = itemsById.get(String(card.getAttribute('data-wf-xano-id') || ''));
-          if (!item) return;
+          if (!item) {
+              releaseXanoCallCard(card);
+              return;
+          }
           const type = callOfferTypeOf(item);
-          if (!type) return;
+          if (!type) {
+              releaseXanoCallCard(card);
+              return;
+          }
           const title = qs('[data-service-card-element="title"]', card);
           const description = qs('[data-service-card-element="description"]', card);
           if (title) title.textContent = String(item.name || '');
@@ -2073,19 +2158,14 @@
           card.setAttribute('data-call-offer-state', 'pending');
           card.removeAttribute('booking-popup-open');
           card.removeAttribute('data-modal-trigger');
+          adapted.push({ card: card, item: item, type: type });
       });
 
       if (!MEMBER.id) {
-          const publicItems = Array.from(itemsById.values());
-          const freeItem = publicItems.find(function (item) { return callOfferTypeOf(item) === 'free'; });
-          const paidItem = publicItems.find(function (item) { return callOfferTypeOf(item) === 'paid'; });
-          const availability = {
-              free: !!(freeItem && freeItem.public_available === true),
-              paid: !!(paidItem && paidItem.public_available === true),
-          };
-          cards.forEach(function (card) {
-              const type = card.getAttribute('data-type');
-              const visible = !!availability[type];
+          adapted.forEach(function (entry) {
+              const card = entry.card;
+              const type = entry.type;
+              const visible = entry.item.public_available === true;
               setCallOfferVisible(card, visible);
               card.setAttribute('data-call-offer-state', visible ? 'available' : 'hidden');
               if (visible) {
@@ -2098,14 +2178,20 @@
                   stripCallBookingRow(card);
               } else {
                   card.removeAttribute('has-connection');
+                  card.removeAttribute('data-signup-trigger-element');
+                  card.removeAttribute('data-signup-trigger-value');
               }
           });
-          if (availability.free || availability.paid) setLoggedOutBookingButtonAvailable();
+          const anyPublicType = Array.from(itemsById.values()).some(function (item) {
+              return item.public_available === true;
+          });
+          if (anyPublicType) setLoggedOutBookingButtonAvailable();
           markServiceCardsClickable();
       } else if (isProfileOwner(MEMBER)) {
           applyOwnerCallCardStates(ownerCallSettingsSnapshot);
       } else if (isBrandMember(MEMBER)) {
-          cards.forEach(function (card) {
+          adapted.forEach(function (entry) {
+              const card = entry.card;
               setCallOfferVisible(card, false);
               card.setAttribute('data-call-offer-state', 'pending');
           });
@@ -2116,7 +2202,8 @@
               syncCanonicalCallSurfaces(paintedCallState.configs);
           }
       } else {
-          cards.forEach(function (card) {
+          adapted.forEach(function (entry) {
+              const card = entry.card;
               setCallOfferVisible(card, false);
               card.setAttribute('data-call-offer-state', 'hidden');
           });

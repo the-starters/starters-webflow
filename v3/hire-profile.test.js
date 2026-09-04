@@ -804,7 +804,7 @@ function addXanoCallCardsFixture(page, instanceKey = 'starter-call-offers-servic
   const free = card('424:call:free')
   const paid = card('424:call:paid')
   page.servicesList.appendChild(wrapper)
-  return { wrapper, template, free, paid }
+  return { wrapper, template, free, paid, card }
 }
 
 function makeCallCardsWfXanoFixture(root, instanceKey = 'starter-call-offers-services') {
@@ -3441,6 +3441,42 @@ test('wf-xano call cards use public Xano availability for logged-out signup pres
   await settle()
   assert.equal(xano.free.root.style.display, 'none', 'a later empty result fails closed')
   assert.equal(xano.paid.root.style.display, 'none', 'no earlier wrapper result stays cached')
+  assert.equal(xano.free.root.getAttribute('data-signup-trigger-element'), null)
+  assert.equal(xano.free.root.getAttribute('data-signup-trigger-value'), null)
+  assert.equal(xano.free.root.getAttribute('data-xano-call-card'), null)
+})
+
+test('a logged-out wf-xano call card answers from its own item, not a sibling row of the same type', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const duplicate = xano.card('424:call:free:duplicate')
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [
+      Object.assign({}, callCardResult().items[0], { public_available: false }),
+      Object.assign({}, callCardResult().items[0], {
+        id: '424:call:free:duplicate',
+        name: 'Second Free Call',
+        public_available: true,
+      }),
+    ],
+  })
+  await settle()
+
+  assert.equal(xano.free.root.style.display, 'none')
+  assert.equal(xano.free.root.getAttribute('data-signup-trigger-element'), null)
+  assert.equal(xano.free.title.textContent, 'Free Call')
+  assert.equal(duplicate.root.style.display, 'block')
+  assert.equal(duplicate.root.getAttribute('data-signup-trigger-value'), 'Free Call')
+  assert.equal(duplicate.title.textContent, 'Second Free Call')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
 })
 
 test('wf-xano call cards normalise the DTO call type before deciding logged-out availability', async () => {
@@ -3469,6 +3505,9 @@ test('wf-xano call cards normalise the DTO call type before deciding logged-out 
     assert.equal(card.root.getAttribute('data-signup-trigger-element'), 'service')
     assert.equal(card.root.getAttribute('data-signup-trigger-value'), value)
   }
+  assert.equal(xano.paid.price.textContent, '250')
+  assert.equal(xano.paid.price.getAttribute('data-millify'), '250')
+  assert.equal(xano.free.price.getAttribute('data-millify'), '')
   assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
 })
 
@@ -3607,6 +3646,56 @@ test('the profile owner sees both wf-xano call skeletons with exact setup-requir
   assert.equal(xano.paid.tooltipText.textContent, 'Connect your calendar to offer calls.')
 })
 
+test('an owner settings lookup failure shows a neutral disabled card and only Call Settings', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({
+    free: new Error('settings unavailable'),
+    paid: new Error('settings unavailable'),
+    grantId: null,
+  })
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.style.display, 'block')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-unavailable')
+    assert.equal(card.root.getAttribute('has-connection'), null)
+    assert.equal(card.root.getAttribute('no-connection'), null)
+    assert.equal(card.root.getAttribute('data-modal-trigger'), null)
+    assert.equal(card.tooltipText.textContent, 'Call settings could not be loaded. Refresh or open Call Settings.')
+    assert.equal(card.calendarCta.style.display, 'none')
+    assert.equal(card.stripeCta.style.display, 'none')
+    assert.equal(card.settingsCta.style.display, 'block')
+    assert.equal(card.settingsCta.getAttribute('href'), '/starter-dashboard')
+  }
+})
+
+test('the profile owner never keeps a wf-xano call clone the adapter refused to bind', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const refused = xano.card('not-in-result')
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = ownerContext(page, ownerController({ grantId: null }), { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  assert.equal(refused.root.style.display, 'none')
+  assert.equal(refused.root.getAttribute('aria-hidden'), 'true')
+  assert.equal(refused.root.getAttribute('data-canonical-call-unavailable'), '')
+  assert.equal(refused.root.getAttribute('data-xano-call-card'), null)
+  assert.equal(refused.root.getAttribute('data-type'), null)
+  assert.equal(refused.root.getAttribute('data-call-offer-state'), null)
+})
+
 test('the owner setup card reads non-boolean readiness the same way the settings modules do', async () => {
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)
@@ -3670,7 +3759,30 @@ test('the legacy owner reveal stands down from the wf-xano card it now shares at
 
   let resolveStarter
   const starterReady = new Promise((resolve) => { resolveStarter = resolve })
-  const controller = ownerController({ grantId: null })
+  const controller = ownerController({
+    grantId: null,
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        free_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        stripe_connect_linked: false,
+        stripe_charges_enabled: false,
+        stripe_readiness_fresh: false,
+        paid_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+  })
   controller.getStarterByMemberId = () => starterReady
   // The owner settings answer never lands, so `paintOwnerCallSurfaces` cannot
   // re-run `applyOwnerCallCardStates` and quietly repair the overwrite. What
@@ -3684,20 +3796,23 @@ test('the legacy owner reveal stands down from the wf-xano card it now shares at
 
   wfx.emit(callCardResult({ free: false, paid: false }))
   await settle()
-  assert.equal(xano.paid.root.getAttribute('no-connection'), 'paid')
-  assert.equal(xano.paid.tooltipText.textContent, 'Connect your calendar to offer calls.')
+  assert.equal(xano.paid.root.getAttribute('no-connection'), null)
+  assert.equal(
+    xano.paid.tooltipText.textContent,
+    'Call settings are loading. Open Call Settings if this continues.',
+  )
 
   resolveStarter(null)
   await settle()
 
   assert.equal(
     xano.paid.tooltipText.textContent,
-    'Connect your calendar to offer calls.',
+    'Call settings are loading. Open Call Settings if this continues.',
     'the legacy reveal must not rewrite the adapter-owned tooltip copy',
   )
-  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'setup-required')
-  assert.equal(xano.paid.calendarCta.style.display, 'block')
-  assert.equal(xano.paid.settingsCta.style.display, 'none')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'settings-loading')
+  assert.equal(xano.paid.calendarCta.style.display, 'none')
+  assert.equal(xano.paid.settingsCta.style.display, 'block')
   assert.equal(
     cmsHoverText.textContent,
     'Connect your calendar to start accepting paid consulting calls.',
@@ -3790,8 +3905,34 @@ test('the owner setup CTA on a wf-xano call card is not cancelled by the direct-
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)
   const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  const controller = ownerController({ grantId: null })
-  controller.authenticatedRequest = () => new Promise(() => {})
+  const controller = ownerController({
+    grantId: null,
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        free_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        stripe_connect_linked: false,
+        stripe_charges_enabled: false,
+        stripe_readiness_fresh: false,
+        paid_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+  })
+  // Model a clone that the document-level scanner sees before the adapter has
+  // stamped the owner-preview state. The listener already exists when the
+  // result arrives, so only a click-time guard can keep the setup CTA alive.
+  xano.free.root.setAttribute('data-type', 'free')
   const context = ownerContext(page, controller, { wfXano: wfx.api })
   vm.createContext(context)
   vm.runInContext(source, context)

@@ -235,12 +235,15 @@ are aligned before selecting the canary.
 4. `document.documentElement` carries `data-v3-algolia-status="ready"`.
 5. The Algolia object ID matches the positive integer in
    `[data-starter-xano-id]`.
-6. Every `[data-xano-call-card]` in the hero and in `#services` settles out of
+6. Every admitted `[data-xano-call-card]` in the hero and in `#services` settles out of
    `data-call-offer-state="pending"` for the role under test: `available` or
    `hidden` for anonymous and Brand viewers, `available` or `setup-required` for
-   the profile's own starter, and `hidden` for a talent on someone else's
-   profile. A card left `pending` for an anonymous or non-brand viewer means the
-   adapter never saw that clone. Prove each role separately — this is the same
+   the profile's own starter (`settings-loading` / `settings-unavailable` only
+   while its settings answer is unresolved or failed), and `hidden` for a talent
+   on someone else's profile. A refused `[wf-xano-item]` has no
+   `data-xano-call-card`, `data-type`, or state marker; prove it is hidden with
+   `data-canonical-call-unavailable`. A card left `pending` for an anonymous or
+   non-brand viewer means the adapter never settled that clone. Prove each role separately — this is the same
    role-matched proof the CMS cards need before the cutover decision.
 
 ## Call modal and project-service routing
@@ -638,17 +641,25 @@ cannot be read as Free by one of them and as nothing by another. A clone is
 adapted only when its `data-wf-xano-id` exactly matches a returned item id;
 nothing falls back by position.
 
-Each adapted clone is stamped `data-xano-call-card="<instance key>"`,
+Each admitted clone is stamped `data-xano-call-card="<instance key>"`,
 `data-service-card="component"`, `data-service-card-state="Default"`,
 `data-call-offer-type`, `data-type`, and a `data-call-offer-state` that starts
 at `pending`. `booking-popup-open` and `data-modal-trigger` are removed first,
 so a clone this file has not yet resolved cannot open the booking popup on its
-own. The final state is one of:
+own. A rendered clone whose `data-wf-xano-id` is absent from the current result,
+or whose item has no admitted Free/Paid type, is released instead of merely
+hidden. Release removes the adapter identity, viewer-state, connection,
+direct-entry, and signup-attribution markers before applying
+`data-canonical-call-unavailable`, `aria-hidden="true"`, and `display:none`.
+That prevents any later owner, Brand, or anonymous writer from re-admitting
+stale content. The final state for an admitted clone is one of:
 
 | `data-call-offer-state` | Viewer and meaning |
 | --- | --- |
 | `available` | the card is offered: logged-out with `public_available === true`, brand with an installed canonical option, or the owner with a bookable record |
 | `setup-required` | owner only: the card is shown as a preview with the next setup step |
+| `settings-loading` | owner only: settings have not resolved yet; the card is disabled and offers only Call Settings |
+| `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
 | `hidden` | the type is not offered to this viewer |
 | `pending` | brand, before canonical discovery has admitted or refused the type |
 
@@ -686,7 +697,13 @@ with only the matching `calendar` / `stripe` / `settings` CTA left visible and
 `/starter-dashboard` supplied for any CTA with no authored `href`. The owner's
 settings answers are remembered in `ownerCallSettingsSnapshot`, so a card
 wf-xano clones after the settings lookup resolves gets the same state, and a
-lookup that resolves after the clone repaints it.
+lookup that resolves after the clone repaints it. Before that answer arrives,
+the card uses the neutral `settings-loading` state. A failed lookup uses
+`settings-unavailable` with “Call settings could not be loaded. Refresh or open
+Call Settings.” and only the Settings CTA. It never guesses that Calendar,
+availability, or Stripe is missing. Setup-required owner cards intentionally
+keep the authored next-slot sentinel as a preview placeholder until a trusted
+bookable record can paint it.
 
 **Signed-in Brand.** The cards start hidden and `pending`; canonical discovery
 is their only writer, so an unbookable type can never be advertised.
