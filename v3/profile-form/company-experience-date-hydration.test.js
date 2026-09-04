@@ -312,7 +312,7 @@ function createJQuery(pickers) {
   return jQuery
 }
 
-function bootCompanyController(relativePath, { pickerReady = true, readyState = 'loading' } = {}) {
+function bootCompanyController(relativePath, { pickerReady = true, readyState = 'loading', initialEndDate = '' } = {}) {
   const clock = createClock()
   const pickers = new Map()
   const fetchCalls = []
@@ -339,6 +339,7 @@ function bootCompanyController(relativePath, { pickerReady = true, readyState = 
     companySubmit: new FakeElement(),
     firstCompanyInput: new FakeElement(),
   }
+  elements.endDateInput.value = initialEndDate
 
   const saveButtonText = new FakeElement()
   saveButtonText.textContent = 'save changes'
@@ -545,7 +546,7 @@ function bootCompanyController(relativePath, { pickerReady = true, readyState = 
 
 for (const controllerPath of controllerPaths) {
   test(`${controllerPath} boots the month controls when the script loads after DOMContentLoaded`, async () => {
-    const app = bootCompanyController(controllerPath, { readyState: 'complete' })
+    const app = bootCompanyController(controllerPath, { readyState: 'complete', initialEndDate: 'Jun 2025' })
 
     await app.ready()
 
@@ -554,6 +555,7 @@ for (const controllerPath of controllerPaths) {
       assert.equal(input.getAttribute('role'), 'combobox')
       assert.ok(input._starterProfileCompanyMonthPicker)
     }
+    assert.equal(app.endDateInput.value, 'Jun 2025')
 
     app.currentWorkCheckbox.checked = true
     app.currentWorkCheckbox.dispatchEvent({ type: 'change' })

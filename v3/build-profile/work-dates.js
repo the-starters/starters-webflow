@@ -16,7 +16,7 @@
 
             if (!endDateInput || !currentWorkCheckbox) return;
 
-            function setCurrentWorkState(isCurrent) {
+            function setCurrentWorkState(isCurrent, isInitial = false) {
                 if (isCurrent) {
                     previousEndDate = endDateInput.value && endDateInput.value !== 'Present'
                         ? endDateInput.value
@@ -29,9 +29,11 @@
                     endDateInput.removeAttribute('disabled');
                     endDateInput.classList.remove('is-disabled');
 
-                    endDateInput.value = previousEndDate;
-                    previousEndDate = '';
-                    endDateInput.dispatchEvent(new Event('starter:work-date-value-restored'));
+                    if (!isInitial) {
+                        endDateInput.value = previousEndDate;
+                        previousEndDate = '';
+                        endDateInput.dispatchEvent(new Event('starter:work-date-value-restored'));
+                    }
                 }
             }
 
@@ -49,7 +51,7 @@
                 setCurrentWorkState(currentWorkCheckbox.checked);
             });
 
-            setCurrentWorkState(currentWorkCheckbox.checked);
+            setCurrentWorkState(currentWorkCheckbox.checked, true);
         }
 
         initWorkDateFields('#company-end', '#company-current');
