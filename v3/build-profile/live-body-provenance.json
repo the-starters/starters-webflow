@@ -44,7 +44,7 @@
       "portfolio-list.js": { "path": "v3/build-profile/portfolio-list.js", "bytes": 4036, "sha256": "508b94b1f40f05dcc916c79c3cf0bec04f627f75bb607d93d02c02e0950fe11b" },
       "company-autocomplete.js": { "path": "v3/build-profile/company-autocomplete.js", "bytes": 14773, "sha256": "92e8029557b57fa4f29fa218586988d1363f07eab008971327386bdb2427d1b3" },
       "work-dates.js": { "path": "v3/build-profile/work-dates.js", "bytes": 2700, "sha256": "4bf43605286b1f6dd796f8227a3f72e7c43aea5f41131f21bd78c283473002b6" },
-      "company-experience-crud.js": { "path": "v3/build-profile/company-experience-crud.js", "bytes": 61135, "sha256": "3102a3da638ee507c4ef96e89d89a7a749139457d299d61c32797f9f410032b5" },
+      "company-experience-crud.js": { "path": "v3/build-profile/company-experience-crud.js", "bytes": 61721, "sha256": "ad4d5ccc46e816b35b85752f4c90200416e442eab2a5ca8e5951aff77c9313ca" },
       "field-counters.js": { "path": "v3/build-profile/field-counters.js", "bytes": 5027, "sha256": "89add4a5af95b6e011116d13c868a7bcc91d36616f216a0ea5ec6aac296fbe61" },
       "bio-editor.js": { "path": "v3/build-profile/bio-editor.js", "bytes": 12246, "sha256": "df9f20286ded40b99a04dfe9e9cae41a9737b351ef6e55dda0f7b346091082cc" },
       "grouped-selects.js": { "path": "v3/build-profile/grouped-selects.js", "bytes": 1649, "sha256": "9fc122b55ae5a0e40bbea47932fbb446d74de656d7818cc3744511adc0a8db22" }

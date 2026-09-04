@@ -215,6 +215,15 @@ function attachStarterProfileCompanyMonthPicker(input) {
 
   function openPicker() {
     if (input.disabled) return;
+    if (typeof input._starterProfileCompanyMinimumResolver === 'function') {
+      const resolvedMinimum = input._starterProfileCompanyMinimumResolver();
+      const resolvedDate = resolvedMinimum instanceof Date
+        ? resolvedMinimum
+        : starterProfileCompanyDatepickerValue(resolvedMinimum);
+      minimumDate = resolvedDate
+        ? new Date(resolvedDate.getFullYear(), resolvedDate.getMonth(), 1)
+        : null;
+    }
     const selected = selectedDate();
     visibleYear = selected ? selected.getFullYear() : new Date().getFullYear();
     if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
@@ -420,6 +429,10 @@ function isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent)
 
 function bindStarterProfileCompanyMonthRange(startInput, endInput, currentCheckbox) {
   if (!startInput || !endInput) return;
+
+  endInput._starterProfileCompanyMinimumResolver = function () {
+    return currentCheckbox && currentCheckbox.checked ? null : startInput.value;
+  };
 
   const syncRange = function () {
     syncStarterProfileCompanyMonthRange(
