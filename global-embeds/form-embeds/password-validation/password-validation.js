@@ -473,7 +473,8 @@
   }
 
   // Memberstack's own kinds. Profile and security forms are bridged like any
-  // marked form, but never gated: their kind is not in this list.
+  // marked form and a checklist wrapper still gates one on its rules, but the
+  // required-fields gate below skips them: their kind is not in this list.
   var AUTH_KINDS = ['login', 'signup', 'forgot-password', 'reset-password'];
 
   function isAuthForm(form) {
