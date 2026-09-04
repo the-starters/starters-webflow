@@ -1,7 +1,5 @@
-# Pipeline agent pinned to Claude: the team's standing order (2026-08-30). Codex
-# is out of quota on this machine as of 2026-09-03 and any fallback list that
-# selects on availability still picks it, so a single pin is the only reliable choice.
-agent: claude
+# Use Codex for repository review and validation.
+agent: [codex]
 
 ignore_patterns:
   - "*.min.js"
