@@ -40,5 +40,5 @@ position. Distinct from the marquee-card empty company slot, which is not motion
 _Avoid_: carousel, swiper, slider, marquee-card
 
 **Track**:
-One horizontal row inside a Logo Wall.
+One horizontal row inside a Logo Wall or the testimonials strip.
 _Avoid_: row, slider, wrapper, list
