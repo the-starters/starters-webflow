@@ -2576,6 +2576,68 @@ test('a peer putting out the mirrored spinner does not open the page', async () 
   assert.equal(profile.submits, 1, 'the ended request lets the next one through')
 })
 
+test('a submit another script cancels never holds the page', async () => {
+  const hero = h('div', { id: 'hero', 'data-ms-loader': '' })
+  const a = signupForm({ noLoader: true })
+  const b = profileForm({ noLoader: true })
+  const root = body([hero, a.form, b.form])
+  const app = mount(root, { hostname: STAGING })
+  const strayWarnings = app.warnings.length
+  const signup = memberstack(root, a.form)
+  const profile = memberstack(root, b.form)
+
+  // turnstile-contents-fix.js cancels a tokenless submit from a later capture
+  // listener, so Memberstack never sees it and never lights anything
+  a.form.addEventListener(
+    'submit',
+    (event) => {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    },
+    true,
+  )
+  signup.submit()
+  await tick()
+  assert.equal(signup.submits, 0, 'the cancelled submit never reached Memberstack')
+
+  // a peer widget lights the page loader afterwards
+  hero.style.display = 'block'
+  await flush()
+  assert.deepEqual(marksOf(a.submitWrap), IDLE_WRAP, 'the cancelled form is not dressed')
+  assert.equal(a.submitSpinner.style.display, '', 'and nothing mirrors onto it')
+
+  profile.submit()
+  await flush()
+  assert.equal(profile.submits, 1, 'the abandoned claim does not refuse the next form')
+  assert.equal(b.submitSpinner.style.display, 'block', 'the Save button is what mirrors')
+  assert.equal(app.warnings.length, strayWarnings, app.warnings.join(' | '))
+})
+
+test('a password-validation hand-back that throws still restores every button', async () => {
+  const a = signupForm({ noLoader: true })
+  const b = signupForm({ noLoader: true })
+  const root = body([a.form, b.form])
+  const app = mount(root, { hostname: STAGING })
+  app.window.startersPasswordValidation = {
+    regate() {
+      throw new Error('password-validation blew up')
+    },
+  }
+
+  a.submitSpinner.style.display = 'block'
+  b.submitSpinner.style.display = 'block'
+  await flush()
+  assert.equal(a.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(b.submitWrap.getAttribute('data-button-theme'), 'disabled')
+
+  app.firePageshow({ persisted: true })
+  await flush()
+  assert.deepEqual(marksOf(a.submitWrap), IDLE_WRAP, 'the first button comes back')
+  assert.deepEqual(marksOf(b.submitWrap), IDLE_WRAP, 'and so does the one after it')
+  assert.equal(a.control.hasAttribute('aria-disabled'), false)
+  assert.equal(b.control.hasAttribute('aria-disabled'), false)
+})
+
 test('a page-level loader lit again after its request ended blocks nothing', async () => {
   const l = loginForm()
   const s = signupForm({ noLoader: true })

@@ -233,10 +233,16 @@
     // password-validation re-adjudicates the gate on hand-back. regate declines
     // only a form it never bridged; rescan covers that and any release older
     // than v1.59.510, which has no regate at all.
-    var pv = window.startersPasswordValidation;
-    if (!pv) return;
-    var regated = typeof pv.regate === 'function' && pv.regate(record.form);
-    if (!regated && typeof pv.rescan === 'function') pv.rescan();
+    // Swallowed: a throwing peer must not cost the forms after this one their
+    // restore in the pageshow loop.
+    try {
+      var pv = window.startersPasswordValidation;
+      if (!pv) return;
+      var regated = typeof pv.regate === 'function' && pv.regate(record.form);
+      if (!regated && typeof pv.rescan === 'function') pv.rescan();
+    } catch (e) {
+      /* no-op */
+    }
   }
 
   // Edge-triggered off the Spinner's live inline display, never off the batch
@@ -381,6 +387,13 @@
     } else {
       route(record);
     }
+    // A later capture listener may cancel this submit, and Memberstack lights
+    // the loader synchronously in the same dispatch: unlit next turn is nobody's
+    // request.
+    var claim = record;
+    setTimeout(function () {
+      if (owner === claim && !isLit(ownedEl())) owner = null;
+    }, 0);
   }
 
   // Capture phase, so a repeat submit dies before Memberstack or any peer
