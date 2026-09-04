@@ -3854,6 +3854,75 @@ test('an owner settings lookup failure shows a neutral disabled card and only Ca
   }
 })
 
+test('owner settings settle independently when the Starter lookup fails', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({
+    grantId: null,
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        free_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        stripe_connect_linked: false,
+        stripe_charges_enabled: false,
+        stripe_readiness_fresh: false,
+        paid_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+  })
+  controller.getStarterByMemberId = async () => { throw new Error('starter lookup unavailable') }
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'setup-required')
+    assert.equal(card.tooltipText.textContent, 'Connect your calendar to offer calls.')
+    assert.equal(card.calendarCta.style.display, 'block')
+  }
+  assert.ok(context.warnings.some((line) => line.includes('the Starter lookup failed')))
+})
+
+test('owner cards fail terminally when the booking controller cannot load', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    member: OWNER_MEMBER,
+    wfXano: wfx.api,
+    omitInitialFreeController: true,
+    freeControllerLoadFails: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-unavailable')
+    assert.equal(card.tooltipText.textContent, 'Call settings could not be loaded. Refresh or open Call Settings.')
+    assert.equal(card.settingsCta.style.display, 'block')
+  }
+})
+
 test('the profile owner never keeps a wf-xano call clone the adapter refused to bind', async () => {
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)

@@ -1653,7 +1653,8 @@
           // are already correct. A successful but empty answer is not a fault:
           // a fully booked calendar is written here exactly as it is for a
           // brand viewer, so no placeholder time survives it.
-          paintNextAvailableSlots(records, ownerGrantId(settings[0], starterGrantId), {
+          const resolvedStarterGrantId = await Promise.resolve(starterGrantId);
+          paintNextAvailableSlots(records, ownerGrantId(settings[0], resolvedStarterGrantId), {
               leaveRowOnDegrade: true,
           });
       } catch (error) {
@@ -1739,6 +1740,15 @@
           freeCallBooking = await ensureFreeCallBooking();
           if (!validFreeCallBooking(freeCallBooking)) {
               console.warn('[hire-profile] Free Call booking controller is unavailable');
+              if (isProfileOwner(MEMBER)) {
+                  ownerCallSettingsSnapshot = {
+                      free: null,
+                      paid: null,
+                      status: { free: 'error', paid: 'error' },
+                      records: [],
+                  };
+                  applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+              }
               return;
           }
 
@@ -1747,8 +1757,22 @@
 
           // if it's not a brand
           if (!isBrandMember(MEMBER)) {
+              // Owner settings are independent of Brand booking discovery.
+              // Start them before the Starter lookup settles so a slow or
+              // failed lookup cannot strand both authored cards in loading.
+              const starterPromise = Promise.resolve().then(function () {
+                  return freeCallBooking.getStarterByMemberId(FREELANCER_ID);
+              }).catch(function (error) {
+                  console.warn('[hire-profile] the Starter lookup failed:', error);
+                  return null;
+              });
+              if (isProfileOwner(MEMBER)) {
+                  paintOwnerCallSurfaces(starterPromise.then(function (starter) {
+                      return starter ? starter['nylas_grant_id'] : null;
+                  }));
+              }
               // check calendar\availability connections
-              const starter = await freeCallBooking.getStarterByMemberId(FREELANCER_ID);
+              const starter = await starterPromise;
               const grant_id = starter ? starter['nylas_grant_id'] : null;
               const ownerConfigs = [];
               if (grant_id) ownerConfigs.push({ is_paid: false });
@@ -1796,7 +1820,6 @@
               // every brand viewer sees replaced. Fire and forget, like the
               // brand path's slot paint: a slow settings answer must not hold
               // up the reveal, and a failure leaves the reveal untouched.
-              paintOwnerCallSurfaces(grant_id);
               refreshEmptySectionNav();
               return;
           }
