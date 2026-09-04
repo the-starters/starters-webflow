@@ -1,5 +1,6 @@
 // Memberstack loader: dresses a Memberstack auth form's Button as busy and
-// disabled while Memberstack shows its own spinner, and restores it on hide.
+// disabled while Memberstack shows its own spinner, and on hide restores it and
+// hands it back to password-validation, whose verdict may have moved meanwhile.
 //
 // @release v1.59.507
 //
@@ -160,6 +161,11 @@
     }
 
     record.pending = false;
+
+    // password-validation keeps re-rendering on input while we hold the button,
+    // so release has to let it re-adjudicate rather than assume its old verdict.
+    var pv = window.startersPasswordValidation;
+    if (pv && typeof pv.rescan === 'function') pv.rescan();
   }
 
   // Edge-triggered off the Spinner's live inline display, never off the batch

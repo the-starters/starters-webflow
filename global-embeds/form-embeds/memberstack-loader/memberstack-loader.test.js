@@ -1615,7 +1615,7 @@ test('the checklist gate and the busy button hand the same CTA back and forth', 
   assert.equal(w.control.hasAttribute('data-memberstack-loader-aria'), false)
   const classAfterHide = w.submitWrap.classList.contains('disabled')
   t.diagnostic('after hide, wrap class `disabled` is present: ' + classAfterHide)
-  assert.equal(classAfterHide, true, 'password-validation clears its own class on its next render')
+  assert.equal(classAfterHide, false, 'the release hands the CTA back and the class clears at once')
 
   dispatch(w.email, 'input')
   await flush()
@@ -1641,6 +1641,81 @@ test('an unfilled checklist form blocks Enter and neither script dresses the but
   assert.equal(w.submitWrap.hasAttribute('aria-busy'), false)
   assert.equal(w.submitWrap.hasAttribute('data-ms-loading'), false)
   assert.equal(w.control.hasAttribute('data-memberstack-loader-aria'), false)
+})
+
+test('a gate closed while the button spins is still closed after the spinner stops', async () => {
+  const w = pvWorld({ form: { checklist: true } })
+
+  fill(w.email, 'brand@example.com')
+  fill(w.password, 'Passw0rd!')
+  check(w.terms)
+  await tick()
+  assert.equal(w.control.hasAttribute('aria-disabled'), false, 'the gate opened')
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 1)
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(w.control.getAttribute('data-memberstack-loader-aria'), '')
+
+  // the person edits the password back to something invalid while it spins
+  w.password.value = 'short'
+  dispatch(w.password, 'input')
+  await tick()
+
+  w.ms.hide()
+  await flush()
+  await tick()
+
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'disabled', 'the CTA still reads shut')
+  assert.equal(w.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(w.control.getAttribute('data-password-validation-aria'), '')
+  assert.equal(w.control.disabled, true, 'the native control stays refused')
+  assert.equal(w.control.hasAttribute('disabled'), true)
+  assert.equal(w.control.getAttribute('data-password-validation-native'), '')
+
+  assert.equal(w.submitWrap.hasAttribute('data-memberstack-loader-theme'), false)
+  assert.equal(w.submitWrap.hasAttribute('data-memberstack-loader-busy'), false)
+  assert.equal(w.submitWrap.hasAttribute('aria-busy'), false)
+  assert.equal(w.submitWrap.hasAttribute('data-ms-loading'), false)
+  assert.equal(w.control.hasAttribute('data-memberstack-loader-aria'), false)
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 1, 'a shut CTA does not submit')
+})
+
+test('a password fixed while the button spins leaves a live CTA behind', async () => {
+  const w = pvWorld({ form: { checklist: true } })
+
+  fill(w.email, 'brand@example.com')
+  fill(w.password, 'Passw0rd!')
+  check(w.terms)
+  await tick()
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 1)
+
+  w.password.value = 'short'
+  dispatch(w.password, 'input')
+  await tick()
+  fill(w.password, 'Passw0rd!')
+  await tick()
+
+  w.ms.hide()
+  await flush()
+  await tick()
+
+  assert.equal(w.submitWrap.getAttribute('data-button-theme'), 'black')
+  assert.equal(w.control.hasAttribute('aria-disabled'), false)
+  assert.equal(w.control.disabled, false, 'the native control is handed back')
+  assert.equal(w.control.hasAttribute('disabled'), false)
+  assert.equal(w.control.hasAttribute('data-password-validation-native'), false)
+
+  dispatch(w.control, 'click')
+  await flush()
+  assert.equal(w.ms.submits, 2)
 })
 
 // ---------------------------------------------------------------------------
