@@ -1,5 +1,5 @@
 # Use Codex for repository review and validation.
-agent: [codex]
+agent: codex
 
 ignore_patterns:
   - "*.min.js"
