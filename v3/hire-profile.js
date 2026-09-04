@@ -698,6 +698,7 @@
           if (includeSurface && !includeSurface(surface, type)) return;
           if (availability[type]) return;
           surface.removeAttribute('has-connection');
+          surface.removeAttribute('data-call-service-direct');
           surface.setAttribute('data-call-offer-state', 'hidden');
       });
       return changed;
@@ -996,6 +997,11 @@
      slot re-run reuses the availability answer rather than re-requesting it. */
   let paintedCallState = null;
 
+  function settleEmptyCallDiscovery() {
+      paintedCallState = { configs: [], slots: {} };
+      return syncCanonicalCallSurfaces([]);
+  }
+
   function repaintCallSurfaces() {
       if (!paintedCallState) return;
       repaintCanonicalRateSurfaces(paintedCallState.configs);
@@ -1018,6 +1024,9 @@
           // saved markup and focused fixtures.
           const type = card.getAttribute('data-type') || card.getAttribute('has-connection');
           if (type !== 'free' && type !== 'paid') return;
+          if (card.hasAttribute('data-xano-call-card') &&
+              (card.hasAttribute('data-canonical-call-unavailable') ||
+                  card.getAttribute('aria-hidden') === 'true')) return;
           // The owner's own preview card is not a booking entry point: owners
           // never self-book, so `openReadyCallType` can only ever fail for it.
           // Binding anyway would cancel the setup CTA inside the card, because
@@ -1041,6 +1050,9 @@
               // stamp (or a released/hidden clone) cannot be trapped by this
               // capture-phase shortcut.
               if (card.hasAttribute('data-call-owner-preview')) return;
+              if (card.hasAttribute('data-xano-call-card') &&
+                  (card.hasAttribute('data-canonical-call-unavailable') ||
+                      card.getAttribute('aria-hidden') === 'true')) return;
               const liveType = card.getAttribute('data-type') || card.getAttribute('has-connection');
               if (liveType !== 'free' && liveType !== 'paid') return;
               event.preventDefault();
@@ -2761,7 +2773,7 @@
   async function startersBooking_handler(freelancerId, brand_name, brand_email) {
 
       if (!validBookingDiscovery(freeCallBooking)) {
-          syncCanonicalCallSurfaces([]);
+          settleEmptyCallDiscovery();
           console.warn('[hire-profile] Free Call booking controller is unavailable');
           return;
       }
@@ -2885,12 +2897,12 @@
               setBookingButtonAvailable(true);
 
           } else {
-              syncCanonicalCallSurfaces([]);
+              settleEmptyCallDiscovery();
               console.warn("No Configurations found for the current starter.");
           }
 
       } else {
-          syncCanonicalCallSurfaces([]);
+          settleEmptyCallDiscovery();
           console.warn("No Nylas Grant ID found for the current starter.");
       }
   }

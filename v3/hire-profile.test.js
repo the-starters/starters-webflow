@@ -3591,6 +3591,34 @@ test('a late wf-xano Brand call card replays canonical discovery and opens only 
   assert.equal(xano.paid.root.getAttribute('data-call-service-direct'), 'ready')
 })
 
+test('a late wf-xano Brand call card replays terminal empty discovery as hidden', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    getConfigs: async () => [],
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult())
+  await settle()
+
+  for (const card of [xano.free.root, xano.paid.root]) {
+    assert.equal(card.style.display, 'none')
+    assert.equal(card.getAttribute('data-call-offer-state'), 'hidden')
+    assert.equal(card.getAttribute('aria-hidden'), 'true')
+    assert.equal(card.getAttribute('has-connection'), null)
+    assert.equal(card.getAttribute('data-call-service-direct'), null)
+  }
+})
+
 test('the profile owner sees both wf-xano call skeletons with exact setup-required tooltip state', async () => {
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)
