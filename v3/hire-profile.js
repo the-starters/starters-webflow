@@ -2090,8 +2090,11 @@
               card.setAttribute('data-call-offer-state', visible ? 'available' : 'hidden');
               if (visible) {
                   card.setAttribute('has-connection', type);
-                  card.setAttribute('data-signup-trigger-element', 'book-call');
-                  card.setAttribute('data-signup-trigger-value', type === 'paid' ? 'Paid Call' : 'Free Call');
+                  card.setAttribute('data-signup-trigger-element', 'service');
+                  card.setAttribute(
+                      'data-signup-trigger-value',
+                      type === 'paid' ? 'Paid Consulting Call' : 'Free Call'
+                  );
                   stripCallBookingRow(card);
               } else {
                   card.removeAttribute('has-connection');

@@ -3430,7 +3430,7 @@ test('wf-xano call cards use public Xano availability for logged-out signup pres
 
   assert.equal(xano.free.root.style.display, 'block')
   assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
-  assert.equal(xano.free.root.getAttribute('data-signup-trigger-element'), 'book-call')
+  assert.equal(xano.free.root.getAttribute('data-signup-trigger-element'), 'service')
   assert.equal(xano.free.root.getAttribute('data-signup-trigger-value'), 'Free Call')
   assert.equal(xano.free.root.children.includes(xano.free.bookingRow), false)
   assert.equal(xano.paid.root.style.display, 'none')
@@ -3463,10 +3463,10 @@ test('wf-xano call cards normalise the DTO call type before deciding logged-out 
   wfx.emit(result)
   await settle()
 
-  for (const [card, value] of [[xano.free, 'Free Call'], [xano.paid, 'Paid Call']]) {
+  for (const [card, value] of [[xano.free, 'Free Call'], [xano.paid, 'Paid Consulting Call']]) {
     assert.equal(card.root.style.display, 'block')
     assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
-    assert.equal(card.root.getAttribute('data-signup-trigger-element'), 'book-call')
+    assert.equal(card.root.getAttribute('data-signup-trigger-element'), 'service')
     assert.equal(card.root.getAttribute('data-signup-trigger-value'), value)
   }
   assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
