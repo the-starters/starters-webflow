@@ -27,6 +27,12 @@
 // example password-validation.js's own aria-disabled) survives untouched.
 // Never author those marks in Webflow.
 //
+// A Memberstack hide carries no identity — it lands on whatever holds
+// [data-ms-loader] at that moment — so only one Memberstack request may be open
+// per page: while the loader is lit, a submit from any other form is refused
+// (staging says so). A Spinner-less form's overlay is not tracked, so it cannot
+// take part in that rule until those forms get a Button.
+//
 // A success redirect navigates without hiding the loader, so Pending is meant
 // to outlive the page: there is no timeout and no fail-open timer.
 //
@@ -245,19 +251,40 @@
 
   // MOVE mode only. A form with no Spinner clears the page instead, so
   // Memberstack falls back to its own overlay for that submit.
+  // Nothing lit can reach here: onSubmit refuses a submit while the loader is
+  // still busy for another form.
   function route(record) {
     var marked = document.querySelectorAll(LOADER_SELECTOR);
     for (var i = 0; i < marked.length; i++) {
       if (marked[i] === record.spinner) continue;
-      // Unmarking a lit Spinner would strand it: the hide that ends its own
-      // submit re-queries live and would put out this form's Spinner instead.
-      var display = marked[i].style && marked[i].style.display;
-      if (display && display !== 'none') marked[i].style.display = 'none';
       marked[i].removeAttribute(LOADER_ATTR);
     }
     if (record.spinner && !record.spinner.hasAttribute(LOADER_ATTR)) {
       record.spinner.setAttribute(LOADER_ATTR, '');
     }
+  }
+
+  // A Memberstack hide carries no identity: it lands on whatever holds the
+  // marker then, so only one request may be open per page.
+  // Never throws: a broken read must not cost the page its submit.
+  function loaderBusy(record) {
+    try {
+      var marked = document.querySelectorAll(LOADER_SELECTOR);
+      for (var i = 0; i < marked.length; i++) {
+        var el = marked[i];
+        // The form that owns the spin in progress is not busy against itself.
+        if (anchor) {
+          if (el === anchor && lastSubmitter === record) continue;
+        } else if (el === record.spinner) {
+          continue;
+        }
+        var display = el.style && el.style.display;
+        if (display && display !== 'none') return true;
+      }
+    } catch (e) {
+      return false;
+    }
+    return false;
   }
 
   // Reads the Anchor's live display, never the mutation batch. Writes only
@@ -299,6 +326,12 @@
     if (record.pending) {
       event.preventDefault();
       event.stopImmediatePropagation();
+      return;
+    }
+    if (loaderBusy(record)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      devWarn('submit refused: the loader is still busy for another form', record.form);
       return;
     }
     lastSubmitter = record;

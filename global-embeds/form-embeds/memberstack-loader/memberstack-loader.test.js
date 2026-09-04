@@ -750,6 +750,15 @@ const NO_MARKS = {
 /** a Button Wrap sitting at its authored theme, nothing else written */
 const IDLE_WRAP = Object.assign({}, NO_MARKS, { theme: 'black' })
 
+// Named, never defaulted: a warning assertion only means something when the
+// host it was mounted on is the one that can produce warnings.
+const STAGING = 'the-starters-3-0.webflow.io'
+const PRODUCTION = 'www.thestarters.com'
+const TAG = '[memberstack-loader]'
+
+/** the one-request-at-a-time refusal, staging only */
+const SUBMIT_REFUSED = 'submit refused'
+
 // ---------------------------------------------------------------------------
 // Scenarios
 // ---------------------------------------------------------------------------
@@ -1914,7 +1923,7 @@ test('the pinned loader is only watched once a second form needs it', async () =
   assert.equal(observerCount(p.control), 0)
 })
 
-test('submitting a second form mid-flight hands the spin over', async () => {
+test('a second form submitting mid-flight is refused until the first spin ends', async () => {
   const { s, p, root } = anchoredPage()
   mount(root)
   const signup = memberstack(root, s.form)
@@ -1926,15 +1935,19 @@ test('submitting a second form mid-flight hands the spin over', async () => {
 
   signup.submit()
   await flush()
-  assert.equal(p.submitSpinner.style.display, 'none', 'the Save button is released')
-  assert.equal(s.submitWrap.getAttribute('data-button-theme'), 'disabled')
-  assert.equal(s.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(signup.submits, 0, 'Memberstack is never asked for a second request')
+  assert.equal(p.submitSpinner.style.display, 'block', 'the Save button keeps its spin')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP, 'and the signup button is untouched')
 
-  signup.hide()
+  profile.hide()
   await flush()
   assert.equal(p.submitSpinner.style.display, 'none')
-  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
-  assert.deepEqual(marksOf(p.wrap), IDLE_WRAP)
+
+  signup.submit()
+  await flush()
+  assert.equal(signup.submits, 1)
+  assert.equal(s.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(s.control.getAttribute('aria-disabled'), 'true')
 })
 
 test('a loader shown by no submit at all still dresses its own button', async () => {
@@ -2084,11 +2097,11 @@ test('the marker follows whichever form was submitted last', async () => {
   assert.equal(p.submitSpinner.style.display, 'block')
 })
 
-test('a second form submitting mid-flight puts out the first form spinner', async () => {
+test('a second form submitting mid-flight is refused, and the first keeps its guard', async () => {
   const a = signupForm({ noLoader: true })
   const b = signupForm({ kind: 'login', noLoader: true })
   const root = body([a.form, b.form])
-  const app = mount(root)
+  const app = mount(root, { hostname: STAGING })
   const msA = memberstack(root, a.form, { cache: false })
   const msB = memberstack(root, b.form, { cache: false })
 
@@ -2101,22 +2114,38 @@ test('a second form submitting mid-flight puts out the first form spinner', asyn
   msB.submit()
   await flush()
 
-  assert.equal(a.submitSpinner.style.display, 'none', 'the spinner it walked away from goes out')
-  assert.deepEqual(marksOf(a.submitWrap), IDLE_WRAP, 'and its button comes back')
-  assert.deepEqual(marksOf(a.control), NO_MARKS)
-  assert.equal(b.submitSpinner.style.display, 'block')
-  assert.equal(b.submitWrap.getAttribute('data-button-theme'), 'disabled')
-  assert.deepEqual(loaders(root), [b.submitSpinner])
-
-  msB.hide()
-  await flush()
+  assert.equal(msB.submits, 0, 'the second form never reaches Memberstack')
+  assert.deepEqual(loaders(root), [a.submitSpinner], 'and the marker does not move')
+  assert.equal(a.submitSpinner.style.display, 'block')
+  assert.equal(a.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(a.control.getAttribute('aria-disabled'), 'true')
   assert.deepEqual(marksOf(b.submitWrap), IDLE_WRAP)
   assert.deepEqual(marksOf(b.control), NO_MARKS)
 
   msA.submit()
+  assert.equal(msA.submits, 1, 'and the first form is still guarding its own submit')
+
+  msA.hide()
   await flush()
-  assert.equal(msA.submits, 2, 'the first form is not left guarding a submit that ended')
-  assert.equal(app.warnings.length, 0)
+  assert.deepEqual(marksOf(a.submitWrap), IDLE_WRAP)
+
+  msB.submit()
+  await flush()
+  assert.equal(msB.submits, 1)
+  assert.deepEqual(loaders(root), [b.submitSpinner], 'now the marker moves')
+  assert.equal(a.submitSpinner.hasAttribute('data-ms-loader'), false)
+  assert.equal(a.submitSpinner.style.display, 'none')
+
+  msB.hide()
+  await flush()
+
+  msA.submit()
+  await flush()
+  assert.equal(msA.submits, 2)
+
+  const refusals = app.warnings.filter((line) => line.includes(SUBMIT_REFUSED))
+  assert.equal(refusals.length, 1, app.warnings.join(' | '))
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
 })
 
 test('a native login form with nowhere to spin falls back to the overlay', async () => {
@@ -2134,14 +2163,176 @@ test('a native login form with nowhere to spin falls back to the overlay', async
 
   login.submit()
   await flush()
-  assert.deepEqual(loaders(root), [], 'the marker leaves the form that is not submitting')
+  assert.equal(login.submits, 0, 'the Spinner-less form waits its turn too')
+  assert.equal(login.overlayShows, 0, 'so no overlay is raised over a live spin')
+  assert.deepEqual(loaders(root), [p.submitSpinner], 'the marker stays with the open request')
+  assert.equal(p.submitSpinner.style.display, 'block')
+
+  profile.hide()
+  await flush()
+
+  login.submit()
+  await flush()
   assert.equal(login.overlayShows, 1, 'Memberstack shows its own full-screen overlay')
-  assert.equal(p.submitSpinner.style.display, 'none', 'the Spinner it left behind goes out')
+  assert.deepEqual(loaders(root), [], 'the unlit marker it left behind is swept')
+  assert.equal(p.submitSpinner.style.display, 'none')
   assert.deepEqual(marksOf(l.control), NO_MARKS)
 
   login.hide()
   assert.equal(login.overlayRemovals, 1)
-  assert.equal(app.warnings.length, 0)
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('with no authored loader, a save in flight refuses the signup form', async () => {
+  const s = signupForm({ noLoader: true })
+  const p = profileForm({ noLoader: true })
+  const root = body([p.form, s.form])
+  mount(root)
+  const profile = memberstack(root, p.form, { cache: false })
+  const signup = memberstack(root, s.form, { cache: false })
+
+  profile.submit()
+  await flush()
+  assert.deepEqual(loaders(root), [p.submitSpinner])
+  assert.equal(p.submitSpinner.style.display, 'block')
+
+  signup.submit()
+  await flush()
+  assert.equal(signup.submits, 0)
+  assert.deepEqual(loaders(root), [p.submitSpinner], 'the marker stays where the request is')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+  assert.deepEqual(marksOf(s.control), NO_MARKS)
+
+  profile.hide()
+  await flush()
+
+  signup.submit()
+  await flush()
+  assert.equal(signup.submits, 1)
+  assert.deepEqual(loaders(root), [s.submitSpinner], 'now it moves')
+  assert.equal(s.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(s.control.getAttribute('aria-disabled'), 'true')
+})
+
+test('a re-submit after a hide cannot be released by a rival request', async () => {
+  const a = signupForm({ noLoader: true })
+  const b = signupForm({ kind: 'login', noLoader: true })
+  const root = body([a.form, b.form])
+  mount(root)
+  const msA = memberstack(root, a.form, { cache: false })
+  const msB = memberstack(root, b.form, { cache: false })
+
+  msA.submit()
+  await flush()
+  msB.submit()
+  await flush()
+  assert.equal(msB.submits, 0, 'no rival request is ever opened')
+
+  msA.hide()
+  await flush()
+  msA.submit()
+  await flush()
+  assert.equal(msA.submits, 2)
+  assert.equal(a.submitWrap.getAttribute('data-button-theme'), 'disabled')
+
+  // nothing is in flight but A's own second request, so nothing can end it early
+  msA.submit()
+  await flush()
+  assert.equal(msA.submits, 2, 'the repeat is swallowed, not passed on')
+  assert.equal(a.submitSpinner.style.display, 'block', 'and A is still pending')
+  assert.equal(a.control.getAttribute('aria-disabled'), 'true')
+})
+
+test('the form that owns the pinned loader waits for a mirrored spin too', async () => {
+  const { s, p, root } = anchoredPage()
+  const app = mount(root, { hostname: STAGING })
+  const signup = memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
+
+  profile.submit()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'block', 'the Save button holds the mirrored spin')
+
+  signup.submit()
+  await flush()
+  assert.equal(signup.submits, 0)
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
+
+  profile.hide()
+  await flush()
+
+  signup.submit()
+  await flush()
+  assert.equal(signup.submits, 1)
+  assert.deepEqual(marksOf(s.submitWrap), {
+    theme: 'disabled',
+    themeMark: 'black',
+    busy: 'true',
+    busyMark: '',
+    loading: 'true',
+    ariaDisabled: null,
+    ariaMark: null,
+  })
+  assert.equal(s.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+  assert.ok(app.warnings[0].includes(SUBMIT_REFUSED), app.warnings[0])
+})
+
+test('a form re-submitting into its own lit spinner is never refused', async () => {
+  const moved = profileForm({ noLoader: true })
+  const movedRoot = body([moved.form])
+  const moveApp = mount(movedRoot, { hostname: STAGING })
+  const move = memberstack(movedRoot, moved.form, { cache: false })
+
+  move.submit()
+  await flush()
+  move.submit()
+  await flush()
+  assert.equal(move.submits, 2, 'MOVE mode: its own Spinner is not a rival')
+  assert.equal(moveApp.warnings.length, 0, moveApp.warnings.join(' | '))
+
+  const pinned = profileForm()
+  const pinnedRoot = body([pinned.form])
+  const pinnedApp = mount(pinnedRoot, { hostname: STAGING })
+  const pin = memberstack(pinnedRoot, pinned.form)
+
+  pin.submit()
+  await flush()
+  pin.submit()
+  await flush()
+  assert.equal(pin.submits, 2, 'MIRROR mode: nor is the anchor it lit itself')
+  assert.equal(pinnedApp.warnings.length, 0, pinnedApp.warnings.join(' | '))
+})
+
+test('on production the refused submit says nothing in the console', async () => {
+  const build = () => {
+    const s = signupForm({ noLoader: true })
+    const p = profileForm({ noLoader: true })
+    return { s, p, root: body([p.form, s.form]) }
+  }
+
+  const quiet = build()
+  const quietApp = mount(quiet.root, { hostname: PRODUCTION })
+  const quietProfile = memberstack(quiet.root, quiet.p.form, { cache: false })
+  const quietSignup = memberstack(quiet.root, quiet.s.form, { cache: false })
+  quietProfile.submit()
+  await flush()
+  quietSignup.submit()
+  await flush()
+  assert.equal(quietSignup.submits, 0, 'still refused')
+  assert.equal(quietApp.warnings.length, 0, quietApp.warnings.join(' | '))
+
+  const loud = build()
+  const loudApp = mount(loud.root, { hostname: STAGING })
+  const loudProfile = memberstack(loud.root, loud.p.form, { cache: false })
+  const loudSignup = memberstack(loud.root, loud.s.form, { cache: false })
+  loudProfile.submit()
+  await flush()
+  loudSignup.submit()
+  await flush()
+  assert.equal(loudSignup.submits, 0)
+  assert.equal(loudApp.warnings.length, 1, loudApp.warnings.join(' | '))
+  assert.ok(loudApp.warnings[0].includes(SUBMIT_REFUSED), loudApp.warnings[0])
 })
 
 test('the marker never lands on the sign-in link next to the CTA', async () => {
@@ -2227,9 +2418,6 @@ test('with password-validation loaded the marker still follows the click', async
 // Three warnings, each at most once per page, emitted only on a staging host
 // or under window.STARTERS_DEBUG === true. Production is silent.
 // ---------------------------------------------------------------------------
-
-const STAGING = 'the-starters-3-0.webflow.io'
-const TAG = '[memberstack-loader]'
 
 /** the /login shape: an auth form whose Spinner has no marker, served by MOVE mode */
 const noLoaderPage = () => {
