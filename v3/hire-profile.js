@@ -1906,13 +1906,13 @@
      two-item public DTO into both wrappers. This adapter adds viewer state and
      routes actions into the controllers that already own signup, booking, and
      owner settings. It never creates a card or a modal. */
-  const loggedOutXanoCallAvailability = new Map();
   let loggedOutXanoCallsSettled = false;
+  let loggedOutXanoCallsAvailable = false;
   let loggedOutLegacyCallsAvailable = false;
 
   function syncLoggedOutBookCallCta() {
       const available = loggedOutXanoCallsSettled
-          ? Array.from(loggedOutXanoCallAvailability.values()).some(Boolean)
+          ? loggedOutXanoCallsAvailable
           : loggedOutLegacyCallsAvailable;
       setLoggedOutBookingButtonAvailable(available);
   }
@@ -2229,7 +2229,10 @@
               return item.public_available === true;
           });
           loggedOutXanoCallsSettled = true;
-          loggedOutXanoCallAvailability.set(key, anyPublicType);
+          // Both wrappers read the same canonical endpoint. Treat its latest
+          // completed response as authoritative for the shared Book Call CTA;
+          // retaining a per-wrapper OR lets a stale sibling keep the CTA open.
+          loggedOutXanoCallsAvailable = anyPublicType;
           syncLoggedOutBookCallCta();
           markServiceCardsClickable();
       } else if (isProfileOwner(MEMBER)) {

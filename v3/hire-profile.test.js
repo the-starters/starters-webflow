@@ -819,6 +819,7 @@ function makeCallCardsWfXanoFixture(root, instanceKey = 'starter-call-offers-ser
     },
   }
   return {
+    instance,
     api: {
       push(callback) {
         callback({ get: (key) => (key === instanceKey ? instance : null) })
@@ -3459,6 +3460,39 @@ test('wf-xano call cards use public Xano availability for logged-out signup pres
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
   assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
   assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+})
+
+test('the latest canonical wf-xano result controls logged-out Book Call across both wrappers', async () => {
+  const page = makePage()
+  const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')
+  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
+  const servicesWfx = makeCallCardsWfXanoFixture(services.wrapper, 'starter-call-offers-services')
+  const headerWfx = makeCallCardsWfXanoFixture(header.wrapper, 'starter-call-offers-header')
+  const instances = {
+    'starter-call-offers-services': servicesWfx.instance,
+    'starter-call-offers-header': headerWfx.instance,
+  }
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: {
+      push(callback) {
+        callback({ get: (key) => instances[key] || null })
+      },
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  servicesWfx.emit(callCardResult({ free: true, paid: false }))
+  await settle()
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+
+  headerWfx.emit({ items: [] })
+  await settle()
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
 })
 
 test('a logged-out wf-xano call card answers from its own item, not a sibling row of the same type', async () => {
