@@ -82,7 +82,7 @@ remain deferred (`paid-call-brand-payment.js`,
 | Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above | native Webflow CMS cards plus side-by-side `starter-call-offers-header` and `starter-call-offers-services` wf-xano canaries / dedicated public Xano endpoint `profile/starter/calls/v3`; this file adds viewer state to the rendered Xano clones — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
 | Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
 | Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, and Talent or owner cards stay inert | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
-| Freelance rate card | everyone | this file / Algolia record, cloned from the section's Default card |
+| Freelance rate card | everyone | this file / Algolia record, cloned from the section's own authored Default card — never an element owned by a `[wf-xano-element="wrapper"]`, because every wf-xano adapter stamps the same `data-service-card="component"` / `data-service-card-state="Default"` pair on its template and its rendered clones |
 | Retainer rate card | everyone | authored `starter-retainer` wf-xano wrapper / canonical Xano endpoint `profile/starter/retainer/v3`; the Algolia-derived runtime clone remains only as the unresolved/error fallback |
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
@@ -211,9 +211,9 @@ are aligned before selecting the canary.
 1. Anonymous: Free and Paid call tout cards appear only when their canonical
    public compatibility projections are true — `public_available` from
    `profile/starter/calls/v3` for the wf-xano cards — and each revealed tout
-   carries no "Next Available" row at all. Generic Book Call CTAs appear when either call
-   type is on. The Free/Paid chooser stays structurally closed, and no
-   authenticated booking discovery runs.
+   carries no "Next Available" row at all. Generic Book Call CTAs appear when
+   either call type is on. The Free/Paid chooser stays structurally closed,
+   and no authenticated booking discovery runs.
 2. Anonymous click on a visible call tout, Book Call CTA, or non-call service
    card opens the signup modal in place. Logged-out Book Call CTAs have no
    `data-modal-trigger`, so a missing signup controller cannot open the booking
@@ -667,7 +667,12 @@ overwritten by the canonical `price_cents` repaint described below, so this is
 the only path where the DTO's units reach the screen — read them as dollars.
 
 **The profile owner.** Both cards are revealed as a read-only preview:
-`data-call-owner-preview`, no signup attribution, and no modal trigger. A type
+`data-call-owner-preview`, no signup attribution, and no modal trigger. That
+marker is also what keeps `wireCallServiceCardsToDirectEntry` off the card: the
+adapter stamps `data-type` on every clone, so an owner preview would otherwise
+match the shortcut selector and get a capture-phase listener that
+`preventDefault()`s every click — cancelling the setup CTA inside the card. The
+owner never self-books, so that shortcut could only ever fail for them. A type
 with a bookable owner record reads `available` with its tooltip hidden. A type
 without one reads `setup-required` and gets the exact next step —
 calendar, availability, Stripe link, Stripe charges, Stripe freshness, then the
@@ -691,7 +696,12 @@ legacy reveal has to stand down from these cards: the Algolia and grant booleans
 in the non-brand branch describe the *profile owner's* connection state, not
 what this viewer may book. `applyCallSurfaceAvailability` therefore takes an
 `includeSurface` filter, and both legacy writers — the non-brand reveal and
-`syncLoggedOutCallSurfaces` — pass `excludeXanoCallCards`. The legacy booleans
+`syncLoggedOutCallSurfaces` — pass `excludeXanoCallCards`. The non-brand
+branch's raw reveals of `[has-connection="free"]`, `[no-connection="free"]`,
+`[has-connection="paid"]` and `[no-connection="paid"]` stand down through the
+same predicate, via `qsaLegacyCallSurfaces` — those are the very attributes the
+adapter stamps on its own cards, so an unscoped selector would re-show a card
+the adapter had hidden and overwrite its owner tooltip. The legacy booleans
 keep governing the untouched CMS comparison cards for as long as those stay on
 the page.
 
@@ -699,9 +709,13 @@ Covered by `wf-xano call cards use public Xano availability for logged-out
 signup presentation`, `wf-xano call cards normalise the DTO call type before
 deciding logged-out availability`, `a non-owner talent keeps the wf-xano call
 cards hidden even though the profile owner has a grant`, `a late wf-xano Brand
-call card replays canonical discovery and opens only its matching type`, and
-`the profile owner sees both wf-xano call skeletons with exact setup-required
-tooltip state` in [`hire-profile.test.js`](hire-profile.test.js).
+call card replays canonical discovery and opens only its matching type`, `the
+profile owner sees both wf-xano call skeletons with exact setup-required tooltip
+state`, `the owner setup CTA on a wf-xano call card is not cancelled by the
+direct-entry wiring`, `the rate cards clone the authored card even when a
+wf-xano clone precedes it in the list`, and `the rate cards refuse the wf-xano
+template that precedes the authored card` in
+[`hire-profile.test.js`](hire-profile.test.js).
 
 ## Rate surfaces are repainted from the canonical source
 
