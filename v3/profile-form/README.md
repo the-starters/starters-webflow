@@ -226,15 +226,36 @@ Both route copies of the company-experience controller
 Full Profile, Consult, and Edit Profile work-experience modals hydrate and save
 identically.
 
-The controllers convert the four existing Webflow date inputs to native
-`type="month"` controls. They remove the legacy jQuery UI datepicker attributes and
-correct each label association at runtime, without adding a second duration field or
-changing the Xano schema. Xano's existing `start_date`, `end_date`, and `current_work`
-fields remain the only authority for the tenure. The control value is `YYYY-MM`, the
-browser presents it as a localized month and year, and cards still render `Mon YYYY`.
+The controllers convert the four existing Webflow date inputs to text controls backed
+by a purpose-built month-only picker. It shows year arrows, a 3-by-4 grid of month
+buttons, Today, and Clear; it has no day grid. The picker is the only way to write a
+month: typing, pasting, and dropping text are all suppressed, and the field is marked
+`aria-readonly`. It is deliberately not a `readonly` control, because a `readonly`
+input is barred from constraint validation and could never report the inverted-range
+message described below. The field carries `role="combobox"` so that the popup state
+it already publishes is announced: `aria-expanded` is not a supported state of the
+implicit `textbox` role, while `combobox` supports `aria-expanded`, `aria-haspopup`,
+`aria-controls`, and `aria-readonly`, which are exactly the four properties the
+control sets. The controllers remove the
+legacy jQuery UI datepicker attributes and correct each label association at runtime,
+without adding a second duration field or changing the Xano schema. Xano's existing
+`start_date`, `end_date`, and `current_work` fields remain the only authority for the
+tenure. The visible value is `Mon YYYY`, a changed value is normalized to `YYYY-MM`
+for Xano, and cards continue to render `Mon YYYY`.
 
-Stored dates are parsed into a real local `Date` before they hydrate the native month
-control. The parser accepts an exact full or three-letter month in
+The picker opens on a click and on `Enter`, `Space`, or `ArrowDown` from the field, and
+closes on `Escape`, on choosing a month, `Today`, or `Clear`, or on a mousedown outside
+it. Every close except the outside mousedown returns focus to the field. Inside the
+popup, `Tab` and `Shift+Tab` cycle through the year arrows, the twelve month buttons,
+`Today`, and `Clear` instead of leaving it, skipping any control the end-month minimum
+below has disabled, and the popup is appended into the surrounding work-experience modal
+when there is one, so a keyboard member cannot land behind the dialog. The popup is
+`position: fixed` and is re-measured against `window.visualViewport` on scroll, resize,
+and viewport change, so a pinch-zoomed or soft-keyboard-shrunk viewport keeps it on
+screen rather than clipping it off an edge.
+
+Stored dates are parsed into a real local `Date` before they hydrate the month picker.
+The parser accepts an exact full or three-letter month in
 `Month YYYY` (first of that month) and ISO `YYYY-MM-DD` with an optional valid
 `THH:MM:SS` suffix, fractional seconds, and `Z` or `+/-HH:MM` offset (that exact
 local calendar day, never a UTC shift). Because Xano records hold day-precision
@@ -248,10 +269,12 @@ blank rather than hydrating an unrelated month and year. Nothing is lost when th
 happens: the baseline/serialize pair below re-submits the original stored string for a
 date field the member never touched.
 
-`Present` is a stored sentinel for a current role, not a date. It never reaches the
-month control and never becomes a baseline, so reopening a current role cannot turn the
-sentinel into a calendar value, and clearing "I currently work here" cannot carry
-`Present` into an end-date field the member can see.
+`Present` is a stored sentinel for a current role, not a date. The disabled end-month
+field shows it verbatim, both when "I currently work here" is ticked and when a stored
+current role is reopened, so the two paths render the same state. It is never parsed
+into a month and never becomes a baseline, so reopening a current role cannot turn the
+sentinel into a calendar value, and clearing "I currently work here" restores the
+member's own previous month rather than carrying `Present` into an editable field.
 
 Work History cards use the same strict parser for their display label. Valid ISO,
 month-only, and day-precision values render as `Mon YYYY`; for example,
@@ -259,10 +282,14 @@ month-only, and day-precision values render as `Mon YYYY`; for example,
 not rewrite the stored value. `Present`, blanks, and unknown legacy strings keep
 their existing behavior.
 
-Hydration also records the canonical string it came from next to the native month value.
-Opening a different role clears disabled state and any date bounds left by the prior modal.
-The two controls intentionally do not set reciprocal native `min` and `max` bounds. Those
-bounds can trap an existing or inverted range and stop a member from repairing either month.
+Hydration also records the canonical string it came from next to the visible month value.
+Opening a different role clears disabled state and any date bounds left by the prior modal,
+then reinstalls the end-month minimum from the role it is showing.
+The bound is one-way. A non-current start month sets the end control's `min`, and its
+picker disables every month before that minimum, the previous-year arrow once the
+minimum's year is the one on screen, and `Today` when the current month falls before it;
+a current role or a blank start month clears the bound again. The start control never
+takes a `max`, so an existing or inverted range stays repairable from either side.
 For a non-current role, save-time validation still requires the end month to be the same as
 or later than the start month; same-month tenures are valid. A rejected range sets a custom
 validity message on both month controls and reports it on the end-month control, so the
@@ -271,7 +298,7 @@ current-role checkbox, or reopening the modal clears it. A current role disables
 end-month control and stores `Present` through the existing `end_date` field.
 
 On save, a date field the member never touched re-serializes its original canonical string,
-and only a field whose native month value actually changed submits `YYYY-MM`. Editing an
+and only a field whose visible month value actually changed submits `YYYY-MM`. Editing an
 unrelated field therefore cannot rewrite a stored legacy date.
 
 Run this coverage with:
