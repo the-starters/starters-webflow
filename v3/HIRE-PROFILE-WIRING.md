@@ -2,8 +2,8 @@
 
 Last updated: 2026-09-04
 Status: Call projections and Free Call behavior are GitHub-owned; the Free/Paid
-call cards render from wf-xano side by side with the CMS cards pending parity
-proof; direct Webflow head cleanup remains pending
+call-card cutover hides the old CMS variants and renders canonical Xano data;
+direct Webflow head cleanup remains pending
 
 ## What this is
 
@@ -79,7 +79,7 @@ remain deferred (`paid-call-brand-payment.js`,
 | Notable Experience | everyone, incl. logged out | Webflow-authored `starter-work-histories` wf-xano wrapper / public Xano endpoint `#5860` |
 | Clients ("also worked with") | everyone, incl. logged out | Webflow-authored `starter-clients` wf-xano wrapper / public Xano endpoint `#5860` |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: accepted canonical configuration plus successful controller install | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
-| Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above | native Webflow CMS cards plus side-by-side `starter-call-offers-header` and `starter-call-offers-services` wf-xano canaries / dedicated public Xano endpoint `profile/starter/calls/v3`; this file adds viewer state to the rendered Xano clones — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
+| Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
 | Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
 | Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, and Talent or owner cards stay inert | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
 | Freelance rate card | everyone | this file / Algolia record, cloned from the section's own authored Default card — never an element owned by a `[wf-xano-element="wrapper"]`, because every wf-xano adapter stamps the same `data-service-card="component"` / `data-service-card-state="Default"` pair on its template and its rendered clones |
@@ -613,19 +613,29 @@ selected. Talent, the profile owner, and unknown roles stay inert.
 ## The Free and Paid call cards render from one wf-xano template per surface
 
 The Free and Paid cards used to be duplicated Webflow CMS bindings, one authored
-variant per viewer state. They now render from **one native template per
+variant per viewer state. The target structure uses **one native template per
 surface**: `starter-call-offers-header` in the hero and
-`starter-call-offers-services` in `#services`. Both wrappers read the dedicated
-public source `KZf7nFnk:profile/starter/calls/v3` (endpoint `#6491`, `GET`,
+`starter-call-offers-services` in `#services`. The published Services wrapper
+already uses that structure; the published Header is temporarily reconciled as
+described below. Both surfaces read the dedicated public source
+`KZf7nFnk:profile/starter/calls/v3` (endpoint `#6491`, `GET`,
 unauthenticated, one `starter_id` input), which returns at most one Free and one
 Paid item with `id`, `type`, `name`, `description`, `price` (whole dollars) and
 `public_available`. Webflow owns both templates; wf-xano clones them; this
 file only adds viewer state and routes clicks into the controllers that already
 own signup, booking, and owner settings. It never creates a card or a modal.
 
-The CMS call cards stay on the page as the side-by-side comparison and the
-rollback path, exactly as `starter-services` does, until role-matched browser
-parity proof allows a cutover decision.
+The CMS call cards stay in the page only as hidden rollback markup. Once the
+canonical Services result settles, the adapter stamps those old call cards
+`data-call-offer-superseded` and keeps them hidden for every viewer role. It
+does not hide ordinary CMS Service cards.
+
+The currently published hero still uses the earlier `starter-calls` wf-xano
+wrapper. Until Webflow publishes `starter-call-offers-header`, the adapter
+repaints those two native hero touts from the latest canonical public call DTO.
+It replays that decision when the legacy wrapper renders or refreshes late. As
+soon as the canonical Header wrapper exists, the legacy hero touts are also
+stamped superseded and stay hidden.
 
 Subscription is the same late-safe pattern as the other two canaries: the
 `window.WfXano` callback queue, plus a single read of the instance's successful
