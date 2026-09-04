@@ -1610,36 +1610,39 @@
       if (!isProfileOwner(MEMBER)) return;
 
       try {
-          const settingsResults = await Promise.all([
-              ownerSettings(OWNER_FREE_SETTINGS_PATH).then(function (value) {
-                  return { status: 'loaded', value: value };
-              }).catch(function (error) {
-                  console.warn('[hire-profile] the owner free-call settings lookup failed:', error);
-                  return { status: 'error', value: null };
-              }),
-              ownerSettings(OWNER_PAID_SETTINGS_PATH).then(function (value) {
-                  return { status: 'loaded', value: value };
-              }).catch(function (error) {
-                  console.warn('[hire-profile] the owner paid-call settings lookup failed:', error);
-                  return { status: 'error', value: null };
-              }),
-          ]);
-          const settings = [settingsResults[0].value, settingsResults[1].value];
-
-          const records = [
-              ownerRecordFrom(settings[0], false),
-              ownerRecordFrom(settings[1], true),
-          ].filter(Boolean);
           ownerCallSettingsSnapshot = {
-              free: settings[0],
-              paid: settings[1],
-              status: {
-                  free: settingsResults[0].status,
-                  paid: settingsResults[1].status,
-              },
-              records: records,
+              free: null,
+              paid: null,
+              status: { free: 'loading', paid: 'loading' },
+              records: [],
           };
-          applyOwnerCallCardStates(ownerCallSettingsSnapshot, records);
+
+          function settleSettings(type, result) {
+              ownerCallSettingsSnapshot[type] = result.value;
+              ownerCallSettingsSnapshot.status[type] = result.status;
+              ownerCallSettingsSnapshot.records = [
+                  ownerRecordFrom(ownerCallSettingsSnapshot.free, false),
+                  ownerRecordFrom(ownerCallSettingsSnapshot.paid, true),
+              ].filter(Boolean);
+              applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+              return result;
+          }
+
+          const freeSettings = ownerSettings(OWNER_FREE_SETTINGS_PATH).then(function (value) {
+              return settleSettings('free', { status: 'loaded', value: value });
+          }).catch(function (error) {
+              console.warn('[hire-profile] the owner free-call settings lookup failed:', error);
+              return settleSettings('free', { status: 'error', value: null });
+          });
+          const paidSettings = ownerSettings(OWNER_PAID_SETTINGS_PATH).then(function (value) {
+              return settleSettings('paid', { status: 'loaded', value: value });
+          }).catch(function (error) {
+              console.warn('[hire-profile] the owner paid-call settings lookup failed:', error);
+              return settleSettings('paid', { status: 'error', value: null });
+          });
+          const settingsResults = await Promise.all([freeSettings, paidSettings]);
+          const settings = [settingsResults[0].value, settingsResults[1].value];
+          const records = ownerCallSettingsSnapshot.records;
           if (!records.length) return;
 
           // Late hero and Services cards reach the owner too, so the re-run
