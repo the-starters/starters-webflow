@@ -486,7 +486,10 @@ function createStarterEditCompanyDraftDirtyController(options) {
  * Captured read-only from /starter-edit-profile on 2026-08-12.
  */
     // Loads, renders, and creates company experience records from Xano.
-    document.addEventListener('DOMContentLoaded', function () {
+    let starterProfileCompanyControllerBooted = false;
+    function bootStarterProfileCompanyController() {
+        if (starterProfileCompanyControllerBooted) return;
+        starterProfileCompanyControllerBooted = true;
         waitForMember(async () => {
             if (!MEMBER.id) return;
 
@@ -1845,4 +1848,10 @@ function createStarterEditCompanyDraftDirtyController(options) {
             updateAddBtnState();
             openAddCompanyAccordionIfEmpty();
         });
-    });
+    }
+
+    if (!document.readyState || document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootStarterProfileCompanyController, { once: true });
+    } else {
+        bootStarterProfileCompanyController();
+    }

@@ -312,7 +312,7 @@ function createJQuery(pickers) {
   return jQuery
 }
 
-function bootCompanyController(relativePath, { pickerReady = true } = {}) {
+function bootCompanyController(relativePath, { pickerReady = true, readyState = 'loading', initialEndDate = '' } = {}) {
   const clock = createClock()
   const pickers = new Map()
   const fetchCalls = []
@@ -339,6 +339,7 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
     companySubmit: new FakeElement(),
     firstCompanyInput: new FakeElement(),
   }
+  elements.endDateInput.value = initialEndDate
 
   const saveButtonText = new FakeElement()
   saveButtonText.textContent = 'save changes'
@@ -422,6 +423,7 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
       constructor(type) { this.type = type }
     },
     document: {
+      readyState,
       body: documentBody,
       head: documentHead,
       documentElement: { clientWidth: 1280, clientHeight: 800 },
@@ -543,6 +545,24 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
 }
 
 for (const controllerPath of controllerPaths) {
+  test(`${controllerPath} boots the month controls when the script loads after DOMContentLoaded`, async () => {
+    const app = bootCompanyController(controllerPath, { readyState: 'complete', initialEndDate: 'Jun 2025' })
+
+    await app.ready()
+
+    for (const input of [app.startDateInput, app.endDateInput, app.editStartDateInput, app.editEndDateInput]) {
+      assert.equal(input.type, 'text')
+      assert.equal(input.getAttribute('role'), 'combobox')
+      assert.ok(input._starterProfileCompanyMonthPicker)
+    }
+    assert.equal(app.endDateInput.value, 'Jun 2025')
+
+    app.currentWorkCheckbox.checked = true
+    app.currentWorkCheckbox.dispatchEvent({ type: 'change' })
+    assert.equal(app.endDateInput.getAttribute('disabled'), 'disabled')
+    assert.equal(app.endDateInput.value, 'Present')
+  })
+
   test(`${controllerPath} opens a month-only grid and saves the selected months`, async () => {
     const app = bootCompanyController(controllerPath)
     await app.ready()
