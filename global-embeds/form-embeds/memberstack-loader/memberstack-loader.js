@@ -208,12 +208,13 @@
     record.pending = false;
     if (owner === record) clearOwner();
 
-    // password-validation re-adjudicates the gate on hand-back: regate is
-    // v1.59.510+, rescan the v1.59.504+ fallback (older PV never re-gates).
+    // password-validation re-adjudicates the gate on hand-back. regate is
+    // v1.59.510+ and declines a form it never bridged; rescan is the page-wide
+    // fallback.
     var pv = window.startersPasswordValidation;
     if (!pv) return;
-    if (typeof pv.regate === 'function') pv.regate(record.form);
-    else if (typeof pv.rescan === 'function') pv.rescan();
+    var regated = typeof pv.regate === 'function' && pv.regate(record.form);
+    if (!regated && typeof pv.rescan === 'function') pv.rescan();
   }
 
   // Edge-triggered off the Spinner's live inline display, never off the batch

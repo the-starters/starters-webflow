@@ -1867,6 +1867,30 @@ test('the release hands one form back, not the whole page', async () => {
   assert.equal(calls[0].form, f.form, 'and it names the form that was released')
 })
 
+test('a password-validation that declines the hand-back still gets a rescan', async () => {
+  const f = signupForm()
+  const root = body([f.form])
+  const app = mount(root)
+  const ms = memberstack(root, f.form)
+
+  const calls = []
+  app.window.startersPasswordValidation = {
+    regate: () => {
+      calls.push('regate')
+      return false
+    },
+    rescan: function () {
+      calls.push('rescan:' + arguments.length)
+    },
+  }
+
+  ms.submit()
+  await flush()
+  ms.hide()
+  await flush()
+  assert.deepEqual(calls, ['regate', 'rescan:0'], 'a form it never bridged falls back')
+})
+
 test('a password-validation too old to regate still gets a rescan', async () => {
   const f = signupForm()
   const root = body([f.form])
