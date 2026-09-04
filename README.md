@@ -111,7 +111,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/onboarding-done-redirect.js` — read half of the `/starter-onboarding` completion pair: redirects an already-complete member to `/starter-dashboard` and fails open; it installs only with `v3/patch-onboarding-status.js`; authoritative wiring and QA live in [`v3/README.md`](v3/README.md#onboarding-done-redirect) and [`v3/ONBOARDING-DONE-REDIRECT-WIRING.md`](v3/ONBOARDING-DONE-REDIRECT-WIRING.md)
 - `v3/patch-onboarding-status.js` — write half of the same pair: detects Webflow form success, records `onboarding_done` in Xano with retries, emits the shared privacy-safe success/failure receipt, and routes to `/starter-dashboard`; authoritative wiring lives in [`v3/README.md`](v3/README.md#onboarding-patch-status) and [`v3/ONBOARDING-PATCH-STATUS-WIRING.md`](v3/ONBOARDING-PATCH-STATUS-WIRING.md)
 - `v3/build-profile/` — source-controlled Build Profile browser controllers; the authoritative migration scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/build-profile/README.md`](v3/build-profile/README.md)
-- `v3/profile-form/` — shared Build/Edit Profile inline-extraction candidates; the authoritative ownership, provenance, page-Head-Code cutover, loader order, and verification contract lives in [`v3/profile-form/README.md`](v3/profile-form/README.md)
+- `v3/profile-form/` — shared Build/Edit Profile inline-extraction candidates plus the whole-dollar price contract the Build and Edit Profile forms enforce on hourly, monthly retainer, paid-call, and custom-service prices before any Xano request; the authoritative ownership, provenance, page-Head-Code cutover, loader order, verification, and [price ranges and rejection rules](v3/profile-form/README.md#whole-dollar-price-contract) live in [`v3/profile-form/README.md`](v3/profile-form/README.md)
 - `v3/profile-form/shared-foundation.js` — shared native-form model and helper foundation extracted from the authenticated Build/Edit Profile routes
 - `v3/profile-form/incremental-dropdowns.js` — shared incremental dropdown controller extracted from the authenticated Build/Edit Profile routes
 - `v3/build-profile/draft-state.js` — Build Profile local/member draft precedence and one-way draft synchronization controller; blank member-bound draft fields hydrate from the signed-in member while non-empty draft edits keep precedence
@@ -179,9 +179,15 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   sent as the canonical integer `0` rather than an empty string, because those
   controls clear their visible value when their toggle turns off. A blank rate
   whose control is still live is sent unchanged, so an empty required rate keeps
-  failing instead of silently persisting a zero rate. Non-blank rate values are
-  never rewritten. Only the member switching Retainer off clears that service's
-  now-hidden description and rate. Hydrating the stored profile runs the same
+  failing instead of silently persisting a zero rate. A non-blank rate is never
+  rounded or partially parsed: it must satisfy the shared
+  [whole-dollar price contract](v3/profile-form/README.md#whole-dollar-price-contract),
+  which the step enforces on the hourly, retainer, and custom-service prices
+  before it issues the PATCH. The page also owns the rate-input setup for those
+  controls instead of delegating to the live shared formatter that rewrites an
+  authored rate to two decimals, so the whole-dollar text a member types is the
+  text the contract validates. Only the member switching Retainer off clears that
+  service's now-hidden description and rate. Hydrating the stored profile runs the same
   show/hide and required-attribute pass without clearing, so a stored retainer
   description survives every reload instead of being blanked into the next save.
   The Phone field is preserved byte-for-byte when the member does not touch it:

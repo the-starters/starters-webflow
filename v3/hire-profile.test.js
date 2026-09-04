@@ -2571,6 +2571,8 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
     [{ config_id: 'missing_duration', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500 }],
     [{ config_id: 'wrong_duration', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 500, duration: 30 }],
     [{ config_id: 'sub_minimum', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 99, duration: 60 }],
+    [{ config_id: 'over_maximum', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 100100, duration: 60 }],
+    [{ config_id: 'fractional_dollar', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 1250, duration: 60 }],
     [{ config_id: 'unknown_payment', is_paid: null, active: true, data_environment: 'production' }],
     [
       { config_id: 'free_a', is_paid: false, active: true, data_environment: 'production' },
@@ -2622,7 +2624,7 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   const bookingCalls = []
   const paidCalls = []
   const configs = [
-    { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'usd', price_cents: 1250, duration: 60 },
+    { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'usd', price_cents: 1200, duration: 60 },
     { config_id: 'free_live', is_paid: false, active: true, data_environment: 'production', payment_environment: null },
   ]
   const context = makeContext({
@@ -2701,7 +2703,7 @@ test('a failed Paid install keeps the installed Free chooser option selectable',
         data_environment: 'production',
         payment_environment: 'live',
         currency: 'USD',
-        price_cents: 1250,
+        price_cents: 1200,
         duration: 60,
       },
     ],
@@ -3273,7 +3275,7 @@ test('Paid-only discovery stays closed when the V3 controller is unavailable', a
       data_environment: 'production',
       payment_environment: 'live',
       currency: 'USD',
-      price_cents: 1250,
+      price_cents: 1200,
         duration: 60,
     }],
     getNearestSlot: async () => { nearestSlotCalls += 1 },
@@ -4015,7 +4017,7 @@ test('2e: a repaint uses the shared millify formatter when the page provides one
     getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
     freeController: {
       getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_1', nylas_grant_email: 's@x.com' }),
-      getConfigs: async () => [{ ...PAID_CONFIG, price_cents: 550000 }],
+      getConfigs: async () => [{ ...PAID_CONFIG, price_cents: 100000 }],
     },
     paidController: { installPaidBookingController: () => true },
   })
@@ -4024,8 +4026,8 @@ test('2e: a repaint uses the shared millify formatter when the page provides one
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(paidSurfacePrice.textContent, '5.5K', 'the page formatter owns the display text')
-  assert.equal(paidSurfacePrice.getAttribute('data-millify'), '5500')
+  assert.equal(paidSurfacePrice.textContent, '1K', 'the page formatter owns the display text')
+  assert.equal(paidSurfacePrice.getAttribute('data-millify'), '1000')
   assert.equal(
     paidSurfacePrice.getAttribute('data-millify-raw'),
     null,
@@ -4398,38 +4400,36 @@ function paidContext(page, config, extra = {}) {
   return context
 }
 
-test('rate paint: a four-figure rate renders millified, not as a raw number', async () => {
+test('rate paint: the $1,000 maximum renders millified, not as a raw number', async () => {
   const page = makePage({ includeFreeCard: false })
   const paid = addPaidCard(page)
   addContractDialog(page)
-  // $1,500. Calling millify with {} threw on units.length for EVERY value, the
-  // catch swallowed it, and this painted "1500".
-  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 150000 })
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 100000 })
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(paid.price.textContent, '1.5K')
-  assert.equal(paid.price.getAttribute('data-millify'), '1500')
+  assert.equal(paid.price.textContent, '1K')
+  assert.equal(paid.price.getAttribute('data-millify'), '1000')
 })
 
 test('rate paint: authored data-millify-* options are honored', async () => {
   const page = makePage({ includeFreeCard: false })
   const paid = addPaidCard(page, { 'data-millify-precision': '2', 'data-millify-space': 'true' })
   addContractDialog(page)
-  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 152500 })
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 100000 })
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(paid.price.textContent, '1.52 K', 'precision 2 and the authored space')
+  assert.equal(paid.price.textContent, '1 K', 'the authored space is honored at the valid ceiling')
 })
 
 test('rate paint: a value over data-millify-max is refused, not approximated', async () => {
   const page = makePage({ includeFreeCard: false })
-  const paid = addPaidCard(page, { 'data-millify-max': '1000' })
+  const paid = addPaidCard(page, { 'data-millify-max': '999' })
   addContractDialog(page)
-  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 })
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 100000 })
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
@@ -4444,19 +4444,19 @@ test('rate paint: a repainted hook drops the authored ceiling', async () => {
   const page = makePage({ includeFreeCard: false })
   const paid = addPaidCard(page, { 'data-millify-max': '100000', 'data-millify-raw': '250' })
   addContractDialog(page)
-  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 })
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 100000 })
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(paid.price.textContent, '5.5K')
+  assert.equal(paid.price.textContent, '1K')
   // The ceiling was sized for the CMS value. Left in place, a later re-process
   // fails('max') and reverts to the raw number.
   assert.equal(paid.price.getAttribute('data-millify-max'), null)
   assert.equal(paid.price.getAttribute('data-millify-raw'), null)
 })
 
-test('rate paint: odd cents keep both decimals, matching canonicalPaidPrice', async () => {
+test('rate paint: odd cents are rejected before a paid card is painted', async () => {
   const page = makePage({ includeFreeCard: false })
   const paid = addPaidCard(page)
   addContractDialog(page)
@@ -4465,7 +4465,9 @@ test('rate paint: odd cents keep both decimals, matching canonicalPaidPrice', as
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(paid.price.getAttribute('data-millify'), '250.50')
+  assert.equal(paid.price.textContent, '250')
+  assert.equal(paid.price.getAttribute('data-millify'), '')
+  assert.ok(context.warnings.some((line) => line.includes('No Configurations found')))
 })
 
 test('rate paint: a free config with no price_cents still clears the chooser sentinel', async () => {
@@ -4540,12 +4542,12 @@ test('rate paint: only the anchored price hook is written, not every number', as
   page.servicesList.appendChild(card)
   addContractDialog(page)
 
-  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 })
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 55000 })
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(price.textContent, '5.5K')
+  assert.equal(price.textContent, '550')
   assert.equal(duration.textContent, '60', 'a duration must never be painted with the price')
 })
 
@@ -4553,7 +4555,7 @@ test('rate paint: a card inserted after discovery is painted by the observer', a
   const page = makePage({ includeFreeCard: false })
   addPaidCard(page)
   addContractDialog(page)
-  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 })
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 55000 })
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
@@ -4575,7 +4577,7 @@ test('rate paint: a card inserted after discovery is painted by the observer', a
     cb([{ type: 'childList', addedNodes: [late] }]))
   await settle()
 
-  assert.equal(latePrice.textContent, '5.5K', 'a late card must not keep the stale CMS price')
+  assert.equal(latePrice.textContent, '550', 'a late card must not keep the stale CMS price')
   assert.notEqual(lateSlot.textContent, '00:00pm on 00/00', 'nor the slot sentinel')
 })
 
@@ -4583,7 +4585,7 @@ test('rate paint: repainting an already-painted card is a byte-identical no-op',
   const page = makePage({ includeFreeCard: false })
   const paid = addPaidCard(page)
   addContractDialog(page)
-  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 })
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 55000 })
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
@@ -4604,7 +4606,7 @@ test('rate paint: an accepted but uninstallable paid card is never priced', asyn
   const page = makePage({ includeFreeCard: false })
   const paid = addPaidCard(page)
   addContractDialog(page)
-  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 550000 }, {
+  const context = paidContext(page, { ...PAID_CONFIG, price_cents: 55000 }, {
     paidController: { installPaidBookingController: () => false },
   })
   vm.createContext(context)
@@ -4827,7 +4829,7 @@ test('owner paint: the owner rate goes through the real shared millify', async (
 
   const context = ownerContext(page, ownerController({
     paid: ownerPaidSettings({
-      services: [Object.assign(ownerPaidSettings().services[0], { price_cents: 550000 })],
+      services: [Object.assign(ownerPaidSettings().services[0], { price_cents: 55000 })],
     }),
   }))
   context.__startersMillify = realMillify()
@@ -4835,8 +4837,8 @@ test('owner paint: the owner rate goes through the real shared millify', async (
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(paidPrice.textContent, '5.5K', 'the page formatter owns the display text')
-  assert.equal(paidPrice.getAttribute('data-millify'), '5500')
+  assert.equal(paidPrice.textContent, '550', 'the page formatter owns the display text')
+  assert.equal(paidPrice.getAttribute('data-millify'), '550')
 })
 
 test('owner paint: both slot rows are painted from the owner configurations', async () => {

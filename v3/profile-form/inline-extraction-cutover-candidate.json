@@ -117,8 +117,8 @@
   },
   "candidateAssets": {
     "v3/profile-form/shared-foundation.js": {
-      "candidateCharacters": 22892,
-      "candidateSha256": "7af566f3bd01f172416d0be37d5b669e9e80848049e980653b237d60d047a214",
+      "candidateCharacters": 22714,
+      "candidateSha256": "76b0feb6c2d2b616bcf12be70b25eb5803d0252efa0b14936ad3837cb1ee3be9",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "liveCaptureAsset": "v3/profile-form/shared-foundation-published.capture.txt",
@@ -170,12 +170,12 @@
       }
     },
     "v3/build-profile/submit-writer.js": {
-      "candidateCharacters": 11438,
-      "candidateSha256": "64bdb27d4834cd218ffe4b9dfd3777ebc0e00d0e8ea838f1106a2b503098a445",
+      "candidateCharacters": 18239,
+      "candidateSha256": "528a4c787ae071e73d14e4113217a8888eb398bc9d168f43392ad6f3b6de43aa",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileSubmitWriter",
-        "restoreTrailingWhitespace": { "219": "          " },
+        "restoreTrailingWhitespace": { "270": "          " },
         "terminalNewlinesRemoved": 0,
         "liveCaptureAsset": "v3/profile-form/build-submit-writer-published.capture.txt"
       }

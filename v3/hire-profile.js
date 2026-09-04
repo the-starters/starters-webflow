@@ -1297,6 +1297,8 @@
               String(record.currency || '').toUpperCase() === 'USD' &&
               Number.isInteger(priceCents) &&
               priceCents >= 100 &&
+              priceCents <= 100000 &&
+              priceCents % 100 === 0 &&
               duration === 60;
       }
       return record.is_paid === false &&

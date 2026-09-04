@@ -19,7 +19,9 @@ carries company logo and stable client identity hydration plus the
 `submit-writer.js` carries the behavior changes owned by the
 [Build Profile documentation](../build-profile/README.md), `shared-foundation.js`
 adds a taxonomy value only through an explicit option click or an Enter press on a highlighted
-option, so typing an exact option name never selects it on fill, on a comma, or on blur,
+option, so typing an exact option name never selects it on fill, on a comma, or on blur, and
+applies the [whole-dollar price contract](#whole-dollar-price-contract) to every rate input instead
+of stripping symbols and re-formatting the authored value,
 and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on
 every input and change, including when the member clears the field. Their transformations are recorded as
 `whitespace_plus_idempotency_guard_plus_behavior_change` and name immutable published-body captures.
@@ -62,6 +64,64 @@ The extraction does not move the form into JavaScript. It does not change the se
 owner or Step 4 portfolio owner. A future `wf-xano` conversion requires a separate declarative contract
 and must not be combined with this ownership cutover, which changes no behavior beyond the five
 declared candidate changes recorded above.
+
+## Whole-dollar price contract
+
+Profile price inputs preserve the member's authored text until validation. They do not strip symbols,
+round decimals, or convert exponent notation. The native inputs use `type="number"`,
+`inputmode="numeric"`, and `step="1"`. Hourly and Paid Call rates allow `$1` through `$1,000`,
+Monthly Retainer allows `$1` through `$25,000`, and each Custom Service allows `$1` through `$50,000`.
+An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, unsafe integer, or value outside
+its range stops before the Xano request. A toggle-owned rate is only validated while its own section
+says yes. A collapsed Monthly Retainer or Paid Call section never forwards the stale text behind it,
+because an unvalidated collapsed value would violate this contract: Build Profile replaces it with the
+same zero or null compatibility value it uses for a section that was never filled in, so turning a
+section off does discard the rate it was holding, and Edit Profile sends the canonical zero only
+alongside the toggle it is turning off and otherwise omits the field. On Build Profile Consult the Paid Call
+section, the Monthly Retainer section, and the Hourly Rate are all unauthored, so no hidden control
+there is an answer and none of them may block a submit the member cannot repair. Each has its own
+rule. For Paid Call the hidden radio is ignored and only a rate that already satisfies this contract
+preserves the paid consult, so a canonical zero, blank, malformed, unsafe, or out-of-range rate keeps
+`paid_call: false, paid_call_rate: null` whichever way hydration left the radio. The Hourly Rate
+follows that same in-contract rule: an in-contract value is persisted, and a blank, zero, malformed,
+unsafe, or out-of-range one stays `hourly_rate: 0`. The Monthly Retainer is unconditionally
+inapplicable on Consult — it always submits `retainer: false, retainer_rate: 0` regardless of the
+hidden radio and regardless of whether the hidden rate satisfies this contract. Full Profile authors
+all three controls, so an enabled or required section there stays strict.
+
+Wherever a blank is the compatibility-empty state, the canonical zero these same writers persist for
+that field is that same state: a blank, zero, or otherwise out-of-contract profile-type-inapplicable Hourly Rate
+round-trips as the zero compatibility value instead of being read back as an authored price, while a
+required or applicable Hourly Rate still rejects zero and every other value this contract refuses. Service prices and names live in hidden capture inputs, where
+focus and native constraint validation paint nothing, so their failures name themselves in the
+authored feedback surface instead: the Edit Profile step opens its authored error modal and Build
+Profile writes the same message into the `[build-profile-error]` panel it already reveals. Both are
+authored markup, so each writes through only an explicit hook — `[build-profile-error-message]` in the
+panel, `[data-profile-feedback-message]` in the modal — or, failing that, a first plain leaf that holds
+no elements of its own (`p` or `div` in the panel, `p` in the modal); a wrapper carrying an icon beside
+the copy is left untouched and the surface is revealed exactly as authored, with the failing control's
+own native validation still reporting where it can. Both
+surfaces are shared, so both memoize their authored copy and restore it at the single boundary every
+reveal goes through: only the reveal that carries a message of its own replaces it. A reported price
+failure, and any message it left behind, is therefore cleared before the next attempt, so a corrected
+whole-dollar value saves without a page reload and no later failure — a rejected save, an auth
+failure — inherits the previous cause. A canonical rate stored before these ranges narrowed is member
+data neither page repairs: it hydrates unchanged and, wherever that price applies, blocks every save
+before any Xano request until the member supplies a whole-dollar replacement of their own. Behind a
+collapsed section, or on a Consult profile that authors none of these controls, it cannot block — the
+compatibility rules above decide what is submitted instead.
+
+Clearing a Custom Service price is the only remove gesture these forms author, and both writers keep
+it: an empty price empties that slot — the service is dropped rather than persisted with a blank or
+zero price — so a member can still delete a service they no longer offer. A non-blank price is an
+authored price and stays strict, and a price authored without a name still blocks. No invalid value is
+silently clamped.
+
+Until the cutover installs this candidate foundation, the published body still live on
+`/starter-edit-profile` re-formats every rate it claims to two decimals on blur, which no whole-dollar
+value can survive. `starter-edit-profile.js` therefore owns the rate-input contract for that page: it
+claims each price control and provides the page's shared rate setup, so the hourly, retainer, and
+cloned Custom Service price rows keep the authored whole-dollar text they are validated against.
 
 ## Verification
 

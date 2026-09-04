@@ -37,6 +37,13 @@
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
+  // A stored paid-call rate the whole-dollar contract rejects stops the transition
+  // before the irreversible provider request. That is a repairable Call Settings
+  // problem, not a connection failure, so the authored error step must name the
+  // rate instead of leaving the member with generic calendar copy.
+  const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
+  const ERROR_TEXT_PAID_CALL_RATE =
+    'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
@@ -453,6 +460,33 @@
   /* UI helpers (legacy step semantics)                                  */
   /* ------------------------------------------------------------------ */
 
+  // Remembers the authored copy the first time the shared error step is revealed,
+  // so every path that reveals it restores that copy and only a rate-aware caller
+  // can replace it. Otherwise one transition's remediation message would still be
+  // on screen for the next, unrelated failure.
+  let authoredTransitionErrorCopy = null
+
+  // Only a leaf the step authored as its copy may be written through. An element
+  // holding markup of its own — an icon beside the text, a wrapper — is left alone
+  // so the step is revealed exactly as authored rather than flattened into a
+  // single text node for the rest of the session.
+  function transitionErrorCopyLeaf(step) {
+    const errorEl = step ? qs('[error-text-element]', step) : null
+    if (!errorEl) return null
+    const childElements = typeof errorEl.childElementCount === 'number'
+      ? errorEl.childElementCount
+      : (errorEl.children ? errorEl.children.length : 0)
+    return childElements === 0 ? errorEl : null
+  }
+
+  function restoreTransitionErrorCopy(step) {
+    const errorEl = transitionErrorCopyLeaf(step)
+    if (!errorEl) return null
+    if (authoredTransitionErrorCopy === null) authoredTransitionErrorCopy = errorEl.textContent
+    errorEl.textContent = authoredTransitionErrorCopy
+    return errorEl
+  }
+
   function switchStep(step) {
     let stepElement = null
     qsa('[availability-step]').forEach(function (el) {
@@ -463,7 +497,15 @@
         el.style.display = 'none'
       }
     })
+    if (step === 'config-request-error') restoreTransitionErrorCopy(stepElement)
     return stepElement
+  }
+
+  function showTransitionError(error) {
+    const step = switchStep('config-request-error')
+    if (!error || error.code !== PAID_CALL_RATE_UNSUPPORTED) return
+    const errorEl = transitionErrorCopyLeaf(step)
+    if (errorEl) errorEl.textContent = ERROR_TEXT_PAID_CALL_RATE
   }
 
   // Matches the page's shared `[data-custom-loader]` contract.
@@ -839,11 +881,17 @@
       duration_minutes: Number(service.duration),
     }
     if (
-      intent.title.length < 3 ||
       !Number.isInteger(intent.price_cents) ||
       intent.price_cents < 100 ||
-      [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1
+      intent.price_cents > 100000 ||
+      intent.price_cents % 100 !== 0
     ) {
+      throw Object.assign(
+        new Error('Canonical paid-call rate is outside the whole-dollar contract'),
+        { code: PAID_CALL_RATE_UNSUPPORTED },
+      )
+    }
+    if (intent.title.length < 3 || [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1) {
       throw new Error('Canonical paid-call service cannot be preserved')
     }
     return intent
@@ -1417,7 +1465,7 @@
         console.warn('[scheduling-writer] manager recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
-      switchStep('config-request-error')
+      showTransitionError(error)
       console.warn('[scheduling-writer] manager change failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'manager-submit',
@@ -1472,7 +1520,7 @@
         console.warn('[scheduling-writer] disconnect recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
-      switchStep('config-request-error')
+      showTransitionError(error)
       console.warn('[scheduling-writer] disconnect failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'disconnect-calendar',

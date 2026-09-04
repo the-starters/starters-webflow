@@ -295,7 +295,21 @@
   function displayableRate(value) {
     if (!value || String(value.currency || '').toLowerCase() !== 'usd') return null
     const cents = Number(value.price_cents)
-    return Number.isInteger(cents) && cents >= 100 ? value : null
+    return Number.isInteger(cents) && cents >= 100 && cents <= 100000 && cents % 100 === 0
+      ? value
+      : null
+  }
+
+  // An active canonical service whose stored rate the whole-dollar contract rejects
+  // is real member data this browser must not repair, but it is not bookable and the
+  // card must never present it as if it were. Naming the stored amount is what makes
+  // the correction actionable, so it is rendered as stored beside the explicit
+  // correction-required state instead of reading as an unset rate on an "on" card.
+  function correctionRequiredRate(service) {
+    if (!service || displayableRate(service)) return null
+    if (String(service.currency || '').toLowerCase() !== 'usd') return null
+    const cents = Number(service.price_cents)
+    return Number.isInteger(cents) && cents > 0 ? service : null
   }
 
   function importedRateSuggestion(value) {
@@ -303,8 +317,7 @@
     if (
       !displayableRate(suggestion) ||
       suggestion.source !== 'legacy_v2' ||
-      suggestion.requires_confirmation !== true ||
-      Number(suggestion.price_cents) % 100 !== 0
+      suggestion.requires_confirmation !== true
     ) return null
     return suggestion
   }
@@ -504,6 +517,15 @@
     setAccessibleName(field('title'), 'Paid call description')
     setAccessibleName(field('price'), 'Paid call rate per hour')
     setAccessibleName(field('duration'), 'Paid call duration')
+
+    const priceInput = field('price')
+    if (priceInput) {
+      priceInput.setAttribute('type', 'number')
+      priceInput.setAttribute('inputmode', 'numeric')
+      priceInput.setAttribute('step', '1')
+      priceInput.setAttribute('min', '1')
+      priceInput.setAttribute('max', '1000')
+    }
 
     const status =
       qs('[data-call-settings-output="status"]', uiScope || root) ||
@@ -821,6 +843,7 @@
     root.setAttribute('data-paid-call-duration-required', String(FIXED_DURATION_MINUTES))
     root.setAttribute('data-paid-call-enabled', 'false')
     root.setAttribute('data-paid-call-bookable', 'false')
+    root.setAttribute('data-paid-call-rate-state', '')
     setActionEnabled(action('save'), false)
     setActionEnabled(action('disable'), false)
     const priceOutput = output('price')
@@ -892,12 +915,13 @@
     explicitIntent = null
     const readiness = readinessState(value)
     const durationMatches = !service || Number(service.duration) === FIXED_DURATION_MINUTES
-    const bookable = readiness.bookable && durationMatches
     const enabledInput = field('enabled')
     const titleInput = field('title')
     const priceInput = field('price')
     const durationInput = field('duration')
     const confirmedRate = displayableRate(service)
+    const rateNeedsCorrection = Boolean(service) && !confirmedRate
+    const bookable = readiness.bookable && durationMatches && !rateNeedsCorrection
 
     setRadioChecked(enabledInput, Boolean(service))
     const disabledInput = disabledField()
@@ -924,10 +948,11 @@
     const cardStateTarget = uiScope || root
     cardStateTarget.setAttribute('data-paid-call-card-state', service ? 'on' : 'off')
     root.setAttribute('data-paid-call-rate-source', suggestion ? 'legacy_v2' : '')
+    root.setAttribute('data-paid-call-rate-state', rateNeedsCorrection ? 'correction-required' : '')
     setActionEnabled(action('save'), canSaveSettings(value))
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
-    const displayedRate = confirmedRate || suggestion
+    const displayedRate = confirmedRate || correctionRequiredRate(service) || suggestion
     if (priceOutput) {
       priceOutput.textContent = displayedRate ? formatUsd(displayedRate.price_cents) : 'Not set'
     } else {
@@ -937,7 +962,9 @@
     paintStatusPills()
     setMessage(
       service
-        ? Number(service.duration) !== FIXED_DURATION_MINUTES
+        ? rateNeedsCorrection
+          ? 'Paid calls are not bookable: update this service to a whole-dollar rate from $1 to $1,000.'
+          : Number(service.duration) !== FIXED_DURATION_MINUTES
           ? 'Update this service to the required 60-minute Paid Call duration.'
           : readiness.bookable
           ? 'Paid calls are on and bookable.'
@@ -977,7 +1004,8 @@
     const titleInput = field('title')
     const priceInput = field('price')
     const title = String((titleInput && titleInput.value) || '').trim()
-    const price = Number((priceInput && priceInput.value) || 0)
+    const rawPrice = String((priceInput && priceInput.value) || '').trim()
+    const price = /^[0-9]+$/.test(rawPrice) ? Number(rawPrice) : NaN
     const duration = FIXED_DURATION_MINUTES
     clearFieldValidity()
     if (title.length < 3 || title.length > 80) {
@@ -985,8 +1013,8 @@
       reportFieldInvalid(titleInput, message)
       throw new Error(message)
     }
-    if (!Number.isInteger(price) || price < 1 || price > 999999) {
-      const message = 'Use a whole-dollar rate from $1 to $999,999.'
+    if (!Number.isSafeInteger(price) || price < 1 || price > 1000) {
+      const message = 'Use a whole-dollar rate from $1 to $1,000.'
       reportFieldInvalid(priceInput, message)
       throw new Error(message)
     }

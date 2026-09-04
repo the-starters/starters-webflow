@@ -26,7 +26,14 @@ class Target {
     this.textContent = ''
     this.focusCount = 0
     this.reportValidityCount = 0
+    this.validationMessage = ''
     this.children = []
+    this.classNames = new Set()
+    this.classList = {
+      add: (value) => { this.classNames.add(value) },
+      remove: (value) => { this.classNames.delete(value) },
+      contains: (value) => this.classNames.has(value),
+    }
   }
 
   addEventListener(type, listener) {
@@ -44,6 +51,7 @@ class Target {
   hasAttribute(name) { return this.attributes.has(name) }
   focus() { this.focusCount += 1 }
   reportValidity() { this.reportValidityCount += 1; return this.checkValidity?.() ?? true }
+  setCustomValidity(message) { this.validationMessage = String(message || '') }
   appendChild(child) { this.children.push(child); child.parentElement = this; return child }
 }
 
@@ -64,6 +72,7 @@ function createEnvironment(fetchImpl, {
   requiredCaptureFields = [],
   additionalFormValues = [],
   canonicalPhone = '',
+  liveRateFormatter = false,
   simulateProfileHydrationAfterDomReady = false,
   dirtyState = null,
 } = {}) {
@@ -84,7 +93,15 @@ function createEnvironment(fetchImpl, {
       disabled: false,
       valid: true,
     }, defaults, fieldOverrides[selector] || {})
-    field.checkValidity = () => field.valid && (!field.required || String(field.value ?? '').trim() !== '')
+    field.checkValidity = () =>
+      field.validationMessage === ''
+      && field.valid
+      && (!field.required || String(field.value ?? '').trim() !== '')
+    const name = selector.match(/^\[name="([^"]+)"\]$/)?.[1]
+    if (name) {
+      field.name = name
+      field.setAttribute('name', name)
+    }
     return field
   }
 
@@ -119,6 +136,10 @@ function createEnvironment(fetchImpl, {
     },
     6: {
       '[name="rate"]': createField('[name="rate"]', { value: '125', required: publishedRequired(6, 'rate') }),
+      '[name="rate-retainer"]': createField('[name="rate-retainer"]', { value: '', required: false }),
+      '#service': createField('#service', { value: '' }),
+      '#service-2': createField('#service-2', { value: '' }),
+      '#service-3': createField('#service-3', { value: '' }),
       '#availability-required': createField('#availability-required', { value: '1' }),
       '[name="free-consulting-calls"]': createField('[name="free-consulting-calls"]', { value: 'yes' }),
       '[name="free-call-description"]': createField('[name="free-call-description"]', { value: 'Legacy free description' }),
@@ -140,6 +161,26 @@ function createEnvironment(fetchImpl, {
     ...field,
   }))
   const fields = { ...globalFields, ...stepFields }
+  const rateInputs = [
+    stepFields['[name="rate"]'],
+    stepFields['[name="rate-retainer"]'],
+  ].filter(Boolean)
+  // Mirrors the published shared foundation still live on the page
+  // (v3/profile-form/shared-foundation-published.capture.txt lines 42-72): it claims
+  // every unclaimed rate control and rewrites its value to two decimals on blur.
+  const liveRateFormatterCalls = []
+  function liveFormatRateInputs(wrapper = null) {
+    liveRateFormatterCalls.push(wrapper)
+    rateInputs
+      .filter((input) => !input.classList.contains('initialized'))
+      .forEach((input) => {
+        input.classList.add('initialized')
+        input.addEventListener('blur', () => {
+          const parsed = parseFloat(input.value)
+          input.value = Number.isNaN(parsed) ? '' : parsed.toFixed(2)
+        })
+      })
+  }
   const buttonText = { textContent: 'Submit' }
   const button = new Target()
   const step = Object.assign(new Target(), { dataset: { index: String(stepIndex) } })
@@ -189,7 +230,7 @@ function createEnvironment(fetchImpl, {
   }
   form.querySelector = () => null
   form.querySelectorAll = () => []
-  form.formValues = [
+  const buildFormValues = () => [
     ['email', globalFields.email.value],
     ['phone', globalFields.phone.value],
     ...(stepIndex === 1 ? [
@@ -212,7 +253,11 @@ function createEnvironment(fetchImpl, {
       ['bio-html', stepFields['#bio-html'].value],
     ] : []),
     ...(stepIndex === 5 ? [['skill-option', 'Research'], ['skills', '1'], ['tool-option', 'Figma'], ['tools', '1']] : []),
-    ...(stepIndex === 6 ? [['rate', stepFields['[name="rate"]'].value], ['availability-option', 'Available'], ['availability', '1']] : []),
+    ...(stepIndex === 6 ? [
+      ['rate', stepFields['[name="rate"]'].value],
+      ['availability-option', 'Available'],
+      ['availability', '1'],
+    ] : []),
     ...(stepIndex === 7 ? [
       ['reviewer', stepFields['[name="reviewer"]'].value],
       ['reviewer-2', stepFields['[name="reviewer-2"]'].value],
@@ -220,6 +265,7 @@ function createEnvironment(fetchImpl, {
     ] : []),
     ...additionalFormValues,
   ]
+  Object.defineProperty(form, 'formValues', { get: buildFormValues })
 
   const successModal = new Target()
   const errorModal = new Target()
@@ -255,6 +301,7 @@ function createEnvironment(fetchImpl, {
     },
     querySelectorAll(selector) {
       if (selector === '[data-form="step"][data-index]') return [step]
+      if (selector === '[data-element="rate"]') return rateInputs
       if (selector === 'input.with-count:not(.initialized), textarea.with-count:not(.initialized)') {
         return domParsed ? [counterInput] : []
       }
@@ -335,6 +382,7 @@ function createEnvironment(fetchImpl, {
     window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
   }
   if (dirtyState) window.__tsProfileDirtyState = dirtyState
+  if (liveRateFormatter) window.formatRateInputs = liveFormatRateInputs
 
   const dollar = () => ({ each() {} })
   const sandbox = {
@@ -395,6 +443,8 @@ function createEnvironment(fetchImpl, {
     fields,
     focusTarget,
     window,
+    liveRateFormatterCalls,
+    runLiveRateFormatter: liveFormatRateInputs,
     switchMember(member) {
       currentMember = member
       authChangeListeners.forEach((listener) => listener({ data: member }))
@@ -700,7 +750,7 @@ async function testOptionalRatesPreserveCanonicalZeroSentinel() {
       ['rate-retainer', '500'],
     ],
   }))
-  assert.equal(configuredPayload.Retainer_Rate, '500')
+  assert.equal(configuredPayload.Retainer_Rate, 500)
 }
 
 async function testStepSixNeverWritesPaidCallAuthority() {
@@ -803,15 +853,357 @@ async function testPhoneCountryChangeCountsAsAMemberEdit() {
 }
 
 async function testEnabledOptionalRatesNeverSilentlyPersistZero() {
-  const enabledBlankPayload = await submittedStepPayload(saved({
-    stepIndex: 6,
-    additionalFormValues: [
-      ['offer-monthly-retainers', 'yes'],
-      ['rate-retainer', '   '],
-    ],
-  }))
-  assert.equal(enabledBlankPayload.Retainer_Enabled, true)
-  assert.equal(enabledBlankPayload.Retainer_Rate, '   ')
+	const environment = saved({
+		stepIndex: 6,
+		additionalFormValues: [
+			['offer-monthly-retainers', 'yes'],
+			['rate-retainer', '   '],
+		],
+	})
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.equal(environment.fields['[name="rate-retainer"]'].reportValidityCount, 1)
+	assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+}
+
+async function testStepSixRejectsInvalidWholeDollarPricesBeforeFetch() {
+	for (const value of ['0', '1001', '-1', '1.5', '1,000', '$50', '1e2']) {
+		const environment = saved({
+			stepIndex: 6,
+			fieldOverrides: { '[name="rate"]': { value } },
+		})
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `hourly ${value} must not send`)
+	}
+
+	for (const value of ['25001', '1.5']) {
+		const environment = saved({
+			stepIndex: 6,
+			additionalFormValues: [
+				['offer-monthly-retainers', 'yes'],
+				['rate-retainer', value],
+			],
+		})
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `retainer ${value} must not send`)
+	}
+
+	for (const value of ['0', '50001', '1.5']) {
+		const environment = saved({
+			stepIndex: 6,
+			additionalFormValues: [['service', JSON.stringify({ name: 'Audit', price: value })]],
+		})
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `service ${value} must not send`)
+	}
+}
+
+async function testStepSixPersistsExactPriceBoundaries() {
+	const environment = saved({
+		stepIndex: 6,
+		fieldOverrides: { '[name="rate"]': { value: '1000' } },
+		additionalFormValues: [
+			['offer-monthly-retainers', 'yes'],
+			['rate-retainer', '25000'],
+			['service', JSON.stringify({ name: 'Audit', price: '50000' })],
+		],
+	})
+	await submit(environment)
+	assert.equal(environment.requests.length, 1, JSON.stringify({
+		hourly: environment.fields['[name="rate"]'].validationMessage,
+		retainer: environment.fields['[name="rate-retainer"]'].validationMessage,
+		service: environment.fields['#service'].validationMessage,
+		modalEvents: environment.modalEvents,
+	}))
+	const payload = JSON.parse(environment.requests[0][1].body)
+	assert.equal(payload.Hourly_Rate, 1000)
+	assert.equal(payload.Retainer_Rate, 25000)
+	assert.equal(JSON.parse(payload.Services)['service-1'].price, 50000)
+}
+
+async function testStepSixPriceContractSurvivesABlankServiceCaptureField() {
+	const environment = saved({
+		stepIndex: 6,
+		additionalFormValues: [
+			['service', ''],
+			['offer-monthly-retainers', 'yes'],
+			['rate-retainer', '0'],
+		],
+	})
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.equal(environment.fields['[name="rate-retainer"]'].reportValidityCount, 1)
+	assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+}
+
+async function testServiceFailuresExplainThemselvesInTheErrorModal() {
+	const missingName = saved({
+		stepIndex: 6,
+		additionalFormValues: [['service', JSON.stringify({ name: '', price: '500' })]],
+	})
+	await submit(missingName)
+	assert.equal(missingName.requests.length, 0)
+	assert.equal(missingName.modalEvents.error, 1)
+	assert.match(missingName.errorFeedback.textContent, /service name is required/i)
+
+	const invalidPrice = saved({
+		stepIndex: 6,
+		additionalFormValues: [['service', JSON.stringify({ name: 'Audit', price: '0' })]],
+	})
+	await submit(invalidPrice)
+	assert.equal(invalidPrice.requests.length, 0)
+	assert.equal(invalidPrice.modalEvents.error, 1)
+	assert.match(invalidPrice.errorFeedback.textContent, /\$1 to \$50,000/)
+}
+
+// The error modal is shared. A price message written for one blocked save must
+// never still be on screen for the next, unrelated failure, which has its own cause.
+async function testAPriceMessageNeverSurvivesIntoAnUnrelatedFailure() {
+	let failRequest = false
+	const service = ['service', JSON.stringify({ name: 'Audit', price: '0' })]
+	const environment = createEnvironment(async () => {
+		if (failRequest) throw new Error('offline')
+		return { ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) }
+	}, {
+		stepIndex: 6,
+		additionalFormValues: [service],
+	})
+
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.match(environment.errorFeedback.textContent, /\$1 to \$50,000/)
+
+	service[1] = JSON.stringify({ name: 'Audit', price: '500' })
+	failRequest = true
+	await submit(environment)
+	assert.equal(environment.requests.length, 1)
+	assert.equal(environment.modalEvents.error, 2)
+	assert.equal(environment.errorFeedback.textContent, 'Your profile could not be saved.')
+}
+
+// An auth failure reveals the same modal without writing a message of its own, so
+// it must not inherit the price remediation copy from an earlier blocked save.
+async function testAnAuthFailureNeverInheritsAPriceMessage() {
+	const service = ['service', JSON.stringify({ name: '', price: '500' })]
+	const environment = createEnvironment(async () => {
+		throw new Error('fetch must not run')
+	}, {
+		stepIndex: 6,
+		additionalFormValues: [service],
+	})
+
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.match(environment.errorFeedback.textContent, /service name is required/i)
+
+	service[1] = JSON.stringify({ name: 'Audit', price: '500' })
+	environment.switchMember(null)
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.equal(environment.errorFeedback.textContent, 'Your profile could not be saved.')
+}
+
+// A shared modal may keep an icon or styled span inside its paragraph. Neither a
+// price-specific reveal nor the generic retry path may flatten that authored
+// subtree by assigning textContent through the paragraph wrapper.
+async function testFeedbackMessagesNeverFlattenNestedAuthoredMarkup() {
+	const service = ['service', JSON.stringify({ name: '', price: '500' })]
+	const environment = createEnvironment(async () => {
+		throw new Error('offline')
+	}, {
+		stepIndex: 6,
+		additionalFormValues: [service],
+	})
+	const icon = { kind: 'authored-icon' }
+	const authored = environment.errorFeedback.textContent
+	environment.errorFeedback.children = [icon]
+	environment.errorFeedback.childElementCount = 1
+
+	await submit(environment)
+	assert.equal(environment.requests.length, 0)
+	assert.equal(environment.errorFeedback.textContent, authored)
+	assert.deepEqual(environment.errorFeedback.children, [icon])
+
+	service[1] = JSON.stringify({ name: 'Audit', price: '500' })
+	await submit(environment)
+	assert.equal(environment.requests.length, 1)
+	assert.equal(environment.errorFeedback.textContent, authored)
+	assert.deepEqual(environment.errorFeedback.children, [icon])
+}
+
+// A canonical Hourly_Rate stored before the contract narrowed is real member data
+// this page must not repair. It hydrates unchanged, blocks every resave before any
+// Xano request while it is still out of contract, and only the member's own
+// whole-dollar replacement clears the stale validity and reaches Xano.
+async function testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt() {
+	const environment = createEnvironment(async () => ({
+		ok: true,
+		status: 200,
+		json: async () => ({ saved: true, projection_pending: false }),
+	}), {
+		stepIndex: 6,
+		fieldOverrides: { '[name="rate"]': { value: '2500' } },
+	})
+	const rate = environment.fields['[name="rate"]']
+	assert.equal(rate.value, '2500', 'hydration must not rewrite the stored outlier')
+	assert.equal(rate.getAttribute('max'), '1000')
+
+	for (const attempt of [1, 2]) {
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `attempt ${attempt} must not reach Xano`)
+		assert.match(rate.validationMessage, /\$1 to \$1,000/)
+		assert.equal(rate.value, '2500', 'the stored outlier is never silently rewritten')
+	}
+
+	for (const invalid of ['1001', '2500.00', '1,000', '$900']) {
+		rate.value = invalid
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `${invalid} must not reach Xano`)
+		assert.match(rate.validationMessage, /\$1 to \$1,000/)
+	}
+
+	rate.value = '900'
+	await submit(environment)
+	assert.equal(environment.requests.length, 1, rate.validationMessage)
+	const [, options] = environment.requests[0]
+	assert.equal(JSON.parse(options.body).Hourly_Rate, 900)
+	assert.equal(rate.validationMessage, '')
+	assert.equal(environment.errorFeedback.textContent, 'Your profile could not be saved.')
+}
+
+// Clearing a custom-service price is the only remove gesture these forms author.
+// It must empty that slot, not block the step on the service being deleted.
+async function testClearingAServicePriceRemovesThatService() {
+	const payload = await submittedStepPayload(saved({
+		stepIndex: 6,
+		additionalFormValues: [
+			['service', JSON.stringify({ name: 'Audit', price: '' })],
+			['service-2', JSON.stringify({ name: 'Workshop', price: '750' })],
+		],
+	}))
+	const services = JSON.parse(payload.Services)
+	assert.equal(services['service-1'], null)
+	assert.deepEqual(services['service-2'], { name: 'Workshop', price: 750 })
+	assert.equal(services['service-3'], null)
+
+	for (const price of ['   ', null, undefined]) {
+		const blank = await submittedStepPayload(saved({
+			stepIndex: 6,
+			additionalFormValues: [['service', JSON.stringify({ name: 'Audit', price })]],
+		}))
+		assert.equal(JSON.parse(blank.Services)['service-1'], null, `price ${price}`)
+	}
+}
+
+async function testANonBlankMalformedServicePriceStillBlocksTheStep() {
+	for (const price of ['0', '500.50', '50001', '1,000', '$50', '1e2', '-5']) {
+		const environment = createEnvironment(async () => {
+			throw new Error('fetch must not run')
+		}, {
+			stepIndex: 6,
+			additionalFormValues: [['service', JSON.stringify({ name: 'Audit', price })]],
+		})
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `service ${price} must not send`)
+		assert.match(environment.errorFeedback.textContent, /\$1 to \$50,000/)
+	}
+}
+
+// A collapsed retainer section must not block the step, and must not forward the
+// stale text of a control the member cannot see as an unvalidated Xano value.
+async function testCollapsedRetainerSectionNeverBlocksStepSix() {
+	const unsetToggle = await submittedStepPayload(saved({
+		stepIndex: 6,
+		additionalFormValues: [['rate-retainer', '   ']],
+	}))
+	assert.equal(unsetToggle.Retainer_Enabled, undefined)
+	assert.equal(Object.prototype.hasOwnProperty.call(unsetToggle, 'Retainer_Rate'), false)
+
+	const legacyDisabledValue = await submittedStepPayload(saved({
+		stepIndex: 6,
+		additionalFormValues: [
+			['offer-monthly-retainers', 'no'],
+			['rate-retainer', '30000'],
+		],
+	}))
+	assert.equal(legacyDisabledValue.Retainer_Enabled, false)
+	assert.equal(legacyDisabledValue.Retainer_Rate, 0)
+}
+
+// Step 6 owns the service price contract for every slot, so it must serialize the
+// slots it validated instead of keying the write-back on slot 1 having a value.
+async function testStepSixPersistsEveryValidatedServiceSlot() {
+	const secondSlotOnly = await submittedStepPayload(saved({
+		stepIndex: 6,
+		additionalFormValues: [
+			['service', ''],
+			['service-2', JSON.stringify({ name: 'Audit', price: '500' })],
+		],
+	}))
+	const persisted = JSON.parse(secondSlotOnly.Services)
+	assert.equal(persisted['service-1'], null)
+	assert.deepEqual(persisted['service-2'], { name: 'Audit', price: 500 })
+	assert.equal(persisted['service-3'], null)
+
+	const whitespaceOnly = await submittedStepPayload(saved({
+		stepIndex: 6,
+		additionalFormValues: [['service', JSON.stringify({ name: ' ', price: ' ' })]],
+	}))
+	assert.deepEqual(JSON.parse(whitespaceOnly.Services), {
+		'service-1': null,
+		'service-2': null,
+		'service-3': null,
+	})
+}
+
+// The published shared foundation is still live on this page and rewrites every
+// rate it claims to two decimals on blur, so a member who focuses a price control
+// and then saves must still persist the whole-dollar value they authored.
+async function testStepSixSavesAuthoredRatesWhileTheLiveFormatterIsPresent() {
+	const environment = saved({ stepIndex: 6, liveRateFormatter: true })
+	const rate = environment.fields['[name="rate"]']
+
+	await rate.dispatchEvent({ type: 'focus' })
+	await rate.dispatchEvent({ type: 'blur' })
+	assert.equal(rate.value, '125')
+
+	environment.runLiveRateFormatter()
+	await rate.dispatchEvent({ type: 'blur' })
+	assert.equal(rate.value, '125')
+
+	const payload = await submittedStepPayload(environment)
+	assert.equal(payload.Hourly_Rate, 125)
+	assert.equal(rate.validationMessage, '')
+	assert.deepEqual([
+		rate.getAttribute('type'),
+		rate.getAttribute('inputmode'),
+		rate.getAttribute('step'),
+		rate.getAttribute('min'),
+		rate.getAttribute('max'),
+	], ['number', 'numeric', '1', '1', '1000'])
+	assert.equal(environment.fields['[name="rate-retainer"]'].getAttribute('max'), '25000')
+}
+
+// Service rows are cloned after load and formatted through the page global, so the
+// contract this page validates has to reach them instead of the live rewriter.
+async function testClonedServicePriceRowsGetTheWholeDollarContract() {
+	const environment = saved({ stepIndex: 6, liveRateFormatter: true })
+	const clonedPrice = Object.assign(new Target(), { value: '500' })
+	clonedPrice.setAttribute('name', 'price-2')
+	const clonedRow = new Target()
+	clonedRow.querySelectorAll = (selector) => selector === '[data-element="rate"]' ? [clonedPrice] : []
+
+	environment.window.formatRateInputs(clonedRow)
+	await clonedPrice.dispatchEvent({ type: 'blur' })
+
+	assert.equal(clonedPrice.value, '500')
+	assert.equal(clonedPrice.classList.contains('initialized'), true)
+	assert.deepEqual([
+		clonedPrice.getAttribute('type'),
+		clonedPrice.getAttribute('step'),
+		clonedPrice.getAttribute('min'),
+		clonedPrice.getAttribute('max'),
+	], ['number', '1', '1', '50000'])
 }
 
 async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
@@ -823,7 +1215,7 @@ async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
   assert.equal(consultPayload.Hourly_Rate, 0)
 
   const fullPayload = await submittedStepPayload(saved({ stepIndex: 6 }))
-  assert.equal(fullPayload.Hourly_Rate, '125')
+  assert.equal(fullPayload.Hourly_Rate, 125)
 
   const requiredBlank = createEnvironment(async () => {
     throw new Error('fetch must not run')
@@ -833,6 +1225,60 @@ async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
   })
   await submit(requiredBlank)
   assert.equal(requiredBlank.requests.length, 0)
+}
+
+// A consult save persists Hourly_Rate 0 for the profile-inapplicable control and
+// the canonical loader writes that 0 straight back into the field, so reading it
+// back as an authored price would block every later save on this flow's own data.
+async function testConsultCanonicalZeroHourlyRateSurvivesSaveReloadSave() {
+  const first = saved({
+    stepIndex: 6,
+    profileType: 'consult',
+    fieldOverrides: { '[name="rate"]': { value: '', required: false, valid: true } },
+  })
+  const firstPayload = await submittedStepPayload(first)
+  assert.equal(firstPayload.Hourly_Rate, 0)
+
+  const reloaded = saved({
+    stepIndex: 6,
+    profileType: 'consult',
+    fieldOverrides: {
+      '[name="rate"]': { value: String(firstPayload.Hourly_Rate), required: false, valid: true },
+    },
+  })
+  const reloadedPayload = await submittedStepPayload(reloaded)
+  assert.equal(reloadedPayload.Hourly_Rate, 0)
+
+  const required = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    stepIndex: 6,
+    fieldOverrides: { '[name="rate"]': { value: '0' } },
+  })
+  await submit(required)
+  assert.equal(required.requests.length, 0, 'a required hourly rate must still reject zero')
+}
+
+// A reported price failure leaves a custom validity message on its control, and
+// native validation runs before the price contract can revalidate. Without the
+// reset the corrected value could never be saved without a full page reload.
+async function testCorrectedPriceSavesAfterAReportedPriceFailure() {
+  const environment = saved({
+    stepIndex: 6,
+    fieldOverrides: { '[name="rate"]': { value: '125.00' } },
+  })
+  const rate = environment.fields['[name="rate"]']
+
+  await submit(environment)
+  assert.equal(environment.requests.length, 0, 'a decimal hourly rate must not reach Xano')
+  assert.match(rate.validationMessage, /\$1 to \$1,000/)
+
+  rate.value = '125'
+  await submit(environment)
+  assert.equal(environment.requests.length, 1, rate.validationMessage)
+  const [, options] = environment.requests[0]
+  assert.equal(JSON.parse(options.body).Hourly_Rate, 125)
+  assert.equal(rate.validationMessage, '')
 }
 
 async function testReviewerStepUsesCanonicalBuildProfileShape() {
@@ -1364,7 +1810,23 @@ Promise.all([
   testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
   testPhoneCountryChangeCountsAsAMemberEdit(),
   testEnabledOptionalRatesNeverSilentlyPersistZero(),
+	testStepSixRejectsInvalidWholeDollarPricesBeforeFetch(),
+	testStepSixPersistsExactPriceBoundaries(),
+	testStepSixPriceContractSurvivesABlankServiceCaptureField(),
+	testServiceFailuresExplainThemselvesInTheErrorModal(),
+	testCollapsedRetainerSectionNeverBlocksStepSix(),
+	testStepSixSavesAuthoredRatesWhileTheLiveFormatterIsPresent(),
+	testClonedServicePriceRowsGetTheWholeDollarContract(),
+	testStepSixPersistsEveryValidatedServiceSlot(),
   testHourlyRateUsesCanonicalZeroOnlyWhenOptional(),
+  testConsultCanonicalZeroHourlyRateSurvivesSaveReloadSave(),
+  testCorrectedPriceSavesAfterAReportedPriceFailure(),
+  testAPriceMessageNeverSurvivesIntoAnUnrelatedFailure(),
+  testAnAuthFailureNeverInheritsAPriceMessage(),
+  testFeedbackMessagesNeverFlattenNestedAuthoredMarkup(),
+  testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt(),
+  testClearingAServicePriceRemovesThatService(),
+  testANonBlankMalformedServicePriceStillBlocksTheStep(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
   testRejectedFetch(),

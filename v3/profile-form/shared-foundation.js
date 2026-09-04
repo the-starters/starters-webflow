@@ -43,31 +43,17 @@
     const inputs = qsa('[data-element="rate"]:not(.initialized)', wrapper);
     inputs.forEach((input) => {
       input.classList.add('initialized');
-      input.addEventListener('input', () => {
-        let value = input.value;
-        value = value.replace(/[^0-9.]/g, '');
-
-        const parts = value.split('.');
-        if (parts.length > 2) {
-          value = parts[0] + '.' + parts[1];
-        }
-
-        if (parts[1]) {
-          value = parts[0] + '.' + parts[1].slice(0, 2);
-        }
-
-        input.value = value;
-      });
-
-      input.addEventListener('blur', () => {
-        let value = parseFloat(input.value);
-
-        if (!isNaN(value)) {
-          input.value = value.toFixed(2);
-        } else {
-          input.value = '';
-        }
-      });
+      const name = String(input.getAttribute('name') || '');
+      const maximum = name === 'rate' || name === 'paid-call-rate'
+        ? 1000
+        : name === 'rate-retainer'
+          ? 25000
+          : 50000;
+      input.setAttribute('type', 'number');
+      input.setAttribute('inputmode', 'numeric');
+      input.setAttribute('step', '1');
+      input.setAttribute('min', '1');
+      input.setAttribute('max', String(maximum));
     });
   }
 

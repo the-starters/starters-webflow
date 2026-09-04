@@ -1321,6 +1321,61 @@ test('disconnecting Google preserves the Platform layer by replacing the Google 
   assert.ok(paths.indexOf('/grants/delete/v3') < paths.indexOf('/starter/paid-call-settings/upsert/v3'))
 })
 
+// Calendar transitions preserve the canonical paid-call service by re-writing it
+// after the grant is deleted, so a rate the paid-call contract would reject must
+// stop the transition before the irreversible provider mutation instead of being
+// preserved, rounded, or silently dropped.
+for (const [label, priceCents] of [
+  ['above the $1,000 maximum', 100100],
+  ['not a whole dollar', 42550],
+]) {
+  test(`a canonical paid-call rate ${label} stops the calendar transition before the grant is deleted`, async () => {
+    const { dom, calls } = loadSection({
+      serverState: {
+        grantId: 'grant-1',
+        grantEmail: 'g@example.com',
+        calendarId: 'cal-1',
+        paidService: {
+          config_id: 'cfg-paid-old',
+          title: 'Paid Strategy Call',
+          price_cents: priceCents,
+          duration: 45,
+          active: true,
+        },
+        availability: {
+          items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+          manager: 'calendar',
+        },
+      },
+    })
+    await settle()
+
+    dom.connectBtnWrapper.children[2].click() // disconnect-google
+    await settle()
+    dom.notif.disconnectGoogleBtn.click() // confirm
+    await settle()
+
+    assert.equal(
+      calls.filter((call) => call.path === '/grants/delete/v3').length,
+      0,
+      'the provider grant must survive a paid-call rate the contract rejects',
+    )
+    assert.equal(
+      calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+      0,
+      'no paid-call rate may be rewritten from a rejected canonical value',
+    )
+    assert.equal(dom.notif.steps['calendar-disconnected'].style.display, 'none')
+    // The rate is repairable in Call Settings, so the member must be told that
+    // rather than being left with copy that blames the calendar connection.
+    assert.equal(dom.notif.steps['request-error'].style.display, '')
+    assert.match(dom.notif.errorText.textContent, /paid call rate/i)
+    assert.match(dom.notif.errorText.textContent, /\$1 to \$1,000/)
+    assert.match(dom.notif.errorText.textContent, /Call Settings/)
+    assert.doesNotMatch(dom.notif.errorText.textContent, /contact support/)
+  })
+}
+
 test('a stale/programmatic connect-platform click is ignored while a Google-backed Nylas grant exists', async () => {
   const { dom, calls } = loadSection({
     serverState: {
@@ -3372,7 +3427,7 @@ test('a free configuration stamped for another environment does not block canoni
   )
 })
 
-test('calendar-preview excludes paid services that are below $1 or failed provider sync', async () => {
+test('calendar-preview excludes paid services outside the whole-dollar $1 to $1,000 contract or failed provider sync', async () => {
   const { dom, calls } = loadSection({
     serverState: {
       grantId: 'grant-1',
@@ -3383,6 +3438,22 @@ test('calendar-preview excludes paid services that are below $1 or failed provid
           config_id: 'cfg-paid-too-low',
           duration: 60,
           price_cents: 99,
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+        {
+          config_id: 'cfg-paid-too-high',
+          duration: 60,
+          price_cents: 100100,
+          is_paid: true,
+          active: true,
+          sync_status: 'ready',
+        },
+        {
+          config_id: 'cfg-paid-fractional',
+          duration: 60,
+          price_cents: 1050,
           is_paid: true,
           active: true,
           sync_status: 'ready',
@@ -3402,6 +3473,8 @@ test('calendar-preview excludes paid services that are below $1 or failed provid
 
   assert.equal(dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
   assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-too-low"]'), null)
+  assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-too-high"]'), null)
+  assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-fractional"]'), null)
   assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid-failed"]'), null)
   assert.equal(
     calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,

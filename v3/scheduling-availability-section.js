@@ -79,6 +79,13 @@
     "We couldn't connect your Google calendar. Please try again or contact support."
   const ERROR_TEXT_DISCONNECT_GOOGLE =
     "We couldn't disconnect your Google calendar. Please try again or contact support."
+  // A stored paid-call rate the whole-dollar contract rejects stops the transition
+  // before the irreversible provider request. That is a repairable Call Settings
+  // problem, not a connection failure, so it must name the rate instead of leaving
+  // the member with generic calendar copy they cannot act on.
+  const ERROR_TEXT_PAID_CALL_RATE =
+    'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
+  const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
   const PRE_OAUTH_GOOGLE_COPY = "You’ll be taken to connect your Google calendar."
   const PRE_OAUTH_GOOGLE_COPY_STALE =
     PRE_OAUTH_GOOGLE_COPY + ' Your availability settings have been saved.'
@@ -115,6 +122,9 @@
   let timezonePersisted = false
   let connectionError = false
   let connectBusy = false
+  // Carries the last calendar-transition failure to the modal that reports it, so
+  // a repairable paid-call rate can replace the generic connection copy.
+  let calendarTransitionErrorText = null
   let cachedItemTemplate = null
   let creatingDraft = false
   let selectedPreviewConfigId = null
@@ -392,6 +402,15 @@
   function publishCalendarConnectionError() {
     connectionError = true
     return publishCalendarConnectionState('error')
+  }
+
+  function noteCalendarTransitionError(error) {
+    calendarTransitionErrorText =
+      error && error.code === PAID_CALL_RATE_UNSUPPORTED ? ERROR_TEXT_PAID_CALL_RATE : null
+  }
+
+  function calendarTransitionErrorCopy(fallback) {
+    return calendarTransitionErrorText || fallback
   }
 
   // Repaints this section's own chrome whenever ANY code path (including a
@@ -873,11 +892,17 @@
       duration_minutes: Number(service.duration),
     }
     if (
-      intent.title.length < 3 ||
       !Number.isInteger(intent.price_cents) ||
       intent.price_cents < 100 ||
-      [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1
+      intent.price_cents > 100000 ||
+      intent.price_cents % 100 !== 0
     ) {
+      throw Object.assign(
+        new Error('Canonical paid-call rate is outside the whole-dollar contract'),
+        { code: PAID_CALL_RATE_UNSUPPORTED },
+      )
+    }
+    if (intent.title.length < 3 || [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1) {
       throw new Error('Canonical paid-call service cannot be preserved')
     }
     return intent
@@ -1196,6 +1221,7 @@
     // calendar is not a connection, so rebuilding over it is still valid.
     if (connectBusy || !platformConnectAvailable()) return
     connectBusy = true
+    calendarTransitionErrorText = null
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
     let memberId = null
@@ -1244,6 +1270,7 @@
         console.warn('[scheduling-section] connect-platform recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
+      noteCalendarTransitionError(error)
       console.warn('[scheduling-section] connect-platform failed:', error && error.message)
       return false
     } finally {
@@ -1255,6 +1282,7 @@
   async function activateGoogleManager() {
     if (connectBusy) return
     connectBusy = true
+    calendarTransitionErrorText = null
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
     let memberId = null
@@ -1291,6 +1319,7 @@
         console.warn('[scheduling-section] connect-google recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
+      noteCalendarTransitionError(error)
       console.warn('[scheduling-section] connect-google failed:', error && error.message)
       connectBusy = false
       setRequestBusy(false)
@@ -1301,6 +1330,7 @@
   async function disconnectGoogleManager() {
     if (connectBusy) return
     connectBusy = true
+    calendarTransitionErrorText = null
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
     let memberId = null
@@ -1344,6 +1374,7 @@
         console.warn('[scheduling-section] disconnect-google recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
+      noteCalendarTransitionError(error)
       console.warn('[scheduling-section] disconnect-google failed:', error && error.message)
       return false
     } finally {
@@ -1556,7 +1587,7 @@
         } else if (action === 'open-oauth-redirect') {
           switchNotification('oauth-redirect')
           activateGoogleManager().then(function (ok) {
-            if (ok === false) showNotificationError(ERROR_TEXT_CONNECT_GOOGLE)
+            if (ok === false) showNotificationError(calendarTransitionErrorCopy(ERROR_TEXT_CONNECT_GOOGLE))
           })
         } else if (action === 'disconnect-google') {
           // Google disconnect deletes the provider-backed grant and replaces
@@ -1565,7 +1596,7 @@
           disconnectGoogleManager()
             .then(function (ok) {
               if (ok) switchNotification('calendar-disconnected')
-              else showNotificationError(ERROR_TEXT_DISCONNECT_GOOGLE)
+              else showNotificationError(calendarTransitionErrorCopy(ERROR_TEXT_DISCONNECT_GOOGLE))
             })
             .finally(function () {
               setNotificationBusy(target, false)
@@ -1740,7 +1771,7 @@
         }
         openNotification('virtual-connect')
         activatePlatformManager().then(function (ok) {
-          if (ok === false) showNotificationError(ERROR_TEXT_CONNECT_PLATFORM)
+          if (ok === false) showNotificationError(calendarTransitionErrorCopy(ERROR_TEXT_CONNECT_PLATFORM))
           else if (ok) switchNotification('virtual-connected')
         })
       } else if (action === 'open-connect-google') {
@@ -2623,6 +2654,8 @@
     return Boolean(
       Number.isInteger(Number(config.price_cents)) &&
         Number(config.price_cents) >= 100 &&
+        Number(config.price_cents) <= 100000 &&
+        Number(config.price_cents) % 100 === 0 &&
         previewSyncReady(config),
     )
   }

@@ -2696,6 +2696,17 @@ Designer follow-up):
 - no `availability-popup-close="pre-redirect"` variant exists (both close
   controls are plain), so the legacy manager-restore close branch is
   currently dead but harmless.
+- `config-request-error` carries no `[error-text-element]`, so the rate-specific
+  paid-call remediation copy a blocked calendar transition reports has nowhere
+  to render on that page and the step keeps its authored generic copy. The
+  non-modal section already authors that element in its shared notification
+  modal and shows the message there. Whenever that element is authored as a
+  plain text leaf, every path that reveals the error step restores its authored
+  copy first, so a blocked transition's remediation message can never still be
+  on screen for the next, unrelated failure; only a rate-aware caller replaces
+  it. An `[error-text-element]` that holds markup of its own — an icon beside
+  the copy — is neither restored nor written, so the step is revealed exactly as
+  authored instead of being flattened into a single text node.
 
 Grant state (`nylas_grant_id`/`email`/`calendar_id`) is sourced only from the
 canonical scheduling row via an authenticated `get_by_memberstack` read at
@@ -2956,16 +2967,16 @@ persist the timezone, update availability, fetch slots again, or create a
 booking. Only a record that declares what the card states enters the preview:
 an explicit `is_paid` boolean and the host's own
 `data_environment` when the record carries one; Paid additionally requires the
-canonical 60-minute duration, `active: true`, a price of at least $1, a
-declared currency of USD, the host's own `payment_environment` when declared,
-and no declared non-ready provider sync state. Environment stamps and the
+canonical 60-minute duration, `active: true`, a whole-dollar price from $1 to
+$1,000, a declared currency of USD, the host's own `payment_environment` when
+declared, and no declared non-ready provider sync state. Environment stamps and the
 provider sync state are compared case-insensitively and trimmed, so a
 `Production`/`LIVE`-cased record is not silently dropped. Free carries no
 provider-side duration guarantee, so a Free record without a whole-minute
 duration still renders at the canonical 30 minutes this module creates; a
-malformed, failed-sync, sub-$1, legacy-duration, or other-environment Paid
-service stays out of the preview. The card partitions its services
-explicitly — Free first, then Paid, each tie-broken by `config_id` — because
+malformed, failed-sync, out-of-contract price, legacy-duration, or
+other-environment Paid service stays out of the preview. The card partitions
+its services explicitly — Free first, then Paid, each tie-broken by `config_id` — because
 Xano returns configurations in table order, so both the rendered order and
 the default selection stay deterministic. The Free admission rule is the same
 predicate that decides whether a free configuration still needs creating, so
@@ -3860,8 +3871,9 @@ Paid CTA, the authored
 `[call-type-item]` must contain a `[call-type-price]` node. The controller
 replaces that node's CMS or Designer text with the canonical USD value from
 `price_cents` before it reveals the Paid option. A missing price node, non-USD
-currency, non-integer price, or price below 100 cents makes installation fail
-closed.
+currency, or a `price_cents` that is not an integer from 100 through 100000
+divisible by 100 makes installation fail closed, so only whole-dollar Paid rates
+from $1 through $1,000 install and paint.
 
 While a Paid calendar load is pending, another click on the same current Paid
 choice is ignored. A Free choice invalidates that load. If the member then

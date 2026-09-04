@@ -797,7 +797,9 @@ resolve to 30 minutes. The controller normalizes every accepted Free calendar
 to zero cents and 30 minutes before slot selection. Paid records must have
 `is_paid === true` and the matching
 `payment_environment` (`test` or `live`), USD currency, and an integer
-`price_cents` of at least 100, plus a `duration` of exactly 60 minutes. Unknown
+`price_cents` from 100 through 100000 that is divisible by 100, plus a
+`duration` of exactly 60 minutes. Thus only whole-dollar Paid rates from $1
+through $1,000 reach the booking controller. Unknown
 hosts return no bookable set. The client excludes records from another data or
 payment environment and rejects invalid Paid prices or durations. It rejects the
 complete remaining set if a `config_id` repeats or if more than one active Free

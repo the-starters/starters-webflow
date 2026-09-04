@@ -34,6 +34,11 @@ test('names every Paid card control and exposes status updates to assistive tech
   assert.equal(result.dom.disabled.getAttribute('aria-label'), 'No, keep paid calls off')
   assert.equal(result.dom.title.getAttribute('aria-label'), 'Paid call description')
   assert.equal(result.dom.price.getAttribute('aria-label'), 'Paid call rate per hour')
+  assert.equal(result.dom.price.getAttribute('type'), 'number')
+  assert.equal(result.dom.price.getAttribute('inputmode'), 'numeric')
+  assert.equal(result.dom.price.getAttribute('step'), '1')
+  assert.equal(result.dom.price.getAttribute('min'), '1')
+  assert.equal(result.dom.price.getAttribute('max'), '1000')
   assert.equal(result.dom.statusOutput.getAttribute('role'), 'status')
   assert.equal(result.dom.statusOutput.getAttribute('aria-live'), 'polite')
 })
@@ -737,6 +742,56 @@ test('renders the active service and prerequisite state from canonical GET', asy
   assert.ok(result.dom.prerequisites.every((item) => item.getAttribute('data-ready') === 'true'))
 })
 
+// A rate stored before the whole-dollar contract narrowed is real member data this
+// browser must not repair. It is also not bookable, so the card must say exactly
+// that and name the stored amount rather than reporting "on and bookable" or
+// leaving an apparently enabled card reading "Not set".
+for (const [label, priceCents, formatted] of [
+  ['above the $1,000 maximum', 250000, '$2,500.00'],
+  ['carrying cents', 42550, '$425.50'],
+]) {
+  test(`an active canonical rate ${label} renders a non-bookable correction-required card`, async () => {
+    const stale = service({ price_cents: priceCents })
+    const result = load({ cardMode: true, initial: canonical({
+      services: [stale],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }) })
+    await settle()
+
+    assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+    assert.equal(result.dom.root.getAttribute('data-paid-call-rate-state'), 'correction-required')
+    assert.equal(
+      result.dom.statusOutput.textContent,
+      'Paid calls are not bookable: update this service to a whole-dollar rate from $1 to $1,000.',
+    )
+    assert.equal(result.dom.priceOutput.textContent, formatted)
+    assert.deepEqual(
+      result.calls.map(({ path, method }) => ({ path, method })),
+      [{ path: '/starter/paid-call-settings/get/v3', method: 'GET' }],
+      'the canonical value is preserved until the member submits a valid replacement',
+    )
+    assert.ok(
+      result.events.some(
+        (event) => event.type === 'starterPaidCallSettingsChanged' && event.detail.bookable === false,
+      ),
+    )
+  })
+}
+
+test('an in-contract active canonical rate still reports on and bookable', async () => {
+  const active = service({ price_cents: 35000 })
+  const result = load({ cardMode: true, initial: canonical({
+    services: [active],
+    readiness: { paid_call_enabled: true, bookable: true },
+  }) })
+  await settle()
+
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-rate-state'), '')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
+  assert.equal(result.dom.priceOutput.textContent, '$350.00')
+})
+
 test('the native Paid card binds without generated IDs and upgrades a legacy duration to fixed 60', async () => {
   const legacy = service({ duration: 15, price_cents: 500, revision: 1 })
   const result = load({
@@ -868,10 +923,10 @@ test('a sub-dollar published Paid rate uses native validation instead of failing
   await settle()
 
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
-  assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $999,999.')
+  assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $1,000.')
   assert.equal(result.dom.price.reportValidityCalls, 1)
   assert.equal(result.dom.price.getAttribute('aria-invalid'), 'true')
-  assert.equal(result.dom.statusOutput.textContent, 'Use a whole-dollar rate from $1 to $999,999.')
+  assert.equal(result.dom.statusOutput.textContent, 'Use a whole-dollar rate from $1 to $1,000.')
 
   result.dom.price.value = '1'
   await result.dom.price.dispatch('input')
@@ -902,7 +957,7 @@ test('a rejected rate never blocks turning published Paid calls off', async () =
   result.dom.price.value = '0.5'
   await result.dom.save.dispatch('click')
   await settle()
-  assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $999,999.')
+  assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $1,000.')
   assert.equal(result.dom.form.reportValidity(), false)
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
 
@@ -1690,19 +1745,21 @@ test('the Paid card shows only the OFF pill while canonical settings load', asyn
   assert.equal(result.dom.offOutput.style.display, 'none')
 })
 
-test('the Paid card price output renders grouped two-decimal USD', async () => {
+test('the Paid card price output renders the grouped maximum and rejects out-of-contract values', async () => {
   const grouped = load({
     cardMode: true,
     initial: canonical({
-      services: [service({ price_cents: 150000 })],
+      services: [service({ price_cents: 100000 })],
       readiness: { paid_call_enabled: true, bookable: true },
     }),
   })
   await settle()
-  assert.equal(grouped.dom.priceOutput.textContent, '$1,500.00')
+  assert.equal(grouped.dom.priceOutput.textContent, '$1,000.00')
   assert.equal(grouped.dom.onOutput.style.display, '')
   assert.equal(grouped.dom.offOutput.style.display, 'none')
 
+  // A stored rate the contract rejects is still the member's real value: the card
+  // names it beside the correction-required state instead of reading as unset.
   const legacyCents = load({
     cardMode: true,
     initial: canonical({
@@ -1712,12 +1769,32 @@ test('the Paid card price output renders grouped two-decimal USD', async () => {
   })
   await settle()
   assert.equal(legacyCents.dom.priceOutput.textContent, '$10.50')
+  assert.equal(legacyCents.dom.root.getAttribute('data-paid-call-rate-state'), 'correction-required')
+  assert.equal(legacyCents.dom.root.getAttribute('data-paid-call-bookable'), 'false')
 
   const off = load({ cardMode: true, initial: canonical() })
   await settle()
   assert.equal(off.dom.priceOutput.textContent, 'Not set')
   assert.equal(off.dom.onOutput.style.display, 'none')
   assert.equal(off.dom.offOutput.style.display, '')
+})
+
+test('Paid input rejects maximum plus one and non-ASCII-digit number syntax before POST', async () => {
+  for (const value of ['1001', '-1', '1.5', '1,000', '$50', '1e2']) {
+    const result = load({
+      cardMode: true,
+      initial: canonical(),
+    })
+    await settle()
+    result.dom.enabled.checked = true
+    await result.dom.enabled.dispatch('change')
+    result.dom.title.value = 'Paid Consultation Call'
+    result.dom.price.value = value
+    await result.dom.save.dispatch('click')
+    await settle()
+    assert.equal(result.calls.some((call) => call.method === 'POST'), false, `${value} must not POST`)
+    assert.equal(result.dom.price.validationMessage, 'Use a whole-dollar rate from $1 to $1,000.')
+  }
 })
 
 test('the current native Paid card price marker renders canonical USD without a new Webflow hook', async () => {

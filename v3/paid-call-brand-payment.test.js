@@ -2560,7 +2560,10 @@ test('booking fingerprint changes with every captured request field but not equi
 
 test('canonical Paid price rejects stale or unsupported display authority', () => {
   assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 100 }), '$1')
-  assert.equal(api.canonicalPaidPrice({ currency: 'USD', price_cents: 1250 }), '$12.50')
+  assert.equal(api.canonicalPaidPrice({ currency: 'USD', price_cents: 1200 }), '$12')
+  assert.equal(api.canonicalPaidPrice({ currency: 'USD', price_cents: 100000 }), '$1000')
+  assert.equal(api.canonicalPaidPrice({ currency: 'USD', price_cents: 100100 }), '')
+  assert.equal(api.canonicalPaidPrice({ currency: 'USD', price_cents: 1250 }), '')
   assert.equal(api.canonicalPaidPrice({ currency: 'eur', price_cents: 100 }), '')
   assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 99 }), '')
   assert.equal(api.canonicalPaidPrice({ currency: 'usd', price_cents: 500.5 }), '')
@@ -2603,6 +2606,18 @@ test('invalid canonical Paid price or duration leaves the authored option hidden
         price_cents: 500,
       },
     }), false)
+    for (const priceCents of [1250, 100100, 250000]) {
+      assert.equal(api.installPaidBookingController({
+        config: {
+          config_id: 'config_paid',
+          grant_id: 'grant_test',
+          duration: 60,
+          is_paid: true,
+          currency: 'usd',
+          price_cents: priceCents,
+        },
+      }), false, `${priceCents} must not install a paid booking controller`)
+    }
     assert.equal(price.textContent, '$50')
     assert.equal(item.style.display, 'none')
   } finally {
@@ -3370,7 +3385,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
         duration: 60,
         is_paid: true,
         currency: 'USD',
-        price_cents: 1250,
+        price_cents: 1200,
       },
       starterSlug: 'jp-testiz-d',
       mountCalendar(options) {
@@ -3378,7 +3393,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
         return Promise.resolve({ slots: [] })
       },
     }), true)
-    assert.equal(priceText.textContent, '$12.50')
+    assert.equal(priceText.textContent, '$12')
     assert.equal(cardLabel.id, 'paid-card-details-label')
     assert.equal(cardMount.attrs['aria-labelledby'], 'paid-card-details-label')
     assert.equal(paymentModal.attrs.role, 'dialog')
