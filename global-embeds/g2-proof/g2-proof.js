@@ -259,11 +259,23 @@
     });
   }
 
+  /** A hover or reduced-motion capability change invalidates any held scale:
+   *  the listener that would restore it may not exist after the change. */
+  function releaseHoverHold() {
+    activeScale.clear();
+    setEntriesTimeScale(registry, 1);
+  }
+
   /** Arms (or re-arms) one track from the DOM as it measures right now.
    *  Returns false when it cannot loop: fewer than two lists, or nothing
    *  measurable yet. The caller decides whether that deserves a warning. */
   function armEntry(entry) {
     var wrapper = entry.wrapper;
+    // Measure before mutating: an unmeasurable track keeps its clones and tween.
+    var firstList = wrapper.querySelectorAll(LIST)[0];
+    if (!firstList || firstList.offsetWidth < 1) return false;
+    if (entry.layout && layoutWidthOf(entry.layout) < 1) return false;
+
     removeListClones(wrapper);
     var capped = ensureTrackFillsLayout(wrapper, entry.layout);
 
@@ -461,10 +473,14 @@
     });
     onMediaChange(hoverMql, function () {
       // Only the listeners are capability-dependent; the tweens are not.
+      releaseHoverHold();
       if (registry.length) wireLayoutHover();
       else run();
     });
-    onMediaChange(reducedMql, run);
+    onMediaChange(reducedMql, function () {
+      releaseHoverHold();
+      run();
+    });
   }
 
   init();

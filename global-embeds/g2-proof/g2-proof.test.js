@@ -1004,3 +1004,90 @@ test('STARTERS_DEBUG set after a silent production run still surfaces the warnin
   assert.equal(app.warnings.length, 1)
   assert.match(warnText(app.warnings[0]), /GSAP not found/)
 })
+
+test('a track measured at zero keeps its clones and its running tween', () => {
+  const page = makePage({ wrappers: 1, layoutWidth: 1000, listWidth: 200 })
+  const app = load(page, { gsap: 'early' })
+  const first = app.record.tos[0]
+
+  assert.equal(clonesIn(page.wrappers[0]).length, 4)
+
+  // An ancestor hides the section: every measurement collapses to zero.
+  page.layouts[0].layoutWidth = 0
+  page.wrappers[0].querySelectorAll('.card-marquee_list').forEach((list) => {
+    list.layoutWidth = 0
+  })
+  app.observe(0)
+
+  assert.equal(clonesIn(page.wrappers[0]).length, 4)
+  assert.equal(first.killed, false)
+  assert.equal(app.record.tos.length, 1)
+
+  // Shown again at the same width: the padded track is still the armed one.
+  page.layouts[0].layoutWidth = 1000
+  page.wrappers[0].querySelectorAll('.card-marquee_list').forEach((list) => {
+    list.layoutWidth = 200
+  })
+  app.observe(0)
+
+  assert.equal(clonesIn(page.wrappers[0]).length, 4)
+  assert.equal(first.killed, false)
+  assert.equal(app.record.tos.length, 1)
+  assert.equal(page.wrappers[0].hasAttribute(ARMED), true)
+})
+
+test('losing hover capability under the pointer releases the slowdown', () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'early' })
+
+  page.layouts[0].dispatch('mouseenter')
+  assert.equal(app.record.tos[0].lastTimeScale, 0.25)
+
+  // The keyboard detaches: no mouseleave will ever arrive for this hold.
+  app.hoverCapabilityChange(false)
+
+  assert.equal(app.record.tos.length, 2)
+  assert.equal(app.record.tos[0].lastTimeScale, 1)
+  assert.equal(app.record.tos[1].lastTimeScale, 1)
+
+  page.wrappers[0].children[0].layoutWidth = 500
+  app.observe(0)
+
+  // Nothing is held any more, so the replacement tween runs at full speed.
+  assert.deepEqual(app.record.tos[2].timeScales, [])
+})
+
+test('reduced motion on then off re-arms at full speed, not the held scale', () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'early' })
+
+  page.layouts[0].dispatch('mouseenter')
+  assert.equal(app.record.tos[0].lastTimeScale, 0.25)
+
+  app.reducedMotionChange(true)
+  app.reducedMotionChange(false)
+
+  const rebuilt = app.record.tos.slice(2)
+  assert.equal(rebuilt.length, 2)
+  assert.deepEqual(
+    rebuilt.map((tween) => tween.timeScales),
+    [[], []],
+  )
+})
+
+test('a hover slowdown survives a resize rebuild under the pointer', () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'early' })
+
+  page.layouts[0].dispatch('mouseenter')
+
+  page.layouts[0].layoutWidth = 1400
+  app.resize()
+
+  const rebuilt = app.record.tos.slice(2)
+  assert.equal(rebuilt.length, 2)
+  assert.deepEqual(
+    rebuilt.map((tween) => tween.lastTimeScale),
+    [0.25, 0.25],
+  )
+})
