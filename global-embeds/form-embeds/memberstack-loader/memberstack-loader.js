@@ -1,10 +1,8 @@
 // Memberstack loader: dresses a Memberstack auth form's Button as busy and
 // disabled while Memberstack shows its own spinner, and on hide restores it and
 // hands it back to password-validation, whose verdict may have moved meanwhile.
-// Load password-validation first in the same embed: both scripts bind
-// capture-phase submit listeners on the same form at init and same-phase
-// listeners run in registration order, so loading it first lets its gate
-// adjudicate a submit before this script's refusal does.
+// Load password-validation first in the same embed: both bind capture-phase
+// submit listeners on the same form, and those run in registration order.
 // Pin it at v1.59.504 or newer: the hand-back runs against any release that
 // exports rescan, but an older one has no ownership marks and undoes the gate
 // it is handed. Pin it at v1.59.510 or newer for the one-form regate() path,
@@ -103,6 +101,7 @@
 
   var LOADER_ATTR = 'data-ms-loader';
   var LOADER_SELECTOR = '[data-ms-loader]';
+  var MODAL_LOADER_SELECTOR = '[data-ms-modal-loader]';
 
   var AUTH_KINDS = ['login', 'signup', 'forgot-password', 'reset-password'];
 
@@ -123,7 +122,7 @@
   // detached one is still reachable, while a detached Spinner is not.
   function ownedEl() {
     if (!owner) return null;
-    var el = anchor || owner.spinner || null;
+    var el = anchor || owner.spinner;
     if (!anchor && el && el.isConnected === false) {
       owner = null;
       return null;
@@ -136,6 +135,10 @@
   function isLit(el) {
     var display = el && el.style && el.style.display;
     return !!display && display !== 'none';
+  }
+
+  function putOut(el) {
+    if (isLit(el)) el.style.display = 'none';
   }
 
   // --- resolving the form's Button -----------------------------------------
@@ -235,11 +238,8 @@
 
     record.pending = false;
 
-    // password-validation re-adjudicates the gate on hand-back. regate declines
-    // only a form it never bridged; rescan covers that and any release older
-    // than v1.59.510, which has no regate at all.
-    // Swallowed: a throwing peer must not cost the forms after this one their
-    // restore in the pageshow loop.
+    // Hand back to password-validation: rescan covers a regate-declined form and
+    // pre-v1.59.510. Swallowed, or a throwing peer costs later forms their pageshow restore.
     try {
       var pv = window.startersPasswordValidation;
       if (!pv) return;
@@ -321,7 +321,7 @@
     var marked = document.querySelectorAll(LOADER_SELECTOR);
     for (var i = 0; i < marked.length; i++) {
       if (marked[i] === record.spinner) continue;
-      if (isLit(marked[i])) marked[i].style.display = 'none';
+      putOut(marked[i]);
       marked[i].removeAttribute(LOADER_ATTR);
     }
     if (record.spinner && !record.spinner.hasAttribute(LOADER_ATTR)) {
@@ -344,9 +344,7 @@
     var target = shown && owner ? owner.spinner : null;
     if (target === anchor) target = null;
 
-    if (mirrored && mirrored !== target && isLit(mirrored)) {
-      mirrored.style.display = 'none';
-    }
+    if (mirrored !== target) putOut(mirrored);
     if (target) {
       if (target.style.display !== display) target.style.display = display;
       mirrored = target;
@@ -578,14 +576,13 @@
   function onPageshow(event) {
     if (!event || !event.persisted) return;
     try {
-      var lit = ownedEl();
-      if (isLit(lit)) lit.style.display = 'none';
-      if (isLit(mirrored)) mirrored.style.display = 'none';
+      putOut(ownedEl());
+      putOut(mirrored);
       owner = null;
       mirrored = null;
       // Memberstack's login success path redirects without hiding this.
-      var overlay = document.querySelector('[data-ms-modal-loader]');
-      if (overlay && typeof overlay.remove === 'function') overlay.remove();
+      var overlay = document.querySelector(MODAL_LOADER_SELECTOR);
+      if (overlay) overlay.remove();
       var records = wiredRecords();
       for (var i = 0; i < records.length; i++) {
         if (records[i].pending) leavePending(records[i]);

@@ -1961,6 +1961,14 @@ function unanchoredPage() {
   return { s, p, root: body([s.form, p.form]) }
 }
 
+/** the same two forms under a hero section that authored the page-level marker */
+function heroPage() {
+  const hero = heroLoader()
+  const s = signupForm({ noLoader: true })
+  const p = profileForm({ noLoader: true })
+  return { hero, s, p, root: body([hero, s.form, p.form]) }
+}
+
 test('saving a profile spins the Save button, not the closed signup modal', async () => {
   const { s, p, root } = anchoredPage()
   const app = mount(root, { hostname: STAGING })
@@ -2544,11 +2552,8 @@ test('a spinner taken off the page mid-request releases the page', async () => {
 })
 
 test('a page loader taken off the page still holds the request open', async () => {
-  const hero = heroLoader()
-  const s = signupForm({ noLoader: true })
-  const p = profileForm({ noLoader: true })
+  const { hero, s, p, root } = heroPage()
   p.form.setAttribute('id', 'save')
-  const root = body([hero, s.form, p.form])
   const app = mount(root, { hostname: STAGING })
   const strayWarnings = app.warnings.length
   const signup = memberstack(root, s.form)
@@ -2637,25 +2642,22 @@ test('a Button that replaced a pending one is dressed and re-asserted', async ()
 })
 
 test('a peer putting out the mirrored spinner does not open the page', async () => {
-  const hero = heroLoader()
-  const a = signupForm({ noLoader: true })
-  const b = profileForm({ noLoader: true })
-  b.form.setAttribute('id', 'save')
-  const root = body([hero, a.form, b.form])
+  const { hero, s, p, root } = heroPage()
+  p.form.setAttribute('id', 'save')
   const app = mount(root, { hostname: STAGING })
   const strayWarnings = app.warnings.length
-  const signup = memberstack(root, a.form)
-  const profile = memberstack(root, b.form)
+  const signup = memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
 
   signup.submit()
   await flush()
   assert.equal(hero.style.display, 'block', 'the pinned page loader is what lights')
-  assert.equal(a.submitSpinner.style.display, 'block', 'and the signup button mirrors it')
+  assert.equal(s.submitSpinner.style.display, 'block', 'and the signup button mirrors it')
 
   // opportunities-3.0.js blanks every [data-button-spinner] on modal-open
-  a.submitSpinner.style.display = 'none'
+  s.submitSpinner.style.display = 'none'
   await flush()
-  assert.deepEqual(marksOf(a.submitWrap), IDLE_WRAP, 'the button comes back')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP, 'the button comes back')
 
   profile.submit()
   await flush()
@@ -2673,18 +2675,15 @@ test('a peer putting out the mirrored spinner does not open the page', async () 
 })
 
 test('a submit another script cancels never holds the page', async () => {
-  const hero = heroLoader()
-  const a = signupForm({ noLoader: true })
-  const b = profileForm({ noLoader: true })
-  const root = body([hero, a.form, b.form])
+  const { hero, s, p, root } = heroPage()
   const app = mount(root, { hostname: STAGING })
   const strayWarnings = app.warnings.length
-  const signup = memberstack(root, a.form)
-  const profile = memberstack(root, b.form)
+  const signup = memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
 
   // turnstile-contents-fix.js cancels a tokenless submit from a later capture
   // listener, so Memberstack never sees it and never lights anything
-  a.form.addEventListener(
+  s.form.addEventListener(
     'submit',
     (event) => {
       event.preventDefault()
@@ -2699,13 +2698,13 @@ test('a submit another script cancels never holds the page', async () => {
   // a peer widget lights the page loader afterwards
   hero.style.display = 'block'
   await flush()
-  assert.deepEqual(marksOf(a.submitWrap), IDLE_WRAP, 'the cancelled form is not dressed')
-  assert.equal(a.submitSpinner.style.display, '', 'and nothing mirrors onto it')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP, 'the cancelled form is not dressed')
+  assert.equal(s.submitSpinner.style.display, '', 'and nothing mirrors onto it')
 
   profile.submit()
   await flush()
   assert.equal(profile.submits, 1, 'the abandoned claim does not refuse the next form')
-  assert.equal(b.submitSpinner.style.display, 'block', 'the Save button is what mirrors')
+  assert.equal(p.submitSpinner.style.display, 'block', 'the Save button is what mirrors')
   assert.equal(app.warnings.length, strayWarnings, app.warnings.join(' | '))
 })
 
