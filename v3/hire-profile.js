@@ -582,22 +582,29 @@
    * controller is missing or cannot confirm the viewer, the CTA opens nothing
    * rather than an unconfigured Free/Paid chooser.
    */
-  function setLoggedOutBookingButtonAvailable() {
+  function setLoggedOutBookingButtonAvailable(available) {
+      const show = available !== false;
       const selector =
-          '[data-modal-trigger="popup-booking-main"]' +
           '[data-signup-trigger-element="book-call"]' +
           ':not([data-booking-back])';
 
       document.querySelectorAll(selector).forEach(function (trigger) {
-          trigger.setAttribute('data-logged-out-book-call', '');
-          trigger.removeAttribute('data-modal-trigger');
-          trigger.removeAttribute('data-booking-trigger-unavailable');
-          trigger.removeAttribute('aria-disabled');
+          const wasLoggedOutAvailable = trigger.hasAttribute('data-logged-out-book-call');
+          if (show) trigger.setAttribute('data-logged-out-book-call', '');
+          else trigger.removeAttribute('data-logged-out-book-call');
+          if (show || wasLoggedOutAvailable) trigger.removeAttribute('data-modal-trigger');
+          if (show) {
+              trigger.removeAttribute('data-booking-trigger-unavailable');
+              trigger.removeAttribute('aria-disabled');
+          } else {
+              trigger.setAttribute('data-booking-trigger-unavailable', '');
+              trigger.setAttribute('aria-disabled', 'true');
+          }
 
           const wrapper = trigger.closest('[booking-button-wrapper]');
           if (!wrapper) return;
-          wrapper.style.display = 'flex';
-          wrapper.setAttribute('aria-hidden', 'false');
+          wrapper.style.display = show ? 'flex' : 'none';
+          wrapper.setAttribute('aria-hidden', show ? 'false' : 'true');
       });
   }
 
@@ -1820,9 +1827,8 @@
 
           if (!MEMBER.id) {
               const publicCalls = syncLoggedOutCallSurfaces(record);
-              if (publicCalls.free || publicCalls.paid) {
-                  setLoggedOutBookingButtonAvailable();
-              }
+              loggedOutLegacyCallsAvailable = publicCalls.free || publicCalls.paid;
+              syncLoggedOutBookCallCta();
               markServiceCardsClickable();
           }
           if (isBrand) {
@@ -1900,6 +1906,17 @@
      two-item public DTO into both wrappers. This adapter adds viewer state and
      routes actions into the controllers that already own signup, booking, and
      owner settings. It never creates a card or a modal. */
+  const loggedOutXanoCallAvailability = new Map();
+  let loggedOutXanoCallsSettled = false;
+  let loggedOutLegacyCallsAvailable = false;
+
+  function syncLoggedOutBookCallCta() {
+      const available = loggedOutXanoCallsSettled
+          ? Array.from(loggedOutXanoCallAvailability.values()).some(Boolean)
+          : loggedOutLegacyCallsAvailable;
+      setLoggedOutBookingButtonAvailable(available);
+  }
+
   function installXanoCallCardsAdapter() {
       window.WfXano = window.WfXano || [];
       if (typeof window.WfXano.push !== 'function') return;
@@ -2211,7 +2228,9 @@
           const anyPublicType = Array.from(itemsById.values()).some(function (item) {
               return item.public_available === true;
           });
-          if (anyPublicType) setLoggedOutBookingButtonAvailable();
+          loggedOutXanoCallsSettled = true;
+          loggedOutXanoCallAvailability.set(key, anyPublicType);
+          syncLoggedOutBookCallCta();
           markServiceCardsClickable();
       } else if (isProfileOwner(MEMBER)) {
           applyOwnerCallCardStates(ownerCallSettingsSnapshot);

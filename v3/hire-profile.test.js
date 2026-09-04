@@ -3444,6 +3444,21 @@ test('wf-xano call cards use public Xano availability for logged-out signup pres
   assert.equal(xano.free.root.getAttribute('data-signup-trigger-element'), null)
   assert.equal(xano.free.root.getAttribute('data-signup-trigger-value'), null)
   assert.equal(xano.free.root.getAttribute('data-xano-call-card'), null)
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+
+  wfx.emit(callCardResult({ free: false, paid: true }))
+  await settle()
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
 })
 
 test('a logged-out wf-xano call card answers from its own item, not a sibling row of the same type', async () => {
