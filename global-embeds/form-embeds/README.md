@@ -14,6 +14,12 @@ The header block in [`turnstile-contents-fix.js`](turnstile-contents-fix.js) is
 **authoritative**. This document explains the model behind it; where the two ever
 disagree, the header wins.
 
+[`memberstack-loader/memberstack-loader.js`](memberstack-loader/memberstack-loader.js)
+is the second exception. It has no docs-site page yet, so its contract lives in
+its own header block and in the inventory entry in the [root README](../../README.md).
+That header block is **authoritative**; where the root README entry and the
+header ever disagree, the header wins.
+
 ## Turnstile arming for `display: contents` forms
 
 Webflow "bot protection" (Cloudflare Turnstile) is on site-wide, so the published
@@ -51,6 +57,16 @@ state carrying its own mark, so a mark written by anyone else lets it erase a
 refusal it does not own. Scripts that hold the same CTA should keep announcing
 themselves with `data-form-flow-disabled` / `data-validate-disabled`, which the
 gate reads as a refusal it must leave alone.
+
+[`memberstack-loader/memberstack-loader.js`](memberstack-loader/memberstack-loader.js)
+marks its own writes the same way, with `data-memberstack-loader-theme`,
+`data-memberstack-loader-busy` and `data-memberstack-loader-aria`. They are
+written at runtime only, so never author them in Webflow either. The loader
+lifts only what carries one of its own marks, which is what lets
+password-validation's hold and the loader's Pending state share one CTA
+without either script undoing the other. The theme is the exception: it is
+always overwritten while Pending, and an authored value is parked on the wrap
+and put back on hide, so a wrap that had no theme ends up with none.
 
 A form carrying Webflow's `display-contents` class **generates no box**, so its
 `getBoundingClientRect()` is `0 × 0` and the observer never reports it as
@@ -295,9 +311,12 @@ full inventory is in the root [`README.md`](../../README.md).
 | [`checkbox-toggle/checkbox-toggle.js`](checkbox-toggle/checkbox-toggle.js) | Checkbox-driven visibility toggling ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/checkbox-toggle)) |
 | [`password-toggle/password-toggle.js`](password-toggle/password-toggle.js) | Show/hide password control ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-toggle)) |
 | [`password-validation/password-validation.js`](password-validation/password-validation.js) | Password-requirements checklist and whole-form CTA gating (password rules + terms + plausible email when present); disables the full `[ms-code-submit-button]` control set including Memberstack's `.clickable_btn` overlay, bridges an enabled non-submitting overlay click into a cancelable synthetic submit (never a native submission); that bridge runs on every `form[data-ms-form]` carrying the marker whether or not a checklist is present, so the script must stay loaded site-wide wherever Memberstack forms use the Button component, and paints post-submit Memberstack/Turnstile rejections onto the form's `.w-form-fail` block; rule set configured per instance via `starters-password-validation-*` wrapper attributes ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation)) |
+| [`memberstack-loader/memberstack-loader.js`](memberstack-loader/memberstack-loader.js) | Gives a Memberstack auth form's Button the Pending look (grey theme, `aria-busy`, `aria-disabled`) for as long as Memberstack shows its `data-ms-loader` spinner, then puts the button back on hide. Spinner routing covers every Memberstack form, auth and profile alike, so the submitting form's own Button Spinner is the one that turns: a page that authors the attribute keeps it in place and has its show and hide mirrored onto that Spinner, and a page that authors none gets the attribute placed on that Spinner at submit time. A double-submit guard stops repeat submits while the button is pending, and on staging the script reports an auth form with no Button Spinner once per such form, and a duplicated or stray `data-ms-loader` once per page |
 | [`form-input-filter/form-input-filter.js`](form-input-filter/form-input-filter.js) | Input filtering and normalization ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-input-filter)) |
 | [`input-preview.js`](input-preview.js) | Echoes an input's value into a preview element ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/input-preview)) |
 
 Companion stylesheets sit beside their scripts, plus a folder-level
 [`form.css`](form.css). Unlike the other embeds in [`global-embeds/`](../README.md),
 nothing here is documented per-file in this folder except the Turnstile fix above.
+The Memberstack loader is documented in its own header block and in the root
+README rather than here.

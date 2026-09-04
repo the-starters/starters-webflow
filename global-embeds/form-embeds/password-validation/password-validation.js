@@ -1,6 +1,6 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation
 //
-// @release v1.59.506
+// @release v1.59.510
 //
 // Password validation — configured entirely from wrapper attributes so a
 // Webflow component instance can pick its own rule set with no code changes.
@@ -22,6 +22,9 @@
 // no wrapper configures fails open and says so on staging; it never gates.
 //
 // Forms added after load: call window.startersPasswordValidation.rescan().
+// A peer handing one form's CTA back: call
+// window.startersPasswordValidation.regate(form) — it re-adjudicates that
+// form's gate alone and returns false if the form was never bridged.
 //
 // The CTA gate covers the WHOLE form, not just the password: the button stays
 // grey until every active password rule passes, the terms checkbox
@@ -71,7 +74,7 @@
   var RULE_ATTR = PREFIX + 'rule';
   var ICON_ATTR = PREFIX + 'icon';
   var DEFAULT_COUNT = 8;
-  var RELEASE = 'v1.59.506';
+  var RELEASE = 'v1.59.510';
   var WIRED_FLAG = '__startersPasswordValidation';
   var BRIDGE_FLAG = '__startersPasswordBridge';
   var SUBMIT_BUTTON_SELECTOR = '[ms-code-submit-button]';
@@ -1042,11 +1045,22 @@
     }
   }
 
+  // A peer hands one form's CTA back here, declining only a form this script
+  // never bridged. No discovery: a late checklist wrapper still needs rescan().
+  function regate(form) {
+    var bridge = form && form[BRIDGE_FLAG];
+    if (!bridge) return false;
+    // The CTA may have been swapped while the peer held it: gate the live root.
+    ensureBridge(form);
+    if (bridge.gate) bridge.gate();
+    return true;
+  }
+
   // Markup injected after load (modals, CMS tabs, step flows) is invisible to
   // the one-shot init, so the page can ask for another pass. An already-wired
   // form is never re-wired, only extended with wrappers it has not seen, so
   // repeated calls stay harmless.
-  window.startersPasswordValidation = { rescan: init, release: RELEASE };
+  window.startersPasswordValidation = { rescan: init, regate: regate, release: RELEASE };
 
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
