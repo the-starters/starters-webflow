@@ -2543,6 +2543,99 @@ test('a spinner taken off the page mid-request releases the page', async () => {
   assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
 })
 
+test('a page loader taken off the page still holds the request open', async () => {
+  const hero = heroLoader()
+  const s = signupForm({ noLoader: true })
+  const p = profileForm({ noLoader: true })
+  p.form.setAttribute('id', 'save')
+  const root = body([hero, s.form, p.form])
+  const app = mount(root, { hostname: STAGING })
+  const strayWarnings = app.warnings.length
+  const signup = memberstack(root, s.form)
+  const profile = memberstack(root, p.form)
+
+  signup.submit()
+  await flush()
+  assert.equal(hero.style.display, 'block', 'the pinned page loader is what lights')
+
+  // Memberstack writes the element it cached at init, in the document or not
+  hero.remove()
+  await flush()
+
+  profile.submit()
+  await flush()
+  assert.equal(profile.submits, 0, 'the cached loader is still the open request')
+  const refusals = app.warnings.slice(strayWarnings)
+  assert.equal(refusals.length, 1, app.warnings.join(' | '))
+  assert.ok(refusals[0].includes(SUBMIT_REFUSED), refusals[0])
+  assert.ok(refusals[0].includes('form#save.auth_form-block'), refusals[0])
+
+  hero.style.display = 'none'
+  await flush()
+  profile.submit()
+  await flush()
+  assert.equal(profile.submits, 1, 'and its hide still ends it')
+})
+
+test('a rescan picks up the Button that replaced a detached one', async () => {
+  const { s, p, root } = unanchoredPage()
+  const app = mount(root, { hostname: STAGING })
+  const profile = memberstack(root, p.form, { cache: false })
+  const signup = memberstack(root, s.form, { cache: false })
+
+  profile.submit()
+  await flush()
+  p.submitSpinner.remove()
+  await flush()
+
+  signup.submit()
+  await flush()
+  signup.hide()
+  await flush()
+
+  // the step flow puts a fresh Button where the one it took away used to be
+  const fresh = profileForm({ noLoader: true })
+  fresh.wrap.remove()
+  p.form.append(fresh.wrap)
+  app.window.startersMemberstackLoader.rescan()
+
+  profile.submit()
+  await flush()
+  assert.equal(fresh.submitSpinner.style.display, 'block', 'the new Button is what spins')
+  assert.equal(profile.overlayShows, 0, 'Memberstack never falls back to its overlay')
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('a Button that replaced a pending one is dressed and re-asserted', async () => {
+  const f = signupForm({ noLoader: true })
+  const root = body([f.form])
+  const app = mount(root, { hostname: STAGING })
+  const ms = memberstack(root, f.form, { cache: false })
+
+  ms.submit()
+  await flush()
+  assert.equal(f.submitWrap.getAttribute('data-button-theme'), 'disabled')
+
+  // the modal swaps the whole Button out while the request is still open
+  const gone = f.submitWrap
+  const fresh = signupForm({ noLoader: true })
+  fresh.submitWrap.remove()
+  gone.remove()
+  f.form.append(fresh.submitWrap)
+  app.window.startersMemberstackLoader.rescan()
+  assert.deepEqual(marksOf(gone), IDLE_WRAP, 'the Button on its way out is left clean')
+
+  ms.submit()
+  await flush()
+  assert.equal(fresh.submitWrap.getAttribute('data-button-theme'), 'disabled', 'the new one greys')
+
+  // a peer strips the busy look off the Button that arrived late
+  fresh.submitWrap.removeAttribute('data-button-theme')
+  await flush()
+  assert.equal(fresh.submitWrap.getAttribute('data-button-theme'), 'disabled', 'and it is put back')
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
 test('a peer putting out the mirrored spinner does not open the page', async () => {
   const hero = heroLoader()
   const a = signupForm({ noLoader: true })

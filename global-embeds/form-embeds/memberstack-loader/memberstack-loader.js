@@ -50,7 +50,9 @@
 // form's included (staging says so). A marker something else lit refuses no
 // other form, though a form whose own Spinner is the pinned marker still reads
 // that light as its own request. A back-button restore clears the whole thing,
-// Memberstack's leftover overlay included. A Spinner-less form's overlay is not
+// Memberstack's leftover overlay included. A Spinner taken off the page
+// mid-request releases the page rather than locking it, so that request's hide
+// may land on the next form's Spinner. A Spinner-less form's overlay is not
 // tracked and takes no part in that rule: its own hide lands on whichever
 // Spinner holds the marker by then, leaving Memberstack's [data-ms-modal-loader]
 // overlay on screen. Ticket 07, which gives those forms a Button, is the fix.
@@ -117,12 +119,12 @@
   var mirrored = null;
 
   // The element the open request lit: the pinned Anchor, or the Spinner it was
-  // routed to. Detached mid-request means no hide can ever reach it again, so
-  // the request stops being ours to police.
+  // routed to. MOVE only: Memberstack writes a cached Anchor by reference, so a
+  // detached one is still reachable, while a detached Spinner is not.
   function ownedEl() {
     if (!owner) return null;
     var el = anchor || owner.spinner || null;
-    if (el && el.isConnected === false) {
+    if (!anchor && el && el.isConnected === false) {
       owner = null;
       return null;
     }
@@ -232,8 +234,6 @@
     }
 
     record.pending = false;
-    // In MIRROR mode the Anchor, not this Spinner, is what a peer just put out.
-    if (owner === record && ownedEl() === record.spinner) owner = null;
 
     // password-validation re-adjudicates the gate on hand-back. regate declines
     // only a form it never bridged; rescan covers that and any release older
@@ -395,9 +395,8 @@
     // A later capture listener may cancel this submit, and Memberstack lights
     // the loader synchronously in the same dispatch: unlit next turn is nobody's
     // request.
-    var claim = record;
     setTimeout(function () {
-      if (owner === claim && !isLit(ownedEl())) owner = null;
+      if (owner === record && !loaderBusy()) owner = null;
     }, 0);
   }
 
@@ -530,15 +529,19 @@
       var form = forms[i];
       var record = form[WIRED_FLAG];
 
-      // A wired form is revisited only to pick up a Button that arrived late.
+      // A wired form is revisited to pick up a Button that arrived late, or one
+      // that replaced the Button this record still points at.
       if (record) {
-        if (!record.spinner) {
+        if (!record.spinner || (form.contains && !form.contains(record.spinner))) {
           var late = resolveButton(form);
           record.noSpinnerWhy = late.why;
           if (late.spinner) {
+            // Or the marks strand on the wrap that is going away.
+            if (record.pending) leavePending(record);
             record.wrap = late.wrap;
             record.control = late.control;
             record.spinner = late.spinner;
+            record.reassertObserved = false;
             observeSpinner(record);
             observeReassert(record);
           }
