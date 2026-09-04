@@ -234,7 +234,12 @@
   function route(record) {
     var marked = document.querySelectorAll(LOADER_SELECTOR);
     for (var i = 0; i < marked.length; i++) {
-      if (marked[i] !== record.spinner) marked[i].removeAttribute(LOADER_ATTR);
+      if (marked[i] === record.spinner) continue;
+      // Unmarking a lit Spinner would strand it: the hide that ends its own
+      // submit re-queries live and would put out this form's Spinner instead.
+      var display = marked[i].style && marked[i].style.display;
+      if (display && display !== 'none') marked[i].style.display = 'none';
+      marked[i].removeAttribute(LOADER_ATTR);
     }
     if (record.spinner && !record.spinner.hasAttribute(LOADER_ATTR)) {
       record.spinner.setAttribute(LOADER_ATTR, '');

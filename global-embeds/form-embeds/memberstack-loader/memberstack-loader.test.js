@@ -2004,6 +2004,41 @@ test('the marker follows whichever form was submitted last', async () => {
   assert.equal(p.submitSpinner.style.display, 'block')
 })
 
+test('a second form submitting mid-flight puts out the first form spinner', async () => {
+  const a = signupForm({ noLoader: true })
+  const b = signupForm({ kind: 'login', noLoader: true })
+  const root = body([a.form, b.form])
+  const app = mount(root)
+  const msA = memberstack(root, a.form, { cache: false })
+  const msB = memberstack(root, b.form, { cache: false })
+
+  msA.submit()
+  await flush()
+  assert.equal(a.submitSpinner.style.display, 'block')
+  assert.deepEqual(loaders(root), [a.submitSpinner])
+  assert.equal(a.submitWrap.getAttribute('data-button-theme'), 'disabled')
+
+  msB.submit()
+  await flush()
+
+  assert.equal(a.submitSpinner.style.display, 'none', 'the spinner it walked away from goes out')
+  assert.deepEqual(marksOf(a.submitWrap), IDLE_WRAP, 'and its button comes back')
+  assert.deepEqual(marksOf(a.control), NO_MARKS)
+  assert.equal(b.submitSpinner.style.display, 'block')
+  assert.equal(b.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.deepEqual(loaders(root), [b.submitSpinner])
+
+  msB.hide()
+  await flush()
+  assert.deepEqual(marksOf(b.submitWrap), IDLE_WRAP)
+  assert.deepEqual(marksOf(b.control), NO_MARKS)
+
+  msA.submit()
+  await flush()
+  assert.equal(msA.submits, 2, 'the first form is not left guarding a submit that ended')
+  assert.equal(app.warnings.length, 0)
+})
+
 test('a native login form with nowhere to spin falls back to the overlay', async () => {
   const p = profileForm({ noLoader: true })
   const l = loginForm()
@@ -2015,13 +2050,13 @@ test('a native login form with nowhere to spin falls back to the overlay', async
   profile.submit()
   await flush()
   assert.deepEqual(loaders(root), [p.submitSpinner])
-  const profileDisplay = p.submitSpinner.style.display
+  assert.equal(p.submitSpinner.style.display, 'block')
 
   login.submit()
   await flush()
   assert.deepEqual(loaders(root), [], 'the marker leaves the form that is not submitting')
   assert.equal(login.overlayShows, 1, 'Memberstack shows its own full-screen overlay')
-  assert.equal(p.submitSpinner.style.display, profileDisplay, 'untouched by the login submit')
+  assert.equal(p.submitSpinner.style.display, 'none', 'the Spinner it left behind goes out')
   assert.deepEqual(marksOf(l.control), NO_MARKS)
 
   login.hide()
