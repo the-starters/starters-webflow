@@ -4,5 +4,5 @@
  * fetch, and insert its clones while the group is hidden.
  */
 [xwf-empty-check]:not(:has([wf-xano-item])) {
-  display: none;
+  display: none !important;
 }
