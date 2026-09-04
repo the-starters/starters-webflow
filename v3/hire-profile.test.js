@@ -750,6 +750,120 @@ function addXanoRetainerFixture(page, { withCard = true } = {}) {
   return { wrapper, template, card, title, description }
 }
 
+function addXanoCallCardsFixture(page, instanceKey = 'starter-call-offers-services') {
+  const wrapper = makeElement('div', {
+    'wf-xano-element': 'wrapper',
+    'wf-xano-instance': instanceKey,
+    'wf-xano-source': 'KZf7nFnk:profile/starter/calls/v3',
+  })
+  const template = makeElement('div', {
+    'wf-xano-element': 'template',
+    'data-service-card': 'component',
+  })
+  wrapper.appendChild(template)
+
+  function card(id) {
+    const root = makeElement('div', { 'wf-xano-item': '', 'data-wf-xano-id': id })
+    const title = makeElement('div', { 'data-service-card-element': 'title' })
+    const description = makeElement('div', { 'data-service-card-element': 'description' })
+    const price = makeElement('span', { 'data-millify': '' })
+    const bookingRow = makeElement('div', {}, ['service-card_content-wrapper'])
+    const tooltip = makeElement('div', { 'data-call-offer-tooltip': '' })
+    const tooltipText = makeElement('span', { 'data-call-offer-tooltip-text': '', 'hover-text': '' })
+    const calendarCta = makeElement('a', {
+      'hover-cta': '',
+      'data-call-setup-action': 'calendar',
+      'starter-dashboard-url': '',
+    })
+    const stripeCta = makeElement('a', {
+      'hover-cta': '',
+      'data-call-setup-action': 'stripe',
+      'stripe-connect-url': '',
+    })
+    const settingsCta = makeElement('a', {
+      'hover-cta': '',
+      'data-call-setup-action': 'settings',
+      'starter-dashboard-url': '',
+    })
+    tooltip.appendChild(tooltipText)
+    tooltip.appendChild(calendarCta)
+    tooltip.appendChild(stripeCta)
+    tooltip.appendChild(settingsCta)
+    root.appendChild(title)
+    root.appendChild(description)
+    root.appendChild(price)
+    root.appendChild(bookingRow)
+    root.appendChild(tooltip)
+    wrapper.appendChild(root)
+    return {
+      root, title, description, price, bookingRow, tooltip, tooltipText,
+      calendarCta, stripeCta, settingsCta,
+    }
+  }
+
+  const free = card('424:call:free')
+  const paid = card('424:call:paid')
+  page.servicesList.appendChild(wrapper)
+  return { wrapper, template, free, paid, card }
+}
+
+function makeCallCardsWfXanoFixture(root, instanceKey = 'starter-call-offers-services') {
+  let resultsHandler = null
+  let latestResult = null
+  const instance = {
+    root,
+    getState: () => latestResult ? { status: 'success', data: latestResult } : null,
+    on(event, handler) {
+      if (event === 'results') resultsHandler = handler
+      return instance
+    },
+  }
+  return {
+    instance,
+    api: {
+      push(callback) {
+        callback({ get: (key) => (key === instanceKey ? instance : null) })
+      },
+    },
+    emit(result) {
+      assert.ok(resultsHandler, `${instanceKey} results handler must be registered`)
+      latestResult = result
+      resultsHandler(result)
+    },
+  }
+}
+
+function callCardResult({ free = true, paid = true, price = 250 } = {}) {
+  return {
+    items: [
+      {
+        id: '424:call:free',
+        type: 'free',
+        name: 'Free Call',
+        description: 'A free intro call',
+        price: 0,
+        currency: 'USD',
+        unit: '/session',
+        public_available: free,
+      },
+      {
+        id: '424:call:paid',
+        type: 'paid',
+        name: 'Paid Consulting Call',
+        description: 'A focused paid session',
+        price: paid ? price : null,
+        currency: 'USD',
+        unit: '/session',
+        public_available: paid,
+      },
+    ],
+    total: 2,
+    page: 1,
+    pages: 1,
+    hasMore: false,
+  }
+}
+
 function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = true } = {}) {
   let resultsHandler = null
   let latestResult = initialResult
@@ -3293,6 +3407,843 @@ test('Paid-only discovery stays closed when the V3 controller is unavailable', a
   assert.ok(context.warnings.some((line) => line.includes('Paid Call controller is unavailable')))
 })
 
+test('wf-xano call cards use public Xano availability for logged-out signup presentation', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const templateBefore = snapshotDom(xano.template)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    // Deliberately disagree with the new endpoint. The new clones must use the
+    // result event, not these legacy Algolia compatibility projections.
+    record: {
+      rate: 0,
+      'retainer-enabled': false,
+      'free-consulting-calls-t-f': false,
+      'paid-consulting-calls-t-f': true,
+    },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: true, paid: false }))
+  await settle()
+
+  assert.equal(xano.free.root.style.display, 'block')
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(xano.free.root.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(xano.free.root.getAttribute('data-signup-trigger-value'), 'Free Call')
+  assert.equal(xano.free.root.children.includes(xano.free.bookingRow), false)
+  assert.equal(xano.paid.root.style.display, 'none')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'hidden')
+  assert.equal(snapshotDom(xano.template), templateBefore, 'the native template stays untouched')
+
+  wfx.emit({ items: [] })
+  await settle()
+  assert.equal(xano.free.root.style.display, 'none', 'a later empty result fails closed')
+  assert.equal(xano.paid.root.style.display, 'none', 'no earlier wrapper result stays cached')
+  assert.equal(xano.free.root.getAttribute('data-signup-trigger-element'), null)
+  assert.equal(xano.free.root.getAttribute('data-signup-trigger-value'), null)
+  assert.equal(xano.free.root.getAttribute('data-xano-call-card'), null)
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+
+  wfx.emit(callCardResult({ free: false, paid: true }))
+  await settle()
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+})
+
+test('the latest canonical wf-xano result controls logged-out Book Call across both wrappers', async () => {
+  const page = makePage()
+  const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')
+  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
+  const servicesWfx = makeCallCardsWfXanoFixture(services.wrapper, 'starter-call-offers-services')
+  const headerWfx = makeCallCardsWfXanoFixture(header.wrapper, 'starter-call-offers-header')
+  const instances = {
+    'starter-call-offers-services': servicesWfx.instance,
+    'starter-call-offers-header': headerWfx.instance,
+  }
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: {
+      push(callback) {
+        callback({ get: (key) => instances[key] || null })
+      },
+    },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  servicesWfx.emit(callCardResult({ free: true, paid: false }))
+  await settle()
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+
+  headerWfx.emit({ items: [] })
+  await settle()
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+})
+
+test('a logged-out wf-xano call card answers from its own item, not a sibling row of the same type', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const duplicate = xano.card('424:call:free:duplicate')
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: [
+      Object.assign({}, callCardResult().items[0], { public_available: false }),
+      Object.assign({}, callCardResult().items[0], {
+        id: '424:call:free:duplicate',
+        name: 'Second Free Call',
+        public_available: true,
+      }),
+    ],
+  })
+  await settle()
+
+  assert.equal(xano.free.root.style.display, 'none')
+  assert.equal(xano.free.root.getAttribute('data-signup-trigger-element'), null)
+  assert.equal(xano.free.title.textContent, 'Free Call')
+  assert.equal(duplicate.root.style.display, 'block')
+  assert.equal(duplicate.root.getAttribute('data-signup-trigger-value'), 'Free Call')
+  assert.equal(duplicate.title.textContent, 'Second Free Call')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+})
+
+test('wf-xano call cards normalise the DTO call type before deciding logged-out availability', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  // The contract admits the type case-insensitively; a payload that spells it
+  // 'Free' must not be painted onto a card that is then hidden for having no
+  // availability, which would silently cost the visitor the signup routing.
+  const result = callCardResult({ free: true, paid: true })
+  result.items[0].type = 'Free'
+  result.items[1].type = ' Paid '
+  wfx.emit(result)
+  await settle()
+
+  for (const [card, value] of [[xano.free, 'Free Call'], [xano.paid, 'Paid Consulting Call']]) {
+    assert.equal(card.root.style.display, 'block')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(card.root.getAttribute('data-signup-trigger-element'), 'service')
+    assert.equal(card.root.getAttribute('data-signup-trigger-value'), value)
+  }
+  assert.equal(xano.paid.price.textContent, '250')
+  assert.equal(xano.paid.price.getAttribute('data-millify'), '250')
+  assert.equal(xano.free.price.getAttribute('data-millify'), '')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+})
+
+test('a non-owner talent keeps the wf-xano call cards hidden even though the profile owner has a grant', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  // The legacy grant-only reveal still governs the untouched CMS comparison
+  // cards for this viewer, and the owner's grant makes it say "free is on".
+  // That must not reach the Xano clones, whose only writer for a viewer who
+  // can neither book nor set up is the adapter's hide.
+  const context = ownerContext(page, ownerController(), {
+    member: OTHER_TALENT_MEMBER,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult())
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.style.display, 'none')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden')
+    assert.equal(card.root.getAttribute('aria-hidden'), 'true')
+    assert.equal(card.root.getAttribute('has-connection'), null)
+  }
+
+  const cmsFreeCard = page.servicesList.querySelector('[has-connection="free"]:not([wf-xano-item])')
+  assert.ok(cmsFreeCard, 'the CMS comparison card fixture must still be present')
+  assert.equal(cmsFreeCard.style.display, 'block', 'the legacy CMS reveal is unchanged')
+})
+
+test('a late wf-xano Brand call card replays canonical discovery and opens only its matching type', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    initBookingComponents: () => {},
+    paidController: { installPaidBookingController: () => true },
+    getConfigs: async () => [
+      {
+        config_id: 'cfg_free',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+        price_cents: 0,
+        duration: 30,
+      },
+      {
+        config_id: 'cfg_paid',
+        is_paid: true,
+        active: true,
+        data_environment: 'production',
+        payment_environment: 'live',
+        currency: 'USD',
+        price_cents: 25000,
+        duration: 60,
+      },
+    ],
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult())
+  await settle()
+
+  assert.equal(xano.free.root.style.display, 'block')
+  assert.equal(xano.paid.root.style.display, 'block')
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(xano.free.root.getAttribute('data-signup-trigger-element'), null)
+  assert.equal(xano.paid.root.getAttribute('data-signup-trigger-element'), null)
+  assert.equal(xano.free.root.getAttribute('data-call-service-direct'), 'ready')
+  assert.equal(xano.paid.root.getAttribute('data-call-service-direct'), 'ready')
+})
+
+test('a late wf-xano Brand call card replays terminal empty discovery as hidden', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => null,
+    getConfigs: async () => [],
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult())
+  await settle()
+
+  for (const card of [xano.free.root, xano.paid.root]) {
+    assert.equal(card.style.display, 'none')
+    assert.equal(card.getAttribute('data-call-offer-state'), 'hidden')
+    assert.equal(card.getAttribute('aria-hidden'), 'true')
+    assert.equal(card.getAttribute('has-connection'), null)
+    assert.equal(card.getAttribute('data-call-service-direct'), null)
+  }
+})
+
+test('the profile owner sees both wf-xano call skeletons with exact setup-required tooltip state', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  // The current Service Tout component exposes the tooltip title and CTA
+  // hooks, but not a custom attribute on the tooltip root itself. The adapter
+  // must derive that wrapper from the authored semantic descendants.
+  xano.free.tooltip.removeAttribute('data-call-offer-tooltip')
+  xano.paid.tooltip.removeAttribute('data-call-offer-tooltip')
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({
+    grantId: null,
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        free_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        stripe_connect_linked: false,
+        stripe_charges_enabled: false,
+        stripe_readiness_fresh: false,
+        paid_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+  })
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.style.display, 'block')
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'setup-required')
+    assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
+    assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+    assert.equal(card.tooltip.style.display, 'block')
+    assert.equal(card.calendarCta.style.display, 'block')
+    assert.equal(card.calendarCta.getAttribute('href'), '/starter-dashboard')
+    assert.equal(card.stripeCta.style.display, 'none')
+    assert.equal(card.settingsCta.style.display, 'none')
+  }
+  assert.equal(xano.free.tooltipText.textContent, 'Connect your calendar to offer calls.')
+  assert.equal(xano.paid.tooltipText.textContent, 'Connect your calendar to offer calls.')
+})
+
+test('the profile owner gets Default only for call cards that pass every readiness gate', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = ownerContext(page, ownerController(), { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult())
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.style.display, 'block')
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
+    assert.equal(card.tooltip.style.display, 'none')
+  }
+})
+
+test('owner cards are Disabled when Stripe is missing or either service is turned off', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: true,
+        availability_configured: true,
+        free_call_enabled: false,
+        bookable: false,
+      },
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: true,
+        availability_configured: true,
+        stripe_connect_linked: false,
+        stripe_charges_enabled: false,
+        stripe_readiness_fresh: false,
+        paid_call_enabled: true,
+        // Deliberately inconsistent upstream input: the explicit Stripe gates
+        // must still win over a stale aggregate bookable flag.
+        bookable: true,
+      },
+    }),
+  })
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult())
+  await settle()
+
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'setup-required')
+  assert.equal(xano.free.tooltipText.textContent, 'Enable your Free Call service.')
+  assert.equal(xano.free.settingsCta.style.display, 'block')
+
+  assert.equal(xano.paid.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'setup-required')
+  assert.equal(xano.paid.tooltipText.textContent, 'Connect Stripe to offer paid calls.')
+  assert.equal(xano.paid.stripeCta.style.display, 'block')
+  assert.equal(xano.paid.settingsCta.style.display, 'none')
+})
+
+test('the Paid owner card is Disabled when the service is off with every connection ready', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: true,
+        availability_configured: true,
+        stripe_connect_linked: true,
+        stripe_charges_enabled: true,
+        stripe_readiness_fresh: true,
+        paid_call_enabled: false,
+        bookable: false,
+      },
+    }),
+  })
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult())
+  await settle()
+
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Default')
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(xano.paid.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'setup-required')
+  assert.equal(xano.paid.tooltipText.textContent, 'Enable and price your Paid Call service.')
+  assert.equal(xano.paid.stripeCta.style.display, 'none')
+  assert.equal(xano.paid.settingsCta.style.display, 'block')
+})
+
+test('an owner settings lookup failure shows a neutral disabled card and only Call Settings', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({
+    free: new Error('settings unavailable'),
+    paid: new Error('settings unavailable'),
+    grantId: null,
+  })
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.style.display, 'block')
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-unavailable')
+    assert.equal(card.root.getAttribute('has-connection'), null)
+    assert.equal(card.root.getAttribute('no-connection'), null)
+    assert.equal(card.root.getAttribute('data-modal-trigger'), null)
+    assert.equal(card.tooltipText.textContent, 'Call settings could not be loaded. Refresh or open Call Settings.')
+    assert.equal(card.calendarCta.style.display, 'none')
+    assert.equal(card.stripeCta.style.display, 'none')
+    assert.equal(card.settingsCta.style.display, 'block')
+    assert.equal(card.settingsCta.getAttribute('href'), '/starter-dashboard')
+  }
+})
+
+test('owner settings settle independently when the Starter lookup fails', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({
+    grantId: null,
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        free_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        stripe_connect_linked: false,
+        stripe_charges_enabled: false,
+        stripe_readiness_fresh: false,
+        paid_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+  })
+  controller.getStarterByMemberId = async () => { throw new Error('starter lookup unavailable') }
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'setup-required')
+    assert.equal(card.tooltipText.textContent, 'Connect your calendar to offer calls.')
+    assert.equal(card.calendarCta.style.display, 'block')
+  }
+  assert.ok(context.warnings.some((line) => line.includes('the Starter lookup failed')))
+})
+
+test('a healthy owner call card settles while its sibling settings request is pending', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const paidSlot = makeElement('div', { 'next-available-slot': '' })
+  paidSlot.textContent = SLOT_SENTINEL
+  xano.paid.root.appendChild(paidSlot)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({ slots: { cfg_owner_paid: SLOT_PAID } })
+  controller.authenticatedRequest = async (path) => {
+    if (path === OWNER_FREE_SETTINGS_PATH) return new Promise(() => {})
+    return ownerPaidSettings()
+  }
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'settings-loading')
+  assert.equal(xano.free.settingsCta.style.display, 'block')
+  assert.equal(xano.paid.root.getAttribute('data-service-card-state'), 'Default')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(xano.paid.price.textContent, '250')
+  assert.equal(paidSlot.textContent, '09:00AM on Mar 06')
+  assert.equal(paidSlot.getAttribute('data-next-slot-state'), 'painted')
+  assert.deepEqual(controller.calls.map((call) => call.configId), ['cfg_owner_paid'])
+})
+
+test('owner cards fail terminally when the booking controller cannot load', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    member: OWNER_MEMBER,
+    wfXano: wfx.api,
+    omitInitialFreeController: true,
+    freeControllerLoadFails: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-unavailable')
+    assert.equal(card.tooltipText.textContent, 'Call settings could not be loaded. Refresh or open Call Settings.')
+    assert.equal(card.settingsCta.style.display, 'block')
+  }
+})
+
+test('the profile owner never keeps a wf-xano call clone the adapter refused to bind', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const refused = xano.card('not-in-result')
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = ownerContext(page, ownerController({ grantId: null }), { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  assert.equal(refused.root.style.display, 'none')
+  assert.equal(refused.root.getAttribute('aria-hidden'), 'true')
+  assert.equal(refused.root.getAttribute('data-canonical-call-unavailable'), '')
+  assert.equal(refused.root.getAttribute('data-xano-call-card'), null)
+  assert.equal(refused.root.getAttribute('data-type'), null)
+  assert.equal(refused.root.getAttribute('data-call-offer-state'), null)
+})
+
+test('the owner setup card reads non-boolean readiness the same way the settings modules do', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  // free-call-settings.js and paid-call-settings.js gate every readiness key
+  // on `=== true`, so a payload carrying the STRING "false" leaves the starter
+  // dashboard saying the calendar is not connected. The profile card must
+  // reach the same verdict rather than skipping to a later setup step.
+  const controller = ownerController({
+    grantId: null,
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: 'false',
+        availability_configured: 'false',
+        free_call_enabled: 'false',
+        bookable: false,
+      },
+      services: [],
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: 'false',
+        availability_configured: 'false',
+        stripe_connect_linked: 'false',
+        stripe_charges_enabled: 'false',
+        stripe_readiness_fresh: 'false',
+        paid_call_enabled: 'false',
+        bookable: false,
+      },
+      services: [],
+    }),
+  })
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'setup-required')
+    assert.equal(card.tooltipText.textContent, 'Connect your calendar to offer calls.')
+    assert.equal(card.calendarCta.style.display, 'block')
+    assert.equal(card.stripeCta.style.display, 'none')
+    assert.equal(card.settingsCta.style.display, 'none')
+  }
+})
+
+test('the legacy owner reveal stands down from the wf-xano card it now shares attributes with', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  // The CMS comparison card the canary still keeps. It carries the same
+  // `no-connection="paid"` the adapter now stamps on its own card, so it is
+  // what proves the stand-down is scoped rather than a blanket disable.
+  const cmsCard = makeElement('div', { 'no-connection': 'paid' })
+  const cmsHoverText = makeElement('div', { 'hover-text': '' })
+  cmsHoverText.textContent = 'CMS placeholder'
+  cmsCard.appendChild(cmsHoverText)
+  page.servicesList.appendChild(cmsCard)
+
+  let resolveStarter
+  const starterReady = new Promise((resolve) => { resolveStarter = resolve })
+  const controller = ownerController({
+    grantId: null,
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        free_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        stripe_connect_linked: false,
+        stripe_charges_enabled: false,
+        stripe_readiness_fresh: false,
+        paid_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+  })
+  controller.getStarterByMemberId = () => starterReady
+  // The owner settings answer never lands, so `paintOwnerCallSurfaces` cannot
+  // re-run `applyOwnerCallCardStates` and quietly repair the overwrite. What
+  // the legacy block leaves behind is the terminal state under assertion.
+  controller.authenticatedRequest = () => new Promise(() => {})
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  context.stripe_charges = true
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+  assert.equal(xano.paid.root.getAttribute('no-connection'), null)
+  assert.equal(
+    xano.paid.tooltipText.textContent,
+    'Call settings are loading. Open Call Settings if this continues.',
+  )
+
+  resolveStarter(null)
+  await settle()
+
+  assert.equal(
+    xano.paid.tooltipText.textContent,
+    'Call settings are loading. Open Call Settings if this continues.',
+    'the legacy reveal must not rewrite the adapter-owned tooltip copy',
+  )
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'settings-loading')
+  assert.equal(xano.paid.calendarCta.style.display, 'none')
+  assert.equal(xano.paid.settingsCta.style.display, 'block')
+  assert.equal(
+    cmsHoverText.textContent,
+    'Connect your calendar to start accepting paid consulting calls.',
+    'the legacy reveal still owns the CMS comparison card',
+  )
+  assert.equal(cmsCard.style.display, 'block')
+})
+
+test('the rate cards clone the authored card even when a wf-xano clone precedes it in the list', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  // Designer order used to decide this. An owner wf-xano card now stays
+  // `Disabled` until readiness resolves, and the rate-card lookup excludes
+  // every wf-xano wrapper regardless of its state.
+  xano.wrapper.remove()
+  page.servicesList.prepend(xano.wrapper)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+
+  let resolveRecord
+  const recordReady = new Promise((resolve) => { resolveRecord = resolve })
+  const controller = ownerController({ grantId: null })
+  controller.authenticatedRequest = () => new Promise(() => {})
+  const context = ownerContext(page, controller, {
+    wfXano: wfx.api,
+    record: { rate: 135, 'retainer-rate': 0, 'retainer-enabled': false },
+  })
+  // Holding the search record back guarantees the adapter stamps first, which
+  // is the ordering production reaches anyway (memberReady vs. an Algolia load).
+  context.WfAlgolia = { getObject: () => recordReady }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(xano.free.tooltip.style.display, 'block')
+
+  resolveRecord({ rate: 135, 'retainer-rate': 0, 'retainer-enabled': false })
+  await settle()
+
+  const freelance = page.servicesList.querySelectorAll('[data-runtime-rate-card="freelance"]')
+  assert.equal(freelance.length, 1, 'the Freelance rate card must still be built')
+  const built = freelance[0]
+  assert.equal(built.querySelector('[data-service-card-element="title"]').textContent, 'Freelance')
+  assert.equal(
+    built.querySelectorAll('[data-call-offer-tooltip]').length,
+    0,
+    'a rate card must not carry the owner call-setup tooltip',
+  )
+  assert.equal(built.getAttribute('wf-xano-item'), null)
+  assert.equal(built.getAttribute('data-wf-xano-id'), null)
+  assert.equal(built.getAttribute('data-xano-call-card'), null)
+})
+
+test('the rate cards refuse the wf-xano template that precedes the authored card', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  // The authored wf-xano template carries the same service-card pair and
+  // survives in the DOM once wf-xano runs, exactly as the sibling retainer
+  // fixture models it. It is not a `wf-xano-item`, so it is a second decoy
+  // the clone-source lookup has to reject on its own.
+  xano.template.setAttribute('data-service-card-state', 'Default')
+  const templateTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  templateTitle.textContent = 'Free Call'
+  xano.template.appendChild(templateTitle)
+  xano.wrapper.remove()
+  page.servicesList.prepend(xano.wrapper)
+
+  const context = makeContext({
+    page,
+    record: { rate: 135, 'retainer-rate': 0, 'retainer-enabled': false },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freelance = page.servicesList.querySelectorAll('[data-runtime-rate-card="freelance"]')
+  assert.equal(freelance.length, 1, 'the Freelance rate card must still be built')
+  const built = freelance[0]
+  assert.equal(
+    built.getAttribute('wf-xano-element'),
+    null,
+    'a rate card must not be cloned from the wf-xano template',
+  )
+  assert.equal(built.querySelector('[data-service-card-element="title"]').textContent, 'Freelance')
+})
+
+test('the owner setup CTA on a wf-xano call card is not cancelled by the direct-entry wiring', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const controller = ownerController({
+    grantId: null,
+    free: ownerFreeSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        free_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+    paid: ownerPaidSettings({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        stripe_connect_linked: false,
+        stripe_charges_enabled: false,
+        stripe_readiness_fresh: false,
+        paid_call_enabled: false,
+        bookable: false,
+      },
+      services: [],
+    }),
+  })
+  // Model a clone that the document-level scanner sees before the adapter has
+  // stamped the owner-preview state. The listener already exists when the
+  // result arrives, so only a click-time guard can keep the setup CTA alive.
+  xano.free.root.setAttribute('data-type', 'free')
+  const context = ownerContext(page, controller, { wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  // The direct-entry listener is capture-phase and preventDefaults every click,
+  // so a click on the revealed setup anchor inside the card would be cancelled
+  // before the anchor ever navigates.
+  function clickCancelledBy(card) {
+    let prevented = false
+    const event = {
+      preventDefault: () => { prevented = true },
+      stopImmediatePropagation() {},
+    }
+    for (const listener of card.listeners.click || []) listener(event)
+    return prevented
+  }
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'setup-required')
+    assert.equal(card.calendarCta.style.display, 'block')
+    assert.equal(card.calendarCta.getAttribute('href'), '/starter-dashboard')
+    assert.equal(
+      clickCancelledBy(card.root),
+      false,
+      'the owner setup CTA must stay clickable',
+    )
+    assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+  }
+})
+
 test('a late wf-xano service card receives logged-out signup wiring without changing its template', async () => {
   const page = makePage()
   const cmsCard = makeElement('div', {
@@ -4138,8 +5089,8 @@ test('2f: both call cards paint their next slot on load, not only after Book Cal
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05', 'free card painted on load')
-  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06', 'paid card painted on load')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05', 'free card painted on load')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on Mar 06', 'paid card painted on load')
 })
 
 test('2f: the chooser rows are painted from their own call type', async () => {
@@ -4152,8 +5103,8 @@ test('2f: the chooser rows are painted from their own call type', async () => {
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
-  assert.equal(hooks.chooserPaid.textContent, '09:00AM on 03/06')
+  assert.equal(hooks.chooserFree.textContent, '03:30PM on Mar 05')
+  assert.equal(hooks.chooserPaid.textContent, '09:00AM on Mar 06')
 })
 
 test('2f: the new Designer sentinels are always overwritten', async () => {
@@ -4209,7 +5160,7 @@ test('2f: no available slot writes the no-slots copy instead of leaving a sentin
 
   assert.equal(hooks.cardFree.textContent, 'No available slots')
   assert.equal(hooks.chooserFree.textContent, 'No available slots')
-  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06', 'paid is unaffected by the free result')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on Mar 06', 'paid is unaffected by the free result')
 })
 
 test('2f: an availability failure never leaves a sentinel on screen', async () => {
@@ -4228,7 +5179,7 @@ test('2f: an availability failure never leaves a sentinel on screen', async () =
   assert.equal(hooks.cardFree.textContent, 'No available slots')
   assert.equal(hooks.cardFree.getAttribute('data-next-slot-state'), 'error')
   assert.equal(hooks.cardPaid.getAttribute('data-next-slot-state'), 'painted')
-  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06', 'one failure must not cost the other type')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on Mar 06', 'one failure must not cost the other type')
 })
 
 test('2f: a profile with no canonical configuration paints nothing', async () => {
@@ -4312,7 +5263,7 @@ test('2f: an uninstallable call type gets no availability request and keeps its 
   await settle()
 
   assert.deepEqual(calls.map((c) => c.configId), ['cfg_free'], 'only the installed type is asked')
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05')
   assert.equal(
     hooks.cardPaid.textContent,
     SLOT_SENTINEL,
@@ -4336,10 +5287,10 @@ test('2f: 12/10-era sentinel remnants are overwritten as readily as the new ones
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
-  assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
-  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06')
-  assert.equal(hooks.chooserPaid.textContent, '09:00AM on 03/06', 'a bare 00:00 remnant goes too')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05')
+  assert.equal(hooks.chooserFree.textContent, '03:30PM on Mar 05')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on Mar 06')
+  assert.equal(hooks.chooserPaid.textContent, '09:00AM on Mar 06', 'a bare 00:00 remnant goes too')
 })
 
 test('the free chooser row survives: hide-free-when-paid is not in this bundle', async () => {
@@ -4694,6 +5645,9 @@ function ownerPaidSettings(overrides = {}) {
     readiness: {
       calendar_connected: true,
       availability_configured: true,
+      stripe_connect_linked: true,
+      stripe_charges_enabled: true,
+      stripe_readiness_fresh: true,
       paid_call_enabled: true,
       bookable: true,
     },
@@ -4854,12 +5808,12 @@ test('owner paint: both slot rows are painted from the owner configurations', as
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05')
   assert.equal(hooks.cardFree.getAttribute('data-next-slot-state'), 'painted')
-  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on Mar 06')
   assert.equal(hooks.cardPaid.getAttribute('data-next-slot-state'), 'painted')
-  assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
-  assert.equal(hooks.chooserPaid.textContent, '09:00AM on 03/06')
+  assert.equal(hooks.chooserFree.textContent, '03:30PM on Mar 05')
+  assert.equal(hooks.chooserPaid.textContent, '09:00AM on Mar 06')
   // The 24h production minimum lives inside the controller's own availability
   // path and slot filter, so the owner path asks through the same export.
   assert.deepEqual(
@@ -4978,7 +5932,7 @@ test('owner paint: one failing endpoint does not cost the other its paint', asyn
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05', 'free still paints')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05', 'free still paints')
   assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL, 'paid is left exactly as found')
   assert.equal(paidPrice.textContent, '999')
   assert.deepEqual(controller.calls.map((c) => c.configId), ['cfg_owner_free'])
@@ -5090,7 +6044,7 @@ test('owner paint: an inactive service is never painted', async () => {
 
   assert.equal(paidPrice.textContent, '999')
   assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05', 'free is unaffected')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05', 'free is unaffected')
 })
 
 test('owner paint: a settings grant that disagrees with the starter record is reported, not used', async () => {
@@ -5455,7 +6409,7 @@ test('owner gate: a service that names its length duration_minutes is honored', 
   const run = await runOwnerGate({ paid: ownerPaidSettings({ services: [service] }) })
 
   assert.equal(run.paidPrice.textContent, '250')
-  assert.equal(run.hooks.cardPaid.textContent, '09:00AM on 03/06')
+  assert.equal(run.hooks.cardPaid.textContent, '09:00AM on Mar 06')
 })
 
 test('owner gate: a paid service reads its environment from the payload when absent', async () => {
@@ -5491,7 +6445,7 @@ test('owner paint: a bridge that throws synchronously costs one call type, not b
   await settle()
 
   assert.equal(chooserFreePrice.textContent, '$0', 'the free paint survives the paid throw')
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05')
   assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
 })
 
@@ -5524,7 +6478,7 @@ test('owner gate: an explicit null payment_environment falls back to the payload
   })
 
   assert.equal(run.paidPrice.textContent, '250')
-  assert.equal(run.hooks.cardPaid.textContent, '09:00AM on 03/06')
+  assert.equal(run.hooks.cardPaid.textContent, '09:00AM on Mar 06')
 })
 
 test('owner gate: a missing free data_environment fails closed', async () => {
