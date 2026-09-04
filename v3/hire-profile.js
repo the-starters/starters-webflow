@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.511
+ * @release v1.59.512
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -334,7 +334,7 @@
   }
 
   /**
-   * `HH:MMAM on MM/DD`. Prefers the booking module's own exported helper so the
+   * `HH:MMAM on MMM DD`. Prefers the booking module's own exported helper so the
    * load path and the click path are the same code, and falls back to the local
    * reimplementation only for an older controller that predates the export.
    * Returns null when no formatter is reachable — which is a version-skew fault,
@@ -352,10 +352,10 @@
       const format = (freeCallBooking && freeCallBooking.formatWithTimezone) ||
           window.formatWithTimezone;
       if (typeof format !== 'function') return null;
-      const list = (format(seconds * 1000, { month: '2-digit' }) || {}).list;
+      const list = (format(seconds * 1000, { month: 'short' }) || {}).list;
       if (!list || !list.hour || !list.month) return null;
       return list.hour + ':' + list.minute + list.dayPeriod +
-          ' on ' + list.month + '/' + list.day;
+          ' on ' + list.month + ' ' + list.day;
   }
 
   /** One slot hook per surface, anchored like the price hook. */

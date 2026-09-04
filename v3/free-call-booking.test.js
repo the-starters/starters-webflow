@@ -380,6 +380,12 @@ test('Free availability uses five minutes only on the exact staging host', async
   assert.equal(loadBrowserApi('thestarters.com').minimumBookingNoticeMinutes(), 1440)
 })
 
+test('next-slot text uses an abbreviated month and two-digit day', () => {
+  const text = api.nextSlotText(Date.now() / 1000)
+  assert.match(text, /^\d{2}:\d{2}(?:AM|PM) on [A-Z][a-z]{2} \d{2}$/)
+  assert.equal(text.includes('/'), false)
+})
+
 test('the authored chooser installs without a legacy main trigger', async () => {
   const fixture = chooserFixture({ includeMain: false })
   const booking = bookingApiFixture()

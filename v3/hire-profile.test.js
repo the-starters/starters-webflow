@@ -4452,8 +4452,8 @@ test('2f: both call cards paint their next slot on load, not only after Book Cal
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05', 'free card painted on load')
-  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06', 'paid card painted on load')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05', 'free card painted on load')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on Mar 06', 'paid card painted on load')
 })
 
 test('2f: the chooser rows are painted from their own call type', async () => {
@@ -4466,8 +4466,8 @@ test('2f: the chooser rows are painted from their own call type', async () => {
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
-  assert.equal(hooks.chooserPaid.textContent, '09:00AM on 03/06')
+  assert.equal(hooks.chooserFree.textContent, '03:30PM on Mar 05')
+  assert.equal(hooks.chooserPaid.textContent, '09:00AM on Mar 06')
 })
 
 test('2f: the new Designer sentinels are always overwritten', async () => {
@@ -4523,7 +4523,7 @@ test('2f: no available slot writes the no-slots copy instead of leaving a sentin
 
   assert.equal(hooks.cardFree.textContent, 'No available slots')
   assert.equal(hooks.chooserFree.textContent, 'No available slots')
-  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06', 'paid is unaffected by the free result')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on Mar 06', 'paid is unaffected by the free result')
 })
 
 test('2f: an availability failure never leaves a sentinel on screen', async () => {
@@ -4542,7 +4542,7 @@ test('2f: an availability failure never leaves a sentinel on screen', async () =
   assert.equal(hooks.cardFree.textContent, 'No available slots')
   assert.equal(hooks.cardFree.getAttribute('data-next-slot-state'), 'error')
   assert.equal(hooks.cardPaid.getAttribute('data-next-slot-state'), 'painted')
-  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06', 'one failure must not cost the other type')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on Mar 06', 'one failure must not cost the other type')
 })
 
 test('2f: a profile with no canonical configuration paints nothing', async () => {
@@ -4626,7 +4626,7 @@ test('2f: an uninstallable call type gets no availability request and keeps its 
   await settle()
 
   assert.deepEqual(calls.map((c) => c.configId), ['cfg_free'], 'only the installed type is asked')
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05')
   assert.equal(
     hooks.cardPaid.textContent,
     SLOT_SENTINEL,
@@ -4650,10 +4650,10 @@ test('2f: 12/10-era sentinel remnants are overwritten as readily as the new ones
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
-  assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
-  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06')
-  assert.equal(hooks.chooserPaid.textContent, '09:00AM on 03/06', 'a bare 00:00 remnant goes too')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05')
+  assert.equal(hooks.chooserFree.textContent, '03:30PM on Mar 05')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on Mar 06')
+  assert.equal(hooks.chooserPaid.textContent, '09:00AM on Mar 06', 'a bare 00:00 remnant goes too')
 })
 
 test('the free chooser row survives: hide-free-when-paid is not in this bundle', async () => {
@@ -5168,12 +5168,12 @@ test('owner paint: both slot rows are painted from the owner configurations', as
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05')
   assert.equal(hooks.cardFree.getAttribute('data-next-slot-state'), 'painted')
-  assert.equal(hooks.cardPaid.textContent, '09:00AM on 03/06')
+  assert.equal(hooks.cardPaid.textContent, '09:00AM on Mar 06')
   assert.equal(hooks.cardPaid.getAttribute('data-next-slot-state'), 'painted')
-  assert.equal(hooks.chooserFree.textContent, '03:30PM on 03/05')
-  assert.equal(hooks.chooserPaid.textContent, '09:00AM on 03/06')
+  assert.equal(hooks.chooserFree.textContent, '03:30PM on Mar 05')
+  assert.equal(hooks.chooserPaid.textContent, '09:00AM on Mar 06')
   // The 24h production minimum lives inside the controller's own availability
   // path and slot filter, so the owner path asks through the same export.
   assert.deepEqual(
@@ -5292,7 +5292,7 @@ test('owner paint: one failing endpoint does not cost the other its paint', asyn
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05', 'free still paints')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05', 'free still paints')
   assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL, 'paid is left exactly as found')
   assert.equal(paidPrice.textContent, '999')
   assert.deepEqual(controller.calls.map((c) => c.configId), ['cfg_owner_free'])
@@ -5404,7 +5404,7 @@ test('owner paint: an inactive service is never painted', async () => {
 
   assert.equal(paidPrice.textContent, '999')
   assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05', 'free is unaffected')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05', 'free is unaffected')
 })
 
 test('owner paint: a settings grant that disagrees with the starter record is reported, not used', async () => {
@@ -5769,7 +5769,7 @@ test('owner gate: a service that names its length duration_minutes is honored', 
   const run = await runOwnerGate({ paid: ownerPaidSettings({ services: [service] }) })
 
   assert.equal(run.paidPrice.textContent, '250')
-  assert.equal(run.hooks.cardPaid.textContent, '09:00AM on 03/06')
+  assert.equal(run.hooks.cardPaid.textContent, '09:00AM on Mar 06')
 })
 
 test('owner gate: a paid service reads its environment from the payload when absent', async () => {
@@ -5805,7 +5805,7 @@ test('owner paint: a bridge that throws synchronously costs one call type, not b
   await settle()
 
   assert.equal(chooserFreePrice.textContent, '$0', 'the free paint survives the paid throw')
-  assert.equal(hooks.cardFree.textContent, '03:30PM on 03/05')
+  assert.equal(hooks.cardFree.textContent, '03:30PM on Mar 05')
   assert.equal(hooks.cardPaid.textContent, SLOT_SENTINEL)
 })
 
@@ -5838,7 +5838,7 @@ test('owner gate: an explicit null payment_environment falls back to the payload
   })
 
   assert.equal(run.paidPrice.textContent, '250')
-  assert.equal(run.hooks.cardPaid.textContent, '09:00AM on 03/06')
+  assert.equal(run.hooks.cardPaid.textContent, '09:00AM on Mar 06')
 })
 
 test('owner gate: a missing free data_environment fails closed', async () => {
