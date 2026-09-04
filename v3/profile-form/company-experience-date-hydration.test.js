@@ -150,7 +150,9 @@ class FakeElement {
     this.listeners = new Map()
     this.descendants = new Map()
     this.validationMessage = ''
+    this.readOnly = false
     this.reportValidityCalls = 0
+    this.lastReportValidity = null
     this.children = []
     this.parentNode = null
     this.hidden = false
@@ -161,9 +163,13 @@ class FakeElement {
   // Mirrors the constraint-validation surface the controller uses: a custom message
   // persists on the control until it is explicitly cleared.
   setCustomValidity(message) { this.validationMessage = String(message == null ? '' : message) }
+  // A readonly or disabled control is barred from constraint validation: it never
+  // reports, so `reportValidity()` resolves to true no matter what message is set.
+  get willValidate() { return !this.readOnly && this.getAttribute('disabled') === null }
   reportValidity() {
     this.reportValidityCalls += 1
-    return !this.validationMessage
+    this.lastReportValidity = this.willValidate ? !this.validationMessage : true
+    return this.lastReportValidity
   }
   setAttribute(name, value) { this.attrs[name] = String(value) }
   getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null }
@@ -187,13 +193,44 @@ class FakeElement {
   handlersFor(type) { return this.listeners.get(type) || [] }
 }
 
-function chooseNativeMonth(input, value) {
-  const min = input.getAttribute('min')
-  const max = input.getAttribute('max')
-  if ((min && value < min) || (max && value > max)) return false
-  input.value = value
-  input.dispatchEvent({ type: 'input' })
-  input.dispatchEvent({ type: 'change' })
+// Picks a month the only way a member can: open the popup, walk the year arrows, and
+// click the month button. Nothing else can write this field, so nothing else may write
+// it here either. `value` is the `YYYY-MM` the picker is expected to end up submitting.
+function chooseMonth(input, value) {
+  const picker = input._starterProfileCompanyMonthPicker
+  if (!picker || input.getAttribute('disabled') !== null) return false
+
+  const match = /^(\d{4})-(\d{2})$/.exec(String(value))
+  if (!match) return false
+
+  const targetYear = Number(match[1])
+  const monthIndex = Number(match[2]) - 1
+  if (monthIndex < 0 || monthIndex > 11) return false
+
+  const popup = picker.popup
+  const [previousYear, yearLabel, nextYear] = popup.children[0].children
+  const monthButtons = popup.children[1].children
+
+  input.dispatchEvent({ type: 'click' })
+  if (popup.hidden) return false
+
+  for (let guard = 0; guard < 500 && Number(yearLabel.textContent) !== targetYear; guard += 1) {
+    const arrow = Number(yearLabel.textContent) > targetYear ? previousYear : nextYear
+    arrow.dispatchEvent({ type: 'click' })
+  }
+  if (Number(yearLabel.textContent) !== targetYear) return false
+
+  monthButtons[monthIndex].dispatchEvent({ type: 'click' })
+  return true
+}
+
+function clearMonth(input) {
+  const picker = input._starterProfileCompanyMonthPicker
+  if (!picker || input.getAttribute('disabled') !== null) return false
+
+  input.dispatchEvent({ type: 'click' })
+  if (picker.popup.hidden) return false
+  picker.popup.children[2].children[1].dispatchEvent({ type: 'click' })
   return true
 }
 
@@ -462,10 +499,10 @@ function bootCompanyController(relativePath, { pickerReady = true } = {}) {
   async function addCompany({ companyName, startDate, endDate, currentWork = false }) {
     selectCompany({ name: companyName })
     elements.jobTitleInput.value = 'Engineer'
-    elements.startDateInput.value = startDate
-    elements.endDateInput.value = endDate
-    elements.startDateInput.dispatchEvent({ type: 'input' })
-    elements.endDateInput.dispatchEvent({ type: 'input' })
+    if (startDate) chooseMonth(elements.startDateInput, startDate)
+    else clearMonth(elements.startDateInput)
+    if (endDate) chooseMonth(elements.endDateInput, endDate)
+    else clearMonth(elements.endDateInput)
     if (elements.currentWorkCheckbox.checked !== currentWork) {
       elements.currentWorkCheckbox.checked = currentWork
       elements.currentWorkCheckbox.dispatchEvent({ type: 'change' })
@@ -510,9 +547,16 @@ for (const controllerPath of controllerPaths) {
     await app.ready()
 
     assert.equal(app.startDateInput.type, 'text')
-    assert.equal(app.startDateInput.readOnly, true)
+    assert.equal(app.startDateInput.getAttribute('aria-readonly'), 'true')
+    assert.equal(app.startDateInput.willValidate, true)
     assert.equal(app.startDateInput.getAttribute('data-input-datepicker'), null)
     assert.equal(app.startDateInput.getAttribute('aria-haspopup'), 'dialog')
+
+    let typingPrevented = 0
+    for (const type of ['beforeinput', 'paste', 'drop']) {
+      app.startDateInput.dispatchEvent({ type, preventDefault() { typingPrevented += 1 } })
+    }
+    assert.equal(typingPrevented, 3)
 
     const startPopup = app.startDateInput._starterProfileCompanyMonthPicker.popup
     const endPopup = app.endDateInput._starterProfileCompanyMonthPicker.popup
@@ -789,8 +833,8 @@ for (const controllerPath of controllerPaths) {
     await app.saveEdit()
     assert.equal(app.fetchCalls.length, requestsBeforeInvalidSave)
 
-    assert.equal(chooseNativeMonth(app.editStartDateInput, '2025-06'), true)
-    assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-12'), true)
+    assert.equal(chooseMonth(app.editStartDateInput, '2025-06'), true)
+    assert.equal(chooseMonth(app.editEndDateInput, '2025-12'), true)
     assert.equal(app.editEndDateInput.getAttribute('min'), null)
     assert.equal(app.editStartDateInput.getAttribute('max'), null)
 
@@ -815,8 +859,8 @@ for (const controllerPath of controllerPaths) {
     assert.equal(app.editStartDateInput.value, 'Jan 2024')
     assert.equal(app.editEndDateInput.value, 'Dec 2024')
 
-    assert.equal(chooseNativeMonth(app.editEndDateInput, '2023-08'), true)
-    assert.equal(chooseNativeMonth(app.editStartDateInput, '2023-05'), true)
+    assert.equal(chooseMonth(app.editEndDateInput, '2023-08'), true)
+    assert.equal(chooseMonth(app.editStartDateInput, '2023-05'), true)
 
     await app.saveEdit()
     const payload = app.lastRequestPayload()
@@ -836,8 +880,8 @@ for (const controllerPath of controllerPaths) {
       end_date: '2024-12',
     })
 
-    assert.equal(chooseNativeMonth(app.editStartDateInput, '2025-05'), true)
-    assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-09'), true)
+    assert.equal(chooseMonth(app.editStartDateInput, '2025-05'), true)
+    assert.equal(chooseMonth(app.editEndDateInput, '2025-09'), true)
 
     await app.saveEdit()
     const payload = app.lastRequestPayload()
@@ -857,7 +901,7 @@ for (const controllerPath of controllerPaths) {
       end_date: '2024-12',
     })
 
-    assert.equal(chooseNativeMonth(app.editStartDateInput, '2025-06'), true)
+    assert.equal(chooseMonth(app.editStartDateInput, '2025-06'), true)
 
     const requestsBeforeInvalidSave = app.fetchCalls.length
     await app.saveEdit()
@@ -866,13 +910,14 @@ for (const controllerPath of controllerPaths) {
     assert.match(app.editStartDateInput.validationMessage, /end month/i)
     assert.match(app.editEndDateInput.validationMessage, /end month/i)
     assert.equal(app.editEndDateInput.reportValidityCalls, 1)
+    assert.equal(app.editEndDateInput.lastReportValidity, false)
 
     // The transient `is-error` flash is finished well inside this window; the
     // message has to outlive it.
     app.clock.advance(1600)
     assert.match(app.editEndDateInput.validationMessage, /end month/i)
 
-    assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-01'), true)
+    assert.equal(chooseMonth(app.editEndDateInput, '2025-01'), true)
     assert.match(app.editStartDateInput.validationMessage, /end month/i)
     assert.match(app.editEndDateInput.validationMessage, /end month/i)
 
@@ -885,7 +930,7 @@ for (const controllerPath of controllerPaths) {
     assert.match(app.editStartDateInput.validationMessage, /end month/i)
     assert.match(app.editEndDateInput.validationMessage, /end month/i)
 
-    assert.equal(chooseNativeMonth(app.editEndDateInput, '2025-12'), true)
+    assert.equal(chooseMonth(app.editEndDateInput, '2025-12'), true)
     assert.equal(app.editStartDateInput.validationMessage, '')
     assert.equal(app.editEndDateInput.validationMessage, '')
 
@@ -907,11 +952,12 @@ for (const controllerPath of controllerPaths) {
     assert.match(app.startDateInput.validationMessage, /end month/i)
     assert.match(app.endDateInput.validationMessage, /end month/i)
     assert.equal(app.endDateInput.reportValidityCalls, 1)
+    assert.equal(app.endDateInput.lastReportValidity, false)
 
     app.clock.advance(1600)
     assert.match(app.endDateInput.validationMessage, /end month/i)
 
-    assert.equal(chooseNativeMonth(app.endDateInput, '2025-01'), true)
+    assert.equal(chooseMonth(app.endDateInput, '2025-01'), true)
     assert.match(app.startDateInput.validationMessage, /end month/i)
     assert.match(app.endDateInput.validationMessage, /end month/i)
 
@@ -924,7 +970,7 @@ for (const controllerPath of controllerPaths) {
     assert.match(app.startDateInput.validationMessage, /end month/i)
     assert.match(app.endDateInput.validationMessage, /end month/i)
 
-    assert.equal(chooseNativeMonth(app.endDateInput, '2025-12'), true)
+    assert.equal(chooseMonth(app.endDateInput, '2025-12'), true)
     assert.equal(app.startDateInput.validationMessage, '')
     assert.equal(app.endDateInput.validationMessage, '')
 
@@ -945,21 +991,21 @@ for (const controllerPath of controllerPaths) {
     dated.jobTitleInput.value = 'Founder'
 
     // Start-first invalid range, corrected by changing the end month.
-    assert.equal(chooseNativeMonth(dated.startDateInput, '2025-06'), true)
-    assert.equal(chooseNativeMonth(dated.endDateInput, '2024-12'), true)
+    assert.equal(chooseMonth(dated.startDateInput, '2025-06'), true)
+    assert.equal(chooseMonth(dated.endDateInput, '2024-12'), true)
     await dated.submitAdd()
     assert.equal(dated.mutationPayloads().length, 0)
     assert.match(dated.endDateInput.validationMessage, /end month/i)
-    assert.equal(chooseNativeMonth(dated.endDateInput, '2025-12'), true)
+    assert.equal(chooseMonth(dated.endDateInput, '2025-12'), true)
     assert.equal(dated.endDateInput.validationMessage, '')
 
     // End-first invalid range, corrected by changing the start month. Only the
     // final corrected state is sent.
-    assert.equal(chooseNativeMonth(dated.endDateInput, '2024-12'), true)
+    assert.equal(chooseMonth(dated.endDateInput, '2024-12'), true)
     await dated.submitAdd()
     assert.equal(dated.mutationPayloads().length, 0)
     assert.match(dated.startDateInput.validationMessage, /end month/i)
-    assert.equal(chooseNativeMonth(dated.startDateInput, '2024-06'), true)
+    assert.equal(chooseMonth(dated.startDateInput, '2024-06'), true)
     assert.equal(dated.startDateInput.validationMessage, '')
     await dated.submitAdd()
 
@@ -990,8 +1036,8 @@ for (const controllerPath of controllerPaths) {
     await current.ready()
     current.selectCompany(identity)
     current.jobTitleInput.value = 'Founder'
-    assert.equal(chooseNativeMonth(current.startDateInput, '2026-01'), true)
-    assert.equal(chooseNativeMonth(current.endDateInput, '2026-08'), true)
+    assert.equal(chooseMonth(current.startDateInput, '2026-01'), true)
+    assert.equal(chooseMonth(current.endDateInput, '2026-08'), true)
     current.currentWorkCheckbox.checked = true
     current.currentWorkCheckbox.dispatchEvent({ type: 'change' })
 
@@ -1054,7 +1100,7 @@ for (const controllerPath of controllerPaths) {
 
     assert.equal(app.editEndDateInput.getAttribute('disabled'), 'disabled')
     assert.equal(app.editEndDateInput.classList.contains('is-disabled'), true)
-    assert.equal(app.editEndDateInput.value, '')
+    assert.equal(app.editEndDateInput.value, 'Present')
 
     // Escape and the modal X bypass closeEditCompany, so the next role opens
     // without the 800ms reset ever running.
@@ -1107,15 +1153,13 @@ for (const controllerPath of controllerPaths) {
       end_date: 'Dec 2024',
     })
 
-    app.editStartDateInput.value = '2025-02'
-    app.editEndDateInput.value = '2026-03'
-    app.editStartDateInput.dispatchEvent({ type: 'input' })
-    app.editEndDateInput.dispatchEvent({ type: 'input' })
+    assert.equal(chooseMonth(app.editStartDateInput, '2025-02'), true)
+    assert.equal(chooseMonth(app.editEndDateInput, '2026-03'), true)
     app.markPickersReady()
     app.clock.advance(500)
 
-    assert.equal(app.editStartDateInput.value, '2025-02')
-    assert.equal(app.editEndDateInput.value, '2026-03')
+    assert.equal(app.editStartDateInput.value, 'Feb 2025')
+    assert.equal(app.editEndDateInput.value, 'Mar 2026')
   })
 
   test(`${controllerPath} keeps a native month edit while the legacy picker is still loading`, async () => {

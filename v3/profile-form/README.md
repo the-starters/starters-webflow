@@ -226,9 +226,13 @@ Both route copies of the company-experience controller
 Full Profile, Consult, and Edit Profile work-experience modals hydrate and save
 identically.
 
-The controllers convert the four existing Webflow date inputs to read-only text
-controls backed by a purpose-built month-only picker. It shows year arrows, a 3-by-4
-grid of month buttons, Today, and Clear; it has no day grid. The controllers remove the
+The controllers convert the four existing Webflow date inputs to text controls backed
+by a purpose-built month-only picker. It shows year arrows, a 3-by-4 grid of month
+buttons, Today, and Clear; it has no day grid. The picker is the only way to write a
+month: typing, pasting, and dropping text are all suppressed, and the field is marked
+`aria-readonly`. It is deliberately not a `readonly` control, because a `readonly`
+input is barred from constraint validation and could never report the inverted-range
+message described below. The controllers remove the
 legacy jQuery UI datepicker attributes and correct each label association at runtime,
 without adding a second duration field or changing the Xano schema. Xano's existing
 `start_date`, `end_date`, and `current_work` fields remain the only authority for the
@@ -250,10 +254,12 @@ blank rather than hydrating an unrelated month and year. Nothing is lost when th
 happens: the baseline/serialize pair below re-submits the original stored string for a
 date field the member never touched.
 
-`Present` is a stored sentinel for a current role, not a date. It never reaches the
-month picker and never becomes a baseline, so reopening a current role cannot turn the
-sentinel into a calendar value, and clearing "I currently work here" cannot carry
-`Present` into an end-date field the member can see.
+`Present` is a stored sentinel for a current role, not a date. The disabled end-month
+field shows it verbatim, both when "I currently work here" is ticked and when a stored
+current role is reopened, so the two paths render the same state. It is never parsed
+into a month and never becomes a baseline, so reopening a current role cannot turn the
+sentinel into a calendar value, and clearing "I currently work here" restores the
+member's own previous month rather than carrying `Present` into an editable field.
 
 Work History cards use the same strict parser for their display label. Valid ISO,
 month-only, and day-precision values render as `Mon YYYY`; for example,

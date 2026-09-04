@@ -98,15 +98,6 @@ function setStarterProfileCompanyDatepickerDate(input, value) {
         return;
     }
 
-    if (input && input.type === 'month') {
-        if (isStarterProfileCompanyPresentDate(value)) return;
-        const date = starterProfileCompanyDatepickerDate(input, value);
-        input.value = date
-            ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-            : '';
-        return;
-    }
-
     if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
     if (isStarterProfileCompanyPresentDate(value)) return;
 
@@ -250,6 +241,9 @@ function attachStarterProfileCompanyMonthPicker(input) {
         if (typeof input.focus === 'function') input.focus({ preventScroll: true });
     });
     input.addEventListener('click', openPicker);
+    ['beforeinput', 'paste', 'drop'].forEach(function (type) {
+        input.addEventListener(type, function (event) { event.preventDefault(); });
+    });
     input.addEventListener('keydown', function (event) {
         if (event.key === 'Escape') closePicker();
         if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown') {
@@ -308,7 +302,8 @@ function enableStarterProfileCompanyMonthInput(input, labelText) {
     input.removeAttribute('data-format');
     input.removeAttribute('data-input-datepicker-format');
     input.type = 'text';
-    input.readOnly = true;
+    input.readOnly = false;
+    input.setAttribute('aria-readonly', 'true');
     input.setAttribute('autocomplete', 'off');
     input.setAttribute('placeholder', 'Select a month');
     input.setAttribute('aria-haspopup', 'dialog');
@@ -747,7 +742,6 @@ function createStarterEditCompanyDraftDirtyController(options) {
             function isEditCompanyDatepickerReady(input) {
                 if (!input) return true;
                 if (input._starterProfileCompanyMonthPicker) return true;
-                if (input.type === 'month') return true;
                 if (typeof jQuery === 'undefined' || !jQuery.fn || !jQuery.fn.datepicker) return false;
 
                 return !!jQuery(input).data('datepicker');
@@ -758,7 +752,6 @@ function createStarterEditCompanyDraftDirtyController(options) {
             // `change`. Chain onto that callback so a picked date still counts as user input.
             function guardEditCompanyDateSelection(input, markChanged) {
                 if (input && input._starterProfileCompanyMonthPicker) return true;
-                if (input && input.type === 'month') return true;
                 if (!input || !isEditCompanyDatepickerReady(input)) return false;
 
                 try {
@@ -1314,11 +1307,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
                         editEndDateInput.value = rawEndDate;
                         resetDatepickerBounds(editEndDateInput);
 
-                        if (company.end_date && !company.current_work) {
-                            setDatepickerDate(editEndDateInput, company.end_date);
-                        } else {
-                            setDatepickerDate(editEndDateInput, null);
-                        }
+                        setDatepickerDate(editEndDateInput, rawEndDate);
 
                         if (company.current_work) {
                             editEndDateInput.setAttribute('disabled', 'disabled');
