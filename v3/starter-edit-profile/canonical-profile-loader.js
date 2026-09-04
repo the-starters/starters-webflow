@@ -26,8 +26,27 @@
         };
     }
 
+    function restoreCanonicalProfileFields(profile, steps, getStepIndex, findFields, applyValue) {
+        steps.forEach((step) => {
+            const stepIndex = getStepIndex(step);
+            if (!stepIndex) return;
+
+            const stepData = profile?.data?.[`step_${stepIndex}`];
+            if (!stepData) return;
+
+            const fields = findFields('[data-input-capture], [ms-code-select="input-required"]', step);
+            fields.forEach((field) => {
+                const fieldName = field.name;
+                if (!fieldName || !(fieldName in stepData)) return;
+
+                applyValue(field, stepData[fieldName]);
+            });
+        });
+    }
+
     window.StartersCanonicalProfileLoader = Object.assign(window.StartersCanonicalProfileLoader || {}, {
         canonicalRequiredMirrors,
+        restoreCanonicalProfileFields,
     });
 
     var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
@@ -200,24 +219,7 @@
             }
 
             function restoreFieldsData(profile) {
-                const steps = getSteps();
-                steps.forEach((step) => {
-                    const stepIndex = getStepIndex(step);
-                    if (!stepIndex) return;
-
-                    const stepKey = `step_${stepIndex}`;
-                    const stepData = profile?.data?.[stepKey];
-
-                    if (!stepData) return;
-
-                    const fields = qsa('[data-input-capture]', step);
-                    fields.forEach((field) => {
-                        const fieldName = field.name;
-                        if (!fieldName || !(fieldName in stepData)) return;
-
-                        setFieldValue(field, stepData[fieldName]);
-                    });
-                });
+                restoreCanonicalProfileFields(profile, getSteps(), getStepIndex, qsa, setFieldValue);
             }
 
             function getFieldValue(field) {
