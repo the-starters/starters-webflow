@@ -116,6 +116,13 @@
     ownerEl = null;
   }
 
+  // Lit is an inline display that is neither absent nor 'none'. Never throws:
+  // callers reach for elements a peer may have taken away.
+  function isLit(el) {
+    var display = el && el.style && el.style.display;
+    return !!display && display !== 'none';
+  }
+
   // --- resolving the form's Button -----------------------------------------
 
   // A <button> with no type attribute submits: that is the browser default.
@@ -226,8 +233,7 @@
   // Edge-triggered off the Spinner's live inline display, never off the batch
   // of mutation records.
   function sync(record) {
-    var display = record.spinner.style.display;
-    var shown = display !== '' && display !== 'none';
+    var shown = isLit(record.spinner);
     // The pinned Anchor lights up for every form on the page; Pending belongs
     // to the one that submitted.
     if (shown && record.spinner === anchor && owner && owner !== record) return;
@@ -306,24 +312,21 @@
   // Never throws: a broken read must not cost the page its submit.
   function loaderBusy() {
     try {
-      if (!ownerEl) return false;
-      var display = ownerEl.style && ownerEl.style.display;
-      return !!display && display !== 'none';
+      return isLit(ownerEl);
     } catch (e) {
       return false;
     }
-    return false;
   }
 
   // Reads the Anchor's live display, never the mutation batch. Writes only
   // where the value differs, and keeps at most one mirrored Spinner lit.
   function mirror() {
     var display = anchor.style.display;
-    var shown = display !== '' && display !== 'none';
+    var shown = isLit(anchor);
     var target = shown && owner ? owner.spinner : null;
     if (target === anchor) target = null;
 
-    if (mirrored && mirrored !== target && mirrored.style.display !== 'none') {
+    if (mirrored && mirrored !== target && isLit(mirrored)) {
       mirrored.style.display = 'none';
     }
     if (target) {
@@ -531,10 +534,8 @@
   function onPageshow(event) {
     if (!event || !event.persisted) return;
     try {
-      var lit = ownerEl && ownerEl.style && ownerEl.style.display;
-      if (lit && lit !== 'none') ownerEl.style.display = 'none';
-      var wasMirrored = mirrored && mirrored.style && mirrored.style.display;
-      if (wasMirrored && wasMirrored !== 'none') mirrored.style.display = 'none';
+      if (isLit(ownerEl)) ownerEl.style.display = 'none';
+      if (isLit(mirrored)) mirrored.style.display = 'none';
       clearOwner();
       mirrored = null;
       var forms = document.querySelectorAll(MS_FORM_SELECTOR);

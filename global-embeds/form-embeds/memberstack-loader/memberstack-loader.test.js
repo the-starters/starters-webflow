@@ -2645,6 +2645,33 @@ test('the marker never lands on the sign-in link next to the CTA', async () => {
   assert.equal(f.linkSpinner.style.display, '')
 })
 
+test('a mirrored spinner already put out by hand is not written to again', async () => {
+  const hero = h('div', { id: 'hero', 'data-ms-loader': '' })
+  const p = profileForm({ noLoader: true })
+  const root = body([hero, p.form])
+  // production on purpose: on staging the page-level marker is named as a stray
+  mount(root, { hostname: PRODUCTION })
+  const profile = memberstack(root, p.form)
+
+  profile.submit()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, 'block', 'the Save button mirrors the page loader')
+
+  // a peer puts the Spinner back to its authored display mid-request
+  p.submitSpinner.style.display = ''
+  await flush()
+
+  const writes = []
+  const watcher = new MutationObserver((records) => records.forEach((record) => writes.push(record)))
+  watcher.observe(p.submitSpinner, { attributes: true, attributeFilter: ['style'] })
+
+  profile.hide()
+  await flush()
+  assert.equal(p.submitSpinner.style.display, '', 'an unlit Spinner is left alone')
+  assert.deepEqual(writes, [], 'and nothing is written to put it out twice')
+  watcher.disconnect()
+})
+
 test('a loader authored after load does not start mirroring it', async () => {
   const f = signupForm({ noLoader: true })
   const stray = h('div', {})
