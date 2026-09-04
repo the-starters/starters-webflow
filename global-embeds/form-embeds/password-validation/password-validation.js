@@ -1,6 +1,6 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation
 //
-// @release v1.59.510
+// @release v1.59.511
 //
 // Password validation — configured entirely from wrapper attributes so a
 // Webflow component instance can pick its own rule set with no code changes.
@@ -19,7 +19,8 @@
 // way to vary a component per breakpoint is two instances in one form, so all
 // of them are rendered and flip together. The first wrapper that enables a
 // rule sets the config; wrappers that enable nothing configure nothing. A form
-// no wrapper configures fails open and says so on staging; it never gates.
+// no wrapper configures runs no checklist and says so on staging; on an auth
+// form the required-fields gate below still applies.
 //
 // Forms added after load: call window.startersPasswordValidation.rescan().
 // A peer handing one form's CTA back: call
@@ -32,7 +33,12 @@
 // one, and the email (input[data-ms-member="email"]) looks like an email when
 // the form has one. Turnstile is deliberately not in this gate — it resolves
 // after the click, on Memberstack's side. Fields the form does not have gate
-// nothing, so login and reset flows keep their password-only behavior.
+// nothing. With no checklist configured, an auth form (login, signup,
+// forgot-password, reset-password) that CARRIES [ms-code-submit-button] still
+// gates on the fields it has, so a login or reset form is never submitted
+// blank; an auth form without the marker is neither bridged nor gated. The
+// gate re-reads the form's fields on every run, so an input swapped in after
+// load is adjudicated as soon as rescan() or regate(form) is called.
 //
 // The live CTA is Memberstack's overlay: a `.clickable_btn` (type="button")
 // inside the [ms-code-submit-button] wrap, with the native submit hidden. A
@@ -40,8 +46,9 @@
 // enabled click on a non-submitting control dispatches a cancelable synthetic
 // submit event — what Memberstack's listener consumes — and never a native
 // submission (see triggerSubmit for why requestSubmit is unsafe). That bridge
-// is installed on every form[data-ms-form] carrying [ms-code-submit-button],
-// gated only where a wrapper configures rules — a fail-open form still submits.
+// is installed on every form[data-ms-form] carrying [ms-code-submit-button];
+// auth kinds are gated on the fields they have, and a form carrying none of
+// them still submits.
 // Disabling covers the wrap AND every overlay control inside it (native
 // `disabled` + aria-disabled), so the visible button can never stay live while
 // only the hidden one is gated. Writes data-password-validation-aria /
@@ -74,11 +81,14 @@
   var RULE_ATTR = PREFIX + 'rule';
   var ICON_ATTR = PREFIX + 'icon';
   var DEFAULT_COUNT = 8;
-  var RELEASE = 'v1.59.510';
+  var RELEASE = 'v1.59.511';
   var WIRED_FLAG = '__startersPasswordValidation';
   var BRIDGE_FLAG = '__startersPasswordBridge';
   var SUBMIT_BUTTON_SELECTOR = '[ms-code-submit-button]';
   var MS_FORM_SELECTOR = 'form[data-ms-form]';
+  // Anything that precedes a click. A natively disabled control fires none of
+  // its own, so these are bound on the form and read in the capture phase.
+  var WAKE_EVENTS = ['focusin', 'keydown', 'pointerdown', 'mousedown', 'mouseover'];
 
   // Rule predicates. Adding a rule is one entry here plus one Webflow
   // attribute — the key IS the attribute suffix and the row's rule value.
@@ -462,6 +472,33 @@
     return !!(visual && visual.classList && visual.classList.contains('w--redirected-checked'));
   }
 
+  // Memberstack's own kinds. Profile and security forms are bridged like any
+  // marked form and a checklist wrapper still gates one on its rules, but the
+  // required-fields gate below skips them: their kind is not in this list.
+  var AUTH_KINDS = ['login', 'signup', 'forgot-password', 'reset-password'];
+
+  function isAuthForm(form) {
+    var kind = form.getAttribute ? form.getAttribute('data-ms-form') : null;
+    return AUTH_KINDS.indexOf(kind) !== -1;
+  }
+
+  // The Gateable Fields recognised by their Memberstack attribute alone; a
+  // field the form does not have is null and gates nothing.
+  function gateFields(form) {
+    return {
+      password: form.querySelector('input[data-ms-member="password"]'),
+      email: form.querySelector('input[data-ms-member="email"]'),
+      terms: form.querySelector('input[data-ms-member="terms-and-condition"]')
+    };
+  }
+
+  // withRules is set by the checklist gate, whose rule predicates already
+  // adjudicate the password — a second non-empty test there would be noise.
+  function fieldsSatisfied(fields, withRules) {
+    if (!withRules && fields.password && (fields.password.value || '').trim() === '') return false;
+    return emailSatisfied(fields.email) && termsSatisfied(fields.terms);
+  }
+
   // --- overlay submit -------------------------------------------------------
   // An input[type=submit] or a button whose type is submit (or absent — the
   // browser default inside a form) already submits on click; triggering again
@@ -637,7 +674,7 @@
     var bridge = form[BRIDGE_FLAG];
 
     if (!bridge) {
-      bridge = form[BRIDGE_FLAG] = { button: null, gate: null };
+      bridge = form[BRIDGE_FLAG] = { button: null, gate: null, checklist: false, bound: [] };
       var surface = failSurface(form);
 
       form.addEventListener('submit', function (event) {
@@ -648,8 +685,9 @@
           return;
         }
         // Signup owns the house rejection copy; any other kind is watched only
-        // when a checklist wired it, which is what origin/main already did.
-        if (form.matches && form.matches(MS_FORM_SELECTOR) && (isSignup(form) || bridge.gate)) {
+        // when a checklist wired it. Read the checklist flag, not bridge.gate:
+        // the required-fields gate must not widen who gets watched.
+        if (form.matches && form.matches(MS_FORM_SELECTOR) && (isSignup(form) || bridge.checklist)) {
           armOutcome(surface);
         }
       }, true);
@@ -684,6 +722,21 @@
       };
     }
 
+    // A gated CTA's native controls receive no click, so an event-less fill (a
+    // password manager, a peer script) would leave it dead. Re-adjudicate on
+    // the way in; an already-open CTA is never re-rendered.
+    if (!bridge.woke) {
+      bridge.woke = true;
+      var wake = function () {
+        if (!bridge.gate || !bridge.button) return;
+        if (!bridge.button.root.classList.contains('disabled')) return;
+        bridge.gate();
+      };
+      for (var e = 0; e < WAKE_EVENTS.length; e++) {
+        form.addEventListener(WAKE_EVENTS[e], wake, true);
+      }
+    }
+
     // A swapped CTA subtree leaves the old button detached and its root inert.
     if (bridge.button && form.contains && !form.contains(bridge.button.root)) bridge.button = null;
     if (!bridge.button) {
@@ -695,6 +748,107 @@
     }
 
     return bridge;
+  }
+
+  // --- required-fields gate -------------------------------------------------
+
+  // Bound once per field per form, and calling THROUGH bridge.gate rather than
+  // a closed-over render: the checklist can replace the gate later, and a
+  // stale render still wired to a field would fight the live one.
+  //
+  // Autofill and password-manager paths are inconsistent: some fire `input`,
+  // some only `change`, some nothing until the field is left. Binding all
+  // three covers every variant that emits anything, and the blur re-checks the
+  // field afterwards. A purely programmatic write to input.value fires no
+  // event at all — nothing can catch that at write time, which is why the
+  // submit handler recomputes rather than trusting the last render.
+  function bindOnce(bridge, field, handler) {
+    if (!field || bridge.bound.indexOf(field) !== -1) return;
+    bridge.bound.push(field);
+    field.addEventListener('input', handler);
+    field.addEventListener('change', handler);
+    field.addEventListener('focusout', handler);
+  }
+
+  function bindGateFields(bridge, fields) {
+    var run = function () {
+      if (bridge.gate) bridge.gate();
+    };
+    bindOnce(bridge, fields.password, run);
+    bindOnce(bridge, fields.email, run);
+    // The terms listener fires at the target BEFORE Webflow's delegated
+    // document handler updates the custom checkbox's visual class, so a
+    // render in the same tick can read a stale w--redirected-checked (an
+    // uncheck would leave the CTA open). Render now for snap, then once more
+    // a tick later against the settled state.
+    bindOnce(bridge, fields.terms, function () {
+      run();
+      if (typeof setTimeout === 'function') setTimeout(run, 0);
+    });
+  }
+
+  // Fields swapped in after the gate was installed still need listeners, and a
+  // detached node is dropped so it can be re-bound if it ever comes back.
+  function refreshGateFields(form, bridge) {
+    if (!bridge.gate) return;
+    var kept = [];
+    for (var i = 0; i < bridge.bound.length; i++) {
+      if (!form.contains || form.contains(bridge.bound[i])) kept.push(bridge.bound[i]);
+    }
+    bridge.bound = kept;
+    bindGateFields(bridge, gateFields(form));
+  }
+
+  // The CTA-shape problems, reported once per bridge so a rescan or a later
+  // checklist wire never repeats them.
+  function warnOnCtaShape(form, bridge) {
+    if (bridge.warnedCta) return;
+    if (!bridge.button) {
+      // Not fatal — the Enter-key blocker still gates the form — but it means
+      // the visible CTA never greys out, which is always a wiring mistake.
+      bridge.warnedCta = true;
+      devWarn(
+        'no [ms-code-submit-button] in this form — the submit button cannot be ' +
+        'gated, though the Enter key is still blocked.',
+        form
+      );
+      return;
+    }
+    if (!bridge.button.themeEl && !bridge.button.native) {
+      // Nothing to grey and nothing to disable: the CTA will look and behave
+      // identical whether the password passes or not.
+      bridge.warnedCta = true;
+      devWarn(
+        'the [ms-code-submit-button] CTA cannot be greyed out or disabled — it ' +
+        'carries no ' + THEME_ATTR + ' and contains no button, input or link. ' +
+        'The Enter key is still blocked.',
+        bridge.button.root
+      );
+    }
+  }
+
+  // Every bridged Auth Form gates on the fields it has, checklist or not, so
+  // an empty login or reset form can never be submitted blank. A checklist
+  // gate installed first wins; a form with no Gateable Field stays fail-open.
+  function installFieldGate(form, bridge) {
+    if (bridge.gate || !isAuthForm(form)) return;
+    var fields = gateFields(form);
+    if (!fields.password && !fields.email && !fields.terms) return;
+
+    // Returns the verdict rather than stashing it, so no caller can ever
+    // adjudicate on a copy that has gone stale.
+    bridge.gate = function () {
+      adoptWhenGated(bridge);
+      // Live read: an input swapped in after install is the one adjudicated.
+      var open = fieldsSatisfied(gateFields(form), false);
+      // Live read: a CTA that only arrives on a later rescan still greys.
+      setDisabled(bridge.button, !open);
+      return open;
+    };
+    // Now that a render can release it, state already on the CTA is ours.
+    adoptWhenGated(bridge);
+    bindGateFields(bridge, fields);
+    warnOnCtaShape(form, bridge);
   }
 
   function activeRules(wrapper) {
@@ -800,46 +954,28 @@
     if (!input) {
       devWarn(
         'wrapper found, but its form has no password input ' +
-        '(input[data-ms-member="password"]) — nothing to validate.',
+        '(input[data-ms-member="password"]), so there is no checklist to ' +
+        'validate; an auth form is still gated on the fields it has.',
         wrappers[0]
       );
       return;
     }
 
-    // Nothing to enforce anywhere: fail open — no gating, no rows or icons
-    // touched. The Memberstack submit bridge still applies. A forgotten
-    // component property must never brick signup, so the only signal is a
-    // staging-side console warning.
+    // No rules to enforce: the checklist fails open, no rows or icons touched.
+    // The submit bridge and an auth form's required-fields gate still apply.
     if (!wrapper) {
       devWarn(
         'zero active rules across all ' + wrappers.length + ' wrapper' +
-        (wrappers.length === 1 ? '' : 's') + ' in this form — every ' + PREFIX +
-        '* toggle is off or invalid, so this form is not being validated.',
+        (wrappers.length === 1 ? '' : 's') + ' in this form: every ' + PREFIX +
+        '* toggle is off or invalid, so this form\'s checklist is not being ' +
+        'validated; an auth form is still gated on the fields it has.',
         wrappers[0]
       );
       return;
     }
 
     var bridge = ensureBridge(form);
-    if (!bridge.button) {
-      // Not fatal — the Enter-key blocker still gates the form — but it means
-      // the visible CTA never greys out, which is always a wiring mistake.
-      devWarn(
-        'no [ms-code-submit-button] in this form — the submit button cannot be ' +
-        'gated, though the Enter key is still blocked.',
-        form
-      );
-    }
-    if (bridge.button && !bridge.button.themeEl && !bridge.button.native) {
-      // Nothing to grey and nothing to disable: the CTA will look and behave
-      // identical whether the password passes or not.
-      devWarn(
-        'the [ms-code-submit-button] CTA cannot be greyed out or disabled — it ' +
-        'carries no ' + THEME_ATTR + ' and contains no button, input or link. ' +
-        'The Enter key is still blocked.',
-        bridge.button.root
-      );
-    }
+    warnOnCtaShape(form, bridge);
 
     // One entry per active rule; its icon pairs are collected from EVERY
     // wrapper in the form, so a second (responsive) instance flips in step
@@ -854,14 +990,16 @@
       normalize(wrappers[w], active, rules);
     }
 
-    var emailInput = form.querySelector('input[data-ms-member="email"]');
-    var termsInput = form.querySelector('input[data-ms-member="terms-and-condition"]');
+    var fields = gateFields(form);
 
     // Returns the verdict rather than stashing it, so no caller can ever
     // adjudicate on a copy that has gone stale.
     function render() {
       adoptWhenGated(bridge);
-      var value = input.value || '';
+      // Live read: a swapped input is the one adjudicated. The captured one is
+      // the fallback for the tick where the live one is momentarily detached.
+      var live = gateFields(form);
+      var value = ((live.password || input).value) || '';
       var allPass = true;
 
       for (var i = 0; i < rules.length; i++) {
@@ -888,39 +1026,18 @@
       // The CTA opens only when the whole form is submittable — password
       // rules, plus terms and a plausible email where the form has them. The
       // checklist above still reads from the password alone.
-      var gate = allPass && emailSatisfied(emailInput) && termsSatisfied(termsInput);
+      var gate = allPass && fieldsSatisfied(live, true);
       // Live read: a CTA that only arrives on a later rescan still greys.
       setDisabled(bridge.button, !gate);
       return gate;
     }
+    // Replaces any gate the marker sweep installed; the fields it bound call
+    // through bridge.gate, so they land here instead of on a second render.
     bridge.gate = render;
+    bridge.checklist = true;
     // Now that a render can release it, state already on the CTA is ours.
     adoptWhenGated(bridge);
-
-    // Autofill and password-manager paths are inconsistent: some fire `input`,
-    // some only `change`, some nothing until the field is left. Binding all
-    // three covers every variant that emits anything, and the blur re-checks
-    // the field afterwards. A purely programmatic write to input.value fires
-    // no event at all — nothing can catch that at write time, which is why the
-    // submit handler recomputes rather than trusting the last render. The
-    // gate's other fields recompute on the same three events.
-    function bindField(field, handler) {
-      if (!field) return;
-      field.addEventListener('input', handler);
-      field.addEventListener('change', handler);
-      field.addEventListener('focusout', handler);
-    }
-    bindField(input, render);
-    bindField(emailInput, render);
-    // The terms listener fires at the target BEFORE Webflow's delegated
-    // document handler updates the custom checkbox's visual class, so a
-    // render in the same tick can read a stale w--redirected-checked (an
-    // uncheck would leave the CTA open). Render now for snap, then once more
-    // a tick later against the settled state.
-    bindField(termsInput, function () {
-      render();
-      if (typeof setTimeout === 'function') setTimeout(render, 0);
-    });
+    bindGateFields(bridge, fields);
 
     // First paint: states every active rule, met or not.
     render();
@@ -1039,6 +1156,8 @@
       var msForm = msForms[m];
       if (!msForm[BRIDGE_FLAG] && !msForm.querySelector(SUBMIT_BUTTON_SELECTOR)) continue;
       var bridged = ensureBridge(msForm);
+      installFieldGate(msForm, bridged);
+      refreshGateFields(msForm, bridged);
       adoptWhenGated(bridged);
       // A CTA that arrived after wiring greys now, not on the first keystroke.
       if (bridged.gate) bridged.gate();
@@ -1052,6 +1171,10 @@
     if (!bridge) return false;
     // The CTA may have been swapped while the peer held it: gate the live root.
     ensureBridge(form);
+    // Fields that arrived after init (a step flow) get their gate here.
+    installFieldGate(form, bridge);
+    refreshGateFields(form, bridge);
+    adoptWhenGated(bridge);
     if (bridge.gate) bridge.gate();
     return true;
   }
