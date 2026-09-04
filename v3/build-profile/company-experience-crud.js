@@ -114,6 +114,7 @@ function attachStarterProfileCompanyMonthPicker(input) {
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   let visibleYear = new Date().getFullYear();
   let minimumDate = null;
+  let minimumRefreshTimer = null;
   let open = false;
 
   if (!document.getElementById('starter-profile-company-month-picker-style')) {
@@ -189,7 +190,8 @@ function attachStarterProfileCompanyMonthPicker(input) {
   }
 
   function refreshMinimum() {
-    if (typeof input._starterProfileCompanyMinimumResolver !== 'function') return;
+    if (typeof input._starterProfileCompanyMinimumResolver !== 'function') return false;
+    const previousMinimum = minimumDate ? minimumDate.getTime() : null;
     const resolvedMinimum = input._starterProfileCompanyMinimumResolver();
     const resolvedDate = resolvedMinimum instanceof Date
       ? resolvedMinimum
@@ -197,6 +199,7 @@ function attachStarterProfileCompanyMonthPicker(input) {
     minimumDate = resolvedDate
       ? new Date(resolvedDate.getFullYear(), resolvedDate.getMonth(), 1)
       : null;
+    return previousMinimum !== (minimumDate ? minimumDate.getTime() : null);
   }
 
   function isBeforeMinimum(candidate) {
@@ -244,6 +247,13 @@ function attachStarterProfileCompanyMonthPicker(input) {
     popup.hidden = false;
     input.setAttribute('aria-expanded', 'true');
     open = true;
+    if (!minimumRefreshTimer) {
+      minimumRefreshTimer = setInterval(function () {
+        if (!open || !refreshMinimum()) return;
+        if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+        render();
+      }, 100);
+    }
     positionPicker();
     const selectedButton = monthButtons.find(function (entry) {
       return !entry.button.disabled && selected && selected.getFullYear() === visibleYear && selected.getMonth() === entry.monthIndex;
@@ -257,6 +267,10 @@ function attachStarterProfileCompanyMonthPicker(input) {
     popup.hidden = true;
     input.setAttribute('aria-expanded', 'false');
     open = false;
+    if (minimumRefreshTimer) {
+      clearInterval(minimumRefreshTimer);
+      minimumRefreshTimer = null;
+    }
   }
 
   previousYear.addEventListener('click', function () {
