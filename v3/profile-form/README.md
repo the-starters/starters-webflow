@@ -232,7 +232,11 @@ buttons, Today, and Clear; it has no day grid. The picker is the only way to wri
 month: typing, pasting, and dropping text are all suppressed, and the field is marked
 `aria-readonly`. It is deliberately not a `readonly` control, because a `readonly`
 input is barred from constraint validation and could never report the inverted-range
-message described below. The controllers remove the
+message described below. The field carries `role="combobox"` so that the popup state
+it already publishes is announced: `aria-expanded` is not a supported state of the
+implicit `textbox` role, while `combobox` supports `aria-expanded`, `aria-haspopup`,
+`aria-controls`, and `aria-readonly`, which are exactly the four properties the
+control sets. The controllers remove the
 legacy jQuery UI datepicker attributes and correct each label association at runtime,
 without adding a second duration field or changing the Xano schema. Xano's existing
 `start_date`, `end_date`, and `current_work` fields remain the only authority for the

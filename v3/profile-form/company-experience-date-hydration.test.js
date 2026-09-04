@@ -551,6 +551,8 @@ for (const controllerPath of controllerPaths) {
     assert.equal(app.startDateInput.willValidate, true)
     assert.equal(app.startDateInput.getAttribute('data-input-datepicker'), null)
     assert.equal(app.startDateInput.getAttribute('aria-haspopup'), 'dialog')
+    assert.equal(app.startDateInput.getAttribute('role'), 'combobox')
+    assert.equal(app.startDateInput.getAttribute('aria-expanded'), 'false')
 
     let typingPrevented = 0
     for (const type of ['beforeinput', 'paste', 'drop']) {
@@ -560,8 +562,10 @@ for (const controllerPath of controllerPaths) {
 
     const startPopup = app.startDateInput._starterProfileCompanyMonthPicker.popup
     const endPopup = app.endDateInput._starterProfileCompanyMonthPicker.popup
+    assert.equal(app.startDateInput.getAttribute('aria-controls'), startPopup.id)
     app.startDateInput.dispatchEvent({ type: 'click' })
     assert.equal(startPopup.hidden, false)
+    assert.equal(app.startDateInput.getAttribute('aria-expanded'), 'true')
     assert.equal(startPopup.getAttribute('role'), 'dialog')
     assert.equal(startPopup.children[1].children.length, 12)
     assert.equal(startPopup.children[1].children[0].focused, true)
@@ -573,6 +577,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(app.startDateInput.value, `Sep ${currentYear}`)
     assert.equal(app.endDateInput.value, `Oct ${currentYear}`)
     assert.equal(startPopup.hidden, true)
+    assert.equal(app.startDateInput.getAttribute('aria-expanded'), 'false')
 
     app.selectCompany({ name: 'Acme', domain: 'acme.example', entityId: 10, source: 'platform' })
     app.jobTitleInput.value = 'Engineer'
@@ -621,6 +626,7 @@ for (const controllerPath of controllerPaths) {
     assert.equal(escapePrevented, true)
     assert.equal(escapeStopped, true)
     assert.equal(popup.hidden, true)
+    assert.equal(app.editStartDateInput.getAttribute('aria-expanded'), 'false')
     assert.equal(app.editStartDateInput.focused, true)
   })
 

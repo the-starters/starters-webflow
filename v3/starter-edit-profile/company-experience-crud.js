@@ -306,6 +306,7 @@ function enableStarterProfileCompanyMonthInput(input, labelText) {
     input.setAttribute('aria-readonly', 'true');
     input.setAttribute('autocomplete', 'off');
     input.setAttribute('placeholder', 'Select a month');
+    input.setAttribute('role', 'combobox');
     input.setAttribute('aria-haspopup', 'dialog');
     input.setAttribute('aria-expanded', 'false');
     input.setAttribute('aria-label', labelText);
