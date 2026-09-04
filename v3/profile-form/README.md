@@ -95,18 +95,21 @@ round-trips as the zero compatibility value instead of being read back as an aut
 required or applicable Hourly Rate still rejects zero and every other value this contract refuses. Service prices and names live in hidden capture inputs, where
 focus and native constraint validation paint nothing, so their failures name themselves in the
 authored feedback surface instead: the Edit Profile step opens its authored error modal and Build
-Profile writes the same message into the `[build-profile-error]` panel it already reveals. That panel
-is authored markup, so only an explicit `[build-profile-error-message]` hook or a first `p`/`div` that
-holds no elements of its own is ever written through; a wrapper carrying an icon beside the copy is
-left untouched and the panel is revealed exactly as authored, with the failing control's own native
-validation still reporting where it can. Both
+Profile writes the same message into the `[build-profile-error]` panel it already reveals. Both are
+authored markup, so each writes through only an explicit hook — `[build-profile-error-message]` in the
+panel, `[data-profile-feedback-message]` in the modal — or, failing that, a first plain leaf that holds
+no elements of its own (`p` or `div` in the panel, `p` in the modal); a wrapper carrying an icon beside
+the copy is left untouched and the surface is revealed exactly as authored, with the failing control's
+own native validation still reporting where it can. Both
 surfaces are shared, so both memoize their authored copy and restore it at the single boundary every
 reveal goes through: only the reveal that carries a message of its own replaces it. A reported price
 failure, and any message it left behind, is therefore cleared before the next attempt, so a corrected
 whole-dollar value saves without a page reload and no later failure — a rejected save, an auth
 failure — inherits the previous cause. A canonical rate stored before these ranges narrowed is member
-data neither page repairs: it hydrates unchanged and blocks every save before any Xano request until
-the member supplies a whole-dollar replacement of their own.
+data neither page repairs: it hydrates unchanged and, wherever that price applies, blocks every save
+before any Xano request until the member supplies a whole-dollar replacement of their own. Behind a
+collapsed section, or on a Consult profile that authors none of these controls, it cannot block — the
+compatibility rules above decide what is submitted instead.
 
 Clearing a Custom Service price is the only remove gesture these forms author, and both writers keep
 it: an empty price empties that slot — the service is dropped rather than persisted with a blank or

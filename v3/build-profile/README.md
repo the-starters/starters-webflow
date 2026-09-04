@@ -196,9 +196,7 @@ Consult: hidden hydrated radio/rate values always submit `retainer: false` and
 `retainer_rate: 0`. The hidden hourly rate is inapplicable on Consult in the same
 way: an in-contract value is persisted, and a malformed, unsafe, or out-of-range
 one submits `hourly_rate: 0` rather than blocking. Full Profile continues to
-validate an enabled retainer and its required hourly rate.
-It
-enforces the
+validate an enabled retainer and its required hourly rate. It enforces the
 [whole-dollar price contract](../profile-form/README.md#whole-dollar-price-contract)
 on the hourly, retainer, paid-call, and service prices before it builds the
 request, instead of rounding a parsed number, and reveals the authored error
