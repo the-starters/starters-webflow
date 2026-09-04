@@ -1,14 +1,17 @@
 // Memberstack loader: dresses a Memberstack auth form's Button as busy and
 // disabled while Memberstack shows its own spinner, and on hide restores it and
 // hands it back to password-validation, whose verdict may have moved meanwhile.
-// Load password-validation first in the same embed: it binds its capture
-// listener at its own init, while this script only looks for it at hide time.
+// Load password-validation first in the same embed: both scripts bind
+// capture-phase submit listeners on the same form at init and same-phase
+// listeners run in registration order, so loading it first lets its gate
+// adjudicate a submit before this script's refusal does.
 // Pin it at v1.59.504 or newer: the hand-back runs against any release that
 // exports rescan, but an older one has no ownership marks and undoes the gate
 // it is handed. Pin it at v1.59.510 or newer for the one-form regate() path,
 // which spares that script's page-level staging warnings. Neither pin can be
-// read off the page: releases before v1.59.504 expose no release marker at all,
-// and v1.59.504 and v1.59.505 report themselves as v1.59.502.
+// read off the page: releases before v1.59.504 expose no release marker at all
+// (staging names one when it sees it), and v1.59.504 and v1.59.505 report
+// themselves as v1.59.502.
 //
 // @release v1.59.510
 //
@@ -44,12 +47,13 @@
 // [data-ms-loader] at that moment — so only one Memberstack request may be open
 // per page. The refusal is keyed to the one request this script witnessed: while
 // the element it lit or routed is still lit, every submit is refused, its own
-// form's included (staging says so). A marker something else lit blocks nothing,
-// and a back-button restore clears the whole thing. A Spinner-less form's
-// overlay is not tracked and takes no part in that rule: its own hide lands on
-// whichever Spinner holds the marker by then, leaving Memberstack's
-// [data-ms-modal-loader] overlay on screen. Ticket 07, which gives those forms
-// a Button, is the fix.
+// form's included (staging says so). A marker something else lit refuses no
+// other form, though a form whose own Spinner is the pinned marker still reads
+// that light as its own request. A back-button restore clears the whole thing,
+// Memberstack's leftover overlay included. A Spinner-less form's overlay is not
+// tracked and takes no part in that rule: its own hide lands on whichever
+// Spinner holds the marker by then, leaving Memberstack's [data-ms-modal-loader]
+// overlay on screen. Ticket 07, which gives those forms a Button, is the fix.
 //
 // A success redirect navigates without hiding the loader, so Pending is meant
 // to outlive the page: there is no timeout and no fail-open timer.
@@ -65,7 +69,8 @@
 // On staging (webflow.io, localhost, the dev tunnel, or window.STARTERS_DEBUG
 // === true) the script warns once per auth form that has no Button Spinner —
 // naming the form, the cause and what lights instead — once per page about a
-// duplicated or stray [data-ms-loader], and once per refused submit.
+// duplicated or stray [data-ms-loader], once per page about a
+// password-validation too old to hand back to, and once per refused submit.
 // Production is silent.
 
 (function () {
@@ -413,6 +418,7 @@
 
   var warnedManyLoaders = false;
   var warnedStrayLoader = false;
+  var warnedOldPv = false;
 
   function isDevHost() {
     try {
@@ -449,12 +455,22 @@
     return out;
   }
 
+  // Every Memberstack form init has already wired, in document order.
+  function wiredRecords() {
+    var forms = document.querySelectorAll(MS_FORM_SELECTOR);
+    var out = [];
+    for (var i = 0; i < forms.length; i++) {
+      if (forms[i][WIRED_FLAG]) out.push(forms[i][WIRED_FLAG]);
+    }
+    return out;
+  }
+
   // Each condition speaks at most once per page, so a rescan never repeats it.
   // Never throws: a broken diagnostic must not cost the page its wiring.
   function diagnose() {
     if (!isDevHost()) return;
     try {
-      var forms = document.querySelectorAll(MS_FORM_SELECTOR);
+      var records = wiredRecords();
       var marked = document.querySelectorAll(LOADER_SELECTOR);
 
       // A marker-less auth form is served fine by MOVE mode; only one with no
@@ -463,9 +479,9 @@
       var fallback = anchor
         ? 'the pinned ' + LOADER_SELECTOR + ' lights instead'
         : 'Memberstack shows its overlay instead';
-      for (var i = 0; i < forms.length; i++) {
-        var record = forms[i][WIRED_FLAG];
-        if (!record || !record.isAuth || record.spinner) continue;
+      for (var i = 0; i < records.length; i++) {
+        var record = records[i];
+        if (!record.isAuth || record.spinner) continue;
         if (record.warnedNoSpinner) continue;
         record.warnedNoSpinner = true;
         devWarn('auth form ' + describe(record.form) + ' has no Button Spinner (' +
@@ -485,6 +501,15 @@
           devWarn(LOADER_SELECTOR + ' outside any Memberstack form: ' + describe(marked[j]));
           break;
         }
+      }
+
+      // No release marker at all means older than v1.59.504, which has no
+      // ownership marks and undoes the gate this script hands it back.
+      var pv = window.startersPasswordValidation;
+      if (!warnedOldPv && pv && typeof pv.rescan === 'function' && !pv.release) {
+        warnedOldPv = true;
+        devWarn('password-validation on this page is older than v1.59.504: the ' +
+          'hand-back will undo its own gate; pin it at v1.59.504 or newer');
       }
     } catch (e) {
       /* no-op */
@@ -558,10 +583,9 @@
       // Memberstack's login success path redirects without hiding this.
       var overlay = document.querySelector('[data-ms-modal-loader]');
       if (overlay && typeof overlay.remove === 'function') overlay.remove();
-      var forms = document.querySelectorAll(MS_FORM_SELECTOR);
-      for (var i = 0; i < forms.length; i++) {
-        var record = forms[i][WIRED_FLAG];
-        if (record && record.pending) leavePending(record);
+      var records = wiredRecords();
+      for (var i = 0; i < records.length; i++) {
+        if (records[i].pending) leavePending(records[i]);
       }
     } catch (e) {
       /* no-op */

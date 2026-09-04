@@ -747,6 +747,9 @@ const body = (children) => h('body', {}, children)
 /** every element currently carrying the Memberstack loader marker */
 const loaders = (root) => root.querySelectorAll('[data-ms-loader]')
 
+/** the page-level marker a hero section authors, which Memberstack pins */
+const heroLoader = () => h('div', { id: 'hero', 'data-ms-loader': '' })
+
 /** every attribute this component may write, read off one element */
 const marksOf = (el) => ({
   theme: el.getAttribute('data-button-theme'),
@@ -2541,7 +2544,7 @@ test('a spinner taken off the page mid-request releases the page', async () => {
 })
 
 test('a peer putting out the mirrored spinner does not open the page', async () => {
-  const hero = h('div', { id: 'hero', 'data-ms-loader': '' })
+  const hero = heroLoader()
   const a = signupForm({ noLoader: true })
   const b = profileForm({ noLoader: true })
   b.form.setAttribute('id', 'save')
@@ -2577,7 +2580,7 @@ test('a peer putting out the mirrored spinner does not open the page', async () 
 })
 
 test('a submit another script cancels never holds the page', async () => {
-  const hero = h('div', { id: 'hero', 'data-ms-loader': '' })
+  const hero = heroLoader()
   const a = signupForm({ noLoader: true })
   const b = profileForm({ noLoader: true })
   const root = body([hero, a.form, b.form])
@@ -2657,7 +2660,7 @@ test('a password-validation hand-back that throws still restores every button', 
 test('a page-level loader lit again after its request ended blocks nothing', async () => {
   const l = loginForm()
   const s = signupForm({ noLoader: true })
-  const hero = h('div', { id: 'hero', 'data-ms-loader': '' })
+  const hero = heroLoader()
   const root = body([hero, l.form, s.form])
   // production on purpose: on staging the Spinner-less login form is named
   const app = mount(root, { hostname: PRODUCTION })
@@ -2788,7 +2791,7 @@ test('the marker never lands on the sign-in link next to the CTA', async () => {
 })
 
 test('a mirrored spinner already put out by hand is not written to again', async () => {
-  const hero = h('div', { id: 'hero', 'data-ms-loader': '' })
+  const hero = heroLoader()
   const p = profileForm({ noLoader: true })
   const root = body([hero, p.form])
   // production on purpose: on staging the page-level marker is named as a stray
@@ -3172,6 +3175,38 @@ test('loading the script twice on staging still warns once', async () => {
   const app = mount(noSpinnerPage().root, { hostname: STAGING, loadTwice: true })
 
   assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+})
+
+/** a page carrying password-validation, with the loader started after it */
+function withPv(pv, hostname) {
+  const f = signupForm({ noLoader: true })
+  const app = mount(body([f.form]), { hostname, readyState: 'loading' })
+  if (pv) app.window.startersPasswordValidation = pv
+  app.fireReady()
+  return app
+}
+
+const OLD_PV = 'older than v1.59.504'
+const oldPvWarnings = (app) => app.warnings.filter((line) => line.includes(OLD_PV)).length
+
+test('a password-validation too old to hand back to is named once', () => {
+  const app = withPv({ rescan() {} }, STAGING)
+
+  assert.equal(oldPvWarnings(app), 1, app.warnings.join(' | '))
+  app.window.startersMemberstackLoader.rescan()
+  app.window.startersMemberstackLoader.rescan()
+  assert.equal(oldPvWarnings(app), 1, 'and never again on a rescan')
+})
+
+test('a password-validation that reports its release is left alone', () => {
+  const named = withPv({ rescan() {}, release: 'v1.59.502' }, STAGING)
+  assert.equal(oldPvWarnings(named), 0, named.warnings.join(' | '))
+
+  const absent = withPv(null, STAGING)
+  assert.equal(oldPvWarnings(absent), 0, absent.warnings.join(' | '))
+
+  const live = withPv({ rescan() {} }, PRODUCTION)
+  assert.equal(live.warnings.length, 0, 'and production says nothing at all')
 })
 
 test('a diagnostics failure never breaks the button wiring', async () => {
