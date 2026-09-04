@@ -1,6 +1,6 @@
 # 🧭 Starter Profile Reliability Progress Checklist
 
-Last updated: 2026-09-03
+Last updated: 2026-09-04
 
 This checklist tracks release-safe implementation evidence for the
 `/starter-edit-profile` reliability workflow. The workspace operator checklist
@@ -27,8 +27,8 @@ in [README.md](README.md) and in the root
 - [x] Require `saved: true` and a Boolean `projection_pending`, show success after the
       canonical save even when public projection is pending or reports a later non-2xx
       failure, and fail closed when a 2xx response omits either confirmation.
-- [x] Hydrate supported stored work-experience dates into native month-and-year controls,
-      keep the `Present` sentinel out of the end-month control, and reject inverted
+- [x] Hydrate supported stored work-experience dates into the month-only picker, keep the
+      `Present` sentinel out of the parsed month and the baseline, and reject inverted
       non-current ranges while allowing a same-month tenure. Contract:
       [Company experience date hydration](../profile-form/README.md#company-experience-date-hydration).
 - [x] Re-serialize an untouched work-experience date as its original canonical string,
@@ -71,7 +71,7 @@ in [README.md](README.md) and in the root
       unchanged, and a required blank Hourly Rate issues no request at all.
 - [x] Both route copies of the company controller hydrate every supported canonical and
       legacy shape into the right month, refuse invalid values, keep `Present` out of the
-      control and baseline, preserve untouched canonical date strings, submit changed
+      parsed month and baseline, preserve untouched canonical date strings, submit changed
       months as `YYYY-MM`, and enforce the shared range contract across consecutive add
       and edit operations.
 - [x] Portfolio update submissions use the instant-live copy until close, while
@@ -117,11 +117,11 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
       `projection_pending`; verify pending and complete projection states show profile
       success, including the documented canonical-save response with non-2xx status,
       and verify a 2xx response without the full contract fails closed.
-- [ ] Retest the published Work Experience flow: the four controls use native month-and-year
-      entry with correct labels; canonical, day-precision, and numeric legacy records reopen
-      on the right month; same-month tenures save; inverted ranges fail; a current role has
-      no editable end month; and saving an unrelated field leaves both stored dates unchanged
-      in Xano.
+- [ ] Retest the published Work Experience flow: the four controls open the month-only
+      picker by mouse and by keyboard with correct labels; canonical, day-precision, and
+      numeric legacy records reopen on the right month; same-month tenures save; inverted
+      ranges fail; a current role has no editable end month; and saving an unrelated field
+      leaves both stored dates unchanged in Xano.
 - [ ] Retest an existing Work Highlight update in production against the
       [authoritative success-copy contract](README.md#in-place-loader-replacements),
       confirm the edit is live immediately, and confirm the shared generic copy
