@@ -1908,8 +1908,31 @@
       }
   }
 
-  function setupMessageFor(type, settings) {
+  /**
+   * Normalize the owner call-settings readiness payload to strict booleans.
+   *
+   * free-call-settings.js and paid-call-settings.js own the same payload and
+   * read every flag with `=== true`, as does the `bookable` gate above. Reading
+   * the same keys by truthiness here would let a non-boolean value (`"false"`)
+   * be read as NOT ready by the starter dashboard and as ready by the profile
+   * card, so the owner is told to fix a step the dashboard still considers
+   * outstanding. One normalizer keeps every reader on the same answer.
+   */
+  function ownerReadinessOf(settings) {
       const readiness = settings && settings.readiness ? settings.readiness : {};
+      return {
+          calendar_connected: readiness.calendar_connected === true,
+          availability_configured: readiness.availability_configured === true,
+          stripe_connect_linked: readiness.stripe_connect_linked === true,
+          stripe_charges_enabled: readiness.stripe_charges_enabled === true,
+          stripe_readiness_fresh: readiness.stripe_readiness_fresh === true,
+          free_call_enabled: readiness.free_call_enabled === true,
+          paid_call_enabled: readiness.paid_call_enabled === true,
+      };
+  }
+
+  function setupMessageFor(type, settings) {
+      const readiness = ownerReadinessOf(settings);
       if (!readiness.calendar_connected) return 'Connect your calendar to offer calls.';
       if (!readiness.availability_configured) return 'Add your availability to offer calls.';
       if (type === 'paid') {
@@ -1941,7 +1964,7 @@
   }
 
   function configureOwnerSetupActions(card, type, settings) {
-      const readiness = settings && settings.readiness ? settings.readiness : {};
+      const readiness = ownerReadinessOf(settings);
       const message = setupMessageFor(type, settings);
       qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (node) {
           node.textContent = message;
