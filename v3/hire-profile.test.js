@@ -3706,6 +3706,53 @@ test('the legacy owner reveal stands down from the wf-xano card it now shares at
   assert.equal(cmsCard.style.display, 'block')
 })
 
+test('the rate cards clone the authored card even when a wf-xano clone precedes it in the list', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  // Designer order is the one fact that decides this: the adapters stamp the
+  // same `data-service-card-state="Default"` the rate-card template lookup
+  // keys on, so a wrapper placed ahead of the authored card wins the lookup.
+  xano.wrapper.remove()
+  page.servicesList.prepend(xano.wrapper)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+
+  let resolveRecord
+  const recordReady = new Promise((resolve) => { resolveRecord = resolve })
+  const controller = ownerController({ grantId: null })
+  controller.authenticatedRequest = () => new Promise(() => {})
+  const context = ownerContext(page, controller, {
+    wfXano: wfx.api,
+    record: { rate: 135, 'retainer-rate': 0, 'retainer-enabled': false },
+  })
+  // Holding the search record back guarantees the adapter stamps first, which
+  // is the ordering production reaches anyway (memberReady vs. an Algolia load).
+  context.WfAlgolia = { getObject: () => recordReady }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Default')
+  assert.equal(xano.free.tooltip.style.display, 'block')
+
+  resolveRecord({ rate: 135, 'retainer-rate': 0, 'retainer-enabled': false })
+  await settle()
+
+  const freelance = page.servicesList.querySelectorAll('[data-runtime-rate-card="freelance"]')
+  assert.equal(freelance.length, 1, 'the Freelance rate card must still be built')
+  const built = freelance[0]
+  assert.equal(built.querySelector('[data-service-card-element="title"]').textContent, 'Freelance')
+  assert.equal(
+    built.querySelectorAll('[data-call-offer-tooltip]').length,
+    0,
+    'a rate card must not carry the owner call-setup tooltip',
+  )
+  assert.equal(built.getAttribute('wf-xano-item'), null)
+  assert.equal(built.getAttribute('data-wf-xano-id'), null)
+  assert.equal(built.getAttribute('data-xano-call-card'), null)
+})
+
 test('a late wf-xano service card receives logged-out signup wiring without changing its template', async () => {
   const page = makePage()
   const cmsCard = makeElement('div', {
