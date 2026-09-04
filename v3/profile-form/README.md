@@ -13,7 +13,9 @@ live identities and candidate identities, plus the exact inverse transformation 
 each captured live body.
 
 Five candidates no longer reconstruct to their published bodies. `canonical-profile-loader.js`
-carries company logo and stable client identity hydration plus the
+carries company logo and stable client identity hydration, the
+[required-mirror hydration contract](../starter-edit-profile/README.md#canonical-required-mirror-hydration),
+and the
 [browser-native unsaved-change prompt request](../starter-edit-profile/README.md#unsaved-change-warning),
 `draft-state.js` carries the member-bound hydration fix,
 `submit-writer.js` carries the behavior changes owned by the
