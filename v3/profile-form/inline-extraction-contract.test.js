@@ -92,7 +92,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({ 4: '  ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/starter-edit-profile/canonical-profile-loader.js': Object.freeze({
-    characters: 23574, sha256: 'f5ed797903dcf7dcb9c7ee79017a8224c67f5de588368a9f5c300e8e9dcdb6f3',
+    characters: 25233, sha256: '0987ddd56267c76c39fcb9a7b06dd17d50df6d69958ae69dcc2af37d091ff661',
     guardKey: 'canonicalProfileLoader',
     liveCaptureAsset: 'v3/profile-form/edit-canonical-profile-loader-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
@@ -1305,9 +1305,27 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
   const firstName = new Element('input')
   firstName.name = 'first-name'
   firstName.value = ''
+  const requiredMirrors = [
+    ['function-required', 'category-id'],
+    ['roles-required', 'role-id'],
+    ['subcategories-required', 'subcategory-id'],
+  ].map(([name, expected]) => {
+    const field = new Element('input')
+    field.name = name
+    field.value = ''
+    field.required = true
+    field.expected = expected
+    field.getAttribute = (attribute) => attribute === 'ms-code-select' ? 'input-required' : null
+    return field
+  })
   const step = new Element('div')
   step.getAttribute = (name) => name === 'data-index' ? '1' : null
-  step.querySelectorAll = (selector) => selector === '[data-input-capture]' ? [firstName] : []
+  step.querySelectorAll = (selector) => {
+    if (selector === '[data-input-capture], [ms-code-select="input-required"]') {
+      return [firstName, ...requiredMirrors]
+    }
+    return []
+  }
   const document = createDocument({
     '#country': country, '#state': state, '#city': city,
     '[data-form="step"]': [step],
@@ -1328,6 +1346,8 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
           return {
             Profile_Type: 'full', Profile_Type_ID: 'full-id', Updated_On: 123,
             First_Name: 'Ada', Last_Name: 'Lovelace', Email: 'ada@example.com',
+            Category_ID: 'category-id', Roles_IDs: ['role-id'],
+            Subcategories_IDs: ['subcategory-id'],
             Country: 'United States', State_Province: 'California', City: 'Los Angeles',
             Also_Worked_With: [], Services: {}, Reviewers: {},
           }
@@ -1345,6 +1365,10 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
   assert.equal(reads.length, 1)
   assert.equal(reads[0].options.method, 'POST')
   assert.equal(firstName.value, 'Ada')
+  for (const field of requiredMirrors) {
+    assert.equal(field.value, field.expected)
+    assert.equal(field.required && field.value === '', false)
+  }
   assert.equal(context.activeProfile.data.step_1.email, 'ada@example.com')
 })
 

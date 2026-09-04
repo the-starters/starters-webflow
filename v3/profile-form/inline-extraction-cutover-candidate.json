@@ -148,8 +148,8 @@
       }
     },
     "v3/starter-edit-profile/canonical-profile-loader.js": {
-      "candidateCharacters": 23574,
-      "candidateSha256": "f5ed797903dcf7dcb9c7ee79017a8224c67f5de588368a9f5c300e8e9dcdb6f3",
+      "candidateCharacters": 25233,
+      "candidateSha256": "0987ddd56267c76c39fcb9a7b06dd17d50df6d69958ae69dcc2af37d091ff661",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "canonicalProfileLoader",
