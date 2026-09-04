@@ -1,0 +1,8 @@
+/*
+ * Hide an authored profile taxonomy group until wf-xano renders at least one
+ * item. The wrapper and template remain in the DOM, so wf-xano can initialize,
+ * fetch, and insert its clones while the group is hidden.
+ */
+[xwf-empty-check]:not(:has([wf-xano-item])) {
+  display: none !important;
+}

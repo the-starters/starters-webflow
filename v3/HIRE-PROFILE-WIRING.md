@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-09-03
+Last updated: 2026-09-04
 Status: Call projections and Free Call behavior are GitHub-owned; direct Webflow head cleanup remains pending
 
 ## What this is
@@ -57,6 +57,18 @@ so a controller that installs without notifying this file still counts. Keep the
 direct synchronous head tag as the final Webflow install; the runtime loader
 prevents the current missing-tag state from disabling Free and Paid discovery
 while the shared component cleanup is still pending.
+
+Also in that same **Head**, after the scheduling tags:
+
+```html
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/hire-profile-taxonomy.css">
+```
+
+This one stylesheet is not part of the owned scheduling embed above and has no
+ordering requirement against it, but it must stay in the **Head**: in the footer
+the rule would arrive after first paint and every empty taxonomy group would
+flash visible before collapsing. See
+[Taxonomy empty groups stay hidden](#taxonomy-empty-groups-stay-hidden).
 
 Webflow → hire template → Page Settings → Custom Code → **Footer**:
 
@@ -593,6 +605,40 @@ unpriced canonical profile cannot leave a stale Retainer card or create a
 duplicate. Logged-out clicks open `signup-modal` with Retainer attribution.
 Eligible signed-in Brands open `generate-contract` with `Monthly retainer`
 selected. Talent, the profile owner, and unknown roles stay inert.
+
+## Taxonomy empty groups stay hidden
+
+[`hire-profile-taxonomy.css`](hire-profile-taxonomy.css) hides each authored
+`[xwf-empty-check]` group until its wf-xano list contains a rendered
+`[wf-xano-item]`. The rule does not hide, remove, or disable the wf-xano wrapper
+or its template. wf-xano can initialize and fetch while the ancestor is hidden,
+and the browser shows the group automatically when wf-xano inserts the first
+rendered item. The `display: none` is `!important` so that an inline `display`
+written on the group — by an IX2 initial state or by a wf-xano state projection
+— cannot defeat it. The rule stops matching the moment the first clone lands,
+so it can never pin a populated group hidden.
+
+The marker is per list, not per section. Three separate
+`profile-content_artifacts` groups already carry it in the published Designer,
+one each for **Tools & Platforms**, **Skills**, and **Industry Experience**:
+
+| Attribute | Value | Authored on |
+| --- | --- | --- |
+| `xwf-empty-check` | (empty) | the Tools & Platforms `profile-content_artifacts` group |
+| `xwf-empty-check` | (empty) | the Skills `profile-content_artifacts` group |
+| `xwf-empty-check` | (empty) | the Industry Experience `profile-content_artifacts` group |
+
+Each marked group must contain exactly **one** wf-xano wrapper — its own list —
+because `:has([wf-xano-item])` tests that group's whole subtree. A single marker
+on a shared parent above all three lists would reveal all three the moment any
+one of them renders an item, which is the defect this rule exists to remove.
+Keep the marker on the group that directly holds one wrapper: never move it up
+to a common ancestor, and never author it twice on nested elements around the
+same list.
+
+The stylesheet loads from the Hire template page **Head**, in the `## Install`
+block above, so the rule applies before first paint and an empty group never
+flashes visible.
 
 ## Rate surfaces are repainted from the canonical source
 
