@@ -70,9 +70,10 @@
 // window.startersMemberstackLoader.rescan(). It only ever gives a form its
 // first Button: a form that already resolved one is never re-pointed, so a
 // Button that replaces it is not adopted, and a swap made while that form's
-// request is open leaves Pending and the open request on the Button the form
-// still holds. Nothing on the site swaps a Button mid-request, and no staging
-// warning covers it.
+// request is open leaves Pending on the Button that left the page: a pinned
+// Anchor's hide still lifts it, a moved marker never reaches it and that form
+// refuses every later submit. Nothing on the site swaps a Button mid-request,
+// and no staging warning covers it.
 //
 // On staging (webflow.io, localhost, the dev tunnel, or window.STARTERS_DEBUG
 // === true) the script warns once per auth form that has no Button Spinner —
