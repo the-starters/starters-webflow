@@ -5640,8 +5640,20 @@ test('invoice context selects only one canonical completed-project final placeho
       lifecycle_state: 'completed',
       final_invoice: { ...final, status },
     })
-    assert.equal(terminal.invoiceMode, 'unavailable')
+    assert.equal(terminal.invoiceMode, 'final_closed')
+    assert.equal(terminal.finalInvoiceStatus, status)
   }
+
+  // A status that is neither open nor terminal is not a settled invoice: it is a
+  // handoff that has not arrived, so it keeps the refreshable message.
+  const unrecognised = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    status: 'completed',
+    lifecycle_state: 'completed',
+    final_invoice: { ...final, status: 'draft' },
+  })
+  assert.equal(unrecognised.invoiceMode, 'unavailable')
+  assert.equal(unrecognised.finalInvoiceStatus, '')
 
   const incomplete = bridge.window.Opp30.invoiceProjectContext(card, {
     id: 746,
@@ -5824,6 +5836,138 @@ test('final invoice submit blocks an invalid description before any request', as
     assert.deepEqual(requests, [])
     assert.match(dom.modal.querySelector('.w-form-fail').textContent, /between 1 and 500/)
   }
+})
+
+// A Starter who bills a completed project, has it paid, and reopens the modal
+// must be told the invoice is settled — not that it is "not ready yet", which
+// prescribes a refresh that can never change a terminal placeholder.
+test('a terminal final invoice blocks submit with its own settled message, never a refresh', async () => {
+  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
+  const identity = {
+    id: 961,
+    kind: 'stripe_invoice',
+    handoff_type: 'final',
+    sync_origin: 'v3',
+  }
+  const cases = [
+    { final_invoice: { ...identity, status: 'paid' }, expected: /already been paid/i },
+    { final_invoice: { ...identity, status: 'void' }, expected: /was cancelled/i },
+    { final_invoice: undefined, expected: /not ready yet/i },
+    { final_invoice: { ...identity, status: 'draft' }, expected: /not ready yet/i },
+  ]
+
+  for (const { final_invoice, expected } of cases) {
+    const dom = invoiceSubmitDom()
+    const requests = []
+    const document = documentWith(dom.modal)
+    const bridge = await loadBridge(
+      async (input) => {
+        requests.push(String(input))
+        return response({})
+      },
+      {
+        member: talentMember,
+        querySelector: document.querySelector,
+        querySelectorAll: document.querySelectorAll,
+      },
+    )
+    const project = { id: 746, status: 'completed', lifecycle_state: 'completed' }
+    if (final_invoice) project.final_invoice = final_invoice
+    const context = bridge.window.Opp30.invoiceProjectContext(card, project)
+    bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
+
+    bridge.dispatchDocument('submit', {
+      target: dom.form,
+      preventDefault() {},
+      stopPropagation() {},
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const failure = dom.modal.querySelector('.w-form-fail').textContent
+    assert.deepEqual(requests, [], JSON.stringify(final_invoice))
+    assert.match(failure, expected)
+    // A settled invoice is never described as merely pending, and a pending one
+    // is never described as settled.
+    if (expected.source.includes('not ready')) assert.doesNotMatch(failure, /billed again/i)
+    else assert.doesNotMatch(failure, /refresh/i)
+  }
+})
+
+// The create path already tolerates a padded enum value, so the cancel path must
+// too: otherwise the same row is a final invoice when billed and an ordinary one
+// when voided, and the click silently takes the wrong route and key namespace.
+test('a whitespace-padded final invoice row still cancels through the final void route', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        status: 'completed',
+        lifecycle_state: 'completed',
+        invoices: [{
+          id: 961,
+          status: 'unpaid',
+          kind: ' Stripe_Invoice ',
+          handoff_type: 'Final ',
+          sync_origin: 'v3',
+          cancel_eligible: true,
+        }],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh: () => Promise.resolve(state),
+    subscribe(handler) {
+      handler(state)
+      return () => {}
+    },
+  }
+  const requests = []
+  let promptText = ''
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/final-cancel/v3')) {
+        requests.push(JSON.parse(init.body))
+        return response({ invoice_id: 961, status: 'void' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: (message) => {
+        promptText = message
+        return 'CANCEL'
+      },
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '961'))
+  bridge.dispatchDocument('click', clickEvent(action).event)
+
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.match(promptText, /void this final invoice/i)
+  assert.match(requests[0].idempotency_key, /^final-invoice-cancel-ui:961:/)
 })
 
 test('completed-project invoice submit uses final-create and accepts invoice_link', async () => {

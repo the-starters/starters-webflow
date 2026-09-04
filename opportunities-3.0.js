@@ -1830,6 +1830,12 @@
     'Open Generate Invoice from the project you want to bill, so we know which project to invoice.'
   const INVOICE_FINAL_UNAVAILABLE_MESSAGE =
     'The final invoice is not ready yet. Refresh the dashboard and try again.'
+  const INVOICE_FINAL_PAID_MESSAGE =
+    'The final invoice for this project has already been paid. It cannot be billed again.'
+  const INVOICE_FINAL_VOID_MESSAGE =
+    'The final invoice for this project was cancelled. It cannot be billed again.'
+  const FINAL_INVOICE_OPEN_STATUSES = ['unknown', 'unpaid']
+  const FINAL_INVOICE_TERMINAL_STATUSES = ['paid', 'void']
   let activeInvoiceProject = null
   let invoiceWorkflowBinding = null
 
@@ -1845,17 +1851,43 @@
     )
   }
 
-  function finalInvoicePlaceholder(project) {
-    if (!projectIsCompleted(project)) return null
+  /**
+   * The identity of a canonical final-invoice row, normalized identically on the
+   * create and the cancel path so a padded enum value cannot split the two.
+   */
+  function isFinalInvoiceRow(invoice) {
+    return Boolean(
+      invoice &&
+      String(invoice.kind || '').trim().toLowerCase() === 'stripe_invoice' &&
+      String(invoice.handoff_type || '').trim().toLowerCase() === 'final',
+    )
+  }
+
+  /**
+   * A completed project's final-invoice handoff, as one of three distinct
+   * states: `open` (billable now), `terminal` (already paid or voided, so it can
+   * never be billed again), or `none` (no usable handoff has arrived yet).
+   * @returns {{state: string, invoice: object|null}}
+   */
+  function finalInvoiceState(project) {
+    const absent = { state: 'none', invoice: null }
+    if (!projectIsCompleted(project)) return absent
     const invoice = project.final_invoice
     if (
-      !invoice ||
-      String(invoice.kind || '').trim().toLowerCase() !== 'stripe_invoice' ||
-      String(invoice.handoff_type || '').trim().toLowerCase() !== 'final' ||
-      String(invoice.sync_origin || '').trim().toLowerCase() !== 'v3' ||
-      !['unknown', 'unpaid'].includes(String(invoice.status || '').trim().toLowerCase())
-    ) return null
-    return invoice
+      !isFinalInvoiceRow(invoice) ||
+      String(invoice.sync_origin || '').trim().toLowerCase() !== 'v3'
+    ) return absent
+    const status = String(invoice.status || '').trim().toLowerCase()
+    if (FINAL_INVOICE_OPEN_STATUSES.includes(status)) return { state: 'open', invoice }
+    if (FINAL_INVOICE_TERMINAL_STATUSES.includes(status)) return { state: 'terminal', invoice }
+    return absent
+  }
+
+  /** The message that names why a terminal final invoice can never be re-billed. */
+  function finalInvoiceClosedMessage(status) {
+    return String(status || '').trim().toLowerCase() === 'paid'
+      ? INVOICE_FINAL_PAID_MESSAGE
+      : INVOICE_FINAL_VOID_MESSAGE
   }
 
   function invoiceProjectContext(card, authoritativeProject = null) {
@@ -1864,7 +1896,8 @@
     if (!(projectId > 0)) return null
     const project = authoritativeProject || projectWorkflowItems.get(projectId) || {}
     const completed = projectIsCompleted(project)
-    const finalPlaceholder = finalInvoicePlaceholder(project)
+    const finalState = finalInvoiceState(project)
+    const finalPlaceholder = finalState.state === 'open' ? finalState.invoice : null
     // Stored placeholder values may only be reused once the projection marks the
     // placeholder recoverable, so a stale amount cannot leak into a new submit.
     const recoveryReady = Boolean(finalPlaceholder && finalPlaceholder.recovery_ready === true)
@@ -1891,8 +1924,15 @@
         cardFieldText(card, 'hiring_manager_name') ||
         cardFieldText(card, 'party') ||
         cardFieldText(card, 'contact_name'),
-      invoiceMode: finalPlaceholder ? 'final' : (completed ? 'unavailable' : 'standard'),
+      invoiceMode: finalState.state === 'open'
+        ? 'final'
+        : finalState.state === 'terminal'
+          ? 'final_closed'
+          : (completed ? 'unavailable' : 'standard'),
       finalInvoiceId: Number(finalPlaceholder && finalPlaceholder.id) || null,
+      finalInvoiceStatus: finalState.state === 'terminal'
+        ? String(finalState.invoice.status || '').trim().toLowerCase()
+        : '',
       finalInvoiceAmount: recoveryReady ? normalizeInvoiceAmount(finalPlaceholder.amount) : null,
       finalInvoiceDescription: recoveryReady
         ? (normalizeFinalInvoiceDescription(finalPlaceholder.description) || '')
@@ -2369,6 +2409,14 @@
           modal,
           INVOICE_NO_PROJECT_MESSAGE,
           validationDiagnostic('generate_invoice', 'invoice', 'NO_PROJECT_CONTEXT'),
+        )
+        return
+      }
+      if (context.invoiceMode === 'final_closed') {
+        invoiceError(
+          modal,
+          finalInvoiceClosedMessage(context.finalInvoiceStatus),
+          validationDiagnostic('generate_invoice', 'invoice', 'FINAL_INVOICE_CLOSED'),
         )
         return
       }
@@ -3376,8 +3424,7 @@
       window.crypto && typeof window.crypto.randomUUID === 'function'
         ? window.crypto.randomUUID()
         : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
-    const prefix = String(invoice && invoice.kind || '').toLowerCase() === 'stripe_invoice' &&
-      String(invoice && invoice.handoff_type || '').toLowerCase() === 'final'
+    const prefix = isFinalInvoiceRow(invoice)
       ? 'final-invoice-cancel-ui:'
       : 'invoice-cancel-ui:'
     action.dataset.invoiceCancelKey = prefix + invoiceId + ':' + uuid
@@ -3425,9 +3472,7 @@
     if (!invoiceId || projectInvoiceCancellationLocks.has(invoiceId)) {
       return false
     }
-    const isFinalInvoice =
-      String(invoice.kind || '').toLowerCase() === 'stripe_invoice' &&
-      String(invoice.handoff_type || '').toLowerCase() === 'final'
+    const isFinalInvoice = isFinalInvoiceRow(invoice)
     const confirmation = window.prompt(isFinalInvoice
       ? 'Type CANCEL to void this final invoice. The hosted invoice will stop accepting payment.'
       : 'Type CANCEL to cancel this invoice. The payment link will stop working.')

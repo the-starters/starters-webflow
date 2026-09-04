@@ -1059,8 +1059,10 @@ current invoice, and rechecks that invoice's id, unpaid status, and cancellation
 eligibility before showing the prompt. It does not trust a missing or stale
 `data-project-invoice-id` decoration. A modal remains a future enhancement.
 
-The resolved canonical invoice decides which void route the click takes. A
-canonical `kind=stripe_invoice` row with `handoff_type=final` is a final
+The resolved canonical invoice decides which void route the click takes, using
+the same trimmed, case-insensitive identity check the create path applies, so a
+padded enum value cannot send the two paths to different routes. A canonical
+`kind=stripe_invoice` row with `handoff_type=final` is a final
 invoice: its prompt reads `Type CANCEL to void this final invoice. The hosted
 invoice will stop accepting payment.`, it posts to `invoices/final-cancel/v3`,
 and its idempotency key is prefixed `final-invoice-cancel-ui:`. Every other
@@ -1240,19 +1242,28 @@ entry point: the browser never hides Generate Invoice because the project is in
 a terminal lifecycle state, and the modal always opens. Xano remains the
 authority for whether the signed-in Starter can bill the selected project.
 
-Opening resolves one of three invoice modes from the canonical row, and the mode
-decides the submit contract:
+Opening resolves one of four invoice modes from the canonical row, and the mode
+decides the submit contract. A `final_invoice` row is recognised as the project's
+final-invoice handoff when `kind=stripe_invoice`, `handoff_type=final`, and
+`sync_origin=v3`; its `status` then chooses between the two completed modes:
 
 - `standard` — the project is not completed. The ordinary create contract below
   applies unchanged.
-- `final` — the project is completed **and** carries a `final_invoice`
-  placeholder whose `kind=stripe_invoice`, `handoff_type=final`,
-  `sync_origin=v3`, and `status` is `unknown` or `unpaid`. The submit routes to
-  the final-invoice contract below.
-- `unavailable` — the project is completed but has no such placeholder. The
-  modal still opens, and the submit fails closed with `The final invoice is not
-  ready yet. Refresh the dashboard and try again.` rather than billing the
-  completed project through the ordinary create route.
+- `final` — the project is completed and its final-invoice handoff is still
+  open, meaning `status` is `unknown` or `unpaid`. The submit routes to the
+  final-invoice contract below.
+- `final_closed` — the project is completed and its final-invoice handoff is
+  already terminal. The submit fails closed and never issues a replacement final
+  invoice: `paid` shows `The final invoice for this project has already been
+  paid. It cannot be billed again.`, and `void` shows `The final invoice for this
+  project was cancelled. It cannot be billed again.`. Neither message asks the
+  member to refresh, because no refresh reopens a terminal handoff.
+- `unavailable` — the project is completed but no usable final-invoice handoff
+  has arrived yet: the row is missing, fails the identity check above, or carries
+  a status that is neither open nor terminal. The modal still opens, and the
+  submit fails closed with `The final invoice is not ready yet. Refresh the
+  dashboard and try again.` rather than billing the completed project through the
+  ordinary create route.
 
 A project counts as completed when **either** the canonical `lifecycle_state`
 **or** the legacy dashboard `status` reads `completed`, so a projection carrying
@@ -1295,9 +1306,9 @@ rounded to cents and must land between $0.01 and $1,000,000, otherwise the
 inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
 nothing is sent. A submit from a modal that was opened without a project card
 fails closed with `Open Generate Invoice from the project you want to bill, so
-we know which project to invoice.`. An `unavailable` submit fails closed with
-`The final invoice is not ready yet. Refresh the dashboard and try again.`
-before any request. In `final` mode the description carries Xano's own contract
+we know which project to invoice.`. An `unavailable` or `final_closed` submit
+fails closed with that mode's message above, before any request. In `final` mode
+the description carries Xano's own contract
 and is trimmed to 1..500 characters; an empty, blank, or longer value shows
 `Enter a final invoice description between 1 and 500 characters.` and nothing is
 sent. `standard` mode keeps its existing trimmed, unvalidated description.
