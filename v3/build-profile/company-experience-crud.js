@@ -1186,7 +1186,7 @@ function starterProfileCompanyMonthYearLabel(value) {
             editEndDateBaseline = starterProfileCompanyDateBaseline(editEndDateInput, rawEndDate);
           }
 
-          syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput);
+          syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, !!company.current_work);
         }
 
         if (editCompanyInput) {

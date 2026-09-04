@@ -282,9 +282,12 @@ not rewrite the stored value. `Present`, blanks, and unknown legacy strings keep
 their existing behavior.
 
 Hydration also records the canonical string it came from next to the visible month value.
-Opening a different role clears disabled state and any date bounds left by the prior modal.
-The two controls intentionally do not set reciprocal `min` and `max` bounds. Those
-bounds can trap an existing or inverted range and stop a member from repairing either month.
+Opening a different role clears disabled state and any date bounds left by the prior modal,
+then reinstalls the end-month minimum from the role it is showing.
+The bound is one-way. A non-current start month sets the end control's `min`, and its
+picker greys out every earlier month, the previous-year arrow, and `Today`; a current role
+or a blank start month clears it again. The start control never takes a `max`, so an
+existing or inverted range stays repairable from either side.
 For a non-current role, save-time validation still requires the end month to be the same as
 or later than the start month; same-month tenures are valid. A rejected range sets a custom
 validity message on both month controls and reports it on the end-month control, so the

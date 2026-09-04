@@ -776,10 +776,14 @@ for (const controllerPath of controllerPaths) {
       start_date: '2025-01',
       current_work: true,
     })
+
+    assert.equal(app.editEndDateInput.getAttribute('min'), null)
+
     app.editCurrentWorkCheckbox.checked = false
     app.editCurrentWorkCheckbox.dispatchEvent({ type: 'change' })
 
     assert.equal(app.editEndDateInput.value, '')
+    assert.equal(app.editEndDateInput.getAttribute('min'), '2025-01')
   })
 
   test(`${controllerPath} keeps a legacy baseline while installing the end minimum`, async () => {
@@ -986,9 +990,8 @@ for (const controllerPath of controllerPaths) {
 
     app.selectCompany({ name: 'Acme' })
     app.jobTitleInput.value = 'Engineer'
+    assert.equal(chooseMonth(app.endDateInput, '2024-12'), true)
     assert.equal(chooseMonth(app.startDateInput, '2025-06'), true)
-    app.endDateInput.value = 'Dec 2024'
-    app.endDateInput.dispatchEvent({ type: 'input' })
 
     const payloadsBeforeInvalidAdd = app.mutationPayloads().length
     await app.submitAdd()
@@ -1036,20 +1039,20 @@ for (const controllerPath of controllerPaths) {
     dated.selectCompany(identity)
     dated.jobTitleInput.value = 'Founder'
 
-    // Start-first invalid range, corrected by changing the end month.
+    // Inverted range staged end-first, corrected by moving the end month forward.
+    assert.equal(chooseMonth(dated.endDateInput, '2024-12'), true)
     assert.equal(chooseMonth(dated.startDateInput, '2025-06'), true)
-    dated.endDateInput.value = 'Dec 2024'
-    dated.endDateInput.dispatchEvent({ type: 'input' })
     await dated.submitAdd()
     assert.equal(dated.mutationPayloads().length, 0)
     assert.match(dated.endDateInput.validationMessage, /end month/i)
     assert.equal(chooseMonth(dated.endDateInput, '2025-12'), true)
     assert.equal(dated.endDateInput.validationMessage, '')
 
-    // End-first invalid range, corrected by changing the start month. Only the
-    // final corrected state is sent.
-    dated.endDateInput.value = 'Dec 2024'
-    dated.endDateInput.dispatchEvent({ type: 'input' })
+    // Inverted range staged end-first, corrected by moving the start month back.
+    // Only the final corrected state is sent.
+    assert.equal(clearMonth(dated.startDateInput), true)
+    assert.equal(chooseMonth(dated.endDateInput, '2024-12'), true)
+    assert.equal(chooseMonth(dated.startDateInput, '2025-06'), true)
     await dated.submitAdd()
     assert.equal(dated.mutationPayloads().length, 0)
     assert.match(dated.startDateInput.validationMessage, /end month/i)
