@@ -891,6 +891,35 @@ test('an authored empty theme comes back empty, not missing', async () => {
   assert.equal(f.submitWrap.hasAttribute('data-memberstack-loader-theme'), false)
 })
 
+
+// data-ms-loading is the second exception to the ownership-mark rule: the
+// loader writes and removes it unmarked, so a value authored on the wrap is
+// taken away by the hide the way the theme is overwritten by the show.
+test('data-ms-loading is written and taken away with no ownership mark', async () => {
+  const f = signupForm()
+  f.submitWrap.setAttribute('data-ms-loading', 'authored')
+  const root = body([f.form])
+  mount(root)
+  const ms = memberstack(root, f.form)
+
+  ms.submit()
+  await flush()
+  assert.equal(f.submitWrap.getAttribute('data-ms-loading'), 'true')
+  assert.equal(
+    f.submitWrap.hasAttribute('data-memberstack-loader-loading'),
+    false,
+    'no mark is parked for it, unlike aria-busy and aria-disabled',
+  )
+
+  ms.hide()
+  await flush()
+  assert.equal(
+    f.submitWrap.hasAttribute('data-ms-loading'),
+    false,
+    'the unmarked attribute goes anyway, authored value and all',
+  )
+})
+
 test("another script's hold on the button is never lifted", async () => {
   const f = signupForm({ ariaDisabled: 'true' })
   const root = body([f.form])
@@ -2548,6 +2577,110 @@ test('a spinner taken off the page mid-request releases the page', async () => {
   await flush()
   assert.equal(signup.submits, 1, 'no hide can ever reach the detached spinner')
   assert.equal(s.submitSpinner.style.display, 'block')
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+
+// ---------------------------------------------------------------------------
+// A Button swapped while its form's request is open
+//
+// rescan() only ever gives a form its first Button, so a replacement Button is
+// never adopted and Pending is left on the Button that went off the page. What
+// happens next is the difference between the two modes: a pinned Anchor's hide
+// still lifts Pending through the mirror, while a moved marker never reaches
+// the detached Spinner and that form refuses every later submit.
+// ---------------------------------------------------------------------------
+
+/** what a modal or step flow does: the CTA subtree is replaced wholesale */
+function swapButton(fixture) {
+  const replacement = signupForm({ noLoader: true })
+  const group = fixture.form.querySelector('.auth_form-button-group')
+  fixture.submitWrap.remove()
+  group.append(replacement.submitWrap)
+  return replacement
+}
+
+test('a Button swapped mid-request in MOVE mode strands Pending and locks the form', async () => {
+  const { s, root } = unanchoredPage()
+  const app = mount(root, { hostname: STAGING })
+  const signup = memberstack(root, s.form, { cache: false })
+
+  signup.submit()
+  await flush()
+  assert.equal(s.submitSpinner.style.display, 'block', 'the authored Button spins')
+  assert.equal(s.submitWrap.getAttribute('data-button-theme'), 'disabled')
+
+  const replacement = swapButton(s)
+  app.window.startersMemberstackLoader.rescan()
+  await flush()
+  assert.deepEqual(marksOf(replacement.submitWrap), IDLE_WRAP, 'the new Button is not adopted')
+  assert.equal(
+    s.submitWrap.getAttribute('data-button-theme'),
+    'disabled',
+    'Pending stays on the Button that left the page',
+  )
+
+  signup.hide()
+  await flush()
+  assert.equal(signup.overlayRemovals, 1, 'the hide reaches no marker in the document')
+  assert.equal(s.submitSpinner.style.display, 'block', 'so the detached Spinner is never put out')
+  assert.equal(s.submitWrap.getAttribute('data-ms-loading'), 'true', 'and Pending never lifts')
+
+  const later = signup.submit()
+  assert.equal(signup.submits, 1, 'the form refuses every later submit')
+  assert.equal(later.defaultPrevented, true)
+  assert.deepEqual(marksOf(replacement.submitWrap), IDLE_WRAP, 'the visible Button never spins')
+})
+
+test('the same swap under a pinned Anchor is lifted by the hide through the mirror', async () => {
+  const { hero, s, root } = heroPage()
+  const app = mount(root, { hostname: STAGING })
+  const signup = memberstack(root, s.form)
+
+  signup.submit()
+  await flush()
+  assert.equal(hero.style.display, 'block', 'the pinned Anchor is what Memberstack lights')
+  assert.equal(s.submitSpinner.style.display, 'block', 'and the Button mirrors it')
+
+  const replacement = swapButton(s)
+  app.window.startersMemberstackLoader.rescan()
+  await flush()
+  assert.deepEqual(marksOf(replacement.submitWrap), IDLE_WRAP, 'the new Button is not adopted')
+  assert.equal(
+    s.submitWrap.getAttribute('data-button-theme'),
+    'disabled',
+    'Pending stays on the Button that left the page',
+  )
+
+  signup.hide()
+  await flush()
+  assert.equal(s.submitSpinner.style.display, 'none', 'the mirror reaches the detached Spinner')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP, 'so Pending is lifted off it')
+
+  signup.submit()
+  await flush()
+  assert.equal(signup.submits, 2, 'and the form still submits')
+})
+
+test('a Button swapped in between requests is not adopted either', async () => {
+  const { s, root } = unanchoredPage()
+  const app = mount(root, { hostname: STAGING })
+  const signup = memberstack(root, s.form, { cache: false })
+
+  const replacement = swapButton(s)
+  app.window.startersMemberstackLoader.rescan()
+  await flush()
+
+  signup.submit()
+  await flush()
+  assert.equal(signup.submits, 1, 'a form with no request open still submits')
+  assert.deepEqual(marksOf(replacement.submitWrap), IDLE_WRAP, 'the Button on the page is idle')
+  assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP, 'and the one that left the page is too')
+  assert.equal(
+    signup.overlayShows,
+    1,
+    'the marker went to the detached Spinner, so Memberstack shows its own overlay',
+  )
   assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
 })
 
