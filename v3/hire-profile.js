@@ -2389,7 +2389,13 @@
 
   function renderRateCards(record) {
       const list = document.querySelector('#services .services-list_wrapper');
-      const template = list ? list.querySelector('[data-service-card="component"][data-service-card-state="Default"]') : null;
+      // The clone source has to be the AUTHORED card. Every wf-xano adapter
+      // stamps the same `data-service-card` / `data-service-card-state` pair on
+      // its rendered clones for styling parity, and those clones live in this
+      // same list, so an unqualified lookup would clone whichever one the
+      // Designer happened to place first and carry its call-offer tooltip and
+      // wf-xano identity onto the Freelance and Retainer cards.
+      const template = list ? list.querySelector('[data-service-card="component"][data-service-card-state="Default"]:not([wf-xano-item])') : null;
       if (!list || !template) {
           console.warn('Rate services:', 'Card template not found');
           return;
