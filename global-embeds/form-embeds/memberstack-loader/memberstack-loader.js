@@ -463,7 +463,7 @@
     return out;
   }
 
-  // Each condition speaks at most once per page, so a rescan never repeats it.
+  // Each condition speaks once at most, so a rescan never repeats it.
   // Never throws: a broken diagnostic must not cost the page its wiring.
   function diagnose() {
     if (!isDevHost()) return;
