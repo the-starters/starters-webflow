@@ -48,12 +48,13 @@
 // form's included (staging says so). A marker something else lit refuses no
 // other form, though a form whose own Spinner is the pinned marker still reads
 // that light as its own request. A back-button restore clears the whole thing,
-// Memberstack's leftover overlay included. A Spinner taken off the page
-// mid-request releases the page rather than locking it, so that request's hide
-// may land on the next form's Spinner. A Spinner-less form's overlay is not
-// tracked and takes no part in that rule: its own hide lands on whichever
-// Spinner holds the marker by then, leaving Memberstack's [data-ms-modal-loader]
-// overlay on screen. Ticket 07, which gives those forms a Button, is the fix.
+// Memberstack's leftover overlay included. On a page that authors no loader, a
+// Spinner taken off the page mid-request releases the page rather than locking
+// it, so that request's hide may land on the next form's Spinner. A
+// Spinner-less form's overlay is not tracked and takes no part in that rule:
+// its own hide lands on whichever Spinner holds the marker by then, leaving
+// Memberstack's [data-ms-modal-loader] overlay on screen. Ticket 07, which
+// gives those forms a Button, is the fix.
 //
 // A success redirect navigates without hiding the loader, so Pending is meant
 // to outlive the page: there is no timeout and no fail-open timer.
@@ -527,19 +528,15 @@
       var form = forms[i];
       var record = form[WIRED_FLAG];
 
-      // A wired form is revisited to pick up a Button that arrived late, or one
-      // that replaced the Button this record still points at.
+      // A wired form is revisited only to pick up a Button that arrived late.
       if (record) {
-        if (!record.spinner || (form.contains && !form.contains(record.spinner))) {
+        if (!record.spinner) {
           var late = resolveButton(form);
           record.noSpinnerWhy = late.why;
           if (late.spinner) {
-            // Or the marks strand on the wrap that is going away.
-            if (record.pending) leavePending(record);
             record.wrap = late.wrap;
             record.control = late.control;
             record.spinner = late.spinner;
-            record.reassertObserved = false;
             observeSpinner(record);
             observeReassert(record);
           }
