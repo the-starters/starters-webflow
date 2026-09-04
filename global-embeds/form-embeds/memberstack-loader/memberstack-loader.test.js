@@ -766,7 +766,7 @@ const SUBMIT_REFUSED = 'submit refused'
 test('sign-up button greys out and reads busy while the spinner runs', async () => {
   const f = signupForm()
   const root = body([f.form])
-  const app = mount(root)
+  const app = mount(root, { hostname: STAGING })
   const ms = memberstack(root, f.form)
 
   ms.submit()
@@ -784,7 +784,7 @@ test('sign-up button greys out and reads busy while the spinner runs', async () 
   })
   assert.equal(f.control.getAttribute('aria-disabled'), 'true')
   assert.equal(f.control.getAttribute('data-memberstack-loader-aria'), '')
-  assert.equal(app.warnings.length, 0, 'production console output stays empty')
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
 })
 
 test('a non-black authored theme is the one that comes back', async () => {
@@ -1031,7 +1031,9 @@ test('a page with no Memberstack form loads the script and touches nothing', asy
   const orphan = signupForm()
   const bare = h('div', { class: 'auth_form-button-group' }, [orphan.submitWrap])
   const root = body([bare])
-  const app = mount(root)
+  // production on purpose: the stray marker this page carries is a staging
+  // warning of its own, covered by the diagnostics section below
+  const app = mount(root, { hostname: PRODUCTION })
 
   assert.equal(typeof app.window.startersMemberstackLoader.rescan, 'function')
   app.window.startersMemberstackLoader.rescan()
@@ -1054,7 +1056,8 @@ test('a page with no Memberstack form loads the script and touches nothing', asy
 test('the reset-password form, which has no spinner at all, is wired and inert', async () => {
   const f = resetForm()
   const root = body([f.form])
-  const app = mount(root)
+  // production on purpose: on staging this shape is warned about by name
+  const app = mount(root, { hostname: PRODUCTION })
 
   const record = f.form.__startersMemberstackLoader
   assert.ok(record, 'the form carries the wired record')
@@ -1106,7 +1109,7 @@ function bareButtonForm(type) {
 test('a wrap whose button has no type at all is still the Button', async () => {
   const f = bareButtonForm()
   const root = body([f.form])
-  const app = mount(root)
+  const app = mount(root, { hostname: STAGING })
   const ms = memberstack(root, f.form)
 
   assert.equal(f.form.__startersMemberstackLoader.spinner, f.submitSpinner)
@@ -1126,7 +1129,8 @@ test('a wrap whose button has no type at all is still the Button', async () => {
 test('a wrap holding only a type="button" control is not the Button', async () => {
   const f = bareButtonForm('button')
   const root = body([f.form])
-  const app = mount(root)
+  // production on purpose: on staging this shape is warned about by name
+  const app = mount(root, { hostname: PRODUCTION })
   const ms = memberstack(root, f.form)
 
   assert.equal(f.form.__startersMemberstackLoader.spinner, null)
@@ -1210,7 +1214,7 @@ test('a browser with no MutationObserver still loads the script quietly', async 
   const root = body([f.form])
   const documentListeners = new Map()
   const warnings = []
-  const window = { location: { hostname: 'www.thestarters.com' } }
+  const window = { location: { hostname: STAGING } }
   window.window = window
   const context = vm.createContext({
     window,
@@ -1242,7 +1246,7 @@ test('a browser with no MutationObserver still loads the script quietly', async 
 test('a second submit while the button is busy never reaches Memberstack', async () => {
   const f = signupForm()
   const root = body([f.form])
-  const app = mount(root)
+  const app = mount(root, { hostname: STAGING })
   const ms = memberstack(root, f.form)
   let watched = 0
   f.form.addEventListener('submit', () => {
@@ -1303,7 +1307,7 @@ test('once the spinner hides, the same button submits again', async () => {
 test('a non-auth Memberstack form can still be submitted as often as it likes', async () => {
   const f = profileForm()
   const root = body([f.form])
-  const app = mount(root)
+  const app = mount(root, { hostname: STAGING })
   const ms = memberstack(root, f.form)
 
   ms.submit()
@@ -1340,7 +1344,8 @@ test('a non-auth Memberstack form can still be submitted as often as it likes', 
 test('the reset-password form, which shows no spinner, submits every time', async () => {
   const f = resetForm()
   const root = body([f.form])
-  const app = mount(root)
+  // production on purpose: on staging this shape is warned about by name
+  const app = mount(root, { hostname: PRODUCTION })
   const ms = memberstack(root, f.form)
 
   ms.submit()
@@ -1903,7 +1908,7 @@ function unanchoredPage() {
 
 test('saving a profile spins the Save button, not the closed signup modal', async () => {
   const { s, p, root } = anchoredPage()
-  const app = mount(root)
+  const app = mount(root, { hostname: STAGING })
   const signup = memberstack(root, s.form)
   const profile = memberstack(root, p.form)
 
@@ -2049,7 +2054,8 @@ test('a native login form on an anchored page leaves every button alone', async 
   const s = signupForm()
   const l = loginForm()
   const root = body([s.form, l.form])
-  const app = mount(root)
+  // production on purpose: on staging the login form is warned about by name
+  const app = mount(root, { hostname: PRODUCTION })
   const login = memberstack(root, l.form)
 
   login.submit()
@@ -2109,7 +2115,7 @@ test('removing the authored loader later does not start moving the marker', asyn
 
 test('with no authored loader the profile save spins its own button', async () => {
   const { s, p, root } = unanchoredPage()
-  const app = mount(root)
+  const app = mount(root, { hostname: STAGING })
   const signup = memberstack(root, s.form)
   const profile = memberstack(root, p.form)
 
@@ -2224,7 +2230,8 @@ test('a native login form with nowhere to spin falls back to the overlay', async
   const p = profileForm({ noLoader: true })
   const l = loginForm()
   const root = body([p.form, l.form])
-  const app = mount(root)
+  // production on purpose: on staging the login form is warned about by name
+  const app = mount(root, { hostname: PRODUCTION })
   const profile = memberstack(root, p.form)
   const login = memberstack(root, l.form)
 
@@ -2522,9 +2529,102 @@ test('a staging auth form with no Button Spinner is told so once', async () => {
   const app = mount(root, { hostname: STAGING })
 
   assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
-  assert.ok(app.warnings[0].includes(TAG), app.warnings[0])
-  assert.ok(app.warnings[0].includes('1 auth form(s) with no Button Spinner'), app.warnings[0])
-  assert.ok(app.warnings[0].includes('falls back to its overlay'), app.warnings[0])
+  assert.equal(
+    app.warnings[0],
+    TAG +
+      ' auth form form#wf-form-Brand-Signup.auth_form-block has no Button Spinner ' +
+      '(its Button Wrap has no [data-button-spinner]); ' +
+      'Memberstack shows its overlay instead',
+  )
+})
+
+/** the same spinnerless auth form under a chosen id, so describe() can name it */
+const namedNoSpinnerForm = (id) => {
+  const f = signupForm({ noSpinner: true })
+  f.form.setAttribute('id', id)
+  return f
+}
+
+test('each spinnerless auth form on the page is named in its own warning', async () => {
+  const first = namedNoSpinnerForm('wf-form-One')
+  const second = namedNoSpinnerForm('wf-form-Two')
+  const root = body([first.form, second.form])
+  const app = mount(root, { hostname: STAGING })
+
+  assert.equal(app.warnings.length, 2, app.warnings.join(' | '))
+  assert.ok(app.warnings[0].includes('form#wf-form-One.auth_form-block'), app.warnings[0])
+  assert.ok(app.warnings[1].includes('form#wf-form-Two.auth_form-block'), app.warnings[1])
+
+  app.window.startersMemberstackLoader.rescan()
+  app.window.startersMemberstackLoader.rescan()
+  assert.equal(app.warnings.length, 2, 'still one per form, however many rescans')
+})
+
+test('on an anchored page the spinnerless form is told the pinned loader lights', async () => {
+  const s = signupForm()
+  const l = loginForm()
+  const root = body([s.form, l.form])
+  const app = mount(root, { hostname: STAGING })
+  const login = memberstack(root, l.form)
+
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+  assert.ok(app.warnings[0].includes('has no Button Spinner'), app.warnings[0])
+  assert.ok(app.warnings[0].includes('no Button Wrap holding a submit control'), app.warnings[0])
+  assert.ok(app.warnings[0].includes('the pinned [data-ms-loader] lights instead'), app.warnings[0])
+
+  login.submit()
+  await flush()
+  assert.equal(login.overlayShows, 0, 'and that is what really happens')
+})
+
+test('a spinnerless auth form added after load is warned about on the next rescan', async () => {
+  const { s, root } = noLoaderPage()
+  const app = mount(root, { hostname: STAGING })
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+
+  const late = namedNoSpinnerForm('wf-form-Late')
+  root.append(late.form)
+  app.window.startersMemberstackLoader.rescan()
+
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+  assert.ok(app.warnings[0].includes('form#wf-form-Late'), app.warnings[0])
+  assert.equal(s.form.__startersMemberstackLoader.spinner, s.submitSpinner, 'the wired form is fine')
+
+  app.window.startersMemberstackLoader.rescan()
+  assert.equal(app.warnings.length, 1, 'and it is not repeated')
+})
+
+test('the reset and login shapes each name their own cause on staging', async () => {
+  const reset = mount(body([resetForm().form]), { hostname: STAGING })
+  assert.equal(reset.warnings.length, 1, reset.warnings.join(' | '))
+  assert.ok(reset.warnings[0].includes('form.auth_form-block'), reset.warnings[0])
+  assert.ok(
+    reset.warnings[0].includes('its Button Wrap has no [data-button-spinner]'),
+    reset.warnings[0],
+  )
+
+  const login = mount(body([loginForm().form]), { hostname: STAGING })
+  assert.equal(login.warnings.length, 1, login.warnings.join(' | '))
+  assert.ok(
+    login.warnings[0].includes('no Button Wrap holding a submit control'),
+    login.warnings[0],
+  )
+})
+
+test('a wrap whose only control cannot submit is named as having no Button Wrap', async () => {
+  const f = bareButtonForm('button')
+  const app = mount(body([f.form]), { hostname: STAGING })
+
+  assert.equal(f.form.getAttribute('data-ms-form'), 'login', 'it really is an auth form')
+  assert.equal(app.warnings.length, 1, app.warnings.join(' | '))
+  assert.ok(
+    app.warnings[0].includes('no Button Wrap holding a submit control'),
+    app.warnings[0],
+  )
+  assert.ok(
+    app.warnings[0].includes('the pinned [data-ms-loader] lights instead'),
+    'its own Spinner still carries the marker Memberstack pinned',
+  )
 })
 
 test('a marker-less page whose auth form has a Spinner is not nagged', async () => {
@@ -2576,13 +2676,13 @@ test('a page with no auth form is not nagged about a missing loader', async () =
 })
 
 test('production stays silent on a page that warns twice on staging', async () => {
-  const app = mount(strayLoaderPage().root)
+  const app = mount(strayLoaderPage().root, { hostname: PRODUCTION })
 
   assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
 })
 
 test('production stays silent on a page whose auth form has no Spinner', async () => {
-  const app = mount(noSpinnerPage().root)
+  const app = mount(noSpinnerPage().root, { hostname: PRODUCTION })
 
   assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
 })
@@ -2595,7 +2695,7 @@ test('STARTERS_DEBUG turns the same warnings on in production', async () => {
 
   const missing = mount(noSpinnerPage().root, { debug: true })
   assert.equal(missing.warnings.length, 1, missing.warnings.join(' | '))
-  assert.ok(missing.warnings[0].includes('with no Button Spinner'), missing.warnings[0])
+  assert.ok(missing.warnings[0].includes('has no Button Spinner'), missing.warnings[0])
 })
 
 test('STARTERS_DEBUG set to false leaves production silent', async () => {

@@ -45,9 +45,10 @@
 // window.startersMemberstackLoader.rescan().
 //
 // On staging (webflow.io, localhost, the dev tunnel, or window.STARTERS_DEBUG
-// === true) the script warns once per page about an auth form with no Button
-// Spinner, and about a duplicated or stray [data-ms-loader]. Production is
-// silent.
+// === true) the script warns once per auth form that has no Button Spinner —
+// naming the form, the cause and what lights instead — once per page about a
+// duplicated or stray [data-ms-loader], and once per refused submit.
+// Production is silent.
 
 (function () {
   if (window.__startersMemberstackLoaderInit) return;
@@ -126,17 +127,24 @@
 
   // A sibling wrap holding only a.clickable_link resolves no control and is
   // therefore never the Button; the reset shape resolves no Spinner.
+  // `why` is the diagnostic cause when nothing resolves, null when it does.
   function resolveButton(form) {
     var wraps = candidateWraps(form);
+    var why = wraps.length
+      ? 'its Button Wrap has no ' + SPINNER_SELECTOR
+      : 'no Button Wrap holding a submit control';
     for (var i = 0; i < wraps.length; i++) {
       var wrap = wraps[i];
       var spinner = wrap.querySelector(SPINNER_SELECTOR);
       if (!spinner) continue;
       var control = findControl(wrap);
-      if (!control) continue;
-      return { wrap: wrap, control: control, spinner: spinner };
+      if (!control) {
+        why = 'its Button Wrap has no control';
+        continue;
+      }
+      return { wrap: wrap, control: control, spinner: spinner, why: null };
     }
-    return { wrap: null, control: null, spinner: null };
+    return { wrap: null, control: null, spinner: null, why: why };
   }
 
   // --- Pending --------------------------------------------------------------
@@ -359,7 +367,6 @@
   // as notwebflow.io or evil-trycloudflare.com cannot read as staging.
   var STAGING_HOSTS = [/(\.|^)webflow\.io$/, /(\.|^)trycloudflare\.com$/];
 
-  var warnedNoSpinner = false;
   var warnedManyLoaders = false;
   var warnedStrayLoader = false;
 
@@ -407,17 +414,18 @@
       var marked = document.querySelectorAll(LOADER_SELECTOR);
 
       // A marker-less auth form is served fine by MOVE mode; only one with no
-      // Button Spinner at all really falls back to the overlay.
-      var spinnerless = 0;
+      // Button Spinner at all really falls back. Latched per form, so a Spinner
+      // arriving on a later rescan just stops the form qualifying.
+      var fallback = anchor
+        ? 'the pinned ' + LOADER_SELECTOR + ' lights instead'
+        : 'Memberstack shows its overlay instead';
       for (var i = 0; i < forms.length; i++) {
         var record = forms[i][WIRED_FLAG];
-        if (record && record.isAuth && !record.spinner) spinnerless++;
-      }
-
-      if (!warnedNoSpinner && spinnerless) {
-        warnedNoSpinner = true;
-        devWarn(spinnerless + ' auth form(s) with no Button Spinner; ' +
-          'Memberstack falls back to its overlay for them');
+        if (!record || !record.isAuth || record.spinner) continue;
+        if (record.warnedNoSpinner) continue;
+        record.warnedNoSpinner = true;
+        devWarn('auth form ' + describe(record.form) + ' has no Button Spinner (' +
+          record.noSpinnerWhy + '); ' + fallback);
       }
 
       if (!warnedManyLoaders && marked.length > 1) {
@@ -457,6 +465,7 @@
       if (record) {
         if (!record.spinner) {
           var late = resolveButton(form);
+          record.noSpinnerWhy = late.why;
           if (late.spinner) {
             record.wrap = late.wrap;
             record.control = late.control;
@@ -478,6 +487,8 @@
         wrap: parts.wrap,
         control: parts.control,
         spinner: parts.spinner,
+        noSpinnerWhy: parts.why,
+        warnedNoSpinner: false,
         pending: false,
         submitWired: false,
         reassertObserved: false
