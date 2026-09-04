@@ -64,7 +64,9 @@ marks its own writes the same way, with `data-memberstack-loader-theme`,
 written at runtime only, so never author them in Webflow either. The loader
 lifts only what carries one of its own marks, which is what lets
 password-validation's hold and the loader's Pending state share one CTA
-without either script undoing the other.
+without either script undoing the other. The theme is the exception: it is
+always overwritten while Pending, and an authored value is parked on the wrap
+and put back on hide, so a wrap that had no theme ends up with none.
 
 A form carrying Webflow's `display-contents` class **generates no box**, so its
 `getBoundingClientRect()` is `0 × 0` and the observer never reports it as

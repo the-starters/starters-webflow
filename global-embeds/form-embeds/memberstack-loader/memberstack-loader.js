@@ -1,9 +1,13 @@
 // Memberstack loader: dresses a Memberstack auth form's Button as busy and
 // disabled while Memberstack shows its own spinner, and on hide restores it and
 // hands it back to password-validation, whose verdict may have moved meanwhile.
-// Hand-back needs password-validation v1.59.504 or newer; v1.59.510 or newer
-// hands one form back through regate() and so avoids repeating that script's
-// page-level staging warnings on every release.
+// Load password-validation first in the same embed: it binds its capture
+// listener at its own init, while this script only looks for it at hide time.
+// Pin it at v1.59.504 or newer — the hand-back runs against any release that
+// exports rescan, but an older one has no ownership marks and undoes the gate
+// it is handed — and at v1.59.510 or newer for the one-form regate() path,
+// which spares that script's page-level staging warnings. Neither pin can be
+// checked here: password-validation reports no release before v1.59.502.
 //
 // @release v1.59.510
 //
@@ -41,8 +45,10 @@
 // the element it lit or routed is still lit, every submit is refused, its own
 // form's included (staging says so). A marker something else lit blocks nothing,
 // and a back-button restore clears the whole thing. A Spinner-less form's
-// overlay is not tracked, so it cannot take part in that rule until those forms
-// get a Button.
+// overlay is not tracked and takes no part in that rule: its own hide lands on
+// whichever Spinner holds the marker by then, leaving Memberstack's
+// [data-ms-modal-loader] overlay on screen. Ticket 07, which gives those forms
+// a Button, is the fix.
 //
 // A success redirect navigates without hiding the loader, so Pending is meant
 // to outlive the page: there is no timeout and no fail-open timer.
