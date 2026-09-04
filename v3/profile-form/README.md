@@ -77,16 +77,17 @@ says yes. A collapsed Monthly Retainer or Paid Call section never forwards the s
 because an unvalidated collapsed value would violate this contract: Build Profile replaces it with the
 same zero or null compatibility value it uses for a section that was never filled in, so turning a
 section off does discard the rate it was holding, and Edit Profile sends the canonical zero only
-alongside the toggle it is turning off and otherwise omits the field. On Build Profile Consult neither
-the Paid Call nor the Monthly Retainer section, nor the Hourly Rate, is authored, so neither hidden
-radio is an answer: only
-a rate that already satisfies this contract preserves that section, and a canonical zero, blank,
-malformed, unsafe, or out-of-range rate behind either hidden control stays the off compatibility state
-— `paid_call_rate: null`, `retainer_rate: 0` — whichever way hydration left the radio, rather than
-blocking a submit the member cannot repair. The hidden Hourly Rate follows the same rule: an
-in-contract value is persisted, and a malformed, unsafe, or out-of-range one behind that hidden control
-stays `hourly_rate: 0` instead of blocking. Full Profile authors all three controls, so an enabled or
-required section there stays strict.
+alongside the toggle it is turning off and otherwise omits the field. On Build Profile Consult the Paid Call
+section, the Monthly Retainer section, and the Hourly Rate are all unauthored, so no hidden control
+there is an answer and none of them may block a submit the member cannot repair. Each has its own
+rule. For Paid Call the hidden radio is ignored and only a rate that already satisfies this contract
+preserves the paid consult, so a canonical zero, blank, malformed, unsafe, or out-of-range rate keeps
+`paid_call: false, paid_call_rate: null` whichever way hydration left the radio. The Hourly Rate
+follows that same in-contract rule: an in-contract value is persisted, and a blank, zero, malformed,
+unsafe, or out-of-range one stays `hourly_rate: 0`. The Monthly Retainer is unconditionally
+inapplicable on Consult — it always submits `retainer: false, retainer_rate: 0` regardless of the
+hidden radio and regardless of whether the hidden rate satisfies this contract. Full Profile authors
+all three controls, so an enabled or required section there stays strict.
 
 Wherever a blank is the compatibility-empty state, the canonical zero these same writers persist for
 that field is that same state: a blank, zero, or otherwise out-of-contract profile-type-inapplicable Hourly Rate
