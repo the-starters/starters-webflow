@@ -654,12 +654,25 @@ own. The final state is one of:
 
 **Logged out.** A card is visible only when its own item carries
 `public_available === true`. A visible card gets `has-connection`,
-`data-signup-trigger-element="book-call"` and the `Free Call` / `Paid Call`
-attribution value, and its `.service-card_content-wrapper` booking row is
-removed through the same `stripCallBookingRow` writer the touts and rate-card
+`data-signup-trigger-element="book-call"` and a `data-signup-trigger-value` of
+`Free Call` / `Paid Call`, and its `.service-card_content-wrapper` booking row
+is removed through the same `stripCallBookingRow` writer the touts and rate-card
 clones use — no authenticated writer runs for this viewer, so a row nobody owns
 would show the `00:00pm on 00/00` sentinel forever. When either type is public,
 the generic Book Call CTAs become available as signup-only entry points.
+
+That attribution pair opens the signup modal but registers **no** lead entry,
+and the difference is open by decision for the canary window rather than
+settled. `book-call` is an allowed trigger element, so the click is recognized
+and the trigger cookie is stored; but for every element except `service` the
+stored value is the override, so the cookie holds `Free Call` / `Paid Call`,
+which is not one of the recognized lead-entry trigger values owned by
+[`README.md`](README.md#signup-trigger-ctas). This card therefore does not
+report the Starter Booking track that the surviving CMS card is authored to
+report, which makes **lead-entry attribution the one thing the side-by-side
+canary does not prove**. Confirm each card's own `data-signup-trigger-*` pair
+against that contract before the cutover decision; do not read this paragraph
+as a working attribution path.
 
 A public Paid item's amount is painted from the DTO's whole-dollar `price`,
 converted to cents for the shared rate writer. Every other viewer has that value
