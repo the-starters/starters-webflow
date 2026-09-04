@@ -294,6 +294,7 @@ function warnText(args) {
  * Run the script for real against a page, in a fresh sandbox.
  * `gsap`: 'early' (present before the script runs), 'late' (attached by the
  * test with attachGsap()), or 'never'.
+ * `hostname` defaults to production; `debug` sets window.STARTERS_DEBUG.
  */
 function load(page, options) {
   const o = options || {}
@@ -341,6 +342,11 @@ function load(page, options) {
 
   sandbox.window = sandbox
   if (o.gsap === 'early') sandbox.gsap = makeGsap(record)
+  // Production host by default: warnings are staging-only, so a case that
+  // wants one has to ask for a staging hostname or the debug flag.
+  sandbox.location = { hostname: o.hostname || 'www.thestarters.com' }
+  sandbox.window.location = sandbox.location
+  if (o.debug !== undefined) sandbox.window.STARTERS_DEBUG = o.debug
 
   sandbox.ResizeObserver = function ResizeObserver(callback) {
     this.callback = callback
@@ -462,7 +468,11 @@ test('GSAP present at parse arms the marquee immediately, silently', () => {
 
 test('GSAP attached only before load: one warning, then arms on load', () => {
   const page = makePage()
-  const app = load(page, { gsap: 'late', readyState: 'loading' })
+  const app = load(page, {
+    gsap: 'late',
+    readyState: 'loading',
+    hostname: 'the-starters-3-0.webflow.io',
+  })
 
   app.domContentLoaded()
   assert.equal(app.record.tos.length, 0)
@@ -479,7 +489,11 @@ test('GSAP attached only before load: one warning, then arms on load', () => {
 
 test('GSAP absent throughout warns once and touches nothing', () => {
   const page = makePage({ listWidth: 200 })
-  const app = load(page, { gsap: 'never', readyState: 'loading' })
+  const app = load(page, {
+    gsap: 'never',
+    readyState: 'loading',
+    hostname: 'the-starters-3-0.webflow.io',
+  })
 
   app.domContentLoaded()
   app.loadEvent()
@@ -491,6 +505,45 @@ test('GSAP absent throughout warns once and touches nothing', () => {
   assert.equal(app.record.sets.length, 0)
   // A short track would have been padded had the guard let the build run.
   assert.equal(clonesIn(page.wrappers[0]).length, 0)
+})
+
+test('on production the same missing GSAP is silent, and still inert', () => {
+  const page = makePage({ listWidth: 200 })
+  const app = load(page, { gsap: 'never', readyState: 'loading' })
+
+  app.domContentLoaded()
+  app.loadEvent()
+  app.resize()
+
+  assert.deepEqual(app.warnings, [])
+  assert.equal(app.record.tos.length, 0)
+  assert.equal(app.record.sets.length, 0)
+  assert.equal(clonesIn(page.wrappers[0]).length, 0)
+})
+
+test('STARTERS_DEBUG turns the warning back on in production', () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'never', readyState: 'loading', debug: true })
+
+  app.domContentLoaded()
+  app.loadEvent()
+
+  assert.equal(app.warnings.length, 1)
+  assert.match(warnText(app.warnings[0]), /GSAP not found/)
+})
+
+test('a lookalike host is not staging and says nothing', () => {
+  const page = makePage()
+  const app = load(page, {
+    gsap: 'never',
+    readyState: 'loading',
+    hostname: 'notwebflow.io',
+  })
+
+  app.domContentLoaded()
+  app.loadEvent()
+
+  assert.deepEqual(app.warnings, [])
 })
 
 test('the release marker is readable even when GSAP never arrives', () => {
@@ -607,7 +660,10 @@ test('a wrapper with a single list warns and is not tweened', () => {
   // authored "needs two lists" contract is what is left to report.
   const page = makePage({ wrappers: 1, layoutWidth: 0 })
   page.wrappers[0].removeChild(page.wrappers[0].children[1])
-  const app = load(page, { gsap: 'early' })
+  const app = load(page, {
+    gsap: 'early',
+    hostname: 'the-starters-3-0.webflow.io',
+  })
 
   assert.equal(app.record.tos.length, 0)
   assert.match(warnText(app.warnings[0]), /needs two \.card-marquee_list/)

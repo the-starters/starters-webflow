@@ -9,7 +9,8 @@
  * parsed, the GSAP check lives in the run step, not at parse time: a run with
  * no GSAP warns once and returns, and the next run (DOMContentLoaded, load,
  * resize, hover-capability change) arms the Marquee. If GSAP never arrives the
- * strip stays static with a single console warning.
+ * strip stays static; the warning is staging-only per the README section
+ * "Staging-only console diagnostics".
  *
  * MARKUP (Designer-authored; classes are the contract):
  *   .card-marquee_layout      the section row group; hover/focus target
@@ -58,12 +59,36 @@
   /** The missing-GSAP warning is emitted at most once per page. */
   var gsapWarned = false;
 
+  /** Host patterns are anchored, so `notwebflow.io` is not staging. */
+  function isDevHost() {
+    try {
+      if (window.STARTERS_DEBUG === true) return true;
+      var h = (location && location.hostname) || '';
+      return (
+        h === 'localhost' ||
+        h === '127.0.0.1' ||
+        /(^|\.)webflow\.io$/.test(h) ||
+        /(^|\.)trycloudflare\.com$/.test(h)
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function warn() {
+    if (!isDevHost()) return;
+    try {
+      console.warn.apply(console, ['[g2-proof]'].concat([].slice.call(arguments)));
+    } catch (e) {
+      /* no-op */
+    }
+  }
+
   function warnMissingGsap() {
+    // The flag flips on every host, so a noisy staging page still warns once.
     if (gsapWarned) return;
     gsapWarned = true;
-    if (typeof console !== 'undefined' && console.warn) {
-      console.warn('[g2-proof] GSAP not found; retrying on load/resize.');
-    }
+    warn('GSAP not found; retrying on the next run (load/resize/hover change).');
   }
 
   function prefersReducedMotion() {
@@ -159,11 +184,7 @@
   /** Per-layout timeScale: mouse only on real-hover devices, focus always. */
   function wireLayoutHover() {
     if (typeof AbortController === 'undefined') {
-      if (typeof console !== 'undefined' && console.warn) {
-        console.warn(
-          '[g2-proof] AbortController missing; hover slow disabled (use a current browser).',
-        );
-      }
+      warn('AbortController missing; hover slow disabled (use a current browser).');
       return;
     }
     if (hoverAbort) {
@@ -254,15 +275,9 @@
 
     var lists = wrapper.querySelectorAll(LIST);
     if (lists.length < 2) {
-      if (typeof console !== 'undefined' && console.warn) {
-        console.warn(
-          '[g2-proof] Each ' +
-            WRAPPER +
-            ' needs two ' +
-            LIST +
-            ' elements for a seamless loop.',
-        );
-      }
+      warn(
+        'Each ' + WRAPPER + ' needs two ' + LIST + ' elements for a seamless loop.',
+      );
       return;
     }
 
