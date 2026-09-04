@@ -290,6 +290,18 @@ function warnText(args) {
   return args.filter((a) => typeof a === 'string').join(' ')
 }
 
+/** Every captured console.warn whose text matches. */
+function warningsMatching(app, re) {
+  return app.warnings.filter((args) => re.test(warnText(args)))
+}
+
+/** The teardown sets: what hands a wrapper back without an inline transform. */
+function clearPropSets(app) {
+  return app.record.sets.filter((entry) => entry.vars.clearProps === 'transform')
+}
+
+const ARMED = 'data-marquee-armed'
+
 /**
  * Run the script for real against a page, in a fresh sandbox.
  * `gsap`: 'early' (present before the script runs), 'late' (attached by the
@@ -348,17 +360,22 @@ function load(page, options) {
   sandbox.window.location = sandbox.location
   if (o.debug !== undefined) sandbox.window.STARTERS_DEBUG = o.debug
 
-  sandbox.ResizeObserver = function ResizeObserver(callback) {
-    this.callback = callback
-    this.observed = null
-    this.disconnected = false
-    this.observe = (el) => {
-      this.observed = el
+  // `noResizeObserver` models an old browser: the constructor is simply absent.
+  if (!o.noResizeObserver) {
+    sandbox.ResizeObserver = function ResizeObserver(callback) {
+      this.callback = callback
+      this.observed = null
+      this.disconnected = false
+      this.observe = (el) => {
+        this.observed = el
+        // A real observer delivers one observation right after observe().
+        if (o.observerAutoFire) callback([])
+      }
+      this.disconnect = () => {
+        this.disconnected = true
+      }
+      observers.push(this)
     }
-    this.disconnect = () => {
-      this.disconnected = true
-    }
-    observers.push(this)
   }
 
   sandbox.matchMedia = (query) => {
@@ -442,6 +459,11 @@ function load(page, options) {
     hoverCapabilityChange: (matches) => {
       media.hover = matches
       mediaHandlers.hover.slice().forEach((fn) => fn())
+    },
+    /** Fire the reduced-motion change handler, as toggling the OS setting does. */
+    reducedMotionChange: (matches) => {
+      media.reduced = matches
+      mediaHandlers.reduced.slice().forEach((fn) => fn())
     },
     /** Run the recorded double-rAF chain. */
     flushFrames: () => {
@@ -671,11 +693,12 @@ test('a wrapper with a single list warns and is not tweened', () => {
 
 /* ------------------------------ rebuilds ------------------------------ */
 
-test('a window resize kills the old tweens and builds new ones', () => {
+test('a resize that changes a width kills the old tweens and builds new ones', () => {
   const page = makePage()
   const app = load(page, { gsap: 'early' })
   const first = app.record.tos.slice()
 
+  page.layouts[0].layoutWidth = 1400
   app.resize()
 
   assert.deepEqual(
@@ -688,6 +711,25 @@ test('a window resize kills the old tweens and builds new ones', () => {
     app.observers.slice(0, 2).map((ro) => ro.disconnected),
     [true, true],
   )
+  // Teardown hands the wrappers back untransformed before the rebuild.
+  assert.equal(clearPropSets(app).length, 2)
+})
+
+test('a resize with every width unchanged leaves the strips running', () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'early' })
+  const first = app.record.tos.slice()
+
+  app.resize()
+
+  // iOS collapsing its URL bar fires resize; restarting from x=0 would show.
+  assert.equal(app.record.tos.length, 2)
+  assert.equal(app.record.sets.length, 2)
+  assert.deepEqual(
+    first.map((tween) => tween.killed),
+    [false, false],
+  )
+  assert.equal(app.window.G2ProofMarquee.armed, true)
 })
 
 test("a wrapper's ResizeObserver pauses and replaces just that tween", () => {
@@ -697,6 +739,7 @@ test("a wrapper's ResizeObserver pauses and replaces just that tween", () => {
 
   assert.equal(app.observers[0].observed, page.wrappers[0].children[0])
 
+  page.wrappers[0].children[0].layoutWidth = 500
   app.observe(0)
 
   assert.equal(first.paused, true)
@@ -706,7 +749,41 @@ test("a wrapper's ResizeObserver pauses and replaces just that tween", () => {
   assert.equal(app.record.sets.length, 3)
 })
 
-test('the hover-capability change re-runs and rebinds pointer hover', () => {
+test("the observer's own first observation does not restart the track", () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'early', observerAutoFire: true })
+
+  assert.equal(app.record.tos.length, 2)
+  assert.equal(app.record.sets.length, 2)
+  assert.equal(app.record.tos[0].killed, false)
+})
+
+test('an observer firing at the same width changes nothing', () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'early' })
+
+  app.observe(0)
+
+  assert.equal(app.record.tos.length, 2)
+  assert.equal(app.record.sets.length, 2)
+})
+
+test('a hover slowdown survives an observer rebuild under the pointer', () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'early' })
+
+  page.layouts[0].dispatch('mouseenter')
+  assert.equal(app.record.tos[0].lastTimeScale, 0.25)
+
+  page.wrappers[0].children[0].layoutWidth = 500
+  app.observe(0)
+
+  // The pointer never left, so the replacement tween is slow from the start.
+  assert.equal(app.record.tos.length, 3)
+  assert.equal(app.record.tos[2].lastTimeScale, 0.25)
+})
+
+test('the hover-capability change rebinds pointer hover without rebuilding', () => {
   const page = makePage()
   const app = load(page, { gsap: 'early', hoverMatches: false })
 
@@ -716,8 +793,21 @@ test('the hover-capability change re-runs and rebinds pointer hover', () => {
   app.hoverCapabilityChange(true)
   page.layouts[0].dispatch('mouseenter')
 
+  assert.equal(app.record.tos.length, 2)
+  assert.equal(app.record.tos[0].lastTimeScale, 0.25)
+})
+
+test('a browser without ResizeObserver still arms, and still rebuilds on resize', () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'early', noResizeObserver: true })
+
+  assert.equal(app.record.tos.length, 2)
+  assert.equal(app.observers.length, 0)
+  assert.deepEqual(app.warnings, [])
+
+  page.layouts[0].layoutWidth = 1400
+  app.resize()
   assert.equal(app.record.tos.length, 4)
-  assert.equal(app.record.tos[2].lastTimeScale, 0.25)
 })
 
 /* ------------------------------ hover and focus ------------------------------ */
@@ -800,4 +890,117 @@ test('each layout owns its own hover scope', () => {
     app.record.tos.map((tween) => tween.lastTimeScale),
     [null, null, 0.25, 0.25],
   )
+})
+
+/* --------------------- readiness, markers and teardown --------------------- */
+
+test("readyState 'interactive' arms once, and load does not arm it again", () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'early', readyState: 'interactive' })
+
+  assert.equal(app.record.tos.length, 2)
+  assert.equal(app.record.sets.length, 2)
+
+  app.loadEvent()
+
+  // Webflow's GSAP is already there at 'interactive'; re-running would show as
+  // every strip jumping back to its start position.
+  assert.equal(app.record.tos.length, 2)
+  assert.equal(app.record.sets.length, 2)
+})
+
+test("readyState 'complete' does not arm a second time on the rAF pass", () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'early', readyState: 'complete' })
+
+  assert.equal(app.record.tos.length, 2)
+
+  app.flushFrames()
+
+  assert.equal(app.record.tos.length, 2)
+  assert.equal(app.record.sets.length, 2)
+})
+
+test("readyState 'complete' with late GSAP arms on the rAF pass", () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'late', readyState: 'complete' })
+
+  assert.equal(app.record.tos.length, 0)
+
+  app.attachGsap()
+  app.flushFrames()
+
+  assert.equal(app.record.tos.length, 2)
+  assert.equal(app.window.G2ProofMarquee.armed, true)
+})
+
+test('armed markers appear only once tweens exist', () => {
+  const armedPage = makePage()
+  const armed = load(armedPage, { gsap: 'early' })
+
+  assert.equal(armed.window.G2ProofMarquee.armed, true)
+  assert.deepEqual(
+    armedPage.wrappers.map((wrapper) => wrapper.hasAttribute(ARMED)),
+    [true, true],
+  )
+
+  const staticPage = makePage()
+  const inert = load(staticPage, { gsap: 'never' })
+
+  assert.equal(inert.window.G2ProofMarquee.armed, false)
+  assert.deepEqual(
+    staticPage.wrappers.map((wrapper) => wrapper.hasAttribute(ARMED)),
+    [false, false],
+  )
+})
+
+test('reduced motion switched on after arming returns the strip to static', () => {
+  const page = makePage({ layoutWidth: 1000, listWidth: 200 })
+  const app = load(page, { gsap: 'early' })
+  const first = app.record.tos.slice()
+
+  assert.equal(clonesIn(page.wrappers[0]).length, 4)
+
+  app.reducedMotionChange(true)
+
+  assert.deepEqual(
+    first.map((tween) => tween.killed),
+    [true, true],
+  )
+  assert.equal(app.record.tos.length, 2)
+  // Static means static: no clones, no frozen inline transform, no marker.
+  assert.equal(clearPropSets(app).length, 2)
+  assert.equal(clonesIn(page.wrappers[0]).length, 0)
+  assert.equal(page.wrappers[0].hasAttribute(ARMED), false)
+  assert.equal(app.window.G2ProofMarquee.armed, false)
+})
+
+test('a track the copy cap cannot fill warns once, not once per rebuild', () => {
+  const page = makePage({ wrappers: 1, layoutWidth: 100, listWidth: 1 })
+  const app = load(page, {
+    gsap: 'early',
+    hostname: 'the-starters-3-0.webflow.io',
+  })
+
+  assert.equal(clonesIn(page.wrappers[0]).length, 24)
+  assert.equal(warningsMatching(app, /Clone cap reached/).length, 1)
+
+  page.wrappers[0].children[0].layoutWidth = 2
+  app.observe(0)
+
+  assert.equal(warningsMatching(app, /Clone cap reached/).length, 1)
+})
+
+test('STARTERS_DEBUG set after a silent production run still surfaces the warning', () => {
+  const page = makePage()
+  const app = load(page, { gsap: 'never', readyState: 'loading' })
+
+  app.domContentLoaded()
+  assert.deepEqual(app.warnings, [])
+
+  app.window.STARTERS_DEBUG = true
+  app.resize()
+
+  assert.equal(app.warnings.length, 1)
+  assert.match(warnText(app.warnings[0]), /GSAP not found/)
 })

@@ -16,10 +16,11 @@
  *   .card-marquee_layout      the section row group; hover/focus target
  *   .card-marquee-wrapper     one track; needs TWO .card-marquee_list children
  *   .card-marquee_list        one card segment; copies get data-marquee-list-clone
- * Copies are appended until the track spans layout width plus one segment,
- * capped at 24, so the faded edges never reveal the end of the strip.
+ * Copies are appended until the track spans layout width plus one segment. The
+ * cap of 24 copies is a safety stop: hitting it means the track is still short
+ * of that width and its end can show, so a staging warning fires.
  *
- * ATTRIBUTES:
+ * ATTRIBUTES (read):
  *   data-marquee-speed        on the wrapper, px/s, default 50
  *   data-marquee-forward      on the wrapper, force left-to-right start
  *   data-marquee-reverse      on the wrapper, force right-to-left start
@@ -28,9 +29,16 @@
  *   data-marquee-hover-scale  on the layout, default 0.25 ("0" pauses, "1" no-op)
  *   data-marquee-fade="off"   CSS only; this script never reads it
  *
+ * ATTRIBUTES (written, output markers — never author them):
+ *   data-marquee-list-clone   on each appended copy
+ *   data-marquee-armed        on a wrapper whose tween is running
+ * window.G2ProofMarquee.armed says the same thing for the page as a whole.
+ *
  * Without an override, tracks alternate direction by their index in the layout.
  * Pointer hover only slows on devices that can really hover; focus always does.
- * prefers-reduced-motion skips the whole animation.
+ * prefers-reduced-motion skips the animation, and a change to that preference
+ * is observed: turning it on tears the strips back down to static.
+ * A window resize only rebuilds when a measured width actually moved.
  */
 (function initCardMarqueeG2() {
   'use strict';
@@ -41,23 +49,36 @@
 
   var RELEASE = 'v1.59.512';
   // Set before anything can bail, so the running version is readable even
-  // when GSAP never shows up.
-  window.G2ProofMarquee = { release: RELEASE };
+  // when GSAP never shows up. `armed` flips only once tweens exist.
+  window.G2ProofMarquee = { release: RELEASE, armed: false };
 
   var WRAPPER = '.card-marquee-wrapper';
   var LIST = '.card-marquee_list';
   var LAYOUT = '.card-marquee_layout';
 
   var CLONE_ATTR = 'data-marquee-list-clone';
+  var ARMED_ATTR = 'data-marquee-armed';
   var MAX_LIST_COPIES = 24;
   var registry = [];
   var hoverAbort = null;
-  /** True when this UA should get mouseenter/leave (not most phones). */
-  var hoverMql =
-    window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)');
-  var mqlHandlerBound = false;
+  /** layout -> the timeScale hover or focus is holding it at right now, so a
+   *  rebuild under a stationary pointer does not shed the slowdown. */
+  var activeScale = new Map();
   /** The missing-GSAP warning is emitted at most once per page. */
   var gsapWarned = false;
+
+  /** An unsupported query throws in older Safari; a null mql just means off. */
+  function mediaQuery(query) {
+    try {
+      return (window.matchMedia && window.matchMedia(query)) || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** True when this UA should get mouseenter/leave (not most phones). */
+  var hoverMql = mediaQuery('(hover: hover) and (pointer: fine)');
+  var reducedMql = mediaQuery('(prefers-reduced-motion: reduce)');
 
   /** Host patterns are anchored, so `notwebflow.io` is not staging. */
   function isDevHost() {
@@ -85,17 +106,20 @@
   }
 
   function warnMissingGsap() {
-    // The flag flips on every host, so a noisy staging page still warns once.
+    // The host check comes first: a silent production run must not latch the
+    // flag, or STARTERS_DEBUG switched on afterwards could never surface it.
+    if (!isDevHost()) return;
     if (gsapWarned) return;
     gsapWarned = true;
     warn('GSAP not found; retrying on the next run (load/resize/hover change).');
   }
 
   function prefersReducedMotion() {
-    return (
-      window.matchMedia &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    );
+    try {
+      return !!(reducedMql && reducedMql.matches);
+    } catch (e) {
+      return false;
+    }
   }
 
   function parseSpeed(el) {
@@ -115,8 +139,7 @@
     return n;
   }
 
-  function reverseIndexInLayout(wrapper) {
-    var layout = wrapper.closest && wrapper.closest(LAYOUT);
+  function reverseIndexInLayout(wrapper, layout) {
     if (!layout) return 0;
     var rows = layout.querySelectorAll(WRAPPER);
     for (var i = 0; i < rows.length; i++) {
@@ -125,10 +148,10 @@
     return 0;
   }
 
-  function shouldReverse(wrapper) {
+  function shouldReverse(wrapper, layout) {
     if (wrapper.hasAttribute('data-marquee-forward')) return false;
     if (wrapper.hasAttribute('data-marquee-reverse')) return true;
-    return reverseIndexInLayout(wrapper) % 2 === 1;
+    return reverseIndexInLayout(wrapper, layout) % 2 === 1;
   }
 
   function isPausedContainer(el) {
@@ -146,22 +169,24 @@
     return (wrapper.closest && wrapper.closest(LAYOUT)) || null;
   }
 
-  /** Clones the first list until the track outruns the section mask (CSS embed). */
+  function layoutWidthOf(layout) {
+    return layout ? layout.getBoundingClientRect().width : 0;
+  }
+
+  /** Clones the first list until the track outruns the section mask (CSS embed).
+   *  Returns true when the copy cap stopped it short of that width. */
   function ensureTrackFillsLayout(wrapper, layout) {
-    if (!layout) return;
-    var lists;
-    var first;
+    if (!layout) return false;
     var safety = 0;
-    var layoutW = layout.getBoundingClientRect().width;
-    if (layoutW < 1) return;
-    while (safety < MAX_LIST_COPIES) {
-      lists = wrapper.querySelectorAll(LIST);
-      first = lists[0];
-      if (!first) return;
+    var layoutW = layoutWidthOf(layout);
+    if (layoutW < 1) return false;
+    while (true) {
+      var first = wrapper.querySelectorAll(LIST)[0];
+      if (!first) return false;
       var segW = first.offsetWidth;
-      if (segW < 1) return;
-      var minTrack = layoutW + segW;
-      if (wrapper.scrollWidth + 0.5 >= minTrack) break;
+      if (segW < 1) return false;
+      if (wrapper.scrollWidth + 0.5 >= layoutW + segW) return false;
+      if (safety >= MAX_LIST_COPIES) return true;
       var c = first.cloneNode(true);
       c.setAttribute(CLONE_ATTR, '');
       wrapper.appendChild(c);
@@ -210,45 +235,147 @@
     map.forEach(function (entries, layout) {
       var scale = parseHoverScale(layout);
       if (scale === null) return;
-      if (usePointer) {
-        layout.addEventListener(
-          'mouseenter',
-          function () {
-            setEntriesTimeScale(entries, scale);
-          },
-          { signal: sig, passive: true },
-        );
-        layout.addEventListener(
-          'mouseleave',
-          function () {
-            setEntriesTimeScale(entries, 1);
-          },
-          { signal: sig, passive: true },
-        );
+      // The map is what a rebuild reads back, so it is written here, not there.
+      function slow() {
+        activeScale.set(layout, scale);
+        setEntriesTimeScale(entries, scale);
       }
-      layout.addEventListener(
-        'focusin',
-        function () {
-          setEntriesTimeScale(entries, scale);
-        },
-        { signal: sig, passive: true },
-      );
+      function restore() {
+        activeScale['delete'](layout);
+        setEntriesTimeScale(entries, 1);
+      }
+      if (usePointer) {
+        layout.addEventListener('mouseenter', slow, { signal: sig, passive: true });
+        layout.addEventListener('mouseleave', restore, { signal: sig, passive: true });
+      }
+      layout.addEventListener('focusin', slow, { signal: sig, passive: true });
       layout.addEventListener(
         'focusout',
         function (e) {
-          if (!e.relatedTarget || !layout.contains(e.relatedTarget)) {
-            setEntriesTimeScale(entries, 1);
-          }
+          if (!e.relatedTarget || !layout.contains(e.relatedTarget)) restore();
         },
         { signal: sig, passive: true },
       );
     });
   }
 
-  function killAll() {
+  /** Arms (or re-arms) one track from the DOM as it measures right now.
+   *  Returns false when it cannot loop: fewer than two lists, or nothing
+   *  measurable yet. The caller decides whether that deserves a warning. */
+  function armEntry(entry) {
+    var wrapper = entry.wrapper;
+    removeListClones(wrapper);
+    var capped = ensureTrackFillsLayout(wrapper, entry.layout);
+
+    var lists = wrapper.querySelectorAll(LIST);
+    if (lists.length < 2) return false;
+
+    var segW = lists[0].offsetWidth;
+    if (segW < 1) return false;
+
+    if (capped && !entry.capWarned) {
+      entry.capWarned = true;
+      warn('Clone cap reached; track may show its end (check the section CSS).');
+    }
+
+    if (entry.tween) {
+      entry.tween.pause();
+      entry.tween.kill();
+    }
+
+    entry.gsap.set(wrapper, { x: entry.rev ? -segW : 0 });
+    entry.tween = entry.gsap.to(wrapper, {
+      x: entry.rev ? 0 : -segW,
+      duration: segW / entry.speed,
+      ease: 'none',
+      repeat: -1,
+      immediateRender: false,
+    });
+    entry.segW = segW;
+    entry.layoutW = layoutWidthOf(entry.layout);
+
+    var held = activeScale.get(entry.layout);
+    if (held != null) {
+      try {
+        entry.tween.timeScale(held);
+      } catch (e) {
+        /* no-op */
+      }
+    }
+    wrapper.setAttribute(ARMED_ATTR, '');
+    return true;
+  }
+
+  /** True when this track measures differently than it did when it armed. */
+  function entryWidthChanged(entry) {
+    var lists = entry.wrapper.querySelectorAll(LIST);
+    if (!lists.length) return false;
+    return (
+      lists[0].offsetWidth !== entry.segW ||
+      layoutWidthOf(entry.layout) !== entry.layoutW
+    );
+  }
+
+  /** `gsap` is passed in, not read from window, so a rebuild uses the instance
+   *  that was present when this run armed. */
+  function buildForWrapper(wrapper, gsap) {
+    if (isPausedContainer(wrapper)) return;
+
+    var layout = getMarqueeLayout(wrapper);
+    var entry = {
+      wrapper: wrapper,
+      layout: layout,
+      gsap: gsap,
+      tween: null,
+      ro: null,
+      segW: 0,
+      layoutW: 0,
+      rev: shouldReverse(wrapper, layout),
+      speed: parseSpeed(wrapper),
+      capWarned: false,
+    };
+
+    if (!armEntry(entry)) {
+      if (wrapper.querySelectorAll(LIST).length < 2) {
+        warn(
+          'Each ' + WRAPPER + ' needs two ' + LIST + ' elements for a seamless loop.',
+        );
+      }
+      return;
+    }
+
+    // Registered before the observer, so nothing can leave an armed tween that
+    // teardown does not know about.
+    registry.push(entry);
+
+    if (typeof ResizeObserver === 'function') {
+      entry.ro = new ResizeObserver(function () {
+        // A real observer delivers one observation straight after observe();
+        // only a segment width that moved is worth restarting the track. The
+        // layout's own width is the resize handler's job, so one resize = one restart.
+        var first = wrapper.querySelectorAll(LIST)[0];
+        if (!first || first.offsetWidth === entry.segW) return;
+        armEntry(entry);
+      });
+      entry.ro.observe(wrapper.querySelectorAll(LIST)[0]);
+    }
+  }
+
+  /** Back to the authored, static strip: no tweens, no clones, no inline
+   *  transform left frozen mid-loop, and no stale armed markers. */
+  function teardown() {
     for (var i = 0; i < registry.length; i++) {
-      if (registry[i] && registry[i].tween) registry[i].tween.kill();
-      if (registry[i] && registry[i].ro) registry[i].ro.disconnect();
+      var entry = registry[i];
+      if (!entry) continue;
+      if (entry.tween) entry.tween.kill();
+      if (entry.ro) entry.ro.disconnect();
+      try {
+        entry.gsap.set(entry.wrapper, { clearProps: 'transform' });
+      } catch (e) {
+        /* no-op */
+      }
+      removeListClones(entry.wrapper);
+      entry.wrapper.removeAttribute(ARMED_ATTR);
     }
     registry = [];
     if (hoverAbort) {
@@ -259,76 +386,11 @@
       }
       hoverAbort = null;
     }
-  }
-
-  /** `gsap` is passed in, not read from window, so a rebuild uses the instance
-   *  that was present when this run armed. */
-  function buildForWrapper(wrapper, gsap) {
-    if (isPausedContainer(wrapper)) return;
-
-    removeListClones(wrapper);
-
-    var layout = getMarqueeLayout(wrapper);
-    if (layout) {
-      ensureTrackFillsLayout(wrapper, layout);
-    }
-
-    var lists = wrapper.querySelectorAll(LIST);
-    if (lists.length < 2) {
-      warn(
-        'Each ' + WRAPPER + ' needs two ' + LIST + ' elements for a seamless loop.',
-      );
-      return;
-    }
-
-    var first = lists[0];
-    var segmentWidth = first.offsetWidth;
-    if (segmentWidth < 1) return;
-
-    var speed = parseSpeed(wrapper);
-    var rev = shouldReverse(wrapper);
-    var regEntry = { tween: null, ro: null, layout: layout };
-
-    gsap.set(wrapper, { x: rev ? -segmentWidth : 0 });
-
-    regEntry.tween = gsap.to(wrapper, {
-      x: rev ? 0 : -segmentWidth,
-      duration: segmentWidth / speed,
-      ease: 'none',
-      repeat: -1,
-      immediateRender: false,
-    });
-
-    regEntry.ro = new ResizeObserver(function () {
-      removeListClones(wrapper);
-      var layoutNow = getMarqueeLayout(wrapper);
-      if (layoutNow) {
-        ensureTrackFillsLayout(wrapper, layoutNow);
-      }
-      var freshLists = wrapper.querySelectorAll(LIST);
-      if (freshLists.length < 2) return;
-      var w = freshLists[0].offsetWidth;
-      if (w < 1) return;
-      if (regEntry.tween) {
-        regEntry.tween.pause();
-        regEntry.tween.kill();
-      }
-      gsap.set(wrapper, { x: rev ? -w : 0 });
-      regEntry.tween = gsap.to(wrapper, {
-        x: rev ? 0 : -w,
-        duration: w / speed,
-        ease: 'none',
-        repeat: -1,
-        immediateRender: false,
-      });
-    });
-
-    registry.push(regEntry);
-    regEntry.ro.observe(first);
+    window.G2ProofMarquee.armed = false;
   }
 
   function run() {
-    killAll();
+    teardown();
 
     // The guard sits ahead of every DOM mutation: no GSAP means no clones and
     // no tweens, only the one warning, and the next run tries again.
@@ -345,41 +407,64 @@
       buildForWrapper(nodes[i], gsap);
     }
     wireLayoutHover();
+    window.G2ProofMarquee.armed = registry.length > 0;
+  }
+
+  /** The late-GSAP hooks exist only to catch a page that armed nothing. */
+  function retry() {
+    if (registry.length) return;
+    run();
+  }
+
+  /** iOS collapsing its URL bar fires resize with every width unchanged, and a
+   *  restart from x=0 is visible, so measure before rebuilding. */
+  function rebuildIfChanged() {
+    if (!registry.length) {
+      run();
+      return;
+    }
+    for (var i = 0; i < registry.length; i++) {
+      if (entryWidthChanged(registry[i])) {
+        run();
+        return;
+      }
+    }
+  }
+
+  /** Safari before 14 only has the deprecated addListener. */
+  function onMediaChange(mql, fn) {
+    if (!mql) return;
+    if (mql.addEventListener) mql.addEventListener('change', fn);
+    else if (mql.addListener) mql.addListener(fn);
   }
 
   function init() {
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', run);
+      document.addEventListener('DOMContentLoaded', retry);
     } else {
       run();
     }
     if (document.readyState === 'complete') {
       requestAnimationFrame(function () {
-        requestAnimationFrame(run);
+        requestAnimationFrame(retry);
       });
     } else {
       window.addEventListener('load', function onLoad() {
         window.removeEventListener('load', onLoad);
-        run();
+        retry();
       });
     }
     var resizeT;
     window.addEventListener('resize', function () {
       clearTimeout(resizeT);
-      resizeT = setTimeout(run, 120);
+      resizeT = setTimeout(rebuildIfChanged, 120);
     });
-    if (hoverMql && !mqlHandlerBound) {
-      mqlHandlerBound = true;
-      if (hoverMql.addEventListener) {
-        hoverMql.addEventListener('change', function () {
-          run();
-        });
-      } else if (hoverMql.addListener) {
-        hoverMql.addListener(function () {
-          run();
-        });
-      }
-    }
+    onMediaChange(hoverMql, function () {
+      // Only the listeners are capability-dependent; the tweens are not.
+      if (registry.length) wireLayoutHover();
+      else run();
+    });
+    onMediaChange(reducedMql, run);
   }
 
   init();
