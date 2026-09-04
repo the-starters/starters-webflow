@@ -21,6 +21,10 @@
  *    the booking chooser stays closed. Signed-in brands use canonical booking
  *    discovery and successful controller installs. Starter members keep the
  *    live-derived owner toggles.
+ *  - Side-by-side canonical Xano Free/Paid call cards. Webflow owns one native
+ *    template per surface and wf-xano renders the public call DTO into both;
+ *    this file adds viewer state and stands the legacy reveal down from those
+ *    cards. The duplicated CMS call cards stay for rollback until parity proof.
  *  - Side-by-side canonical Xano Service cards. Webflow owns the visible
  *    template and form; this file adds role-aware interaction attributes and
  *    reconciles only adapter-owned native Service options.
@@ -45,7 +49,8 @@
  *   qs, qsa,
  *   jQuery ($, two utility blocks),
  *   window.WfAlgolia (search record),
- *   window.WfXano (late-safe canonical Service-card results).
+ *   window.WfXano (late-safe canonical Service-card, call-card and Retainer
+ *     results).
  *
  * StartersFreeCallBooking is loaded from the GitHub/jsDelivr asset when an
  * older Webflow page head does not install it yet. The dependency stays
