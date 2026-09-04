@@ -480,6 +480,35 @@ test('invoiceCancel sends the authenticated cancellation contract to Xano', asyn
   assert.deepEqual(JSON.parse(requests[1].init.body), payload)
 })
 
+test('final invoice wrappers preserve the ordinary routes and use isolated final routes', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/final-create/v3')) {
+        return response({ invoice_id: 961, invoice_link: 'https://invoice.stripe.com/i/test' })
+      }
+      if (url.includes('/invoices/final-cancel/v3')) {
+        return response({ invoice_id: 961, status: 'void' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember },
+  )
+  const create = { project_id: 746, amount: 250, description: 'Final services', idempotency_key: 'final-create-test' }
+  const cancel = { invoice_id: 961, expected_status: 'unpaid', idempotency_key: 'final-cancel-test', dry_run: false }
+
+  await bridge.API.invoiceFinalCreate(create)
+  await bridge.API.invoiceFinalCancel(cancel)
+
+  assert.match(requests[1].url, /\/invoices\/final-create\/v3$/)
+  assert.deepEqual(JSON.parse(requests[1].init.body), create)
+  assert.match(requests[2].url, /\/invoices\/final-cancel\/v3$/)
+  assert.deepEqual(JSON.parse(requests[2].init.body), cancel)
+})
+
 test('mutation diagnostics retain only safe invoice lifecycle fields', async () => {
   const bridge = await loadBridge(
     async (input) => {
@@ -982,6 +1011,81 @@ test('Starter invoice cancellation requires exact CANCEL and refreshes the canon
   assert.match(cancelBodies[0].idempotency_key, /^invoice-cancel-ui:901:/)
   assert.ok(await waitFor(() => refreshCount === 1))
   assert.ok(await waitFor(() => wrap.style.display === 'none'))
+})
+
+test('Starter final invoice cancellation uses the isolated void route', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        status: 'completed',
+        lifecycle_state: 'completed',
+        invoices: [{
+          id: 961,
+          status: 'unpaid',
+          kind: 'stripe_invoice',
+          handoff_type: 'final',
+          sync_origin: 'v3',
+          cancel_eligible: true,
+        }],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh: () => Promise.resolve(state),
+    subscribe(handler) {
+      handler(state)
+      return () => {}
+    },
+  }
+  const requests = []
+  let promptText = ''
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/final-cancel/v3')) {
+        requests.push(JSON.parse(init.body))
+        return response({ invoice_id: 961, status: 'void' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: (message) => {
+        promptText = message
+        return 'CANCEL'
+      },
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '961'))
+  bridge.dispatchDocument('click', clickEvent(action).event)
+
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.match(promptText, /void this final invoice/i)
+  assert.equal(requests[0].invoice_id, 961)
+  assert.match(requests[0].idempotency_key, /^final-invoice-cancel-ui:961:/)
 })
 
 test('dashboard invoice rows show Cancelled and remove payable actions for canonical void invoices', async () => {
@@ -5474,6 +5578,493 @@ test('a completed project card can still open Generate Invoice', async () => {
   assert.equal(click.counts.stopped, 1)
 })
 
+test('invoice context selects only one canonical completed-project final placeholder', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
+  const final = {
+    id: 961,
+    kind: 'stripe_invoice',
+    handoff_type: 'final',
+    sync_origin: 'v3',
+    status: 'unknown',
+  }
+
+  const eligible = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    status: 'completed',
+    lifecycle_state: 'completed',
+    final_invoice: final,
+  })
+  assert.equal(eligible.invoiceMode, 'final')
+  assert.equal(eligible.finalInvoiceId, 961)
+  assert.equal(eligible.finalInvoiceAmount, null)
+
+  const recovery = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    status: 'completed',
+    lifecycle_state: 'completed',
+    final_invoice: {
+      ...final,
+      amount: 125.25,
+      description: 'Original final work',
+      recovery_ready: true,
+    },
+  })
+  assert.equal(recovery.invoiceMode, 'final')
+  assert.equal(recovery.finalInvoiceAmount, 125.25)
+  assert.equal(recovery.finalInvoiceDescription, 'Original final work')
+  assert.equal('stripe_ref' in recovery, false)
+
+  const invalid = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    status: 'completed',
+    lifecycle_state: 'completed',
+    final_invoice: { ...final, sync_origin: 'legacy' },
+  })
+  assert.equal(invalid.invoiceMode, 'unavailable')
+
+  for (const status of ['unknown', 'unpaid']) {
+    const blankPlaceholder = bridge.window.Opp30.invoiceProjectContext(card, {
+      id: 746,
+      status: 'completed',
+      lifecycle_state: 'completed',
+      final_invoice: { ...final, status },
+    })
+    assert.equal(blankPlaceholder.invoiceMode, 'final')
+  }
+
+  for (const status of ['paid', 'void']) {
+    const terminal = bridge.window.Opp30.invoiceProjectContext(card, {
+      id: 746,
+      status: 'completed',
+      lifecycle_state: 'completed',
+      final_invoice: { ...final, status },
+    })
+    assert.equal(terminal.invoiceMode, 'final_closed')
+    assert.equal(terminal.finalInvoiceStatus, status)
+  }
+
+  // A status that is neither open nor terminal is not a settled invoice: it is a
+  // handoff that has not arrived, so it keeps the refreshable message.
+  const unrecognised = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    status: 'completed',
+    lifecycle_state: 'completed',
+    final_invoice: { ...final, status: 'draft' },
+  })
+  assert.equal(unrecognised.invoiceMode, 'unavailable')
+  assert.equal(unrecognised.finalInvoiceStatus, '')
+
+  const incomplete = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    status: 'active',
+    lifecycle_state: 'active',
+    invoices: [],
+  })
+  assert.equal(incomplete.invoiceMode, 'standard')
+})
+
+// A projection may carry only the canonical lifecycle_state, only the legacy
+// dashboard status, or two fields that disagree. Every one of those rows is
+// completed, so none of them may fall into the unreachable 'unavailable' mode
+// while its final placeholder is right there in the payload.
+test('either completed field alone routes a final placeholder to the final mode', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
+  const final = {
+    id: 961,
+    kind: 'stripe_invoice',
+    handoff_type: 'final',
+    sync_origin: 'v3',
+    status: 'unknown',
+  }
+  const completedShapes = [
+    { lifecycle_state: 'completed' },
+    { status: 'completed' },
+    { status: 'completed', lifecycle_state: 'terminated' },
+    { status: 'active', lifecycle_state: 'completed' },
+    { status: 'COMPLETED ' },
+  ]
+
+  for (const shape of completedShapes) {
+    const context = bridge.window.Opp30.invoiceProjectContext(card, {
+      id: 746,
+      ...shape,
+      final_invoice: final,
+    })
+    assert.equal(context.invoiceMode, 'final', JSON.stringify(shape))
+    assert.equal(context.finalInvoiceId, 961)
+
+    // The same row without a usable placeholder still fails closed, so the two
+    // predicates keep agreeing on what "completed" means.
+    const missing = bridge.window.Opp30.invoiceProjectContext(card, { id: 746, ...shape })
+    assert.equal(missing.invoiceMode, 'unavailable', JSON.stringify(shape))
+  }
+})
+
+// invoiceMode is only advisory until it changes the request, so the
+// lifecycle_state-only row has to reach invoices/final-create/v3 end to end.
+test('a lifecycle_state-only completed row submits through the final-create route', async () => {
+  const dom = invoiceSubmitDom()
+  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
+  const requests = []
+  const document = documentWith(dom.modal)
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/final-create/v3')) {
+        requests.push({ url, body: JSON.parse(init.body) })
+        return response({ invoice_id: 961, status: 'unpaid' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      querySelector: document.querySelector,
+      querySelectorAll: document.querySelectorAll,
+    },
+  )
+  const context = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    lifecycle_state: 'completed',
+    final_invoice: {
+      id: 961,
+      kind: 'stripe_invoice',
+      handoff_type: 'final',
+      sync_origin: 'v3',
+      status: 'unknown',
+    },
+  })
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.match(requests[0].url, /\/invoices\/final-create\/v3$/)
+  assert.equal(requests[0].body.project_id, 746)
+  assert.match(requests[0].body.idempotency_key, /^final-invoice-v3-746-/)
+  assert.ok(await waitFor(() => dom.modal.querySelector('.w-form-done').style.display === 'block'))
+  assert.ok(!dom.modal.querySelector('.w-form-fail').textContent)
+})
+
+// recovery_ready is the projection's own signal that the stored placeholder may
+// be reused. Without it a stale amount must not be prefilled and silently
+// billed, the way a member who only retypes the description would.
+test('a final placeholder that is not recovery_ready prefills neither amount nor description', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
+  const stale = {
+    id: 961,
+    kind: 'stripe_invoice',
+    handoff_type: 'final',
+    sync_origin: 'v3',
+    status: 'unknown',
+    amount: 125.25,
+    description: 'Original final work',
+  }
+
+  for (const recoveryReady of [undefined, false, 'true', 1]) {
+    const final_invoice = { ...stale }
+    if (recoveryReady !== undefined) final_invoice.recovery_ready = recoveryReady
+    const context = bridge.window.Opp30.invoiceProjectContext(card, {
+      id: 746,
+      status: 'completed',
+      lifecycle_state: 'completed',
+      final_invoice,
+    })
+    assert.equal(context.invoiceMode, 'final')
+    assert.equal(context.finalInvoiceAmount, null, String(recoveryReady))
+    assert.equal(context.finalInvoiceDescription, '', String(recoveryReady))
+
+    const dom = invoiceSubmitDom()
+    dom.amount.value = ''
+    dom.description.value = ''
+    bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
+    assert.equal(dom.amount.value, '')
+    assert.equal(dom.description.value, '')
+  }
+})
+
+test('final invoice description enforces the trimmed 1..500 character endpoint contract', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const normalize = bridge.window.Opp30.normalizeFinalInvoiceDescription
+
+  assert.equal(normalize(''), null)
+  assert.equal(normalize('   '), null)
+  assert.equal(normalize(' x '), 'x')
+  assert.equal(normalize('a'.repeat(500)), 'a'.repeat(500))
+  assert.equal(normalize('a'.repeat(501)), null)
+})
+
+test('final invoice submit blocks an invalid description before any request', async () => {
+  for (const invalidDescription of ['', '   ', 'a'.repeat(501)]) {
+    const dom = invoiceSubmitDom()
+    dom.description.value = invalidDescription
+    const requests = []
+    const document = documentWith(dom.modal)
+    const bridge = await loadBridge(
+      async (input) => {
+        requests.push(String(input))
+        return response({})
+      },
+      {
+        member: talentMember,
+        querySelector: document.querySelector,
+        querySelectorAll: document.querySelectorAll,
+      },
+    )
+    bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+      projectId: 746,
+      title: 'Completed campaign',
+      brand: 'Acme Co',
+      invoiceMode: 'final',
+      finalInvoiceId: 961,
+    })
+
+    bridge.dispatchDocument('submit', {
+      target: dom.form,
+      preventDefault() {},
+      stopPropagation() {},
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.deepEqual(requests, [])
+    assert.match(dom.modal.querySelector('.w-form-fail').textContent, /between 1 and 500/)
+  }
+})
+
+// A Starter who bills a completed project, has it paid, and reopens the modal
+// must be told the invoice is settled — not that it is "not ready yet", which
+// prescribes a refresh that can never change a terminal placeholder.
+test('a terminal final invoice blocks submit with its own settled message, never a refresh', async () => {
+  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
+  const identity = {
+    id: 961,
+    kind: 'stripe_invoice',
+    handoff_type: 'final',
+    sync_origin: 'v3',
+  }
+  const cases = [
+    { final_invoice: { ...identity, status: 'paid' }, expected: /already been paid/i },
+    { final_invoice: { ...identity, status: 'void' }, expected: /was cancelled/i },
+    { final_invoice: undefined, expected: /not ready yet/i },
+    { final_invoice: { ...identity, status: 'draft' }, expected: /not ready yet/i },
+  ]
+
+  for (const { final_invoice, expected } of cases) {
+    const dom = invoiceSubmitDom()
+    const requests = []
+    const document = documentWith(dom.modal)
+    const bridge = await loadBridge(
+      async (input) => {
+        requests.push(String(input))
+        return response({})
+      },
+      {
+        member: talentMember,
+        querySelector: document.querySelector,
+        querySelectorAll: document.querySelectorAll,
+      },
+    )
+    const project = { id: 746, status: 'completed', lifecycle_state: 'completed' }
+    if (final_invoice) project.final_invoice = final_invoice
+    const context = bridge.window.Opp30.invoiceProjectContext(card, project)
+    bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
+
+    bridge.dispatchDocument('submit', {
+      target: dom.form,
+      preventDefault() {},
+      stopPropagation() {},
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const failure = dom.modal.querySelector('.w-form-fail').textContent
+    assert.deepEqual(requests, [], JSON.stringify(final_invoice))
+    assert.match(failure, expected)
+    // A settled invoice is never described as merely pending, and a pending one
+    // is never described as settled.
+    if (expected.source.includes('not ready')) assert.doesNotMatch(failure, /billed again/i)
+    else assert.doesNotMatch(failure, /refresh/i)
+  }
+})
+
+// The create path already tolerates a padded enum value, so the cancel path must
+// too: otherwise the same row is a final invoice when billed and an ordinary one
+// when voided, and the click silently takes the wrong route and key namespace.
+test('a whitespace-padded final invoice row still cancels through the final void route', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        status: 'completed',
+        lifecycle_state: 'completed',
+        invoices: [{
+          id: 961,
+          status: 'unpaid',
+          kind: ' Stripe_Invoice ',
+          handoff_type: 'Final ',
+          sync_origin: 'v3',
+          cancel_eligible: true,
+        }],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh: () => Promise.resolve(state),
+    subscribe(handler) {
+      handler(state)
+      return () => {}
+    },
+  }
+  const requests = []
+  let promptText = ''
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/final-cancel/v3')) {
+        requests.push(JSON.parse(init.body))
+        return response({ invoice_id: 961, status: 'void' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: (message) => {
+        promptText = message
+        return 'CANCEL'
+      },
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '961'))
+  bridge.dispatchDocument('click', clickEvent(action).event)
+
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.match(promptText, /void this final invoice/i)
+  assert.match(requests[0].idempotency_key, /^final-invoice-cancel-ui:961:/)
+})
+
+test('completed-project invoice submit uses final-create and accepts invoice_link', async () => {
+  const dom = invoiceSubmitDom()
+  const requests = []
+  const document = documentWith(dom.modal)
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/final-create/v3')) {
+        requests.push({ url, body: JSON.parse(init.body) })
+        return response({
+          invoice_id: 961,
+          status: 'unpaid',
+          invoice_link: 'https://invoice.stripe.com/i/final-test',
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      querySelector: document.querySelector,
+      querySelectorAll: document.querySelectorAll,
+    },
+  )
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+    projectId: 746,
+    title: 'Completed campaign',
+    brand: 'Acme Co',
+    invoiceMode: 'final',
+    finalInvoiceId: 961,
+  })
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.match(requests[0].body.idempotency_key, /^final-invoice-v3-746-/)
+  assert.equal(requests[0].body.description, 'August retainer')
+  const link = dom.modal.querySelector('[data-wf-invoice="payment-link"]')
+  assert.ok(await waitFor(() =>
+    link.href === 'https://invoice.stripe.com/i/final-test'))
+})
+
+test('recoverable final invoice prefills its canonical amount and sends no provider identity', async () => {
+  const dom = invoiceSubmitDom()
+  const requests = []
+  const document = documentWith(dom.modal)
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/final-create/v3')) {
+        requests.push(JSON.parse(init.body))
+        return response({
+          invoice_id: 961,
+          status: 'unpaid',
+          invoice_link: 'https://invoice.stripe.com/i/recovered-test',
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      querySelector: document.querySelector,
+      querySelectorAll: document.querySelectorAll,
+    },
+  )
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+    projectId: 746,
+    title: 'Completed campaign',
+    brand: 'Acme Co',
+    invoiceMode: 'final',
+    finalInvoiceId: 961,
+    finalInvoiceAmount: 125.25,
+    finalInvoiceDescription: 'Original final work',
+  })
+  assert.equal(dom.amount.value, '125.25')
+  assert.equal(dom.description.value, 'Original final work')
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.equal(requests[0].amount, 125.25)
+  assert.equal(requests[0].description, 'Original final work')
+  assert.equal('stripe_ref' in requests[0], false)
+  assert.doesNotMatch(JSON.stringify(requests[0]), /in_[A-Za-z0-9]/)
+})
+
 test('Generate Invoice waits for canonical project context before opening', async () => {
   const title = el('p', { 'wf-xano-bind': 'title' })
   title.textContent = 'Stale project title'
@@ -5842,6 +6433,41 @@ test('the success screen shows and hides the Stripe button, not just its overlay
   paintInvoiceSuccess(unpayable.modal, { status: 'unpaid' }, context, 10)
   assert.equal(unpayable.wrap.style.display, 'none')
   assert.equal(unpayable.link.href, '#invoice-payment-link')
+})
+
+// The success screen and the card rows read the same provider fields, so they
+// have to fail closed identically: a non-https or malformed value must never
+// become a live pay-button target.
+test('the success screen only accepts an absolute https provider link', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { paintInvoiceSuccess } = bridge.window.Opp30
+  const context = { brand: 'Northwind Coffee', title: 'Growth Marketing Lead' }
+
+  const payable = invoiceModalFixture()
+  paintInvoiceSuccess(
+    payable.modal,
+    { status: 'unpaid', invoice_link: 'https://invoice.stripe.com/i/final-test' },
+    context,
+    250,
+  )
+  assert.equal(payable.link.href, 'https://invoice.stripe.com/i/final-test')
+  assert.equal(payable.wrap.style.display, '')
+
+  const rejected = [
+    '/invoices/961',
+    'http://invoice.stripe.com/i/final-test',
+    'javascript:alert(1)',
+    'https://invoice.stripe.com/i/final test',
+    'invoice.stripe.com/i/final-test',
+    '',
+    '   ',
+  ]
+  for (const invoice_link of rejected) {
+    const fixture = invoiceModalFixture()
+    paintInvoiceSuccess(fixture.modal, { status: 'unpaid', invoice_link }, context, 250)
+    assert.equal(fixture.wrap.style.display, 'none', String(invoice_link))
+    assert.equal(fixture.link.href, '#invoice-payment-link', String(invoice_link))
+  }
 })
 
 // A member can bill several projects without reloading, and the first success

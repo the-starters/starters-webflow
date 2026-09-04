@@ -1059,22 +1059,31 @@ current invoice, and rechecks that invoice's id, unpaid status, and cancellation
 eligibility before showing the prompt. It does not trust a missing or stale
 `data-project-invoice-id` decoration. A modal remains a future enhancement.
 
-The browser posts `invoice_id`, `expected_status=unpaid`, `dry_run=false`, and a
-retry-stable idempotency key to authenticated Xano `invoices/cancel/v3`. Xano
-remains the authority for Starter ownership, V3 Starter-generated origin,
-current unpaid status, and the Stripe Payment Link mapping. A successful cancel
-makes the provider link unpayable, stores canonical `status=void` with display
-label `Cancelled`, and queues the Brand notification exactly once. The
-controller then refreshes the existing wf-xano project page so the cancelled
-state replaces the action in place. Each rendered invoice row receives the
-canonical `data-project-invoice-id` and `data-project-invoice-status`
-attributes. Canonical `void` rows paint the projected `Cancelled` label even
-though the older shared Webflow component still authors that pill as
-`Incomplete`. If the refreshed invoice has no `payment_link` or `invoice_link`,
-the controller removes the anchor target and hides the full `View Invoice`
-button wrapper. Payable rows keep `_blank` plus `noopener noreferrer`. A failed
-request leaves the row available for a retry and shows the endpoint's safe
-action message when present.
+The resolved canonical invoice decides which void route the click takes, using
+the same trimmed, case-insensitive identity check the create path applies, so a
+padded enum value cannot send the two paths to different routes. A canonical
+`kind=stripe_invoice` row with `handoff_type=final` is a final invoice: its
+prompt reads `Type CANCEL to void this final invoice. The hosted invoice will
+stop accepting payment.`, it posts to `invoices/final-cancel/v3`, and its
+idempotency key is prefixed `final-invoice-cancel-ui:`. Every other eligible
+row keeps the ordinary prompt, `invoices/cancel/v3`, and the
+`invoice-cancel-ui:` prefix. Both routes post the same `invoice_id`,
+`expected_status=unpaid`, `dry_run=false`, and retry-stable idempotency key to
+authenticated Xano. Xano remains the authority for Starter ownership, V3
+Starter-generated origin, current unpaid status, and the provider mapping. A
+successful cancel makes the provider link unpayable, stores canonical
+`status=void` with display label `Cancelled`, and queues the Brand notification
+exactly once. The controller then refreshes the existing wf-xano project page
+so the cancelled state replaces the action in place. Each rendered invoice row
+receives the canonical `data-project-invoice-id` and
+`data-project-invoice-status` attributes. Canonical `void` rows paint the
+projected `Cancelled` label even though the older shared Webflow component
+still authors that pill as `Incomplete`. If the refreshed invoice has no
+absolute `https://` `payment_link` or `invoice_link`, the controller removes
+the anchor target and hides the full `View Invoice` button wrapper. Payable
+rows keep `_blank` plus `noopener noreferrer`. A failed request leaves the row
+available for a retry and shows the endpoint's safe action message when
+present.
 
 The existing `[wf-xano-link="project-end"]` or
 `[wf-xano-link="project-decline"]` control is upgraded to
@@ -1230,9 +1239,45 @@ native `dialog[data-modal-target="generate-invoice"]` component, opened through
 `window.lumos.modal`'s registry so its paused GSAP entrance timeline, scroll
 lock, and focus restore all still run; direct `showModal()` remains only as a
 fallback for pages without `modal.js`. Completed project rows keep this invoice
-entry point: the browser does not hide or reject Generate Invoice because the
-project is in a terminal lifecycle state. Xano remains the authority for whether
-the signed-in Starter can bill the selected project.
+entry point: the browser never hides Generate Invoice because the project is in
+a terminal lifecycle state, and the modal always opens. Xano remains the
+authority for whether the signed-in Starter can bill the selected project.
+
+Opening resolves one of four invoice modes from the canonical row, and the mode
+decides the submit contract. A `final_invoice` row is recognised as the project's
+final-invoice handoff when `kind=stripe_invoice`, `handoff_type=final`, and
+`sync_origin=v3`; its `status` then chooses between the two completed modes:
+
+- `standard` — the project is not completed. The ordinary create contract below
+  applies unchanged.
+- `final` — the project is completed and its final-invoice handoff is still
+  open, meaning `status` is `unknown` or `unpaid`. The submit routes to the
+  final-invoice contract below.
+- `final_closed` — the project is completed and its final-invoice handoff is
+  already terminal. The submit fails closed and never issues a replacement final
+  invoice: `paid` shows `The final invoice for this project has already been
+  paid. It cannot be billed again.`, and `void` shows `The final invoice for this
+  project was cancelled. It cannot be billed again.`. Neither message asks the
+  member to refresh, because no refresh reopens a terminal handoff.
+- `unavailable` — the project is completed but no usable final-invoice handoff
+  has arrived yet: the row is missing, fails the identity check above, or carries
+  a status that is neither open nor terminal. The modal still opens, and the
+  submit fails closed with `The final invoice is not ready yet. Refresh the
+  dashboard and try again.` rather than billing the completed project through the
+  ordinary create route.
+
+A project counts as completed when **either** the canonical `lifecycle_state`
+**or** the legacy dashboard `status` reads `completed`, so a projection carrying
+only one of the two fields still reaches its final-invoice route.
+
+A `final` placeholder marked `recovery_ready=true` prefills the modal's `Amount`
+and `Description` from its stored values, so a stalled final invoice can be
+regenerated without retyping. Each stored value must still pass that field's own
+rule below, so an out-of-range amount or an over-long description is left blank
+rather than prefilled. Without the flag both fields are left blank: a placeholder
+the projection has not marked recoverable never leaks a stale amount or
+description into a new submit. The browser sends no provider identity — the
+placeholder's own id and any Stripe reference stay server-side.
 
 Before opening on the Starter dashboard, the controller resolves the selected
 id against the canonical project-list row, waiting for the current list load when
@@ -1264,12 +1309,19 @@ rounded to cents and must land between $0.01 and $1,000,000, otherwise the
 inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
 nothing is sent. A submit from a modal that was opened without a project card
 fails closed with `Open Generate Invoice from the project you want to bill, so
-we know which project to invoice.`.
+we know which project to invoice.`. An `unavailable` or `final_closed` submit
+fails closed with that mode's message above, before any request. In `final`
+mode the description carries Xano's own contract and is trimmed to 1..500
+characters; an empty, blank, or longer value shows `Enter a final invoice
+description between 1 and 500 characters.` and nothing is sent. `standard` mode
+keeps its existing trimmed, unvalidated description.
 
 A valid submit posts `project_id`, `amount`, `description`, and
-`idempotency_key` to Xano `POST invoices/create/v3` through the same
-authenticated Memberstack-to-Xano bridge as the rest of the file. The
-idempotency key (`invoice-v3-<project_id>-<uuid>`) is stored on the form, so a
+`idempotency_key` through the same authenticated Memberstack-to-Xano bridge as
+the rest of the file. `standard` mode posts to Xano `POST invoices/create/v3`
+with an `invoice-v3-<project_id>-<uuid>` idempotency key; `final` mode posts the
+same four fields to `POST invoices/final-create/v3` with a
+`final-invoice-v3-<project_id>-<uuid>` key. The key is stored on the form, so a
 retry after a failure reuses it and is cleared once an invoice is created. The
 resolved submit control is disabled while the request is in flight, by the same
 design-system convention `form-validation.js` uses: the wrapper takes
@@ -1299,10 +1351,12 @@ Keep these markup contracts in the modal:
 - The pay CTA is the anchor whose authored placeholder href is
   `#invoice-payment-link`; the script stamps it with
   `data-wf-invoice="payment-link"` on first use and rewrites the href to the
-  Stripe payment link, opened in a new tab. Its `.button_main-wrap` wrapper is
-  hidden when the response carries no link, and reopening the modal restores the
-  placeholder href, so a stale Stripe link is never left behind the button for a
-  later invoice.
+  response's `payment_link`, or its `invoice_link` when the first is absent,
+  opened in a new tab. Both the success screen and the card rows apply the same
+  payable-link contract: only an absolute `https://` link with no whitespace is
+  shown. Its `.button_main-wrap` wrapper is hidden when the response carries no
+  such link, and reopening the modal restores the placeholder href, so a stale
+  Stripe link is never left behind the button for a later invoice.
 - Errors need `[data-wf-invoice="error"]` (the Webflow `.w-form-fail` block is
   accepted) and optionally `[data-wf-invoice="error-message"]` inside it. With
   neither present the failure is only a console warning, invisible to the member.
