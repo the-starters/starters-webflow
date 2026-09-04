@@ -638,6 +638,24 @@ for (const controllerPath of controllerPaths) {
     assert.equal(app.endDateInput.getAttribute('min'), '2024-05')
   })
 
+  test(`${controllerPath} recomputes the end minimum whenever its picker opens`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    app.startDateInput.value = 'May 2024'
+    app.endDateInput.value = 'Jan 2020'
+    app.endDateInput._starterProfileCompanyMonthPicker.setMinimum(null)
+    app.endDateInput.dispatchEvent({ type: 'click' })
+
+    const popup = app.endDateInput._starterProfileCompanyMonthPicker.popup
+    assert.equal(popup.children[0].children[1].textContent, '2024')
+    assert.equal(popup.children[0].children[0].disabled, true)
+    assert.deepEqual(
+      popup.children[1].children.slice(0, 4).map((button) => button.disabled),
+      [true, true, true, true],
+    )
+  })
+
   test(`${controllerPath} keeps the edit picker inside its modal and keyboard reachable`, async () => {
     const app = bootCompanyController(controllerPath)
     await app.ready()
