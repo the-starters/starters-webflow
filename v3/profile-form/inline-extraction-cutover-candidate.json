@@ -117,8 +117,8 @@
   },
   "candidateAssets": {
     "v3/profile-form/shared-foundation.js": {
-      "candidateCharacters": 23232,
-      "candidateSha256": "4c22ddc541742b15cf6b29354bbbd350b2d7d82ac1720b657403dba82c060efe",
+      "candidateCharacters": 23304,
+      "candidateSha256": "e66f167b4874df91f0d6f6bcb0fc69a94e35836e85faef6e8f7104f6246618a7",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "liveCaptureAsset": "v3/profile-form/shared-foundation-published.capture.txt",

@@ -271,7 +271,7 @@ function node(tagName, attributes = {}, text = '') {
   return created
 }
 
-function createFixture({ isMulti = true, options: optionList, initialValue = '' } = {}) {
+function createFixture({ isMulti = true, maxSelections = 3, options: optionList, initialValue = '' } = {}) {
   const root = new Node('body')
   const listInstance = node('div', { 'fs-list-instance': 'skills' })
   root.append(listInstance)
@@ -287,7 +287,7 @@ function createFixture({ isMulti = true, options: optionList, initialValue = '' 
 
   const input = node('input', {
     'ms-code-select': 'input',
-    'ms-code-select-max': '3',
+    'ms-code-select-max': String(maxSelections),
     'ms-code-select-min': '1',
   })
   const inputValue = node('input', { 'ms-code-select': 'input-value' })
@@ -442,6 +442,39 @@ test('editing a taxonomy after hydration still keeps the retired saved id', () =
 
   assert.deepEqual(harness.selectedTagNames(), ['Figma', 'Sketch'])
   assert.equal(harness.inputValue.value, 'skill-a, skill-c, skill-retired')
+})
+
+test('a max-one Function selector hydrates only one rendered saved id', () => {
+  const harness = boot({
+    isMulti: false,
+    maxSelections: 1,
+    initialValue: 'function-a, function-b',
+    options: [
+      { id: 'function-a', name: 'Marketing' },
+      { id: 'function-b', name: 'Design' },
+    ],
+  })
+
+  harness.flushProfileHydration()
+
+  assert.deepEqual(harness.selectedTagNames(), ['Marketing'])
+  assert.equal(harness.inputValue.value, 'function-a')
+  assert.equal(harness.inputRequired.value, 'function-a')
+})
+
+test('a max-one Availability selector drops unmatched saved ids', () => {
+  const harness = boot({
+    isMulti: false,
+    maxSelections: 1,
+    initialValue: 'availability-retired, availability-b',
+    options: [{ id: 'availability-b', name: '20 hours per week' }],
+  })
+
+  harness.flushProfileHydration()
+
+  assert.deepEqual(harness.selectedTagNames(), ['20 hours per week'])
+  assert.equal(harness.inputValue.value, 'availability-b')
+  assert.equal(harness.inputRequired.value, 'availability-b')
 })
 
 const OPTIONS = [

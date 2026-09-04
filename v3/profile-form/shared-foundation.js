@@ -648,11 +648,13 @@
           preservedUnmatchedValues = [];
 
           initialValues.forEach((value) => {
+            if (!isMulti && selectedOptions.length) return;
+
             const matchingOption = options.find((option) => option.id === value || option.name === value);
 
             if (matchingOption) {
               addTag(matchingOption);
-            } else if (!preservedUnmatchedValues.includes(value)) {
+            } else if (isMulti && !preservedUnmatchedValues.includes(value)) {
               preservedUnmatchedValues.push(value);
             }
           });
