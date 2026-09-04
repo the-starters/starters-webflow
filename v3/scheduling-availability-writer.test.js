@@ -216,6 +216,24 @@ function buildDom(options) {
     errorText = new El('div', { 'error-text-element': '' })
     errorText.textContent =
       "We couldn't complete that calendar change. Please try again or contact support."
+    if (options.nestedErrorTextMarkup) {
+      // Designer may author the copy beside an inline icon. Real DOM semantics
+      // apply on this node: assigning textContent discards every child, so the
+      // writer must leave it alone instead of flattening the authored subtree.
+      let text = errorText.textContent
+      Object.defineProperty(errorText, 'textContent', {
+        get() { return text },
+        set(value) {
+          text = String(value)
+          errorText.children = []
+        },
+      })
+      const icon = new El('span', { class: 'error-icon' })
+      const copy = new El('span', { class: 'error-copy' })
+      copy.textContent = text
+      errorText.appendChild(icon)
+      errorText.appendChild(copy)
+    }
     steps['config-request-error'].appendChild(errorText)
   }
 
@@ -1576,6 +1594,30 @@ for (const [label, priceCents] of [
     assert.doesNotMatch(result.dom.errorText.textContent, /contact support/)
   })
 }
+
+// Designer owns the error step's markup. Where the copy sits beside an inline
+// icon, no reveal may replace that subtree with a single text node.
+test('a revealed error step keeps nested authored markup inside its error-text element', async () => {
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    nestedErrorTextMarkup: true,
+    routes: blockedPaidRateRoutes(100100),
+  })
+  await settle()
+
+  result.clickAction(result.dom.buttons.disconnectConfirm)
+  result.clickAction(result.dom.buttons.disconnectCalendar)
+  await settle()
+
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(
+    result.calls.filter((call) => call.path === '/grants/delete/v3').length,
+    0,
+    'the provider grant must survive regardless of which error copy the page can show',
+  )
+  assert.equal(result.dom.errorText.children.length, 2, 'authored icon and copy must survive')
+  assert.match(result.dom.errorText.children[1].textContent, /contact support/)
+})
 
 test('a blocked paid-call rate still stops the disconnect where Designer authored no error-text element', async () => {
   const result = loadWriter({

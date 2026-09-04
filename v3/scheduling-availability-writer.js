@@ -466,8 +466,21 @@
   // on screen for the next, unrelated failure.
   let authoredTransitionErrorCopy = null
 
-  function restoreTransitionErrorCopy(step) {
+  // Only a leaf the step authored as its copy may be written through. An element
+  // holding markup of its own — an icon beside the text, a wrapper — is left alone
+  // so the step is revealed exactly as authored rather than flattened into a
+  // single text node for the rest of the session.
+  function transitionErrorCopyLeaf(step) {
     const errorEl = step ? qs('[error-text-element]', step) : null
+    if (!errorEl) return null
+    const childElements = typeof errorEl.childElementCount === 'number'
+      ? errorEl.childElementCount
+      : (errorEl.children ? errorEl.children.length : 0)
+    return childElements === 0 ? errorEl : null
+  }
+
+  function restoreTransitionErrorCopy(step) {
+    const errorEl = transitionErrorCopyLeaf(step)
     if (!errorEl) return null
     if (authoredTransitionErrorCopy === null) authoredTransitionErrorCopy = errorEl.textContent
     errorEl.textContent = authoredTransitionErrorCopy
@@ -491,7 +504,7 @@
   function showTransitionError(error) {
     const step = switchStep('config-request-error')
     if (!error || error.code !== PAID_CALL_RATE_UNSUPPORTED) return
-    const errorEl = step ? qs('[error-text-element]', step) : null
+    const errorEl = transitionErrorCopyLeaf(step)
     if (errorEl) errorEl.textContent = ERROR_TEXT_PAID_CALL_RATE
   }
 

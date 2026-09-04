@@ -235,7 +235,6 @@
           selector: '[name="rate-retainer"]',
         };
         const retainerSelected = toBool(formData["offer-monthly-retainers"]) === true;
-        const retainerInContract = wholeDollarFailure(formData["rate-retainer"], RETAINER_PRICE) === null;
         // Consult does not author the retainer section. Hidden hydrated controls
         // must never enable or block a value the member cannot repair here.
         const retainerEnabled = isConsultProfile ? false : retainerSelected;

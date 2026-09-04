@@ -3868,8 +3868,9 @@ Paid CTA, the authored
 `[call-type-item]` must contain a `[call-type-price]` node. The controller
 replaces that node's CMS or Designer text with the canonical USD value from
 `price_cents` before it reveals the Paid option. A missing price node, non-USD
-currency, non-integer price, or price below 100 cents makes installation fail
-closed.
+currency, or a `price_cents` that is not an integer from 100 through 100000
+divisible by 100 makes installation fail closed, so only whole-dollar Paid rates
+from $1 through $1,000 install and paint.
 
 While a Paid calendar load is pending, another click on the same current Paid
 choice is ignored. A Free choice invalidates that load. If the member then
