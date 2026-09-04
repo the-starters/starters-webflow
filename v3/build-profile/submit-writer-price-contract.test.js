@@ -312,6 +312,38 @@ test('a consult profile round-trips the canonical zero hourly rate it persists',
 
 })
 
+// The Consult flow authors no hourly-rate control, but hydration writes the
+// canonical Hourly_Rate into the hidden field for both routes. A legacy outlier
+// behind that hidden control must keep the zero compatibility state instead of
+// blocking a submit on a price the member can neither see nor repair.
+test('a consult profile never blocks on hidden hourly-rate data the contract rejects', async () => {
+  for (const stale of ['1500', '1.50', '1,000', '$50', '1e2', '-5', '9007199254740993']) {
+    const result = load({ rate: stale }, '/build-profile/consult')
+    await result.submit.click()
+    assert.equal(
+      result.requests.length, 1,
+      `${stale}: ${result.inputs['[name="rate"]'].validationMessage}`,
+    )
+    assert.equal(result.requests[0].body.hourly_rate, 0)
+    assert.equal(result.error.style.display, 'none')
+    assert.equal(result.inputs['[name="rate"]'].reportValidityCount, 0)
+  }
+
+  const inContract = load({ rate: '750' }, '/build-profile/consult')
+  await inContract.submit.click()
+  assert.equal(inContract.requests.length, 1)
+  assert.equal(inContract.requests[0].body.hourly_rate, 750)
+})
+
+test('Full Profile still rejects an out-of-range hourly rate on its own visible control', async () => {
+  const fullProfile = load({ rate: '1500' }, '/build-profile/full')
+  await fullProfile.submit.click()
+  assert.equal(fullProfile.requests.length, 0)
+  assert.equal(fullProfile.error.style.display, 'block')
+  assert.match(fullProfile.inputs['[name="rate"]'].validationMessage, /\$1 to \$1,000/)
+  assert.equal(fullProfile.inputs['[name="rate"]'].reportValidityCount, 1)
+})
+
 test('Full Profile rejects a required hourly rate of zero', async () => {
   const fullProfile = load({ rate: '0' }, '/build-profile/full')
   await fullProfile.submit.click()

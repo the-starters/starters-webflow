@@ -221,13 +221,17 @@
           : null;
 
         const fullProfile = !isConsultProfile;
-        const hourlyRate = wholeDollar(formData.rate, {
+        const HOURLY_PRICE = {
           min: 1,
           max: 1000,
           label: 'hourly rate',
           selector: '[name="rate"]',
           allowBlank: !fullProfile,
-        });
+        };
+        const hourlyInContract = wholeDollarFailure(formData.rate, HOURLY_PRICE) === null;
+        const hourlyRate = fullProfile || hourlyInContract
+          ? wholeDollar(formData.rate, HOURLY_PRICE)
+          : null;
         const RETAINER_PRICE = {
           min: 1,
           max: 25000,

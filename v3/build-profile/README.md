@@ -193,7 +193,10 @@ out-of-range rate behind that hidden radio keeps the no-paid-consult
 compatibility state instead of blocking a submit the member cannot repair. It
 also treats the monthly-retainer section as profile-type-inapplicable on
 Consult: hidden hydrated radio/rate values always submit `retainer: false` and
-`retainer_rate: 0`. Full Profile continues to validate an enabled retainer.
+`retainer_rate: 0`. The hidden hourly rate is inapplicable on Consult in the same
+way: an in-contract value is persisted, and a malformed, unsafe, or out-of-range
+one submits `hourly_rate: 0` rather than blocking. Full Profile continues to
+validate an enabled retainer and its required hourly rate.
 It
 enforces the
 [whole-dollar price contract](../profile-form/README.md#whole-dollar-price-contract)

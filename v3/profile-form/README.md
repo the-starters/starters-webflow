@@ -78,17 +78,20 @@ because an unvalidated collapsed value would violate this contract: Build Profil
 same zero or null compatibility value it uses for a section that was never filled in, so turning a
 section off does discard the rate it was holding, and Edit Profile sends the canonical zero only
 alongside the toggle it is turning off and otherwise omits the field. On Build Profile Consult neither
-the Paid Call nor the Monthly Retainer section is authored, so neither hidden radio is an answer: only
+the Paid Call nor the Monthly Retainer section, nor the Hourly Rate, is authored, so neither hidden
+radio is an answer: only
 a rate that already satisfies this contract preserves that section, and a canonical zero, blank,
 malformed, unsafe, or out-of-range rate behind either hidden control stays the off compatibility state
 — `paid_call_rate: null`, `retainer_rate: 0` — whichever way hydration left the radio, rather than
-blocking a submit the member cannot repair. Full Profile authors both controls, so an enabled section
-there stays strict.
+blocking a submit the member cannot repair. The hidden Hourly Rate follows the same rule: an
+in-contract value is persisted, and a malformed, unsafe, or out-of-range one behind that hidden control
+stays `hourly_rate: 0` instead of blocking. Full Profile authors all three controls, so an enabled or
+required section there stays strict.
 
 Wherever a blank is the compatibility-empty state, the canonical zero these same writers persist for
-that field is that same state: a blank or zero profile-type-inapplicable Hourly Rate round-trips as the
-zero compatibility value instead of being read back as an authored price, while a required or
-applicable Hourly Rate still rejects zero. Service prices and names live in hidden capture inputs, where
+that field is that same state: a blank, zero, or otherwise out-of-contract profile-type-inapplicable Hourly Rate
+round-trips as the zero compatibility value instead of being read back as an authored price, while a
+required or applicable Hourly Rate still rejects zero and every other value this contract refuses. Service prices and names live in hidden capture inputs, where
 focus and native constraint validation paint nothing, so their failures name themselves in the
 authored feedback surface instead: the Edit Profile step opens its authored error modal and Build
 Profile writes the same message into the `[build-profile-error]` panel it already reveals. That panel
