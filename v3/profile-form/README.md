@@ -247,11 +247,12 @@ The picker opens on a click and on `Enter`, `Space`, or `ArrowDown` from the fie
 closes on `Escape`, on choosing a month, `Today`, or `Clear`, or on a mousedown outside
 it. Every close except the outside mousedown returns focus to the field. Inside the
 popup, `Tab` and `Shift+Tab` cycle through the year arrows, the twelve month buttons,
-`Today`, and `Clear` instead of leaving it, and the popup is appended into the
-surrounding work-experience modal when there is one, so a keyboard member cannot land
-behind the dialog. The popup is `position: fixed` and is re-measured against
-`window.visualViewport` on scroll, resize, and viewport change, so a pinch-zoomed or
-soft-keyboard-shrunk viewport keeps it on screen rather than clipping it off an edge.
+`Today`, and `Clear` instead of leaving it, skipping any control the end-month minimum
+below has disabled, and the popup is appended into the surrounding work-experience modal
+when there is one, so a keyboard member cannot land behind the dialog. The popup is
+`position: fixed` and is re-measured against `window.visualViewport` on scroll, resize,
+and viewport change, so a pinch-zoomed or soft-keyboard-shrunk viewport keeps it on
+screen rather than clipping it off an edge.
 
 Stored dates are parsed into a real local `Date` before they hydrate the month picker.
 The parser accepts an exact full or three-letter month in
@@ -285,9 +286,10 @@ Hydration also records the canonical string it came from next to the visible mon
 Opening a different role clears disabled state and any date bounds left by the prior modal,
 then reinstalls the end-month minimum from the role it is showing.
 The bound is one-way. A non-current start month sets the end control's `min`, and its
-picker greys out every earlier month, the previous-year arrow, and `Today`; a current role
-or a blank start month clears it again. The start control never takes a `max`, so an
-existing or inverted range stays repairable from either side.
+picker disables every month before that minimum, the previous-year arrow once the
+minimum's year is the one on screen, and `Today` when the current month falls before it;
+a current role or a blank start month clears the bound again. The start control never
+takes a `max`, so an existing or inverted range stays repairable from either side.
 For a non-current role, save-time validation still requires the end month to be the same as
 or later than the start month; same-month tenures are valid. A rejected range sets a custom
 validity message on both month controls and reports it on the end-month control, so the
