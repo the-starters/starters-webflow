@@ -343,7 +343,8 @@ class FakeEvent {
  * @param {Element} root
  * @param {{loadTwice?: boolean, readyState?: string, hostname?: string,
  *          debug?: boolean, fetch?: Function, sources?: string[]}} [options]
- * @returns {{window: object, warnings: string[], root: Element, fireReady: () => void}}
+ * @returns {{window: object, warnings: string[], root: Element, fireReady: () => void,
+ *            firePageshow: (opts?: {persisted?: boolean}) => void}}
  */
 function mount(root, options = {}) {
   const documentListeners = new Map()
@@ -359,7 +360,15 @@ function mount(root, options = {}) {
     querySelector: (selector) => root.querySelector(selector),
   }
   const location = { hostname: options.hostname || 'www.thestarters.com' }
-  const window = { location }
+  const windowListeners = new Map()
+  const window = {
+    location,
+    addEventListener(type, listener) {
+      const list = windowListeners.get(type) || []
+      list.push(listener)
+      windowListeners.set(type, list)
+    },
+  }
   if (options.debug !== undefined) window.STARTERS_DEBUG = options.debug
   if (options.fetch) window.fetch = options.fetch
   window.window = window
@@ -390,7 +399,14 @@ function mount(root, options = {}) {
     ;(documentListeners.get('DOMContentLoaded') || []).forEach((listener) => listener())
   }
 
-  return { window, warnings, root, fireReady }
+  /** a back-button restore (persisted) or an ordinary fresh show */
+  const firePageshow = (opts = {}) => {
+    ;(windowListeners.get('pageshow') || []).forEach((listener) =>
+      listener({ type: 'pageshow', persisted: !!opts.persisted }),
+    )
+  }
+
+  return { window, warnings, root, fireReady, firePageshow }
 }
 
 // ---------------------------------------------------------------------------
@@ -899,7 +915,7 @@ test("a foreign aria-busy on the wrap survives the pending round trip", async ()
   assert.equal(f.submitWrap.getAttribute('aria-busy'), 'true')
 })
 
-test('a non-auth Memberstack form is left completely alone', async () => {
+test("a non-auth Memberstack form's button is never dressed", async () => {
   const f = profileForm()
   const root = body([f.form])
   mount(root)
@@ -919,7 +935,9 @@ test('a non-auth Memberstack form is left completely alone', async () => {
     ariaMark: null,
   })
   assert.equal(f.control.getAttribute('aria-disabled'), null)
-  assert.equal(observerCount(f.submitSpinner), 0)
+  // its own Spinner is the pinned loader here: watched once for its own hide,
+  // once as the Anchor
+  assert.equal(observerCount(f.submitSpinner), 2, 'watched only to see when the request ends')
 
   ms.hide()
   await flush()
@@ -1308,7 +1326,7 @@ test('once the spinner hides, the same button submits again', async () => {
   assert.equal(f.control.getAttribute('aria-disabled'), 'true')
 })
 
-test('a non-auth Memberstack form can still be submitted as often as it likes', async () => {
+test('a non-auth form clicked again mid-request is refused too', async () => {
   const f = profileForm()
   const root = body([f.form])
   const app = mount(root, { hostname: STAGING })
@@ -1323,7 +1341,7 @@ test('a non-auth Memberstack form can still be submitted as often as it likes', 
   ms.submit()
   await flush()
 
-  assert.equal(ms.submits, 3)
+  assert.equal(ms.submits, 1, 'one request, however often the Save button is clicked')
   assert.deepEqual(marksOf(f.wrap), {
     theme: 'black',
     themeMark: null,
@@ -1342,7 +1360,7 @@ test('a non-auth Memberstack form can still be submitted as often as it likes', 
     ariaDisabled: null,
     ariaMark: null,
   })
-  assert.equal(app.warnings.length, 0)
+  assert.equal(app.warnings.length, 2, app.warnings.join(' | '))
 })
 
 test('the reset-password form, which shows no spinner, submits every time', async () => {
@@ -1524,7 +1542,7 @@ test('re-asserting the busy look settles instead of looping', async () => {
   assert.equal(controlObservers, 1)
 })
 
-test('a non-auth form is watched nowhere at all', async () => {
+test('a non-auth form is watched at its Spinner and nowhere else', async () => {
   const f = profileForm()
   const root = body([f.form])
   const app = mount(root)
@@ -1532,7 +1550,7 @@ test('a non-auth form is watched nowhere at all', async () => {
 
   assert.equal(observerCount(f.wrap), 0)
   assert.equal(observerCount(f.control), 0)
-  assert.equal(observerCount(f.submitSpinner), 0)
+  assert.equal(observerCount(f.submitSpinner), 1, 'one watcher, and a rescan adds no more')
 })
 
 test('a button wired by a later rescan is defended just like the rest', async () => {
@@ -1975,7 +1993,7 @@ test('the signup button on that same page still greys out for its own submit', a
   assert.deepEqual(marksOf(s.submitWrap), IDLE_WRAP)
 })
 
-test('the pinned loader is only watched once a second form needs it', async () => {
+test('the pinned loader is watched from the first submit, and watched once', async () => {
   const { s, p, root } = anchoredPage()
   mount(root)
   const signup = memberstack(root, s.form)
@@ -1985,7 +2003,7 @@ test('the pinned loader is only watched once a second form needs it', async () =
 
   signup.submit()
   await flush()
-  assert.equal(observerCount(s.submitSpinner), 1, 'its own submit needs no mirror')
+  assert.equal(observerCount(s.submitSpinner), 2, 'the mirror watches it from the first submit')
   signup.hide()
   await flush()
 
@@ -1999,7 +2017,7 @@ test('the pinned loader is only watched once a second form needs it', async () =
   await flush()
   assert.equal(observerCount(s.submitSpinner), 2, 'the mirror is installed once')
 
-  assert.equal(observerCount(p.submitSpinner), 0)
+  assert.equal(observerCount(p.submitSpinner), 1, 'the Save button is watched for its own hide')
   assert.equal(observerCount(p.wrap), 0)
   assert.equal(observerCount(p.control), 0)
 })
@@ -2361,7 +2379,7 @@ test('the form that owns the pinned loader waits for a mirrored spin too', async
   assert.ok(app.warnings[0].includes(SUBMIT_REFUSED), app.warnings[0])
 })
 
-test('a form re-submitting into its own lit spinner is never refused', async () => {
+test('clicking Save twice opens one Memberstack request, not two', async () => {
   const moved = profileForm({ noLoader: true })
   const movedRoot = body([moved.form])
   const moveApp = mount(movedRoot, { hostname: STAGING })
@@ -2371,8 +2389,10 @@ test('a form re-submitting into its own lit spinner is never refused', async () 
   await flush()
   move.submit()
   await flush()
-  assert.equal(move.submits, 2, 'MOVE mode: its own Spinner is not a rival')
-  assert.equal(moveApp.warnings.length, 0, moveApp.warnings.join(' | '))
+  assert.equal(move.submits, 1, 'MOVE mode: the second click is refused')
+  assert.equal(moveApp.warnings.length, 1, moveApp.warnings.join(' | '))
+  assert.ok(moveApp.warnings[0].includes(SUBMIT_REFUSED), moveApp.warnings[0])
+  assert.ok(moveApp.warnings[0].includes('form.auth_form-block'), moveApp.warnings[0])
 
   const pinned = profileForm()
   const pinnedRoot = body([pinned.form])
@@ -2383,8 +2403,174 @@ test('a form re-submitting into its own lit spinner is never refused', async () 
   await flush()
   pin.submit()
   await flush()
-  assert.equal(pin.submits, 2, 'MIRROR mode: nor is the anchor it lit itself')
-  assert.equal(pinnedApp.warnings.length, 0, pinnedApp.warnings.join(' | '))
+  assert.equal(pin.submits, 1, 'MIRROR mode: so is a second click into the pinned loader')
+  assert.equal(pinnedApp.warnings.length, 1, pinnedApp.warnings.join(' | '))
+  assert.ok(pinnedApp.warnings[0].includes(SUBMIT_REFUSED), pinnedApp.warnings[0])
+})
+
+test('the refused submit is named, and the open request is left alone', async () => {
+  const move = unanchoredPage()
+  const moveApp = mount(move.root, { hostname: STAGING })
+  const moveProfile = memberstack(move.root, move.p.form, { cache: false })
+  const moveSignup = memberstack(move.root, move.s.form, { cache: false })
+
+  moveProfile.submit()
+  await flush()
+  moveSignup.submit()
+  await flush()
+  assert.equal(moveSignup.submits, 0, 'MOVE mode: the second form is swallowed')
+  assert.equal(move.p.submitSpinner.style.display, 'block', 'the open request keeps its spin')
+  assert.deepEqual(loaders(move.root), [move.p.submitSpinner], 'and its marker')
+  assert.equal(moveApp.warnings.length, 1, moveApp.warnings.join(' | '))
+  assert.ok(moveApp.warnings[0].includes(SUBMIT_REFUSED), moveApp.warnings[0])
+  assert.ok(
+    moveApp.warnings[0].includes('form#wf-form-Brand-Signup.auth_form-block'),
+    moveApp.warnings[0],
+  )
+
+  const pin = anchoredPage()
+  const pinApp = mount(pin.root, { hostname: STAGING })
+  const pinSignup = memberstack(pin.root, pin.s.form)
+  const pinProfile = memberstack(pin.root, pin.p.form)
+
+  pinProfile.submit()
+  await flush()
+  pinSignup.submit()
+  await flush()
+  assert.equal(pinSignup.submits, 0, 'MIRROR mode: the same')
+  assert.equal(pin.p.submitSpinner.style.display, 'block')
+  assert.deepEqual(marksOf(pin.s.submitWrap), IDLE_WRAP)
+  assert.equal(pinApp.warnings.length, 1, pinApp.warnings.join(' | '))
+  assert.ok(
+    pinApp.warnings[0].includes('form#wf-form-Brand-Signup.auth_form-block'),
+    pinApp.warnings[0],
+  )
+})
+
+test('a lit marker this script never lit refuses nothing', async () => {
+  const f = signupForm({ noLoader: true })
+  const stray = h('div', { id: 'hero', class: 'foo' })
+  const root = body([f.form, stray])
+  const app = mount(root, { hostname: STAGING })
+  const ms = memberstack(root, f.form, { cache: false })
+
+  // a duplicate marker, or a peer widget lighting one of its own
+  stray.setAttribute('data-ms-loader', '')
+  stray.style.display = 'block'
+  await flush()
+
+  ms.submit()
+  await flush()
+  assert.equal(ms.submits, 1, 'a marker we never lit does not hold the page')
+  assert.equal(f.submitSpinner.style.display, 'block')
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('a spinner left lit with no hide does not lock the next form out', async () => {
+  const { s, p, root } = unanchoredPage()
+  const app = mount(root, { hostname: STAGING })
+  const profile = memberstack(root, p.form, { cache: false })
+  const signup = memberstack(root, s.form, { cache: false })
+
+  profile.submit()
+  await flush()
+  profile.hide()
+  await flush()
+
+  // Memberstack's logout path shows the loader and never hides it on rejection
+  p.submitSpinner.style.display = 'block'
+  await flush()
+
+  signup.submit()
+  await flush()
+  assert.equal(signup.submits, 1, 'the stranded spin blocks nothing')
+  assert.deepEqual(loaders(root), [s.submitSpinner])
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('a page-level loader lit again after its request ended blocks nothing', async () => {
+  const l = loginForm()
+  const s = signupForm({ noLoader: true })
+  const hero = h('div', { id: 'hero', 'data-ms-loader': '' })
+  const root = body([hero, l.form, s.form])
+  // production on purpose: on staging the Spinner-less login form is named
+  const app = mount(root, { hostname: PRODUCTION })
+  const login = memberstack(root, l.form)
+  const signup = memberstack(root, s.form)
+
+  login.submit()
+  await flush()
+  assert.equal(hero.style.display, 'block', 'the pinned page loader is what lights')
+
+  login.hide()
+  await flush()
+  hero.style.display = 'block'
+  await flush()
+
+  signup.submit()
+  await flush()
+  assert.equal(signup.submits, 1, 'the finished login no longer holds the page')
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('a profile save that ends releases the page for the next one', async () => {
+  const p = profileForm({ noLoader: true })
+  const root = body([p.form])
+  const app = mount(root, { hostname: STAGING })
+  const ms = memberstack(root, p.form, { cache: false })
+
+  ms.submit()
+  await flush()
+  ms.hide()
+  await flush()
+
+  ms.submit()
+  await flush()
+  assert.equal(ms.submits, 2, 'the ended save is not still holding the page')
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('a back-button restore puts the button back and reopens the page', async () => {
+  const f = signupForm({ noLoader: true })
+  const root = body([f.form])
+  const app = mount(root, { hostname: STAGING })
+  const ms = memberstack(root, f.form, { cache: false })
+
+  ms.submit()
+  await flush()
+  assert.equal(f.submitWrap.getAttribute('data-button-theme'), 'disabled')
+
+  // restored from the bfcache: Memberstack will never hide the loader it left
+  app.firePageshow({ persisted: true })
+  await flush()
+
+  assert.deepEqual(marksOf(f.submitWrap), IDLE_WRAP)
+  assert.equal(f.control.hasAttribute('aria-disabled'), false)
+  assert.equal(f.submitSpinner.style.display, 'none')
+
+  ms.submit()
+  await flush()
+  assert.equal(ms.submits, 2)
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
+})
+
+test('an ordinary fresh show leaves a live request exactly as it was', async () => {
+  const f = signupForm({ noLoader: true })
+  const root = body([f.form])
+  const app = mount(root, { hostname: STAGING })
+  const ms = memberstack(root, f.form, { cache: false })
+
+  ms.submit()
+  await flush()
+  app.firePageshow({ persisted: false })
+  await flush()
+
+  assert.equal(f.submitWrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(f.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(f.submitSpinner.style.display, 'block')
+  ms.submit()
+  assert.equal(ms.submits, 1, 'still pending')
+  assert.equal(app.warnings.length, 0, app.warnings.join(' | '))
 })
 
 test('on production the refused submit says nothing in the console', async () => {

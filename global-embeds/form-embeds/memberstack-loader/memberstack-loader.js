@@ -37,9 +37,12 @@
 //
 // A Memberstack hide carries no identity — it lands on whatever holds
 // [data-ms-loader] at that moment — so only one Memberstack request may be open
-// per page: while the loader is lit, a submit from any other form is refused
-// (staging says so). A Spinner-less form's overlay is not tracked, so it cannot
-// take part in that rule until those forms get a Button.
+// per page. The refusal is keyed to the one request this script witnessed: while
+// the element it lit or routed is still lit, every submit is refused, its own
+// form's included (staging says so). A marker something else lit blocks nothing,
+// and a back-button restore clears the whole thing. A Spinner-less form's
+// overlay is not tracked, so it cannot take part in that rule until those forms
+// get a Button.
 //
 // A success redirect navigates without hiding the loader, so Pending is meant
 // to outlive the page: there is no timeout and no fail-open timer.
@@ -96,8 +99,16 @@
   var anchor = null;
   var anchorResolved = false;
   var anchorObserved = false;
-  var lastSubmitter = null;
+  // The one request this script witnessed: the record that opened it and the
+  // [data-ms-loader] it lit or routed. Nothing else is ours to police.
+  var owner = null;
+  var ownerEl = null;
   var mirrored = null;
+
+  function clearOwner() {
+    owner = null;
+    ownerEl = null;
+  }
 
   // --- resolving the form's Button -----------------------------------------
 
@@ -195,6 +206,7 @@
     }
 
     record.pending = false;
+    if (owner === record) clearOwner();
 
     // password-validation re-adjudicates the gate on hand-back: regate is
     // v1.59.510+, rescan the v1.59.504+ fallback (older PV never re-gates).
@@ -211,7 +223,10 @@
     var shown = display !== '' && display !== 'none';
     // The pinned Anchor lights up for every form on the page; Pending belongs
     // to the one that submitted.
-    if (shown && record.spinner === anchor && lastSubmitter && lastSubmitter !== record) return;
+    if (shown && record.spinner === anchor && owner && owner !== record) return;
+    if (!shown && ownerEl === record.spinner) clearOwner();
+    // Pending is the auth forms' busy look; every form still routes and refuses.
+    if (!record.isAuth) return;
     if (shown && !record.pending) enterPending(record);
     else if (!shown && record.pending) leavePending(record);
   }
@@ -253,7 +268,7 @@
   }
 
   function observeSpinner(record) {
-    if (!record.isAuth || !record.spinner) return;
+    if (!record.spinner) return;
     if (typeof MutationObserver === 'undefined') return;
     if (record.spinner[OBSERVED_FLAG]) return;
     record.spinner[OBSERVED_FLAG] = true;
@@ -267,8 +282,6 @@
 
   // MOVE mode only. A form with no Spinner clears the page instead, so
   // Memberstack falls back to its own overlay for that submit.
-  // Nothing lit can reach here: onSubmit refuses a submit while the loader is
-  // still busy for another form.
   function route(record) {
     var marked = document.querySelectorAll(LOADER_SELECTOR);
     for (var i = 0; i < marked.length; i++) {
@@ -281,22 +294,14 @@
   }
 
   // A Memberstack hide carries no identity: it lands on whatever holds the
-  // marker then, so only one request may be open per page.
+  // marker then, so only one request may be open per page. Only the element
+  // this script lit or routed counts; a marker a peer lit is not ours.
   // Never throws: a broken read must not cost the page its submit.
-  function loaderBusy(record) {
+  function loaderBusy() {
     try {
-      var marked = document.querySelectorAll(LOADER_SELECTOR);
-      for (var i = 0; i < marked.length; i++) {
-        var el = marked[i];
-        // The form that owns the spin in progress is not busy against itself.
-        if (anchor) {
-          if (el === anchor && lastSubmitter === record) continue;
-        } else if (el === record.spinner) {
-          continue;
-        }
-        var display = el.style && el.style.display;
-        if (display && display !== 'none') return true;
-      }
+      if (!ownerEl) return false;
+      var display = ownerEl.style && ownerEl.style.display;
+      return !!display && display !== 'none';
     } catch (e) {
       return false;
     }
@@ -308,7 +313,7 @@
   function mirror() {
     var display = anchor.style.display;
     var shown = display !== '' && display !== 'none';
-    var target = shown && lastSubmitter ? lastSubmitter.spinner : null;
+    var target = shown && owner ? owner.spinner : null;
     if (target === anchor) target = null;
 
     if (mirrored && mirrored !== target && mirrored.style.display !== 'none') {
@@ -321,7 +326,7 @@
       mirrored = null;
     }
     // A hide ends the submit, so a later show nobody asked for lights nothing.
-    if (!shown) lastSubmitter = null;
+    if (!shown) clearOwner();
   }
 
   // Installed from the capture-phase submit, which runs before Memberstack
@@ -344,17 +349,24 @@
       event.stopImmediatePropagation();
       return;
     }
-    if (loaderBusy(record)) {
+    if (loaderBusy()) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      devWarn('submit refused: the loader is still busy for another form', record.form);
+      devWarn('submit refused on ' + describe(record.form) +
+        ': a Memberstack request is still open');
       return;
     }
-    lastSubmitter = record;
+    owner = record;
     if (anchor) {
-      if (record.spinner && record.spinner !== anchor) observeAnchor();
+      // Watched on every submit, or a request that ends on the Anchor alone
+      // would leave ownership behind.
+      observeAnchor();
+      ownerEl = anchor;
     } else {
       route(record);
+      // A Spinner-less form in MOVE mode owns nothing: Memberstack falls back
+      // to its own untracked overlay.
+      ownerEl = record.spinner || null;
     }
   }
 
@@ -506,6 +518,30 @@
     }
 
     diagnose();
+  }
+
+  // A restored page keeps the loader Memberstack lit and will never hide it.
+  function onPageshow(event) {
+    if (!event || !event.persisted) return;
+    try {
+      var lit = ownerEl && ownerEl.style && ownerEl.style.display;
+      if (lit && lit !== 'none') ownerEl.style.display = 'none';
+      var wasMirrored = mirrored && mirrored.style && mirrored.style.display;
+      if (wasMirrored && wasMirrored !== 'none') mirrored.style.display = 'none';
+      clearOwner();
+      mirrored = null;
+      var forms = document.querySelectorAll(MS_FORM_SELECTOR);
+      for (var i = 0; i < forms.length; i++) {
+        var record = forms[i][WIRED_FLAG];
+        if (record && record.pending) leavePending(record);
+      }
+    } catch (e) {
+      /* no-op */
+    }
+  }
+
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('pageshow', onPageshow);
   }
 
   window.startersMemberstackLoader = { rescan: init, release: RELEASE };
