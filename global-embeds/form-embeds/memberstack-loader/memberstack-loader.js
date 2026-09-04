@@ -11,7 +11,7 @@
 // (staging names one when it sees it), and v1.59.504 and v1.59.505 report
 // themselves as v1.59.502.
 //
-// @release v1.59.510
+// @release v1.59.511
 //
 // Memberstack (DOM 1.2.0) fires no event for submit start or end. The only
 // signal it gives is inline display on the page's [data-ms-loader], so the
@@ -35,11 +35,13 @@
 // only (data-ms-form login / signup / forgot-password / reset-password). Loader
 // routing and the one-request-at-a-time refusal below cover every Memberstack
 // form, profile and account forms included. Every attribute this script may
-// have to undo, other than the theme it always overwrites, is written alongside
-// an ownership mark (data-memberstack-loader-busy, -aria), and only marked
-// attributes are ever removed, so a peer's hold (for example
-// password-validation.js's own aria-disabled) survives untouched. Never author
-// data-memberstack-loader-theme, -busy or -aria in Webflow.
+// have to undo, other than the theme it always overwrites and data-ms-loading,
+// is written alongside an ownership mark (data-memberstack-loader-busy, -aria),
+// and only marked attributes are ever removed, so a peer's hold (for example
+// password-validation.js's own aria-disabled) survives untouched.
+// data-ms-loading is written and removed unmarked because nothing else on the
+// site writes it; give it a mark like the others if that ever changes. Never
+// author data-memberstack-loader-theme, -busy or -aria in Webflow.
 //
 // A Memberstack hide carries no identity — it lands on whatever holds
 // [data-ms-loader] at that moment — so only one Memberstack request may be open
@@ -65,7 +67,12 @@
 // it also owns, so hide still ends where the peer left the button.
 //
 // Forms added after load (modals, step flows): call
-// window.startersMemberstackLoader.rescan().
+// window.startersMemberstackLoader.rescan(). It only ever gives a form its
+// first Button: a form that already resolved one is never re-pointed, so a
+// Button that replaces it is not adopted, and a swap made while that form's
+// request is open leaves Pending and the open request on the Button the form
+// still holds. Nothing on the site swaps a Button mid-request, and no staging
+// warning covers it.
 //
 // On staging (webflow.io, localhost, the dev tunnel, or window.STARTERS_DEBUG
 // === true) the script warns once per auth form that has no Button Spinner —
@@ -78,7 +85,7 @@
   if (window.__startersMemberstackLoaderInit) return;
   window.__startersMemberstackLoaderInit = true;
 
-  var RELEASE = 'v1.59.510';
+  var RELEASE = 'v1.59.511';
   var WIRED_FLAG = '__startersMemberstackLoader';
   var OBSERVED_FLAG = '__startersMemberstackLoaderObserved';
 

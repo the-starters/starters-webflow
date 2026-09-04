@@ -67,6 +67,9 @@ password-validation's hold and the loader's Pending state share one CTA
 without either script undoing the other. The theme is the exception: it is
 always overwritten while Pending, and an authored value is parked on the wrap
 and put back on hide, so a wrap that had no theme ends up with none.
+`data-ms-loading` is the second exception: the loader writes and removes it
+without a mark because nothing else on the site writes it, so give it a mark
+like the others if that ever changes.
 
 A form carrying Webflow's `display-contents` class **generates no box**, so its
 `getBoundingClientRect()` is `0 × 0` and the observer never reports it as
