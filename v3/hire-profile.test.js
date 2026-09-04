@@ -3443,6 +3443,65 @@ test('wf-xano call cards use public Xano availability for logged-out signup pres
   assert.equal(xano.paid.root.style.display, 'none', 'no earlier wrapper result stays cached')
 })
 
+test('wf-xano call cards normalise the DTO call type before deciding logged-out availability', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-enabled': false },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  // The contract admits the type case-insensitively; a payload that spells it
+  // 'Free' must not be painted onto a card that is then hidden for having no
+  // availability, which would silently cost the visitor the signup routing.
+  const result = callCardResult({ free: true, paid: true })
+  result.items[0].type = 'Free'
+  result.items[1].type = ' Paid '
+  wfx.emit(result)
+  await settle()
+
+  for (const [card, value] of [[xano.free, 'Free Call'], [xano.paid, 'Paid Call']]) {
+    assert.equal(card.root.style.display, 'block')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(card.root.getAttribute('data-signup-trigger-element'), 'book-call')
+    assert.equal(card.root.getAttribute('data-signup-trigger-value'), value)
+  }
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+})
+
+test('a non-owner talent keeps the wf-xano call cards hidden even though the profile owner has a grant', async () => {
+  const page = makePage()
+  addContractDialog(page)
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  // The legacy grant-only reveal still governs the untouched CMS comparison
+  // cards for this viewer, and the owner's grant makes it say "free is on".
+  // That must not reach the Xano clones, whose only writer for a viewer who
+  // can neither book nor set up is the adapter's hide.
+  const context = ownerContext(page, ownerController(), {
+    member: OTHER_TALENT_MEMBER,
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult())
+  await settle()
+
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.style.display, 'none')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden')
+    assert.equal(card.root.getAttribute('aria-hidden'), 'true')
+    assert.equal(card.root.getAttribute('has-connection'), null)
+  }
+
+  const cmsFreeCard = page.servicesList.querySelector('[has-connection="free"]:not([wf-xano-item])')
+  assert.ok(cmsFreeCard, 'the CMS comparison card fixture must still be present')
+  assert.equal(cmsFreeCard.style.display, 'block', 'the legacy CMS reveal is unchanged')
+})
+
 test('a late wf-xano Brand call card replays canonical discovery and opens only its matching type', async () => {
   const page = makePage()
   addContractDialog(page)

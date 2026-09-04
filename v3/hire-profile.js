@@ -652,7 +652,17 @@
       if (bookingRow) bookingRow.remove();
   }
 
-  function syncCanonicalCallSurfaces(configs) {
+  /**
+   * The wf-xano call cards are governed by their own endpoint result, so a
+   * writer that does not own them passes this to stand down. The Algolia and
+   * legacy grant booleans remain only for the untouched CMS comparison cards
+   * during the side-by-side canary.
+   */
+  function excludeXanoCallCards(surface) {
+      return !surface.hasAttribute('data-xano-call-card');
+  }
+
+  function syncCanonicalCallSurfaces(configs, includeSurface) {
       const records = Array.isArray(configs) ? configs : [];
       // Same shared predicate as the painters and the chooser lookup, so one
       // record set cannot be read as free by one of them and as nothing by
@@ -666,9 +676,10 @@
           surface.setAttribute('has-connection', type);
           surface.removeAttribute('no-connection');
           surface.setAttribute('data-call-offer-state', 'available');
-      });
+      }, includeSurface);
       document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (surface) {
           const type = surface.getAttribute('data-type');
+          if (includeSurface && !includeSurface(surface, type)) return;
           if (availability[type]) return;
           surface.removeAttribute('has-connection');
           surface.setAttribute('data-call-offer-state', 'hidden');
@@ -1674,7 +1685,7 @@
               const ownerConfigs = [];
               if (grant_id) ownerConfigs.push({ is_paid: false });
               if (grant_id && window.stripe_charges) ownerConfigs.push({ is_paid: true });
-              syncCanonicalCallSurfaces(ownerConfigs);
+              syncCanonicalCallSurfaces(ownerConfigs, excludeXanoCallCards);
               if (!grant_id) {
                   qsa('[no-connection="free"]').forEach((item) => item.style.display = "block");
               } else {
@@ -1797,12 +1808,7 @@
       applyCallSurfaceAvailability(availability, function (surface, type) {
           surface.setAttribute('data-logged-out-call-tout', type);
           stripCallBookingRow(surface);
-      }, function (surface) {
-          // New wf-xano clones are governed by their own endpoint result. The
-          // Algolia booleans remain only for the untouched CMS comparison
-          // cards during the side-by-side canary.
-          return !surface.hasAttribute('data-xano-call-card');
-      });
+      }, excludeXanoCallCards);
 
       return availability;
   }
@@ -1864,13 +1870,22 @@
       });
   }
 
+  /**
+   * The single reader of a DTO item's call type. Admission, the per-card paint
+   * and the logged-out availability lookup all key on this, so one payload
+   * cannot be read as Free by one of them and as nothing by another.
+   */
+  function callOfferTypeOf(item) {
+      const type = String((item && item.type) || '').trim().toLowerCase();
+      return type === 'free' || type === 'paid' ? type : '';
+  }
+
   function callOfferItemMap(result) {
       const items = result && Array.isArray(result.items) ? result.items : [];
       const byId = new Map();
       items.forEach(function (item) {
           if (!item || item.id == null) return;
-          const type = String(item.type || '').trim().toLowerCase();
-          if (type !== 'free' && type !== 'paid') return;
+          if (!callOfferTypeOf(item)) return;
           byId.set(String(item.id), item);
       });
       return byId;
@@ -1992,8 +2007,8 @@
       cards.forEach(function (card) {
           const item = itemsById.get(String(card.getAttribute('data-wf-xano-id') || ''));
           if (!item) return;
-          const type = String(item.type || '').trim().toLowerCase();
-          if (type !== 'free' && type !== 'paid') return;
+          const type = callOfferTypeOf(item);
+          if (!type) return;
           const title = qs('[data-service-card-element="title"]', card);
           const description = qs('[data-service-card-element="description"]', card);
           if (title) title.textContent = String(item.name || '');
@@ -2018,8 +2033,8 @@
 
       if (!MEMBER.id) {
           const publicItems = Array.from(itemsById.values());
-          const freeItem = publicItems.find(function (item) { return item.type === 'free'; });
-          const paidItem = publicItems.find(function (item) { return item.type === 'paid'; });
+          const freeItem = publicItems.find(function (item) { return callOfferTypeOf(item) === 'free'; });
+          const paidItem = publicItems.find(function (item) { return callOfferTypeOf(item) === 'paid'; });
           const availability = {
               free: !!(freeItem && freeItem.public_available === true),
               paid: !!(paidItem && paidItem.public_available === true),
