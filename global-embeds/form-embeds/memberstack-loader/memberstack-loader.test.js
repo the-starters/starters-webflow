@@ -1614,8 +1614,22 @@ function pvWorld(opts = {}) {
   return Object.assign({ root, fail, ms }, f, app)
 }
 
+/**
+ * password-validation gates every bridged Auth Form on the Gateable Fields it
+ * has, checklist or not, so an unfilled form never reaches this script. Filling
+ * them leaves the busy button as the only thing that can refuse the CTA.
+ */
+async function satisfyPv(w) {
+  fill(w.email, 'brand@example.com')
+  fill(w.password, 'Passw0rd!')
+  check(w.terms)
+  // the terms handler renders again a tick later, against the settled state
+  await tick()
+}
+
 test('with password-validation loaded first, a repeat click is refused, not double-submitted', async () => {
   const w = pvWorld()
+  await satisfyPv(w)
 
   dispatch(w.control, 'click')
   await flush()
@@ -1641,6 +1655,7 @@ test('with password-validation loaded first, a repeat click is refused, not doub
 
 test('with the loader script first, the pair behaves identically', async () => {
   const w = pvWorld({ loaderFirst: true })
+  await satisfyPv(w)
 
   dispatch(w.control, 'click')
   await flush()
@@ -1665,6 +1680,7 @@ test('with the loader script first, the pair behaves identically', async () => {
 
 test('on production the refused repeat click says nothing in the console', async () => {
   const w = pvWorld({ hostname: 'www.thestarters.com' })
+  await satisfyPv(w)
 
   dispatch(w.control, 'click')
   await flush()
@@ -1676,6 +1692,7 @@ test('on production the refused repeat click says nothing in the console', async
 
 test('pressing Enter during a Memberstack submit is swallowed with password-validation loaded', async (t) => {
   const w = pvWorld()
+  await satisfyPv(w)
 
   dispatch(w.control, 'click')
   await flush()
@@ -2886,6 +2903,7 @@ test('repeated rescans still leave exactly one loader marker', async () => {
 
 test('with password-validation loaded the marker still follows the click', async () => {
   const w = pvWorld({ form: { noLoader: true } })
+  await satisfyPv(w)
 
   dispatch(w.control, 'click')
   assert.deepEqual(loaders(w.root), [w.submitSpinner])
