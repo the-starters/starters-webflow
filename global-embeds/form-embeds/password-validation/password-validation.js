@@ -462,6 +462,23 @@
     return !!(visual && visual.classList && visual.classList.contains('w--redirected-checked'));
   }
 
+  // The Gateable Fields recognised by their Memberstack attribute alone; a
+  // field the form does not have is null and gates nothing.
+  function gateFields(form) {
+    return {
+      password: form.querySelector('input[data-ms-member="password"]'),
+      email: form.querySelector('input[data-ms-member="email"]'),
+      terms: form.querySelector('input[data-ms-member="terms-and-condition"]')
+    };
+  }
+
+  // withRules is set by the checklist gate, whose rule predicates already
+  // adjudicate the password — a second non-empty test there would be noise.
+  function fieldsSatisfied(fields, withRules) {
+    if (!withRules && fields.password && (fields.password.value || '').trim() === '') return false;
+    return emailSatisfied(fields.email) && termsSatisfied(fields.terms);
+  }
+
   // --- overlay submit -------------------------------------------------------
   // An input[type=submit] or a button whose type is submit (or absent — the
   // browser default inside a form) already submits on click; triggering again
@@ -637,7 +654,7 @@
     var bridge = form[BRIDGE_FLAG];
 
     if (!bridge) {
-      bridge = form[BRIDGE_FLAG] = { button: null, gate: null };
+      bridge = form[BRIDGE_FLAG] = { button: null, gate: null, checklist: false, bound: [] };
       var surface = failSurface(form);
 
       form.addEventListener('submit', function (event) {
@@ -648,8 +665,9 @@
           return;
         }
         // Signup owns the house rejection copy; any other kind is watched only
-        // when a checklist wired it, which is what origin/main already did.
-        if (form.matches && form.matches(MS_FORM_SELECTOR) && (isSignup(form) || bridge.gate)) {
+        // when a checklist wired it. Read the checklist flag, not bridge.gate:
+        // the required-fields gate must not widen who gets watched.
+        if (form.matches && form.matches(MS_FORM_SELECTOR) && (isSignup(form) || bridge.checklist)) {
           armOutcome(surface);
         }
       }, true);
@@ -695,6 +713,43 @@
     }
 
     return bridge;
+  }
+
+  // --- required-fields gate -------------------------------------------------
+
+  // Bound once per field per form, and calling THROUGH bridge.gate rather than
+  // a closed-over render: the checklist can replace the gate later, and a
+  // stale render still wired to a field would fight the live one.
+  //
+  // Autofill and password-manager paths are inconsistent: some fire `input`,
+  // some only `change`, some nothing until the field is left. Binding all
+  // three covers every variant that emits anything, and the blur re-checks the
+  // field afterwards. A purely programmatic write to input.value fires no
+  // event at all — nothing can catch that at write time, which is why the
+  // submit handler recomputes rather than trusting the last render.
+  function bindOnce(bridge, field, handler) {
+    if (!field || bridge.bound.indexOf(field) !== -1) return;
+    bridge.bound.push(field);
+    field.addEventListener('input', handler);
+    field.addEventListener('change', handler);
+    field.addEventListener('focusout', handler);
+  }
+
+  function bindGateFields(bridge, fields) {
+    var run = function () {
+      if (bridge.gate) bridge.gate();
+    };
+    bindOnce(bridge, fields.password, run);
+    bindOnce(bridge, fields.email, run);
+    // The terms listener fires at the target BEFORE Webflow's delegated
+    // document handler updates the custom checkbox's visual class, so a
+    // render in the same tick can read a stale w--redirected-checked (an
+    // uncheck would leave the CTA open). Render now for snap, then once more
+    // a tick later against the settled state.
+    bindOnce(bridge, fields.terms, function () {
+      run();
+      if (typeof setTimeout === 'function') setTimeout(run, 0);
+    });
   }
 
   function activeRules(wrapper) {
@@ -854,8 +909,7 @@
       normalize(wrappers[w], active, rules);
     }
 
-    var emailInput = form.querySelector('input[data-ms-member="email"]');
-    var termsInput = form.querySelector('input[data-ms-member="terms-and-condition"]');
+    var fields = gateFields(form);
 
     // Returns the verdict rather than stashing it, so no caller can ever
     // adjudicate on a copy that has gone stale.
@@ -888,39 +942,18 @@
       // The CTA opens only when the whole form is submittable — password
       // rules, plus terms and a plausible email where the form has them. The
       // checklist above still reads from the password alone.
-      var gate = allPass && emailSatisfied(emailInput) && termsSatisfied(termsInput);
+      var gate = allPass && fieldsSatisfied(fields, true);
       // Live read: a CTA that only arrives on a later rescan still greys.
       setDisabled(bridge.button, !gate);
       return gate;
     }
+    // Replaces any gate the marker sweep installed; the fields it bound call
+    // through bridge.gate, so they land here instead of on a second render.
     bridge.gate = render;
+    bridge.checklist = true;
     // Now that a render can release it, state already on the CTA is ours.
     adoptWhenGated(bridge);
-
-    // Autofill and password-manager paths are inconsistent: some fire `input`,
-    // some only `change`, some nothing until the field is left. Binding all
-    // three covers every variant that emits anything, and the blur re-checks
-    // the field afterwards. A purely programmatic write to input.value fires
-    // no event at all — nothing can catch that at write time, which is why the
-    // submit handler recomputes rather than trusting the last render. The
-    // gate's other fields recompute on the same three events.
-    function bindField(field, handler) {
-      if (!field) return;
-      field.addEventListener('input', handler);
-      field.addEventListener('change', handler);
-      field.addEventListener('focusout', handler);
-    }
-    bindField(input, render);
-    bindField(emailInput, render);
-    // The terms listener fires at the target BEFORE Webflow's delegated
-    // document handler updates the custom checkbox's visual class, so a
-    // render in the same tick can read a stale w--redirected-checked (an
-    // uncheck would leave the CTA open). Render now for snap, then once more
-    // a tick later against the settled state.
-    bindField(termsInput, function () {
-      render();
-      if (typeof setTimeout === 'function') setTimeout(render, 0);
-    });
+    bindGateFields(bridge, fields);
 
     // First paint: states every active rule, met or not.
     render();
