@@ -419,6 +419,31 @@ test('late taxonomy hydration does not arm Edit Profile dirty state', () => {
   assert.deepEqual(harness.selectedTagNames(), ['Figma'])
 })
 
+test('hydration keeps saved taxonomy ids that no longer have a rendered option', () => {
+  const harness = boot({
+    initialValue: 'skill-a, skill-retired, skill-c',
+    options: [{ id: 'skill-a', name: 'Figma' }, { id: 'skill-c', name: 'Sketch' }],
+  })
+
+  harness.flushProfileHydration()
+
+  assert.deepEqual(harness.selectedTagNames(), ['Figma', 'Sketch'])
+  assert.equal(harness.inputValue.value, 'skill-a, skill-c, skill-retired')
+})
+
+test('editing a taxonomy after hydration still keeps the retired saved id', () => {
+  const harness = boot({
+    initialValue: 'skill-a, skill-retired',
+    options: [{ id: 'skill-a', name: 'Figma' }, { id: 'skill-c', name: 'Sketch' }],
+  })
+
+  harness.flushProfileHydration()
+  harness.renderedOption('Sketch').dispatchEvent('click')
+
+  assert.deepEqual(harness.selectedTagNames(), ['Figma', 'Sketch'])
+  assert.equal(harness.inputValue.value, 'skill-a, skill-c, skill-retired')
+})
+
 const OPTIONS = [
   { id: '1', name: 'Figma' },
   { id: '2', name: 'Sketch' },
