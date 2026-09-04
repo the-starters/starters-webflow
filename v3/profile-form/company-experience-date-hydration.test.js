@@ -656,6 +656,54 @@ for (const controllerPath of controllerPaths) {
     )
   })
 
+  test(`${controllerPath} rechecks the end minimum when a visible month is clicked`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    app.startDateInput.value = 'Jan 2020'
+    app.endDateInput.value = 'Jan 2020'
+    app.endDateInput.dispatchEvent({ type: 'click' })
+
+    const popup = app.endDateInput._starterProfileCompanyMonthPicker.popup
+    const monthButtons = popup.children[1].children
+    assert.equal(popup.children[0].children[1].textContent, '2020')
+    assert.equal(monthButtons[0].disabled, false)
+
+    // A late hydration can replace the start value without firing an event after
+    // the end popup rendered. The click itself must still enforce the live range.
+    app.startDateInput.value = 'May 2024'
+    let selected = 0
+    app.endDateInput.addEventListener('change', () => { selected += 1 })
+    monthButtons[0].dispatchEvent({ type: 'click' })
+
+    assert.equal(selected, 0)
+    assert.equal(app.endDateInput.value, 'Jan 2020')
+    assert.equal(popup.children[0].children[1].textContent, '2024')
+    assert.deepEqual(monthButtons.slice(0, 4).map((button) => button.disabled), [true, true, true, true])
+    assert.equal(monthButtons[4].disabled, false)
+  })
+
+  test(`${controllerPath} re-enables months after the open picker minimum silently relaxes`, async () => {
+    const app = bootCompanyController(controllerPath)
+    await app.ready()
+
+    app.startDateInput.value = 'May 2024'
+    app.endDateInput.value = 'Jun 2024'
+    app.endDateInput.dispatchEvent({ type: 'click' })
+
+    const popup = app.endDateInput._starterProfileCompanyMonthPicker.popup
+    const monthButtons = popup.children[1].children
+    assert.deepEqual(monthButtons.slice(0, 4).map((button) => button.disabled), [true, true, true, true])
+
+    // Late hydration can change the bound value without an input/change event.
+    // While the popup is open, its native disabled state must follow that value.
+    app.startDateInput.value = 'Jan 2024'
+    app.clock.advance(100)
+
+    assert.deepEqual(monthButtons.slice(0, 4).map((button) => button.disabled), [false, false, false, false])
+    assert.equal(chooseMonth(app.endDateInput, '2024-01'), true)
+  })
+
   test(`${controllerPath} keeps the edit picker inside its modal and keyboard reachable`, async () => {
     const app = bootCompanyController(controllerPath)
     await app.ready()
