@@ -2,7 +2,7 @@
 // disabled while Memberstack shows its own spinner, and on hide restores it and
 // hands it back to password-validation, whose verdict may have moved meanwhile.
 //
-// @release v1.59.507
+// @release v1.59.509
 //
 // Memberstack (DOM 1.2.0) fires no event for submit start or end. The only
 // signal it gives is inline display on the page's [data-ms-loader], so the
@@ -16,7 +16,7 @@
 // attribute moved onto the submitting form's Spinner at submit time.
 //
 // While Pending the wrap carries data-button-theme="disabled" (the grey look),
-// aria-busy="true" (existing CSS turns that into cursor: wait) and
+// aria-busy="true" (site CSS may style it) and
 // data-ms-loading="true"; the clickable control carries aria-disabled="true".
 // The authored theme is parked on the wrap so hide can put it back.
 //
@@ -39,14 +39,15 @@
 // window.startersMemberstackLoader.rescan().
 //
 // On staging (webflow.io, localhost, the dev tunnel, or window.STARTERS_DEBUG
-// === true) the script warns once per page about a missing, duplicated or
-// stray [data-ms-loader]. Production is silent.
+// === true) the script warns once per page about an auth form with no Button
+// Spinner, and about a duplicated or stray [data-ms-loader]. Production is
+// silent.
 
 (function () {
   if (window.__startersMemberstackLoaderInit) return;
   window.__startersMemberstackLoaderInit = true;
 
-  var RELEASE = 'v1.59.507';
+  var RELEASE = 'v1.59.509';
   var WIRED_FLAG = '__startersMemberstackLoader';
   var OBSERVED_FLAG = '__startersMemberstackLoaderObserved';
 
@@ -54,12 +55,14 @@
   var KIND_ATTR = 'data-ms-form';
   var SUBMIT_MARKER = '[ms-code-submit-button]';
   var WRAP_SELECTOR = '.button_main-wrap';
-  var NATIVE_SUBMIT_SELECTOR = 'button[type="submit"],input[type="submit"]';
+  var NATIVE_SUBMIT_SELECTOR = 'button,input[type="submit"]';
   var SPINNER_SELECTOR = '[data-button-spinner]';
   // Ordered: Memberstack's overlay wins over the native control it hides.
   var CONTROL_SELECTORS = ['.clickable_btn', 'button', 'input[type="submit"]'];
 
   var THEME_ATTR = 'data-button-theme';
+  // An authored data-button-theme="" is not the same as no attribute at all.
+  var NO_THEME = '__none__';
   var DISABLED_THEME = 'disabled';
   var BUSY_ATTR = 'aria-busy';
   var LOADING_ATTR = 'data-ms-loading';
@@ -85,13 +88,24 @@
 
   // --- resolving the form's Button -----------------------------------------
 
+  // A <button> with no type attribute submits: that is the browser default.
+  function holdsNativeSubmit(wrap) {
+    var els = wrap.querySelectorAll(NATIVE_SUBMIT_SELECTOR);
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (!el.matches('button')) return true;
+      if ((el.getAttribute('type') || 'submit').toLowerCase() === 'submit') return true;
+    }
+    return false;
+  }
+
   function candidateWraps(form) {
     var marked = form.querySelectorAll(SUBMIT_MARKER);
     if (marked.length) return marked;
     var wraps = form.querySelectorAll(WRAP_SELECTOR);
     var out = [];
     for (var i = 0; i < wraps.length; i++) {
-      if (wraps[i].querySelector(NATIVE_SUBMIT_SELECTOR)) out.push(wraps[i]);
+      if (holdsNativeSubmit(wraps[i])) out.push(wraps[i]);
     }
     return out;
   }
@@ -124,7 +138,7 @@
   function enterPending(record) {
     var wrap = record.wrap;
     var theme = wrap.getAttribute(THEME_ATTR);
-    wrap.setAttribute(THEME_MARK, theme === null ? '' : theme);
+    wrap.setAttribute(THEME_MARK, theme === null ? NO_THEME : theme);
     wrap.setAttribute(THEME_ATTR, DISABLED_THEME);
 
     if (wrap.getAttribute(BUSY_ATTR) !== 'true') {
@@ -145,7 +159,7 @@
   function leavePending(record) {
     var wrap = record.wrap;
     var authored = wrap.getAttribute(THEME_MARK);
-    if (authored === null || authored === '') wrap.removeAttribute(THEME_ATTR);
+    if (authored === null || authored === NO_THEME) wrap.removeAttribute(THEME_ATTR);
     else wrap.setAttribute(THEME_ATTR, authored);
     wrap.removeAttribute(THEME_MARK);
 
@@ -310,7 +324,7 @@
   // as notwebflow.io or evil-trycloudflare.com cannot read as staging.
   var STAGING_HOSTS = [/(\.|^)webflow\.io$/, /(\.|^)trycloudflare\.com$/];
 
-  var warnedNoLoader = false;
+  var warnedNoSpinner = false;
   var warnedManyLoaders = false;
   var warnedStrayLoader = false;
 
@@ -357,16 +371,18 @@
       var forms = document.querySelectorAll(MS_FORM_SELECTOR);
       var marked = document.querySelectorAll(LOADER_SELECTOR);
 
-      var auth = 0;
+      // A marker-less auth form is served fine by MOVE mode; only one with no
+      // Button Spinner at all really falls back to the overlay.
+      var spinnerless = 0;
       for (var i = 0; i < forms.length; i++) {
         var record = forms[i][WIRED_FLAG];
-        if (record && record.isAuth) auth++;
+        if (record && record.isAuth && !record.spinner) spinnerless++;
       }
 
-      if (!warnedNoLoader && auth && !marked.length) {
-        warnedNoLoader = true;
-        devWarn('no ' + LOADER_SELECTOR + ' on a page with ' + auth + ' auth form(s); ' +
-          'a form with no Button Spinner falls back to Memberstack\'s overlay');
+      if (!warnedNoSpinner && spinnerless) {
+        warnedNoSpinner = true;
+        devWarn(spinnerless + ' auth form(s) with no Button Spinner; ' +
+          'Memberstack falls back to its overlay for them');
       }
 
       if (!warnedManyLoaders && marked.length > 1) {
