@@ -1559,12 +1559,17 @@ const REFUSED = "click refused by another script's disabled state on the CTA"
 /**
  * A page carrying both scripts, in the given load order, plus the Webflow
  * fail block password-validation reaches for.
- * @param {{form?: object, loaderFirst?: boolean, hostname?: string}} [opts]
+ * `orphan` adds a checklist row outside every wrapper, which is a page-level
+ * password-validation warning: it re-prints on each rescan and stays put on a
+ * per-form regate.
+ * @param {{form?: object, loaderFirst?: boolean, hostname?: string, orphan?: boolean}} [opts]
  */
 function pvWorld(opts = {}) {
   const f = signupForm(opts.form || {})
   const fail = h('div', { class: 'w-form-fail' }, [h('div', {}, [''])])
-  const root = body([h('div', { class: 'w-form' }, [f.form, fail])])
+  const kids = [h('div', { class: 'w-form' }, [f.form, fail])]
+  if (opts.orphan) kids.push(h('div', { 'starters-password-validation-rule': 'numbers' }))
+  const root = body(kids)
   const app = mount(root, {
     sources: opts.loaderFirst ? [source, pvSource] : [pvSource, source],
     hostname: opts.hostname || 'the-starters-3-0.webflow.io',
@@ -1805,6 +1810,73 @@ test('a password fixed while the button spins leaves a live CTA behind', async (
   dispatch(w.control, 'click')
   await flush()
   assert.equal(w.ms.submits, 2)
+})
+
+test('the release hands one form back, not the whole page', async () => {
+  const f = signupForm()
+  const root = body([f.form])
+  const app = mount(root)
+  const ms = memberstack(root, f.form)
+
+  const calls = []
+  app.window.startersPasswordValidation = {
+    regate: (form) => {
+      calls.push({ name: 'regate', form })
+      return true
+    },
+    rescan: () => calls.push({ name: 'rescan', form: null }),
+  }
+
+  ms.submit()
+  await flush()
+  assert.deepEqual(calls, [], 'nothing is handed back while it spins')
+
+  ms.hide()
+  await flush()
+  assert.deepEqual(
+    calls.map((call) => call.name),
+    ['regate'],
+  )
+  assert.equal(calls[0].form, f.form, 'and it names the form that was released')
+})
+
+test('a password-validation too old to regate still gets a rescan', async () => {
+  const f = signupForm()
+  const root = body([f.form])
+  const app = mount(root)
+  const ms = memberstack(root, f.form)
+
+  const calls = []
+  app.window.startersPasswordValidation = { rescan: () => calls.push('rescan') }
+
+  ms.submit()
+  await flush()
+  ms.hide()
+  await flush()
+  assert.deepEqual(calls, ['rescan'])
+})
+
+test('handing the CTA back never re-prints a page-level checklist warning', async () => {
+  const w = pvWorld({ form: { checklist: true }, orphan: true })
+  const orphans = () => w.warnings.filter((line) => line.includes('sit outside any wrapper')).length
+
+  assert.equal(orphans(), 1, w.warnings.join(' | '))
+
+  fill(w.email, 'brand@example.com')
+  fill(w.password, 'Passw0rd!')
+  check(w.terms)
+  await tick()
+
+  for (let round = 0; round < 2; round++) {
+    dispatch(w.control, 'click')
+    await flush()
+    w.ms.hide()
+    await flush()
+    await tick()
+  }
+
+  assert.equal(w.ms.submits, 2, 'both submit/hide cycles really ran')
+  assert.equal(orphans(), 1, w.warnings.join(' | '))
 })
 
 // ---------------------------------------------------------------------------

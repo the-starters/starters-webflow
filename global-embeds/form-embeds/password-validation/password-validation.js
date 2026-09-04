@@ -22,6 +22,9 @@
 // no wrapper configures fails open and says so on staging; it never gates.
 //
 // Forms added after load: call window.startersPasswordValidation.rescan().
+// A peer handing one form's CTA back: call
+// window.startersPasswordValidation.regate(form) — it re-adjudicates that
+// form's gate alone and returns false if the form was never bridged.
 //
 // The CTA gate covers the WHOLE form, not just the password: the button stays
 // grey until every active password rule passes, the terms checkbox
@@ -1042,11 +1045,20 @@
     }
   }
 
+  // A peer that held this form's CTA hands it back here: one form's gate, not
+  // a page-wide pass, so nothing re-prints the page-level staging warnings.
+  function regate(form) {
+    var bridge = form && form[BRIDGE_FLAG];
+    if (!bridge || typeof bridge.gate !== 'function') return false;
+    bridge.gate();
+    return true;
+  }
+
   // Markup injected after load (modals, CMS tabs, step flows) is invisible to
   // the one-shot init, so the page can ask for another pass. An already-wired
   // form is never re-wired, only extended with wrappers it has not seen, so
   // repeated calls stay harmless.
-  window.startersPasswordValidation = { rescan: init, release: RELEASE };
+  window.startersPasswordValidation = { rescan: init, regate: regate, release: RELEASE };
 
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);

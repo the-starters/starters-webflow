@@ -182,10 +182,12 @@
 
     record.pending = false;
 
-    // password-validation keeps re-rendering on input while we hold the button,
-    // so release has to let it re-adjudicate rather than assume its old verdict.
+    // password-validation re-adjudicates the gate on hand-back: regate is
+    // v1.59.510+, rescan the v1.59.504+ fallback (older PV never re-gates).
     var pv = window.startersPasswordValidation;
-    if (pv && typeof pv.rescan === 'function') pv.rescan();
+    if (!pv) return;
+    if (typeof pv.regate === 'function') pv.regate(record.form);
+    else if (typeof pv.rescan === 'function') pv.rescan();
   }
 
   // Edge-triggered off the Spinner's live inline display, never off the batch

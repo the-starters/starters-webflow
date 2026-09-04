@@ -2768,3 +2768,61 @@ test('r6-24: our native disabled is not released while another node is foreign-h
   assert.equal(hidden.disabled, false, 'first unheld open render releases it')
   assert.equal(theme(wrapBtn), 'black')
 })
+
+// ===========================================================================
+// Round regate — a peer that borrowed the CTA hands back one form
+//
+// memberstack-loader dresses the same CTA as busy while Memberstack spins. On
+// hide it has to let this script re-adjudicate, but a whole rescan re-prints
+// every page-level staging warning, so it calls regate(form) instead.
+// ===========================================================================
+
+test('r-regate: regate is exposed and refuses a form it never bridged', () => {
+  const f = liveSetup()
+  const pv = f.window.startersPasswordValidation
+
+  assert.equal(typeof pv.regate, 'function')
+  assert.equal(pv.regate(h('form', {}, [])), false, 'a form with no bridge is not gated')
+  assert.equal(pv.regate(null), false)
+  assert.equal(pv.regate(undefined), false)
+})
+
+test('r-regate: regate puts back a gate a peer stripped off the CTA', () => {
+  const f = liveSetup()
+  assert.equal(overlayGated(f), true, 'an empty password gates the CTA')
+
+  f.overlay.removeAttribute('aria-disabled')
+  f.overlay.removeAttribute('data-password-validation-aria')
+
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true)
+  assert.equal(f.overlay.getAttribute('aria-disabled'), 'true')
+  assert.equal(f.overlay.getAttribute('data-password-validation-aria'), '')
+  assert.equal(overlayGated(f), true)
+})
+
+test('r-regate: regate says nothing where a rescan repeats a page warning', () => {
+  const f = liveSetup({ mount: onStaging() })
+  const orphans = () => f.warnings.filter((line) => line.includes('sit outside any wrapper')).length
+
+  f.root.append(h('div', { 'starters-password-validation-rule': 'numbers' }))
+  assert.equal(orphans(), 0, 'the row arrived after the one-shot init')
+
+  f.window.startersPasswordValidation.regate(f.form)
+  assert.equal(orphans(), 0, f.warnings.join(' | '))
+
+  f.window.startersPasswordValidation.rescan()
+  assert.equal(orphans(), 1, 'a page-wide pass is what reports it')
+})
+
+test('r-regate: regate on an open gate leaves the CTA live', () => {
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true)
+
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true)
+  assert.equal(overlayOpen(f), true)
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'and it still submits')
+})
