@@ -1,7 +1,7 @@
 /**
  * GitHub-owned Free Call booking controller for /hire/<slug>.
  *
- * @release v1.59.429
+ * @release v1.59.512
  *
  * Webflow owns the chooser, modal shell, guest fields, and success step. This
  * module binds those authored elements and sends Free requests through the
@@ -450,8 +450,8 @@
   }
 
   function nextSlotText(value) {
-    const list = formatWithTimezone(value * 1000, { month: '2-digit' }).list
-    return list.hour + ':' + list.minute + list.dayPeriod + ' on ' + list.month + '/' + list.day
+    const list = formatWithTimezone(value * 1000, { month: 'short' }).list
+    return list.hour + ':' + list.minute + list.dayPeriod + ' on ' + list.month + ' ' + list.day
   }
 
   /**

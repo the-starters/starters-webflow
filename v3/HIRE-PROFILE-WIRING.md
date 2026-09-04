@@ -782,6 +782,10 @@ and its `NO_SLOTS_TEXT`, and this file uses them, so the load path and the click
 path are the same code and the copy cannot drift. A local reimplementation
 remains only as a fallback for a controller that predates those exports.
 
+A painted slot uses `HH:MMAM on MMM DD`, for example `03:30PM on Mar 05`.
+The abbreviated month is intentional; the runtime must not return to the numeric
+`MM/DD` form. Both the exported writer and the local fallback use this format.
+
 The click path also stamps `data-next-slot-state` now, so a hook is
 self-describing whichever writer got there last.
 
