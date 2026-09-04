@@ -667,6 +667,17 @@
       return !surface.hasAttribute('data-xano-call-card');
   }
 
+  /**
+   * The legacy reveal's raw selectors read the same `has-connection` /
+   * `no-connection` attributes the wf-xano adapter now stamps on its own
+   * cards, so they need the same stand-down `syncCanonicalCallSurfaces` gets.
+   * Routing them through the one predicate keeps a single definition of which
+   * surfaces the legacy writers still own.
+   */
+  function qsaLegacyCallSurfaces(selector) {
+      return Array.from(qsa(selector)).filter(excludeXanoCallCards);
+  }
+
   function syncCanonicalCallSurfaces(configs, includeSurface) {
       const records = Array.isArray(configs) ? configs : [];
       // Same shared predicate as the painters and the chooser lookup, so one
@@ -1692,19 +1703,19 @@
               if (grant_id && window.stripe_charges) ownerConfigs.push({ is_paid: true });
               syncCanonicalCallSurfaces(ownerConfigs, excludeXanoCallCards);
               if (!grant_id) {
-                  qsa('[no-connection="free"]').forEach((item) => item.style.display = "block");
+                  qsaLegacyCallSurfaces('[no-connection="free"]').forEach((item) => item.style.display = "block");
               } else {
-                  qsa('[has-connection="free"]').forEach((item) => item.style.display = "block");
+                  qsaLegacyCallSurfaces('[has-connection="free"]').forEach((item) => item.style.display = "block");
               }
 
               // check stripe connections
               // `stripe_charges` is a global var (assigned as window.stripe_charges
               // by an embedded script at the top of the page).
               if (!window.stripe_charges) {
-                  qsa('[no-connection="paid"]').forEach((item) => item.style.display = "block");
+                  qsaLegacyCallSurfaces('[no-connection="paid"]').forEach((item) => item.style.display = "block");
 
               } else if (!grant_id && window.stripe_charges) {
-                  qsa('[no-connection="paid"]').forEach((item) => {
+                  qsaLegacyCallSurfaces('[no-connection="paid"]').forEach((item) => {
                       item.style.display = "block";
 
                       qsa('[hover-text]', item).forEach((item) => {
@@ -1724,7 +1735,7 @@
                   });
 
               } else {
-                  qsa('[has-connection="paid"]').forEach((item) => item.style.display = "block");
+                  qsaLegacyCallSurfaces('[has-connection="paid"]').forEach((item) => item.style.display = "block");
               }
 
               // Everything above decides only what the owner can SEE. Nothing
