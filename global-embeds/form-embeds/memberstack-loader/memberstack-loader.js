@@ -3,11 +3,12 @@
 // hands it back to password-validation, whose verdict may have moved meanwhile.
 // Load password-validation first in the same embed: it binds its capture
 // listener at its own init, while this script only looks for it at hide time.
-// Pin it at v1.59.504 or newer — the hand-back runs against any release that
+// Pin it at v1.59.504 or newer: the hand-back runs against any release that
 // exports rescan, but an older one has no ownership marks and undoes the gate
-// it is handed — and at v1.59.510 or newer for the one-form regate() path,
+// it is handed. Pin it at v1.59.510 or newer for the one-form regate() path,
 // which spares that script's page-level staging warnings. Neither pin can be
-// checked here: password-validation reports no release before v1.59.502.
+// read off the page: releases before v1.59.504 expose no release marker at all,
+// and v1.59.504 and v1.59.505 report themselves as v1.59.502.
 //
 // @release v1.59.510
 //
