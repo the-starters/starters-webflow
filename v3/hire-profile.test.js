@@ -3901,21 +3901,14 @@ test('owner settings settle independently when the Starter lookup fails', async 
 test('a healthy owner call card settles while its sibling settings request is pending', async () => {
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)
+  const paidSlot = makeElement('div', { 'next-available-slot': '' })
+  paidSlot.textContent = SLOT_SENTINEL
+  xano.paid.root.appendChild(paidSlot)
   const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  const controller = ownerController({ grantId: null })
+  const controller = ownerController({ slots: { cfg_owner_paid: SLOT_PAID } })
   controller.authenticatedRequest = async (path) => {
-    if (path === OWNER_FREE_SETTINGS_PATH) {
-      return ownerFreeSettings({
-        readiness: {
-          calendar_connected: false,
-          availability_configured: false,
-          free_call_enabled: false,
-          bookable: false,
-        },
-        services: [],
-      })
-    }
-    return new Promise(() => {})
+    if (path === OWNER_FREE_SETTINGS_PATH) return new Promise(() => {})
+    return ownerPaidSettings()
   }
   const context = ownerContext(page, controller, { wfXano: wfx.api })
   vm.createContext(context)
@@ -3924,12 +3917,14 @@ test('a healthy owner call card settles while its sibling settings request is pe
   await settle()
 
   assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
-  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'setup-required')
-  assert.equal(xano.free.tooltipText.textContent, 'Connect your calendar to offer calls.')
-  assert.equal(xano.free.calendarCta.style.display, 'block')
-  assert.equal(xano.paid.root.getAttribute('data-service-card-state'), 'Disabled')
-  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'settings-loading')
-  assert.equal(xano.paid.settingsCta.style.display, 'block')
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'settings-loading')
+  assert.equal(xano.free.settingsCta.style.display, 'block')
+  assert.equal(xano.paid.root.getAttribute('data-service-card-state'), 'Default')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(xano.paid.price.textContent, '250')
+  assert.equal(paidSlot.textContent, '09:00AM on Mar 06')
+  assert.equal(paidSlot.getAttribute('data-next-slot-state'), 'painted')
+  assert.deepEqual(controller.calls.map((call) => call.configId), ['cfg_owner_paid'])
 })
 
 test('owner cards fail terminally when the booking controller cannot load', async () => {

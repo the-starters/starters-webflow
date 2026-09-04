@@ -1616,6 +1616,35 @@
               status: { free: 'loading', paid: 'loading' },
               records: [],
           };
+          let resolvedStarterGrantId = null;
+          let starterGrantSettled = false;
+          const slotPaintStarted = new Set();
+
+          function paintReadyOwnerSlots() {
+              if (!starterGrantSettled) return;
+              const grantId = ownerGrantId(
+                  ownerCallSettingsSnapshot.free,
+                  resolvedStarterGrantId
+              );
+              if (!grantId) return;
+              ownerCallSettingsSnapshot.records.forEach(function (record) {
+                  const type = record.is_paid === true ? 'paid' : 'free';
+                  if (slotPaintStarted.has(type)) return;
+                  slotPaintStarted.add(type);
+                  paintNextAvailableSlots([record], grantId, {
+                      leaveRowOnDegrade: true,
+                  });
+              });
+          }
+
+          Promise.resolve(starterGrantId).then(function (grantId) {
+              resolvedStarterGrantId = grantId;
+              starterGrantSettled = true;
+              paintReadyOwnerSlots();
+          }).catch(function (error) {
+              starterGrantSettled = true;
+              console.warn('[hire-profile] the owner grant lookup failed:', error);
+          });
 
           function settleSettings(type, result) {
               ownerCallSettingsSnapshot[type] = result.value;
@@ -1625,6 +1654,18 @@
                   ownerRecordFrom(ownerCallSettingsSnapshot.paid, true),
               ].filter(Boolean);
               applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+              const record = recordForType(ownerCallSettingsSnapshot.records, type);
+              if (record) {
+                  const priorSlots = paintedCallState && paintedCallState.slots
+                      ? paintedCallState.slots
+                      : {};
+                  paintedCallState = {
+                      configs: ownerCallSettingsSnapshot.records,
+                      slots: priorSlots,
+                  };
+                  repaintCanonicalRateSurfaces([record]);
+                  paintReadyOwnerSlots();
+              }
               return result;
           }
 
@@ -1640,26 +1681,7 @@
               console.warn('[hire-profile] the owner paid-call settings lookup failed:', error);
               return settleSettings('paid', { status: 'error', value: null });
           });
-          const settingsResults = await Promise.all([freeSettings, paidSettings]);
-          const settings = [settingsResults[0].value, settingsResults[1].value];
-          const records = ownerCallSettingsSnapshot.records;
-          if (!records.length) return;
-
-          // Late hero and Services cards reach the owner too, so the re-run
-          // point gets the owner's canonical set exactly as it gets the brand's.
-          paintedCallState = { configs: records, slots: {} };
-          repaintCanonicalRateSurfaces(records);
-          // OWNER CONTRACT: a failed lookup, an unbookable readiness, a missing
-          // grant or a missing formatter leaves the authored row standing —
-          // writing "No available slots" over their own profile for what is
-          // really a lookup fault sends them to fix availability settings that
-          // are already correct. A successful but empty answer is not a fault:
-          // a fully booked calendar is written here exactly as it is for a
-          // brand viewer, so no placeholder time survives it.
-          const resolvedStarterGrantId = await Promise.resolve(starterGrantId);
-          paintNextAvailableSlots(records, ownerGrantId(settings[0], resolvedStarterGrantId), {
-              leaveRowOnDegrade: true,
-          });
+          await Promise.all([freeSettings, paidSettings]);
       } catch (error) {
           console.warn('[hire-profile] the owner call-surface paint stood down:', error);
       }
