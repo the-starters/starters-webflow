@@ -2606,7 +2606,7 @@
   function installXanoHeroRateCards() {
       const carrier = document.querySelector('[data-starter-xano-id]');
       const pageStarterId = carrier ? String(carrier.textContent || '').trim() : '';
-      const roots = qsa('[wf-xano-element="wrapper"]').filter(function (root) {
+      const roots = Array.from(qsa('[wf-xano-element="wrapper"]')).filter(function (root) {
           const key = root.getAttribute('wf-xano-instance');
           return !root.closest('#services') && (key === 'starter-hourly' || key === 'starter-retainer');
       });
@@ -2617,7 +2617,7 @@
           root.style.display = 'none';
           root.setAttribute('aria-hidden', 'true');
           root.setAttribute('data-canonical-hero-rate-state', 'pending');
-          const templates = qsa('[data-service-card="component"]', root).filter(function (card) {
+          const templates = Array.from(qsa('[data-service-card="component"]', root)).filter(function (card) {
               return card.closest('[wf-xano-element="wrapper"]') === root;
           });
           const starterId = String(root.getAttribute('wf-xano-param-starter_id') || '').trim();
@@ -2668,7 +2668,7 @@
               instance.on('beforeRender', validated);
               function apply(result) {
                   const items = validated(result && result.items);
-                  const cards = qsa('[wf-xano-item]', root).filter(function (card) {
+                  const cards = Array.from(qsa('[wf-xano-item]', root)).filter(function (card) {
                       return card.closest('[wf-xano-element="wrapper"]') === root;
                   });
                   if (items.length !== 1 || cards.length !== 1 || cards[0].getAttribute('data-wf-xano-id') !== items[0].id) {
