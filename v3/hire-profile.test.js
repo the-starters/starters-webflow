@@ -3914,6 +3914,79 @@ test('a late stale-success replay cannot reopen calls after wf-xano refresh fail
   assert.equal(page.bookingButtonWrapper.style.display, 'none')
 })
 
+for (const isBrand of [false, true]) {
+  for (const failedKey of ['starter-call-offers-header', 'starter-call-offers-services']) {
+    test(`a sibling cached success cannot clear shared readiness failure (${isBrand ? 'Brand' : 'anonymous'}, ${failedKey})`, async () => {
+      const page = makePage()
+      const keys = ['starter-call-offers-header', 'starter-call-offers-services']
+      const cards = keys.map(key => addXanoCallCardsFixture(page, key))
+      const lists = cards.map((card, index) => makeCallCardsWfXanoFixture(card.wrapper, keys[index], {
+        initialResult: callCardResult(), initialError: keys[index] === failedKey, replayOnSubscribe: true,
+      }))
+      const context = makeContext({
+        page, member: isBrand ? BRAND_MEMBER : undefined, record: { rate: 0, 'retainer-enabled': false },
+        getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+        initBookingComponents: () => {},
+        paidController: { installPaidBookingController: () => true },
+        getConfigs: async () => [
+          { config_id: 'cfg_free', is_paid: false, active: true, data_environment: 'production', price_cents: 0, duration: 30 },
+          { config_id: 'cfg_paid', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 25000, duration: 60 },
+        ],
+        wfXano: { push(callback) { callback({ get: key => lists[keys.indexOf(key)]?.instance }) } },
+      })
+      vm.createContext(context)
+      vm.runInContext(source, context)
+      await settle()
+      for (const wrapper of cards) {
+        for (const card of [wrapper.free, wrapper.paid]) {
+          assert.equal(card.root.style.display, 'none')
+          assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+          assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+        }
+      }
+      assert.equal(page.bookingButtonWrapper.style.display, 'none')
+      lists[keys.indexOf(failedKey)].emit(callCardResult())
+      await settle()
+      assert.equal(page.bookingButtonWrapper.style.display, 'flex', 'a successful retry restores readiness')
+    })
+  }
+}
+
+for (const replayOnSubscribe of [false, true]) {
+  test(`owner retained rows receive settings after a pre-registration failure (replay: ${replayOnSubscribe})`, async () => {
+    const page = makePage()
+    const keys = ['starter-call-offers-header', 'starter-call-offers-services']
+    const cards = keys.map(key => addXanoCallCardsFixture(page, key))
+    const lists = cards.map((card, index) => makeCallCardsWfXanoFixture(card.wrapper, keys[index], {
+      initialResult: callCardResult(), initialError: true, replayOnSubscribe,
+    }))
+    const controller = ownerController({ paid: ownerPaidSettings({ readiness: {
+      calendar_connected: true, availability_configured: true,
+      stripe_connect_linked: false, stripe_charges_enabled: false,
+      stripe_readiness_fresh: false, paid_call_enabled: true, bookable: false,
+    } }) })
+    const context = ownerContext(page, controller, {
+      wfXano: { push(callback) { callback({ get: key => lists[keys.indexOf(key)]?.instance }) } },
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    for (const wrapper of cards) {
+      for (const card of [wrapper.free, wrapper.paid]) {
+        assert.equal(card.root.style.display, 'block')
+        assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
+        assert.ok(card.root.getAttribute('data-xano-call-card'))
+      }
+      assert.equal(wrapper.free.root.getAttribute('data-service-card-state'), 'Default')
+      assert.equal(wrapper.free.tooltip.style.display, 'none')
+      assert.equal(wrapper.paid.root.getAttribute('data-service-card-state'), 'Disabled')
+      assert.equal(wrapper.paid.tooltipText.textContent, 'Connect Stripe to offer paid calls.')
+      assert.equal(wrapper.paid.stripeCta.style.display, 'block')
+      assert.equal(wrapper.paid.settingsCta.style.display, 'none')
+    }
+  })
+}
+
 for (const publicFirst of [false, true]) {
   test(`Brand cards intersect installed discovery with public readiness (public first: ${publicFirst})`, async () => {
     const page = makePage()

@@ -2015,8 +2015,17 @@
 
               function applyResult(result) {
                   Promise.resolve(memberReady).then(function () {
-                      const state = typeof instance.getState === 'function' ? instance.getState() : null;
-                      if (state && state.status === 'error') {
+                      if (isProfileOwner(MEMBER)) {
+                          adaptXanoCallCards(instance, key, result);
+                          return;
+                      }
+                      const readinessFailed = callKeys.some(function (callKey) {
+                          const sibling = wfx.get(callKey);
+                          const state = sibling && typeof sibling.getState === 'function'
+                              ? sibling.getState() : null;
+                          return state && state.status === 'error';
+                      });
+                      if (readinessFailed) {
                           failClosed();
                           return;
                       }
@@ -2038,7 +2047,10 @@
               if (!receivedResult && typeof instance.getState === 'function') {
                   const state = instance.getState();
                   if (state && state.status === 'success' && state.data) applyResult(state.data);
-                  else if (state && state.status === 'error') failClosed();
+                  else if (state && state.status === 'error') {
+                      if (state.data) applyResult(state.data);
+                      failClosed();
+                  }
               }
           });
       });
