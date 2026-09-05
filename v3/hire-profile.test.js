@@ -3878,6 +3878,58 @@ test('a late wf-xano Brand call card replays canonical discovery and opens only 
   assert.equal(xano.paid.root.getAttribute('data-call-service-direct'), 'ready')
 })
 
+for (const publicFirst of [false, true]) {
+  test(`Brand cards intersect installed discovery with public readiness (public first: ${publicFirst})`, async () => {
+    const page = makePage()
+    const xano = addXanoCallCardsFixture(page)
+    const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+    let resolveConfigs
+    const configs = new Promise(resolve => { resolveConfigs = resolve })
+    const context = makeContext({
+      page,
+      member: BRAND_MEMBER,
+      record: { rate: 0, 'retainer-enabled': false },
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+      initBookingComponents: () => {},
+      paidController: { installPaidBookingController: () => true },
+      getConfigs: () => configs,
+      wfXano: wfx.api,
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    if (publicFirst) {
+      wfx.emit(callCardResult({ free: true, paid: false }))
+      await settle()
+    }
+    resolveConfigs([
+      { config_id: 'cfg_free', is_paid: false, active: true, data_environment: 'production', price_cents: 0, duration: 30 },
+      { config_id: 'cfg_paid', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 25000, duration: 60 },
+    ])
+    await settle()
+    if (!publicFirst) {
+      assert.equal(page.bookingButtonWrapper.style.display, 'none', 'discovery alone must not admit cards')
+      wfx.emit(callCardResult({ free: true, paid: false }))
+      await settle()
+    }
+    assert.equal(xano.free.root.style.display, 'block')
+    assert.equal(xano.paid.root.style.display, 'none')
+    assert.equal(xano.paid.root.getAttribute('data-call-service-direct'), null)
+    assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+    wfx.emit(callCardResult({ free: false, paid: false }))
+    await settle()
+    assert.equal(xano.free.root.style.display, 'none')
+    assert.equal(xano.paid.root.style.display, 'none')
+    assert.equal(page.bookingButtonWrapper.style.display, 'none')
+    wfx.emit(callCardResult({ free: false, paid: true }))
+    await settle()
+    assert.equal(xano.free.root.style.display, 'none')
+    assert.equal(xano.paid.root.style.display, 'block')
+    assert.equal(xano.paid.price.textContent, '250')
+    assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  })
+}
+
 test('a late wf-xano Brand call card replays terminal empty discovery as hidden', async () => {
   const page = makePage()
   addContractDialog(page)

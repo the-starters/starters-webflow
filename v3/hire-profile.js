@@ -538,6 +538,9 @@
   }
 
   function setBookingButtonAvailable(available) {
+      if (available && isBrandMember(MEMBER)) {
+          available = publicCallTypeReady('free') || publicCallTypeReady('paid');
+      }
       document.querySelectorAll('[booking-button-wrapper]').forEach(function (wrapper) {
           wrapper.style.display = available ? 'flex' : 'none';
           wrapper.setAttribute('aria-hidden', available ? 'false' : 'true');
@@ -688,8 +691,19 @@
       return Array.from(qsa(selector)).filter(excludeXanoCallCards);
   }
 
+  function publicCallTypeReady(type) {
+      const wrapper = document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
+      if (!wrapper) return true; // Legacy pages have no public-readiness contract.
+      if (!latestCanonicalCallItems) return false;
+      return Array.from(latestCanonicalCallItems.values()).some(function (item) {
+          return callOfferTypeOf(item) === type && item.public_available === true;
+      });
+  }
+
   function syncCanonicalCallSurfaces(configs, includeSurface) {
-      const records = Array.isArray(configs) ? configs : [];
+      const records = (Array.isArray(configs) ? configs : []).filter(function (record) {
+          return !isBrandMember(MEMBER) || publicCallTypeReady(record.is_paid === true ? 'paid' : 'free');
+      });
       // Same shared predicate as the painters and the chooser lookup, so one
       // record set cannot be read as free by one of them and as nothing by
       // another.
@@ -697,6 +711,10 @@
           free: !!recordForType(records, 'free'),
           paid: !!recordForType(records, 'paid'),
       };
+      if (isBrandMember(MEMBER)) {
+          reconcileInstalledBookingModalOptions(records);
+          setBookingButtonAvailable(records.length > 0);
+      }
       const changed = applyCallSurfaceAvailability(availability, function (surface, type) {
           if (!surface.hasAttribute('data-xano-call-card')) return;
           surface.setAttribute('has-connection', type);
@@ -1151,7 +1169,7 @@
 
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
-  syncCanonicalCallSurfaces([]);
+  applyCallSurfaceAvailability({ free: false, paid: false });
   // Webflow authors the structural Book Call triggers and dialog. Canonical
   // environment-scoped discovery is the only code path that may enable them.
   setBookingButtonAvailable(false);
@@ -3234,7 +3252,8 @@
               repaintCallSurfaces();
               if (callSurfacesChanged) refreshEmptySectionNav();
               if (!bookingSurfaceAvailable) return;
-              setBookingButtonAvailable(true);
+              // syncCanonicalCallSurfaces owns the final intersection of
+              // installed controllers and current public readiness.
 
           } else {
               settleEmptyCallDiscovery();
