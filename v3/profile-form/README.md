@@ -119,10 +119,23 @@ collapsed section, or on a Consult profile that authors none of these controls, 
 compatibility rules above decide what is submitted instead.
 
 Clearing a Custom Service price is the only remove gesture these forms author, and both writers keep
-it: an empty price empties that slot — the service is dropped rather than persisted with a blank or
-zero price — so a member can still delete a service they no longer offer. A non-blank price is an
-authored price and stays strict, and a price authored without a name still blocks. No invalid value is
-silently clamped.
+it: a missing/null price or a blank/whitespace string empties that slot, so a member can still delete
+a service they no longer offer. For all three slots, Build and Edit validate the JSON price type before
+converting it to text: arrays, booleans, and objects block the profile request. In particular, `[100]`
+is not a scalar price and `[]` is not a removal request. Non-blank strings and numbers must satisfy
+the range and whole-dollar rules above; numeric decimals fail, while valid integer numbers and
+trimmed digit strings are sent as exact integer prices. A price authored without a name still blocks.
+No invalid value is silently clamped or treated as removal.
+
+The real-writer regressions cover rejected JSON types, numeric decimals, accepted scalar boundaries,
+and null/blank removal in all three slots:
+
+```sh
+node --test starter-edit-profile.test.js v3/build-profile/submit-writer-price-contract.test.js
+```
+
+This frontend contract does not replace independent validation in Xano's raw request body.
+Production runtime and canonical no-write proof remain required.
 
 Until the cutover installs this candidate foundation, the published body still live on
 `/starter-edit-profile` re-formats every rate it claims to two decimals on blur, which no whole-dollar
