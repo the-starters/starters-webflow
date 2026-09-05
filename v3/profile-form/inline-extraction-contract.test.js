@@ -1290,7 +1290,7 @@ test('build draft state preserves non-empty member-bound draft edits', async () 
   assert.equal(email.value, 'draft@example.com')
 })
 
-test('edit canonical loader hydrates authored fields without a load-time mutation', async () => {
+test('edit canonical loader hydrates authored fields without a load-time mutation', { timeout: 30000 }, async () => {
   const country = new Element('select')
   const state = new Element('select')
   const city = new Element('select')
@@ -1359,8 +1359,16 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
 
   run('v3/starter-edit-profile/canonical-profile-loader.js', context)
   assert.equal(document.listeners.get('DOMContentLoaded').length, 1)
+  const hydrated = new Promise((resolve) => {
+    const dirtyState = context.window.__tsProfileDirtyState
+    const finishHydration = dirtyState.finishHydration
+    dirtyState.finishHydration = function () {
+      finishHydration.call(this)
+      resolve()
+    }
+  })
   await document.listeners.get('DOMContentLoaded')[0]()
-  await new Promise((resolve) => setTimeout(resolve, 45))
+  await hydrated
 
   assert.equal(reads.length, 1)
   assert.equal(reads[0].options.method, 'POST')
