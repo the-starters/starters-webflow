@@ -834,14 +834,18 @@ function addLegacyHeaderCallCardsFixture(page) {
   return { wrapper, free, paid }
 }
 
-function makeCallCardsWfXanoFixture(root, instanceKey = 'starter-call-offers-services') {
+function makeCallCardsWfXanoFixture(root, instanceKey = 'starter-call-offers-services', { initialResult = null, initialError = false, replayOnSubscribe = false } = {}) {
   let resultsHandler = null
-  let latestResult = null
+  let errorHandler = null
+  let latestResult = initialResult
+  let failed = initialError
   const instance = {
     root,
-    getState: () => latestResult ? { status: 'success', data: latestResult } : null,
+    getState: () => failed ? { status: 'error', data: latestResult } : latestResult ? { status: 'success', data: latestResult } : null,
     on(event, handler) {
       if (event === 'results') resultsHandler = handler
+      if (event === 'error') errorHandler = handler
+      if (event === 'results' && replayOnSubscribe && latestResult) Promise.resolve().then(() => handler(latestResult))
       return instance
     },
   }
@@ -855,7 +859,13 @@ function makeCallCardsWfXanoFixture(root, instanceKey = 'starter-call-offers-ser
     emit(result) {
       assert.ok(resultsHandler, `${instanceKey} results handler must be registered`)
       latestResult = result
+      failed = false
       resultsHandler(result)
+    },
+    fail() {
+      assert.ok(errorHandler, 'call readiness must observe wf-xano failures')
+      failed = true
+      errorHandler(new Error('readiness refresh failed'))
     },
   }
 }
@@ -3725,6 +3735,17 @@ test('the latest canonical wf-xano result controls logged-out Book Call across b
   assert.equal(page.bookingButtonWrapper.style.display, 'none')
   assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+
+  servicesWfx.emit(callCardResult())
+  headerWfx.emit(callCardResult())
+  await settle()
+  servicesWfx.fail()
+  await settle()
+  for (const card of [services.free, services.paid, header.free, header.paid]) {
+    assert.equal(card.root.style.display, 'none')
+    assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+  }
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
 })
 
 test('a logged-out wf-xano call card answers from its own item, not a sibling row of the same type', async () => {
@@ -3878,6 +3899,181 @@ test('a late wf-xano Brand call card replays canonical discovery and opens only 
   assert.equal(xano.paid.root.getAttribute('data-call-service-direct'), 'ready')
 })
 
+test('a late stale-success replay cannot reopen calls after wf-xano refresh failure', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper, 'starter-call-offers-services', {
+    initialResult: callCardResult(), initialError: true, replayOnSubscribe: true,
+  })
+  const context = makeContext({ page, record: { rate: 0, 'retainer-enabled': false }, wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  assert.equal(xano.free.root.style.display, 'none')
+  assert.equal(xano.paid.root.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+})
+
+for (const isBrand of [false, true]) {
+  for (const failedKey of ['starter-call-offers-header', 'starter-call-offers-services']) {
+    test(`a sibling cached success cannot clear shared readiness failure (${isBrand ? 'Brand' : 'anonymous'}, ${failedKey})`, async () => {
+      const page = makePage()
+      const keys = ['starter-call-offers-header', 'starter-call-offers-services']
+      const cards = keys.map(key => addXanoCallCardsFixture(page, key))
+      const lists = cards.map((card, index) => makeCallCardsWfXanoFixture(card.wrapper, keys[index], {
+        initialResult: callCardResult(), initialError: keys[index] === failedKey, replayOnSubscribe: true,
+      }))
+      const context = makeContext({
+        page, member: isBrand ? BRAND_MEMBER : undefined, record: { rate: 0, 'retainer-enabled': false },
+        getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+        initBookingComponents: () => {},
+        paidController: { installPaidBookingController: () => true },
+        getConfigs: async () => [
+          { config_id: 'cfg_free', is_paid: false, active: true, data_environment: 'production', price_cents: 0, duration: 30 },
+          { config_id: 'cfg_paid', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 25000, duration: 60 },
+        ],
+        wfXano: { push(callback) { callback({ get: key => lists[keys.indexOf(key)]?.instance }) } },
+      })
+      vm.createContext(context)
+      vm.runInContext(source, context)
+      await settle()
+      for (const wrapper of cards) {
+        for (const card of [wrapper.free, wrapper.paid]) {
+          assert.equal(card.root.style.display, 'none')
+          assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+          assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+        }
+      }
+      assert.equal(page.bookingButtonWrapper.style.display, 'none')
+      for (const paidAvailable of [true, false, true]) {
+        lists[keys.indexOf(failedKey)].emit(callCardResult({ paid: paidAvailable }))
+        await settle()
+        assert.equal(page.bookingButtonWrapper.style.display, 'flex', 'a successful retry restores readiness')
+        for (const [index, wrapper] of cards.entries()) {
+          for (const [type, card] of [['free', wrapper.free], ['paid', wrapper.paid]]) {
+            const available = type === 'free' || paidAvailable
+            assert.equal(card.root.getAttribute('data-xano-call-card'), keys[index])
+            assert.equal(card.root.getAttribute('data-call-offer-type'), type)
+            assert.equal(card.root.style.display, available ? 'block' : 'none')
+            if (isBrand) {
+              assert.equal(card.root.getAttribute('data-call-service-direct'), available ? 'ready' : null)
+              assert.equal(card.root.getAttribute('has-connection'), available ? type : null)
+            } else {
+              assert.equal(card.root.getAttribute('data-signup-trigger-element'), available ? 'service' : null)
+              assert.equal(card.root.getAttribute('data-signup-trigger-value'), available
+                ? type === 'free' ? 'Free Call' : 'Paid Consulting Call'
+                : null)
+            }
+          }
+          if (paidAvailable) assert.equal(wrapper.paid.price.textContent, '250')
+        }
+        lists[keys.indexOf(failedKey)].fail()
+        await settle()
+        for (const wrapper of cards) {
+          for (const card of [wrapper.free, wrapper.paid]) {
+            assert.equal(card.root.style.display, 'none')
+            assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+            assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+          }
+        }
+        assert.equal(page.bookingButtonWrapper.style.display, 'none')
+      }
+    })
+  }
+}
+
+for (const replayOnSubscribe of [false, true]) {
+  test(`owner retained rows receive settings after a pre-registration failure (replay: ${replayOnSubscribe})`, async () => {
+    const page = makePage()
+    const keys = ['starter-call-offers-header', 'starter-call-offers-services']
+    const cards = keys.map(key => addXanoCallCardsFixture(page, key))
+    const lists = cards.map((card, index) => makeCallCardsWfXanoFixture(card.wrapper, keys[index], {
+      initialResult: callCardResult(), initialError: true, replayOnSubscribe,
+    }))
+    const controller = ownerController({ paid: ownerPaidSettings({ readiness: {
+      calendar_connected: true, availability_configured: true,
+      stripe_connect_linked: false, stripe_charges_enabled: false,
+      stripe_readiness_fresh: false, paid_call_enabled: true, bookable: false,
+    } }) })
+    const context = ownerContext(page, controller, {
+      wfXano: { push(callback) { callback({ get: key => lists[keys.indexOf(key)]?.instance }) } },
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    for (const wrapper of cards) {
+      for (const card of [wrapper.free, wrapper.paid]) {
+        assert.equal(card.root.style.display, 'block')
+        assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
+        assert.ok(card.root.getAttribute('data-xano-call-card'))
+      }
+      assert.equal(wrapper.free.root.getAttribute('data-service-card-state'), 'Default')
+      assert.equal(wrapper.free.tooltip.style.display, 'none')
+      assert.equal(wrapper.paid.root.getAttribute('data-service-card-state'), 'Disabled')
+      assert.equal(wrapper.paid.tooltipText.textContent, 'Connect Stripe to offer paid calls.')
+      assert.equal(wrapper.paid.stripeCta.style.display, 'block')
+      assert.equal(wrapper.paid.settingsCta.style.display, 'none')
+    }
+  })
+}
+
+for (const publicFirst of [false, true]) {
+  test(`Brand cards intersect installed discovery with public readiness (public first: ${publicFirst})`, async () => {
+    const page = makePage()
+    const xano = addXanoCallCardsFixture(page)
+    const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+    let resolveConfigs
+    const configs = new Promise(resolve => { resolveConfigs = resolve })
+    const context = makeContext({
+      page,
+      member: BRAND_MEMBER,
+      record: { rate: 0, 'retainer-enabled': false },
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+      initBookingComponents: () => {},
+      paidController: { installPaidBookingController: () => true },
+      getConfigs: () => configs,
+      wfXano: wfx.api,
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    if (publicFirst) {
+      wfx.emit(callCardResult({ free: true, paid: false }))
+      await settle()
+    }
+    resolveConfigs([
+      { config_id: 'cfg_free', is_paid: false, active: true, data_environment: 'production', price_cents: 0, duration: 30 },
+      { config_id: 'cfg_paid', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 25000, duration: 60 },
+    ])
+    await settle()
+    if (!publicFirst) {
+      assert.equal(page.bookingButtonWrapper.style.display, 'none', 'discovery alone must not admit cards')
+      wfx.emit(callCardResult({ free: true, paid: false }))
+      await settle()
+    }
+    assert.equal(xano.free.root.style.display, 'block')
+    assert.equal(xano.paid.root.style.display, 'none')
+    assert.equal(xano.paid.root.getAttribute('data-call-service-direct'), null)
+    assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+    wfx.emit(callCardResult({ free: false, paid: false }))
+    await settle()
+    assert.equal(xano.free.root.style.display, 'none')
+    assert.equal(xano.paid.root.style.display, 'none')
+    assert.equal(page.bookingButtonWrapper.style.display, 'none')
+    wfx.emit(callCardResult({ free: false, paid: true }))
+    await settle()
+    assert.equal(xano.free.root.style.display, 'none')
+    assert.equal(xano.paid.root.style.display, 'block')
+    assert.equal(xano.paid.price.textContent, '250')
+    assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+    wfx.fail()
+    await settle()
+    assert.equal(xano.free.root.style.display, 'none')
+    assert.equal(xano.paid.root.style.display, 'none')
+    assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  })
+}
+
 test('a late wf-xano Brand call card replays terminal empty discovery as hidden', async () => {
   const page = makePage()
   addContractDialog(page)
@@ -3975,6 +4171,8 @@ test('the profile owner gets Default only for call cards that pass every readine
   vm.runInContext(source, context)
   await settle()
   wfx.emit(callCardResult())
+  await settle()
+  wfx.fail()
   await settle()
 
   for (const card of [xano.free, xano.paid]) {

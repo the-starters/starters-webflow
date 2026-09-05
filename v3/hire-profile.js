@@ -538,6 +538,9 @@
   }
 
   function setBookingButtonAvailable(available) {
+      if (available && isBrandMember(MEMBER)) {
+          available = publicCallTypeReady('free') || publicCallTypeReady('paid');
+      }
       document.querySelectorAll('[booking-button-wrapper]').forEach(function (wrapper) {
           wrapper.style.display = available ? 'flex' : 'none';
           wrapper.setAttribute('aria-hidden', available ? 'false' : 'true');
@@ -688,8 +691,19 @@
       return Array.from(qsa(selector)).filter(excludeXanoCallCards);
   }
 
+  function publicCallTypeReady(type) {
+      const wrapper = document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
+      if (!wrapper) return true; // Legacy pages have no public-readiness contract.
+      if (!latestCanonicalCallItems) return false;
+      return Array.from(latestCanonicalCallItems.values()).some(function (item) {
+          return callOfferTypeOf(item) === type && item.public_available === true;
+      });
+  }
+
   function syncCanonicalCallSurfaces(configs, includeSurface) {
-      const records = Array.isArray(configs) ? configs : [];
+      const records = (Array.isArray(configs) ? configs : []).filter(function (record) {
+          return !isBrandMember(MEMBER) || publicCallTypeReady(record.is_paid === true ? 'paid' : 'free');
+      });
       // Same shared predicate as the painters and the chooser lookup, so one
       // record set cannot be read as free by one of them and as nothing by
       // another.
@@ -697,6 +711,10 @@
           free: !!recordForType(records, 'free'),
           paid: !!recordForType(records, 'paid'),
       };
+      if (isBrandMember(MEMBER)) {
+          reconcileInstalledBookingModalOptions(records);
+          setBookingButtonAvailable(records.length > 0);
+      }
       const changed = applyCallSurfaceAvailability(availability, function (surface, type) {
           if (!surface.hasAttribute('data-xano-call-card')) return;
           surface.setAttribute('has-connection', type);
@@ -1047,7 +1065,10 @@
           // A cloned DOM node copies attributes but not listeners. Track actual
           // listener ownership by element identity instead of trusting the
           // diagnostic attribute as the binding guard.
-          if (directCallServiceCards.has(card)) return;
+          if (directCallServiceCards.has(card)) {
+              card.setAttribute('data-call-service-direct', 'ready');
+              return;
+          }
 
           // Service cards are type-specific shortcuts. They reuse the exact
           // installed chooser CTA so the matching GitHub controller and native
@@ -1151,9 +1172,9 @@
 
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
-  syncCanonicalCallSurfaces([]);
-  // Webflow authors the structural Book Call triggers and dialog. Canonical
-  // environment-scoped discovery is the only code path that may enable them.
+  applyCallSurfaceAvailability({ free: false, paid: false });
+  // Webflow authors the structural Book Call triggers and dialog. Keep them
+  // closed until the viewer-specific readiness gate admits an entry point.
   setBookingButtonAvailable(false);
   neutralizeUnavailableCompanyLinks();
   wireCallServiceCardsToDirectEntry();
@@ -1979,13 +2000,42 @@
 
       window.WfXano.push(function (wfx) {
           if (!wfx || typeof wfx.get !== 'function') return;
-          ['starter-call-offers-header', 'starter-call-offers-services'].forEach(function (key) {
+          const callKeys = ['starter-call-offers-header', 'starter-call-offers-services'];
+          function failClosed() {
+              Promise.resolve(memberReady).then(function () {
+                  if (isProfileOwner(MEMBER)) return;
+                  callKeys.forEach(function (key) {
+                      const instance = wfx.get(key);
+                      if (instance && instance.root) adaptXanoCallCards(instance, key, { items: [] });
+                  });
+              }).catch(function (error) {
+                  console.warn('Xano call readiness:', error);
+              });
+          }
+          callKeys.forEach(function (key) {
               const instance = wfx.get(key);
               if (!instance || typeof instance.on !== 'function' || !instance.root) return;
 
               function applyResult(result) {
                   Promise.resolve(memberReady).then(function () {
-                      adaptXanoCallCards(instance, key, result);
+                      if (isProfileOwner(MEMBER)) {
+                          adaptXanoCallCards(instance, key, result);
+                          return;
+                      }
+                      const readinessFailed = callKeys.some(function (callKey) {
+                          const sibling = wfx.get(callKey);
+                          const state = sibling && typeof sibling.getState === 'function'
+                              ? sibling.getState() : null;
+                          return state && state.status === 'error';
+                      });
+                      if (readinessFailed) {
+                          failClosed();
+                          return;
+                      }
+                      callKeys.forEach(function (callKey) {
+                          const sibling = wfx.get(callKey);
+                          if (sibling && sibling.root) adaptXanoCallCards(sibling, callKey, result);
+                      });
                   }).catch(function (error) {
                       console.warn('Xano call cards:', error);
                   });
@@ -1996,9 +2046,17 @@
                   receivedResult = true;
                   applyResult(result);
               });
+              // Keyed wf-xano lists retain their previous rows on refresh
+              // failure and emit error, not results. Old readiness must not
+              // keep either surface or the shared chooser open.
+              instance.on('error', failClosed);
               if (!receivedResult && typeof instance.getState === 'function') {
                   const state = instance.getState();
                   if (state && state.status === 'success' && state.data) applyResult(state.data);
+                  else if (state && state.status === 'error') {
+                      if (state.data) applyResult(state.data);
+                      failClosed();
+                  }
               }
           });
       });
@@ -3234,7 +3292,8 @@
               repaintCallSurfaces();
               if (callSurfacesChanged) refreshEmptySectionNav();
               if (!bookingSurfaceAvailable) return;
-              setBookingButtonAvailable(true);
+              // syncCanonicalCallSurfaces owns the final intersection of
+              // installed controllers and current public readiness.
 
           } else {
               settleEmptyCallDiscovery();

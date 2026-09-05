@@ -161,6 +161,9 @@ const NON_BROWSER_SCRIPTS = new Set([
   'build-profile-wiring-audit.js',
   'step-flow-test-dom.js',
   'v3/starter-edit-profile/published-form-contract.js',
+  // Synthetic data/controllers for the local Hire call-card browser harness;
+  // loaded only by its fixture page, never installed on Webflow.
+  'v3/browser-tests/hire-calls-fixture.js',
   // Read-only Slater.app exports kept as the readable reference for
   // v2/contract.js. Generated artifacts, never edited and never loaded.
   'slater/4885.readable.js',
