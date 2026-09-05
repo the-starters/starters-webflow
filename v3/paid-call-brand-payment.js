@@ -41,6 +41,7 @@
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
   const guardedGuestSubmitTargets = new WeakSet()
+  const paidBookingInstallations = new WeakMap()
 
   function getBookingSurfaceOwnership() {
     const existing = global.StartersBookingSurfaceOwnership
@@ -108,14 +109,14 @@
        * is what would reset twice, and neither one can miss a close.
        */
       resetTiming: 'close-complete',
-      register: function (popup, container, onReset) {
+      register: function (popup, container, onReset, owner) {
         let binding = bindings.get(popup)
         if (!binding) {
           // `closePending` makes the reset idempotent per close cycle: one
           // reset per close no matter how many close-complete events the embed
           // emits, re-armed whenever the dialog is opened again or a call type
           // claims the surface.
-          binding = { container, resets: new Set(), closePending: true }
+          binding = { container, resets: new Map(), closePending: true }
           bindings.set(popup, binding)
           if (typeof global.addEventListener === 'function') {
             global.addEventListener('modal-open', function (event) {
@@ -134,7 +135,7 @@
           }
         }
         if (binding.container !== container) return false
-        binding.resets.add(onReset)
+        binding.resets.set(owner || onReset, onReset)
         return true
       },
       reset: function (popup, nextType) {
@@ -2011,6 +2012,15 @@
     const popup = document.querySelector('[popup-booking]')
     const container = popup && popup.querySelector('[nylas-container]')
     if (!ctas.length || !popup || !container) return false
+    const previousInstall = paidBookingInstallations.get(popup)
+    if (previousInstall) previousInstall()
+    const listeners = []
+    let disposed = false
+    function listen(target, name, handler, capture) {
+      if (disposed || !target || typeof target.addEventListener !== 'function') return
+      target.addEventListener(name, handler, capture)
+      listeners.push(() => target.removeEventListener && target.removeEventListener(name, handler, capture))
+    }
     const paidCallMessage = popup.querySelector('[paid-call-text]')
     const authoredPaidCallText = paidCallMessage
       ? String(paidCallMessage.textContent || '')
@@ -2455,7 +2465,7 @@
           cardComplete = Boolean(event && event.complete)
           errorText.textContent = event.error ? event.error.message : ''
         })
-        save.addEventListener('click', async function (event) {
+        listen(save, 'click', async function (event) {
           event.preventDefault()
           event.stopImmediatePropagation()
           if (save.disabled) return
@@ -2592,7 +2602,7 @@
       '[call-type-item] [booking-popup-open][data-type="free"][data-config]',
     )).forEach(function (cta) {
       if (typeof cta.addEventListener === 'function') {
-        cta.addEventListener('click', function () {
+        listen(cta, 'click', function () {
           bookingSurfaceLifecycle.reset(popup, 'free')
         }, true)
       }
@@ -2631,17 +2641,17 @@
 
     paymentCloseControls().forEach(function (control) {
       if (typeof control.addEventListener === 'function') {
-        control.addEventListener('click', cancelPaymentUi)
+        listen(control, 'click', cancelPaymentUi)
       }
     })
 
     const paymentModal = document.querySelector('[popup-stripe-card]')
     if (paymentModal && typeof paymentModal.addEventListener === 'function') {
-      paymentModal.addEventListener('cancel', cancelPaymentUi)
+      listen(paymentModal, 'cancel', cancelPaymentUi)
     }
 
     if (typeof global.addEventListener === 'function') {
-      global.addEventListener('modal-close', function (event) {
+      listen(global, 'modal-close', function (event) {
         const modal = event && event.detail && event.detail.modal
         if (
           modal === 'popup-stripe-card' ||
@@ -2650,7 +2660,12 @@
       })
     }
 
-    if (!bookingSurfaceLifecycle.register(popup, container, resetBookingUi)) return false
+    if (!bookingSurfaceLifecycle.register(popup, container, resetBookingUi, 'paid')) return false
+    paidBookingInstallations.set(popup, function () {
+      disposed = true
+      cancelPaymentUi()
+      listeners.forEach(remove => remove())
+    })
     installPaymentAccessibility()
     bookingSurfaceLifecycle.reset(popup)
 

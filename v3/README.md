@@ -4164,3 +4164,25 @@ Run the focused tests with:
 ```sh
 node --test v3/starter-review-form.test.js
 ```
+
+
+### Messages call entry
+
+Load `v3/messages-calls.js` immediately before `v3/messages.js`, both deferred.
+The adapter binds the native `[booking-button-wrapper]` and its authored button,
+then removes the unconditional chooser trigger. Keep the page-head fail-closed
+style `[booking-button-wrapper]{display:none}` until the authenticated adapter
+reveals the selected conversation's eligible call types.
+
+Only active Brand Free/Brand Paid plan IDs can enter. A Starter or ambiguous
+role stays hidden. Selection changes invalidate pending reads and calendar
+ownership. On each entry, read the canonical public call DTO and authenticated
+booking configuration again. Both admitted types show the native chooser; one
+type uses the existing hidden-chooser pass-through to its calendar. Neither or
+a failed lookup stays hidden. The adapter loads the existing scheduling auth,
+Free booking and Paid booking controllers, and never writes TalkJS eligibility
+metadata. All booking requests remain owned by the shared controllers.
+
+Messages requires the native `popup-booking-main` and `popup-booking` dialogs
+and the Hire payment-method dialog for Brands that need to add a card.
+The native dialog guest fields are optional, as on older Hire markup.
