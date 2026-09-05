@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.530
+ * @release v1.59.531
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -2096,7 +2096,9 @@
   // computed visibility here would permanently lose a fourth tout after it
   // was hidden, or reopen an unavailable offer when another tout disappears.
   function reconcileHeaderTouts() {
-      const carrier = qs('[data-profile-type]');
+      // Existing wf-xano clones can reach this during bootstrap, before the
+      // page helper aliases below are assigned. The native query is ready now.
+      const carrier = document.querySelector('[data-profile-type]');
       const profileType = carrier
           ? String(carrier.getAttribute('data-profile-type') || carrier.textContent || '').trim().toLowerCase()
           : '';

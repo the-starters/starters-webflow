@@ -19,14 +19,15 @@ async function until(predicate) {
 function calls(surface) {
   return `<div wf-xano-element="wrapper" wf-xano-instance="starter-call-offers-${surface}"
     wf-xano-source="KZf7nFnk:profile/starter/calls/v3" wf-xano-method="GET" wf-xano-auth="none" wf-xano-param-starter_id="424">
-    <div wf-xano-element="template" data-service-card="component" data-service-card-type="tout">
+    <div wf-xano-element="template" data-service-card="component" data-service-card-type="tout"
+      has-connection="free" ${surface === 'services' ? 'data-type="free"' : ''}>
       <span data-service-card-element="title" wf-xano-bind="name"></span>
       <span data-service-card-element="description" wf-xano-bind="description"></span>
       <span data-millify="" wf-xano-bind="price"></span>
     </div></div>`
 }
 
-for (const profileType of ['Consult', 'Full']) test(`real Header clone cap and recovery: ${profileType}`, async () => {
+for (const libraryFirst of [false, true]) for (const profileType of ['Consult', 'Full']) test(`real Header clone cap and recovery: ${profileType}, libraryFirst=${libraryFirst}`, async () => {
   const errors = []
   const console = new VirtualConsole()
   console.on('jsdomError', error => errors.push(error.message))
@@ -102,12 +103,22 @@ for (const profileType of ['Consult', 'Full']) test(`real Header clone cap and r
     heading.textContent = `Actual wf-xano Header fixture: ${profileType}, ${stage}`
     snapshot.querySelector('body').prepend(heading)
     fs.writeFileSync(path.join(process.env.HIRE_HEADER_EVIDENCE_DIR,
-      `header-${profileType.toLowerCase()}-${stage}.html`), '<!doctype html>\n' + snapshot.outerHTML)
+      `header-${profileType.toLowerCase()}-${libraryFirst ? 'library-first' : 'page-first'}-${stage}.html`), '<!doctype html>\n' + snapshot.outerHTML)
   }
   try {
-    w.eval(pageSource)
-    w.eval(library)
-    w.document.dispatchEvent(new w.Event('DOMContentLoaded'))
+    if (libraryFirst) {
+      w.eval(library)
+      w.document.dispatchEvent(new w.Event('DOMContentLoaded'))
+      await until(() => w.document.querySelectorAll('[wf-xano-item]').length === 4)
+      assert.equal(w.document.querySelectorAll('header [wf-xano-item][has-connection="free"]').length, 2,
+        'actual Header clones must exist before hire-profile bootstrap')
+      assert.equal(w.document.querySelectorAll('#services [wf-xano-item][data-type="free"]').length, 2)
+      assert.doesNotThrow(() => w.eval(pageSource), 'early call tracking cannot depend on later qs assignment')
+    } else {
+      w.eval(pageSource)
+      w.eval(library)
+      w.document.dispatchEvent(new w.Event('DOMContentLoaded'))
+    }
     await until(() => w.document.querySelectorAll('[data-xano-call-card]').length === 4 &&
       Array.from(w.document.querySelectorAll('[data-canonical-hero-rate-state]')).every(root =>
         root.getAttribute('data-canonical-hero-rate-state') === 'ready'))

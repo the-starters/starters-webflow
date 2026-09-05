@@ -936,6 +936,24 @@ function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = tru
   }
 }
 
+for (const missingHelper of [false, true]) test(`existing Header call clones bootstrap before qs assignment (helper missing: ${missingHelper})`, () => {
+  const page = makePage()
+  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
+  page.root.appendChild(header.wrapper)
+  for (const card of [header.free, header.paid]) {
+    card.root.setAttribute('has-connection', 'free')
+    card.root.setAttribute('data-service-card', 'component')
+  }
+  const context = makeContext({ page })
+  if (missingHelper) context.qs = undefined
+  vm.createContext(context)
+  assert.doesNotThrow(() => vm.runInContext(source, context))
+  for (const card of [header.free, header.paid]) {
+    assert.equal(card.root.style.display, 'none', 'pre-adapter clones remain fail-closed')
+    assert.equal(card.root.getAttribute('aria-hidden'), 'true')
+  }
+})
+
 function makeHeaderToutCapacityFixture({ profileType = 'Consult', owner = false, brand = false } = {}) {
   const page = makePage()
   const profileTypeNode = makeElement('div', { 'data-profile-type': profileType })
