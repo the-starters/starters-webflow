@@ -43,7 +43,9 @@ for (const libraryFirst of [false, true]) test(`real wf-xano canonical hero GET/
   Object.assign(w, { MEMBER: {}, memberReady: Promise.resolve({}), waitForMember: callback => callback({}),
     starter_memberstack_id: 'fixture-member', stripe_charges: false,
     qs: (selector, scope) => (scope || w.document).querySelector(selector),
-    qsa: (selector, scope) => Array.from((scope || w.document).querySelectorAll(selector)),
+    // Production's shared qsa returns a NodeList, not an Array. Keep the real
+    // DOM return type so adapter Array-only assumptions fail here too.
+    qsa: (selector, scope) => (scope || w.document).querySelectorAll(selector),
     WfXanoConfig: { xanoBase: 'https://fixture.invalid', preAuth: false, debug: false },
     IntersectionObserver: class { observe() {} disconnect() {} },
     formatWithTimezone: () => ({ list: {} }),
