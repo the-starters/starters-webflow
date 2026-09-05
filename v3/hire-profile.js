@@ -1418,6 +1418,9 @@
   }
 
   function selectBookableConfigurations(records) {
+      if (freeCallBooking && typeof freeCallBooking.selectBookableConfigurations === 'function') {
+          return freeCallBooking.selectBookableConfigurations(records, location.hostname);
+      }
       if (!Array.isArray(records)) return [];
 
       const environments = bookableEnvironments();

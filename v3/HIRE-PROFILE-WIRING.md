@@ -1034,7 +1034,10 @@ itself.
 
 `nylas_configurations/get_bookable/v3` owns the authoritative bookable-set
 filter. `hire-profile.js` applies a second, fail-closed check before it gives
-that set to the two GitHub modal controllers. Each record must have a `config_id`, `active ===
+that set to the two GitHub modal controllers. The shared
+`free-call-booking.js` export `selectBookableConfigurations` owns this client
+check for Hire and [Messages](README.md#messages-call-entry); Hire retains a
+local fallback for older controller versions. Each record must have a `config_id`, `active ===
 true`, and the host's exact `data_environment` (`test` on the Webflow test host,
 `production` on the production hosts). Free records must have `is_paid ===
 false`; when present, `price_cents` must resolve to zero and `duration` must

@@ -1858,7 +1858,7 @@ Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
 - On the V3 custom domains, runs on valid single-segment `/hire/<slug>` paths,
-  `/starter-dashboard`, and `/brand-dashboard`. Production
+  `/starter-dashboard`, `/brand-dashboard`, and `/messages`. Production
   `/hire/jp-dionisio` remains explicitly blocked.
 - Authenticates only explicit reviewed `/v3` routes on the configured Xano
   origin, including the two Brand paid-call payment-method paths documented
@@ -3585,6 +3585,8 @@ Load it after `scheduling-auth.js` on the approved Hire surfaces:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/paid-call-brand-payment.js"></script>
 ```
 
+For Messages, the [call-entry adapter](#messages-call-entry) loads this controller.
+
 The scheduling auth bridge allowlists these paid-call paths:
 
 - `POST /brand/payment-method/setup/v3`
@@ -3847,9 +3849,15 @@ calendar generation and restores `schedule-step="default"`. It also clears the
 selected slot, guest fields, topic, context, calendar, errors, status text, and
 Stripe Card Element. Closing only the Stripe dialog before canonical booking
 proof clears its card/error state, retained slot, and Paid guest state without
-creating a booking. Direct
-call-service routing and generic chooser behavior are owned by
-[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
+creating a booking. Reinstalling the Paid controller on the same booking dialog
+disposes the previous controller's listeners and destroys its Stripe Card
+Element. A pending Stripe load cannot mount an Element for a disposed controller.
+The shared booking lifecycle replaces each call type's reset callback on
+reinstallation. Replacement and delayed-load regressions are covered in
+[`paid-call-brand-payment.test.js`](paid-call-brand-payment.test.js).
+Hire call-service routing and chooser behavior are owned by
+[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing);
+Messages routing is owned by [Messages call entry](#messages-call-entry).
 
 The native `[popup-stripe-card]` component must keep its visible payment title
 (`Payment Methods` today; `Card details` is also supported) and retain
@@ -4164,3 +4172,33 @@ Run the focused tests with:
 ```sh
 node --test v3/starter-review-form.test.js
 ```
+
+
+### Messages call entry
+
+Load `v3/messages-calls.js` immediately before `v3/messages.js`, both deferred
+from the repository's jsDelivr `@latest/v3/` path in the Messages page head.
+Preserve the existing redirects and mobile styles.
+The adapter binds the native `[booking-button-wrapper]` and its authored button,
+then removes the unconditional chooser trigger. Keep the page-head fail-closed
+style `[booking-button-wrapper]{display:none}` until the authenticated adapter
+reveals the selected conversation's eligible call types.
+Remove the native wrapper's `data-ms-content="paid-plans"` attribute during
+page activation. Memberstack can remove that element before the adapter starts
+for Brand Free accounts; the adapter owns role gating for this control.
+
+Only active Brand Free/Brand Paid plan IDs can enter. A Starter or ambiguous
+role stays hidden. Selection changes invalidate pending reads and calendar
+ownership. On each entry, read the canonical public call DTO and authenticated
+booking configuration again. Manual readiness probes must send the production
+`Origin` header because the endpoint selects its environment from that context.
+Both admitted types show the native chooser; one
+type uses the existing hidden-chooser pass-through to its calendar. Neither or
+a failed lookup stays hidden. The adapter loads the existing scheduling auth,
+Free booking and Paid booking controllers, and never writes TalkJS eligibility
+metadata. All booking requests remain owned by the shared controllers.
+
+Messages requires the native `popup-booking-main` and `popup-booking` dialogs.
+Install [`messages-payment-dialog.html`](messages-payment-dialog.html) in the
+empty Messages footer for Brands that need the Hire payment-method dialog.
+The native dialog guest fields are optional, as on older Hire markup.
