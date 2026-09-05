@@ -1858,7 +1858,7 @@ Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
 - On the V3 custom domains, runs on valid single-segment `/hire/<slug>` paths,
-  `/starter-dashboard`, and `/brand-dashboard`. Production
+  `/starter-dashboard`, `/brand-dashboard`, and `/messages`. Production
   `/hire/jp-dionisio` remains explicitly blocked.
 - Authenticates only explicit reviewed `/v3` routes on the configured Xano
   origin, including the two Brand paid-call payment-method paths documented
@@ -3585,6 +3585,8 @@ Load it after `scheduling-auth.js` on the approved Hire surfaces:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/paid-call-brand-payment.js"></script>
 ```
 
+For Messages, the [call-entry adapter](#messages-call-entry) loads this controller.
+
 The scheduling auth bridge allowlists these paid-call paths:
 
 - `POST /brand/payment-method/setup/v3`
@@ -4168,7 +4170,9 @@ node --test v3/starter-review-form.test.js
 
 ### Messages call entry
 
-Load `v3/messages-calls.js` immediately before `v3/messages.js`, both deferred.
+Load `v3/messages-calls.js` immediately before `v3/messages.js`, both deferred
+from the repository's jsDelivr `@latest/v3/` path in the Messages page head.
+Preserve the existing redirects and mobile styles.
 The adapter binds the native `[booking-button-wrapper]` and its authored button,
 then removes the unconditional chooser trigger. Keep the page-head fail-closed
 style `[booking-button-wrapper]{display:none}` until the authenticated adapter
@@ -4188,6 +4192,7 @@ a failed lookup stays hidden. The adapter loads the existing scheduling auth,
 Free booking and Paid booking controllers, and never writes TalkJS eligibility
 metadata. All booking requests remain owned by the shared controllers.
 
-Messages requires the native `popup-booking-main` and `popup-booking` dialogs
-and the Hire payment-method dialog for Brands that need to add a card.
+Messages requires the native `popup-booking-main` and `popup-booking` dialogs.
+Install [`messages-payment-dialog.html`](messages-payment-dialog.html) in the
+empty Messages footer for Brands that need the Hire payment-method dialog.
 The native dialog guest fields are optional, as on older Hire markup.
