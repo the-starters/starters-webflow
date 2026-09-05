@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-09-04
+Last updated: 2026-09-05
 Status: Call projections and Free Call behavior are GitHub-owned; the Free/Paid
 call-card cutover hides the old CMS variants and renders canonical Xano data;
 direct Webflow head cleanup remains pending
@@ -82,11 +82,50 @@ remain deferred (`paid-call-brand-payment.js`,
 | Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
 | Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
 | Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, and Talent or owner cards stay inert | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
-| Freelance rate card | everyone | this file / Algolia record, cloned from the section's own authored Default card — never an element owned by a `[wf-xano-element="wrapper"]`, because every wf-xano adapter stamps the same `data-service-card="component"` / `data-service-card-state="Default"` pair on its template and its rendered clones |
-| Retainer rate card | everyone | authored `starter-retainer` wf-xano wrapper / canonical Xano endpoint `profile/starter/retainer/v3`; the Algolia-derived runtime clone remains only as the unresolved/error fallback |
+| Services Freelance rate card | everyone | this file / Algolia record, cloned from the section's own authored Default card — never an element owned by a `[wf-xano-element="wrapper"]`, because every wf-xano adapter stamps the same `data-service-card="component"` / `data-service-card-state="Default"` pair on its template and its rendered clones |
+| Services Retainer rate card | everyone | authored `starter-retainer` wf-xano wrapper / canonical Xano endpoint `profile/starter/retainer/v3`; the Algolia-derived runtime clone remains only as the unresolved/error fallback |
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
+| Hero Hourly and Retainer touts | everyone | native wf-xano lists adapted by this file; see [Hero rate cards](#hero-rate-cards) |
 | Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all |
+
+### Hero rate cards
+
+`installXanoHeroRateCards()` adapts the legacy `starter-hourly` and
+`starter-retainer` wrappers outside `#services`. Each must contain exactly one
+owned `[data-service-card="component"]` with a `[wf-xano-bind="price"]` node.
+Its positive integer `wf-xano-param-starter_id` must match the trimmed text of
+`[data-starter-xano-id]`; invalid or mismatched identities stay hidden without
+adapter initialization.
+
+The adapter marks the authored card as a native hidden wf-xano template and
+assigns each wrapper a unique `starter-hero-<kind>-<index>` instance key. It uses
+public `WfXano.destroy(root)`, `init(root)`, and `get(key)` so the old duplicate
+Retainer key cannot destroy the Services instance. Native cloning preserves
+links, role attributes, and layout.
+
+These lists read `GET KZf7nFnk:profile/starter/rates/v3` with `starter_id` and
+`kind` (`hourly` or `retainer`), without authentication. A visible result
+requires exactly one item with matching `id: "<kind>:<starter_id>"`, matching
+`type`, and a numeric positive safe-integer whole-dollar `price` within the
+shared writer's cents-conversion bound (`Number.MAX_SAFE_INTEGER / 100`).
+Pending reads, errors, empty or invalid results stay hidden, including during
+refresh after a successful result. The adapter removes stale millify values and
+ceilings and paints the canonical amount without clamping legacy positive rates
+to the form's current input limits. Services Retainer, custom Services, and Call
+controllers retain their separate contracts.
+
+Focused coverage lives in `hire-profile.test.js`. The real-library integration
+covers both library load orders, minimum/current-maximum/legacy prices, refresh
+visibility, and Services instance preservation. Run it explicitly in a workspace
+with wf-xano available:
+
+```sh
+NODE_PATH="<wf-xano>/node_modules" WF_XANO_SOURCE="<wf-xano>/wf-xano.js" node --test v3/hire-canonical-rates.integration.cjs
+```
+
+This local coverage does not establish production release or role-matched
+screenshot proof, nor complete the remaining W8 workflows or W10 provider proof.
 
 ### Company-link safety
 
@@ -131,7 +170,8 @@ missing and stands down if the namespace still cannot load.
   nothing else. The anchor utilities also ignore a bare `#` or an invalid hash
   selector so a placeholder link cannot abort the remaining page utilities
 - `window.WfAlgolia` — the search client, awaited with a 30s deadline
-- `window.WfXano` — the late-safe callback queue used to reach the
+- `window.WfXano` — the late-safe callback queue used to initialize the
+  [hero rate cards](#hero-rate-cards) through its public API and reach the
   `starter-services`, `starter-retainer`, `starter-call-offers-header`, and
   `starter-call-offers-services` instances and consume their current or future
   canonical results. A missing Services instance leaves the existing CMS cards
@@ -749,11 +789,11 @@ wf-xano clone precedes it in the list`, and `the rate cards refuse the wf-xano
 template that precedes the authored card` in
 [`hire-profile.test.js`](hire-profile.test.js).
 
-## Rate surfaces are repainted from the canonical source
+## Call rate surfaces are repainted from the canonical source
 
 The rate lives in four stores and the CMS-bound `[data-millify]` surfaces were
 never re-painted after a settings save, so a stale CMS rate outlived the change
-(verified: trent reads `150` in Algolia and `$250` in the markup). Every rate
+(verified: trent reads `150` in Algolia and `$250` in the markup). Every call rate
 display — card, tout, and the chooser's `[call-type-price]` — is repainted from
 the same canonical source the booking popup's CTA already trusts: the accepted
 Nylas configuration's `price_cents`. The CMS value degrades to a cosmetic
@@ -1216,10 +1256,11 @@ the rate-card clones get, through the same `stripCallBookingRow` writer — so t
 `00:00pm on 00/00` sentinel cannot stand on a public page, and a visitor who has
 not signed up yet is not told "No available slots" about a calendar the page
 never queried. An anonymous check therefore proves signup display and routing,
-not canonical rate or next-slot painting. The wf-xano call cards are the one
-exception to the rate half: an anonymous Paid card is painted from the public
+not canonical rate or next-slot painting. For call surfaces, the wf-xano cards
+are the exception to the rate half: an anonymous Paid card is painted from the public
 DTO's own `price`, so its amount is observable without a session — but it comes
-from the public contract, not from the canonical repaint.
+from the public contract, not from the canonical repaint. The non-call
+[hero rate cards](#hero-rate-cards) have their own public-read contract.
 
 The other half of the squeeze: sandbox members exist only on staging, and the
 staging index holds no production starters, so there is no venue where a member

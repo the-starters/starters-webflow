@@ -1,6 +1,7 @@
 // Local integration: NODE_PATH=<wf-xano>/node_modules WF_XANO_SOURCE=<wf-xano>/wf-xano.js node --test v3/hire-canonical-rates.integration.cjs
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const path = require('node:path')
 const test = require('node:test')
 const { JSDOM, VirtualConsole } = require('jsdom')
 const library = fs.readFileSync(process.env.WF_XANO_SOURCE, 'utf8')
@@ -27,6 +28,14 @@ for (const libraryFirst of [false, true]) test(`real wf-xano canonical hero GET/
   virtualConsole.on('jsdomError', error => errors.push(error.message))
   const dom = new JSDOM(html, { url: 'https://www.thestarters.com/hire/fixture', runScripts: 'outside-only', virtualConsole })
   const w = dom.window
+  function capture(stage) {
+    if (!process.env.HIRE_RATE_EVIDENCE_DIR) return
+    const snapshot = w.document.documentElement.cloneNode(true)
+    const heading = w.document.createElement('h1')
+    heading.textContent = `Hire rate integration fixture: ${stage} (libraryFirst=${libraryFirst})`
+    snapshot.querySelector('body').prepend(heading)
+    fs.writeFileSync(path.join(process.env.HIRE_RATE_EVIDENCE_DIR, `hero-${libraryFirst}-${stage}.html`), '<!doctype html>\n' + snapshot.outerHTML)
+  }
   const requests = []
   let prices = { hourly: 1, retainer: 1 }
   let responseMode = 'valid'
@@ -81,12 +90,14 @@ for (const libraryFirst of [false, true]) test(`real wf-xano canonical hero GET/
       assert.equal(root.querySelector('[wf-xano-element="template"]').style.display, 'none')
       assert.equal(root.querySelector('[wf-xano-item]').getAttribute('href'), '#services')
     }
+    capture('minimum')
     prices = { hourly: 1000, retainer: 25000 }
     await Promise.all(roots.map(root => w.WfXano.get(root.getAttribute('wf-xano-instance')).refresh()))
     for (const root of roots) {
       const kind = root.getAttribute('wf-xano-param-kind')
       assert.equal(root.querySelector('[wf-xano-item] [wf-xano-bind="price"]').textContent, kind === 'hourly' ? '1K' : '25K')
     }
+    capture('maximum')
     prices = { hourly: 15000, retainer: 250000 }
     await Promise.all(roots.map(root => w.WfXano.get(root.getAttribute('wf-xano-instance')).refresh()))
     for (const root of roots) {
@@ -95,6 +106,7 @@ for (const libraryFirst of [false, true]) test(`real wf-xano canonical hero GET/
       assert.equal(amount.textContent, kind === 'hourly' ? '15K' : '250K', 'legacy canonical values must not be clamped or hidden')
       assert.equal(amount.getAttribute('data-millify'), String(prices[kind]))
     }
+    capture('legacy-positive')
     const root = roots[0]; const instance = w.WfXano.get(root.getAttribute('wf-xano-instance'))
     responseMode = 'pending'
     const pending = instance.refresh()
@@ -104,6 +116,7 @@ for (const libraryFirst of [false, true]) test(`real wf-xano canonical hero GET/
     assert.equal(root.style.display, 'none', 'failed read cannot expose previous price')
     responseMode = 'empty'; await instance.refresh()
     assert.equal(root.style.display, 'none', 'disabled offer cannot expose previous price')
+    capture('empty-hourly')
     assert.deepEqual(errors, [])
   } finally { w.close() }
 })
