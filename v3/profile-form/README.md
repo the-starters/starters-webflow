@@ -1,12 +1,5 @@
 # Profile form browser ownership
 
-Incremental service fields read the latest capture JSON on every sync. An
-unchanged blur refreshes add-button state but emits no synthetic change, so it
-does not trigger the Edit unsaved-changes warning. Actual edits still emit a
-change; missing fields still normalize; late hydration and sibling fields are
-preserved. Numeric canonical values retain their type on an unchanged blur.
-The capture-sync suite executes the real dirty guard to cover this boundary.
-
 The native Webflow forms, fields, success states, error states, and layout remain authored in Webflow.
 This directory owns browser logic shared by Build Profile and Starter Edit Profile.
 
@@ -37,7 +30,15 @@ comma-separated hidden value, and
 applies the [whole-dollar price contract](#whole-dollar-price-contract) to every rate input instead
 of stripping symbols and re-formatting the authored value,
 and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on
-every input and change, including when the member clears the field. Their transformations are recorded as
+input, change, and blur, including when the member clears the field. Each sync reads the latest
+capture JSON, preserving late hydration and sibling changes, and refreshes add-button state.
+Unchanged values emit no synthetic change and retain numeric canonical types when their string
+representation matches the field exactly. For a blank control, missing/null capture values normalize
+to an empty string without emitting a change. Actual edits still emit a change; an unchanged blur adds no dirty state of its own
+and leaves existing edits and in-flight save protections intact under the
+[Edit dirty-state contract](../starter-edit-profile/README.md#unsaved-change-warning).
+The [capture-sync suite](./incremental-dropdowns-capture-sync.test.js) executes the real dirty guard
+at this boundary. Their transformations are recorded as
 `whitespace_plus_idempotency_guard_plus_behavior_change` and name immutable published-body captures.
 Tests still pin each candidate length and SHA-256, prove the published length, body hash, and
 complete-embed hash from its capture, and fail if a declared change stops diverging from the published
