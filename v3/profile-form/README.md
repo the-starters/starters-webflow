@@ -1,5 +1,12 @@
 # Profile form browser ownership
 
+Incremental service fields read the latest capture JSON on every sync. An
+unchanged blur refreshes add-button state but emits no synthetic change, so it
+does not trigger the Edit unsaved-changes warning. Actual edits still emit a
+change; missing fields still normalize; late hydration and sibling fields are
+preserved. Numeric canonical values retain their type on an unchanged blur.
+The capture-sync suite executes the real dirty guard to cover this boundary.
+
 The native Webflow forms, fields, success states, error states, and layout remain authored in Webflow.
 This directory owns browser logic shared by Build Profile and Starter Edit Profile.
 

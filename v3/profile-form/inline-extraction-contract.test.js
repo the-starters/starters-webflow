@@ -81,7 +81,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({ 3: '  ', 81: ' ', 239: '      ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/profile-form/incremental-dropdowns.js': Object.freeze({
-    characters: 14107, sha256: 'f239896721ec2048d138af0d8874596509710ca5ac039d016f15dcdcffa15faf',
+    characters: 14708, sha256: '015173062d8bfbeeaf9222e149edad5a34e709ad04c4e39506414e752e6eb39e',
     guardKey: 'incrementalDropdowns',
     liveCaptureAsset: 'v3/profile-form/incremental-dropdowns-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
