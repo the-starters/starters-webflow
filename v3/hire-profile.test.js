@@ -974,6 +974,117 @@ function makeRetainerWfXanoFixture(root) {
   }
 }
 
+function makeMissingHeroRatesFixture(page) {
+  const roots = ['hourly', 'retainer'].map(kind => {
+    const root = makeElement('div', { 'wf-xano-element': 'wrapper', 'wf-xano-instance': `starter-${kind}`,
+      'wf-xano-source': 'KZf7nFnk:profile/starter/taxonomy/v3', 'wf-xano-param-kind': kind, 'wf-xano-param-starter_id': '1063' })
+    const card = makeElement('a', { 'data-service-card': 'component', 'data-service-card-type': 'tout', href: '#services', 'data-signup-trigger-value': kind })
+    const price = makeElement('span', { 'wf-xano-bind': 'price', 'data-millify': '', 'data-millify-raw': '0' })
+    price.textContent = '0'; card.appendChild(price); root.appendChild(card); page.root.appendChild(root)
+    return root
+  })
+  const services = addXanoRetainerFixture(page)
+  services.wrapper.setAttribute('wf-xano-source', 'KZf7nFnk:profile/starter/retainer/v3')
+  const instances = new Map()
+  const originalServiceInstance = { root: services.wrapper, on() { return this }, getState() { return null } }
+  instances.set('starter-retainer', originalServiceInstance)
+  const initialized = []; const destroyed = []
+  const api = {
+    push(fn) { fn(api) }, get(key) { return instances.get(key) || null },
+    destroy(root) { destroyed.push(root); for (const [key, instance] of instances) if (instance.root === root) instances.delete(key) },
+    init(root) {
+      const template = root.querySelector('[wf-xano-element="template"]')
+      if (!template) return
+      initialized.push(root)
+      const handlers = {}; let state = { status: 'loading' }; let subscriber
+      const instance = { root, on(name, fn) { handlers[name] = fn; return this },
+        subscribe(fn) { subscriber = fn; fn(state) }, getState() { return state },
+        emit(items) {
+          const rows = handlers.beforeRender ? handlers.beforeRender(items) : items
+          root.querySelectorAll('[wf-xano-item]').forEach(card => card.remove())
+          rows.forEach(item => {
+            const clone = template.cloneNode(true); clone.removeAttribute('wf-xano-element')
+            clone.setAttribute('wf-xano-item', ''); clone.setAttribute('data-wf-xano-id', item.id); clone.style.display = ''
+            clone.querySelector('[wf-xano-bind="price"]').textContent = String(item.price)
+            template.parentElement.appendChild(clone)
+          })
+          state = { status: 'success', data: { items: rows } }; if (subscriber) subscriber(state)
+          if (handlers.results) handlers.results(state.data)
+        },
+        transition(status) { state = { status }; if (subscriber) subscriber(state); if (status === 'error' && handlers.error) handlers.error(new Error('read failed')) },
+      }
+      instances.set(root.getAttribute('wf-xano-instance'), instance)
+    },
+  }
+  return { roots, services, api, initialized, destroyed, originalServiceInstance,
+    instance(root) { return api.get(root.getAttribute('wf-xano-instance')) } }
+}
+
+test('canonical hero rates repair missing templates and duplicate Retainer key without touching Services', () => {
+  const page = makePage(); const fixture = makeMissingHeroRatesFixture(page)
+  const context = makeContext({ page, starterId: 1063, wfXano: fixture.api })
+  context.__startersMillify = realMillify()
+  vm.createContext(context); vm.runInContext(source, context)
+  assert.equal(fixture.initialized.length, 2)
+  assert.equal(new Set(fixture.roots.map(root => root.getAttribute('wf-xano-instance'))).size, 2)
+  assert.equal(fixture.api.get('starter-retainer'), fixture.originalServiceInstance)
+  assert.ok(!fixture.destroyed.includes(fixture.services.wrapper))
+  for (const [index, kind] of ['hourly', 'retainer'].entries()) {
+    const root = fixture.roots[index]
+    assert.equal(root.style.display, 'none', 'pending must hide authored zero')
+    assert.equal(root.getAttribute('wf-xano-source'), 'KZf7nFnk:profile/starter/rates/v3')
+    assert.equal(root.getAttribute('wf-xano-param-kind'), kind)
+    assert.equal(root.getAttribute('wf-xano-method'), 'GET')
+    assert.equal(root.getAttribute('wf-xano-auth'), 'none')
+    const instance = fixture.instance(root)
+    for (const price of [1, kind === 'hourly' ? 1000 : 25000]) {
+      instance.emit([{ id: `${kind}:1063`, type: kind, price }])
+      assert.equal(root.getAttribute('data-canonical-hero-rate-state'), 'ready')
+      const clone = root.querySelector('[wf-xano-item]')
+      assert.equal(clone.getAttribute('href'), '#services', 'authored click preserved')
+      assert.equal(clone.querySelector('[wf-xano-bind="price"]').getAttribute('data-millify'), String(price))
+      assert.equal(clone.querySelector('[wf-xano-bind="price"]').textContent, price === 1 ? '1' : kind === 'hourly' ? '1K' : '25K')
+      assert.equal(root.querySelector('[wf-xano-element="template"]').style.display, 'none')
+    }
+    instance.transition('loading'); assert.equal(root.style.display, 'none')
+    instance.transition('error'); assert.equal(root.style.display, 'none')
+    instance.emit([]); assert.equal(root.style.display, 'none')
+    for (const items of [[{ id: `${kind}:999`, type: kind, price: 1 }], [{ id: `${kind}:1063`, type: kind, price: 0 }],
+      [{ id: `${kind}:1063`, type: kind, price: '1' }], [{ id: `${kind}:1063`, type: kind, price: 1 }, { id: `${kind}:1063`, type: kind, price: 2 }]]) {
+      instance.emit(items); assert.equal(root.style.display, 'none', 'bad identity/value/cardinality must not reveal a price')
+    }
+  }
+})
+
+for (const kind of ['hourly', 'retainer']) test(`canonical hero rates reject mismatched ${kind} wrapper identity before initialization`, () => {
+  const page = makePage(); const fixture = makeMissingHeroRatesFixture(page)
+  const root = fixture.roots[kind === 'hourly' ? 0 : 1]
+  root.setAttribute('wf-xano-param-starter_id', '999')
+  const context = makeContext({ page, starterId: 1063, wfXano: fixture.api })
+  vm.createContext(context); vm.runInContext(source, context)
+  assert.equal(root.style.display, 'none')
+  assert.equal(root.getAttribute('aria-hidden'), 'true')
+  assert.ok(!fixture.initialized.includes(root), 'another Starter must never initialize a hero rate request')
+  assert.equal(root.querySelector('[wf-xano-item]'), null)
+  assert.equal(fixture.initialized.length, 1, 'the matching hero remains eligible')
+  assert.equal(fixture.api.get('starter-retainer'), fixture.originalServiceInstance)
+})
+
+for (const identity of [null, '', '1063invalid']) test(`canonical hero rates hide invalid page identity ${JSON.stringify(identity)}`, () => {
+  const page = makePage(); const fixture = makeMissingHeroRatesFixture(page)
+  const context = makeContext({ page, starterId: 1063, wfXano: fixture.api })
+  if (identity === null) page.starterXanoId.remove()
+  else page.starterXanoId.textContent = identity
+  vm.createContext(context); vm.runInContext(source, context)
+  assert.equal(fixture.initialized.length, 0)
+  for (const root of fixture.roots) {
+    assert.equal(root.style.display, 'none')
+    assert.equal(root.getAttribute('aria-hidden'), 'true')
+    assert.equal(root.querySelector('[wf-xano-item]'), null)
+  }
+  assert.equal(fixture.api.get('starter-retainer'), fixture.originalServiceInstance)
+})
+
 /* ---------------------------------------------------------------- tests --- */
 
 test('a page missing the Memberstack helpers stands down instead of throwing', () => {
