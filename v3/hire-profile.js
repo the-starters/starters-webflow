@@ -1867,6 +1867,7 @@
      discovery before any booking surface opens. Starter members keep the
      live-derived owner toggles above. */
   let canonicalRetainerState = 'pending';
+  installXanoHeroRateCards();
   installXanoCallCardsAdapter();
   installXanoServiceCardsAdapter();
   installXanoRetainerCardAdapter();
@@ -2596,6 +2597,103 @@
           option.setAttribute('value', serviceName);
           option.setAttribute('data-xano-service-option', 'starter-services');
           serviceField.appendChild(option);
+      });
+  }
+
+  /* Normalize the legacy hero tout wrappers into native wf-xano lists. They
+     shipped without a template and reused the Services Retainer instance key,
+     leaving their authored zero visible without ever issuing a request. */
+  function installXanoHeroRateCards() {
+      const roots = qsa('[wf-xano-element="wrapper"]').filter(function (root) {
+          const key = root.getAttribute('wf-xano-instance');
+          return !root.closest('#services') && (key === 'starter-hourly' || key === 'starter-retainer');
+      });
+      const prepared = [];
+      roots.forEach(function (root, index) {
+          const kind = root.getAttribute('wf-xano-instance') === 'starter-hourly' ? 'hourly' : 'retainer';
+          const display = root.style.display;
+          root.style.display = 'none';
+          root.setAttribute('aria-hidden', 'true');
+          root.setAttribute('data-canonical-hero-rate-state', 'pending');
+          const templates = qsa('[data-service-card="component"]', root).filter(function (card) {
+              return card.closest('[wf-xano-element="wrapper"]') === root;
+          });
+          const starterId = String(root.getAttribute('wf-xano-param-starter_id') || '').trim();
+          if (templates.length !== 1 || !/^[1-9][0-9]*$/.test(starterId)) return;
+          const template = templates[0];
+          const price = qs('[wf-xano-bind="price"]', template);
+          if (!price) return;
+          // Preserve authored links, role attributes and layout; the library owns
+          // cloning/binding and the template's parent is its default list.
+          template.setAttribute('wf-xano-element', 'template');
+          template.style.display = 'none';
+          price.removeAttribute('data-millify-raw');
+          price.removeAttribute('data-millify-max');
+          price.setAttribute('data-millify', '');
+          price.textContent = '';
+          const key = 'starter-hero-' + kind + '-' + index;
+          root.setAttribute('wf-xano-instance', key);
+          root.setAttribute('wf-xano-source', 'KZf7nFnk:profile/starter/rates/v3');
+          root.setAttribute('wf-xano-method', 'GET');
+          root.setAttribute('wf-xano-auth', 'none');
+          root.setAttribute('wf-xano-param-kind', kind);
+          root.setAttribute('wf-xano-defer', 'true');
+          prepared.push({ root, kind, starterId, key, display });
+      });
+      window.WfXano = window.WfXano || [];
+      if (typeof window.WfXano.push !== 'function') return;
+      window.WfXano.push(function (wfx) {
+          if (!wfx || typeof wfx.init !== 'function' || typeof wfx.get !== 'function' || typeof wfx.destroy !== 'function') return;
+          prepared.forEach(function (entry) {
+              const root = entry.root;
+              function hide(status) {
+                  root.style.display = 'none';
+                  root.setAttribute('aria-hidden', 'true');
+                  root.setAttribute('data-canonical-hero-rate-state', status);
+              }
+              function validated(items) {
+                  if (!Array.isArray(items) || items.length !== 1) return [];
+                  const item = items[0];
+                  return item && item.id === entry.kind + ':' + entry.starterId && item.type === entry.kind &&
+                      typeof item.price === 'number' && Number.isSafeInteger(item.price) && item.price > 0 &&
+                      item.price <= Number.MAX_SAFE_INTEGER / 100 ? [item] : [];
+              }
+              // Destroy by root, never by the formerly duplicated instance name.
+              wfx.destroy(root);
+              wfx.init(root);
+              const instance = wfx.get(entry.key);
+              if (!instance || instance.root !== root || typeof instance.on !== 'function') return;
+              instance.on('beforeRender', validated);
+              function apply(result) {
+                  const items = validated(result && result.items);
+                  const cards = qsa('[wf-xano-item]', root).filter(function (card) {
+                      return card.closest('[wf-xano-element="wrapper"]') === root;
+                  });
+                  if (items.length !== 1 || cards.length !== 1 || cards[0].getAttribute('data-wf-xano-id') !== items[0].id) {
+                      hide('empty');
+                      return;
+                  }
+                  const price = qs('[wf-xano-bind="price"]', cards[0]);
+                  if (!price) { hide('error'); return; }
+                  price.removeAttribute('data-millify-max');
+                  if (!paintRateElement(price, items[0].price * 100)) { hide('error'); return; }
+                  cards[0].setAttribute('data-canonical-hero-rate', entry.kind);
+                  root.style.display = entry.display;
+                  root.setAttribute('aria-hidden', 'false');
+                  root.setAttribute('data-canonical-hero-rate-state', 'ready');
+              }
+              instance.on('results', apply);
+              instance.on('error', function () { hide('error'); });
+              if (typeof instance.subscribe === 'function') {
+                  instance.subscribe(function (state) {
+                      if (state.status !== 'success') hide(state.status || 'pending');
+                  });
+              }
+              if (typeof instance.getState === 'function') {
+                  const state = instance.getState();
+                  if (state && state.status === 'success') apply(state.data);
+              }
+          });
       });
   }
 
