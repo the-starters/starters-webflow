@@ -127,8 +127,8 @@
       }
     },
     "v3/profile-form/incremental-dropdowns.js": {
-      "candidateCharacters": 14107,
-      "candidateSha256": "f239896721ec2048d138af0d8874596509710ca5ac039d016f15dcdcffa15faf",
+      "candidateCharacters": 14708,
+      "candidateSha256": "015173062d8bfbeeaf9222e149edad5a34e709ad04c4e39506414e752e6eb39e",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "incrementalDropdowns",
