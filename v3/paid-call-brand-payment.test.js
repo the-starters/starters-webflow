@@ -3465,6 +3465,9 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
         if (!listeners[name]) listeners[name] = []
         listeners[name].push(listener)
       },
+      removeEventListener(name, listener) {
+        listeners[name] = (listeners[name] || []).filter((entry) => entry !== listener)
+      },
       click() {
         this.clickCount += 1
         ;(listeners.click || []).forEach(function (listener) {
@@ -3577,6 +3580,8 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   }
   const cardListeners = {}
   let cardCreates = 0
+  let cardDestroys = 0
+  let activeCards = 0
   let cardConfirmations = 0
   let saveBindings = 0
   const originalSaveAdd = save.addEventListener
@@ -3590,7 +3595,12 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
         cardCreates += 1
         return {
           clear() {},
-          mount() {},
+          mount() { activeCards += 1 },
+          destroy() {
+            cardDestroys += 1
+            activeCards -= 1
+            delete cardListeners.change
+          },
           on(name, listener) { cardListeners[name] = listener },
         }
       },
@@ -3602,7 +3612,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   })
   global.xanoAuthFetch = fetch
   const install = fixtureOptions.install || api.installPaidBookingController
-  install({
+  const installOptions = {
     config: {
       config_id: 'config_paid',
       grant_id: 'grant_test',
@@ -3624,8 +3634,12 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
         },
       })
     },
-  })
+  }
+  install(installOptions)
   return {
+    reinstall: () => install(installOptions),
+    getCardDestroys: () => cardDestroys,
+    getActiveCards: () => activeCards,
     calendars,
     cardListeners,
     /**
@@ -4506,4 +4520,66 @@ test('the dashboard layout injector is idempotent and inert on a bare document',
   assert.equal(injected, 1)
   assert.doesNotThrow(() => api.ensureDashboardCalendarLayout(undefined))
   assert.doesNotThrow(() => api.ensureDashboardCalendarLayout({}))
+})
+
+
+test('replacing the paid controller destroys its mounted card Element', async () => {
+  const fixture = makePaidLifecycleFixture(async () => response({ environment: 'test', bookable: false }))
+  try {
+    await openCardSetup(fixture)
+    assert.equal(fixture.getActiveCards(), 1)
+    fixture.paymentClose.click()
+    fixture.reinstall()
+    assert.equal(fixture.getCardDestroys(), 1)
+    assert.equal(fixture.getActiveCards(), 0)
+    assert.equal(fixture.cardListeners.change, undefined)
+    assert.equal(fixture.save.listeners.click.length, 0)
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[1].options.onConfirm(SCOPING_SLOT)
+    assert.equal(fixture.getCardCreates(), 2)
+    assert.equal(fixture.getActiveCards(), 1)
+    assert.equal(fixture.save.listeners.click.length, 1)
+    assert.equal(fixture.getOpenCount(), 2)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('replacing the paid controller while Stripe loads prevents a stale mount', async () => {
+  const fixture = makePaidLifecycleFixture(async () => response({ environment: 'test', bookable: false }))
+  const stripe = global.Stripe
+  let finishLoad
+  let signalLoading
+  const loading = new Promise((resolve) => { signalLoading = resolve })
+  const query = global.document.querySelector
+  global.Stripe = undefined
+  global.document.querySelector = function (selector) {
+    if (selector === 'script[src="https://js.stripe.com/v3/"]') {
+      return { addEventListener(name, listener) {
+        if (name === 'load') {
+          finishLoad = listener
+          signalLoading()
+        }
+      } }
+    }
+    return query.call(this, selector)
+  }
+  try {
+    await fixture.paid.onclick({ preventDefault() {} })
+    const pending = fixture.calendars[0].options.onConfirm(SCOPING_SLOT)
+    await loading
+    fixture.reinstall()
+    global.Stripe = stripe
+    finishLoad()
+    await pending
+    assert.equal(fixture.getCardCreates(), 0)
+    assert.equal(fixture.getOpenCount(), 0)
+    assert.equal(fixture.getSaveBindings(), 0)
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[1].options.onConfirm(SCOPING_SLOT)
+    assert.equal(fixture.getActiveCards(), 1)
+    assert.equal(fixture.getOpenCount(), 1)
+  } finally {
+    fixture.restore()
+  }
 })
