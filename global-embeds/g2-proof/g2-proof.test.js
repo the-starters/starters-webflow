@@ -569,7 +569,7 @@ test('a lookalike host is not staging and says nothing', () => {
 })
 
 test('the release marker is readable even when GSAP never arrives', () => {
-  assert.match(source, /@release v1\.59\.519/)
+  assert.match(source, /@release v1\.59\.524/)
 
   const app = load(makePage(), { gsap: 'never' })
   assert.equal(app.window.G2ProofMarquee.release, 'v1.59.524')
