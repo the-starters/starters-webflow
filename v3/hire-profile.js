@@ -2787,6 +2787,18 @@
           if (title) title.textContent = String(item.name || 'Ongoing Advisory Retainer');
           if (description) description.textContent = String(item.description || '');
 
+          // This canonical Retainer is not a Paid/custom-service price. Its
+          // authored template carries a 5000 formatting ceiling, below the
+          // valid Retainer range. Match the hero's formatter contract without
+          // clamping legacy rates or changing another offer's guard.
+          const price = qs('[wf-xano-bind="price"][data-millify]', card);
+          const amount = Number(item.price);
+          if (price && Number.isSafeInteger(amount) && amount > 0 &&
+              Number.isSafeInteger(amount * 100)) {
+              price.removeAttribute('data-millify-max');
+              paintRateElement(price, amount * 100);
+          }
+
           card.setAttribute('data-service-card', 'component');
           card.setAttribute('data-service-card-state', 'Default');
           card.setAttribute('data-rate-card', 'retainer');
