@@ -2604,6 +2604,8 @@
      shipped without a template and reused the Services Retainer instance key,
      leaving their authored zero visible without ever issuing a request. */
   function installXanoHeroRateCards() {
+      const carrier = document.querySelector('[data-starter-xano-id]');
+      const pageStarterId = carrier ? String(carrier.textContent || '').trim() : '';
       const roots = qsa('[wf-xano-element="wrapper"]').filter(function (root) {
           const key = root.getAttribute('wf-xano-instance');
           return !root.closest('#services') && (key === 'starter-hourly' || key === 'starter-retainer');
@@ -2619,7 +2621,7 @@
               return card.closest('[wf-xano-element="wrapper"]') === root;
           });
           const starterId = String(root.getAttribute('wf-xano-param-starter_id') || '').trim();
-          if (templates.length !== 1 || !/^[1-9][0-9]*$/.test(starterId)) return;
+          if (templates.length !== 1 || !/^[1-9][0-9]*$/.test(starterId) || starterId !== pageStarterId) return;
           const template = templates[0];
           const price = qs('[wf-xano-bind="price"]', template);
           if (!price) return;

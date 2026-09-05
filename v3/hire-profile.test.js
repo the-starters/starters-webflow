@@ -1056,6 +1056,35 @@ test('canonical hero rates repair missing templates and duplicate Retainer key w
   }
 })
 
+for (const kind of ['hourly', 'retainer']) test(`canonical hero rates reject mismatched ${kind} wrapper identity before initialization`, () => {
+  const page = makePage(); const fixture = makeMissingHeroRatesFixture(page)
+  const root = fixture.roots[kind === 'hourly' ? 0 : 1]
+  root.setAttribute('wf-xano-param-starter_id', '999')
+  const context = makeContext({ page, starterId: 1063, wfXano: fixture.api })
+  vm.createContext(context); vm.runInContext(source, context)
+  assert.equal(root.style.display, 'none')
+  assert.equal(root.getAttribute('aria-hidden'), 'true')
+  assert.ok(!fixture.initialized.includes(root), 'another Starter must never initialize a hero rate request')
+  assert.equal(root.querySelector('[wf-xano-item]'), null)
+  assert.equal(fixture.initialized.length, 1, 'the matching hero remains eligible')
+  assert.equal(fixture.api.get('starter-retainer'), fixture.originalServiceInstance)
+})
+
+for (const identity of [null, '', '1063invalid']) test(`canonical hero rates hide invalid page identity ${JSON.stringify(identity)}`, () => {
+  const page = makePage(); const fixture = makeMissingHeroRatesFixture(page)
+  const context = makeContext({ page, starterId: 1063, wfXano: fixture.api })
+  if (identity === null) page.starterXanoId.remove()
+  else page.starterXanoId.textContent = identity
+  vm.createContext(context); vm.runInContext(source, context)
+  assert.equal(fixture.initialized.length, 0)
+  for (const root of fixture.roots) {
+    assert.equal(root.style.display, 'none')
+    assert.equal(root.getAttribute('aria-hidden'), 'true')
+    assert.equal(root.querySelector('[wf-xano-item]'), null)
+  }
+  assert.equal(fixture.api.get('starter-retainer'), fixture.originalServiceInstance)
+})
+
 /* ---------------------------------------------------------------- tests --- */
 
 test('a page missing the Memberstack helpers stands down instead of throwing', () => {
