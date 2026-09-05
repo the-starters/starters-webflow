@@ -1073,6 +1073,30 @@ async function testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt() 
 
 // Clearing a custom-service price is the only remove gesture these forms author.
 // It must empty that slot, not block the step on the service being deleted.
+async function testServicePriceRequiresScalarBeforeCoercion() {
+  for (const slot of ['service', 'service-2', 'service-3']) {
+    for (const price of [[100], [], [null], [[100]], [1, 2], true, false, {}, { value: 100 }, 1.5]) {
+      const environment = saved({ stepIndex: 6,
+        additionalFormValues: ['service', 'service-2', 'service-3'].map(key => [key, key === slot ? JSON.stringify({ name: 'Audit', price }) : '']),
+      })
+      await submit(environment)
+      assert.equal(environment.requests.length, 0, `${slot} price ${JSON.stringify(price)} must not send`)
+      assert.equal(environment.modalEvents.error, 1)
+    }
+    for (const price of [1, 50000, '1', '50000', null, '', '   ']) {
+      const environment = saved({ stepIndex: 6,
+        additionalFormValues: ['service', 'service-2', 'service-3'].map(key => [key, key === slot ? JSON.stringify({ name: 'Audit', price }) : '']),
+      })
+      await submit(environment)
+      assert.equal(environment.requests.length, 1, `${slot} price ${JSON.stringify(price)} should save`)
+      const payload = JSON.parse(environment.requests[0][1].body)
+      const service = JSON.parse(payload.Services)[slot === 'service' ? 'service-1' : slot]
+      if (price == null || String(price).trim() === '') assert.equal(service, null)
+      else assert.equal(service.price, Number(price))
+    }
+  }
+}
+
 async function testClearingAServicePriceRemovesThatService() {
 	const payload = await submittedStepPayload(saved({
 		stepIndex: 6,
@@ -1826,6 +1850,7 @@ Promise.all([
   testFeedbackMessagesNeverFlattenNestedAuthoredMarkup(),
   testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt(),
   testClearingAServicePriceRemovesThatService(),
+  testServicePriceRequiresScalarBeforeCoercion(),
   testANonBlankMalformedServicePriceStillBlocksTheStep(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),

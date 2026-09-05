@@ -720,7 +720,10 @@ onDomReady(function () {
 		// price empties the slot instead of blocking the step on a service the member is
 		// deleting. A non-blank price is authored and stays strict.
 		function servicePriceAuthored(service) {
-			return String(service?.price ?? '').trim() !== '';
+			const price = service?.price;
+			// Only a real null/blank price removes a slot. Arrays and objects
+			// must reach validation, not become blank or numeric through String().
+			return price != null && (typeof price !== 'string' || price.trim() !== '');
 		}
 
 		// Services live in hidden JSON capture inputs, so a price failure there cannot
@@ -788,6 +791,10 @@ onDomReady(function () {
 			for (const [slot, service] of Object.entries(services)) {
 				if (!servicePriceAuthored(service)) continue;
 				const serviceField = qs(`#${slot === 'service-1' ? 'service' : slot}`, form);
+				if (typeof service.price !== 'string' && typeof service.price !== 'number') {
+					return { valid: false, code: 'PRICE_NOT_INTEGER', field: serviceField,
+						mirror: true, message: priceMessage(PRICE_CONTRACTS.Services) };
+				}
 				if (!serviceName(service)) {
 					return {
 						valid: false,
