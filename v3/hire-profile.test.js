@@ -834,14 +834,18 @@ function addLegacyHeaderCallCardsFixture(page) {
   return { wrapper, free, paid }
 }
 
-function makeCallCardsWfXanoFixture(root, instanceKey = 'starter-call-offers-services') {
+function makeCallCardsWfXanoFixture(root, instanceKey = 'starter-call-offers-services', { initialResult = null, initialError = false, replayOnSubscribe = false } = {}) {
   let resultsHandler = null
-  let latestResult = null
+  let errorHandler = null
+  let latestResult = initialResult
+  let failed = initialError
   const instance = {
     root,
-    getState: () => latestResult ? { status: 'success', data: latestResult } : null,
+    getState: () => failed ? { status: 'error', data: latestResult } : latestResult ? { status: 'success', data: latestResult } : null,
     on(event, handler) {
       if (event === 'results') resultsHandler = handler
+      if (event === 'error') errorHandler = handler
+      if (event === 'results' && replayOnSubscribe && latestResult) Promise.resolve().then(() => handler(latestResult))
       return instance
     },
   }
@@ -855,7 +859,13 @@ function makeCallCardsWfXanoFixture(root, instanceKey = 'starter-call-offers-ser
     emit(result) {
       assert.ok(resultsHandler, `${instanceKey} results handler must be registered`)
       latestResult = result
+      failed = false
       resultsHandler(result)
+    },
+    fail() {
+      assert.ok(errorHandler, 'call readiness must observe wf-xano failures')
+      failed = true
+      errorHandler(new Error('readiness refresh failed'))
     },
   }
 }
@@ -3725,6 +3735,17 @@ test('the latest canonical wf-xano result controls logged-out Book Call across b
   assert.equal(page.bookingButtonWrapper.style.display, 'none')
   assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+
+  servicesWfx.emit(callCardResult())
+  headerWfx.emit(callCardResult())
+  await settle()
+  servicesWfx.fail()
+  await settle()
+  for (const card of [services.free, services.paid, header.free, header.paid]) {
+    assert.equal(card.root.style.display, 'none')
+    assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+  }
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
 })
 
 test('a logged-out wf-xano call card answers from its own item, not a sibling row of the same type', async () => {
@@ -3878,6 +3899,21 @@ test('a late wf-xano Brand call card replays canonical discovery and opens only 
   assert.equal(xano.paid.root.getAttribute('data-call-service-direct'), 'ready')
 })
 
+test('a late stale-success replay cannot reopen calls after wf-xano refresh failure', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper, 'starter-call-offers-services', {
+    initialResult: callCardResult(), initialError: true, replayOnSubscribe: true,
+  })
+  const context = makeContext({ page, record: { rate: 0, 'retainer-enabled': false }, wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  assert.equal(xano.free.root.style.display, 'none')
+  assert.equal(xano.paid.root.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+})
+
 for (const publicFirst of [false, true]) {
   test(`Brand cards intersect installed discovery with public readiness (public first: ${publicFirst})`, async () => {
     const page = makePage()
@@ -3927,6 +3963,11 @@ for (const publicFirst of [false, true]) {
     assert.equal(xano.paid.root.style.display, 'block')
     assert.equal(xano.paid.price.textContent, '250')
     assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+    wfx.fail()
+    await settle()
+    assert.equal(xano.free.root.style.display, 'none')
+    assert.equal(xano.paid.root.style.display, 'none')
+    assert.equal(page.bookingButtonWrapper.style.display, 'none')
   })
 }
 
@@ -4027,6 +4068,8 @@ test('the profile owner gets Default only for call cards that pass every readine
   vm.runInContext(source, context)
   await settle()
   wfx.emit(callCardResult())
+  await settle()
+  wfx.fail()
   await settle()
 
   for (const card of [xano.free, xano.paid]) {

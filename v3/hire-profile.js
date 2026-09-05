@@ -1997,12 +1997,29 @@
 
       window.WfXano.push(function (wfx) {
           if (!wfx || typeof wfx.get !== 'function') return;
-          ['starter-call-offers-header', 'starter-call-offers-services'].forEach(function (key) {
+          const callKeys = ['starter-call-offers-header', 'starter-call-offers-services'];
+          function failClosed() {
+              Promise.resolve(memberReady).then(function () {
+                  if (isProfileOwner(MEMBER)) return;
+                  callKeys.forEach(function (key) {
+                      const instance = wfx.get(key);
+                      if (instance && instance.root) adaptXanoCallCards(instance, key, { items: [] });
+                  });
+              }).catch(function (error) {
+                  console.warn('Xano call readiness:', error);
+              });
+          }
+          callKeys.forEach(function (key) {
               const instance = wfx.get(key);
               if (!instance || typeof instance.on !== 'function' || !instance.root) return;
 
               function applyResult(result) {
                   Promise.resolve(memberReady).then(function () {
+                      const state = typeof instance.getState === 'function' ? instance.getState() : null;
+                      if (state && state.status === 'error') {
+                          failClosed();
+                          return;
+                      }
                       adaptXanoCallCards(instance, key, result);
                   }).catch(function (error) {
                       console.warn('Xano call cards:', error);
@@ -2014,9 +2031,14 @@
                   receivedResult = true;
                   applyResult(result);
               });
+              // Keyed wf-xano lists retain their previous rows on refresh
+              // failure and emit error, not results. Old readiness must not
+              // keep either surface or the shared chooser open.
+              instance.on('error', failClosed);
               if (!receivedResult && typeof instance.getState === 'function') {
                   const state = instance.getState();
                   if (state && state.status === 'success' && state.data) applyResult(state.data);
+                  else if (state && state.status === 'error') failClosed();
               }
           });
       });
