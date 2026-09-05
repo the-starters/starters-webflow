@@ -639,8 +639,19 @@ and `Retainer_Rate` is positive. The published wrapper initially points at the
 shared taxonomy source. `hire-profile.js` upgrades only that named instance
 through wf-xano's public `destroy`/`init` API; it does not change endpoint
 `#5860` or its unrelated draft. Webflow owns the native wrapper and card
-template. The adapter only repaints the rendered title and description and
-adds the existing signup or exact project-service attributes.
+template. The adapter repaints the rendered title, description, and canonical
+price and adds the existing signup or exact project-service attributes.
+On initial results and refreshes, only the rendered Retainer
+`[wf-xano-bind="price"][data-millify]` hook loses its inherited
+`data-millify-max="5000"` ceiling. Positive safe-integer whole-dollar prices
+whose cents conversion is also a safe integer use the hero's existing price
+formatter, so `25000` displays as `25K`. The writer preserves the exact amount
+in `data-millify` and removes stale `data-millify-raw`; it does not clamp legacy
+above-cap rates or mutate canonical data. The authored template, shared millify
+defaults, and Paid/custom-service guards remain unchanged. Real-library load
+order and refresh coverage lives in
+[`hire-services-retainer.integration.cjs`](hire-services-retainer.integration.cjs),
+whose header gives the explicit invocation and external wf-xano dependency.
 
 The Algolia-derived runtime Retainer clone remains visible while the canonical
 request is pending or when it errors. The first resolved canonical result
