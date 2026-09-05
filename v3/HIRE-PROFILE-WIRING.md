@@ -127,6 +127,28 @@ NODE_PATH="<wf-xano>/node_modules" WF_XANO_SOURCE="<wf-xano>/wf-xano.js" node --
 This local coverage does not establish production release or role-matched
 screenshot proof, nor complete the remaining W8 workflows or W10 provider proof.
 
+### Header offer selection
+
+Header touts have a display policy separate from booking eligibility. After
+canonical reads establish each offer's eligibility, show at most three in this
+priority: Hourly/Freelance, Retainer, Free Call, Paid Call. A Full profile's Header
+never shows Paid Call, even when it is bookable. Read the existing
+`data-profile-type` page carrier case-insensitively. No additional Consult-hourly
+exclusion is part of this contract.
+
+This policy affects only canonical Header rate and call wrappers. Services,
+Retainer project entry, booking admission, and the global Book Call chooser keep
+their independent rules. Owner setup-required previews count toward the three
+Header slots without changing their Disabled state or setup tooltip. Unavailable
+visitor offers do not count. Recompute selection when sibling wrappers settle,
+refresh, fail, or recover; display suppression must not erase canonical eligibility.
+
+Run `v3/hire-header-touts.integration.cjs` with the same `NODE_PATH` and
+`WF_XANO_SOURCE` settings shown above for actual wf-xano clone and recovery
+coverage. It checks the parsed production hiding rule because JSDOM does not
+correctly resolve stylesheet `!important` against inline display. Use optional
+`HIRE_HEADER_EVIDENCE_DIR` snapshots for real-browser computed-visibility proof.
+
 ### Company-link safety
 
 The `starter-work-histories` and `starter-clients` wf-xano wrappers keep every
