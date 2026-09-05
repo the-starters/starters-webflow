@@ -3438,6 +3438,13 @@ test('Paid-only discovery stays closed when the V3 controller is unavailable', a
 test('wf-xano call cards use public Xano availability for logged-out signup presentation', async () => {
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)
+  const strayAuthoredPaid = makeElement('div', {
+    'data-service-card': 'component',
+    'data-service-card-state': 'Default',
+    'data-type': 'paid',
+    'has-connection': 'paid',
+  })
+  xano.wrapper.appendChild(strayAuthoredPaid)
   const templateBefore = snapshotDom(xano.template)
   const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
   const context = makeContext({
@@ -3465,6 +3472,9 @@ test('wf-xano call cards use public Xano availability for logged-out signup pres
   assert.equal(xano.paid.root.style.display, 'none')
   assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'hidden')
   assert.equal(snapshotDom(xano.template), templateBefore, 'the native template stays untouched')
+  assert.equal(strayAuthoredPaid.style.display, 'none')
+  assert.equal(strayAuthoredPaid.getAttribute('data-call-offer-superseded'), '')
+  assert.equal(strayAuthoredPaid.getAttribute('aria-hidden'), 'true')
 
   wfx.emit({ items: [] })
   await settle()
