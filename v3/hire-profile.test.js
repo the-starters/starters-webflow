@@ -936,6 +936,24 @@ function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = tru
   }
 }
 
+for (const missingHelper of [false, true]) test(`existing Header call clones bootstrap before qs assignment (helper missing: ${missingHelper})`, () => {
+  const page = makePage()
+  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
+  page.root.appendChild(header.wrapper)
+  for (const card of [header.free, header.paid]) {
+    card.root.setAttribute('has-connection', 'free')
+    card.root.setAttribute('data-service-card', 'component')
+  }
+  const context = makeContext({ page })
+  if (missingHelper) context.qs = undefined
+  vm.createContext(context)
+  assert.doesNotThrow(() => vm.runInContext(source, context))
+  for (const card of [header.free, header.paid]) {
+    assert.equal(card.root.style.display, 'none', 'pre-adapter clones remain fail-closed')
+    assert.equal(card.root.getAttribute('aria-hidden'), 'true')
+  }
+})
+
 function makeHeaderToutCapacityFixture({ profileType = 'Consult', owner = false, brand = false } = {}) {
   const page = makePage()
   const profileTypeNode = makeElement('div', { 'data-profile-type': profileType })
@@ -7296,6 +7314,9 @@ test('a direct service-card entry hides the chooser for the whole pass-through',
   await settle()
 
   assert.deepEqual(marks, [['shell', ''], ['row', '']])
+  // The release runs in a timer scheduled after the asynchronous row click.
+  // A single settle can resume before that timer under host contention.
+  for (let i = 0; i < 50 && page.bookingDialog.hasAttribute(PASS_THROUGH); i += 1) await settle()
   assert.equal(
     page.bookingDialog.getAttribute(PASS_THROUGH),
     null,
@@ -7687,6 +7708,7 @@ test('a same-tick double direct entry still stamps the booking dialog direct', a
   assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
   assert.equal(backArrowShown(context, booking, back), false)
   assert.equal(back.getAttribute('aria-hidden'), 'true')
+  for (let i = 0; i < 50 && page.bookingDialog.hasAttribute(PASS_THROUGH); i += 1) await settle()
   assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null, 'and it is given back')
 })
 

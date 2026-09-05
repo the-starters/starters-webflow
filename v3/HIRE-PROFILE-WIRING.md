@@ -151,6 +151,11 @@ correctly resolve stylesheet `!important` against inline display. Set optional
 inspect those snapshots in a real browser for computed-visibility proof. The
 export alone does not perform that verification.
 
+Header selection must also work when wf-xano renders the authored call template
+before this deferred adapter boots. Bootstrap selection uses the native DOM query,
+not a page-helper alias assigned later. Keep the template's actual call attributes
+in load-order regressions; a neutral fixture without those hooks misses this path.
+
 ### Company-link safety
 
 The `starter-work-histories` and `starter-clients` wf-xano wrappers keep every
