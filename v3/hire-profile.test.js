@@ -7314,6 +7314,9 @@ test('a direct service-card entry hides the chooser for the whole pass-through',
   await settle()
 
   assert.deepEqual(marks, [['shell', ''], ['row', '']])
+  // The release runs in a timer scheduled after the asynchronous row click.
+  // A single settle can resume before that timer under host contention.
+  for (let i = 0; i < 50 && page.bookingDialog.hasAttribute(PASS_THROUGH); i += 1) await settle()
   assert.equal(
     page.bookingDialog.getAttribute(PASS_THROUGH),
     null,
@@ -7705,6 +7708,7 @@ test('a same-tick double direct entry still stamps the booking dialog direct', a
   assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
   assert.equal(backArrowShown(context, booking, back), false)
   assert.equal(back.getAttribute('aria-hidden'), 'true')
+  for (let i = 0; i < 50 && page.bookingDialog.hasAttribute(PASS_THROUGH); i += 1) await settle()
   assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null, 'and it is given back')
 })
 
