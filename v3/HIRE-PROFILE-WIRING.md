@@ -264,10 +264,10 @@ are aligned before selecting the canary.
    or `data-type` — otherwise a logged-in click opens an unconfigured booking
    popup for a card that cannot be booked.
 3. Eligible signed-in Brand: canonical discovery keeps every call projection
-   closed until its exact controller installs. A successful Free install reveals
-   every Free projection; a successful Paid install reveals every Paid
-   projection. Generic Book Call buttons open the authored chooser. A Free or
-   Paid call service in the hero or Services section reuses its exact installed
+   closed until the [Brand readiness contract](#signed-in-brand-readiness)
+   admits the type. Verify both arrival orders, refresh failure, sibling cached
+   replay, and recovery of both Header and Services cards. Generic Book Call
+   buttons open the authored chooser. A Free or Paid call service in the hero or Services section reuses its exact installed
    chooser CTA and opens that call flow directly, including on a migrated
    profile whose legacy Book Call button is absent. A failed Paid
    install leaves Paid hidden without closing an installed Free option. Each
@@ -300,12 +300,11 @@ production route map. Every authored
 `data-booking-trigger-unavailable` and `aria-disabled="true"`. A confirmed
 logged-out viewer gets only CTAs carrying
 `data-signup-trigger-element="book-call"`, and those CTAs lose their Lumos modal
-trigger before they are shown. A Brand keeps the booking triggers hidden until
-canonical discovery produces a Free option that the GitHub Free controller can
-own or a Paid option that the V3 controller accepts. Triggers outside these two
-approved paths stay closed, so no entry point can open an empty chooser.
+trigger before they are shown. Brand triggers and chooser options follow the
+[Brand readiness contract](#signed-in-brand-readiness). Triggers outside these
+two approved paths stay closed, so no entry point can open an empty chooser.
 The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
-`data-booking-surface-unavailable` until that same discovery succeeds.
+`data-booking-surface-unavailable` until an option is admitted.
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
 
@@ -688,12 +687,15 @@ It replays that decision when the legacy wrapper renders or refreshes late. As
 soon as the canonical Header wrapper exists, the legacy hero touts are also
 stamped superseded and stay hidden.
 
-Subscription is the same late-safe pattern as the other two canaries: the
-`window.WfXano` callback queue, plus a single read of the instance's successful
-public state when a result completed before this deferred file registered. A
-replayed result is not adapted twice, future results stay subscribed, and every
-adaptation waits on `memberReady` so no card is painted for an unresolved
-viewer.
+Subscription uses the `window.WfXano` callback queue and reads retained public
+state when this deferred file registers after a result. Every adaptation waits
+on `memberReady`. For visitors, an error in either canonical wrapper invalidates
+both wrappers and the shared chooser; a sibling's cached success cannot reopen
+them while either instance still reports `error`. Once neither reports an
+error, a successful result reconciles matching rows in both wrappers, restoring
+their adapter identity and eligible click routes together. Owners instead adapt
+retained rows even when the instance reports an error, so their independent
+settings lookup can still apply Default or Disabled states.
 
 `callOfferTypeOf` is the single reader of a DTO item's call type — trimmed,
 lowercased, and admitted only as `free` or `paid`. Admission, the per-card
@@ -717,7 +719,7 @@ stale content. The final state for an admitted clone is one of:
 
 | `data-call-offer-state` | Viewer and meaning |
 | --- | --- |
-| `available` | the card is offered: logged-out with `public_available === true`, brand with an installed canonical option, or the owner with a bookable record |
+| `available` | the card is offered: logged-out with `public_available === true`, brand admitted by the [readiness contract](#signed-in-brand-readiness), or the owner with a bookable record |
 | `setup-required` | owner only: the card is shown as a preview with the next setup step |
 | `settings-loading` | owner only: settings have not resolved yet; the card is disabled and offers only Call Settings |
 | `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
@@ -766,12 +768,16 @@ availability, or Stripe is missing. Setup-required owner cards intentionally
 keep the authored next-slot sentinel as a preview placeholder until a trusted
 bookable record can paint it.
 
-**Signed-in Brand.** The cards start hidden and `pending`; canonical discovery
-is their only writer, so an unbookable type can never be advertised.
-`syncCanonicalCallSurfaces` reveals the admitted types and hides the rest, and a
-card cloned after discovery finished replays the already-installed
-`paintedCallState.configs` rather than staying `pending` until some unrelated
-DOM mutation happens.
+<a id="signed-in-brand-readiness"></a>
+
+**Signed-in Brand.** On pages with either canonical call wrapper, a type is
+available only when its authenticated configuration has an installed controller
+and the current public DTO admits that type with `public_available === true`.
+`syncCanonicalCallSurfaces` applies this intersection to cards, chooser options,
+and Book Call availability. Public results and authenticated discovery may
+arrive in either order; unresolved public readiness keeps the surfaces closed.
+A late card replays `paintedCallState.configs` through the same gate. Pages with
+neither canonical wrapper retain the authenticated discovery gate alone.
 
 **Any other signed-in viewer** — talent on someone else's profile, unknown role
 — gets both cards hidden. That is the fail-closed default, and it is why the
@@ -1043,7 +1049,8 @@ the legacy card-charge notice. The Paid success-state contract is owned by the
 
 `paid-call-brand-payment.js` receives the exact accepted Paid configuration and
 owns that authored CTA, Stripe Card Element, and paid booking command. Only
-successfully installed configurations are reconciled into the chooser and the
+successfully installed configurations can pass the
+[Brand readiness contract](#signed-in-brand-readiness) into the chooser and
 matching page projections. A call type without one exact accepted and installed
 configuration keeps no `data-config` and retains the structural hide. This
 keeps Paid closed during startup, when its controller is missing, and whenever
@@ -1273,17 +1280,24 @@ DTO's own `price`, so its amount is observable without a session — but it come
 from the public contract, not from the canonical repaint. The non-call
 [hero rate cards](#hero-rate-cards) have their own public-read contract.
 
-The other half of the squeeze: sandbox members exist only on staging, and the
-staging index holds no production starters, so there is no venue where a member
-session and a rendered call card meet. Machine verification of the logged-in
-half is impossible from this harness. Final acceptance is a console paste from a
-logged-in browser.
+Local automated coverage includes [`hire-profile.test.js`](hire-profile.test.js)
+and the native Chrome fixture:
 
-The owner path is the tighter case of the same limit: it needs a session that is
-the starter whose profile is rendered, so it cannot be exercised by any brand
-sandbox member either, on either host. Its unit coverage in
-[`hire-profile.test.js`](hire-profile.test.js) is the whole automated venue;
-acceptance is a console paste from the starter's own logged-in browser.
+```sh
+node v3/browser-tests/hire-calls.browser.cjs
+```
+
+The browser runner uses the default macOS Chrome path unless `CHROME_BIN` is
+set. Optional `HIRE_BROWSER_EVIDENCE` selects the screenshot and observation
+output directory. It exercises both wrappers' failure/replay/recovery, public
+paid price, signup attribution, matching Brand controller entry, and owner
+settings states through real DOM, adapter, attribution, and modal code.
+Provider responses and booking controllers are synthetic; fetch connections
+and form submissions are blocked by the fixture's content security policy.
+This proves local routing and rendering, not production Webflow layout,
+authenticated provider behavior, or booking completion. Production acceptance
+still needs role-matched browser evidence, including the profile's own starter
+session for owner states.
 
 ## Not owned here — `No button group "step-1" in scope`
 
