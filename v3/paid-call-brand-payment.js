@@ -2438,7 +2438,7 @@
     }
 
     async function installCardSetup(readiness) {
-      if (cardSetupInstalled) return
+      if (disposed || cardSetupInstalled) return
       if (!cardSetupInstallPromise) cardSetupInstallPromise = (async function () {
         const nodes = paymentNodes()
         const cardMount = nodes.mount
@@ -2449,6 +2449,7 @@
           throw new Error('The authored payment form is incomplete')
         }
         const Stripe = await loadStripe()
+        if (disposed) return
         const stripe = Stripe(readiness.environment === 'test' ? STRIPE_PUBLIC_KEY_TEST : STRIPE_PUBLIC_KEY_LIVE)
         cardElement = stripe.elements().create('card', {
           hidePostalCode: true,
@@ -2462,6 +2463,7 @@
         })
         cardElement.mount(cardMount)
         cardElement.on('change', function (event) {
+          if (disposed) return
           cardComplete = Boolean(event && event.complete)
           errorText.textContent = event.error ? event.error.message : ''
         })
@@ -2665,6 +2667,10 @@
       disposed = true
       cancelPaymentUi()
       listeners.forEach(remove => remove())
+      if (cardElement) {
+        cardElement.destroy()
+        cardElement = null
+      }
     })
     installPaymentAccessibility()
     bookingSurfaceLifecycle.reset(popup)
