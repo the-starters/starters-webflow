@@ -172,7 +172,13 @@
         // empty price empties the slot instead of blocking the submit on a service
         // the member is deleting. A non-blank price is authored and stays strict.
         function requiredServicesFields(data, selector) {
-          if (!data || !String(data.price ?? '').trim()) return null;
+          if (!data || data.price == null) return null;
+          // Validate JSON type before blank detection or numeric conversion:
+          // [] is not a remove gesture and [100] is not a scalar price.
+          if (typeof data.price !== 'string' && typeof data.price !== 'number') {
+            return priceError(qs(selector, form), 'Use a whole-dollar service price from $1 to $50,000.', 'PRICE_NOT_INTEGER', true);
+          }
+          if (typeof data.price === 'string' && !data.price.trim()) return null;
           if (!String(data.name ?? '').trim()) {
             return priceError(qs(selector, form), 'A service name is required when a service price is set.', 'SERVICE_NAME_REQUIRED', true);
           }

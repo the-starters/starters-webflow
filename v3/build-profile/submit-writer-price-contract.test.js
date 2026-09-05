@@ -422,6 +422,26 @@ test('a later non-price failure restores the authored error copy', async () => {
 
 // Clearing a custom-service price is the only remove gesture these forms author.
 // It must empty the slot, not block the whole submit on the service being deleted.
+test('all custom service slots reject non-scalar prices before coercion and retain scalar/removal semantics', async () => {
+  for (const slot of ['service', 'service-2', 'service-3']) {
+    for (const price of [[100], [], [null], [[100]], [1, 2], true, false, {}, { value: 100 }, 1.5]) {
+      const result = load({ [slot]: JSON.stringify({ name: 'Audit', price }) })
+      await result.submit.click()
+      assert.equal(result.requests.length, 0, `${slot} price ${JSON.stringify(price)} must not reach Xano`)
+      assert.equal(result.error.style.display, 'block')
+      assert.match(result.errorMessage.textContent, /whole-dollar service price/)
+    }
+    for (const price of [1, 50000, '1', '50000', null, '', '   ']) {
+      const result = load({ [slot]: JSON.stringify({ name: 'Audit', price }) })
+      await result.submit.click()
+      assert.equal(result.requests.length, 1, `${slot} price ${JSON.stringify(price)} should save`)
+      const service = result.requests[0].body.services[slot === 'service' ? 'service-1' : slot]
+      if (price == null || String(price).trim() === '') assert.equal(service, null)
+      else assert.equal(service.price, Number(price))
+    }
+  }
+})
+
 test('clearing a service price removes that service instead of blocking the submit', async () => {
   const cleared = load({
     service: JSON.stringify({ name: 'Audit', price: '' }),
