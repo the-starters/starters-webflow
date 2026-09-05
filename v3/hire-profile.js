@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.521
+ * @release v1.59.523
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -2052,6 +2052,24 @@
       });
   }
 
+  /**
+   * A canonical wrapper owns exactly one neutral `wf-xano` template. If an
+   * authored sibling card is left in the wrapper without `wf-xano-item`, the
+   * library does not own or remove it and it can remain visible beside the
+   * rendered clones with placeholder content. Fail that stray authored card
+   * closed while leaving the actual template untouched for future rerenders.
+   */
+  function supersedeCanonicalCallWrapperExtras(instanceRoot) {
+      if (!instanceRoot) return;
+      qsa('[data-service-card="component"]', instanceRoot).forEach(function (card) {
+          if (card.closest('[wf-xano-element="wrapper"]') !== instanceRoot) return;
+          if (card.hasAttribute('wf-xano-item')) return;
+          if (card.getAttribute('wf-xano-element') === 'template') return;
+          card.setAttribute('data-call-offer-superseded', '');
+          setCallOfferVisible(card, false);
+      });
+  }
+
   function canonicalPublicItemForType(itemsById, type) {
       return Array.from(itemsById.values()).find(function (item) {
           return callOfferTypeOf(item) === type;
@@ -2340,6 +2358,7 @@
   function adaptXanoCallCards(instance, key, result) {
       const itemsById = callOfferItemMap(result);
       latestCanonicalCallItems = itemsById;
+      supersedeCanonicalCallWrapperExtras(instance.root);
       paintLegacyHeaderCanonicalContent(itemsById);
       if (key === 'starter-call-offers-services') {
           supersedeLegacyServiceCallCards(instance.root);
