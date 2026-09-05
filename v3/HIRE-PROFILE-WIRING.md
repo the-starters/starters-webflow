@@ -127,6 +127,30 @@ NODE_PATH="<wf-xano>/node_modules" WF_XANO_SOURCE="<wf-xano>/wf-xano.js" node --
 This local coverage does not establish production release or role-matched
 screenshot proof, nor complete the remaining W8 workflows or W10 provider proof.
 
+### Header offer selection
+
+Header touts have a display policy separate from booking eligibility. After
+canonical reads establish each offer's eligibility, show at most three in this
+priority: Hourly/Freelance, Retainer, Free Call, Paid Call. A Full profile's Header
+never shows Paid Call, even when it is bookable. Read the existing
+`data-profile-type` page carrier case-insensitively. No additional Consult-hourly
+exclusion is part of this contract.
+
+This policy affects only canonical Header rate and call wrappers. Services,
+Retainer project entry, booking admission, and the global Book Call chooser keep
+their independent rules. Owner setup-required previews count toward the three
+Header slots without changing their Disabled state or setup tooltip. Unavailable
+visitor offers do not count. Recompute selection when sibling wrappers settle,
+refresh, fail, or recover; display suppression must not erase canonical eligibility.
+
+Run `v3/hire-header-touts.integration.cjs` with the same `NODE_PATH` and
+`WF_XANO_SOURCE` settings shown above for actual wf-xano clone and recovery
+coverage. It checks the parsed production hiding rule because JSDOM does not
+correctly resolve stylesheet `!important` against inline display. Set optional
+`HIRE_HEADER_EVIDENCE_DIR` to an existing directory to export HTML snapshots;
+inspect those snapshots in a real browser for computed-visibility proof. The
+export alone does not perform that verification.
+
 ### Company-link safety
 
 The `starter-work-histories` and `starter-clients` wf-xano wrappers keep every
@@ -250,7 +274,8 @@ are aligned before selecting the canary.
 
 1. Anonymous: Free and Paid call tout cards appear only when their canonical
    public compatibility projections are true — `public_available` from
-   `profile/starter/calls/v3` for the wf-xano cards — and each revealed tout
+   `profile/starter/calls/v3` for the wf-xano cards — subject to
+   [Header offer selection](#header-offer-selection). Each revealed tout
    carries no "Next Available" row at all. Generic Book Call CTAs appear when
    either call type is on. The Free/Paid chooser stays structurally closed,
    and no authenticated booking discovery runs.
@@ -267,7 +292,7 @@ are aligned before selecting the canary.
    closed until the [Brand readiness contract](#signed-in-brand-readiness)
    admits the type. Verify both arrival orders, refresh failure, sibling cached
    replay, and recovery of both Header and Services cards. Generic Book Call
-   buttons open the authored chooser. A Free or Paid call service in the hero or
+   buttons open the authored chooser. A visible Free or Paid call service in the hero or
    Services section reuses its exact installed
    chooser CTA and opens that call flow directly, including on a migrated
    profile whose legacy Book Call button is absent. A failed Paid

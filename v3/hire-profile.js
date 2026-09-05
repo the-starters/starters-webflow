@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.523
+ * @release v1.59.530
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -64,6 +64,8 @@
 (function () {
   'use strict';
 
+  const headerToutEligibility = new Map();
+
   function ensureBookingModalAvailabilityGuard() {
       const guardId = 'hire-booking-modal-availability-guard';
       if (document.getElementById(guardId)) return;
@@ -75,6 +77,7 @@
           '[data-booking-trigger-unavailable]{display:none!important}',
           '[data-canonical-call-unavailable]{display:none!important}',
           '[data-call-offer-superseded]{display:none!important}',
+          '[data-header-tout-excluded]{display:none!important}',
           // The chooser pass-through (see openReadyCallType). !important on the
           // subtree as well as the dialog is deliberate: the modal library's
           // GSAP entrance writes inline styles on the backdrop and content, and
@@ -651,6 +654,7 @@
                   surface.setAttribute('aria-hidden', 'true');
                   surface.style.display = 'none';
               }
+              trackHeaderCallEligibility(surface, type, !!availability[type]);
           });
       });
       return changed;
@@ -1056,7 +1060,12 @@
           if (type !== 'free' && type !== 'paid') return;
           if (card.hasAttribute('data-xano-call-card') &&
               (card.hasAttribute('data-canonical-call-unavailable') ||
-                  card.getAttribute('aria-hidden') === 'true')) return;
+                  (card.getAttribute('aria-hidden') === 'true' &&
+                      card.getAttribute('data-header-tout-excluded') !== 'capacity'))) return;
+          // A cap-hidden but eligible Header call can reappear when a rate
+          // refresh removes a higher-priority tout. Bind it now; the existing
+          // click-time visibility guard still rejects it until then. This
+          // avoids coupling rate reconciliation to booking or owner wiring.
           // The owner's own preview card is not a booking entry point: owners
           // never self-book, so `openReadyCallType` can only ever fail for it.
           // Binding anyway would cancel the setup CTA inside the card, because
@@ -2083,6 +2092,64 @@
       return byId;
   }
 
+  // Keep upstream eligibility separate from the presentation cap. Reading
+  // computed visibility here would permanently lose a fourth tout after it
+  // was hidden, or reopen an unavailable offer when another tout disappears.
+  function reconcileHeaderTouts() {
+      const carrier = qs('[data-profile-type]');
+      const profileType = carrier
+          ? String(carrier.getAttribute('data-profile-type') || carrier.textContent || '').trim().toLowerCase()
+          : '';
+      const priority = ['hourly', 'retainer', 'free', 'paid'];
+      let count = 0;
+      const entries = Array.from(headerToutEligibility.entries()).filter(function (entry) {
+          if (entry[0].isConnected === false) {
+              headerToutEligibility.delete(entry[0]);
+              return false;
+          }
+          return true;
+      }).sort(function (a, b) {
+          return priority.indexOf(a[1].type) - priority.indexOf(b[1].type);
+      });
+      entries.forEach(function (entry) {
+          const node = entry[0];
+          const state = entry[1];
+          let reason = '';
+          if (state.eligible) {
+              if (profileType === 'full' && state.type === 'paid') reason = 'profile-type';
+              else if (count >= 3) reason = 'capacity';
+              else count += 1;
+          }
+          if (reason) {
+              if (node.getAttribute('data-header-tout-excluded') !== reason) {
+                  node.setAttribute('data-header-tout-excluded', reason);
+              }
+              node.setAttribute('aria-hidden', 'true');
+          } else {
+              node.removeAttribute('data-header-tout-excluded');
+              if (state.ariaHidden == null) node.removeAttribute('aria-hidden');
+              else node.setAttribute('aria-hidden', state.ariaHidden);
+          }
+      });
+  }
+
+  function trackHeaderToutEligibility(node, type, eligible) {
+      headerToutEligibility.set(node, {
+          type: type,
+          eligible: eligible,
+          ariaHidden: node.getAttribute('aria-hidden')
+      });
+      reconcileHeaderTouts();
+  }
+
+  function trackHeaderCallEligibility(card, type, eligible) {
+      if (card.closest('#services') || !card.hasAttribute('wf-xano-item') ||
+          card.getAttribute('wf-xano-element') === 'template') return;
+      const root = card.closest('[wf-xano-element="wrapper"]');
+      if (!root || root.getAttribute('wf-xano-instance') !== 'starter-call-offers-header') return;
+      trackHeaderToutEligibility(card, type, eligible);
+  }
+
   function setCallOfferVisible(card, visible) {
       if (visible) {
           card.removeAttribute('data-canonical-call-unavailable');
@@ -2093,6 +2160,8 @@
           card.setAttribute('aria-hidden', 'true');
           card.style.display = 'none';
       }
+      trackHeaderCallEligibility(card, card.getAttribute('data-type') ||
+          card.getAttribute('data-call-offer-type'), visible);
   }
 
   function supersedeLegacyServiceCallCards(instanceRoot) {
@@ -2523,6 +2592,7 @@
 
       wireCallServiceCardsToDirectEntry();
       repaintCallSurfaces();
+      reconcileHeaderTouts();
       refreshEmptySectionNav();
   }
 
@@ -2675,6 +2745,7 @@
           root.style.display = 'none';
           root.setAttribute('aria-hidden', 'true');
           root.setAttribute('data-canonical-hero-rate-state', 'pending');
+          trackHeaderToutEligibility(root, kind, false);
           const templates = Array.from(qsa('[data-service-card="component"]', root)).filter(function (card) {
               return card.closest('[wf-xano-element="wrapper"]') === root;
           });
@@ -2710,6 +2781,7 @@
                   root.style.display = 'none';
                   root.setAttribute('aria-hidden', 'true');
                   root.setAttribute('data-canonical-hero-rate-state', status);
+                  trackHeaderToutEligibility(root, entry.kind, false);
               }
               function validated(items) {
                   if (!Array.isArray(items) || items.length !== 1) return [];
@@ -2741,6 +2813,7 @@
                   root.style.display = entry.display;
                   root.setAttribute('aria-hidden', 'false');
                   root.setAttribute('data-canonical-hero-rate-state', 'ready');
+                  trackHeaderToutEligibility(root, entry.kind, true);
               }
               instance.on('results', apply);
               instance.on('error', function () { hide('error'); });

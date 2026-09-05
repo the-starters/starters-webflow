@@ -936,6 +936,174 @@ function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = tru
   }
 }
 
+function makeHeaderToutCapacityFixture({ profileType = 'Consult', owner = false, brand = false } = {}) {
+  const page = makePage()
+  const profileTypeNode = makeElement('div', { 'data-profile-type': profileType })
+  profileTypeNode.textContent = profileType
+  page.root.appendChild(profileTypeNode)
+  const rates = makeMissingHeroRatesFixture(page)
+  rates.roots.forEach(root => root.setAttribute('wf-xano-param-starter_id', '424'))
+  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
+  // Unlike Services cards, Header clones live outside the #services section.
+  page.root.appendChild(header.wrapper)
+  const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')
+  const headerFeed = makeCallCardsWfXanoFixture(header.wrapper, 'starter-call-offers-header')
+  const servicesFeed = makeCallCardsWfXanoFixture(services.wrapper, 'starter-call-offers-services')
+  const get = rates.api.get.bind(rates.api)
+  rates.api.get = key => key === 'starter-call-offers-header' ? headerFeed.instance
+    : key === 'starter-call-offers-services' ? servicesFeed.instance : get(key)
+  const extra = { starterId: 424, wfXano: rates.api,
+    record: { rate: 0, 'retainer-enabled': false, 'profile-type': profileType } }
+  if (brand) Object.assign(extra, {
+    member: BRAND_MEMBER,
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    initBookingComponents: () => {},
+    paidController: { installPaidBookingController: () => {
+      page.paidModalCta.setAttribute('data-paid-call-v3', 'ready')
+      return true
+    } },
+    getConfigs: async () => [
+      { config_id: 'cfg_free', is_paid: false, active: true, data_environment: 'production', price_cents: 0, duration: 30 },
+      { config_id: 'cfg_paid', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 25000, duration: 60 },
+    ],
+  })
+  const controller = ownerController({ grantId: null,
+    free: ownerFreeSettings({ readiness: { calendar_connected: false, availability_configured: false,
+      free_call_enabled: false, bookable: false }, services: [] }),
+    paid: ownerPaidSettings({ readiness: { calendar_connected: false, availability_configured: false,
+      stripe_connect_linked: false, stripe_charges_enabled: false, stripe_readiness_fresh: false,
+      paid_call_enabled: false, bookable: false }, services: [] }),
+  })
+  const context = owner ? ownerContext(page, controller, extra) : makeContext({ page, ...extra })
+  vm.createContext(context); vm.runInContext(source, context)
+  function rate(kind, present = true) {
+    const root = rates.roots[kind === 'hourly' ? 0 : 1]
+    rates.instance(root).emit(present ? [{ id: `${kind}:424`, type: kind, price: 100 }] : [])
+  }
+  function visible(node) {
+    for (let current = node; current; current = current.parentElement) {
+      if (current.style.display === 'none' || current.getAttribute('data-header-tout-excluded') !== null) return false
+    }
+    return true
+  }
+  function offers() {
+    return [
+      ['hourly', rates.roots[0].querySelector('[wf-xano-item]')],
+      ['retainer', rates.roots[1].querySelector('[wf-xano-item]')],
+      ['free', header.free.root], ['paid', header.paid.root],
+    ].filter(([, node]) => node && visible(node)).map(([type]) => type)
+  }
+  return { page, rates, header, services, headerFeed, servicesFeed, rate, visible, offers }
+}
+
+test('Header capacity selects Hourly Retainer Free from four eligible Consult offers; Services keeps Paid', async () => {
+  const f = makeHeaderToutCapacityFixture()
+  f.rate('hourly'); f.rate('retainer')
+  f.headerFeed.emit(callCardResult()); f.servicesFeed.emit(callCardResult())
+  await settle()
+  assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'])
+  assert.equal(f.header.paid.root.getAttribute('data-header-tout-excluded'), 'capacity')
+  assert.equal(f.visible(f.services.paid.root), true)
+  assert.equal(f.services.paid.root.getAttribute('data-header-tout-excluded'), null)
+})
+
+test('Full Header excludes Paid even with spare capacity without changing Services Paid', async () => {
+  const f = makeHeaderToutCapacityFixture({ profileType: 'Full' })
+  f.headerFeed.emit(callCardResult({ free: false })); f.servicesFeed.emit(callCardResult({ free: false }))
+  await settle()
+  assert.deepEqual(f.offers(), [])
+  assert.equal(f.header.paid.root.getAttribute('data-header-tout-excluded'), 'profile-type')
+  assert.equal(f.visible(f.services.paid.root), true)
+  f.rate('hourly')
+  await settle()
+  assert.deepEqual(f.offers(), ['hourly'])
+})
+
+test('Consult Header permits Hourly and excludes visitor-unavailable Free from capacity', async () => {
+  const f = makeHeaderToutCapacityFixture()
+  f.rate('hourly'); f.rate('retainer')
+  f.headerFeed.emit(callCardResult({ free: false })); f.servicesFeed.emit(callCardResult({ free: false }))
+  await settle()
+  assert.deepEqual(f.offers(), ['hourly', 'retainer', 'paid'])
+  assert.equal(f.visible(f.header.free.root), false)
+  assert.equal(f.header.paid.root.getAttribute('data-header-tout-excluded'), null)
+})
+
+test('Header capacity recalculates after late rates, errors, empty results and recovery', async () => {
+  const f = makeHeaderToutCapacityFixture()
+  f.headerFeed.emit(callCardResult()); f.servicesFeed.emit(callCardResult())
+  await settle()
+  assert.deepEqual(f.offers(), ['free', 'paid'])
+  f.rate('retainer'); await settle()
+  assert.deepEqual(f.offers(), ['retainer', 'free', 'paid'])
+  f.rate('hourly'); await settle()
+  assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'])
+  assert.equal(f.header.paid.root.getAttribute('aria-hidden'), 'true')
+  f.rates.instance(f.rates.roots[0]).transition('error'); await settle()
+  assert.deepEqual(f.offers(), ['retainer', 'free', 'paid'])
+  assert.equal(f.header.paid.root.getAttribute('aria-hidden'), null, 'reclaimed capacity restores accessibility')
+  f.rate('hourly'); await settle()
+  assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'])
+  f.rate('retainer', false); await settle()
+  assert.deepEqual(f.offers(), ['hourly', 'free', 'paid'])
+  f.rate('retainer'); await settle()
+  assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'])
+  f.headerFeed.fail(); await settle()
+  assert.deepEqual(f.offers(), ['hourly', 'retainer'])
+  f.headerFeed.emit(callCardResult()); await settle()
+  assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'])
+  assert.equal(f.visible(f.services.paid.root), true, 'Header recovery must retain Services identity')
+})
+
+test('Header owner Disabled skeletons consume capacity without altering setup tooltips', async () => {
+  const f = makeHeaderToutCapacityFixture({ owner: true })
+  await settle()
+  f.rate('hourly'); f.rate('retainer')
+  f.headerFeed.emit(callCardResult({ free: false, paid: false }))
+  f.servicesFeed.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+  assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'])
+  for (const card of [f.header.free, f.header.paid, f.services.free, f.services.paid]) {
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'setup-required')
+    assert.equal(card.tooltipText.textContent, 'Connect your calendar to offer calls.')
+    assert.equal(card.calendarCta.style.display, 'block')
+    assert.equal(card.stripeCta.style.display, 'none')
+    assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+  }
+  f.rate('hourly', false); await settle()
+  assert.deepEqual(f.offers(), ['retainer', 'free', 'paid'])
+  assert.equal(f.header.paid.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(f.header.paid.tooltipText.textContent, 'Connect your calendar to offer calls.')
+})
+
+test('Brand recovered Header Paid capacity opens the native Paid booking entry', async () => {
+  const f = makeHeaderToutCapacityFixture({ brand: true })
+  const clickOrder = []
+  f.page.bookingButton.click = () => clickOrder.push('shell')
+  f.page.paidModalCta.click = () => clickOrder.push('paid')
+  f.rate('hourly'); f.rate('retainer')
+  f.headerFeed.emit(callCardResult()); f.servicesFeed.emit(callCardResult())
+  await settle()
+  assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'])
+  const initiallyHiddenPaid = f.header.paid.root
+  assert.equal(initiallyHiddenPaid.listeners.click?.length, 1)
+  initiallyHiddenPaid.listeners.click[0]({ preventDefault() {}, stopImmediatePropagation() {} })
+  await settle()
+  assert.deepEqual(clickOrder, [], 'capacity-hidden Paid remains non-actionable')
+  f.rates.instance(f.rates.roots[0]).transition('error')
+  await settle()
+  assert.deepEqual(f.offers(), ['retainer', 'free', 'paid'])
+  const paid = f.header.paid.root
+  assert.equal(paid.getAttribute('aria-hidden'), null)
+  assert.equal(paid.listeners.click?.length, 1, 'newly revealed Paid must acquire its direct-entry handler')
+  let prevented = 0
+  paid.listeners.click[0]({ preventDefault: () => { prevented += 1 }, stopImmediatePropagation() {} })
+  await settle()
+  assert.equal(prevented, 1)
+  assert.deepEqual(clickOrder, ['shell', 'paid'], 'capacity recovery must restore behavior, not only visibility')
+})
+
 function makeRetainerWfXanoFixture(root) {
   let resultsHandler = null
   let instance = null
@@ -2526,6 +2694,7 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
       '[data-booking-trigger-unavailable]{display:none!important}' +
       '[data-canonical-call-unavailable]{display:none!important}' +
       '[data-call-offer-superseded]{display:none!important}' +
+      '[data-header-tout-excluded]{display:none!important}' +
       '[data-booking-pass-through]{visibility:hidden!important}' +
       '[data-booking-pass-through] *{visibility:hidden!important}' +
       '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"])' +
