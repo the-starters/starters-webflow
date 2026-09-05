@@ -4173,11 +4173,16 @@ The adapter binds the native `[booking-button-wrapper]` and its authored button,
 then removes the unconditional chooser trigger. Keep the page-head fail-closed
 style `[booking-button-wrapper]{display:none}` until the authenticated adapter
 reveals the selected conversation's eligible call types.
+Remove the native wrapper's `data-ms-content="paid-plans"` attribute during
+page activation. Memberstack can remove that element before the adapter starts
+for Brand Free accounts; the adapter owns role gating for this control.
 
 Only active Brand Free/Brand Paid plan IDs can enter. A Starter or ambiguous
 role stays hidden. Selection changes invalidate pending reads and calendar
 ownership. On each entry, read the canonical public call DTO and authenticated
-booking configuration again. Both admitted types show the native chooser; one
+booking configuration again. Manual readiness probes must send the production
+`Origin` header because the endpoint selects its environment from that context.
+Both admitted types show the native chooser; one
 type uses the existing hidden-chooser pass-through to its calendar. Neither or
 a failed lookup stays hidden. The adapter loads the existing scheduling auth,
 Free booking and Paid booking controllers, and never writes TalkJS eligibility
