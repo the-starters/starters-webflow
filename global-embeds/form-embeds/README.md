@@ -16,9 +16,9 @@ disagree, the header wins.
 
 [`memberstack-loader/memberstack-loader.js`](memberstack-loader/memberstack-loader.js)
 is the second exception. It has no docs-site page yet, so its contract lives in
-its own header block and in the inventory entry in the [root README](../../README.md).
-That header block is **authoritative**; where the root README entry and the
-header ever disagree, the header wins.
+its own header block, which is **authoritative**. The
+[root README](../../README.md) and the table below carry a one-line summary and
+point back to that header.
 
 ## Turnstile arming for `display: contents` forms
 
@@ -314,7 +314,7 @@ full inventory is in the root [`README.md`](../../README.md).
 | [`checkbox-toggle/checkbox-toggle.js`](checkbox-toggle/checkbox-toggle.js) | Checkbox-driven visibility toggling ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/checkbox-toggle)) |
 | [`password-toggle/password-toggle.js`](password-toggle/password-toggle.js) | Show/hide password control ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-toggle)) |
 | [`password-validation/password-validation.js`](password-validation/password-validation.js) | Password-requirements checklist and whole-form CTA gating on Memberstack forms carrying `[ms-code-submit-button]`: the checklist rules plus the Gateable Fields the form has, the reset code (`input[data-ms-member="token"]`) among them, so a reset-password form holds its CTA until both the code and the new password are in. The root [`README.md`](../../README.md#current-scripts) entry owns the full contract ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation)) |
-| [`memberstack-loader/memberstack-loader.js`](memberstack-loader/memberstack-loader.js) | Gives a Memberstack auth form's Button the Pending look (grey theme, `aria-busy`, `aria-disabled`) for as long as Memberstack shows its `data-ms-loader` spinner, then puts the button back on hide. Spinner routing covers every Memberstack form, auth and profile alike, so the submitting form's own Button Spinner is the one that turns: a page that authors the attribute keeps it in place and has its show and hide mirrored onto that Spinner, and a page that authors none gets the attribute placed on that Spinner at submit time. A double-submit guard stops repeat submits while the button is pending, and on staging the script reports an auth form with no Button Spinner once per such form, and a duplicated or stray `data-ms-loader` once per page |
+| [`memberstack-loader/memberstack-loader.js`](memberstack-loader/memberstack-loader.js) | Busy and disabled Button look on Memberstack auth forms for as long as Memberstack shows its `data-ms-loader` spinner, with a double-submit guard; read `window.startersMemberstackLoader.release` for the version in the page. The file header owns the full contract |
 | [`form-input-filter/form-input-filter.js`](form-input-filter/form-input-filter.js) | Input filtering and normalization ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-input-filter)) |
 | [`input-preview.js`](input-preview.js) | Echoes an input's value into a preview element ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/input-preview)) |
 
