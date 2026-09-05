@@ -78,9 +78,9 @@ remain deferred (`paid-call-brand-payment.js`,
 | --- | --- | --- |
 | Notable Experience | everyone, incl. logged out | Webflow-authored `starter-work-histories` wf-xano wrapper / public Xano endpoint `#5860` |
 | Clients ("also worked with") | everyone, incl. logged out | Webflow-authored `starter-clients` wf-xano wrapper / public Xano endpoint `#5860` |
-| Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: accepted canonical configuration plus successful controller install | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
+| Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: [readiness contract](#signed-in-brand-readiness) | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
 | Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
-| Rate and next-slot text on those projections | owner: their own call settings · anonymous: CMS · brand: accepted canonical configuration | this file / authenticated Xano |
+| Rate and next-slot text on those projections | see [canonical rate painting](#call-rate-surfaces-are-repainted-from-the-canonical-source) and [public-view limits](#qa-venue-limits-for-the-call-surface-rules) | this file |
 | Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, and Talent or owner cards stay inert | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
 | Services Freelance rate card | everyone | this file / Algolia record, cloned from the section's own authored Default card — never an element owned by a `[wf-xano-element="wrapper"]`, because every wf-xano adapter stamps the same `data-service-card="component"` / `data-service-card-state="Default"` pair on its template and its rendered clones |
 | Services Retainer rate card | everyone | authored `starter-retainer` wf-xano wrapper / canonical Xano endpoint `profile/starter/retainer/v3`; the Algolia-derived runtime clone remains only as the unresolved/error fallback |
@@ -267,7 +267,8 @@ are aligned before selecting the canary.
    closed until the [Brand readiness contract](#signed-in-brand-readiness)
    admits the type. Verify both arrival orders, refresh failure, sibling cached
    replay, and recovery of both Header and Services cards. Generic Book Call
-   buttons open the authored chooser. A Free or Paid call service in the hero or Services section reuses its exact installed
+   buttons open the authored chooser. A Free or Paid call service in the hero or
+   Services section reuses its exact installed
    chooser CTA and opens that call flow directly, including on a migrated
    profile whose legacy Book Call button is absent. A failed Paid
    install leaves Paid hidden without closing an installed Free option. Each
@@ -326,12 +327,10 @@ Both are covered by executable tests (`a logged-out call tout click opens no
 booking surface at all` in `hire-profile.test.js`, and the logged-out Book Call
 case in `signup-attribution.test.js`). For a signed-in Brand,
 `hire-profile.js` reveals all matching `[has-connection="free"]` or
-`[has-connection="paid"]` surfaces only after the exact canonical option passes
-the client filter and its controller installs successfully. Hidden runtime call
-templates remain hidden. A missing configuration or failed controller install
-removes legacy visibility from the matching hero, sticky-header, Services, and
-chooser projection so stale Webflow or Algolia intent cannot advertise an
-unbookable call.
+`[has-connection="paid"]` surfaces according to the
+[Brand readiness contract](#signed-in-brand-readiness). Hidden runtime call
+templates remain hidden; rejected types lose visibility on the matching hero,
+sticky-header, Services, and chooser projections.
 
 The native Free and Paid call service components in the hero and Services
 section are type-specific shortcuts.
@@ -724,7 +723,7 @@ stale content. The final state for an admitted clone is one of:
 | `settings-loading` | owner only: settings have not resolved yet; the card is disabled and offers only Call Settings |
 | `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
 | `hidden` | the type is not offered to this viewer |
-| `pending` | brand, before canonical discovery has admitted or refused the type |
+| `pending` | brand, before the [readiness contract](#signed-in-brand-readiness) has admitted or refused the type |
 
 **Logged out.** A card is visible only when its own item carries
 `public_available === true`. A visible card gets `has-connection`,

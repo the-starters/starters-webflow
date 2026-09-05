@@ -1173,8 +1173,8 @@
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
   applyCallSurfaceAvailability({ free: false, paid: false });
-  // Webflow authors the structural Book Call triggers and dialog. Canonical
-  // environment-scoped discovery is the only code path that may enable them.
+  // Webflow authors the structural Book Call triggers and dialog. Keep them
+  // closed until the viewer-specific readiness gate admits an entry point.
   setBookingButtonAvailable(false);
   neutralizeUnavailableCompanyLinks();
   wireCallServiceCardsToDirectEntry();
