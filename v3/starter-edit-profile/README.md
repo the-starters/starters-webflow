@@ -118,6 +118,19 @@ whatever a duplicate name contributed. Never widen those two lookups back to a
 `[name=…]` or document-wide query: a hidden duplicate would win by document order
 and submit a stale contact value the member cannot see.
 
+### Canonical required-mirror hydration
+
+`canonical-profile-loader.js` hydrates the authored required validation mirrors
+alongside the ordinary `[data-input-capture]` controls. Personal Details owns
+`function-required`, `roles-required`, and `subcategories-required`; Skills and
+Tools owns `skills-required` and `tools-required`; Availability owns
+`availability-required`. Each mirror prefers its canonical Xano ID or ID list,
+joining an array as a comma-separated value. If the ID value is absent or empty,
+the corresponding canonical display value remains the compatibility fallback.
+This keeps an unchanged canonical profile valid without replacing a stored ID
+with its label. The loader writes only matching named fields inside their owning
+step and dispatches the same native hydration events as other restored controls.
+
 ### Unsaved-change warning
 
 `canonical-profile-loader.js` owns one page-level dirty-state controller. Canonical
