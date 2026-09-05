@@ -3849,9 +3849,15 @@ calendar generation and restores `schedule-step="default"`. It also clears the
 selected slot, guest fields, topic, context, calendar, errors, status text, and
 Stripe Card Element. Closing only the Stripe dialog before canonical booking
 proof clears its card/error state, retained slot, and Paid guest state without
-creating a booking. Direct
-call-service routing and generic chooser behavior are owned by
-[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
+creating a booking. Reinstalling the Paid controller on the same booking dialog
+disposes the previous controller's listeners and destroys its Stripe Card
+Element. A pending Stripe load cannot mount an Element for a disposed controller.
+The shared booking lifecycle replaces each call type's reset callback on
+reinstallation. Replacement and delayed-load regressions are covered in
+[`paid-call-brand-payment.test.js`](paid-call-brand-payment.test.js).
+Hire call-service routing and chooser behavior are owned by
+[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing);
+Messages routing is owned by [Messages call entry](#messages-call-entry).
 
 The native `[popup-stripe-card]` component must keep its visible payment title
 (`Payment Methods` today; `Card details` is also supported) and retain
