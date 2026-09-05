@@ -3945,9 +3945,39 @@ for (const isBrand of [false, true]) {
         }
       }
       assert.equal(page.bookingButtonWrapper.style.display, 'none')
-      lists[keys.indexOf(failedKey)].emit(callCardResult())
-      await settle()
-      assert.equal(page.bookingButtonWrapper.style.display, 'flex', 'a successful retry restores readiness')
+      for (const paidAvailable of [true, false, true]) {
+        lists[keys.indexOf(failedKey)].emit(callCardResult({ paid: paidAvailable }))
+        await settle()
+        assert.equal(page.bookingButtonWrapper.style.display, 'flex', 'a successful retry restores readiness')
+        for (const [index, wrapper] of cards.entries()) {
+          for (const [type, card] of [['free', wrapper.free], ['paid', wrapper.paid]]) {
+            const available = type === 'free' || paidAvailable
+            assert.equal(card.root.getAttribute('data-xano-call-card'), keys[index])
+            assert.equal(card.root.getAttribute('data-call-offer-type'), type)
+            assert.equal(card.root.style.display, available ? 'block' : 'none')
+            if (isBrand) {
+              assert.equal(card.root.getAttribute('data-call-service-direct'), available ? 'ready' : null)
+              assert.equal(card.root.getAttribute('has-connection'), available ? type : null)
+            } else {
+              assert.equal(card.root.getAttribute('data-signup-trigger-element'), available ? 'service' : null)
+              assert.equal(card.root.getAttribute('data-signup-trigger-value'), available
+                ? type === 'free' ? 'Free Call' : 'Paid Consulting Call'
+                : null)
+            }
+          }
+          if (paidAvailable) assert.equal(wrapper.paid.price.textContent, '250')
+        }
+        lists[keys.indexOf(failedKey)].fail()
+        await settle()
+        for (const wrapper of cards) {
+          for (const card of [wrapper.free, wrapper.paid]) {
+            assert.equal(card.root.style.display, 'none')
+            assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+            assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+          }
+        }
+        assert.equal(page.bookingButtonWrapper.style.display, 'none')
+      }
     })
   }
 }

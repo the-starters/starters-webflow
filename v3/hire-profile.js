@@ -1065,7 +1065,10 @@
           // A cloned DOM node copies attributes but not listeners. Track actual
           // listener ownership by element identity instead of trusting the
           // diagnostic attribute as the binding guard.
-          if (directCallServiceCards.has(card)) return;
+          if (directCallServiceCards.has(card)) {
+              card.setAttribute('data-call-service-direct', 'ready');
+              return;
+          }
 
           // Service cards are type-specific shortcuts. They reuse the exact
           // installed chooser CTA so the matching GitHub controller and native
@@ -2029,7 +2032,10 @@
                           failClosed();
                           return;
                       }
-                      adaptXanoCallCards(instance, key, result);
+                      callKeys.forEach(function (callKey) {
+                          const sibling = wfx.get(callKey);
+                          if (sibling && sibling.root) adaptXanoCallCards(sibling, callKey, result);
+                      });
                   }).catch(function (error) {
                       console.warn('Xano call cards:', error);
                   });
