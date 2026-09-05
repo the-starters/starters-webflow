@@ -321,5 +321,5 @@ full inventory is in the root [`README.md`](../../README.md).
 Companion stylesheets sit beside their scripts, plus a folder-level
 [`form.css`](form.css). Unlike the other embeds in [`global-embeds/`](../README.md),
 nothing here is documented per-file in this folder except the Turnstile fix above.
-The Memberstack loader is documented in its own header block and in the root
-README rather than here.
+The Memberstack loader's own header block owns the full contract. The root README
+and this table carry one-line summaries that point back to it.
