@@ -298,7 +298,11 @@
 
         if (memberLastUpdate > 0) {
           console.log('Using member profile as the newest profile');
-          return memberProfile;
+          return {
+            ...memberProfile,
+            type: localProfile?.type || memberProfile.type,
+            type_id: localProfile?.type_id || memberProfile.type_id,
+          };
         }
 
         return createEmptyProfile(PROFILE_TYPE, PROFILE_TYPE_ID, Date.now());

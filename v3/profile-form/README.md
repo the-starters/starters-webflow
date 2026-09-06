@@ -89,8 +89,11 @@ edit. `draft-state.js` prefers saved member answers over a newer empty seed and
 does not push that seed back to Memberstack. Local drafts containing captured
 field keys still use the existing timestamp precedence, including fields the
 member deliberately cleared to blank. This preserves actual local edits while
-allowing cross-browser saved-draft recovery. The extraction contract suite
-executes both cases; production reload proof remains a separate acceptance gate.
+allowing cross-browser saved-draft recovery. Restored member answers retain the
+current route type and type ID from the identity-guarded local draft, even when
+the saved answers came from the other Build route. The extraction contract suite
+covers both cross-type directions, local persistence, and no reverse sync;
+production reload proof remains a separate acceptance gate.
 
 ## Whole-dollar price contract
 

@@ -159,8 +159,8 @@
       }
     },
     "v3/build-profile/draft-state.js": {
-      "candidateCharacters": 11698,
-      "candidateSha256": "2d4e03d97621616efb2180567cf7bc71a542454a03154285386f0932a6921cd8",
+      "candidateCharacters": 11857,
+      "candidateSha256": "d7f029fb5e0324078b1c5c962bcd7bb4af301932735eb3f1bd8e32fc90941e2c",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileDraftState",
