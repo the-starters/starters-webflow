@@ -70,3 +70,78 @@ test('real DOM disabled and inherited hidden visibility are exempt; correcting v
     assert.equal(state.advances, 3)
   } finally { dom.window.close() }
 })
+
+async function mountWriter() {
+  const fixture = mount('/build-profile/full-profile')
+  const { window, field } = fixture
+  await new Promise(resolve => window.document.addEventListener('DOMContentLoaded', resolve, { once: true }))
+  const form = field.closest('form')
+  form.setAttribute('build-profile-form', '')
+  field.name = 'rate'
+  form.insertAdjacentHTML('beforeend', '<button type="button" form-submit>Submit</button>')
+  window.document.body.insertAdjacentHTML('beforeend', '<div build-profile-success></div><div build-profile-error><p>Error</p></div>')
+  window.qs = (selector, scope = window.document) => scope.querySelector(selector)
+  window.waitForMember = callback => callback()
+  window.MEMBER = { id: 'test' }
+  window.setLoader = () => {}
+  window.console = { log() {}, error() {}, warn() {} }
+  window.eval(fs.readFileSync(path.join(__dirname, '../build-profile/submit-writer.js'), 'utf8'))
+  window.document.dispatchEvent(new window.Event('DOMContentLoaded'))
+  fixture.submit = async () => {
+    form.querySelector('[form-submit]').click()
+    await Promise.resolve()
+    await Promise.resolve()
+    fixture.state.advances = 0
+    fixture.state.draftSaves = 0
+  }
+  return fixture
+}
+
+for (const value of ['1', '1000']) {
+  test('writer rejection recovers through Continue after correction to ' + value, async () => {
+    const { dom, window, field, button, state, submit } = await mountWriter()
+    try {
+      field.value = '1.0'
+      button.click()
+      assert.equal(state.advances, 1)
+      await submit()
+      assert.equal(field.validity.customError, true)
+      field.dispatchEvent(new window.Event('input', { bubbles: true }))
+      button.click()
+      assert.equal(state.advances, 0)
+      field.value = value
+      field.dispatchEvent(new window.Event('input', { bubbles: true }))
+      assert.equal(field.validity.customError, false)
+      button.click()
+      assert.deepEqual(state, { advances: 1, draftSaves: 1 })
+      assert.equal(field.value, value)
+      field.value = '1.0'
+      field.dispatchEvent(new window.Event('change', { bubbles: true }))
+      await submit()
+      assert.equal(field.validity.customError, true)
+    } finally { dom.window.close() }
+  })
+}
+
+test('writer recovery preserves native constraints and unrelated custom feedback', async () => {
+  const { dom, window, field, button, state, submit } = await mountWriter()
+  try {
+    field.value = '1.0'
+    await submit()
+    field.value = '1001'
+    field.dispatchEvent(new window.Event('change', { bubbles: true }))
+    assert.equal(field.validity.customError, false)
+    button.click()
+    assert.equal(state.advances, 0)
+    field.value = '1.0'
+    await submit()
+    field.setCustomValidity('Unrelated validation')
+    field.value = '1'
+    field.dispatchEvent(new window.Event('input', { bubbles: true }))
+    assert.equal(field.validationMessage, 'Unrelated validation')
+    button.click()
+    assert.equal(state.advances, 0)
+    await submit()
+    assert.equal(field.validationMessage, 'Unrelated validation')
+  } finally { dom.window.close() }
+})
