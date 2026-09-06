@@ -81,6 +81,17 @@ owner or Step 4 portfolio owner. A future `wf-xano` conversion requires a separa
 and must not be combined with this ownership cutover, which changes no behavior beyond the five
 declared candidate changes recorded above.
 
+## Empty route seeds and saved draft recovery
+
+The identity guard seeds route/type metadata with a fresh timestamp when this
+browser has no member-scoped draft. That empty `data` object is not an authored
+edit. `draft-state.js` prefers saved member answers over a newer empty seed and
+does not push that seed back to Memberstack. Local drafts containing captured
+field keys still use the existing timestamp precedence, including fields the
+member deliberately cleared to blank. This preserves actual local edits while
+allowing cross-browser saved-draft recovery. The extraction contract suite
+executes both cases; production reload proof remains a separate acceptance gate.
+
 ## Whole-dollar price contract
 
 ### Legacy Build Continue constraint adapter
