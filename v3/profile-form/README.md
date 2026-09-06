@@ -17,7 +17,8 @@ carries company logo and stable client identity hydration, the
 [required-mirror hydration contract](../starter-edit-profile/README.md#canonical-required-mirror-hydration),
 and the
 [browser-native unsaved-change prompt request](../starter-edit-profile/README.md#unsaved-change-warning),
-`draft-state.js` carries the member-bound hydration fix,
+`draft-state.js` carries the member-bound hydration fix and
+[saved draft recovery contract](#empty-route-seeds-and-saved-draft-recovery),
 `submit-writer.js` carries the behavior changes owned by the
 [Build Profile documentation](../build-profile/README.md), `shared-foundation.js`
 adds a taxonomy value only through an explicit option click or an Enter press on a highlighted
