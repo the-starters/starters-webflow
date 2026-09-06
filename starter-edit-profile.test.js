@@ -921,6 +921,26 @@ async function testStepSixPersistsExactPriceBoundaries() {
 	assert.equal(JSON.parse(payload.Services)['service-1'].price, 50000)
 }
 
+async function testEnabledRetainerLexicalInputUsesItsOwnWriterGuard() {
+	for (const value of ['1,000', '$100', '1e2', '   ', '-1']) {
+		const environment = saved({
+			stepIndex: 6,
+			additionalFormValues: [['offer-monthly-retainers', 'yes'], ['rate-retainer', value]],
+		})
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `enabled Retainer ${JSON.stringify(value)} must not send`)
+		assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+		assert.equal(environment.fields['[name="rate-retainer"]'].reportValidityCount, 1)
+	}
+	const padded = saved({
+		stepIndex: 6,
+		additionalFormValues: [['offer-monthly-retainers', 'yes'], ['rate-retainer', ' 100 ']],
+	})
+	await submit(padded)
+	assert.equal(padded.requests.length, 1)
+	assert.equal(JSON.parse(padded.requests[0][1].body).Retainer_Rate, 100)
+}
+
 async function testStepSixPriceContractSurvivesABlankServiceCaptureField() {
 	const environment = saved({
 		stepIndex: 6,
@@ -1836,6 +1856,7 @@ Promise.all([
   testEnabledOptionalRatesNeverSilentlyPersistZero(),
 	testStepSixRejectsInvalidWholeDollarPricesBeforeFetch(),
 	testStepSixPersistsExactPriceBoundaries(),
+	testEnabledRetainerLexicalInputUsesItsOwnWriterGuard(),
 	testStepSixPriceContractSurvivesABlankServiceCaptureField(),
 	testServiceFailuresExplainThemselvesInTheErrorModal(),
 	testCollapsedRetainerSectionNeverBlocksStepSix(),
