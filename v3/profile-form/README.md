@@ -28,7 +28,8 @@ saved taxonomy id that no longer has a rendered option only for a true multi-sel
 Function or Availability selector keeps at most one rendered saved option and never emits a
 comma-separated hidden value, and
 applies the [whole-dollar price contract](#whole-dollar-price-contract) to every rate input instead
-of stripping symbols and re-formatting the authored value,
+of stripping symbols and re-formatting the authored value, and supplies the
+[legacy Build Continue constraint adapter](#legacy-build-continue-constraint-adapter),
 and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on
 input, change, and blur, including when the member clears the field. Each sync reads the latest
 capture JSON, preserving late hydration and sibling changes, and refreshes add-button state.
@@ -161,13 +162,23 @@ the copy is left untouched and the surface is revealed exactly as authored, with
 own native validation still reporting where it can. Both
 surfaces are shared, so both memoize their authored copy and restore it at the single boundary every
 reveal goes through: only the reveal that carries a message of its own replaces it. A reported price
-failure, and any message it left behind, is therefore cleared before the next attempt, so a corrected
+failure's writer-owned feedback is therefore cleared before the next attempt, so a corrected
 whole-dollar value saves without a page reload and no later failure — a rejected save, an auth
 failure — inherits the previous cause. A canonical rate stored before these ranges narrowed is member
 data neither page repairs: it hydrates unchanged and, wherever that price applies, blocks every save
 before any Xano request until the member supplies a whole-dollar replacement of their own. Behind a
 collapsed section, or on a Consult profile that authors none of these controls, it cannot block — the
 compatibility rules above decide what is submitted instead.
+
+On Build Profile, an `input` or `change` event that changes an hourly, retainer,
+or paid-call rate also clears that field's writer-owned custom error, provided
+its current message still matches the one the writer set. An event without a
+value change leaves the error in place. Unrelated custom errors are preserved
+during editing and submit retries. This lets a member correct a rejected
+spelling such as `1.0` to `1` and use Continue again; native constraints still
+apply, and the final writer revalidates the whole-dollar spelling on submit.
+The [real-DOM integration](./legacy-build-numeric-validity.integration.cjs)
+covers this rejection, correction, and Continue sequence.
 
 Clearing a Custom Service price is the only remove gesture these forms author, and both writers keep
 it: a missing/null price or a blank/whitespace string empties that slot, so a member can still delete
