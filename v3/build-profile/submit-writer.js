@@ -44,10 +44,26 @@
       const errorMessage = errorMessageHook
         || (errorMessageLeaf && !errorMessageLeaf.querySelector?.('*') ? errorMessageLeaf : null);
       const authoredErrorMessage = errorMessage ? errorMessage.textContent : '';
-      const PRICE_CONTROL_SELECTORS = [
-        '[name="rate"]', '[name="rate-retainer"]', '[name="paid-call-rate"]',
-        '#service', '#service-2', '#service-3',
-      ];
+      const priceFeedback = new Map();
+
+      function clearPriceFeedback(field) {
+        const feedback = priceFeedback.get(field);
+        if (!feedback) return;
+        if (field.validationMessage === feedback.message) field.setCustomValidity?.('');
+        priceFeedback.delete(field);
+      }
+
+      function clearChangedPriceFeedback(event) {
+        const field = event.target;
+        const feedback = priceFeedback.get(field);
+        if (feedback && field.value !== feedback.value) clearPriceFeedback(field);
+      }
+
+      ['rate', 'rate-retainer', 'paid-call-rate'].forEach((name) => {
+        const field = qs('[name="' + name + '"]', form);
+        field?.addEventListener('input', clearChangedPriceFeedback);
+        field?.addEventListener('change', clearChangedPriceFeedback);
+      });
 
       function paintErrorMessage(message) {
         if (errorMessage) errorMessage.textContent = message || authoredErrorMessage;
@@ -55,7 +71,7 @@
 
       function resetSubmitFeedback() {
         paintErrorMessage(null);
-        PRICE_CONTROL_SELECTORS.forEach((selector) => qs(selector, form)?.setCustomValidity?.(''));
+        priceFeedback.forEach((feedback, field) => clearPriceFeedback(field));
       }
 
       // custom form submission handler
@@ -102,7 +118,11 @@
           if (mirror || !field) {
             throw Object.assign(new Error(message), { code, panelMessage: message });
           }
-          field.setCustomValidity?.(message);
+          clearPriceFeedback(field);
+          if (!field.validationMessage || !field.validity?.customError) {
+            field.setCustomValidity?.(message);
+            priceFeedback.set(field, { message, value: field.value });
+          }
           field.focus?.();
           field.reportValidity?.();
           throw Object.assign(new Error(message), { code });
@@ -135,7 +155,7 @@
               : `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
             return priceError(field, message, failure, mirror);
           }
-          field?.setCustomValidity?.('');
+          clearPriceFeedback(field);
           const raw = String(value ?? '').trim();
           return compatibilityEmpty(raw, contract.allowBlank) ? null : Number(raw);
         };

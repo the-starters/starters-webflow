@@ -28,7 +28,8 @@ saved taxonomy id that no longer has a rendered option only for a true multi-sel
 Function or Availability selector keeps at most one rendered saved option and never emits a
 comma-separated hidden value, and
 applies the [whole-dollar price contract](#whole-dollar-price-contract) to every rate input instead
-of stripping symbols and re-formatting the authored value,
+of stripping symbols and re-formatting the authored value, and supplies the
+[legacy Build Continue constraint adapter](#legacy-build-continue-constraint-adapter),
 and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on
 input, change, and blur, including when the member clears the field. Each sync reads the latest
 capture JSON, preserving late hydration and sibling changes, and refreshes add-button state.
@@ -82,6 +83,49 @@ declared candidate changes recorded above.
 
 ## Whole-dollar price contract
 
+### Legacy Build Continue constraint adapter
+
+The legacy Videsigns wizard checks required numeric values for text presence and
+character count, not native numeric validity. A live Consult test advanced from
+Rates to Reviews with `0`, `-1`, `1.5`, and `1001` despite authored `min=1`,
+`max=1000`, and `step=1`. No final submit was attempted in that reproduction.
+
+`shared-foundation.js` now supplies a narrow capture-phase adapter on the two
+Build routes. A click on the existing `[data-form="next-btn"]` checks visible,
+enabled required numeric controls in that button's `[data-form="step"]` inside
+`form[data-form="multistep"]`. Native `checkValidity()` enforces the authored
+constraints. Invalid clicks stop before draft and wizard handlers; native
+`reportValidity()` supplies the browser message and focus. Keyboard-generated
+clicks follow the same path. Valid clicks retain their default behavior.
+Hidden ancestor layout and inherited CSS visibility are read from the rendered
+field, and disabled or validation-barred controls are excluded. Fields are read
+again on every click, including dynamically added controls.
+
+The source change is not itself production proof. The Build README's
+Elvin ownership exclusion still applies to availability, call visibility, and
+business validation/rate formatting. This adapter only consumes existing native
+numeric constraints. It does not change their limits, field values, rate
+normalization, business rules, draft format, final submit, or the obfuscated
+vendor. The existing shared owner avoids another loader or failover behavior.
+The [regression suite](./legacy-build-numeric-validity.test.js) executes the
+adapter with legacy attributes and event phases; its injected validity boundary
+does not replace the real-DOM integration below before release or live Full and
+Consult browser QA before acceptance. The execution checklist owns measured
+release and production results.
+
+Run the independent real-DOM integration with an operator-provided installed
+`jsdom` dependency (standard Node module resolution; a missing dependency fails):
+
+```sh
+NODE_PATH=/path/to/node_modules node --test v3/profile-form/legacy-build-numeric-validity.integration.cjs
+BUILD_NUMERIC_BASELINE=1 NODE_PATH=/path/to/node_modules node --test v3/profile-form/legacy-build-numeric-validity.integration.cjs
+```
+
+The second command must fail against the unmodified pre-fix `HEAD`. The first
+must pass against the candidate. This suite uses actual DOM attributes, native
+numeric validity, and capture/bubble events. Only geometry is injected because
+jsdom has no layout. Browser message/focus UX still requires browser QA.
+
 Profile price inputs preserve the member's authored text until validation. They do not strip symbols,
 round decimals, or convert exponent notation. The native inputs use `type="number"`,
 `inputmode="numeric"`, and `step="1"`. Hourly and Paid Call rates allow `$1` through `$1,000`,
@@ -118,13 +162,23 @@ the copy is left untouched and the surface is revealed exactly as authored, with
 own native validation still reporting where it can. Both
 surfaces are shared, so both memoize their authored copy and restore it at the single boundary every
 reveal goes through: only the reveal that carries a message of its own replaces it. A reported price
-failure, and any message it left behind, is therefore cleared before the next attempt, so a corrected
+failure's writer-owned feedback is therefore cleared before the next attempt, so a corrected
 whole-dollar value saves without a page reload and no later failure — a rejected save, an auth
 failure — inherits the previous cause. A canonical rate stored before these ranges narrowed is member
 data neither page repairs: it hydrates unchanged and, wherever that price applies, blocks every save
 before any Xano request until the member supplies a whole-dollar replacement of their own. Behind a
 collapsed section, or on a Consult profile that authors none of these controls, it cannot block — the
 compatibility rules above decide what is submitted instead.
+
+On Build Profile, an `input` or `change` event that changes an hourly, retainer,
+or paid-call rate also clears that field's writer-owned custom error, provided
+its current message still matches the one the writer set. An event without a
+value change leaves the error in place. Unrelated custom errors are preserved
+during editing and submit retries. This lets a member correct a rejected
+spelling such as `1.0` to `1` and use Continue again; native constraints still
+apply, and the final writer revalidates the whole-dollar spelling on submit.
+The [real-DOM integration](./legacy-build-numeric-validity.integration.cjs)
+covers this rejection, correction, and Continue sequence.
 
 Clearing a Custom Service price is the only remove gesture these forms author, and both writers keep
 it: a missing/null price or a blank/whitespace string empties that slot, so a member can still delete
