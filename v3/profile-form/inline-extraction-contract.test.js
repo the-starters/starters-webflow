@@ -98,7 +98,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/draft-state.js': Object.freeze({
-    characters: 11151, sha256: 'f5311c42114ae706587bf0abe9738b80dbb798319b049781766a490df4936f7a',
+    characters: 11857, sha256: 'd7f029fb5e0324078b1c5c962bcd7bb4af301932735eb3f1bd8e32fc90941e2c',
     guardKey: 'buildProfileDraftState',
     liveCaptureAsset: 'v3/profile-form/build-draft-state-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
@@ -1186,12 +1186,52 @@ test('build draft state keeps the newest local draft and syncs it once', async (
   assert.equal(memberUpdates[0].json.build_profile.data.step_1.tagline, 'local')
 })
 
+test('build draft state restores saved answers instead of a newer empty route seed', async () => {
+  const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 200, data: {} }
+  const memberProfile = { type: 'consult', type_id: 'consult-id', last_update: 100,
+    data: { step_1: { 'first-name': 'QA Consult' }, step_6: { 'paid-call-rate': '1000' } } }
+  const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
+  assert.equal(context.activeProfile.data.step_1['first-name'], 'QA Consult')
+  assert.equal(context.activeProfile.data.step_6['paid-call-rate'], '1000')
+  assert.equal(memberUpdates.length, 0, 'initial route seeding must not overwrite the saved member draft')
+})
+
+for (const [routeType, savedType] of [['consult', 'full'], ['full', 'consult']]) {
+  for (const memberLastUpdate of [100, 300]) {
+    test(`build draft state preserves ${routeType} route metadata when restoring ${savedType} answers at ${memberLastUpdate}`, async () => {
+      const localProfile = { type: routeType, type_id: `${routeType}-id`, last_update: 200, data: {} }
+      const memberProfile = { type: savedType, type_id: `${savedType}-id`, last_update: memberLastUpdate,
+        data: { step_1: { tagline: 'Saved answer' }, step_6: { 'paid-call-rate': '1000' } } }
+      const tagline = new Element('input')
+      tagline.name = 'tagline'
+      const { context, memberUpdates, values } = await runDraftCase({ localProfile, memberProfile, stepFields: [tagline] })
+      const expected = { ...memberProfile, type: routeType, type_id: `${routeType}-id` }
+
+      assert.deepEqual(JSON.parse(JSON.stringify(context.activeProfile)), expected)
+      assert.deepEqual(JSON.parse(values.get('ts:build_profile:member:member-1')), expected)
+      assert.equal(tagline.value, 'Saved answer')
+      assert.equal(memberUpdates.length, 0)
+    })
+  }
+}
+
+test('build draft state preserves an explicitly cleared newer local step', async () => {
+  const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 200,
+    data: { step_1: { 'first-name': '' } } }
+  const memberProfile = { type: 'consult', type_id: 'consult-id', last_update: 100,
+    data: { step_1: { 'first-name': 'Old answer' } } }
+  const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
+  assert.equal(context.activeProfile.data.step_1['first-name'], '')
+  assert.equal(memberUpdates.length, 1)
+})
+
 test('build draft state keeps a newer member draft without a reverse sync', async () => {
   const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 100, data: { step_1: { tagline: 'local' } } }
   const memberProfile = { type: 'full', type_id: 'full-id', last_update: 200, data: { step_1: { tagline: 'member' } } }
   const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
 
-  assert.equal(context.activeProfile.type, 'full')
+  assert.equal(context.activeProfile.type, 'consult')
+  assert.equal(context.activeProfile.type_id, 'consult-id')
   assert.equal(context.activeProfile.data.step_1.tagline, 'member')
   assert.equal(memberUpdates.length, 0)
 })

@@ -17,7 +17,8 @@ carries company logo and stable client identity hydration, the
 [required-mirror hydration contract](../starter-edit-profile/README.md#canonical-required-mirror-hydration),
 and the
 [browser-native unsaved-change prompt request](../starter-edit-profile/README.md#unsaved-change-warning),
-`draft-state.js` carries the member-bound hydration fix,
+`draft-state.js` carries the member-bound hydration fix and
+[saved draft recovery contract](#empty-route-seeds-and-saved-draft-recovery),
 `submit-writer.js` carries the behavior changes owned by the
 [Build Profile documentation](../build-profile/README.md), `shared-foundation.js`
 adds a taxonomy value only through an explicit option click or an Enter press on a highlighted
@@ -80,6 +81,20 @@ The extraction does not move the form into JavaScript. It does not change the se
 owner or Step 4 portfolio owner. A future `wf-xano` conversion requires a separate declarative contract
 and must not be combined with this ownership cutover, which changes no behavior beyond the five
 declared candidate changes recorded above.
+
+## Empty route seeds and saved draft recovery
+
+The identity guard seeds route/type metadata with a fresh timestamp when this
+browser has no member-scoped draft. That empty `data` object is not an authored
+edit. `draft-state.js` prefers saved member answers over a newer empty seed and
+does not push that seed back to Memberstack. Local drafts containing captured
+field keys still use the existing timestamp precedence, including fields the
+member deliberately cleared to blank. This preserves actual local edits while
+allowing cross-browser saved-draft recovery. Restored member answers retain the
+current route type and type ID from the identity-guarded local draft, even when
+the saved answers came from the other Build route. The extraction contract suite
+covers both cross-type directions, local persistence, and no reverse sync;
+production reload proof remains a separate acceptance gate.
 
 ## Whole-dollar price contract
 
