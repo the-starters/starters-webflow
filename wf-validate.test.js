@@ -52,7 +52,7 @@ class Element {
     this.children = []
     this.parentElement = null
     this.style = {}
-    this.textContent = ''
+    this._text = ''
     this.id = ''
     this.value = ''
     this.noValidate = false
@@ -87,6 +87,14 @@ class Element {
     children.forEach((child) => this.append(child))
   }
 
+  get textContent() {
+    return this._text
+  }
+  set textContent(value) {
+    this._text = String(value)
+    this.children.forEach((child) => (child.parentElement = null))
+    this.children = []
+  }
   setAttribute(name, value) {
     this._attrs.set(name, String(value))
   }
@@ -104,6 +112,25 @@ class Element {
     child.parentElement = this
     this.children.push(child)
     return child
+  }
+  appendChild(child) {
+    return this.append(child)
+  }
+  insertBefore(child, ref) {
+    child.parentElement = this
+    const at = ref ? this.children.indexOf(ref) : -1
+    if (at === -1) this.children.push(child)
+    else this.children.splice(at, 0, child)
+    return child
+  }
+  get firstChild() {
+    return this.children[0] || null
+  }
+  remove() {
+    const parent = this.parentElement
+    if (!parent) return
+    parent.children.splice(parent.children.indexOf(this), 1)
+    this.parentElement = null
   }
 
   descendants() {
@@ -1064,4 +1091,227 @@ test('count-max 3 chars: a 4th character keystroke is blocked', () => {
     inputType: 'insertText',
   })
   assert.equal(blocked.defaultPrevented, true)
+})
+
+
+// ---------------------------------------------------------------------------
+// 8. selection groups (wf-validate-element="group"), meters and the error summary
+// ---------------------------------------------------------------------------
+
+/**
+ * A picker in the shape of the profile taxonomy widget: wrapper with a visible
+ * typeahead input (named, like the live markup), a chips area, and a meter.
+ * @param {object} attrs wrapper attributes
+ * @param {number} chips how many selected chips to start with
+ */
+function pickerFixture(attrs, chips) {
+  const typeahead = h('input', { type: 'text', name: 'skill-option', 'ms-code-select': 'input' })
+  const selected = h('div', { 'ms-code-select': 'selected-wrapper' })
+  for (let i = 0; i < chips; i += 1) selected.append(h('div', { 'ms-code-select': 'tag' }))
+  const meter = h('span', { 'wf-validate-element': 'meter' })
+  const wrapper = h('div', Object.assign({ 'wf-validate-element': 'group', 'ms-code-select-wrapper': 'multi' }, attrs), [
+    typeahead,
+    selected,
+    meter,
+  ])
+  const email = h('input', { name: 'Email', type: 'email', required: '' })
+  const submit = h('button', { type: 'submit' })
+  const summary = h('div', { 'wf-validate-element': 'summary' })
+  const form = h('form', { 'wf-validate-element': 'form', 'wf-validate-submit-disable': '' }, [summary, email, wrapper, submit])
+  const root = h('body', {}, [form])
+  return { typeahead, selected, meter, wrapper, email, submit, summary, form, root }
+}
+
+const addChip = (f) => f.selected.append(h('div', { 'ms-code-select': 'tag' }))
+const removeChip = (f) => f.selected.children.pop().parentElement = null
+
+test('group: an empty required picker blocks submit, marks the wrapper and injects an error after it', () => {
+  const f = pickerFixture({ required: '', 'wf-validate-name': 'skills' }, 0)
+  f.email.value = 'a@b.co'
+  const m = mount(f.root)
+
+  assert.equal(isDisabled(f.submit), true, 'incomplete from bind time')
+  const event = m.fireDocument('submit', f.form)
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(f.wrapper.classList.contains(INVALID), true)
+  assert.equal(f.wrapper.getAttribute('aria-invalid'), 'true')
+  const error = f.form.querySelectorAll('[wf-validate-element="error"]')[0]
+  assert.ok(error, 'auto error slot injected')
+  assert.equal(error.className, 'wf-validate_error-auto')
+  assert.equal(f.form.children.indexOf(error), f.form.children.indexOf(f.wrapper) + 1, 'injected right after the wrapper')
+  assert.equal(error.textContent, 'Please select an option.')
+  assert.equal(f.wrapper.getAttribute('aria-describedby'), error.id)
+  // focus lands on the picker's own input, not the unfocusable wrapper
+  assert.equal(f.typeahead.focusCalls.length, 1)
+  assert.equal(f.typeahead.focusCalls[0].preventScroll, true)
+  assert.equal(f.typeahead.scrollCalls.length, 1)
+  assert.equal(f.wrapper.focusCalls.length, 0)
+})
+
+test('group: the picker typeahead input never forms its own field group', () => {
+  const f = pickerFixture({ 'wf-validate-name': 'skills' }, 0)
+  f.typeahead.setAttribute('required', '')
+  f.email.value = 'a@b.co'
+  const m = mount(f.root)
+  // no min on the wrapper, and the inner required text input is ignored:
+  // the form is complete and the gate lets the submit through
+  assert.equal(isEnabled(f.submit), true)
+  const event = m.fireDocument('submit', f.form)
+  assert.equal(event.defaultPrevented, false)
+  assert.equal(f.typeahead.classList.contains(INVALID), false)
+})
+
+test('group: min/max bounds render their messages and clear as the selection changes', async () => {
+  const f = pickerFixture({ 'wf-validate-name': 'skills', 'wf-validate-min': '3', 'wf-validate-max': '4' }, 2)
+  f.email.value = 'a@b.co'
+  const m = mount(f.root)
+
+  // leaving the picker marks it touched
+  m.fire(f.form, 'focusout', f.typeahead)
+  let error = f.form.querySelectorAll('[wf-validate-element="error"]')[0]
+  assert.equal(error.textContent, 'Please select at least 3 (you have 2).')
+  assert.equal(f.meter.style.display, 'none', 'meter hidden while the error shows')
+
+  // the widget adds a chip on click; the form click listener re-checks on the next tick
+  addChip(f)
+  m.fire(f.form, 'click', f.selected)
+  await tick()
+  assert.equal(error.style.display, 'none', 'error clears at 3')
+  assert.equal(f.wrapper.classList.contains(INVALID), false)
+  assert.equal(f.meter.textContent, '3 / 4 selected')
+  assert.equal(isEnabled(f.submit), true)
+
+  addChip(f)
+  addChip(f)
+  m.fire(f.form, 'click', f.selected)
+  await tick()
+  assert.equal(error.textContent, 'Please select no more than 4 (you have 5).')
+  assert.equal(error.style.display, '')
+})
+
+test('group: message overrides on the wrapper win, and a bare required means min 1', () => {
+  const f = pickerFixture(
+    { required: '', 'wf-validate-name': 'roles', 'wf-validate-message-required': 'Pick at least one role.' },
+    0,
+  )
+  f.email.value = 'a@b.co'
+  const m = mount(f.root)
+  m.fire(f.form, 'focusout', f.typeahead)
+  assert.equal(f.form.querySelectorAll('[wf-validate-element="error"]')[0].textContent, 'Pick at least one role.')
+  addChip(f)
+  m.fire(f.form, 'change', f.typeahead)
+  assert.equal(f.wrapper.classList.contains(INVALID), false)
+})
+
+test('group: an unrendered wrapper (the other profile type) is skipped', () => {
+  const f = pickerFixture({ required: '', 'wf-validate-name': 'subcategories' }, 0)
+  f.wrapper.rendered = false
+  f.email.value = 'a@b.co'
+  const m = mount(f.root)
+  assert.equal(isEnabled(f.submit), true)
+  const event = m.fireDocument('submit', f.form)
+  assert.equal(event.defaultPrevented, false)
+})
+
+test('meter: renders the count, the max and the remaining minimum from bind time', () => {
+  const f = pickerFixture({ 'wf-validate-name': 'skills', 'wf-validate-min': '3', 'wf-validate-max': '15' }, 1)
+  mount(f.root)
+  assert.equal(f.meter.textContent, '1 / 15 selected · pick 2 more')
+})
+
+test('meter: a group without a max shows a plain count', () => {
+  const f = pickerFixture({ 'wf-validate-name': 'industries' }, 2)
+  mount(f.root)
+  assert.equal(f.meter.textContent, '2 selected')
+})
+
+test('summary: hidden at bind, then lists one link per invalid group in DOM order on a blocked submit', () => {
+  const f = pickerFixture({ required: '', 'wf-validate-name': 'skills' }, 0)
+  const m = mount(f.root)
+  assert.equal(f.summary.style.display, 'none')
+  assert.equal(f.summary.getAttribute('role'), 'alert')
+
+  const event = m.fireDocument('submit', f.form)
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(f.summary.style.display, '')
+  const title = f.summary.querySelector('[wf-validate-element="summary-title"]')
+  assert.equal(title.textContent, 'Please fix 2 field(s) below')
+  const links = f.summary.querySelectorAll('[wf-validate-element="summary-link"]')
+  assert.deepEqual(
+    links.map((a) => a.textContent),
+    ['Please fill out this field.', 'Please select an option.'],
+  )
+
+  // a link brings its target into view: the picker link lands on the typeahead
+  f.typeahead.focusCalls.length = 0
+  f.typeahead.scrollCalls.length = 0
+  const click = makeEvent('click', links[1])
+  ;(links[1]._listeners.get('click') || []).forEach((listener) => listener(click))
+  assert.equal(click.defaultPrevented, true)
+  assert.equal(f.typeahead.focusCalls.length, 1)
+  assert.equal(f.typeahead.focusCalls[0].preventScroll, true)
+  assert.equal(f.typeahead.scrollCalls.length, 1)
+  assert.equal(f.typeahead.scrollCalls[0].behavior, 'smooth')
+  assert.equal(f.typeahead.scrollCalls[0].block, 'center')
+})
+
+test('summary: the title template and a summary-list child are honored', () => {
+  const f = pickerFixture({ required: '', 'wf-validate-name': 'skills' }, 0)
+  f.summary.setAttribute('wf-validate-summary-title', '{n} things to fix')
+  const heading = h('strong', { 'wf-validate-element': 'summary-title' })
+  const list = h('ul', { 'wf-validate-element': 'summary-list' })
+  f.summary.append(heading)
+  f.summary.append(list)
+  const m = mount(f.root)
+  m.fireDocument('submit', f.form)
+  assert.equal(heading.textContent, '2 things to fix')
+  assert.equal(list.children.length, 2)
+  assert.equal(list.children.every((a) => a.getAttribute('wf-validate-element') === 'summary-link'), true)
+})
+
+test('summary: hides the moment the form validates, and on reset', async () => {
+  const f = pickerFixture({ required: '', 'wf-validate-name': 'skills' }, 0)
+  const m = mount(f.root)
+  m.fireDocument('submit', f.form)
+  assert.equal(f.summary.style.display, '')
+
+  f.email.value = 'a@b.co'
+  addChip(f)
+  assert.equal(m.WfValidate.validate(f.form), true)
+  assert.equal(f.summary.style.display, 'none')
+  assert.equal(f.summary.querySelectorAll('[wf-validate-element="summary-link"]').length, 0)
+
+  f.email.value = ''
+  m.fireDocument('submit', f.form)
+  assert.equal(f.summary.style.display, '')
+  m.fire(f.form, 'reset')
+  assert.equal(f.summary.style.display, 'none')
+  await tick()
+})
+
+test('summary: a form without a summary slot behaves exactly as before', () => {
+  const email = h('input', { name: 'Email', type: 'email', required: '' })
+  const form = h('form', { 'wf-validate-element': 'form' }, [email, h('button', { type: 'submit' })])
+  const m = mount(h('body', {}, [form]))
+  const event = m.fireDocument('submit', form)
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(form.querySelectorAll('[wf-validate-element="summary-link"]').length, 0)
+  assert.equal(email.focusCalls.length, 1)
+  assert.equal(email.focusCalls[0].preventScroll, true)
+})
+
+test('refresh: a picker injected after bind joins the gate', () => {
+  const f = pickerFixture({ 'wf-validate-name': 'skills' }, 1)
+  f.email.value = 'a@b.co'
+  const m = mount(f.root)
+  assert.equal(isEnabled(f.submit), true)
+  const late = h('div', { 'wf-validate-element': 'group', required: '', 'wf-validate-name': 'tools' }, [
+    h('input', { type: 'text', name: 'tool-option' }),
+  ])
+  f.form.append(late)
+  m.WfValidate.refresh(f.form)
+  assert.equal(isDisabled(f.submit), true)
+  const event = m.fireDocument('submit', f.form)
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(late.classList.contains(INVALID), true)
 })

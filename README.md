@@ -243,7 +243,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `starters-list/apply-button-disable.js`
 - `starters-list/range-backfill.js`
 - `utils/loader.js` — env-switch script loader (`loadEnvScript`)
-- `utils/wf-validate.js` — declarative form validation: styled errors and success slots, live counters, soft-disabled submitters while a form is incomplete, and refresh support for late-injected fields (see below)
+- `utils/wf-validate.js` — declarative form validation: styled errors and success slots, live counters, selection groups with meters for chip pickers, a linked error summary, soft-disabled submitters while a form is incomplete, and refresh support for late-injected fields (see below)
 - `explore-search/explore-search-chip-fill.js` — chip click copies its text into the search input, fires the engine's `input` event, announces `explore-search:commit`
 - `explore-search/explore-search-tab-counts.js` — live per-index hit counts for the tab bar (intercepts the engine's own Algolia responses; zero extra operations)
 - `explore-search/explore-search-most-searched.js` — dynamic "Most Searched" chips from an Algolia Query Suggestions index, via a designer-owned template
@@ -1409,9 +1409,48 @@ blocks invalid submits before Webflow's handler or page controllers see them.
 </form>
 ```
 
-- Roles: `wf-validate-element="form | error | message | success | count | submit"`.
-  Error/success/count slots bind to the nearest field, or explicitly via
-  `wf-validate-for="<input name>"`.
+- Roles: `wf-validate-element="form | error | message | success | count | submit | group | item | meter | summary"`.
+  Error/success/count/meter slots bind to the nearest field or group, or explicitly via
+  `wf-validate-for="<input name or group name>"`.
+- `group` is a **selection group**: a wrapper whose validity is the number of selected
+  items inside it, for pickers that render chips and keep their real value in a hidden
+  input (the profile taxonomy pickers: skills, tools, roles, subcategories, industries).
+  Hidden inputs are invisible to the native API, which is why those pickers carry a
+  second hidden "required mirror" input per picker today; a `group` replaces the mirror.
+  Items are descendants matching `wf-validate-item` (default
+  `[wf-validate-element="item"]`, falling back to `[ms-code-select="tag"]`). Bounds:
+  `wf-validate-min` / `wf-validate-max` on the wrapper; a bare `required` means min 1.
+  Name it with `wf-validate-name` (defaults: `id`, then `select-wrap-entity`). Messages:
+  `wf-validate-message-required | -min | -max` on the wrapper. The group is touched on
+  focusout from inside the wrapper, re-checked on every click/input/change inside it
+  (and on DOM changes via MutationObserver), skipped when the wrapper is not rendered
+  (the other profile type's picker), and painted like a field: `is-wf-validate-invalid`
+  and `aria-invalid` on the wrapper, an auto error slot injected after it, and the gate
+  focuses the picker's own input. The picker's visible typeahead input never forms a
+  field group of its own.
+
+  ```html
+  <div wf-validate-element="group" wf-validate-name="skills" wf-validate-min="3" wf-validate-max="15"
+       ms-code-select-wrapper="multi">
+    <input ms-code-select="input" type="text" placeholder="Type to search…" />
+    <div ms-code-select="selected-wrapper"><!-- [ms-code-select="tag"] chips --></div>
+    <span wf-validate-element="meter"></span>
+    <div wf-validate-element="error"></div>
+  </div>
+  ```
+
+- `meter` is the live selection meter for a group: `2 / 15 selected · pick 1 more`
+  while a min is unmet, `3 / 15 selected` once met, `2 selected` without a max. Hidden
+  while the group's error shows.
+- `summary` is one error summary per form, hidden until a submit is blocked (or
+  `WfValidate.validate(form)` fails): a title plus one link per invalid group in DOM
+  order; each link focuses its field (or the picker input) without a scroll jump and
+  centers it. Title from `wf-validate-summary-title` on the slot with `{n}` for the
+  count (default `Please fix {n} field(s) below`); an optional child
+  `wf-validate-element="summary-list"` receives the links and an existing
+  `wf-validate-element="summary-title"` child is rewritten, so the slot can carry an icon
+  or heading. It hides the moment the form validates and on reset. The first-invalid
+  focus behavior is unchanged; the summary is additive.
 - `success` is the positive twin of `error`: a Designer-authored slot (checkmark,
   "Looks good!") shown only once its field has been touched AND is valid, so it can
   never appear next to a visible error. The script only toggles its visibility.
