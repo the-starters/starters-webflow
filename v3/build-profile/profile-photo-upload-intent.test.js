@@ -71,6 +71,8 @@ function createHarness({
   uploadResponder,
   pathname = '/build-profile/full-profile',
   storedPhotoUrl = '',
+  retryTimer,
+  clock,
 } = {}) {
   const label = element();
   label.tagName = 'DIV';
@@ -236,7 +238,8 @@ function createHarness({
       resizeCount += 1;
       return { width: 1200, height: 800, close() {} };
     },
-    setTimeout: (callback) => callback(),
+    Date: clock || Date,
+    setTimeout: (callback, delay) => retryTimer ? retryTimer(callback, delay) : callback(),
     requestAnimationFrame: (callback) => callback(),
   });
   vm.runInContext(shimSource, context);
@@ -416,6 +419,55 @@ async function run() {
     unavailable.uploadError.textContent,
     'Image upload failed. Click here to try again.',
   );
+
+  const busyResponse = () => new Response(JSON.stringify({ message: 'PROFILE_IMAGE_CAS_RETRY_EXHAUSTED' }), { status: 500 });
+  const successResponse = () => new Response(JSON.stringify({ starter_image: 'https://example.invalid/retried.jpg', starter_image_small: 'https://example.invalid/retried-small.jpg' }), { status: 200 });
+  for (const pathname of ['/starter-edit-profile', '/build-profile/full-profile', '/build-profile/consult']) {
+    let now = 0;
+    const retried = createHarness({ pathname, clock: { now: () => now }, retryTimer(callback, delay) { now += delay; callback(); }, uploadResponder: index => index < 7 ? busyResponse() : successResponse() });
+    retried.input.files = [firstFile];
+    retried.input.dispatchEvent(new retried.TestEvent('change'));
+    await settle();
+    if (retried.window.StartersBuildProfilePhotoUpload) {
+      assert.equal(retried.uploads.length, 0);
+      retried.window.StartersBuildProfilePhotoUpload.markProfileSaved();
+      await retried.window.StartersBuildProfilePhotoUpload.commitPending();
+    }
+    await settle();
+    assert.equal(retried.uploads.length, 8);
+    assert.equal(new Set(retried.uploads.map(x => x.sourceMutationId)).size, 1);
+    assert(retried.uploads.every(x => x.image === retried.uploads[0].image));
+    assert.equal(retried.resizeCount(), 1);
+    assert.equal(retried.photoUrlInput.value, 'https://example.invalid/retried.jpg');
+    assert.equal(retried.uploadError.style.display, 'none');
+    assert.equal(retried.wrap.style.display, 'none');
+    assert(now >= 60000);
+  }
+  let retryNow = 0;
+  const exhausted = createHarness({ pathname: '/starter-edit-profile', clock: { now: () => retryNow }, retryTimer(callback, delay) { retryNow += delay; callback(); }, uploadResponder: busyResponse });
+  exhausted.input.files = [firstFile]; exhausted.input.dispatchEvent(new exhausted.TestEvent('change')); await settle();
+  assert.equal(exhausted.uploads.length, 13);
+  assert(retryNow < 180000);
+  assert.equal(exhausted.uploadError.textContent, 'Image upload failed. Click here to try again.');
+  assert.notEqual(exhausted.photoUrlInput.value, 'https://example.invalid/retried.jpg');
+  for (const [status, message] of [[500, 'PROFILE_IMAGE_STATE_INVALID'], [401, 'PROFILE_IMAGE_CAS_RETRY_EXHAUSTED'], [429, 'Too many requests']]) {
+    const terminal = createHarness({ pathname: '/starter-edit-profile', uploadResponder: () => new Response(JSON.stringify({ message }), { status }) });
+    terminal.input.files = [firstFile]; terminal.input.dispatchEvent(new terminal.TestEvent('change')); await settle();
+    assert.equal(terminal.uploads.length, status === 401 ? 2 : 1); // Auth shim already retries one refreshed token.
+  }
+  for (const replace of [false, true]) {
+    const timers = [];
+    const cancelled = createHarness({ pathname: '/starter-edit-profile', retryTimer: callback => timers.push(callback), uploadResponder: index => index === 0 ? busyResponse() : successResponse() });
+    cancelled.input.files = [firstFile]; cancelled.input.dispatchEvent(new cancelled.TestEvent('change')); await settle();
+    assert.equal(cancelled.uploads.length, 1);
+    assert.equal(cancelled.uploadError.textContent, 'Your profile is still syncing. We will retry the photo automatically.');
+    cancelled.removeBtn.click();
+    if (replace) { cancelled.input.files = [secondFile]; cancelled.input.dispatchEvent(new cancelled.TestEvent('change')); await settle(); }
+    for (const callback of timers) callback(); await settle();
+    assert.equal(cancelled.uploads.length, replace ? 2 : 1);
+    assert.equal(cancelled.photoUrlInput.value, replace ? 'https://example.invalid/retried.jpg' : '');
+    assert.equal(cancelled.uploadError.style.display, 'none');
+  }
 
   const pendingResponses = [];
   const overlapping = createHarness({
