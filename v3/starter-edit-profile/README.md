@@ -212,10 +212,11 @@ workflow is tracked in [PROGRESS-CHECKLIST.md](PROGRESS-CHECKLIST.md).
    Xano writes. Obtain separate approval before production publish and repeat QA.
 9. Scan every authorized published domain for Airtable, Make, and PAT exposure patterns.
 
-## Step 5 validation (skills, tools) since 2026-09-07
+## Step 1 and step 5 validation (pickers) since 2026-09-07
 
-Step 5 no longer reads the hidden `#skills-required` / `#tools-required` mirror inputs. Its two
-rules are `kind: 'group'`: the controller counts selected chips (`[ms-code-select="tag"]`) inside
+Step 1 no longer reads `#function-required` / `#roles-required` / `#subcategories-required`, and step 5 no
+longer reads `#skills-required` / `#tools-required`. Those rules are `kind: 'group'` (step 1: functions min 1 for
+both types, roles min 1 Full only, subcategories min 1 Consult only; `#profile-photo-url` stays a mirror): the controller counts selected chips (`[ms-code-select="tag"]`) inside
 `[select-wrap-entity="skills"]` (minimum 3) and `[select-wrap-entity="tools"]` (minimum 2), for Full
 profiles only. `syncSelectionGroupBounds(type)` mirrors that minimum onto each wrapper as
 `wf-validate-min` (and removes it for Consult), so `utils/wf-validate.js`, which the wrappers opt
