@@ -86,7 +86,7 @@
   var CSS = [
     '/* Favorite control sits on the card photo corner (some Designer template',
     '   variants ship the wrapper as an empty full-width div). */',
-    LIST_SECTION + ' .expert-card_wrapper > .expert-card_favorite-wrapper { position: absolute; top: .75rem; right: .75rem; z-index: 2; width: auto; height: auto; }',
+    LIST_SECTION + ' .expert-card_wrapper > .expert-card_favorite-wrapper { position: absolute; top: .75rem; right: .75rem; width: auto; height: auto; }',
     '/* Never show the control in an unmarked list variant. Scoped to the list',
     '   section so favorite wrappers elsewhere on the page (membership-modal',
     '   static Expert Cards) stay untouched, and gate-attribute renames cannot',
