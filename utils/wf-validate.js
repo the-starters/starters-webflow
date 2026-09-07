@@ -54,6 +54,38 @@
  *             are gated automatically — page controllers that bind click on
  *             the button (the opp30 modal pattern) and call the API directly
  *             never fire while the form is invalid.
+ *   group   — a SELECTION group: a wrapper whose validity is "how many items
+ *             are selected inside it", not a control's value. Built for the
+ *             taxonomy pickers (skills, tools, roles…) that render chips and
+ *             keep their real value in a hidden input — hidden inputs are
+ *             invisible to the native API and to this script, so those pickers
+ *             used to need a second hidden "required mirror" input per picker.
+ *             Selected items are the wrapper's descendants matching
+ *             wf-validate-item (a selector; default [wf-validate-element="item"],
+ *             falling back to the profile pickers' [ms-code-select="tag"]).
+ *             Bounds: wf-validate-min / wf-validate-max on the wrapper (a bare
+ *             `required` attribute means min 1). Name it with wf-validate-name
+ *             so error/meter slots can bind with wf-validate-for. It is touched
+ *             on focusout from inside the wrapper and re-checked on every
+ *             click/input/change inside it (and on DOM changes, where
+ *             MutationObserver exists). The invalid class and aria-invalid go
+ *             on the wrapper; an auto error slot is injected after it. A
+ *             wrapper that isn't rendered (the other profile type's picker) is
+ *             skipped like a hidden field.
+ *   item    — one selected item inside a group (the default item selector).
+ *   meter   — live selection meter for a group ("2 / 3 selected", or
+ *             "2 selected" without a max; " · pick 1 more" is appended while
+ *             a min is unmet). Binds like an error slot (nearest group or
+ *             wf-validate-for). Hidden while the group's error is showing.
+ *   summary — one error summary per form, shown when a submit is blocked: a
+ *             short title plus one link per invalid group, in DOM order;
+ *             clicking a link focuses that field (or group) and centers it.
+ *             Title from wf-validate-summary-title on the slot, with {n} for
+ *             the count (default "Please fix {n} field(s) below"). An optional
+ *             child wf-validate-element="summary-list" receives the links so
+ *             the slot can carry an icon or heading. Hidden on init, on
+ *             reset, and the moment the form validates. It complements the
+ *             existing first-invalid focus; it never replaces it.
  *
  * Settings (on the same element as wf-validate-element="form" — the <form> or
  * its wrapper):
@@ -93,6 +125,16 @@
  *   wf-validate-message         — catch-all override for any failure.
  *   wf-validate-match="<name>"  — field must equal the field named <name>
  *                                 (e.g. confirm-password).
+ *   Settings (on a wf-validate-element="group" wrapper):
+ *   wf-validate-name            — the group's name (for wf-validate-for and the
+ *                                 summary). Defaults to the wrapper's id, then to
+ *                                 select-wrap-entity, then to a generated name.
+ *   wf-validate-min / -max      — selected-count bounds. `required` = min 1.
+ *   wf-validate-item            — selector for one selected item (see group).
+ *   wf-validate-message-min / -max / -required
+ *                               — message overrides; -required is used when the
+ *                                 count is 0 and a min applies.
+ *
  *   wf-validate-minwords / wf-validate-maxwords
  *                               — word-count bounds (whitespace-separated
  *                                 words). The native API has no word rules, so
@@ -106,8 +148,8 @@
  *                                 validationMessage.
  *
  * State classes (Finsweet-style, style them in Webflow — no CSS shipped):
- *   is-wf-validate-invalid  — on each invalid field, and on the form while it
- *                             has any invalid field.
+ *   is-wf-validate-invalid  — on each invalid field (or invalid group wrapper),
+ *                             and on the form while it has any invalid field.
  *   is-wf-validate-disabled — the canonical styling hook for a soft-disabled
  *                             submitter (opacity, cursor, pointer-events off if
  *                             you insist). The theme attribute ("disabled" on
@@ -187,6 +229,10 @@
   const FIELD_SELECTOR = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]), select, textarea'
   const NATIVE_SUBMIT_SELECTOR = 'button[type="submit"], input[type="submit"], button:not([type])'
   const MARKED_SUBMIT_SELECTOR = '[wf-validate-element="submit"]'
+  const GROUP_SELECTOR = '[wf-validate-element="group"]'
+  const DEFAULT_ITEM_SELECTOR = '[wf-validate-element="item"], [ms-code-select="tag"]'
+  const FOCUSABLE_SELECTOR = 'input:not([type="hidden"]), select, textarea, button, [tabindex]'
+  const DEFAULT_SUMMARY_TITLE = 'Please fix {n} field(s) below'
 
   let uid = 0
 
@@ -257,7 +303,57 @@
    * @property {number | null} countMax  counter denominator (maxlength / maxwords / wf-validate-count-max)
    * @property {boolean} countWords  counter counts words instead of characters
    * @property {boolean} touched  whether errors may be shown yet
+   * @property {SelectionSpec | null} [sel]  set on selection groups (wf-validate-element="group")
+   * @property {HTMLElement | null} [meter]  bound selection-meter slot
    */
+
+  /**
+   * @typedef {Object} SelectionSpec
+   * @property {HTMLElement} wrapper  the element carrying wf-validate-element="group"
+   * @property {number} min  0 when unbounded
+   * @property {number} max  NaN when unbounded
+   * @property {string} itemSelector
+   * @property {number} [lastCount]  last selected count seen by onSelectionChange
+   */
+
+  /**
+   * A rendered element (same measurement isActive uses for controls): a picker
+   * that belongs to the other profile type is display:none and must not block.
+   * @param {Element} el
+   * @returns {boolean}
+   */
+  const isRendered = (el) => typeof el.getClientRects !== 'function' || el.getClientRects().length > 0
+
+  /**
+   * How many items are currently selected inside a selection group.
+   * @param {SelectionSpec} sel
+   * @returns {number}
+   */
+  const selectedCount = (sel) => sel.wrapper.querySelectorAll(sel.itemSelector).length
+
+  /**
+   * The selection group's failure message: required/min/max on the selected
+   * count. Pure, like the other rule helpers.
+   * @param {FieldGroup} group
+   * @returns {string} empty string when within bounds (or not rendered)
+   */
+  const selectionMessage = (group) => {
+    const sel = /** @type {SelectionSpec} */ (group.sel)
+    if (!isRendered(sel.wrapper)) return ''
+    const w = sel.wrapper
+    const n = selectedCount(sel)
+    const override = (rule) => w.getAttribute('wf-validate-message-' + rule) || w.getAttribute('wf-validate-message')
+    if (sel.min > 0 && n === 0) {
+      return override('required') || override('min') || 'Please select ' + (sel.min === 1 ? 'an option.' : 'at least ' + sel.min + ' options.')
+    }
+    if (sel.min > 0 && n < sel.min) {
+      return override('min') || 'Please select at least ' + sel.min + ' (you have ' + n + ').'
+    }
+    if (sel.max > 0 && n > sel.max) {
+      return override('max') || 'Please select no more than ' + sel.max + ' (you have ' + n + ').'
+    }
+    return ''
+  }
 
   /**
    * The tighter of a native/attr bound and a counter denominator. Either
@@ -425,6 +521,7 @@
    * @returns {string} empty string when the group is valid
    */
   const groupMessage = (group, form) => {
+    if (group.sel) return selectionMessage(group)
     let msg = ''
     group.els.forEach((el) => {
       if (!isActive(el)) return
@@ -456,26 +553,22 @@
 
       /** @type {Map<string, FieldGroup>} */
       this.groups = new Map()
-      Array.from(form.querySelectorAll(FIELD_SELECTOR)).forEach((el) => {
-        const name = el.getAttribute('name')
-        if (!name) return
-        let group = this.groups.get(name)
-        if (!group) {
-          group = {
-            name,
-            els: [],
-            error: null,
-            messageEl: null,
-            success: null,
-            count: null,
-            countMax: null,
-            countWords: false,
-            touched: false,
-          }
-          this.groups.set(name, group)
-        }
-        group.els.push(/** @type {HTMLInputElement} */ (el))
-      })
+      /** selection wrapper -> its group, for events that originate inside a picker. @type {Map<Element, FieldGroup>} */
+      this.selGroups = new Map()
+      /** @type {HTMLElement | null} the form's error summary slot */
+      this.summary = null
+      /** @type {HTMLElement | null} */
+      this.summaryList = null
+      this.collect()
+
+      const summaryRoot = root || form
+      const summary = /** @type {HTMLElement | null} */ (summaryRoot.querySelector('[wf-validate-element="summary"]'))
+      if (summary) {
+        this.summary = summary
+        this.summaryList = summary.querySelector('[wf-validate-element="summary-list"]')
+        summary.setAttribute('role', 'alert')
+        summary.style.display = 'none'
+      }
 
       Array.from(form.querySelectorAll('[wf-validate-element="error"]')).forEach((error) => {
         const group = this.resolveTarget(/** @type {HTMLElement} */ (error))
@@ -490,6 +583,13 @@
         // no role: a success slot is not an alert, and its content is the
         // Designer's (we only toggle visibility)
         group.success.style.display = 'none'
+      })
+
+      Array.from(form.querySelectorAll('[wf-validate-element="meter"]')).forEach((meter) => {
+        const group = this.resolveTarget(/** @type {HTMLElement} */ (meter))
+        if (!group || !group.sel) return
+        group.meter = /** @type {HTMLElement} */ (meter)
+        this.updateMeter(group)
       })
 
       Array.from(form.querySelectorAll('[wf-validate-element="count"]')).forEach((count) => {
@@ -513,6 +613,10 @@
       form.addEventListener('input', (e) => this.onInput(e))
       form.addEventListener('change', (e) => this.onInput(e))
       form.addEventListener('reset', () => this.onReset())
+      // pickers change their selection on clicks (option added, chip removed)
+      // that fire no input/change on any named control: re-check the enclosing
+      // selection group after the widget's own click handlers have run
+      form.addEventListener('click', (e) => this.onSelectionClick(e))
       // cheap, silent backstop for reveal patterns that fire no other event
       // (tabs, wizard steps, a class-swapped panel): the instant the user enters
       // any field, the fields are certainly rendered, so re-measure completeness.
@@ -534,28 +638,190 @@
      * @returns {void}
      */
     refresh() {
-      Array.from(this.form.querySelectorAll(FIELD_SELECTOR)).forEach((el) => {
+      this.collect()
+      this.groups.forEach((group) => this.bindLimit(group))
+      this.applySubmitState()
+    }
+
+    /**
+     * Build (or extend) the name-keyed groups from the form's current controls
+     * and selection wrappers, in document order. Existing groups keep their
+     * touched/painted state; only genuinely new controls/wrappers are added.
+     * @returns {void}
+     */
+    collect() {
+      const blank = (name) => ({
+        name,
+        els: [],
+        error: null,
+        messageEl: null,
+        success: null,
+        count: null,
+        countMax: null,
+        countWords: false,
+        touched: false,
+        sel: null,
+        meter: null,
+      })
+      Array.from(this.form.querySelectorAll(FIELD_SELECTOR + ', ' + GROUP_SELECTOR)).forEach((node) => {
+        if (node.getAttribute('wf-validate-element') === 'group') {
+          const wrapper = /** @type {HTMLElement} */ (node)
+          if (this.selGroups.has(wrapper)) return
+          // a picker's own text input lives inside the wrapper; it is the
+          // wrapper that owns validity, so that control never forms a group
+          const name =
+            wrapper.getAttribute('wf-validate-name') ||
+            wrapper.id ||
+            wrapper.getAttribute('select-wrap-entity') ||
+            'wf-validate-group-' + ++uid
+          const min = wrapper.hasAttribute('required')
+            ? Math.max(1, parseInt(wrapper.getAttribute('wf-validate-min') || '', 10) || 0)
+            : parseInt(wrapper.getAttribute('wf-validate-min') || '', 10) || 0
+          const max = parseInt(wrapper.getAttribute('wf-validate-max') || '', 10)
+          const group = blank(name)
+          group.sel = {
+            wrapper,
+            min,
+            max: max > 0 ? max : NaN,
+            itemSelector: wrapper.getAttribute('wf-validate-item') || DEFAULT_ITEM_SELECTOR,
+            lastCount: NaN,
+          }
+          group.sel.lastCount = selectedCount(group.sel)
+          this.groups.set(name, group)
+          this.selGroups.set(wrapper, group)
+          this.observeSelection(group)
+          return
+        }
+        const el = node
         const name = el.getAttribute('name')
         if (!name) return
+        if (el.closest(GROUP_SELECTOR)) return
         let group = this.groups.get(name)
         if (!group) {
-          group = {
-            name,
-            els: [],
-            error: null,
-            messageEl: null,
-            success: null,
-            count: null,
-            countMax: null,
-            countWords: false,
-            touched: false,
-          }
+          group = blank(name)
           this.groups.set(name, group)
         }
         if (!group.els.includes(el)) group.els.push(/** @type {HTMLInputElement} */ (el))
       })
-      this.groups.forEach((group) => this.bindLimit(group))
+    }
+
+    /**
+     * Re-check a selection group whenever its DOM changes (chips added or
+     * removed by the picker), where MutationObserver exists. Silent until the
+     * group is touched; the submit-disable state always follows.
+     * @param {FieldGroup} group
+     * @returns {void}
+     */
+    observeSelection(group) {
+      if (typeof MutationObserver !== 'function' || !group.sel) return
+      const observer = new MutationObserver(() => this.onSelectionChange(group))
+      observer.observe(group.sel.wrapper, { childList: true, subtree: true })
+    }
+
+    /**
+     * @param {FieldGroup} group
+     * @returns {void}
+     */
+    onSelectionChange(group) {
+      if (!group.sel) return
+      // The meter and the (auto) error slot usually live INSIDE the wrapper, so
+      // painting them is itself a mutation the observer sees. Only a change in
+      // the selected count is a real change; everything else returns at once,
+      // which is what keeps observer -> paint -> observer from looping.
+      const n = selectedCount(group.sel)
+      if (n === group.sel.lastCount) return
+      group.sel.lastCount = n
+      this.updateMeter(group)
+      if (group.touched) this.validateGroup(group)
       this.applySubmitState()
+    }
+
+    /**
+     * A click inside a selection wrapper (option picked, chip removed): let the
+     * widget's own handlers finish, then re-check that group.
+     * @param {Event} e
+     * @returns {void}
+     */
+    onSelectionClick(e) {
+      const origin = e.target instanceof Element ? e.target : null
+      const wrapper = origin && origin.closest(GROUP_SELECTOR)
+      const group = wrapper && this.selGroups.get(wrapper)
+      if (!group) return
+      setTimeout(() => this.onSelectionChange(group), 0)
+    }
+
+    /**
+     * "n / max selected" (or "n selected"), plus " · pick k more" while a min
+     * is unmet — the same wording on every picker instead of per-widget copy.
+     * @param {FieldGroup} group
+     * @returns {void}
+     */
+    updateMeter(group) {
+      if (!group.meter || !group.sel) return
+      const n = selectedCount(group.sel)
+      const max = group.sel.max
+      let text = n + (max > 0 ? ' / ' + max : '') + ' selected'
+      if (group.sel.min > 0 && n < group.sel.min) text += ' · pick ' + (group.sel.min - n) + ' more'
+      group.meter.textContent = text
+    }
+
+    /**
+     * The element a summary link (or the gate) should focus for a group: the
+     * first control, or the first focusable thing inside a selection wrapper.
+     * @param {FieldGroup} group
+     * @returns {HTMLElement | null}
+     */
+    focusTargetFor(group) {
+      if (group.sel) {
+        const inner = /** @type {HTMLElement | null} */ (group.sel.wrapper.querySelector(FOCUSABLE_SELECTOR))
+        return inner || group.sel.wrapper
+      }
+      return group.els.find((el) => isActive(el)) || group.els[0] || null
+    }
+
+    /**
+     * Render (or hide) the error summary from the current group states. Called
+     * from validateAll only, so it appears when a submit is blocked or the API
+     * validates, and disappears the moment everything passes.
+     * @param {boolean} valid
+     * @returns {void}
+     */
+    renderSummary(valid) {
+      const slot = this.summary
+      if (!slot) return
+      const list = this.summaryList || slot
+      if (valid) {
+        slot.style.display = 'none'
+        list.textContent = ''
+        return
+      }
+      list.textContent = ''
+      let n = 0
+      this.groups.forEach((group) => {
+        const msg = groupMessage(group, this.form)
+        if (!msg) return
+        n += 1
+        const target = this.focusTargetFor(group)
+        const link = document.createElement('a')
+        link.setAttribute('href', '#')
+        link.setAttribute('wf-validate-element', 'summary-link')
+        link.textContent = msg
+        link.addEventListener('click', (e) => {
+          e.preventDefault()
+          if (target) bringIntoView(target)
+        })
+        list.appendChild(link)
+      })
+      if (!this.summaryList) {
+        const title = document.createElement('div')
+        title.setAttribute('wf-validate-element', 'summary-title')
+        title.textContent = (slot.getAttribute('wf-validate-summary-title') || DEFAULT_SUMMARY_TITLE).replace('{n}', String(n))
+        list.insertBefore(title, list.firstChild || null)
+      } else {
+        const titleEl = slot.querySelector('[wf-validate-element="summary-title"]')
+        if (titleEl) titleEl.textContent = (slot.getAttribute('wf-validate-summary-title') || DEFAULT_SUMMARY_TITLE).replace('{n}', String(n))
+      }
+      slot.style.display = ''
     }
 
     /**
@@ -568,8 +834,14 @@
     resolveTarget(slot) {
       const explicit = slot.getAttribute('wf-validate-for')
       if (explicit) return this.groups.get(explicit)
+      // a slot inside a selection wrapper belongs to that group, whatever
+      // controls the picker renders inside it
+      const wrapper = slot.parentElement && slot.parentElement.closest(GROUP_SELECTOR)
+      if (wrapper && this.selGroups.has(wrapper)) return this.selGroups.get(wrapper)
       let scope = slot.parentElement
       while (scope && scope !== this.form.parentElement) {
+        const nested = scope.querySelector(GROUP_SELECTOR)
+        if (nested && this.selGroups.has(nested)) return this.selGroups.get(nested)
         const field = scope.querySelector(FIELD_SELECTOR)
         if (field && field.getAttribute('name')) return this.groups.get(field.getAttribute('name') || '')
         scope = scope.parentElement
@@ -591,6 +863,7 @@
       error.setAttribute('role', 'alert')
       if (!error.id) error.id = 'wf-validate-error-' + ++uid
       group.els.forEach((el) => el.setAttribute('aria-describedby', error.id))
+      if (group.sel) group.sel.wrapper.setAttribute('aria-describedby', error.id)
     }
 
     /**
@@ -603,11 +876,12 @@
      */
     ensureError(group) {
       if (group.error) return
-      const anchor = group.els[group.els.length - 1]
+      const anchor = group.sel ? group.sel.wrapper : group.els[group.els.length - 1]
+      if (!anchor) return
       const error = document.createElement('div')
       error.setAttribute('wf-validate-element', 'error')
       error.className = 'wf-validate_error-auto'
-      ;(anchor.closest('label') || anchor).insertAdjacentElement('afterend', error)
+      ;((group.sel ? null : anchor.closest('label')) || anchor).insertAdjacentElement('afterend', error)
       this.adoptError(group, error)
     }
 
@@ -726,6 +1000,11 @@
         el.classList.toggle(INVALID_CLASS, !!msg)
         el.setAttribute('aria-invalid', msg ? 'true' : 'false')
       })
+      if (group.sel) {
+        group.sel.wrapper.classList.toggle(INVALID_CLASS, !!msg)
+        group.sel.wrapper.setAttribute('aria-invalid', msg ? 'true' : 'false')
+      }
+      if (group.meter) group.meter.style.display = msg ? 'none' : ''
       if (group.error) {
         ;(group.messageEl || group.error).textContent = msg || ''
         group.error.style.display = msg ? '' : 'none'
@@ -740,6 +1019,8 @@
      */
     groupFor(e) {
       const el = /** @type {HTMLElement} */ (e.target)
+      const wrapper = el && typeof el.closest === 'function' ? el.closest(GROUP_SELECTOR) : null
+      if (wrapper && this.selGroups.has(wrapper)) return this.selGroups.get(wrapper)
       const name = el.getAttribute && el.getAttribute('name')
       return name ? this.groups.get(name) : undefined
     }
@@ -868,6 +1149,7 @@
       const group = this.groupFor(e)
       if (!group) return
       this.updateCount(group)
+      this.updateMeter(group)
       if (group.touched) this.validateGroup(group)
       this.applySubmitState()
     }
@@ -885,8 +1167,12 @@
         this.paint(group, '')
       })
       this.form.classList.remove(INVALID_CLASS)
+      this.renderSummary(true)
       setTimeout(() => {
-        this.groups.forEach((group) => this.updateCount(group))
+        this.groups.forEach((group) => {
+          this.updateCount(group)
+          this.updateMeter(group)
+        })
         this.applySubmitState()
       }, 0)
     }
@@ -913,6 +1199,7 @@
         if (!this.validateGroup(group, true)) valid = false
       })
       this.form.classList.toggle(INVALID_CLASS, !valid)
+      this.renderSummary(valid)
       this.applySubmitState()
       return valid
     }
@@ -920,6 +1207,19 @@
 
   /** form element -> validator, so re-init never double-binds. @type {WeakMap<HTMLFormElement, FormValidator>} */
   const bound = new WeakMap()
+
+  /**
+   * Focus without the browser's own instant scroll, then center the element
+   * ourselves (smoothly, or instantly under prefers-reduced-motion). Used by the
+   * gates and by summary links.
+   * @param {HTMLElement} el
+   * @returns {void}
+   */
+  const bringIntoView = (el) => {
+    el.focus({ preventScroll: true })
+    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
+  }
 
   /**
    * Shared invalid-gate: validate, and on failure kill the event before any
@@ -939,9 +1239,9 @@
     e.stopImmediatePropagation()
     const firstInvalid = /** @type {HTMLElement | null} */ (validator.form.querySelector('.' + INVALID_CLASS))
     if (!firstInvalid) return
-    firstInvalid.focus({ preventScroll: true })
-    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    firstInvalid.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
+    // an invalid selection wrapper is not focusable itself: land on the picker's input
+    const group = validator.selGroups.get(firstInvalid)
+    bringIntoView(group ? validator.focusTargetFor(group) || firstInvalid : firstInvalid)
   }
 
   /**
