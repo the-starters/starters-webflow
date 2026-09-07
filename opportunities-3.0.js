@@ -4054,7 +4054,7 @@
   }
 
   // Returns a promise so the designed modal can resolve the intent. The
-  // prompt/confirm path stays reachable for pages published before the
+  // confirmation fallback stays reachable for pages published before the
   // `end-project` markup shipped, so a rollout skew never strands the button.
   async function projectActionIntent(
     project,

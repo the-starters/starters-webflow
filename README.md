@@ -1099,12 +1099,13 @@ The primary control's label and mutation follow canonical lifecycle state,
 except that canonical `status=pending` takes precedence over a more specific
 `lifecycle_state` and always exposes one authorized cancel action. A started
 project's End Project action always means completion for both roles; there is no
-early-end mode and no end reason is sent. Pre-activation projects cancel through a compact confirmation without feedback.
+early-end mode and no end reason is sent. Pre-activation projects cancel through
+a compact confirmation without feedback.
 The optional reason is empty; Xano records `canceled_before_activation`.
-Cancellation does not create a review or change ranking points. Xano #1679 finalizes the project on the first action by
-either party. Kaeser changed this behavior on 2026-09-01 to match V2. No
-counterparty confirmation is required. Terminal projects expose no lifecycle
-action.
+Cancellation does not create a review or change ranking points. Xano #1679
+finalizes the project on the first action by either party. Kaeser changed this
+behavior on 2026-09-01 to match V2. No counterparty confirmation is required.
+Terminal projects expose no lifecycle action.
 
 The lifecycle intent opens the separate Webflow-authored
 `data-modal-target="end-project"` dialog on both role dashboards. Both the Brand
@@ -1123,10 +1124,10 @@ equivalent `data-end-project-bind` values) to display the active project's
 canonical title and numeric ID in every state. When the Starter component places
 these bindings in its reused `[booking-element-wrap][display-flex]` rows, the
 controller reveals each populated row as flex after binding the identity. The
-controller removes native `required` constraints while a group is hidden. The Brand completion
-review stays optional, so the controller also clears its native constraint when
-shown and uses JavaScript to reject a half-filled review. Author the submit
-control as the standard Clickable Wrap: the empty `button.clickable_btn` remains
+controller removes native `required` constraints while a group is hidden. The
+Brand completion review stays optional, so the controller also clears its native
+constraint when shown and uses JavaScript to reject a half-filled review. Author
+the submit control as the standard Clickable Wrap: the empty `button.clickable_btn` remains
 the native submitter, while every `.button_main-text` in its `.button_main-wrap`
 receives the state-specific caption. A legacy plain button can instead keep its
 caption in a nested `div` or `span`. Pre-activation projects paint the
