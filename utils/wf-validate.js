@@ -310,8 +310,6 @@
   /**
    * @typedef {Object} SelectionSpec
    * @property {HTMLElement} wrapper  the element carrying wf-validate-element="group"
-   * @property {number} min  0 when unbounded
-   * @property {number} max  NaN when unbounded
    * @property {string} itemSelector
    * @property {number} [lastCount]  last selected count seen by onSelectionChange
    */
@@ -323,6 +321,21 @@
    * @returns {boolean}
    */
   const isRendered = (el) => typeof el.getClientRects !== 'function' || el.getClientRects().length > 0
+
+  /**
+   * A selection group's bounds, read LIVE from the wrapper on every check so a
+   * page controller can raise, lower or drop them after bind (the profile
+   * pickers share one wrapper across profile types and the controller decides
+   * per member whether a minimum applies). A bare `required` means min 1.
+   * @param {HTMLElement} wrapper
+   * @returns {{min: number, max: number}} min 0 when unbounded, max NaN when unbounded
+   */
+  const boundsOf = (wrapper) => {
+    const attrMin = parseInt(wrapper.getAttribute('wf-validate-min') || '', 10) || 0
+    const min = wrapper.hasAttribute('required') ? Math.max(1, attrMin) : attrMin
+    const max = parseInt(wrapper.getAttribute('wf-validate-max') || '', 10)
+    return { min, max: max > 0 ? max : NaN }
+  }
 
   /**
    * How many items are currently selected inside a selection group.
@@ -341,16 +354,17 @@
     const sel = /** @type {SelectionSpec} */ (group.sel)
     if (!isRendered(sel.wrapper)) return ''
     const w = sel.wrapper
+    const { min, max } = boundsOf(w)
     const n = selectedCount(sel)
     const override = (rule) => w.getAttribute('wf-validate-message-' + rule) || w.getAttribute('wf-validate-message')
-    if (sel.min > 0 && n === 0) {
-      return override('required') || override('min') || 'Please select ' + (sel.min === 1 ? 'an option.' : 'at least ' + sel.min + ' options.')
+    if (min > 0 && n === 0) {
+      return override('required') || override('min') || 'Please select ' + (min === 1 ? 'an option.' : 'at least ' + min + ' options.')
     }
-    if (sel.min > 0 && n < sel.min) {
-      return override('min') || 'Please select at least ' + sel.min + ' (you have ' + n + ').'
+    if (min > 0 && n < min) {
+      return override('min') || 'Please select at least ' + min + ' (you have ' + n + ').'
     }
-    if (sel.max > 0 && n > sel.max) {
-      return override('max') || 'Please select no more than ' + sel.max + ' (you have ' + n + ').'
+    if (max > 0 && n > max) {
+      return override('max') || 'Please select no more than ' + max + ' (you have ' + n + ').'
     }
     return ''
   }
@@ -674,15 +688,9 @@
             wrapper.id ||
             wrapper.getAttribute('select-wrap-entity') ||
             'wf-validate-group-' + ++uid
-          const min = wrapper.hasAttribute('required')
-            ? Math.max(1, parseInt(wrapper.getAttribute('wf-validate-min') || '', 10) || 0)
-            : parseInt(wrapper.getAttribute('wf-validate-min') || '', 10) || 0
-          const max = parseInt(wrapper.getAttribute('wf-validate-max') || '', 10)
           const group = blank(name)
           group.sel = {
             wrapper,
-            min,
-            max: max > 0 ? max : NaN,
             itemSelector: wrapper.getAttribute('wf-validate-item') || DEFAULT_ITEM_SELECTOR,
             lastCount: NaN,
           }
@@ -759,9 +767,9 @@
     updateMeter(group) {
       if (!group.meter || !group.sel) return
       const n = selectedCount(group.sel)
-      const max = group.sel.max
+      const { min, max } = boundsOf(group.sel.wrapper)
       let text = n + (max > 0 ? ' / ' + max : '') + ' selected'
-      if (group.sel.min > 0 && n < group.sel.min) text += ' · pick ' + (group.sel.min - n) + ' more'
+      if (min > 0 && n < min) text += ' · pick ' + (min - n) + ' more'
       group.meter.textContent = text
     }
 
