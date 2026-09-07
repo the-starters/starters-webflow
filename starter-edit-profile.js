@@ -391,8 +391,13 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 		{ selector: '#bio-html', kind: 'mirror', focusSelector: '.ql-editor, [contenteditable="true"]' },
 	],
 	5: [
-		{ selector: '#skills-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="skill-option"], [fs-list-instance="skills"] input' },
-		{ selector: '#tools-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="tool-option"], [fs-list-instance="tools"] input' },
+		// Selection groups: validity is the number of selected chips inside the picker
+		// wrapper, not the hidden `input-required` mirror. The same wrapper also carries
+		// wf-validate-element="group", and syncSelectionGroupBounds() keeps its
+		// wf-validate-min in step with the active profile type so the library's gate
+		// and this contract enforce one rule.
+		{ selector: '[select-wrap-entity="skills"]', kind: 'group', min: 3, profileTypes: ['full'], focusSelector: '[name="skill-option"], [fs-list-instance="skills"] input' },
+		{ selector: '[select-wrap-entity="tools"]', kind: 'group', min: 2, profileTypes: ['full'], focusSelector: '[name="tool-option"], [fs-list-instance="tools"] input' },
 	],
 	6: [
 		{ selector: '[name="rate"]', kind: 'nativeConditional' },
@@ -409,9 +414,29 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 	],
 });
 
-function ruleApplies(rule) {
+function ruleApplies(rule, type = window.activeProfile?.type || '') {
 	if (!rule.profileTypes?.length) return true;
-	return rule.profileTypes.includes(window.activeProfile?.type || '');
+	return rule.profileTypes.includes(type);
+}
+
+const SELECTED_CHIP_SELECTOR = '[ms-code-select="tag"]';
+
+function selectedChipCount(wrapper) {
+	return qsa(SELECTED_CHIP_SELECTOR, wrapper).length;
+}
+
+// Mirror each `group` rule's minimum onto its wrapper as wf-validate-min for the
+// active profile type, and drop it otherwise, so utils/wf-validate.js (which reads
+// the bound live) gates the step 5 save with exactly the rule this controller checks.
+function syncSelectionGroupBounds(type) {
+	Object.values(STEP_VALIDATION_CONTRACT).forEach((rules) => {
+		rules.filter((rule) => rule.kind === 'group').forEach((rule) => {
+			qsa(rule.selector).forEach((wrapper) => {
+				if (ruleApplies(rule, type)) wrapper.setAttribute('wf-validate-min', String(rule.min));
+				else wrapper.removeAttribute('wf-validate-min');
+			});
+		});
+	});
 }
 
 function nonEmptyValue(field) {
@@ -470,8 +495,12 @@ function validateOwnedStep(stepIndex, { report = false } = {}) {
 		return { valid: false, failures: [validationFailure('PROFILE_NOT_READY', { selector: '' })] };
 	}
 
+	// Idempotent: the bound on each picker wrapper must reflect the profile type at
+	// the moment of the check, whatever the hydration order was.
+	syncSelectionGroupBounds(window.activeProfile.type);
+
 	const failures = [];
-	rules.filter(ruleApplies).forEach((rule) => {
+	rules.filter((rule) => ruleApplies(rule)).forEach((rule) => {
 		if (rule.kind === 'reviewerTuple') {
 			failures.push(...validateReviewerTuple(rule, step));
 			return;
@@ -494,6 +523,11 @@ function validateOwnedStep(stepIndex, { report = false } = {}) {
 
 		if (rule.kind === 'mirror') {
 			if (!nonEmptyValue(field)) failures.push(validationFailure('MIRROR_VALUE_MISSING', rule, field));
+			return;
+		}
+
+		if (rule.kind === 'group') {
+			if (selectedChipCount(field) < rule.min) failures.push(validationFailure('GROUP_MIN_NOT_MET', rule, field));
 			return;
 		}
 
@@ -616,6 +650,8 @@ onDomReady(function () {
 				const checkForType = input.dataset.nonRequired;
 				input.required = checkForType === type ? false : true;
 			});
+
+			syncSelectionGroupBounds(type);
 		}
 
 		/* SUBMIT METHODS */

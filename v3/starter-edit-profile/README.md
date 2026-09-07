@@ -211,3 +211,14 @@ workflow is tracked in [PROGRESS-CHECKLIST.md](PROGRESS-CHECKLIST.md).
 8. Verify current network responses, console-only diagnostics, and no unexpected
    Xano writes. Obtain separate approval before production publish and repeat QA.
 9. Scan every authorized published domain for Airtable, Make, and PAT exposure patterns.
+
+## Step 5 validation (skills, tools) since 2026-09-07
+
+Step 5 no longer reads the hidden `#skills-required` / `#tools-required` mirror inputs. Its two
+rules are `kind: 'group'`: the controller counts selected chips (`[ms-code-select="tag"]`) inside
+`[select-wrap-entity="skills"]` (minimum 3) and `[select-wrap-entity="tools"]` (minimum 2), for Full
+profiles only. `syncSelectionGroupBounds(type)` mirrors that minimum onto each wrapper as
+`wf-validate-min` (and removes it for Consult), so `utils/wf-validate.js`, which the wrappers opt
+into with `wf-validate-element="group"`, gates the tab 5 save with the same rule. The mirror inputs
+stay authored in Webflow because the shared picker widget and the Build pages still write them; only
+this controller's step 5 rules stopped depending on them. Failure code: `GROUP_MIN_NOT_MET`.
