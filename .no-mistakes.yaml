@@ -1,5 +1,5 @@
-# Use Claude for repository review and validation.
-agent: claude
+# Use Codex for repository review and validation.
+agent: codex
 
 ignore_patterns:
   - "*.min.js"
