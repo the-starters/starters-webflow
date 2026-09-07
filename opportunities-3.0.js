@@ -1823,6 +1823,7 @@
   const INVOICE_MIN_AMOUNT = 0.01
   const INVOICE_MAX_AMOUNT = 1000000
   const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
+  const INVOICE_FINAL_AMOUNT_MESSAGE = 'Enter a final invoice amount between $0.01 and $1,000,000, with no more than two decimal places.'
   const INVOICE_FINAL_DESCRIPTION_MAX_LENGTH = 500
   const INVOICE_FINAL_DESCRIPTION_MESSAGE =
     'Enter a final invoice description between 1 and 500 characters.'
@@ -1930,6 +1931,7 @@
           ? 'final_closed'
           : (completed ? 'unavailable' : 'standard'),
       finalInvoiceId: Number(finalPlaceholder && finalPlaceholder.id) || null,
+      finalInvoiceRecoveryReady: recoveryReady,
       finalInvoiceStatus: finalState.state === 'terminal'
         ? String(finalState.invoice.status || '').trim().toLowerCase()
         : '',
@@ -1947,6 +1949,13 @@
     const amount = Math.round(raw * 100) / 100
     if (amount < INVOICE_MIN_AMOUNT || amount > INVOICE_MAX_AMOUNT) return null
     return amount
+  }
+
+  // Final invoices must preserve the entered cents, never silently round them.
+  function normalizeFinalInvoiceAmount(value) {
+    const text = String(value == null ? '' : value).trim()
+    if (!/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)) return null
+    return normalizeInvoiceAmount(text)
   }
 
   /**
@@ -2097,6 +2106,8 @@
       const amountInput = typeof form.querySelector === 'function'
         ? ($('#Amount', form) || $('[name="Amount"]', form))
         : null
+      const recovering = Boolean(context && context.invoiceMode === 'final' && context.finalInvoiceRecoveryReady)
+      if (amountInput) amountInput.readOnly = recovering
       if (amountInput && recoveryAmount !== null) amountInput.value = String(recoveryAmount)
       const recoveryDescription = context && context.invoiceMode === 'final'
         ? normalizeFinalInvoiceDescription(context.finalInvoiceDescription)
@@ -2104,6 +2115,7 @@
       const descriptionInput = typeof form.querySelector === 'function'
         ? ($('#Description', form) || $('[name="Description"]', form))
         : null
+      if (descriptionInput) descriptionInput.readOnly = recovering
       if (descriptionInput && recoveryDescription !== null) descriptionInput.value = recoveryDescription
       form.style.display = ''
       delete form.dataset.invoiceIdempotencyKey
@@ -2431,16 +2443,22 @@
 
       const amountInput = $('#Amount', form) || $('[name="Amount"]', form)
       const descriptionInput = $('#Description', form) || $('[name="Description"]', form)
-      const amount = normalizeInvoiceAmount(amountInput && amountInput.value)
+      const recovering = context.invoiceMode === 'final' && context.finalInvoiceRecoveryReady
+      const rawAmount = recovering ? context.finalInvoiceAmount : amountInput && amountInput.value
+      const amount = context.invoiceMode === 'final'
+        ? normalizeFinalInvoiceAmount(rawAmount)
+        : normalizeInvoiceAmount(rawAmount)
       if (amount === null) {
         invoiceError(
           modal,
-          INVOICE_AMOUNT_MESSAGE,
+          context.invoiceMode === 'final' ? INVOICE_FINAL_AMOUNT_MESSAGE : INVOICE_AMOUNT_MESSAGE,
           validationDiagnostic('generate_invoice', 'invoice', 'INVALID_AMOUNT'),
         )
         return
       }
-      const rawDescription = descriptionInput ? descriptionInput.value : ''
+      const rawDescription = recovering
+        ? context.finalInvoiceDescription
+        : (descriptionInput ? descriptionInput.value : '')
       const description = context.invoiceMode === 'final'
         ? normalizeFinalInvoiceDescription(rawDescription)
         : String(rawDescription || '').trim()

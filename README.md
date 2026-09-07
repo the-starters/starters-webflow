@@ -1275,7 +1275,9 @@ only one of the two fields still reaches its final-invoice route.
 
 A `final` placeholder marked `recovery_ready=true` prefills the modal's `Amount`
 and `Description` from its stored values, so a stalled final invoice can be
-regenerated without retyping. Each stored value must still pass that field's own
+regenerated without retyping. Recovery fields are read-only, and submission uses
+the canonical recovery values even if the DOM is edited. Reopening an ordinary
+or new final invoice restores editable fields. Each stored value must still pass that field's own
 rule below, so an out-of-range amount or an over-long description is left blank
 rather than prefilled. Without the flag both fields are left blank: a placeholder
 the projection has not marked recoverable never leaks a stale amount or
@@ -1307,7 +1309,10 @@ with a console warning instead of turning another button into an invoice submit
 settle it. A wrapper marked disabled by attribute (`data-validate-disabled`,
 `data-button-theme="disabled"`, `aria-disabled="true"`) is never converted.
 
-`Amount` and `Description` are resolved by id or input name. The amount is
+`Amount` and `Description` are resolved by id or input name. New final invoices
+reject amounts with more than two decimal places before any request; they never
+silently round the entered amount. Ordinary invoices retain their existing
+rounding behavior. The ordinary invoice amount is
 rounded to cents and must land between $0.01 and $1,000,000, otherwise the
 inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
 nothing is sent. A submit from a modal that was opened without a project card

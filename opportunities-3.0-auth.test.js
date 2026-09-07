@@ -8928,3 +8928,55 @@ test('a validation failure shows our copy, not the Webflow default', async () =>
   assert.match(dom.fail.textContent, /what happened/)
   assert.doesNotMatch(dom.fail.textContent, /Oops! Something went wrong/)
 })
+
+test('final invoice recovery locks fields and submits the canonical values despite DOM edits', async () => {
+  const dom = invoiceSubmitDom()
+  const requests = []
+  const document = documentWith(dom.modal)
+  const bridge = await loadBridge(async (input, init = {}) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    if (url.includes('/invoices/final-create/v3')) {
+      requests.push(JSON.parse(init.body))
+      return response({ invoice_id: 961, status: 'unpaid' })
+    }
+    return response({ items: [] })
+  }, { member: talentMember, querySelector: document.querySelector, querySelectorAll: document.querySelectorAll })
+  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
+  const context = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746, status: 'completed', lifecycle_state: 'completed',
+    final_invoice: { id: 961, kind: 'stripe_invoice', handoff_type: 'final', sync_origin: 'v3', status: 'unknown',
+      recovery_ready: true, amount: 125.29, description: 'Original final work' },
+  })
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
+  assert.equal(dom.amount.readOnly, true)
+  assert.equal(dom.description.readOnly, true)
+  dom.amount.value = '200'
+  dom.description.value = 'Changed after preparation'
+  bridge.dispatchDocument('submit', { target: dom.form, preventDefault() {}, stopPropagation() {} })
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.equal(requests[0].amount, 125.29)
+  assert.equal(requests[0].description, 'Original final work')
+  assert.ok(await waitFor(() => dom.modal.querySelector('.w-form-done').style.display === 'block'))
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, { projectId: 747, invoiceMode: 'standard' })
+  assert.equal(dom.amount.readOnly, false)
+  assert.equal(dom.description.readOnly, false)
+})
+
+test('final invoices reject extra decimal places before any request', async () => {
+  for (const value of ['1.001', '1.999', '125.290']) {
+    const dom = invoiceSubmitDom()
+    const requests = []
+    const document = documentWith(dom.modal)
+    const bridge = await loadBridge(async input => { requests.push(String(input)); return response({}) }, {
+      member: talentMember, querySelector: document.querySelector, querySelectorAll: document.querySelectorAll,
+    })
+    bridge.window.Opp30.prepareInvoiceModal(dom.modal, { projectId: 746, invoiceMode: 'final', finalInvoiceId: 961 })
+    dom.amount.value = value
+    dom.description.value = 'Final work'
+    bridge.dispatchDocument('submit', { target: dom.form, preventDefault() {}, stopPropagation() {} })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.deepEqual(requests, [])
+    assert.match(dom.modal.querySelector('.w-form-fail').textContent, /two decimal places/)
+  }
+})
