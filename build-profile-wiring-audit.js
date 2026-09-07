@@ -1,4 +1,5 @@
 const fs = require('node:fs')
+const path = require('node:path')
 
 const BUILD_PROFILE_PAGES = [
   '/build-profile/full-profile',
@@ -15,6 +16,16 @@ const DRAFT_IDENTITY_GUARD_SRC_RE =
   /^https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@(?:v\d+\.\d+\.\d+|[0-9a-f]{7,40})\/build-profile-draft-identity-guard\.js$/
 
 const AUTHORITATIVE_ENDPOINT_RE = /build_profile\/starter\/update/
+
+// Since the inline-extraction cutover the authoritative click owner is not in the
+// page: the page loads it from the Starters CDN. The audit then reads the owner
+// from that module's source (the repo copy by default, or an explicit file), so
+// the click-path check still runs against what the page actually executes.
+const SUBMIT_WRITER_TAG_RE =
+  /<script\b[^>]*\bsrc=["']([^"']*\/v3\/build-profile\/submit-writer\.js[^"']*)["'][^>]*>/i
+const STARTERS_SUBMIT_WRITER_SRC_RE =
+  /^https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/"'\s]+\/v3\/build-profile\/submit-writer\.js(?:\?[^"'\s]*)?$/
+const DEFAULT_SUBMIT_WRITER_PATH = path.join(__dirname, 'v3', 'build-profile', 'submit-writer.js')
 
 const ONBOARDING_PATH = '/starter-onboarding'
 
@@ -275,7 +286,35 @@ function ownsAuthoritativeClickSubmit(html) {
   return false
 }
 
-function auditBuildProfileHtml(pagePath, html) {
+/**
+ * Where the authoritative click owner lives for this page: the page itself when
+ * it still inlines the writer, otherwise the CDN-loaded submit-writer module.
+ * Returns the combined source the owner checks should read, plus findings.
+ * @param {string} html
+ * @param {{submitWriterSource?: string | null}} options
+ */
+function resolveOwnerSource(html, options) {
+  const findings = []
+  if (AUTHORITATIVE_ENDPOINT_RE.test(html)) return { source: html, origin: 'inline', findings }
+  const tag = SUBMIT_WRITER_TAG_RE.exec(html)
+  if (!tag) return { source: html, origin: 'inline', findings }
+  const src = tag[1]
+  if (!STARTERS_SUBMIT_WRITER_SRC_RE.test(src)) {
+    findings.push(`submit-writer must load from the Starters jsDelivr repo, found: ${src}`)
+    return { source: html, origin: 'cdn', findings }
+  }
+  let writer = options.submitWriterSource
+  if (writer === undefined) {
+    writer = fs.existsSync(DEFAULT_SUBMIT_WRITER_PATH) ? fs.readFileSync(DEFAULT_SUBMIT_WRITER_PATH, 'utf8') : null
+  }
+  if (!writer) {
+    findings.push('submit-writer is loaded from the CDN but its source could not be resolved for the click-owner check')
+    return { source: html, origin: 'cdn', findings }
+  }
+  return { source: `${html}\n${writer}`, origin: 'cdn', findings }
+}
+
+function auditBuildProfileHtml(pagePath, html, options = {}) {
   if (!BUILD_PROFILE_PAGES.includes(pagePath)) {
     throw new Error(`unsupported build-profile page: ${pagePath}`)
   }
@@ -312,9 +351,11 @@ function auditBuildProfileHtml(pagePath, html) {
     }
   }
 
-  const hasAuthoritativeEndpoint = AUTHORITATIVE_ENDPOINT_RE.test(html)
+  const owner = resolveOwnerSource(html, options)
+  findings.push(...owner.findings)
+  const hasAuthoritativeEndpoint = AUTHORITATIVE_ENDPOINT_RE.test(owner.source)
   const hasFormSubmitControl = /\bform-submit(?:\s*=\s*(?:""|''))?/.test(html)
-  const hasDirectClickOwner = ownsAuthoritativeClickSubmit(html)
+  const hasDirectClickOwner = ownsAuthoritativeClickSubmit(owner.source)
 
   if (!hasAuthoritativeEndpoint) {
     findings.push('authoritative build-profile Xano endpoint is missing')
@@ -355,24 +396,37 @@ function auditBuildProfileHtml(pagePath, html) {
     findings,
     ok: findings.length === 0,
     pagePath,
+    submitOwnerSource: owner.origin,
   }
 }
 
 function parseArgs(argv) {
   const files = new Map()
-  for (let index = 0; index < argv.length; index += 2) {
-    const pagePath = argv[index]
-    const filePath = argv[index + 1]
+  let submitWriterPath = null
+  const rest = []
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === '--submit-writer') {
+      submitWriterPath = argv[index + 1]
+      if (!submitWriterPath) throw new Error('--submit-writer needs a file path')
+      index += 1
+      continue
+    }
+    rest.push(argv[index])
+  }
+  for (let index = 0; index < rest.length; index += 2) {
+    const pagePath = rest[index]
+    const filePath = rest[index + 1]
     if (!pagePath || !filePath) {
-      throw new Error('usage: node build-profile-wiring-audit.js <page-path> <html-file> [...]')
+      throw new Error('usage: node build-profile-wiring-audit.js [--submit-writer <js-file>] <page-path> <html-file> [...]')
     }
     files.set(pagePath, filePath)
   }
-  return files
+  return { files, submitWriterPath }
 }
 
 function runCli(argv) {
-  const files = parseArgs(argv)
+  const { files, submitWriterPath } = parseArgs(argv)
+  const options = submitWriterPath ? { submitWriterSource: fs.readFileSync(submitWriterPath, 'utf8') } : {}
   const missing = BUILD_PROFILE_PAGES.filter((pagePath) => !files.has(pagePath))
   if (missing.length) {
     throw new Error(`missing required page snapshots: ${missing.join(', ')}`)
@@ -381,9 +435,9 @@ function runCli(argv) {
   let failed = false
   for (const pagePath of BUILD_PROFILE_PAGES) {
     const html = fs.readFileSync(files.get(pagePath), 'utf8')
-    const result = auditBuildProfileHtml(pagePath, html)
+    const result = auditBuildProfileHtml(pagePath, html, options)
     if (result.ok) {
-      console.log(`PASS ${pagePath}: one pinned engine and direct Xano click owner`)
+      console.log(`PASS ${pagePath}: one pinned engine and direct Xano click owner (${result.submitOwnerSource})`)
       continue
     }
 
