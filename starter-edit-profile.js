@@ -381,9 +381,12 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 		{ selector: '[name="state"]', kind: 'nativeConditional' },
 		{ selector: '[name="city"]', kind: 'nativeConditional' },
 		{ selector: '#profile-photo-url', kind: 'mirror', focusSelector: '[data-profile-photo-input], input[type="file"]' },
-		{ selector: '#function-required', kind: 'mirror', focusSelector: '[name="function-option"], [fs-list-instance="function"] input' },
-		{ selector: '#roles-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="role-option"], [fs-list-instance="roles"] input' },
-		{ selector: '#subcategories-required', kind: 'mirror', profileTypes: ['consult'], focusSelector: '[name="subcategories-option"], [fs-list-instance="subcategories"] input' },
+		// Selection groups (see step 5): chip counts inside the picker wrapper, not the
+		// hidden `input-required` mirrors. syncSelectionGroupBounds() mirrors each
+		// minimum onto the wrapper as wf-validate-min for the active profile type.
+		{ selector: '[select-wrap-entity="functions"]', kind: 'group', min: 1, focusSelector: '[name="function-option"], [fs-list-instance="function"] input' },
+		{ selector: '[select-wrap-entity="roles"]', kind: 'group', min: 1, profileTypes: ['full'], focusSelector: '[name="role-option"], [fs-list-instance="roles"] input' },
+		{ selector: '[select-wrap-entity="subcategories"]', kind: 'group', min: 1, profileTypes: ['consult'], focusSelector: '[name="subcategories-option"], [fs-list-instance="subcategories"] input' },
 	],
 	2: [
 		{ selector: '#tagline', kind: 'native' },

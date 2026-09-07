@@ -129,9 +129,9 @@ function createEnvironment(fetchImpl, {
       '[name="state"]': createField('[name="state"]', { value: '', required: false }),
       '[name="city"]': createField('[name="city"]', { value: '', required: false }),
       '#profile-photo-url': createField('#profile-photo-url', { value: 'https://example.test/profile.jpg' }),
-      '#function-required': createField('#function-required', { value: '1' }),
-      '#roles-required': createField('#roles-required', { value: '1' }),
-      '#subcategories-required': createField('#subcategories-required', { value: '1' }),
+      '[select-wrap-entity="functions"]': createGroup('[select-wrap-entity="functions"]', 1),
+      '[select-wrap-entity="roles"]': createGroup('[select-wrap-entity="roles"]', 1),
+      '[select-wrap-entity="subcategories"]': createGroup('[select-wrap-entity="subcategories"]', 1),
     },
     2: {
       '#tagline': createField('#tagline', { value: 'Product strategist', required: publishedRequired(2, 'tagline') }),
@@ -1551,7 +1551,7 @@ async function testEmptyMirrorFocusesAuthoredControlWithoutStartingRequest() {
     throw new Error('fetch must not run')
   }, {
     workflowDiagnostics: true,
-    fieldOverrides: { '#function-required': { value: '' } },
+    fieldOverrides: { '[select-wrap-entity="functions"]': { chips: 0 } },
   })
 
   await submit(environment)
@@ -1559,7 +1559,7 @@ async function testEmptyMirrorFocusesAuthoredControlWithoutStartingRequest() {
   assert.equal(environment.requests.length, 0)
   assert.equal(environment.focusTarget.focusCount, 1)
   assert.equal(environment.button.style.pointerEvents ?? '', '')
-  assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'MIRROR_VALUE_MISSING')
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'GROUP_MIN_NOT_MET')
 }
 
 async function testMissingAuthoredMarkerFailsClosed() {
@@ -1599,7 +1599,7 @@ async function testProfileTypeSelectsOnlyItsOwnedMirrorBranch() {
     json: async () => ({ saved: true, projection_pending: false }),
   }), {
     profileType: 'consult',
-    fieldOverrides: { '#roles-required': { value: '' } },
+    fieldOverrides: { '[select-wrap-entity="roles"]': { chips: 0 } },
   })
   await submit(consultValid)
   assert.equal(consultValid.requests.length, 1)
@@ -1608,7 +1608,7 @@ async function testProfileTypeSelectsOnlyItsOwnedMirrorBranch() {
     throw new Error('fetch must not run')
   }, {
     profileType: 'consult',
-    fieldOverrides: { '#subcategories-required': { value: '' } },
+    fieldOverrides: { '[select-wrap-entity="subcategories"]': { chips: 0 } },
   })
   await submit(consultInvalid)
   assert.equal(consultInvalid.requests.length, 0)
