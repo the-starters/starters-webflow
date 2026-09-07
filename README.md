@@ -1275,9 +1275,13 @@ only one of the two fields still reaches its final-invoice route.
 
 A `final` placeholder marked `recovery_ready=true` prefills the modal's `Amount`
 and `Description` from its stored values, so a stalled final invoice can be
-regenerated without retyping. Each stored value must still pass that field's own
-rule below, so an out-of-range amount or an over-long description is left blank
-rather than prefilled. Without the flag both fields are left blank: a placeholder
+regenerated without retyping. Recovery fields are read-only, and submission uses
+the canonical recovery values even if the DOM is edited. Reopening an ordinary
+or new final invoice restores editable fields. Recovery amounts are normalized
+to cents and checked against the billable range; recovery descriptions are
+trimmed and checked against the final-description rule below. Invalid values
+are left blank, remain read-only, and block submission until the canonical data
+is corrected and reloaded. Without the flag both fields are left blank: a placeholder
 the projection has not marked recoverable never leaks a stale amount or
 description into a new submit. The browser sends no provider identity — the
 placeholder's own id and any Stripe reference stay server-side.
@@ -1307,8 +1311,12 @@ with a console warning instead of turning another button into an invoice submit
 settle it. A wrapper marked disabled by attribute (`data-validate-disabled`,
 `data-button-theme="disabled"`, `aria-disabled="true"`) is never converted.
 
-`Amount` and `Description` are resolved by id or input name. The amount is
-rounded to cents and must land between $0.01 and $1,000,000, otherwise the
+`Amount` and `Description` are resolved by id or input name. New final invoices
+require a decimal amount between $0.01 and $1,000,000 with no more than two
+decimal places; they never silently round the entered amount. Invalid amounts
+in `final` mode show `Enter a final invoice amount between $0.01 and $1,000,000,
+with no more than two decimal places.` before any request. The ordinary invoice
+amount is rounded to cents and must land between $0.01 and $1,000,000, otherwise the
 inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
 nothing is sent. A submit from a modal that was opened without a project card
 fails closed with `Open Generate Invoice from the project you want to bill, so
