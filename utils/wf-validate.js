@@ -1142,7 +1142,9 @@
         const pos = before.length + insert.length
         el.setSelectionRange(pos, pos)
       }
-      this.onInput({ target: el })
+      // Native paste was prevented, so notify every field consumer of the mutation.
+      // The form's delegated input listener also refreshes validation and counters.
+      el.dispatchEvent(new Event('input', { bubbles: true }))
     }
 
     /** Field blurred: first moment an error may appear. @param {Event} e @returns {void} */

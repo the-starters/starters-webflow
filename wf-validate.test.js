@@ -211,6 +211,16 @@ class Element {
     this.selectionEnd = end
   }
 
+  dispatchEvent(event) {
+    event.target = this
+    let node = this
+    do {
+      for (const listener of node._listeners.get(event.type) || []) listener(event)
+      node = event.bubbles && !event.stopped ? node.parentElement : null
+    } while (node)
+    return !event.defaultPrevented
+  }
+
   addEventListener(type, listener) {
     const list = this._listeners.get(type) || []
     list.push(listener)
@@ -265,6 +275,9 @@ function mount(root, options = {}) {
   window.window = window
   const context = vm.createContext({
     Element,
+    Event: class {
+      constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) }
+    },
     console,
     document,
     setTimeout,
@@ -1335,4 +1348,41 @@ test('group: bounds are read live, so a controller can add or drop a minimum aft
   assert.equal(f.wrapper.classList.contains(INVALID), false)
   assert.equal(isEnabled(f.submit), true)
   assert.equal(f.meter.textContent, '1 / 15 selected')
+})
+
+
+test('limited paste notifies field and form consumers once with the final value', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '10' })
+  const app = mount(f.root)
+  const fieldValues = []
+  const formValues = []
+  f.brief.addEventListener('input', e => fieldValues.push(e.target.value))
+  f.form.addEventListener('input', e => formValues.push(e.target.value))
+  f.brief.value = ''
+  const event = app.fire(f.brief, 'paste', f.brief, {
+    clipboardData: { getData: () => 'Chief Marketing Officer' },
+  })
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(f.brief.value, 'Chief Mark')
+  assert.deepEqual(fieldValues, ['Chief Mark'])
+  assert.deepEqual(formValues, ['Chief Mark'])
+  assert.equal(f.brief.selectionStart, 10)
+  assert.equal(isEnabled(f.submit), true)
+  f.brief.setSelectionRange(0, 10)
+  app.fire(f.brief, 'paste', f.brief, { clipboardData: { getData: () => 'QA Lead' } })
+  assert.deepEqual(fieldValues, ['Chief Mark', 'QA Lead'])
+  assert.deepEqual(formValues, ['Chief Mark', 'QA Lead'])
+  assert.equal(f.brief.selectionStart, 7)
+})
+
+test('paste with no available room does not emit an input mutation', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '3' })
+  const app = mount(f.root)
+  f.brief.value = 'ABC'
+  f.brief.setSelectionRange(3, 3)
+  let mutations = 0
+  f.brief.addEventListener('input', () => mutations++)
+  app.fire(f.brief, 'paste', f.brief, { clipboardData: { getData: () => 'D' } })
+  assert.equal(f.brief.value, 'ABC')
+  assert.equal(mutations, 0)
 })
