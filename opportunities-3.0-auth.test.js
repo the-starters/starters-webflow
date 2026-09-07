@@ -8966,10 +8966,11 @@ test('final invoice recovery locks fields and submits the canonical values despi
 test('final invoices reject extra decimal places before any request', async () => {
   for (const value of ['1.001', '1.999', '125.290']) {
     const dom = invoiceSubmitDom()
+    dom.modal.querySelector('.w-form-fail').textContent = 'Oops! Something went wrong while submitting the form.'
     const requests = []
     const document = documentWith(dom.modal)
     const bridge = await loadBridge(async input => { requests.push(String(input)); return response({}) }, {
-      member: talentMember, querySelector: document.querySelector, querySelectorAll: document.querySelectorAll,
+      member: talentMember, workflowDiagnostics: true, querySelector: document.querySelector, querySelectorAll: document.querySelectorAll,
     })
     bridge.window.Opp30.prepareInvoiceModal(dom.modal, { projectId: 746, invoiceMode: 'final', finalInvoiceId: 961 })
     dom.amount.value = value
