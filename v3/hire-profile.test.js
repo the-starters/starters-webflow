@@ -7628,6 +7628,8 @@ for (const ready of [false, true]) {
       await settle()
 
       assert.equal(mixed.style.display, display)
+      assert.equal(mixed.hasAttribute('booking-button-wrapper'), false,
+        'mixed groups must not match the shared booking-only CSS hiding rule')
       assert.equal(mixed.getAttribute('aria-hidden'), null)
       assert.equal(hire.getAttribute('data-booking-trigger-unavailable'), null)
       assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), ready ? null : '')
@@ -7666,6 +7668,8 @@ for (const canonical of [false, true]) {
 
         const assertAvailability = (available) => {
           assert.equal(mixed.style.display, display)
+          assert.equal(mixed.hasAttribute('booking-button-wrapper'), false,
+            'mixed groups must not match the shared booking-only CSS hiding rule')
           assert.equal(mixed.getAttribute('aria-hidden'), authoredAria)
           assert.equal(hire.getAttribute('data-booking-trigger-unavailable'), null)
           assert.equal(hire.getAttribute('data-modal-trigger'), 'generate-contract')
