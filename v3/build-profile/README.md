@@ -247,6 +247,13 @@ its own single token-refresh retry. Backend lease, transaction, and idempotency
 guards remain unchanged. This extends the existing shared photo controller and
 its authored upload contract; no new page script or Webflow markup is required.
 
+On either Build Profile route, removing or replacing a photo while
+`commitPending()` is waiting causes that commit to reject when it resumes, so
+the submit writer cannot show success for the obsolete selection. Submit the
+profile again to commit a replacement; it remains prepared until then. An
+already-sent request is not aborted, but its obsolete response is not applied
+to the page.
+
 Run `node v3/build-profile/profile-photo-upload-intent.test.js` to exercise busy
 responses followed by success, stable mutation/file identity, all three page
 paths, bounded exhaustion, terminal errors, and cancellation/replacement.
