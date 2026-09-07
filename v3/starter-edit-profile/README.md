@@ -223,3 +223,30 @@ profiles only. `syncSelectionGroupBounds(type)` mirrors that minimum onto each w
 into with `wf-validate-element="group"`, gates the tab 5 save with the same rule. The mirror inputs
 stay authored in Webflow because the shared picker widget and the Build pages still write them; only
 this controller's step 5 rules stopped depending on them. Failure code: `GROUP_MIN_NOT_MET`.
+
+
+## Proposed step 6 availability group (PR only)
+
+Step 6 counts `[ms-code-select="tag"]` chips inside
+`[select-wrap-entity="availability"]`. Full profiles require at least one chip.
+Consult profiles have no availability minimum. The controller no longer reads
+`#availability-required`; that mirror stays authored for existing picker writers.
+A stale nonempty mirror cannot pass an empty picker, and an empty mirror cannot
+block a selected picker. `syncSelectionGroupBounds` sets `wf-validate-min="1"`
+for Full and removes it for Consult. Failure code: `GROUP_MIN_NOT_MET`.
+
+The `[name="rate"]` and `nativeGroup` rules remain unchanged. The controller
+continues to disable legacy call fields. The existing single-select widget owns
+the maximum; this controller change adds no new maximum check.
+
+This PR does not change Webflow attributes or enable the pane 6 library Save gate.
+A later approved Webflow change would set `wf-validate-element="group"`,
+`wf-validate-name="availability"`, and `wf-validate-max="1"` on wrapper
+`5734d97a-4a61-f0bf-9cfe-da0731689859` on page `6a44b2477e93b2d11b905de0`.
+Do not author a minimum; the controller sets it by profile type. Whether pane 6
+gets a submit marker remains a separate decision.
+
+JP must explicitly approve merge, tag, each Webflow write, and each whole-site
+production publish in this session. Check the latest tag's target before tagging.
+Compare jsDelivr `@latest` body hashes with the release files before changing
+any `?v=` cache key. A PR and local tests are not deployed-runtime proof.

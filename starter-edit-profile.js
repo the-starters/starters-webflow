@@ -405,7 +405,7 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 	6: [
 		{ selector: '[name="rate"]', kind: 'nativeConditional' },
 		{ selector: '[data-input-capture][required]', kind: 'nativeGroup' },
-		{ selector: '#availability-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="availability-option"], [fs-list-instance="availability"] input' },
+		{ selector: '[select-wrap-entity="availability"]', kind: 'group', min: 1, profileTypes: ['full'], focusSelector: '[name="availability-option"], [fs-list-instance="availability"] input' },
 	],
 	7: [
 		{
@@ -430,7 +430,7 @@ function selectedChipCount(wrapper) {
 
 // Mirror each `group` rule's minimum onto its wrapper as wf-validate-min for the
 // active profile type, and drop it otherwise, so utils/wf-validate.js (which reads
-// the bound live) gates the step 5 save with exactly the rule this controller checks.
+// the bound live) checks the same minimum as this controller for each opted-in picker.
 function syncSelectionGroupBounds(type) {
 	Object.values(STEP_VALIDATION_CONTRACT).forEach((rules) => {
 		rules.filter((rule) => rule.kind === 'group').forEach((rule) => {
