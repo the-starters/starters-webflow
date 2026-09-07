@@ -230,3 +230,30 @@ This exclusion is a release boundary, not proof that the remaining inline code i
 7. Confirm each loaded response is a non-cached current release, then publish production and repeat the safe checks.
 8. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request and clean authored success copy that stays put with no automatic navigation, then click the authored "Start onboarding" CTA and confirm it lands on `/starter-onboarding`; verify the canonical Xano record and its projection after each submit.
 9. Scan both published domains for Airtable, Make, and PAT exposure patterns.
+
+### Photo upload during profile sync
+
+On Build Profile and Starter Edit Profile, HTTP 500 with the exact message
+`PROFILE_IMAGE_CAS_RETRY_EXHAUSTED` triggers automatic retries. A background
+projection can hold the image commit lease longer than the backend's short retry
+loop. The controller preserves the same encoded file and `source_mutation_id`,
+shows a syncing message, and applies only a complete successful response.
+
+Retries use exponential delays capped at 20 seconds, at most 12 retries, and a
+three-minute scheduling budget. A request already in flight may finish after the
+budget. Removing or replacing the photo cancels further retries for the old
+intent. Other errors keep the existing manual retry path; the auth shim retains
+its own single token-refresh retry. Backend lease, transaction, and idempotency
+guards remain unchanged. This extends the existing shared photo controller and
+its authored upload contract; no new page script or Webflow markup is required.
+
+On either Build Profile route, removing or replacing a photo while
+`commitPending()` is waiting causes that commit to reject when it resumes, so
+the submit writer cannot show success for the obsolete selection. Submit the
+profile again to commit a replacement; it remains prepared until then. An
+already-sent request is not aborted, but its obsolete response is not applied
+to the page.
+
+Run `node v3/build-profile/profile-photo-upload-intent.test.js` to exercise busy
+responses followed by success, stable mutation/file identity, all three page
+paths, bounded exhaustion, terminal errors, and cancellation/replacement.

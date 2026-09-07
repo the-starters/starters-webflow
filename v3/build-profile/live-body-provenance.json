@@ -36,10 +36,10 @@
     }
   },
   "candidateAssets": {
-    "sourceCommit": "working-tree@2c478f6554e5735a0e5fbce7c71a245eb63eab4d",
+    "sourceCommit": "working-tree@fa560ed66349681801f8cc7042911fc34bb1499f",
     "hashMethod": "Full Git blob bytes hashed as SHA-256; these are release candidates, not authenticated Webflow captures",
     "files": {
-      "profile-photo.js": { "path": "v3/build-profile/profile-photo.js", "bytes": 14854, "sha256": "b7593bf81d47c0d59a12125e7ad561a61e8ff1b14649f064e4ede9765cf7e558" },
+      "profile-photo.js": { "path": "v3/build-profile/profile-photo.js", "bytes": 16563, "sha256": "988c84c6391241f2aa3969f4acdeb77258831bd7332e5137046e2a8f4440fcf5" },
       "portfolio-crud.js": { "path": "v3/build-profile/portfolio-crud.js", "bytes": 38397, "sha256": "67a4ae90325477bc931a35d015eeba536e90ad5ff90968dc6c0cccb06872576f" },
       "portfolio-list.js": { "path": "v3/build-profile/portfolio-list.js", "bytes": 4036, "sha256": "508b94b1f40f05dcc916c79c3cf0bec04f627f75bb607d93d02c02e0950fe11b" },
       "company-autocomplete.js": { "path": "v3/build-profile/company-autocomplete.js", "bytes": 14773, "sha256": "92e8029557b57fa4f29fa218586988d1363f07eab008971327386bdb2427d1b3" },
