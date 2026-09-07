@@ -54,22 +54,27 @@ document.addEventListener("DOMContentLoaded", function () {
         content.style.display = "none";
   
         const refresh = () => {
-          tl.invalidate();
+          if (tl) tl.invalidate();
           if (typeof ScrollTrigger !== "undefined") ScrollTrigger.refresh();
         };
-        const tl = gsap.timeline({ paused: true, defaults: { duration: 0.3, ease: "power1.inOut" }, onComplete: refresh, onReverseComplete: refresh });
-        tl.set(content, { display: "block" });
-        tl.fromTo(content, { height: 0 }, { height: "auto" });
-  
-        const closeAccordion = () => card.classList.contains("is-active") && (card.classList.remove("is-active"), tl.reverse(), button.setAttribute("aria-expanded", "false"));
+        const tl = typeof gsap !== "undefined"
+          ? gsap.timeline({ paused: true, defaults: { duration: 0.3, ease: "power1.inOut" }, onComplete: refresh, onReverseComplete: refresh })
+          : null;
+        if (tl) {
+          tl.set(content, { display: "block" });
+          tl.fromTo(content, { height: 0 }, { height: "auto" });
+        }
+
+        const closeAccordion = () => card.classList.contains("is-active") && (card.classList.remove("is-active"), tl ? tl.reverse() : (content.style.display = "none"), button.setAttribute("aria-expanded", "false"));
         closeFunctions[cardIndex] = closeAccordion;
-  
+
         const openAccordion = (instant = false) => {
           if (closePrevious && previousIndex !== null && previousIndex !== cardIndex) closeFunctions[previousIndex]?.();
           previousIndex = cardIndex;
           button.setAttribute("aria-expanded", "true");
           card.classList.add("is-active");
-          instant ? tl.progress(1) : tl.play();
+          if (tl) instant ? tl.progress(1) : tl.play();
+          else content.style.display = "block";
         };
         if (openAllByDefault || openByDefault === cardIndex + 1) openAccordion(true);
   
