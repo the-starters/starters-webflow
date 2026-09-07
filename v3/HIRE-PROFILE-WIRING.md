@@ -342,6 +342,10 @@ discovery, so the TEST fixture cannot activate on a production host.
 The booking availability gate controls a `[booking-button-wrapper]` only when
 it contains a Book Call entry and no `[data-signup-trigger-element="hire"]` entry.
 The template uses the attribute on Hire-only and mixed Hire/Book Call groups.
+For Hire-containing groups, the controller removes the misplaced
+`booking-button-wrapper` hook: shared production CSS hides that attribute by
+default outside Designer. Merely skipping inline visibility writes leaves Hire
+hidden by that CSS. Authored styles, classes and ARIA states remain unchanged.
 Those groups retain their authored display, ARIA state, and existing CMS and
 Memberstack role visibility for both authenticated and logged-out viewers. The
 per-trigger unavailable attribute hides Book Call independently inside mixed

@@ -541,7 +541,14 @@
   }
 
   function setBookingWrapperAvailable(wrapper, available) {
-      if (!wrapper || wrapper.querySelector('[data-signup-trigger-element="hire"]')) return;
+      if (!wrapper) return;
+      if (wrapper.querySelector('[data-signup-trigger-element="hire"]')) {
+          // Shared booking CSS hides this hook by default outside Designer.
+          // Mixed groups are not booking-only: remove that misplaced hook,
+          // preserving authored styles and CMS/Memberstack visibility gates.
+          wrapper.removeAttribute('booking-button-wrapper');
+          return;
+      }
       if (!wrapper.querySelector('[data-modal-trigger="popup-booking-main"]') &&
           !wrapper.querySelector('[data-signup-trigger-element="book-call"]')) return;
       wrapper.style.display = available ? 'flex' : 'none';
