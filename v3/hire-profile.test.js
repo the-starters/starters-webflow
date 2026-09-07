@@ -7571,6 +7571,125 @@ test('a back control in the dialog header is hidden even on a chooser entry', as
   assert.equal(headerBack.style.display, undefined)
 })
 
+test('the availability gate preserves Hire wrappers when calls are unavailable', async () => {
+  const page = makePage()
+  const hireWrapper = makeElement('div', { 'booking-button-wrapper': '' })
+  const hire = makeElement('button', { 'data-modal-trigger': 'popup-hire' })
+  hireWrapper.appendChild(hire)
+  page.root.appendChild(hireWrapper)
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => null,
+    getConfigs: async () => [],
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hireWrapper.style.display, undefined)
+  assert.equal(hireWrapper.getAttribute('aria-hidden'), null)
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+})
+
+for (const ready of [false, true]) {
+  for (const display of [undefined, 'none']) {
+    test(`mixed Hire/Book Call group preserves authored display ${display} with calls ready=${ready}`, async () => {
+      const page = makePage()
+      const mixed = makeElement('div', { 'booking-button-wrapper': '' })
+      if (display !== undefined) mixed.style.display = display
+      const hire = makeElement('button', {
+        'data-modal-trigger': 'generate-contract',
+        'data-signup-trigger-element': 'hire',
+      })
+      mixed.appendChild(hire)
+      page.bookingButton.remove()
+      mixed.appendChild(page.bookingButton)
+      page.root.appendChild(mixed)
+      const context = ready ? readyFreeContext(page) : makeContext({
+        page,
+        member: {
+          id: 'brand_member',
+          auth: { email: 'brand@example.com' },
+          customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+          planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+        },
+        getStarterByMemberId: async () => null,
+        getConfigs: async () => [],
+      })
+      vm.createContext(context)
+      vm.runInContext(source, context)
+      await settle()
+
+      assert.equal(mixed.style.display, display)
+      assert.equal(mixed.getAttribute('aria-hidden'), null)
+      assert.equal(hire.getAttribute('data-booking-trigger-unavailable'), null)
+      assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), ready ? null : '')
+    })
+  }
+}
+
+for (const canonical of [false, true]) {
+  for (const ready of [false, true]) {
+    for (const display of [undefined, 'none']) {
+      test(`logged-out mixed Hire/Book Call preserves display ${display}, ready=${ready}, canonical=${canonical}`, async () => {
+        const page = makePage()
+        const mixed = page.bookingButtonWrapper
+        if (display === undefined) delete mixed.style.display
+        else mixed.style.display = display
+        const authoredAria = display === 'none' ? 'true' : 'false'
+        mixed.setAttribute('aria-hidden', authoredAria)
+        const hire = makeElement('button', {
+          'data-modal-trigger': 'generate-contract',
+          'data-signup-trigger-element': 'hire',
+        })
+        mixed.appendChild(hire)
+        const xano = canonical ? addXanoCallCardsFixture(page) : null
+        const wfx = canonical ? makeCallCardsWfXanoFixture(xano.wrapper) : null
+        const context = makeContext({
+          page,
+          record: {
+            'free-consulting-calls-t-f': ready,
+            'paid-consulting-calls-t-f': false,
+          },
+          ...(wfx ? { wfXano: wfx.api } : {}),
+        })
+        vm.createContext(context)
+        vm.runInContext(source, context)
+        await settle()
+
+        const assertAvailability = (available) => {
+          assert.equal(mixed.style.display, display)
+          assert.equal(mixed.getAttribute('aria-hidden'), authoredAria)
+          assert.equal(hire.getAttribute('data-booking-trigger-unavailable'), null)
+          assert.equal(hire.getAttribute('data-modal-trigger'), 'generate-contract')
+          assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), available ? null : '')
+          assert.equal(page.bookingButton.getAttribute('aria-disabled'), available ? null : 'true')
+          assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), available ? '' : null)
+          assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), 'book-call')
+          if (available) assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+          assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
+        }
+        assertAvailability(ready)
+        if (wfx) {
+          for (const available of [!ready, ready]) {
+            wfx.emit(callCardResult({ free: available, paid: false }))
+            await settle()
+            assertAvailability(available)
+            assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+          }
+        }
+      })
+    }
+  }
+}
+
 test('the availability gate leaves the in-dialog back control alone', async () => {
   // The calendar footer's back control carries the chooser's trigger name, so
   // it now joins the set this gate sweeps. Stamping it unavailable would hand
