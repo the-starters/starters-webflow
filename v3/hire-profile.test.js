@@ -7635,6 +7635,61 @@ for (const ready of [false, true]) {
   }
 }
 
+for (const canonical of [false, true]) {
+  for (const ready of [false, true]) {
+    for (const display of [undefined, 'none']) {
+      test(`logged-out mixed Hire/Book Call preserves display ${display}, ready=${ready}, canonical=${canonical}`, async () => {
+        const page = makePage()
+        const mixed = page.bookingButtonWrapper
+        if (display === undefined) delete mixed.style.display
+        else mixed.style.display = display
+        const authoredAria = display === 'none' ? 'true' : 'false'
+        mixed.setAttribute('aria-hidden', authoredAria)
+        const hire = makeElement('button', {
+          'data-modal-trigger': 'generate-contract',
+          'data-signup-trigger-element': 'hire',
+        })
+        mixed.appendChild(hire)
+        const xano = canonical ? addXanoCallCardsFixture(page) : null
+        const wfx = canonical ? makeCallCardsWfXanoFixture(xano.wrapper) : null
+        const context = makeContext({
+          page,
+          record: {
+            'free-consulting-calls-t-f': ready,
+            'paid-consulting-calls-t-f': false,
+          },
+          ...(wfx ? { wfXano: wfx.api } : {}),
+        })
+        vm.createContext(context)
+        vm.runInContext(source, context)
+        await settle()
+
+        const assertAvailability = (available) => {
+          assert.equal(mixed.style.display, display)
+          assert.equal(mixed.getAttribute('aria-hidden'), authoredAria)
+          assert.equal(hire.getAttribute('data-booking-trigger-unavailable'), null)
+          assert.equal(hire.getAttribute('data-modal-trigger'), 'generate-contract')
+          assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), available ? null : '')
+          assert.equal(page.bookingButton.getAttribute('aria-disabled'), available ? null : 'true')
+          assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), available ? '' : null)
+          assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), 'book-call')
+          if (available) assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+          assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
+        }
+        assertAvailability(ready)
+        if (wfx) {
+          for (const available of [!ready, ready]) {
+            wfx.emit(callCardResult({ free: available, paid: false }))
+            await settle()
+            assertAvailability(available)
+            assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+          }
+        }
+      })
+    }
+  }
+}
+
 test('the availability gate leaves the in-dialog back control alone', async () => {
   // The calendar footer's back control carries the chooser's trigger name, so
   // it now joins the set this gate sweeps. Stamping it unavailable would hand

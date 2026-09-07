@@ -540,19 +540,20 @@
       });
   }
 
+  function setBookingWrapperAvailable(wrapper, available) {
+      if (!wrapper || wrapper.querySelector('[data-signup-trigger-element="hire"]')) return;
+      if (!wrapper.querySelector('[data-modal-trigger="popup-booking-main"]') &&
+          !wrapper.querySelector('[data-signup-trigger-element="book-call"]')) return;
+      wrapper.style.display = available ? 'flex' : 'none';
+      wrapper.setAttribute('aria-hidden', available ? 'false' : 'true');
+  }
+
   function setBookingButtonAvailable(available) {
       if (available && isBrandMember(MEMBER)) {
           available = publicCallTypeReady('free') || publicCallTypeReady('paid');
       }
       document.querySelectorAll('[booking-button-wrapper]').forEach(function (wrapper) {
-          // The template uses this attribute on Hire-only and mixed groups.
-          // Preserve their CMS/role visibility; the trigger gate below hides
-          // Book Call independently without taking Hire away with its parent.
-          if (wrapper.querySelector('[data-signup-trigger-element="hire"]')) return;
-          if (!wrapper.querySelector('[data-modal-trigger="popup-booking-main"]') &&
-              !wrapper.querySelector('[data-signup-trigger-element="book-call"]')) return;
-          wrapper.style.display = available ? 'flex' : 'none';
-          wrapper.setAttribute('aria-hidden', available ? 'false' : 'true');
+          setBookingWrapperAvailable(wrapper, available);
       });
 
       // The hire template has more than one authored Book Call entry point.
@@ -615,9 +616,7 @@
           }
 
           const wrapper = trigger.closest('[booking-button-wrapper]');
-          if (!wrapper) return;
-          wrapper.style.display = show ? 'flex' : 'none';
-          wrapper.setAttribute('aria-hidden', show ? 'false' : 'true');
+          setBookingWrapperAvailable(wrapper, show);
       });
   }
 
