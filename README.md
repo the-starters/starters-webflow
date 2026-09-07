@@ -1369,7 +1369,9 @@ Keep these markup contracts in the modal:
   such link, and reopening the modal restores the placeholder href, so a stale
   Stripe link is never left behind the button for a later invoice.
 - Errors need `[data-wf-invoice="error"]` (the Webflow `.w-form-fail` block is
-  accepted) and optionally `[data-wf-invoice="error-message"]` inside it. With
+  accepted) and optionally `[data-wf-invoice="error-message"]` inside it. The
+  invoice controller replaces the initial error copy with its validation or
+  request error message, including when diagnostics record a receipt. With
   neither present the failure is only a console warning, invisible to the member.
 - Mark the success close control with `data-wf-invoice="close-success"`. Until
   that hook is authored, the controller accepts and stamps the existing
