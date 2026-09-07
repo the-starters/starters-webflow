@@ -7598,6 +7598,43 @@ test('the availability gate preserves Hire wrappers when calls are unavailable',
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
 })
 
+for (const ready of [false, true]) {
+  for (const display of [undefined, 'none']) {
+    test(`mixed Hire/Book Call group preserves authored display ${display} with calls ready=${ready}`, async () => {
+      const page = makePage()
+      const mixed = makeElement('div', { 'booking-button-wrapper': '' })
+      if (display !== undefined) mixed.style.display = display
+      const hire = makeElement('button', {
+        'data-modal-trigger': 'generate-contract',
+        'data-signup-trigger-element': 'hire',
+      })
+      mixed.appendChild(hire)
+      page.bookingButton.remove()
+      mixed.appendChild(page.bookingButton)
+      page.root.appendChild(mixed)
+      const context = ready ? readyFreeContext(page) : makeContext({
+        page,
+        member: {
+          id: 'brand_member',
+          auth: { email: 'brand@example.com' },
+          customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+          planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+        },
+        getStarterByMemberId: async () => null,
+        getConfigs: async () => [],
+      })
+      vm.createContext(context)
+      vm.runInContext(source, context)
+      await settle()
+
+      assert.equal(mixed.style.display, display)
+      assert.equal(mixed.getAttribute('aria-hidden'), null)
+      assert.equal(hire.getAttribute('data-booking-trigger-unavailable'), null)
+      assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), ready ? null : '')
+    })
+  }
+}
+
 test('the availability gate leaves the in-dialog back control alone', async () => {
   // The calendar footer's back control carries the chooser's trigger name, so
   // it now joins the set this gate sweeps. Stamping it unavailable would hand

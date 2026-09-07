@@ -340,12 +340,13 @@ Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
 
 The booking availability gate controls a `[booking-button-wrapper]` only when
-it contains a `[data-modal-trigger="popup-booking-main"]` or
-`[data-signup-trigger-element="book-call"]` entry. The template also uses this
-wrapper attribute on Hire groups; groups without a Book Call entry retain their
-existing CMS and Memberstack role visibility conditions, even when calls are
-unavailable. Regression coverage: `the availability gate preserves Hire wrappers
-when calls are unavailable` in [`hire-profile.test.js`](hire-profile.test.js).
+it contains a Book Call entry and no `[data-signup-trigger-element="hire"]` entry.
+The template uses the attribute on Hire-only and mixed Hire/Book Call groups.
+Those groups retain their existing CMS and Memberstack role visibility. The
+per-trigger unavailable attribute hides Book Call independently inside mixed
+groups. Regression coverage in [`hire-profile.test.js`](hire-profile.test.js)
+exercises unavailable and ready calls, including authored hidden groups that
+must stay hidden.
 
 Every authored Free and Paid projection starts hidden. Anonymous viewers may
 reveal only tout cards from the writer-maintained public compatibility booleans.
