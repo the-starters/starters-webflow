@@ -1099,11 +1099,9 @@ The primary control's label and mutation follow canonical lifecycle state,
 except that canonical `status=pending` takes precedence over a more specific
 `lifecycle_state` and always exposes one authorized cancel action. A started
 project's End Project action always means completion for both roles; there is no
-early-end mode and no end reason is sent. Pre-activation projects can cancel
-only with a required note that records what happened for admin operations. The
-cancel note becomes the project action reason and lifecycle-event payload; it is
-not written to `core_reviews_v3`, does not appear on `/hire`, and does not
-change ranking points. Xano #1679 finalizes the project on the first action by
+early-end mode and no end reason is sent. Pre-activation projects cancel through a compact confirmation without feedback.
+The optional reason is empty; Xano records `canceled_before_activation`.
+Cancellation does not create a review or change ranking points. Xano #1679 finalizes the project on the first action by
 either party. Kaeser changed this behavior on 2026-09-01 to match V2. No
 counterparty confirmation is required. Terminal projects expose no lifecycle
 action.
@@ -1116,27 +1114,26 @@ modes. A legacy `[data-end-project-mode-toggle]` left in the Designer stays
 hidden and inert, so a rollout skew cannot resurrect the retired early-end
 intent. Use `[data-end-project-title]` and `[data-end-project-subtitle]` for the
 state-specific copy, `[data-end-project-reason-wrap]` around
-`[data-end-project-reason]` for the pre-activation cancel note, and
+`[data-end-project-reason]` for the legacy reason field, and
 `[data-end-project-review]` around the Brand-only rating and public-review
 fields. The controller shows those review fields only for a Brand completing a
-started project, and hides the reason field outside pre-activation cancellation.
+started project, and always hides the legacy reason field.
 Add `project-element="project-name"` and `project-element="project-id"` (or the
 equivalent `data-end-project-bind` values) to display the active project's
 canonical title and numeric ID in every state. When the Starter component places
 these bindings in its reused `[booking-element-wrap][display-flex]` rows, the
 controller reveals each populated row as flex after binding the identity. The
-controller removes native `required` constraints while a group is hidden. It
-restores the reason constraint when that group is shown. The Brand completion
+controller removes native `required` constraints while a group is hidden. The Brand completion
 review stays optional, so the controller also clears its native constraint when
 shown and uses JavaScript to reject a half-filled review. Author the submit
 control as the standard Clickable Wrap: the empty `button.clickable_btn` remains
 the native submitter, while every `.button_main-text` in its `.button_main-wrap`
 receives the state-specific caption. A legacy plain button can instead keep its
 caption in a nested `div` or `span`. Pre-activation projects paint the
-cancel-note view and never show review fields. If the separate modal markup is
-absent during a Designer/CDN rollout skew, the native prompt flow requires the
-same cancel note so the lifecycle action is not stranded or submitted without
-its admin record, and a started project asks a single completion confirmation.
+compact confirmation and never show feedback fields. If the separate modal markup
+is absent during a Designer/CDN rollout skew, a native confirmation handles
+cancellation without prompting for feedback. A started project asks a single
+completion confirmation.
 Rows left in `completion_requested` or `termination_requested` by the retired
 two-sided flow remain actionable. They do not show a waiting label, disable the
 requesting party, or fail closed when a request timestamp is missing. A stranded
