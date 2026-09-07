@@ -7571,6 +7571,33 @@ test('a back control in the dialog header is hidden even on a chooser entry', as
   assert.equal(headerBack.style.display, undefined)
 })
 
+test('the availability gate preserves Hire wrappers when calls are unavailable', async () => {
+  const page = makePage()
+  const hireWrapper = makeElement('div', { 'booking-button-wrapper': '' })
+  const hire = makeElement('button', { 'data-modal-trigger': 'popup-hire' })
+  hireWrapper.appendChild(hire)
+  page.root.appendChild(hireWrapper)
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => null,
+    getConfigs: async () => [],
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hireWrapper.style.display, undefined)
+  assert.equal(hireWrapper.getAttribute('aria-hidden'), null)
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+})
+
 test('the availability gate leaves the in-dialog back control alone', async () => {
   // The calendar footer's back control carries the chooser's trigger name, so
   // it now joins the set this gate sweeps. Stamping it unavailable would hand

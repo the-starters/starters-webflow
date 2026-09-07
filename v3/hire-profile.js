@@ -545,6 +545,11 @@
           available = publicCallTypeReady('free') || publicCallTypeReady('paid');
       }
       document.querySelectorAll('[booking-button-wrapper]').forEach(function (wrapper) {
+          // The template also uses this wrapper attribute on Hire groups.
+          // Only groups containing Book Call entries belong to availability.
+          // Leave Hire visibility to its CMS and role conditions.
+          if (!wrapper.querySelector('[data-modal-trigger="popup-booking-main"]') &&
+              !wrapper.querySelector('[data-signup-trigger-element="book-call"]')) return;
           wrapper.style.display = available ? 'flex' : 'none';
           wrapper.setAttribute('aria-hidden', available ? 'false' : 'true');
       });
