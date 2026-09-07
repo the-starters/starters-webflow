@@ -269,9 +269,13 @@
         if (!buildProfileSaved) throw new Error('Save the profile before uploading its photo');
         const uploadIntent = currentUploadIntent;
         try {
-          return await applyUploadIntent(uploadIntent);
+          const result = await applyUploadIntent(uploadIntent);
+          if (currentUploadIntent !== uploadIntent) {
+            throw new Error('Photo selection changed. Submit the profile again.');
+          }
+          return result;
         } catch (error) {
-          if (currentUploadIntent !== uploadIntent) return null;
+          if (currentUploadIntent !== uploadIntent) throw error;
           setLoader(false, preview);
           wrap.style.display = 'block';
           showError('Image upload failed. Click here to try again.');

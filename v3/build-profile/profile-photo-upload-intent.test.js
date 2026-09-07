@@ -469,6 +469,47 @@ async function run() {
     assert.equal(cancelled.uploadError.style.display, 'none');
   }
 
+  for (const pathname of ['/build-profile/full-profile', '/build-profile/consult']) {
+    for (const replace of [false, true]) {
+      const timers = [];
+      const cancelled = createHarness({
+        pathname,
+        retryTimer: callback => timers.push(callback),
+        uploadResponder: index => index === 0 ? busyResponse() : successResponse(),
+      });
+      const api = cancelled.window.StartersBuildProfilePhotoUpload;
+      cancelled.input.files = [firstFile];
+      cancelled.input.dispatchEvent(new cancelled.TestEvent('change'));
+      assert.equal(cancelled.uploads.length, 0);
+      api.markProfileSaved();
+      const commit = api.commitPending();
+      const rejected = assert.rejects(commit, /Photo selection changed/);
+      await settle();
+      assert.equal(timers.length, 1);
+      if (replace) {
+        cancelled.input.files = [secondFile];
+        cancelled.input.dispatchEvent(new cancelled.TestEvent('change'));
+      } else {
+        cancelled.removeBtn.click();
+      }
+      await settle();
+      assert.equal(cancelled.uploads.length, 1);
+      timers.shift()();
+      await rejected;
+      assert.equal(cancelled.uploads.length, 1);
+      assert.equal(api.hasPendingUpload(), replace);
+      assert.equal(cancelled.photoUrlInput.value, replace ? 'pending-profile-photo-upload' : '');
+      assert.equal(cancelled.uploadError.style.display, 'none');
+      if (replace) {
+        await api.commitPending();
+        assert.equal(cancelled.uploads.length, 2);
+        assert.notEqual(cancelled.uploads[0].sourceMutationId, cancelled.uploads[1].sourceMutationId);
+        assert.equal(cancelled.photoUrlInput.value, 'https://example.invalid/retried.jpg');
+        assert.equal(api.hasPendingUpload(), false);
+      }
+    }
+  }
+
   const pendingResponses = [];
   const overlapping = createHarness({
     uploadResponder(index) {
@@ -494,7 +535,7 @@ async function run() {
     starter_image: 'https://example.invalid/stale.jpg',
     starter_image_small: 'https://example.invalid/stale-small.jpg',
   })));
-  await firstCommit;
+  await assert.rejects(firstCommit, /Photo selection changed/);
   await settle();
   assert.equal(overlapping.uploadError.style.display, 'none');
   assert.equal(overlapping.wrap.style.display, 'none');
