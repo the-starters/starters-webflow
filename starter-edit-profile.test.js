@@ -105,6 +105,14 @@ function createEnvironment(fetchImpl, {
     return field
   }
 
+  // A taxonomy picker wrapper: validity is the number of selected chips inside it.
+  function createGroup(selector, chips) {
+    const wrapper = Object.assign(new Target(), { chips }, fieldOverrides[selector] || {})
+    wrapper.removeAttribute = (name) => { wrapper.attributes.delete(name) }
+    wrapper.querySelectorAll = (sel) => sel === '[ms-code-select="tag"]' ? Array.from({ length: wrapper.chips }, () => new Target()) : []
+    return wrapper
+  }
+
   const globalFields = {
     email: createField('#email', { value: 'new@example.com', required: publishedRequired(1, 'email') }),
     phone: createField('#phone', { value: '+15555555555', required: publishedRequired(1, 'phone') }),
@@ -131,8 +139,8 @@ function createEnvironment(fetchImpl, {
       '#bio-html': createField('#bio-html', { value: '<p>Profile biography</p>' }),
     },
     5: {
-      '#skills-required': createField('#skills-required', { value: '1' }),
-      '#tools-required': createField('#tools-required', { value: '1' }),
+      '[select-wrap-entity="skills"]': createGroup('[select-wrap-entity="skills"]', 3),
+      '[select-wrap-entity="tools"]': createGroup('[select-wrap-entity="tools"]', 2),
     },
     6: {
       '[name="rate"]': createField('[name="rate"]', { value: '125', required: publishedRequired(6, 'rate') }),
@@ -301,6 +309,8 @@ function createEnvironment(fetchImpl, {
     },
     querySelectorAll(selector) {
       if (selector === '[data-form="step"][data-index]') return [step]
+      // picker wrappers are document-scoped for the profile-type bound sync
+      if (Object.prototype.hasOwnProperty.call(stepFields, selector) && selector.startsWith('[select-wrap-entity=')) return [stepFields[selector]]
       if (selector === '[data-element="rate"]') return rateInputs
       if (selector === 'input.with-count:not(.initialized), textarea.with-count:not(.initialized)') {
         return domParsed ? [counterInput] : []
@@ -441,6 +451,7 @@ function createEnvironment(fetchImpl, {
     counter,
     counterInput,
     fields,
+    stepFields,
     focusTarget,
     window,
     liveRateFormatterCalls,
@@ -1604,7 +1615,11 @@ async function testProfileTypeSelectsOnlyItsOwnedMirrorBranch() {
 }
 
 async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles() {
-  for (const [stepIndex, selector] of [[5, '#skills-required'], [5, '#tools-required'], [6, '#availability-required']]) {
+  for (const [stepIndex, selector, emptyOverride] of [
+    [5, '[select-wrap-entity="skills"]', { chips: 0 }],
+    [5, '[select-wrap-entity="tools"]', { chips: 1 }],
+    [6, '#availability-required', { value: '' }],
+  ]) {
     const consult = createEnvironment(async () => ({
       ok: true,
       status: 200,
@@ -1612,7 +1627,7 @@ async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(
     }), {
       stepIndex,
       profileType: 'consult',
-      fieldOverrides: { [selector]: { value: '' } },
+      fieldOverrides: { [selector]: emptyOverride },
     })
     await submit(consult)
     assert.equal(consult.requests.length, 1, `consult step ${stepIndex} ignores ${selector}`)
@@ -1621,7 +1636,7 @@ async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(
       throw new Error('fetch must not run')
     }, {
       stepIndex,
-      fieldOverrides: { [selector]: { value: '' } },
+      fieldOverrides: { [selector]: emptyOverride },
     })
     await submit(full)
     assert.equal(full.requests.length, 0, `full step ${stepIndex} requires ${selector}`)
@@ -1889,6 +1904,7 @@ Promise.all([
   testProfileHydrationMustFinishBeforeValidationCanWrite(),
   testProfileTypeSelectsOnlyItsOwnedMirrorBranch(),
   testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(),
+  testStepFiveGroupRulesCountChipsAndSyncBounds(),
   testConditionalLocationRequirementTransitions(),
   testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
   testDynamicRequiredCaptureBlocksBeforeLoading(),
@@ -1902,3 +1918,39 @@ Promise.all([
     console.error(error)
     process.exitCode = 1
   })
+
+
+async function testStepFiveGroupRulesCountChipsAndSyncBounds() {
+  const blocked = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    stepIndex: 5,
+    workflowDiagnostics: true,
+    fieldOverrides: { '[select-wrap-entity="skills"]': { chips: 2 } },
+  })
+  await submit(blocked)
+  assert.equal(blocked.requests.length, 0, 'two skills on a Full profile must not save')
+  assert.equal(blocked.focusTarget.focusCount, 1, 'the picker input receives focus')
+  assert.equal(blocked.window.__startersWorkflowDiagnosticLast.error_code, 'GROUP_MIN_NOT_MET')
+
+  const saved = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true, projection_pending: false }),
+  }), { stepIndex: 5 })
+  await submit(saved)
+  assert.equal(saved.requests.length, 1, 'three skills and two tools save')
+  const skills = saved.stepFields['[select-wrap-entity="skills"]']
+  const tools = saved.stepFields['[select-wrap-entity="tools"]']
+  assert.equal(skills.getAttribute('wf-validate-min'), '3', 'Full profile: skills minimum mirrored for wf-validate')
+  assert.equal(tools.getAttribute('wf-validate-min'), '2', 'Full profile: tools minimum mirrored for wf-validate')
+
+  const consult = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true, projection_pending: false }),
+  }), { stepIndex: 5, profileType: 'consult', fieldOverrides: { '[select-wrap-entity="skills"]': { chips: 0 } } })
+  await submit(consult)
+  assert.equal(consult.requests.length, 1, 'Consult profile: no skills minimum')
+  assert.equal(consult.stepFields['[select-wrap-entity="skills"]'].getAttribute('wf-validate-min'), null, 'Consult profile: no wf-validate-min on the wrapper')
+}
