@@ -1315,3 +1315,24 @@ test('refresh: a picker injected after bind joins the gate', () => {
   assert.equal(event.defaultPrevented, true)
   assert.equal(late.classList.contains(INVALID), true)
 })
+
+
+test('group: bounds are read live, so a controller can add or drop a minimum after bind', async () => {
+  const f = pickerFixture({ 'wf-validate-name': 'skills', 'wf-validate-max': '15' }, 1)
+  f.email.value = 'a@b.co'
+  const m = mount(f.root)
+  assert.equal(isEnabled(f.submit), true)
+  assert.equal(f.meter.textContent, '1 / 15 selected')
+
+  f.wrapper.setAttribute('wf-validate-min', '3')
+  m.fire(f.form, 'focusout', f.typeahead)
+  assert.equal(isDisabled(f.submit), true)
+  assert.equal(f.form.querySelectorAll('[wf-validate-element="error"]')[0].textContent, 'Please select at least 3 (you have 1).')
+  assert.equal(f.meter.style.display, 'none')
+
+  f.wrapper.removeAttribute('wf-validate-min')
+  m.fire(f.form, 'change', f.typeahead)
+  assert.equal(f.wrapper.classList.contains(INVALID), false)
+  assert.equal(isEnabled(f.submit), true)
+  assert.equal(f.meter.textContent, '1 / 15 selected')
+})
