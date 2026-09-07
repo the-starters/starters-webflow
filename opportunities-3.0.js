@@ -2069,8 +2069,8 @@
       return
     }
     const target = $('[data-wf-invoice="error-message"]', fail) || fail
+    target.textContent = text
     if (receipt) decorateWorkflowMessage(target, text, receipt)
-    else target.textContent = text
     fail.style.display = 'block'
   }
 
