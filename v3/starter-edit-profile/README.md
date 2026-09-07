@@ -103,9 +103,11 @@ tests pass. Until that whole-block cutover is approved and published, the inline
 block remains a known second owner and the reliability fix is not live.
 
 The native Webflow form, field names, success/error elements, hidden mirror
-elements, and component markup stay authored in Webflow. Hidden mirrors are
-logically required by the page controller and map failure focus to an authored
-visible control. They must not prevent the controller click handler from recording
+elements, and component markup stay authored in Webflow. The remaining `mirror`
+rules map failure focus to an authored visible control; picker validation is owned
+by the [step 1 and step 5](#step-1-and-step-5-validation-pickers-since-2026-09-07)
+and [step 6](#proposed-step-6-availability-group-pr-only) contracts below.
+Hidden mirrors must not prevent the controller click handler from recording
 a console-only validation receipt. Only the page controller's request-loading
 state may apply `pointer-events: none`, and only after validation succeeds.
 
@@ -127,9 +129,10 @@ Tools owns `skills-required` and `tools-required`; Availability owns
 `availability-required`. Each mirror prefers its canonical Xano ID or ID list,
 joining an array as a comma-separated value. If the ID value is absent or empty,
 the corresponding canonical display value remains the compatibility fallback.
-This keeps an unchanged canonical profile valid without replacing a stored ID
-with its label. The loader writes only matching named fields inside their owning
-step and dispatches the same native hydration events as other restored controls.
+This preserves compatibility mirror values without replacing a stored ID
+with its label; picker validity follows the group contracts below. The loader
+writes only matching named fields inside their owning step and dispatches the
+same native hydration events as other restored controls.
 
 ### Unsaved-change warning
 
@@ -221,8 +224,8 @@ both types, roles min 1 Full only, subcategories min 1 Consult only; `#profile-p
 profiles only. `syncSelectionGroupBounds(type)` mirrors that minimum onto each wrapper as
 `wf-validate-min` (and removes it for Consult), so `utils/wf-validate.js`, which the wrappers opt
 into with `wf-validate-element="group"`, gates the tab 5 save with the same rule. The mirror inputs
-stay authored in Webflow because the shared picker widget and the Build pages still write them; only
-this controller's step 5 rules stopped depending on them. Failure code: `GROUP_MIN_NOT_MET`.
+stay authored in Webflow because the shared picker widget and the Build pages still write them;
+this controller's step 1 and step 5 picker rules stopped depending on them. Failure code: `GROUP_MIN_NOT_MET`.
 
 
 ## Proposed step 6 availability group (PR only)
