@@ -342,7 +342,8 @@ discovery, so the TEST fixture cannot activate on a production host.
 The booking availability gate controls a `[booking-button-wrapper]` only when
 it contains a Book Call entry and no `[data-signup-trigger-element="hire"]` entry.
 The template uses the attribute on Hire-only and mixed Hire/Book Call groups.
-Those groups retain their existing CMS and Memberstack role visibility. The
+Those groups retain their authored display, ARIA state, and existing CMS and
+Memberstack role visibility for both authenticated and logged-out viewers. The
 per-trigger unavailable attribute hides Book Call independently inside mixed
 groups. Regression coverage in [`hire-profile.test.js`](hire-profile.test.js)
 exercises unavailable and ready calls, including authored hidden groups that
@@ -1144,8 +1145,9 @@ A starter reading their own `/hire/<slug>` sees the rates read-only: the page is
 a preview of what a brand is shown, not a surface they can act on.
 
 Book Call needs no extra rule — only the brand's canonical discovery ever calls
-`setBookingButtonAvailable(true)`, so for the owner the wrapper stays
-`display: none` with `aria-hidden="true"`, every
+`setBookingButtonAvailable(true)`. Wrapper visibility follows the
+[booking availability gate contract](#call-modal-and-project-service-routing).
+For the owner, every
 `[data-modal-trigger="popup-booking-main"]` keeps
 `data-booking-trigger-unavailable` and `aria-disabled="true"`, and the dialog
 keeps `data-booking-surface-unavailable`.
