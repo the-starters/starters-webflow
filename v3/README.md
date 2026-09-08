@@ -3631,6 +3631,15 @@ flowchart TD
    columns. A narrow mount uses the document order: calendar, timezone, time
    buttons, then confirmation. The selected slot is advisory only.
 
+   In the Hire and Messages booking modals, the selected call's summary sits
+   above the month: `Free consultation call` or `Paid consultation call`, followed
+   by its duration in minutes and, for paid calls, the canonical USD price from
+   `canonicalPaidPrice(config)`. The `data-paid-calendar-element="month"`
+   wrapper contains this `call-summary` and the `month-dates` host. The summary
+   remains visible when availability is empty and is replaced on each current
+   remount. Dashboard rescheduling does not render this summary and retains its
+   existing `month` host and controls.
+
    The timezone dropdown defaults to the visitor's browser timezone.
    Changing it clears the selected slot, regroups slots by local date and
    reformats every time. The booking command sends the selected IANA timezone
