@@ -447,3 +447,36 @@ for (const result of [response({}, 503), response({}), response({ ok: false })])
     assert.equal(app.fixture.input.disabled, false)
   })
 }
+
+test('reset timeout preserves candidates and draft, then retry acknowledges the same session', async () => {
+  let expire
+  let cleared = false
+  let tokenStalls = true
+  const app = load({
+    getXanoAuthToken: () => tokenStalls ? new Promise(() => {}) : Promise.resolve('token'),
+    setTimeout(callback, delay) { if (delay === 35000) expire = callback; return 1 },
+    clearTimeout() { cleared = true },
+    fetch: async () => response({ ok: true }),
+  })
+  await flush()
+  const before = app.stored.get(STORAGE_KEY)
+  const card = new Element()
+  app.fixture.candidates.appendChild(card)
+  app.fixture.input.value = 'Keep this draft'
+  const reset = app.fixture.startOver.dispatch('click')
+  await flush()
+  expire()
+  await reset
+  assert.equal(app.stored.get(STORAGE_KEY), before)
+  assert.equal(app.fixture.candidates.children[0], card)
+  assert.equal(app.fixture.input.value, 'Keep this draft')
+  assert.equal(app.fixture.startOver.disabled, false)
+  assert.equal(cleared, true)
+  tokenStalls = false
+  await app.fixture.startOver.dispatch('click')
+  assert.equal(JSON.parse(app.requests[0].body).session_id, JSON.parse(before).session_id)
+  assert.notEqual(app.stored.get(STORAGE_KEY), before)
+  assert.equal(app.fixture.candidates.children.length, 0)
+  assert.equal(app.fixture.input.value, '')
+  assert.equal(app.fixture.status.textContent, 'New conversation ready.')
+})
