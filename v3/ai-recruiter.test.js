@@ -388,7 +388,7 @@ test('start over invalidates an in-flight response', async () => {
   const loaded = load({
     fetch: (url) => url.endsWith('/message')
       ? pendingMessage
-      : response({ status: 'ok' }),
+      : response({ ok: true }),
   })
   await flush()
   loaded.fixture.consent.checked = true
@@ -411,3 +411,39 @@ test('auth changes reload instead of retaining another member session', async ()
   loaded.window.$memberstackDom.authListener({ id: 'member-other' })
   assert.equal(loaded.window.reloaded, true)
 })
+
+test('reset retains conversation until acknowledgement and blocks duplicate reset', async () => {
+  let resolveReset
+  const app = load({ fetch: () => new Promise(resolve => { resolveReset = resolve }) })
+  await flush()
+  const before = app.stored.get(STORAGE_KEY)
+  const message = new Element()
+  app.fixture.messages.appendChild(message)
+  const reset = app.fixture.startOver.dispatch('click')
+  await flush()
+  assert.equal(app.stored.get(STORAGE_KEY), before)
+  assert.equal(app.fixture.messages.children[0], message)
+  assert.equal(app.fixture.input.disabled, true)
+  await app.fixture.startOver.dispatch('click')
+  assert.equal(app.requests.length, 1)
+  resolveReset(response({ ok: true }))
+  await reset
+  assert.notEqual(app.stored.get(STORAGE_KEY), before)
+  assert.equal(app.fixture.messages.children.length, 0)
+  assert.equal(app.fixture.input.disabled, false)
+})
+
+for (const result of [response({}, 503), response({}), response({ ok: false })]) {
+  test(`unconfirmed reset retains the session and permits retry (${result.status})`, async () => {
+    const app = load({ fetch: async () => result })
+    await flush()
+    const before = app.stored.get(STORAGE_KEY)
+    app.fixture.messages.appendChild(new Element())
+    await app.fixture.startOver.dispatch('click')
+    assert.equal(app.stored.get(STORAGE_KEY), before)
+    assert.equal(app.fixture.messages.children.length, 1)
+    assert.match(app.fixture.status.textContent, /Could not confirm/)
+    assert.equal(app.fixture.startOver.disabled, false)
+    assert.equal(app.fixture.input.disabled, false)
+  })
+}
