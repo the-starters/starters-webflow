@@ -1112,6 +1112,8 @@
      * @returns {void}
      */
     onPaste(group, el, e) {
+      // A profile counter may already have inserted and notified consumers.
+      if (e.defaultPrevented) return
       const clip = e.clipboardData
       if (!clip || typeof clip.getData !== 'function') return
       const text = clip.getData('text')

@@ -1386,3 +1386,52 @@ test('paste with no available room does not emit an input mutation', () => {
   assert.equal(f.brief.value, 'ABC')
   assert.equal(mutations, 0)
 })
+
+// Both production controllers bind paste listeners to counted profile fields.
+for (const order of ['counter-first', 'validator-first']) {
+  for (const words of [false, true]) {
+    test(`profile paste has one owner: ${order}, ${words ? 'words' : 'characters'}`, () => {
+      const maximum = words ? 3 : 20
+      const f = countLimitFixture(words ? { 'count-by-words': '' } : { maxlength: String(maximum) }, {
+        'wf-validate-count-max': String(maximum),
+        ...(words ? { 'wf-validate-count-mode': 'words' } : {}),
+      })
+      f.brief.parentElement.classList.add('form_input-wr')
+      f.brief.maxLength = maximum
+      f.brief.dataset = { maxWords: String(maximum) }
+      const counterSpan = { textContent: '' }
+      const bindCounter = () => vm.runInNewContext(
+        fs.readFileSync(path.join(__dirname, 'v3/build-profile/field-counters.js'), 'utf8'),
+        {
+          qsa: () => [f.brief],
+          qs: selector => selector === '.count-input' ? counterSpan : null,
+          Event: class { constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) } },
+        },
+      )
+      let app
+      if (order === 'counter-first') { bindCounter(); app = mount(f.root) }
+      else { app = mount(f.root); bindCounter() }
+      const mutations = []
+      f.form.addEventListener('input', e => mutations.push(e.target.value))
+      const paste = text => app.fire(f.brief, 'paste', f.brief, { clipboardData: { getData: () => text } })
+      f.brief.setSelectionRange(0, 0)
+      paste('Paste once')
+      assert.equal(f.brief.value, 'Paste once')
+      assert.deepEqual(mutations, ['Paste once'])
+      assert.equal(counterSpan.textContent, words ? '02' : '10')
+      f.brief.setSelectionRange(0, f.brief.value.length)
+      paste('New content')
+      assert.equal(f.brief.value, 'New content')
+      assert.equal(mutations.length, 2)
+      f.brief.setSelectionRange(0, f.brief.value.length)
+      paste(words ? 'one two three four five' : '1234567890123456789012345')
+      const capped = words ? 'one two three' : '12345678901234567890'
+      assert.equal(f.brief.value, capped)
+      assert.equal(mutations.length, 3)
+      assert.equal(f.brief.selectionStart, capped.length)
+      paste('extra')
+      assert.equal(f.brief.value, capped)
+      assert.equal(mutations.length, 3, 'full field emits no mutation')
+    })
+  }
+}
