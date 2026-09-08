@@ -1496,6 +1496,12 @@ blocks invalid submits before Webflow's handler or page controllers see them.
   invalid even when `maxlength` is missing or higher (the tighter of the two
   wins). The count slot hides while its field's error is showing. (Finsweet's
   "inputcounter" is a number stepper, not a char counter — this fills that gap.)
+- Profile fields with `count-by-words` also use `data-max-words` as a word cap
+  (160 when absent or empty), even without a validator count slot. The tightest
+  positive cap among that profile limit, `wf-validate-maxwords`, and a word-mode
+  `wf-validate-count-max` applies to typing, paste, and submit validation,
+  including restored values. A native `maxlength` remains a separate character
+  cap; for example, `maxlength="5000"` does not override a 200-word profile cap.
 - After a limited paste inserts text, the owning handler emits one bubbling `input`
   event with the final value and the caret after the inserted text. Existing
   field controllers and delegated validation receive that update, including

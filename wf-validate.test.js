@@ -1389,13 +1389,19 @@ test('paste with no available room does not emit an input mutation', () => {
 
 // Both production controllers bind paste listeners to counted profile fields.
 for (const order of ['counter-first', 'validator-first']) {
-  for (const words of [false, true]) {
-    test(`profile paste has one owner: ${order}, ${words ? 'words' : 'characters'}`, () => {
+  for (const mode of ['characters', 'words', 'profile-words']) {
+    const words = mode !== 'characters'
+    test(`profile paste has one owner: ${order}, ${mode}`, () => {
       const maximum = words ? 3 : 20
       const f = countLimitFixture(words ? { 'count-by-words': '' } : { maxlength: String(maximum) }, {
         'wf-validate-count-max': String(maximum),
         ...(words ? { 'wf-validate-count-mode': 'words' } : {}),
       })
+      if (mode === 'profile-words') {
+        f.count.removeAttribute('wf-validate-element')
+        f.brief.setAttribute('maxlength', '5000')
+        f.brief.setAttribute('data-max-words', String(maximum))
+      }
       f.brief.parentElement.classList.add('form_input-wr')
       f.brief.maxLength = maximum
       f.brief.dataset = { maxWords: String(maximum) }
@@ -1435,3 +1441,16 @@ for (const order of ['counter-first', 'validator-first']) {
     })
   }
 }
+
+test('profile word contract validates restored values and defaults to 160', () => {
+  const f = countLimitFixture({ 'count-by-words': '', maxlength: '5000' }, {})
+  f.count.removeAttribute('wf-validate-element')
+  const app = mount(f.root)
+  f.brief.value = Array(161).fill('word').join(' ')
+  app.fire(f.form, 'input', f.brief)
+  assert.equal(isDisabled(f.submit), true)
+  assert.equal(app.fireDocument('submit', f.form).defaultPrevented, true)
+  f.brief.value = Array(160).fill('word').join(' ')
+  app.fire(f.form, 'input', f.brief)
+  assert.equal(isEnabled(f.submit), true)
+})

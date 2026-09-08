@@ -144,6 +144,9 @@
  *                                 way maxlength stops character input; the
  *                                 error remains for values that arrived over
  *                                 the limit (prefill, JS set).
+ *   count-by-words / data-max-words
+ *                               — profile word-limit compatibility; see
+ *                                 README.md#utilswf-validatejs for the contract.
  *   (no override)               — falls back to the browser's own localized
  *                                 validationMessage.
  *
@@ -426,6 +429,12 @@
     return trimmed ? trimmed.split(/\s+/).length : 0
   }
 
+  // Existing profile counters use this attribute contract instead of a validator count slot.
+  const maximumWords = (el, countMax) => tighterMax(
+    tighterMax(el.getAttribute('wf-validate-maxwords'), countMax),
+    el.hasAttribute('count-by-words') ? (el.getAttribute('data-max-words') || '160') : null,
+  )
+
   /**
    * Word-count bounds (wf-validate-minwords / wf-validate-maxwords). The
    * Constraint Validation API has no word rules, so these are enforced here,
@@ -444,7 +453,7 @@
         'Please use at least ' + min + ' words (you are currently using ' + words + ').'
       )
     }
-    const max = tighterMax(el.getAttribute('wf-validate-maxwords'), countMax)
+    const max = maximumWords(el, countMax)
     if (max > 0 && words > max) {
       return (
         el.getAttribute('wf-validate-message-maxwords') ||
@@ -1044,10 +1053,7 @@
       const el = group.els[0]
       if (!el) return { charMax: NaN, wordMax: NaN, active: false }
       const charMax = tighterMax(el.getAttribute('maxlength'), group.countWords ? null : group.countMax)
-      const wordMax = tighterMax(
-        el.getAttribute('wf-validate-maxwords'),
-        group.countWords ? group.countMax : null,
-      )
+      const wordMax = maximumWords(el, group.countWords ? group.countMax : null)
       return { charMax, wordMax, active: charMax > 0 || wordMax > 0 }
     }
 

@@ -267,3 +267,6 @@ applies to keyboard and context-menu paste. The second handler must not insert
 again. `wf-validate.test.js` executes both controllers in both registration orders,
 covering character/word limits, full replacement, counters, caret, and one input
 notification. Run `node --test wf-validate.test.js` after changing either handler.
+
+See the [shared validator reference](../../README.md#utilswf-validatejs) for
+profile word caps, defaults, and their interaction with validator and native limits.
