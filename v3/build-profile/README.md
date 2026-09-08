@@ -264,14 +264,12 @@ The profile counter and shared `wf-validate` limiter both handle paste. Each mus
 return when `event.defaultPrevented` is already set, so the first handler owns the
 insertion and sends a bubbling input notification when it inserts text. This
 applies to keyboard and context-menu paste. The second handler must not insert
-again. `wf-validate.test.js` executes both controllers in both registration orders,
-covering character/word limits, full replacement, counters, caret, and one input
-notification. Run `node --test wf-validate.test.js` after changing either handler.
+again. The counter lives in `v3/build-profile/field-counters.js` for Build Profile
+and in `starter-edit-profile.js` (Inline block 2) for Edit Profile.
+`wf-validate.test.js` executes each actual counter with the shared validator in
+both registration orders, covering character/word limits, production word-limit
+attributes, full replacement, counters, caret, and one input notification. Run
+`node --test wf-validate.test.js` after changing any of these handlers.
 
 See the [shared validator reference](../../README.md#utilswf-validatejs) for
 profile word caps, defaults, and their interaction with validator and native limits.
-
-Edit Profile currently embeds its field counter in `starter-edit-profile.js`
-(Inline block 2). The overlap regression runs that actual block as well as the
-Build counter, in both listener orders and with production word-limit attributes.
-Both counter copies must honor paste ownership until shared extraction is completed.
