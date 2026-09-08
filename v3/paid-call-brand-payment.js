@@ -1468,6 +1468,25 @@
     return { wrapper, select }
   }
 
+  function createCallSummary(config) {
+    const summary = applyStyles(global.document.createElement('div'), {
+      paddingBottom: '16px', marginBottom: '16px', borderBottom: '1px solid #e5e5e5',
+    })
+    summary.setAttribute('data-paid-calendar-element', 'call-summary')
+    const title = applyStyles(global.document.createElement('p'), {
+      margin: '0 0 6px', fontSize: '16px', fontWeight: '500',
+    })
+    title.textContent = config.is_paid === true ? 'Paid consultation call' : 'Free consultation call'
+    const details = applyStyles(global.document.createElement('p'), {
+      margin: '0', fontSize: '13px',
+    })
+    const price = config.is_paid === true ? canonicalPaidPrice(config) : ''
+    details.textContent = String(config.duration) + ' minutes' + (price ? ' · ' + price + ' USD' : '')
+    summary.appendChild(title)
+    summary.appendChild(details)
+    return summary
+  }
+
   async function mountPaidCalendar(options) {
     const settings = options || {}
     const container = settings.container
@@ -1647,6 +1666,11 @@
     }
 
     if (!slots.length) {
+      if (onBookingSurface) {
+        const summary = createCallSummary(config)
+        applyStyles(summary, { padding: CALENDAR_FRAME })
+        container.appendChild(summary)
+      }
       container.appendChild(status)
       setStatus('No available times were found in the next 14 days.', 'empty')
       // An empty calendar is exactly when a visitor most wants the other kind
@@ -1728,7 +1752,7 @@
       })
     calendarPanel.setAttribute('data-paid-calendar-element', 'calendar-panel')
     const calendarHost = global.document.createElement('div')
-    calendarHost.setAttribute('data-paid-calendar-element', 'month')
+    calendarHost.setAttribute('data-paid-calendar-element', onBookingSurface ? 'month-dates' : 'month')
     const timePanel = applyStyles(global.document.createElement('div'), onBookingSurface
       ? {}
       : {
@@ -1967,7 +1991,11 @@
     })
 
     if (onBookingSurface) {
-      calendarPanel.appendChild(calendarHost)
+      const month = global.document.createElement('div')
+      month.setAttribute('data-paid-calendar-element', 'month')
+      month.appendChild(createCallSummary(config))
+      month.appendChild(calendarHost)
+      calendarPanel.appendChild(month)
       calendarPanel.appendChild(timezoneControl.wrapper)
       layout.appendChild(calendarPanel)
       timePanel.appendChild(times)

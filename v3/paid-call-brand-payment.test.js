@@ -784,6 +784,7 @@ async function mountFooterFixture(options = {}) {
   })
   try {
     const mount = { container, config: { config_id: 'config_paid', grant_id: 'grant_test', duration: 15 }, async onConfirm() {} }
+    if (options.config) mount.config = options.config
     if (options.confirmText) mount.confirmText = options.confirmText
     if (options.backText) mount.backText = options.backText
     if (options.onConfirm) mount.onConfirm = options.onConfirm
@@ -1225,7 +1226,7 @@ test('an empty calendar still offers the way back to the chooser', async () => {
   assert.equal(backParts.text.textContent, 'Back')
   assert.equal(backParts.button.getAttribute('class'), 'clickable_btn')
   assert.deepEqual(footer.children, [back])
-  assert.equal(container.children.indexOf(footer), 1)
+  assert.equal(container.children.indexOf(footer), container.children.length - 1)
 })
 
 test('the footer row is right-aligned on desktop and stacked on mobile', async () => {
@@ -4582,4 +4583,26 @@ test('replacing the paid controller while Stripe loads prevents a stale mount', 
   } finally {
     fixture.restore()
   }
+})
+
+for (const [paid, expected] of [[false, '30 minutes'], [true, '60 minutes · $250 USD']]) {
+  test('booking calendar shows selected ' + (paid ? 'paid' : 'free') + ' call details and replaces them on remount', async () => {
+    const container = bookingMount()
+    const config = { config_id: 'chosen', grant_id: 'grant_test', is_paid: paid,
+      duration: paid ? 60 : 30, price_cents: paid ? 25000 : 0, currency: 'USD' }
+    for (const slots of [undefined, []]) {
+      await mountFooterFixture({ container, config, slots })
+      const summaries = container.querySelectorAll('[data-paid-calendar-element]')
+        .filter(node => node.getAttribute('data-paid-calendar-element') === 'call-summary')
+      assert.equal(summaries.length, 1)
+      assert.equal(summaries[0].children[0].textContent, paid ? 'Paid consultation call' : 'Free consultation call')
+      assert.equal(summaries[0].children[1].textContent, expected)
+    }
+  })
+}
+
+test('dashboard calendar does not gain booking call summary', async () => {
+  const fixture = await mountFooterFixture({ container: new CalendarElement('div') })
+  assert.equal(fixture.container.querySelectorAll('[data-paid-calendar-element]')
+    .some(node => node.getAttribute('data-paid-calendar-element') === 'call-summary'), false)
 })
