@@ -268,7 +268,5 @@ again. `wf-validate.test.js` executes both controllers in both registration orde
 covering character/word limits, full replacement, counters, caret, and one input
 notification. Run `node --test wf-validate.test.js` after changing either handler.
 
-The shared validator also reads the existing `count-by-words` / `data-max-words`
-profile contract (160 words when omitted). This keeps the visible word cap effective
-when the validator receives paste first, including production textareas with
-`maxlength="5000"` and no validator count slot. Submit validation uses the same cap.
+See the [shared validator reference](../../README.md#utilswf-validatejs) for
+profile word caps, defaults, and their interaction with validator and native limits.

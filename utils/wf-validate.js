@@ -144,6 +144,9 @@
  *                                 way maxlength stops character input; the
  *                                 error remains for values that arrived over
  *                                 the limit (prefill, JS set).
+ *   count-by-words / data-max-words
+ *                               — profile word-limit compatibility; see
+ *                                 README.md#utilswf-validatejs for the contract.
  *   (no override)               — falls back to the browser's own localized
  *                                 validationMessage.
  *

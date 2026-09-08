@@ -15,7 +15,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://local');
     if (url.pathname === '/overlap') {
-      const words = url.searchParams.get('words') === '1'
+      const profileWords = url.searchParams.has('profile')
+      const words = profileWords || url.searchParams.get('words') === '1'
+      const maximum = profileWords ? 200 : 3
       const base = url.searchParams.get('base') === '1'
       const order = url.searchParams.get('order')
       const scripts = order === 'counter-first' ? ['counter', 'validator'] : ['validator', 'counter']
@@ -23,17 +25,17 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       res.end(`<!doctype html><title>Description paste acceptance</title>
       <style>body{font:20px system-ui;padding:48px;background:#f5f5f0}textarea{display:block;width:700px;height:130px;font:22px system-ui;padding:18px;margin:20px 0}output{display:block;margin-top:20px}</style>
       <h1>Profile description paste</h1><p>Local actual-controller fixture · ${order} · ${words ? 'words' : 'characters'} · ${base ? 'before fix' : 'after fix'}</p>
-      <form wf-validate-element="form"><div class="form_input-wr"><label>Description<textarea name="description" class="with-count" ${words ? 'count-by-words data-max-words="3"' : 'maxlength="20"'}></textarea></label>
-      <span class="count-input"></span> / ${words ? 3 : 20}
-      <div wf-validate-element="count" wf-validate-count-max="${words ? 3 : 20}" ${words ? 'wf-validate-count-mode="words"' : ''}></div></div></form><output></output>
+      <form wf-validate-element="form"><div class="form_input-wr"><label>Description<textarea name="description" class="with-count" ${words ? `count-by-words data-max-words="${maximum}" ${profileWords ? 'maxlength="5000"' : ''}` : 'maxlength="20"'}></textarea></label>
+      <span class="count-input"></span> / ${words ? maximum : 20}
+      <div ${profileWords ? '' : 'wf-validate-element="count"'} wf-validate-count-max="${words ? maximum : 20}" ${words ? 'wf-validate-count-mode="words"' : ''}></div></div><button type="submit">Save description</button></form><output></output>
       <script>window.qs=(s,r)=>(r||document).querySelector(s);window.qsa=(s,r)=>[...(r||document).querySelectorAll(s)];window.mutations=[];window.pastes=[];qs('form').addEventListener('input',e=>{mutations.push(e.target.value);qs('output').textContent='Form received '+mutations.length+' input notification(s): '+e.target.value});qs('textarea').addEventListener('paste',e=>pastes.push({trusted:e.isTrusted}));</script>
-      ${scripts.map(name => `<script src="/overlap-script?name=${name}&base=${base ? 1 : 0}"></script>${name === 'validator' ? '<script>WfValidate.init()</script>' : ''}`).join('')}`)
+      ${scripts.map(name => `<script src="/overlap-script?name=${name}&base=${base ? 1 : 0}${profileWords ? '&profile=1' : ''}"></script>${name === 'validator' ? '<script>WfValidate.init()</script>' : ''}`).join('')}`)
       return
     }
     if (url.pathname === '/overlap-script') {
       const file = url.searchParams.get('name') === 'counter' ? 'v3/build-profile/field-counters.js' : 'utils/wf-validate.js'
       res.setHeader('Content-Type', 'text/javascript')
-      res.end(url.searchParams.get('base') === '1' ? execFileSync('git', ['show', 'f6fc497f1a0d78aff856f0dc3a85fbbe2750e1ae:' + file], {cwd:root}) : await fs.readFile(path.join(root,file)))
+      res.end(url.searchParams.get('base') === '1' ? execFileSync('git', ['show', (url.searchParams.has('profile') ? '70ab7d02fd5699b3899064d2c4917f5bd2b3a02d:' : 'f6fc497f1a0d78aff856f0dc3a85fbbe2750e1ae:') + file], {cwd:root}) : await fs.readFile(path.join(root,file)))
       return
     }
     if (url.pathname === '/') {
@@ -159,6 +161,31 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
           const label=`description-${order}-${words ? 'words' : 'chars'}-${base ? 'before' : 'after'}`
           observations.push({label,state,final:await evaluate(`({value:qs('textarea').value,mutations,pastes})`)})
           if(evidence){const shot=await send('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(evidence,label+'.png'),Buffer.from(shot.data,'base64'))}
+        }
+      }
+    }
+    for (const order of ['counter-first','validator-first']) {
+      for (const base of [true,false]) {
+        await send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/overlap?profile=1&order=${order}&base=${base ? 1 : 0}`})
+        await pause(200)
+        await evaluate(`qs('textarea').focus();navigator.clipboard.writeText(Array(205).fill('service').join(' '))`)
+        await send('Input.dispatchKeyEvent',{type:'keyDown',key:'v',code:'KeyV',modifiers:4,commands:['paste']})
+        await send('Input.dispatchKeyEvent',{type:'keyUp',key:'v',code:'KeyV',modifiers:4})
+        const state = await evaluate(`({words:qs('textarea').value.trim().split(/\\s+/).length,count:qs('.count-input').textContent,mutations:mutations.length,trusted:pastes[0].trusted})`)
+        assert.equal(state.words,base && order === 'validator-first' ? 205 : 200)
+        assert.equal(state.mutations,1)
+        assert.equal(state.trusted,true)
+        const label = `profile-200-${order}-${base ? 'before' : 'after'}`
+        observations.push({label,...state})
+        if(evidence){const shot=await send('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(evidence,label+'.png'),Buffer.from(shot.data,'base64'))}
+        if (!base) {
+          await send('Input.insertText',{text:' extra'})
+          assert.equal(await evaluate(`qs('textarea').value.trim().split(/\\s+/).length`),200)
+          for (const maximum of [200,160]) {
+            const result = await evaluate(`(()=>{const el=qs('textarea');${maximum === 160 ? "el.removeAttribute('data-max-words');" : ''}el.value=Array(${maximum+1}).fill('restored').join(' ');el.dispatchEvent(new Event('input',{bubbles:true}));const event=new Event('submit',{bubbles:true,cancelable:true});qs('form').dispatchEvent(event);return {blocked:event.defaultPrevented,text:qs('form').textContent}})()`)
+            assert.equal(result.blocked,true)
+            observations.push({label:label+'-restored-'+maximum,...result})
+          }
         }
       }
     }
