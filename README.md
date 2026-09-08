@@ -1496,11 +1496,13 @@ blocks invalid submits before Webflow's handler or page controllers see them.
   invalid even when `maxlength` is missing or higher (the tighter of the two
   wins). The count slot hides while its field's error is showing. (Finsweet's
   "inputcounter" is a number stepper, not a char counter — this fills that gap.)
-- After a limited paste inserts text, the validator emits one bubbling `input`
+- After a limited paste inserts text, the owning handler emits one bubbling `input`
   event with the final value and the caret after the inserted text. Existing
   field controllers and delegated validation receive that update, including
   the company/title controllers that enable Add Work Experience. A paste with
-  no available room leaves the value unchanged and emits no `input` event.
+  no available room leaves the value unchanged and emits no `input` event. See
+  [counted-field paste ownership](v3/build-profile/README.md#counted-field-paste-ownership)
+  for coordination with the profile counter.
 - An invalid field with no error slot gets a plain one auto-injected (class
   `wf-validate_error-auto`), so a gated form never blocks submission invisibly.
 - `minlength`/`maxlength` are enforced by the script itself (native tooShort/tooLong

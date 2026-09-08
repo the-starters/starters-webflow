@@ -257,3 +257,13 @@ to the page.
 Run `node v3/build-profile/profile-photo-upload-intent.test.js` to exercise busy
 responses followed by success, stable mutation/file identity, all three page
 paths, bounded exhaustion, terminal errors, and cancellation/replacement.
+
+### Counted-field paste ownership
+
+The profile counter and shared `wf-validate` limiter both handle paste. Each must
+return when `event.defaultPrevented` is already set, so the first handler owns the
+insertion and sends a bubbling input notification when it inserts text. This
+applies to keyboard and context-menu paste. The second handler must not insert
+again. `wf-validate.test.js` executes both controllers in both registration orders,
+covering character/word limits, full replacement, counters, caret, and one input
+notification. Run `node --test wf-validate.test.js` after changing either handler.

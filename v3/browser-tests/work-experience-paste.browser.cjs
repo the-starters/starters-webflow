@@ -14,6 +14,28 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
   if (evidence) await fs.mkdir(evidence, { recursive: true })
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://local');
+    if (url.pathname === '/overlap') {
+      const words = url.searchParams.get('words') === '1'
+      const base = url.searchParams.get('base') === '1'
+      const order = url.searchParams.get('order')
+      const scripts = order === 'counter-first' ? ['counter', 'validator'] : ['validator', 'counter']
+      res.setHeader('Content-Type', 'text/html; charset=utf-8')
+      res.end(`<!doctype html><title>Description paste acceptance</title>
+      <style>body{font:20px system-ui;padding:48px;background:#f5f5f0}textarea{display:block;width:700px;height:130px;font:22px system-ui;padding:18px;margin:20px 0}output{display:block;margin-top:20px}</style>
+      <h1>Profile description paste</h1><p>Local actual-controller fixture · ${order} · ${words ? 'words' : 'characters'} · ${base ? 'before fix' : 'after fix'}</p>
+      <form wf-validate-element="form"><div class="form_input-wr"><label>Description<textarea name="description" class="with-count" ${words ? 'count-by-words data-max-words="3"' : 'maxlength="20"'}></textarea></label>
+      <span class="count-input"></span> / ${words ? 3 : 20}
+      <div wf-validate-element="count" wf-validate-count-max="${words ? 3 : 20}" ${words ? 'wf-validate-count-mode="words"' : ''}></div></div></form><output></output>
+      <script>window.qs=(s,r)=>(r||document).querySelector(s);window.qsa=(s,r)=>[...(r||document).querySelectorAll(s)];window.mutations=[];window.pastes=[];qs('form').addEventListener('input',e=>{mutations.push(e.target.value);qs('output').textContent='Form received '+mutations.length+' input notification(s): '+e.target.value});qs('textarea').addEventListener('paste',e=>pastes.push({trusted:e.isTrusted}));</script>
+      ${scripts.map(name => `<script src="/overlap-script?name=${name}&base=${base ? 1 : 0}"></script>${name === 'validator' ? '<script>WfValidate.init()</script>' : ''}`).join('')}`)
+      return
+    }
+    if (url.pathname === '/overlap-script') {
+      const file = url.searchParams.get('name') === 'counter' ? 'v3/build-profile/field-counters.js' : 'utils/wf-validate.js'
+      res.setHeader('Content-Type', 'text/javascript')
+      res.end(url.searchParams.get('base') === '1' ? execFileSync('git', ['show', 'f6fc497f1a0d78aff856f0dc3a85fbbe2750e1ae:' + file], {cwd:root}) : await fs.readFile(path.join(root,file)))
+      return
+    }
     if (url.pathname === '/') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end(`<!doctype html><title>Work experience paste regression</title><style>body{font:18px system-ui;background:#f5f5f0;padding:50px;max-width:800px}input{display:block;padding:14px;width:90%;margin:12px 0}button{padding:14px 28px;background:#241342;color:white;border:0;border-radius:8px}.company-card{background:white;padding:20px;margin:12px 0}small{color:#555}</style>
@@ -100,6 +122,43 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
           assert.ok(cards.some(t=>t.includes('Second Company')&&t.includes('QA Lead')),JSON.stringify(cards));
           observations.push({label:mode+'-added-second-company',cards,requests:await evaluate('requests')});
           if(evidence){const shot=await send('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(evidence,mode+'-added.png'),Buffer.from(shot.data,'base64'))}
+        }
+      }
+    }
+    await send('Emulation.setFocusEmulationEnabled', {enabled:true})
+    await send('Browser.grantPermissions', {origin:`http://127.0.0.1:${server.address().port}`,permissions:['clipboardReadWrite','clipboardSanitizedWrite']})
+    for (const order of ['counter-first','validator-first']) {
+      for (const words of [false,true]) {
+        for (const base of [true,false]) {
+          await send('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/overlap?order=${order}&words=${words ? 1 : 0}&base=${base ? 1 : 0}`})
+          await pause(200)
+          const paste = async text => {
+            await evaluate(`qs('textarea').focus();navigator.clipboard.writeText(${JSON.stringify(text)})`)
+            await send('Input.dispatchKeyEvent',{type:'keyDown',key:'v',code:'KeyV',modifiers:4,commands:['paste']})
+            await send('Input.dispatchKeyEvent',{type:'keyUp',key:'v',code:'KeyV',modifiers:4})
+            return evaluate(`({value:qs('textarea').value,caret:qs('textarea').selectionStart,count:qs('.count-input').textContent,mutations:[...mutations],pastes:[...pastes]})`)
+          }
+          const state = await paste('Paste once')
+          assert.ok(state.pastes[0].trusted, 'Use a browser-generated clipboard event')
+          if(base) assert.notEqual(state.value,'Paste once','Base must reproduce duplicate insertion')
+          else {
+            assert.equal(state.value,'Paste once');assert.equal(state.mutations.length,1)
+            assert.equal(state.count,words ? '02' : '10')
+            await evaluate(`qs('textarea').setSelectionRange(0,10)`)
+            const replacement = await paste('New content')
+            assert.equal(replacement.value,'New content');assert.equal(replacement.mutations.length,2)
+            await evaluate(`qs('textarea').setSelectionRange(4,11)`)
+            assert.equal((await paste('role')).value,'New role')
+            await evaluate(`qs('textarea').select()`)
+            const capped = await paste(words ? 'one two three four' : '1234567890123456789012345')
+            assert.equal(capped.value,words ? 'one two three' : '12345678901234567890')
+            assert.equal(capped.caret,capped.value.length)
+            const full = await paste('extra')
+            assert.equal(full.value,capped.value);assert.equal(full.mutations.length,capped.mutations.length)
+          }
+          const label=`description-${order}-${words ? 'words' : 'chars'}-${base ? 'before' : 'after'}`
+          observations.push({label,state,final:await evaluate(`({value:qs('textarea').value,mutations,pastes})`)})
+          if(evidence){const shot=await send('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(evidence,label+'.png'),Buffer.from(shot.data,'base64'))}
         }
       }
     }
