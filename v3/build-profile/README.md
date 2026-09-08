@@ -270,3 +270,8 @@ notification. Run `node --test wf-validate.test.js` after changing either handle
 
 See the [shared validator reference](../../README.md#utilswf-validatejs) for
 profile word caps, defaults, and their interaction with validator and native limits.
+
+Edit Profile currently embeds its field counter in `starter-edit-profile.js`
+(Inline block 2). The overlap regression runs that actual block as well as the
+Build counter, in both listener orders and with production word-limit attributes.
+Both counter copies must honor paste ownership until shared extraction is completed.

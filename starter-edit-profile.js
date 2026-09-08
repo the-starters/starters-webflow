@@ -1364,6 +1364,8 @@ function counterFields(wrapper = null) {
 			});
 
 			input.addEventListener('paste', (event) => {
+				// The shared validator may already have inserted the clipboard text.
+				if (event.defaultPrevented) return;
 				event.preventDefault();
 
 				const pastedText = event.clipboardData?.getData('text') || '';
