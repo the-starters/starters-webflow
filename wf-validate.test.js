@@ -1388,10 +1388,11 @@ test('paste with no available room does not emit an input mutation', () => {
 })
 
 // Both production controllers bind paste listeners to counted profile fields.
+for (const surface of ['build', 'edit']) {
 for (const order of ['counter-first', 'validator-first']) {
   for (const mode of ['characters', 'words', 'profile-words']) {
     const words = mode !== 'characters'
-    test(`profile paste has one owner: ${order}, ${mode}`, () => {
+    test(`profile paste has one owner: ${surface}, ${order}, ${mode}`, () => {
       const maximum = words ? 3 : 20
       const f = countLimitFixture(words ? { 'count-by-words': '' } : { maxlength: String(maximum) }, {
         'wf-validate-count-max': String(maximum),
@@ -1407,8 +1408,11 @@ for (const order of ['counter-first', 'validator-first']) {
       f.brief.dataset = { maxWords: String(maximum) }
       const counterSpan = { textContent: '' }
       const bindCounter = () => vm.runInNewContext(
-        fs.readFileSync(path.join(__dirname, 'v3/build-profile/field-counters.js'), 'utf8'),
+        surface === 'build'
+          ? fs.readFileSync(path.join(__dirname, 'v3/build-profile/field-counters.js'), 'utf8')
+          : fs.readFileSync(path.join(__dirname, 'starter-edit-profile.js'), 'utf8').split('// Inline block 2')[1].split('// Inline block 3')[0],
         {
+          onDomReady: callback => callback(),
           qsa: () => [f.brief],
           qs: selector => selector === '.count-input' ? counterSpan : null,
           Event: class { constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) } },
@@ -1440,6 +1444,8 @@ for (const order of ['counter-first', 'validator-first']) {
       assert.equal(mutations.length, 3, 'full field emits no mutation')
     })
   }
+}
+
 }
 
 test('profile word contract validates restored values and defaults to 160', () => {
