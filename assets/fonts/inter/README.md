@@ -2,7 +2,7 @@
 
 Split the existing Webflow Inter font into common characters and remaining characters. The union preserves all 1,020 original codepoints and both weight (100–900) and optical-size (14–32) axes. Default character advances and side bearings match the source font.
 
-Common text loads 99,256 bytes instead of 209,292 bytes, about 110 KB less. Text using both subsets loads 228,772 bytes total, about 19 KB more than the original. Unicode ranges are disjoint. This is a transfer optimization, not a claimed LCP improvement. Both faces retain font-display: swap.
+Common text loads 99,160 bytes instead of 209,292 bytes, about 110 KB less. Text using both subsets loads 228,652 bytes total, about 19 KB more than the original. Unicode ranges are disjoint. This is a transfer optimization, not a claimed LCP improvement. Both faces retain font-display: swap.
 
 Load inter-subsets.css after the native Webflow styles. It uses the same Inter Variable family and face descriptors, so the later subset faces take precedence for their unicode ranges. The original face remains the fallback if a subset fails to load. Verify the target page requests subsets rather than the original before accepting deployment. Do not preload either subset.
 
