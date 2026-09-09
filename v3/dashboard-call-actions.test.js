@@ -2006,3 +2006,19 @@ test('the authored booking-copy hooks are preferred over matching the copy strin
   assert.equal(title.textContent, 'Propose a new time')
   assert.match(body.textContent, /until the other participant confirms/)
 })
+
+test('card Decline opens the selected booking before changing the modal panel', async () => {
+  const booking = pendingBooking()
+  const order = []
+  const panel = { style: {}, getAttribute: () => 'decline' }
+  const modal = { querySelectorAll: selector => selector === '[booking-popup-content]' ? (order.push('panel'), [panel]) : [] }
+  const card = {}
+  const button = { getAttribute: key => key === 'booking-action-btn' ? 'switch-decline' : null,
+    closest: selector => selector === '[data-booking-id]' ? card : selector.includes('[popup-booking-info]') ? null : button }
+  let handler
+  api.wire({ document: { addEventListener: (_name, fn) => { handler = fn }, querySelector: () => modal }, role: 'starter',
+    getBooking: () => booking, openDetail: (actualModal, actualBooking) => { assert.equal(actualModal, modal); assert.equal(actualBooking, booking); order.push('open'); return true } })
+  await handler({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+  assert.deepEqual(order, ['open', 'panel'])
+  assert.equal(panel.hidden, false)
+})

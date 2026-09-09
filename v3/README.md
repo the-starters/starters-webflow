@@ -2224,10 +2224,9 @@ is left untouched rather than swallowed. Every other authored payment or
 booking action stays hidden except Close, Back, the
 Starter's eligible pending-call Accept and Decline actions, the participant
 Cancel chain for eligible Free booked calls, and owner-scoped recording access
-for eligible completed or archived calls. These migrated actions remain inside
-View Details; apart from that Message button, card-level decline, cancel,
-media, and other legacy controls stay hidden. The exact Cancel and reschedule
-eligibility and feedback rules live in the
+for eligible completed or archived calls. Card-level cancel, media, and other
+unsupported legacy controls stay hidden. Card-level Decline and the exact
+Cancel and reschedule eligibility and feedback rules live in the
 [dashboard booking action contract](#dashboard-booking-action-contract). The
 decline chain now also exposes its authored reason step
 (`switch-decline-reason`), so the reason dialog is reachable. Free-call
@@ -2288,9 +2287,10 @@ so the shared modal close flow and refresh listener run, with the native dialog
 `close()` method used only as a fallback. These two navigation actions remain
 available regardless of booking state.
 
-The Starter pending card exposes only the Designer-authored Accept lifecycle
-control while the canonical response window remains open. The details dialog
-exposes both Accept and Decline under their separate eligibility contracts.
+The Starter pending card exposes the Designer-authored Accept lifecycle
+control while the canonical response window remains open. Decline eligibility
+and card-to-modal behavior are defined in the
+[dashboard booking action contract](#dashboard-booking-action-contract).
 Before the controller calls `booking/confirm/v3`, it decodes the
 canonical `booking_ref`, requires its booking and configuration IDs to match the
 row, and supplies an idempotency key scoped to the canonical booking,
@@ -2310,7 +2310,15 @@ contracts.
 
 `dashboard-call-actions.js` owns the details-dialog navigation plus the
 supported decline, cancel, and Free-call reschedule commands. Decline is
-available only to the Starter on a canonical pending row. Cancel is available
+available only to the Starter on a canonical pending row. The authored card
+Decline control also requires an open response window and a loaded, valid
+action module that approves the booking through `canDecline`. Clicking it
+populates the existing details modal with the selected booking and counterpart,
+opens it through the shared Lumos modal owner, then switches to the decline
+panel. If the modal cannot be populated or opened, the panel switch stops.
+Pending Starter rescheduling remains unsupported.
+
+Cancel is available
 to either participant only on a canonical Free
 confirmed or rescheduled row whose start is in the future. Xano
 `booking/cancel/v3` rejects Paid cancellation until the paid-cancel follow-up
