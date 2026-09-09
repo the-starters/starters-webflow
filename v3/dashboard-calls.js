@@ -294,6 +294,7 @@
       return 'completed'
     }
     if (['completed', 'complete', 'done'].includes(raw)) return 'completed'
+    if (raw === 'rescheduled') return 'rescheduled'
     return 'confirmed'
   }
 
@@ -447,6 +448,7 @@
   function statusLabel(status, role) {
     return {
       pending: role === 'starter' ? 'Pending' : 'Requested',
+      rescheduled: 'Pending',
       confirmed: 'Upcoming',
       completed: 'Completed',
       cancelled: 'Cancelled',
@@ -1380,6 +1382,7 @@
       'Rescheduling is available for Free calls.',
       Boolean(gates.rescheduleAnchor) &&
         active &&
+        status !== 'rescheduled' &&
         upcoming &&
         !gates.rescheduleShown &&
         !gates.respondShown,
@@ -1564,7 +1567,7 @@
     setBookingField(modal, 'payment-status-text', paymentText, isPaid)
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
 
-    const showMeeting = status === 'confirmed' && clean(booking.meeting_link) !== ''
+    const showMeeting = ['confirmed', 'rescheduled'].includes(status) && clean(booking.meeting_link) !== ''
     bookingFields(modal, 'meeting-link').forEach(function (meetingLink) {
       if ('href' in meetingLink) meetingLink.href = showMeeting ? clean(booking.meeting_link) : ''
       meetingLink.textContent = showMeeting ? clean(booking.meeting_link) : ''
