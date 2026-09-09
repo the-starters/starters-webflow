@@ -28,38 +28,14 @@
  * never be added to a node that already has a role — and in Designer the close
  * control is quite likely to be exactly such a node. See DISMISSAL below.
  *
- * WHO SEES IT. The canonical Learn Gating sheet says every authenticated
- * member — Brand Free, Brand Paid, or Starter — gets the complete Article with
- * no membership upsell. Only logged-out readers get this sign-up gate. After
- * `memberReady` settles, this script asks Memberstack's real
- * `$memberstackDom.getCurrentMember()` API and exits before writing a style
- * whenever it returns a member. The wrapper's existing
- * `data-ms-content="!learn-access"` remains a second guard: this script reads
- * its COMPUTED display and also exits when it resolves to `none`. These guards
- * matter because GSAP
- * writes inline styles, and an inline `opacity`/`visibility` on an element
- * Memberstack meant to hide is how a paywall leaks to a paying member. The
- * guard is computed-style rather than "is the element present" because this
- * site does both: Memberstack removes some gate variants and merely hides
- * others, so presence proves nothing while computed display covers both.
+ * ELIGIBILITY. See README.md#who-is-gated for the Article access policy and
+ * authentication fallback contract. Resolve identity before querying or styling
+ * the wrapper: inline GSAP styles could otherwise expose a Memberstack-hidden
+ * gate or leave a member scroll-locked behind an invisible gate.
  *
- * THAT GUARD IS WORTHLESS IF IT RUNS TOO EARLY, which is the real trap.
- * Memberstack resolves the member asynchronously and paints the gates AFTER
- * defer-time scripts run — expert-card-browse-loader.js:124 documents the same
- * window ("Memberstack REMOVES the non-matching variants, but only after it
- * resolves — and this embed runs at defer time, before that"). A guard that
- * reads the wrapper at DOMContentLoaded therefore sees `display: flex` for
- * EVERY reader including one with learn-access, arms itself, and later locks
- * the scroll of a member who can see no gate and has no way to unlock it. The
- * close control added since does not rescue them: their whole wrapper is
- * hidden, so the close inside it is hidden too and `dismissible` resolves
- * false. So this embed waits on `window.memberReady` — the site's own
- * readiness promise, used the same way by route-guard.js,
- * expert-card-browse-loader.js and posthog-identity.js — and re-checks
- * computed display once more at reveal time, BEFORE the scroll lock, to cover
- * a gate that is hidden later still. It boots anyway if that promise is absent
- * or rejects: a gate that fails to appear is a much smaller problem than one
- * that traps a paying member on a page they cannot scroll.
+ * Memberstack can hide the wrapper after readiness settles, so reveal must
+ * re-check computed display BEFORE taking the scroll lock. Element presence
+ * alone cannot guard this: Memberstack may hide or remove gated elements.
  *
  * THE TRIGGER, two mutually exclusive modes chosen once at init:
  *   - Article >= CHARS (default 2500) — walk the article's text nodes, insert a
@@ -89,9 +65,9 @@
  * a hard paywall unless Designer supplies a close control:
  *
  *   [data-learn-gate-close-button], inside the wrapper, carrying its own
- *   Memberstack `data-ms-content`. Memberstack decides who gets one. A logged-in
- *   non-paying member sees it and may dismiss; a logged-out reader gets no such
- *   element and the gate stays exactly as hard as it was before this existed.
+ *   Memberstack `data-ms-content`. This legacy dismissal mechanism only runs
+ *   after the eligibility guard; it does not determine Article access. See
+ *   README.md#who-may-close-it-is-also-memberstacks-decision for authoring rules.
  *
  * PUT IT ON SOMETHING MEMBERSTACK CAN HIDE, AND NEVER ON THE BACKDROP. The whole
  * gate rests on `dismissible`, which asks whether the close control is displayed.

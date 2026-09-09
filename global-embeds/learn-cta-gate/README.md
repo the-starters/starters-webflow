@@ -19,10 +19,10 @@ into a Webflow embed**, so a change to it only reaches the site once a release
 tag is pushed and jsDelivr resolves `@latest` to it. The stylesheet ships with
 it under the same tag.
 
+This document owns the Article eligibility policy in [Who is gated](#who-is-gated).
 The header blocks in [`learn-cta-gate.js`](learn-cta-gate.js) and
-[`learn-cta-gate.css`](learn-cta-gate.css) are the **authoritative contract**.
-This document explains the model behind them and what the Designer has to
-provide; where the two ever disagree, the headers win.
+[`learn-cta-gate.css`](learn-cta-gate.css) describe local implementation invariants
+and safety constraints; the sections below explain Designer authoring.
 
 The embed is **inert until the gate markup exists**. With no
 `[data-learn-gate-element="wrapper"]` on the page it returns silently — that is
@@ -108,7 +108,7 @@ itself, and later locks the scroll of a member who can see no gate and has no wa
 to unlock it. The close control below does not rescue them: their whole wrapper
 is hidden, so the close inside it is hidden too and `dismissible` resolves false.
 
-So the embed guards that window twice:
+The embed guards that window in four steps:
 
 1. Boot waits on `window.memberReady`, then asks the real Memberstack member API.
 2. Authenticated members exit with `skipped: 'authenticated-member'` before any
@@ -138,9 +138,9 @@ For the current canonical Article policy, authenticated members never reach the
 gate. The dismissal contract remains a defense for legacy
 authoring states. The gate is a **hard paywall** unless the Designer authors a close control:
 `[data-learn-gate-close-button]`, inside the wrapper, carrying its own
-`data-ms-content`. A logged-in non-paying member sees one and may dismiss; a
-logged-out reader gets no such element and the gate stays exactly as hard as it
-was before this existed.
+`data-ms-content`. Legacy markup may expose this control to non-paying members, but they now
+bypass the gate under [Who is gated](#who-is-gated). A logged-out reader gets
+no such element, so the gate remains non-dismissible.
 
 The script reduces all of that to **one boolean**, `state.dismissible`, and every
 dismissal path is gated on it. One value to reason about, one value to test.
@@ -329,9 +329,9 @@ parks it at `yPercent: 100` in the same tick that it reveals the wrapper.
 `ensureClosed()` also parks it through `gsap.set()` at init as a belt — through
 GSAP, never through CSS, for exactly the reason above.
 
-**A test asserts this file never declares `transform`. Do not add one.** It was
-caught on staging, and the regression it guards is invisible in review: the gate
-still animates, it just animates off-screen.
+**Do not add a CSS `transform`.** Verify transform ownership in a browser:
+the sandbox tests do not compute CSS, and an off-screen animation can otherwise
+go unnoticed.
 
 The one place the script *does* write `transform` is `applyStyles()`, which is
 only reached when GSAP is absent. The invariant is about sharing the property
@@ -347,8 +347,7 @@ jsdom in this repo), with controllable stubs for `getComputedStyle`,
 turn.
 
 Beyond the behaviour above it pins several things a later tidy-up could
-plausibly undo: that the stylesheet never declares `transform`, that the shipped
-lag exceeds the shipped fade, that Escape is not wired on any gate, that the
+plausibly undo: that the shipped lag exceeds the shipped fade, that Escape is not wired on any gate, that the
 backdrop is refused as a close control and does not hide a real one behind it,
 that a close control hidden by an *ancestor* does not make the gate dismissible,
 and that the CSS and JS `@release` markers match — the two ship together, so
