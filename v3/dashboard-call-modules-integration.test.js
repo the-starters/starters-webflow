@@ -41,7 +41,7 @@ test('dashboard exposes only supported migrated actions', () => {
   dashboard.configureActionButtons(card, 'starter', 'pending', booking)
   assert.equal(details.hidden, false)
   assert.equal(accept.hidden, false)
-  assert.equal(decline.hidden, true)
+  assert.equal(decline.hidden, false)
   assert.equal(cancel.hidden, true)
   assert.equal(reschedule.hidden, true)
   assert.equal(media.hidden, true)

@@ -3967,3 +3967,22 @@ test('call card binds its Join Call destination and clears it for ineligible reb
     assert.equal(link.hidden, false)
   }
 })
+
+test('Starter request Decline is exposed only with a loaded eligible contract and open response window', () => {
+  const prior = global.StartersDashboardCallActions
+  const button = element({ 'booking-action-btn': 'switch-decline' })
+  const card = { querySelectorAll: () => [button] }
+  const booking = { status: 'pending', data_environment: 'test', booking_id: 'b', config_id: 'c', start: Date.now() + 86400000 }
+  try {
+    global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
+    api.configureActionButtons(card, 'starter', 'pending', booking)
+    assert.equal(button.hidden, false)
+    api.configureActionButtons(card, 'brand', 'pending', booking)
+    assert.equal(button.hidden, true)
+    api.configureActionButtons(card, 'starter', 'pending', { ...booking, confirmation_expires_at: Date.now() - 1000 })
+    assert.equal(button.hidden, true)
+    global.StartersDashboardCallActions = undefined
+    api.configureActionButtons(card, 'starter', 'pending', booking)
+    assert.equal(button.hidden, true)
+  } finally { global.StartersDashboardCallActions = prior }
+})

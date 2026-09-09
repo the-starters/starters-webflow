@@ -707,14 +707,17 @@
       const accept =
         action === 'switch-confirm' &&
         canConfirmBooking(role, booking || { status: status }, now)
+      const actions = global.StartersDashboardCallActions
+      const decline = action === 'switch-decline' &&
+        responseWindowOpen(booking, now) &&
+        validDashboardModule(actions) && typeof actions.canDecline === 'function' &&
+        actions.canDecline(role, booking)
       const messageHref = action === 'message' ? bookingMessageHref(role, booking) : ''
       const message = action === 'message' && messageHref !== ''
       if (action === 'message') setMessageControlDestination(button, messageHref)
-      // Details and Message are read-only. Accept is the first V3-native
-      // mutation. Every other legacy control stays hidden until it has a
-      // populated current endpoint contract and tests. In particular, never
-      // open empty Reschedule UI.
-      show(button, details || accept || message)
+      // Only expose actions backed by a loaded canonical action contract.
+      // Pending Starter rescheduling still has no supported contract.
+      show(button, details || accept || decline || message)
     })
   }
 
@@ -1675,6 +1678,16 @@
       })
   }
 
+  function openBookingDetail(modal, booking, role) {
+    const system = global.lumos && global.lumos.modal
+    const dialog = modal && modal.closest && modal.closest('dialog')
+    if (!system || typeof system.open !== 'function' ||
+        !system.list || !system.list['popup-booking-info']) return false
+    if (!populateDetailModal(modal, booking, role)) return false
+    system.open('popup-booking-info')
+    return !dialog || dialog.open
+  }
+
   function wireBookingDetails(refs, role) {
     if (!global.document || !global.document.addEventListener) return
     global.document.addEventListener('click', function (event) {
@@ -2391,6 +2404,9 @@
         return bookingForActionTarget(refs, target)
       },
       getBookingStatus: bookingStatus,
+      openDetail: function (modal, booking) {
+        return openBookingDetail(modal, booking, role)
+      },
       // A proposal model must be scoped to its receipt; only a direct update
       // re-renders the entire modal with a changed canonical booking.
       refreshDetail: function (modal, booking, content) {
@@ -2412,6 +2428,7 @@
   }
 
   const api = {
+    openBookingDetail,
     bindCard,
     bookingStatus,
     paidBooking,

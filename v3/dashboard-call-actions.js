@@ -1351,6 +1351,9 @@
         }
         const config = KINDS[step.kind]
         if (step.step === 'open') {
+          const card = button.closest && button.closest('[data-booking-id]')
+          if (card && typeof settings.openDetail === 'function' &&
+              !settings.openDetail(modal, booking)) return
           if (step.kind === 'reschedule-propose' || step.kind === 'reschedule-request') {
             ensureRescheduleViews(document, modal)
             applyRescheduleContractCopy(modal, step.kind)
