@@ -251,12 +251,5 @@ activated for any Starter outside TEST.
 
 ## Free booking confirmation reuse
 
-`free-call-booking.js` populates the success receipt from the submitted Free request
-and selected timezone after canonical success. Shared popup reset on close or call
-type handoff restores the original authored receipt contents and price-row visibility.
-Repeated Free requests populate fresh values, including empty context.
-
-Paid receipt population is a separate pre-existing gap: restoring authored placeholders
-prevents stale Free details from leaking into Paid reuse, but those placeholders are
-not correct Paid booking details. The focused Free controller regressions exercise
-the shared reset boundary; they do not prove a production Paid booking.
+The Free receipt and shared popup reset contract are owned by
+[Free booking confirmation](HIRE-PROFILE-WIRING.md#free-booking-confirmation).
