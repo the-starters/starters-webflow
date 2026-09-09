@@ -337,7 +337,7 @@ test('email payload rewrites the legacy interview path to the live V3 CMS route'
     assert.equal(payload.properties.learn_count, '1')
     assert.equal(
         payload.properties.learn_url,
-        'https://thestarters.com/learn/interviews-analyses/paid-social-101-a-guide-to-growing-e-commerce-brands?utm_source=quiz-results&utm_campaign=lead-drip#lesson',
+        'https://thestarters.com/learn/interviews-analysis/paid-social-101-a-guide-to-growing-e-commerce-brands?utm_source=quiz-results&utm_campaign=lead-drip#lesson',
     )
     evidence.learn_cta = {
         endpoint: enrollmentCalls(harness.fetchCalls)[0].url,

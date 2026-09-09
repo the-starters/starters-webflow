@@ -934,7 +934,7 @@ create a lead-entry event.
 | Collection | `/categories/` | `69f2329d4f5bacf6765c1ca1` | `69f2329e4f5bacf6765c1cc6` | `collection_signup` |
 | Collection | `/subcategories/` | `69f233f6f3e97748419e3a3d` | `69f233f7f3e97748419e3a43` | `collection_signup` |
 | Learn gated | `/learn/playbooks-frameworks/` | `69e1e416f6476e12f572b39b` | `69e1e417f6476e12f572b468` | `learn_unlock` |
-| Learn ungated | `/learn/interviews-analyses/` | `69dca9df095d2fbcf34e255b` | `69dca9df095d2fbcf34e2575` | `learn_signup` |
+| Learn ungated | `/learn/interviews-analysis/` | `69dca9df095d2fbcf34e255b` | `69dca9df095d2fbcf34e2575` | `learn_signup` |
 | Learn session | `/learn/sessions/` | `69e08554183023227aa46c1e` | `69e08554183023227aa46c24` | `session_signup` |
 | Starter Connect | `/hire/` | `69f241ec147b71addb6f1531` | `69f241ed147b71addb6f153d` | `hire` or `message` |
 | Starter Booking | `/hire/` | `69f241ec147b71addb6f1531` | `69f241ed147b71addb6f153d` | `booking`, `booking_free`, or `booking_paid` |
