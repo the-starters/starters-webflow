@@ -1198,11 +1198,14 @@
    * module-owned row in its place.
    *
    * The frame callback re-reads `data-booking-id` so a modal that was closed,
-   * reset, or rebound to another call in the meantime is left alone.
+   * reset, or rebound to another call in the meantime is left alone. A newer
+   * render also supersedes queued work so canonical rows cannot overwrite a
+   * scoped proposal receipt.
    * @param {HTMLElement|null} modal Detail modal being populated.
-   * @param {object} booking Canonical row bound to the modal.
+   * @param {object} booking Canonical row or receipt-only proposal model.
    * @param {string} role Signed-in member's role.
    * @param {string} [timezone] Display timezone.
+   * @param {string} [content] Limit rendering to this booking-popup-content panel.
    * @returns {boolean} Whether a recompute was scheduled.
    */
   function scheduleDetailSupplements(modal, booking, role, timezone, content) {
@@ -2329,8 +2332,8 @@
         return bookingForActionTarget(refs, target)
       },
       getBookingStatus: bookingStatus,
-      // Lets the actions module re-render the open modal from a booking it has
-      // just mutated, so a success panel cannot show pre-change values.
+      // A proposal model must be scoped to its receipt; only a direct update
+      // re-renders the entire modal with a changed canonical booking.
       refreshDetail: function (modal, booking, content) {
         return populateDetailModal(modal, booking, role, undefined, content)
       },

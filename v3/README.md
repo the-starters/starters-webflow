@@ -2351,8 +2351,11 @@ panel replaces `[Starter]` and `[Brand]` in its leaf text nodes with the
 counterpart's canonical booking name, or `the other participant` when that name
 is blank. Before the pending direct-update panel opens, the module updates the
 open modal from the new start, end, and reason, so its booking fields do not show
-the pre-change time. A confirmed-call proposal does not update those fields,
-because its current time stays authoritative until the counterpart confirms.
+the pre-change time. For either Brand or Starter, a confirmed-call proposal
+renders the selected date and reason only in the `reschedule-proposed` receipt,
+using the shared detail formatter for both authored booking fields and generated
+supplement rows. The base panel and canonical booking retain the confirmed time
+until the counterpart accepts, including when the participant returns with Back.
 Other authored content stays unchanged. The panel remains visible until the
 participant closes the modal; closing it then refreshes the canonical list.
 
