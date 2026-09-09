@@ -1821,7 +1821,7 @@ test('the shared reason panel carries the copy of the contract in play', () => {
   )
 })
 
-test('only the pending contract restates the booking before showing its success panel', async () => {
+test('reschedule receipts show the selected slot without moving a confirmed booking', async () => {
   const originalCalendar = global.StartersPaidCallBrandPayment
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
@@ -1841,6 +1841,42 @@ test('only the pending contract restates the booking before showing its success 
     querySelectorAll() {
       return []
     },
+  }
+  const details = require('./dashboard-calls.js')
+  const panels = ['base', 'reschedule-proposed', 'reschedule-updated'].map(name => ({
+    hidden: false,
+    style: {},
+    date: { textContent: '', style: {} },
+    reason: { textContent: '', style: {} },
+    getAttribute(attribute) { return attribute === 'booking-popup-content' ? name : null },
+    querySelectorAll(selector) {
+      if (selector === '[booking-element="start-date"]') return [this.date]
+      if (selector === '[booking-element="reschedule-reason"]') return [this.reason]
+      return []
+    },
+  }))
+  const originalQuery = modal.querySelector
+  modal.setAttribute = () => {}
+  modal.querySelector = selector => panels.find(panel =>
+    selector === '[booking-popup-content="' + panel.getAttribute('booking-popup-content') + '"]'
+  ) || originalQuery(selector)
+  modal.querySelectorAll = selector => selector === '[booking-popup-content]'
+    ? panels : panels.flatMap(panel => panel.querySelectorAll(selector))
+  const handlers = []
+  const document = {
+    addEventListener(event, handler) { if (event === 'click') handlers.push(handler) },
+    querySelector() { return modal },
+  }
+  api.wire({ document, role: 'brand', getBooking() { throw new Error('Unexpected booking lookup') } })
+  function returnToBase() {
+    const button = {
+      getAttribute(name) { return name === 'booking-action-btn' ? 'switch-base' : null },
+      closest(selector) { return selector.includes('popup-booking-info') ? modal : this },
+    }
+    handlers.forEach(handler => handler({
+      target: button, preventDefault() {}, stopImmediatePropagation() {},
+    }))
+    assert.equal(panels[0].hidden, false)
   }
   const mounts = []
   try {
@@ -1882,7 +1918,9 @@ test('only the pending contract restates the booking before showing its success 
     const pendingStart = pending.start
     const refreshed = []
     await api.mountRescheduleCalendar({}, modal, pending, 'brand', reasonField.value, undefined,
-      function (_modal, booking) {
+      function (_modal, booking, content) {
+        assert.equal(content, undefined)
+        details.populateDetailModal(_modal, booking, 'brand', undefined, content)
         refreshed.push(booking)
       })
     await mounts[0].onConfirm(slot)
@@ -1890,25 +1928,49 @@ test('only the pending contract restates the booking before showing its success 
     assert.equal(refreshed[0], pending)
     assert.equal(pending.start, start)
     assert.notEqual(pending.start, pendingStart)
+    assert.equal(pending.end, slot.end)
+    assert.equal(panels[2].hidden, false)
+    const updatedDate = panels[2].date.textContent
+    assert.ok(updatedDate)
+    returnToBase()
+    assert.equal(panels[0].date.textContent, updatedDate)
 
-    // Confirmed: the time holds until the counterpart answers, so nothing is restated.
-    // The successful pending confirm clears the authored reason field, so refill it.
-    reasonField.value = 'Need a later time'
-    currentId = 'booking-confirmed-1'
-    const confirmed = rescheduleBooking({
-      status: 'confirmed',
-      booking_id: 'booking-confirmed-1',
-      start: Date.now() + 72 * 60 * 60 * 1000,
-    })
-    const confirmedStart = confirmed.start
-    const notRefreshed = []
-    await api.mountRescheduleCalendar({}, modal, confirmed, 'starter', reasonField.value, undefined,
-      function (_modal, booking) {
-        notRefreshed.push(booking)
+    for (const role of ['starter', 'brand']) {
+      // Confirmed: the receipt shows the proposal, but the confirmed booking stays unchanged.
+      // The successful pending confirm clears the authored reason field, so refill it.
+      reasonField.value = 'Need a later time'
+      currentId = 'booking-confirmed-' + role
+      const confirmed = rescheduleBooking({
+        status: 'confirmed',
+        booking_id: currentId,
+        start: Date.now() + 72 * 60 * 60 * 1000,
       })
-    await mounts[1].onConfirm(slot)
-    assert.equal(notRefreshed.length, 0)
-    assert.equal(confirmed.start, confirmedStart)
+      const confirmedStart = confirmed.start
+      const confirmedEnd = confirmed.end
+      details.populateDetailModal(modal, confirmed, role)
+      const canonicalDate = panels[0].date.textContent
+      assert.notEqual(canonicalDate, updatedDate)
+      const proposalViews = []
+      await api.mountRescheduleCalendar({}, modal, confirmed, role, reasonField.value, undefined,
+        function (_modal, booking, content) {
+          details.populateDetailModal(_modal, booking, role, undefined, content)
+          proposalViews.push(booking)
+        })
+      await mounts[mounts.length - 1].onConfirm(slot)
+      assert.equal(proposalViews.length, 1)
+      assert.notEqual(proposalViews[0], confirmed)
+      assert.equal(proposalViews[0].start, slot.start)
+      assert.equal(proposalViews[0].end, slot.end)
+      assert.equal(proposalViews[0].rescheduled_reason, 'Need a later time')
+      assert.equal(confirmed.start, confirmedStart)
+      assert.equal(confirmed.end, confirmedEnd)
+      assert.equal(panels[1].hidden, false)
+      assert.equal(panels[1].date.textContent, updatedDate)
+      assert.equal(panels[1].reason.textContent, 'Need a later time')
+      returnToBase()
+      assert.equal(panels[0].date.textContent, canonicalDate)
+      assert.equal(panels[1].hidden, true)
+    }
   } finally {
     global.StartersPaidCallBrandPayment = originalCalendar
     global.xanoAuthFetch = originalFetch

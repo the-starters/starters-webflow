@@ -1066,12 +1066,14 @@
    * a navigating Message link below a reason form or the slot picker is noise
    * that can also discard the participant's in-progress input.
    */
-  function ensureDetailSupplements(modal, booking, role, timezone) {
+  function ensureDetailSupplements(modal, booking, role, timezone, content) {
     if (!modal || !booking || typeof modal.querySelectorAll !== 'function') return 0
     const document = modal.ownerDocument || global.document
     if (!document || typeof document.createElement !== 'function') return 0
     const authored = Array.prototype.slice.call(
-      modal.querySelectorAll('[booking-popup-content]'),
+      modal.querySelectorAll(content
+        ? '[booking-popup-content="' + content + '"]'
+        : '[booking-popup-content]'),
     )
     const panels = authored.filter(function (panel) {
       return (
@@ -1080,7 +1082,7 @@
         ) === -1
       )
     })
-    if (!authored.length) panels.push(modal)
+    if (!authored.length && !content) panels.push(modal)
     const rows = detailSupplementRows(booking, role, timezone)
     const counterpart = detailCounterpart(role, booking)
     const counterpartId = clean(counterpart && counterpart.memberstack_id)
@@ -1196,21 +1198,27 @@
    * module-owned row in its place.
    *
    * The frame callback re-reads `data-booking-id` so a modal that was closed,
-   * reset, or rebound to another call in the meantime is left alone.
+   * reset, or rebound to another call in the meantime is left alone. A newer
+   * render also supersedes queued work so canonical rows cannot overwrite a
+   * scoped proposal receipt.
    * @param {HTMLElement|null} modal Detail modal being populated.
-   * @param {object} booking Canonical row bound to the modal.
+   * @param {object} booking Canonical row or receipt-only proposal model.
    * @param {string} role Signed-in member's role.
    * @param {string} [timezone] Display timezone.
+   * @param {string} [content] Limit rendering to this booking-popup-content panel.
    * @returns {boolean} Whether a recompute was scheduled.
    */
-  function scheduleDetailSupplements(modal, booking, role, timezone) {
+  function scheduleDetailSupplements(modal, booking, role, timezone, content) {
     if (!modal || !booking || typeof modal.getAttribute !== 'function') return false
     if (typeof global.requestAnimationFrame !== 'function') return false
     const bookingId = clean(modal.getAttribute('data-booking-id'))
+    const render = {}
+    modal.__startersDetailSupplementRender = render
     try {
       global.requestAnimationFrame(function () {
         if (clean(modal.getAttribute('data-booking-id')) !== bookingId) return
-        ensureDetailSupplements(modal, booking, role, timezone)
+        if (modal.__startersDetailSupplementRender !== render) return
+        ensureDetailSupplements(modal, booking, role, timezone, content)
       })
     } catch (_error) {
       return false
@@ -1440,16 +1448,32 @@
       })
   }
 
-  function populateDetailModal(modal, booking, role, now) {
+  function populateDetailSchedule(root, booking, role) {
+    const other = role === 'starter' ? booking.brand_data : booking.starter_data
+    const own = role === 'starter' ? booking.starter_data : booking.brand_data
+    const timezone = (own && own.timezone) || (other && other.timezone)
+    setBookingField(root, 'start-date', formatDate(booking.start, timezone), true)
+    setBookingField(root, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
+  }
+
+  function populateDetailModal(modal, booking, role, now, content) {
     if (!modal || !booking) return false
+    const other = role === 'starter' ? booking.brand_data : booking.starter_data
+    const own = role === 'starter' ? booking.starter_data : booking.brand_data
+    const timezone = (own && own.timezone) || (other && other.timezone)
+    if (content) {
+      const panel = modal.querySelector('[booking-popup-content="' + content + '"]')
+      if (!panel) return false
+      populateDetailSchedule(panel, booking, role)
+      ensureDetailSupplements(modal, booking, role, timezone, content)
+      scheduleDetailSupplements(modal, booking, role, timezone, content)
+      return true
+    }
     const nextBookingId = clean(booking.booking_id || booking.id)
     const previousBookingId = clean(modal.getAttribute('data-booking-id'))
     if (previousBookingId !== nextBookingId) resetDetailActionState(modal)
     const status = bookingStatus(booking, now)
     const isPaid = paidBooking(booking)
-    const other = role === 'starter' ? booking.brand_data : booking.starter_data
-    const own = role === 'starter' ? booking.starter_data : booking.brand_data
-    const timezone = (own && own.timezone) || (other && other.timezone)
     const paymentText = isPaid && status !== 'cancelled' && status !== 'archived'
       ? booking.pm_confirmed
         ? 'Payment method confirmed.'
@@ -1490,11 +1514,10 @@
     setBookingField(modal, 'starter-name', booking.starter_data && booking.starter_data.name, true)
     setBookingField(modal, 'title', booking.call_context || 'Call', true)
     setBookingField(modal, 'context', booking.call_context, true)
-    setBookingField(modal, 'start-date', formatDate(booking.start, timezone), true)
+    populateDetailSchedule(modal, booking, role)
     setBookingField(modal, 'duration', formatDuration(booking.duration), true)
     setBookingPrice(modal, formatPrice(booking.price, isPaid), isPaid)
     setBookingField(modal, 'payment-status-text', paymentText, isPaid)
-    setBookingField(modal, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
 
     const showMeeting = status === 'confirmed' && clean(booking.meeting_link) !== ''
@@ -2309,10 +2332,10 @@
         return bookingForActionTarget(refs, target)
       },
       getBookingStatus: bookingStatus,
-      // Lets the actions module re-render the open modal from a booking it has
-      // just mutated, so a success panel cannot show pre-change values.
-      refreshDetail: function (modal, booking) {
-        return populateDetailModal(modal, booking, role)
+      // A proposal model must be scoped to its receipt; only a direct update
+      // re-renders the entire modal with a changed canonical booking.
+      refreshDetail: function (modal, booking, content) {
+        return populateDetailModal(modal, booking, role, undefined, content)
       },
       onAvailable: function () {
         refreshDetailExpiration(refs, role)
