@@ -2105,7 +2105,11 @@ requests and all other rows under calls; Brand keeps pending and accepted rows
 in its calls list. Each card's authored status pill receives the canonical,
 role-aware lifecycle label and the matching Designer variant: pending is
 `Pending` for Starter and `Requested` for Brand, confirmed is `Upcoming`, and
-completed, cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
+rescheduled is `Pending` for both roles on cards and in call details.
+Reschedule proposals retain the distinct canonical `rescheduled` state and stay
+in both roles' calls lists, without initial-request expiry or initial Accept
+actions. Once their end time passes, they display as completed. Completed,
+cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
 The selected `[booking-filter]` is the only control with `is-active`,
 `aria-pressed="true"`, and the matching checked visual state.
 
@@ -2170,9 +2174,10 @@ previous member's ID survives an identity change. Compose steps are excluded
 never receive it, because a summary and a navigating Message link below a
 reason form or the slot picker would discard in-progress input.
 
-Confirmed calls can show their canonical meeting link; cancelled and archived
-calls cannot. The authored Message controls navigate to the counterpart's
-thread. Only the counterpart's identity row carries a link — the Starter's
+Confirmed calls and active reschedule proposals can show their existing canonical
+meeting link; cancelled and archived calls cannot. The authored Message controls
+navigate to the counterpart's thread. Only the counterpart's identity row carries
+a link — the Starter's
 dashboard restores `brand-message-link`, the Brand's restores
 `starter-message-link`, and the member's own row is left alone, because a link
 to a thread with oneself has no destination. Each restored link reads
@@ -2291,9 +2296,11 @@ contracts never claim the same booking. Every command requires a booking ID,
 configuration ID, participant identity, and exact `test` or `production` data
 environment.
 
-For an active upcoming row where neither a reschedule action nor a response is
-available, the modal shows `Rescheduling is available for Free calls.`
-below the authored Reschedule control. Both eligibility explanations are
+For an active upcoming initial request or confirmed row where neither a
+reschedule action nor a response is available, the modal shows
+`Rescheduling is available for Free calls.` below the authored Reschedule
+control. A rescheduled proposal hides this hint for both roles, including when
+reusing a modal that previously showed it. Both eligibility explanations are
 module-owned `data-starters-action-hint` nodes inserted after the authored
 buttons; the script does not edit Designer markup. The early Reschedule guard
 resolves the confirmed proposal or pending direct-update contract and passes an
