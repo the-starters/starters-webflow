@@ -84,7 +84,10 @@ not used as identity because it is `{}` for both logged-in and logged-out
 visitors on this site.
 
 The wrapper still carries Memberstack's `data-ms-content="!learn-access"` as a
-second guard. For logged-out or unresolved visitors, the embed reads the
+second guard. Only a successful member lookup with `response.data === null`
+confirms a logged-out reader. Missing, rejected, thrown, or malformed lookups
+leave the Article open with `skipped: 'authentication-unresolved'` and arm no
+trigger. For confirmed logged-out visitors, the embed reads the
 wrapper's **computed display** and exits without writing a single style when it
 resolves to `none`.
 
@@ -110,7 +113,7 @@ So the embed guards that window twice:
 1. Boot waits on `window.memberReady`, then asks the real Memberstack member API.
 2. Authenticated members exit with `skipped: 'authenticated-member'` before any
    gate style or trigger is written.
-3. Logged-out or unresolved visitors continue through the authored wrapper
+3. Only confirmed logged-out visitors continue through the authored wrapper
    guard.
 4. Reveal re-checks computed display **before** the scroll lock, covering a gate
    that Memberstack hides later still. On that path it stands down, tears the
@@ -132,7 +135,7 @@ survives.
 ## Who may close it is also Memberstack's decision
 
 For the current canonical Article policy, authenticated members never reach the
-gate. The dismissal contract remains a defense for legacy or unresolved
+gate. The dismissal contract remains a defense for legacy
 authoring states. The gate is a **hard paywall** unless the Designer authors a close control:
 `[data-learn-gate-close-button]`, inside the wrapper, carrying its own
 `data-ms-content`. A logged-in non-paying member sees one and may dismiss; a

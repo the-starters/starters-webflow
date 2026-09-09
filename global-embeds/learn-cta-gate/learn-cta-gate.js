@@ -863,6 +863,11 @@
       return
     }
 
+    if (authenticatedMember !== false) {
+      state.skipped = 'authentication-unresolved'
+      return
+    }
+
     wrapper = document.querySelector(WRAPPER_SELECTOR)
     if (!wrapper) {
       state.skipped = 'no-wrapper'
@@ -965,33 +970,26 @@
     },
   }
 
-  /**
-   * `memberReady` is only a readiness signal on this site. Its resolved value
-   * is `{}` for every visitor, so it cannot prove authentication. After it
-   * settles, ask the real Memberstack API and test `response.data`. If the SDK
-   * is missing or rejects, keep the existing logged-out behavior and let the
-   * wrapper's computed display provide the second guard.
-   */
   function resolveMemberAndBoot() {
     var ms = window.$memberstackDom
     if (!ms || typeof ms.getCurrentMember !== 'function') {
-      warn('$memberstackDom.getCurrentMember unavailable — using authored gate')
-      boot(false)
+      warn('$memberstackDom.getCurrentMember unavailable — Article stays open')
+      boot(null)
       return
     }
     try {
       ms.getCurrentMember().then(
         function (response) {
-          boot(!!(response && response.data))
+          boot(response && response.data === null ? false : response && response.data ? true : null)
         },
         function () {
-          warn('getCurrentMember rejected — using authored gate')
-          boot(false)
+          warn('getCurrentMember rejected — Article stays open')
+          boot(null)
         }
       )
     } catch (err) {
-      warn('getCurrentMember threw — using authored gate')
-      boot(false)
+      warn('getCurrentMember threw — Article stays open')
+      boot(null)
     }
   }
 
