@@ -245,8 +245,12 @@
     )
     replaceParagraphText(
       dialog,
-      ['Within 24h / 72h / 7 days', 'Within 24h / 24–72h / 72h–7 days'],
-      'Within 24h / 24–72h / 72h–7 days',
+      [
+        'Within 24h / 72h / 7 days',
+        'Within 24h / 24–72h / 72h–7 days',
+        'Under 24h / 24h to under 72h / 72h to 7 days',
+      ],
+      'Under 24h / 24h to under 72h / 72h to 7 days',
     )
     replaceParagraphText(
       dialog,

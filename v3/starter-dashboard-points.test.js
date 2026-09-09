@@ -240,7 +240,7 @@ test('earning rules become active and include one completed-call row', () => {
       'Active points rules update automatically after each eligible activity is verified.',
     ),
   )
-  assert.ok(copy.includes('Within 24h / 24–72h / 72h–7 days'))
+  assert.ok(copy.includes('Under 24h / 24h to under 72h / 72h to 7 days'))
   assert.ok(copy.includes('Verified paid invoices through The Starters'))
   assert.ok(copy.includes('Per verified $1 paid'))
   assert.ok(copy.includes('Approved 5-star / 4-star review'))
