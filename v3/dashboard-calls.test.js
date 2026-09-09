@@ -3782,3 +3782,68 @@ test('opening on a terminal panel hides the authored back control', (context) =>
   global.StartersDashboardCallActions.switchPopupContent(view.modal, 'cancelled')
   assert.equal(view.back.hidden, false)
 })
+
+test('generated reschedule receipts preserve canonical base dates across deferred rendering', () => {
+  const actions = require('./dashboard-call-actions.js')
+  const originalFrame = global.requestAnimationFrame
+  try {
+    for (const role of ['brand', 'starter']) {
+      const frames = []
+      global.requestAnimationFrame = callback => frames.push(callback)
+      const document = { createElement: tag => domElement(tag) }
+      const modal = domElement('dialog', { 'popup-booking-info': '' })
+      modal.ownerDocument = document
+      const base = domElement('div', { 'booking-popup-content': 'base' })
+      modal.appendChild(base)
+      actions.ensureRescheduleViews(document, modal)
+      const receipt = modal.querySelector('[booking-popup-content="reschedule-proposed"]')
+      assert.ok(receipt)
+      const booking = {
+        booking_id: 'generated-' + role,
+        status: 'confirmed',
+        start: Date.now() + 72 * 60 * 60 * 1000,
+        end: Date.now() + 73 * 60 * 60 * 1000,
+        duration: 60,
+        brand_data: { name: 'Brand', timezone: 'UTC' },
+        starter_data: { name: 'Starter', timezone: 'Asia/Manila' },
+      }
+      const date = panel => panel.querySelector('[data-starters-call-summary-row="start-date"]').children[1].textContent
+      api.populateDetailModal(modal, booking, role)
+      const canonicalDate = date(base)
+      assert.equal(date(receipt), canonicalDate)
+      const proposal = { ...booking, start: booking.start + 86400000, end: booking.end + 86400000 }
+      api.populateDetailModal(modal, proposal, role, undefined, 'reschedule-proposed')
+      actions.switchPopupContent(modal, 'reschedule-proposed')
+      const proposedDate = date(receipt)
+      assert.notEqual(proposedDate, canonicalDate)
+      assert.equal(date(base), canonicalDate)
+      frames.splice(0).forEach(callback => callback())
+      assert.equal(date(receipt), proposedDate)
+      assert.equal(date(base), canonicalDate)
+
+      const handlers = []
+      document.addEventListener = (event, handler) => {
+        if (event === 'click') handlers.push(handler)
+      }
+      document.querySelector = () => modal
+      actions.wire({ document, role, getBooking() { throw new Error('Unexpected booking lookup') } })
+      const button = {
+        getAttribute(name) { return name === 'booking-action-btn' ? 'switch-base' : null },
+        closest(selector) { return selector.includes('popup-booking-info') ? modal : this },
+      }
+      handlers.forEach(handler => handler({
+        target: button, preventDefault() {}, stopImmediatePropagation() {},
+      }))
+      assert.equal(base.hidden, false)
+      assert.equal(receipt.hidden, true)
+      assert.equal(date(base), canonicalDate)
+
+      api.populateDetailModal(modal, { ...proposal, status: 'pending' }, role)
+      frames.splice(0).forEach(callback => callback())
+      assert.equal(date(base), proposedDate)
+      assert.equal(date(modal.querySelector('[booking-popup-content="reschedule-updated"]')), proposedDate)
+    }
+  } finally {
+    global.requestAnimationFrame = originalFrame
+  }
+})

@@ -1066,12 +1066,14 @@
    * a navigating Message link below a reason form or the slot picker is noise
    * that can also discard the participant's in-progress input.
    */
-  function ensureDetailSupplements(modal, booking, role, timezone) {
+  function ensureDetailSupplements(modal, booking, role, timezone, content) {
     if (!modal || !booking || typeof modal.querySelectorAll !== 'function') return 0
     const document = modal.ownerDocument || global.document
     if (!document || typeof document.createElement !== 'function') return 0
     const authored = Array.prototype.slice.call(
-      modal.querySelectorAll('[booking-popup-content]'),
+      modal.querySelectorAll(content
+        ? '[booking-popup-content="' + content + '"]'
+        : '[booking-popup-content]'),
     )
     const panels = authored.filter(function (panel) {
       return (
@@ -1080,7 +1082,7 @@
         ) === -1
       )
     })
-    if (!authored.length) panels.push(modal)
+    if (!authored.length && !content) panels.push(modal)
     const rows = detailSupplementRows(booking, role, timezone)
     const counterpart = detailCounterpart(role, booking)
     const counterpartId = clean(counterpart && counterpart.memberstack_id)
@@ -1203,14 +1205,17 @@
    * @param {string} [timezone] Display timezone.
    * @returns {boolean} Whether a recompute was scheduled.
    */
-  function scheduleDetailSupplements(modal, booking, role, timezone) {
+  function scheduleDetailSupplements(modal, booking, role, timezone, content) {
     if (!modal || !booking || typeof modal.getAttribute !== 'function') return false
     if (typeof global.requestAnimationFrame !== 'function') return false
     const bookingId = clean(modal.getAttribute('data-booking-id'))
+    const render = {}
+    modal.__startersDetailSupplementRender = render
     try {
       global.requestAnimationFrame(function () {
         if (clean(modal.getAttribute('data-booking-id')) !== bookingId) return
-        ensureDetailSupplements(modal, booking, role, timezone)
+        if (modal.__startersDetailSupplementRender !== render) return
+        ensureDetailSupplements(modal, booking, role, timezone, content)
       })
     } catch (_error) {
       return false
@@ -1450,10 +1455,15 @@
 
   function populateDetailModal(modal, booking, role, now, content) {
     if (!modal || !booking) return false
+    const other = role === 'starter' ? booking.brand_data : booking.starter_data
+    const own = role === 'starter' ? booking.starter_data : booking.brand_data
+    const timezone = (own && own.timezone) || (other && other.timezone)
     if (content) {
       const panel = modal.querySelector('[booking-popup-content="' + content + '"]')
       if (!panel) return false
       populateDetailSchedule(panel, booking, role)
+      ensureDetailSupplements(modal, booking, role, timezone, content)
+      scheduleDetailSupplements(modal, booking, role, timezone, content)
       return true
     }
     const nextBookingId = clean(booking.booking_id || booking.id)
@@ -1461,9 +1471,6 @@
     if (previousBookingId !== nextBookingId) resetDetailActionState(modal)
     const status = bookingStatus(booking, now)
     const isPaid = paidBooking(booking)
-    const other = role === 'starter' ? booking.brand_data : booking.starter_data
-    const own = role === 'starter' ? booking.starter_data : booking.brand_data
-    const timezone = (own && own.timezone) || (other && other.timezone)
     const paymentText = isPaid && status !== 'cancelled' && status !== 'archived'
       ? booking.pm_confirmed
         ? 'Payment method confirmed.'
