@@ -1711,7 +1711,7 @@ test('missing panel details and role-correct Message actions are supplied withou
     'Schedule changed',
   )
   const starterMessage = cancelled.querySelector('[data-starters-call-message]')
-  assert.equal(starterMessage.textContent, 'Message Brand')
+  assert.equal(starterMessage.textContent, 'Messages tab')
   assert.equal(starterMessage.href, '/messages?with=mem_brand')
 
   const rowGroup = cancelled.querySelector('[data-starters-call-summary-rows]')
@@ -1725,12 +1725,14 @@ test('missing panel details and role-correct Message actions are supplied withou
 
   const messageActions = cancelled.querySelector('[data-starters-call-summary-actions]')
   assert.ok(messageActions)
-  assert.equal(messageActions.style.justifyContent, 'flex-end')
+  assert.equal(messageActions.tagName, 'p')
+  assert.equal(messageActions.children[0].textContent, 'If you’d like to discuss options, reach out to Northwind via the ')
+  assert.equal(messageActions.children[2].textContent, '.')
   assert.equal(starterMessage.parentNode, messageActions)
-  assert.equal(starterMessage.style.display, 'inline-flex')
-  assert.equal(starterMessage.style.backgroundColor, '#1f231f')
-  assert.equal(starterMessage.style.color, '#ffffff')
-  assert.equal(starterMessage.style.textDecoration, 'none')
+  assert.equal(starterMessage.style.display, 'inline')
+  assert.equal(starterMessage.style.backgroundColor, undefined)
+  assert.equal(starterMessage.style.color, 'inherit')
+  assert.equal(starterMessage.style.textDecoration, 'underline')
 
   const supplement = cancelled.querySelector('[data-starters-call-summary]')
   assert.equal(supplement.hidden, false)
@@ -1757,7 +1759,7 @@ test('missing panel details and role-correct Message actions are supplied withou
   api.ensureDetailSupplements(modal, booking, 'brand', 'UTC')
   assert.equal(cancelled.querySelectorAll('[data-starters-call-summary]').length, 1)
   const brandMessage = cancelled.querySelector('[data-starters-call-message]')
-  assert.equal(brandMessage.textContent, 'Message Starter')
+  assert.equal(brandMessage.textContent, 'Messages tab')
   assert.equal(brandMessage.href, '/messages?with=mem_starter')
   assert.equal(
     cancelled.querySelectorAll('[data-starters-call-summary-rows]').length,
