@@ -2385,7 +2385,7 @@ availability flag and is never returned to the dashboard consumer. Direct
 transcript fetch and rendering remain closed because there is no reviewed
 authenticated V3 transcript proxy with an exact ownership contract.
 
-<a id="dashboard-payment-recovery"></a>
+### Dashboard payment recovery
 
 `dashboard-call-payment.js` owns the Brand dashboard payment-method panel for
 eligible declined Paid bookings in a canonical `test` or `live` environment.
