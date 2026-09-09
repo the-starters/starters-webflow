@@ -2227,9 +2227,7 @@ Cancel chain for eligible Free booked calls, and owner-scoped recording access
 for eligible completed or archived calls. Card-level cancel, media, and other
 unsupported legacy controls stay hidden. Card-level Decline and the exact
 Cancel and reschedule eligibility and feedback rules live in the
-[dashboard booking action contract](#dashboard-booking-action-contract). The
-decline chain now also exposes its authored reason step
-(`switch-decline-reason`), so the reason dialog is reachable. Free-call
+[dashboard booking action contract](#dashboard-booking-action-contract). Free-call
 reschedule has two separate contracts on the published environment-bound
 endpoints. For a confirmed call, either participant proposes a time and the
 counterpart responds. For a pending request, only the Brand can update the
@@ -2316,6 +2314,12 @@ action module that approves the booking through `canDecline`. Clicking it
 populates the existing details modal with the selected booking and counterpart,
 opens it through the shared Lumos modal owner, then switches to the decline
 panel. If the modal cannot be populated or opened, the panel switch stops.
+In the decline panel, the authored `switch-decline-reason` control reads
+`Decline Call` and opens the reason step for the selected booking. Both
+`booking-action-btn` and `booking-card-action-btn` hooks use the shared
+`setAuthoredActionLabel` formatter to preserve the nested button structure.
+This label applies to eligible Free and Paid requests; cancellation labels
+are unchanged.
 Pending Starter rescheduling remains unsupported.
 
 Cancel is available
