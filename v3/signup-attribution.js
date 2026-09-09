@@ -316,6 +316,8 @@
     // CompleteRegistration, which is the failure this guard exists to prevent.
     var SIGNUP_FORM_SELECTOR = 'form[data-ms-form="signup"]'
     var LOGIN_FORM_SELECTOR = '[data-ms-form="login"]'
+    var SIGNUP_SUBMIT_CONTROL_SELECTOR =
+        'form[data-ms-form="signup"] [ms-code-submit-button]'
 
     var COMPLETE_REGISTRATION_EVENT = 'CompleteRegistration'
     var FIRED_FLAG = 'startersCompleteRegistrationFired'
@@ -1208,11 +1210,41 @@
         }
     }
 
+    /**
+     * The shared Webflow auth component uses a visible `type="button"`
+     * wrapper marked with `ms-code-submit-button`; Memberstack can complete the
+     * signup without dispatching a native form submit. Treat that exact control
+     * as signup intent too. Registration still requires the subsequent
+     * logged-out to logged-in transition, so an invalid click sends nothing.
+     *
+     * @param {Event} event
+     * @returns {void}
+     */
+    var onLeadEntrySignupControlClick = function (event) {
+        try {
+            if (
+                !leadEntryContextForPath(
+                    (window.location && window.location.pathname) || '',
+                )
+            ) {
+                return
+            }
+            var target = event && event.target
+            if (!target || typeof target.closest !== 'function') return
+            if (target.closest(SIGNUP_SUBMIT_CONTROL_SELECTOR)) {
+                leadEntrySignupSubmitted = true
+            }
+        } catch (error) {
+            /* an unreadable control fails closed */
+        }
+    }
+
     /** @returns {void} */
     var bindLeadEntrySignupSubmit = function () {
         try {
             if (!document || typeof document.addEventListener !== 'function') return
             document.addEventListener('submit', onLeadEntrySignupSubmit, true)
+            document.addEventListener('click', onLeadEntrySignupControlClick, true)
         } catch (error) {
             /* a page that cannot listen never registers a lead entry */
         }

@@ -537,6 +537,21 @@ function boot(options = {}) {
             for (const entry of handlers) entry[1](event)
             return event
         },
+        clickSignupControl: () => {
+            const control = {}
+            const target = {
+                closest(selector) {
+                    return selector ===
+                        'form[data-ms-form="signup"] [ms-code-submit-button]'
+                        ? control
+                        : null
+                },
+            }
+            const event = { target }
+            const handlers = document.listeners.filter(([name]) => name === 'click')
+            for (const entry of handlers) entry[1](event)
+            return event
+        },
         rerun: () => vm.runInNewContext(source, context),
         settle: () => new Promise((resolve) => setImmediate(resolve)),
         writesFor: (name) =>
@@ -1146,6 +1161,43 @@ test('a real production CMS signup registers one authenticated V3 lead entry', a
             },
         },
     ])
+})
+
+test('the shared custom signup button registers an ungated Learn lead entry', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analysis/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'],
+        member: null,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await harness.settle()
+
+    harness.clickSignupControl()
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+    await harness.settle()
+
+    const registrations = harness.fetchCalls.filter((call) =>
+        /lead_email\/register\/v3$/.test(call.url),
+    )
+    assert.equal(registrations.length, 1)
+    assert.deepEqual(JSON.parse(registrations[0].init.body), {
+        source_event_id: 'evt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        source_route: '/learn/interviews-analysis/operator-story',
+        source_collection_id: '69dca9df095d2fbcf34e255b',
+        source_resource_slug: 'operator-story',
+        intent_subtype: 'learn_signup',
+        properties: {
+            client_payload_version: 'lead_entry_browser_v1',
+            signup_source: '/learn/interviews-analysis/operator-story',
+        },
+    })
 })
 
 test('an accepted lead entry retries PostHog after the real SDK loads', async () => {
