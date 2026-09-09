@@ -464,10 +464,10 @@ or falling back to legacy profile metadata. Recommendations cached before these
 email fields were added refresh before enrollment without changing the quiz
 revision. When no Learn record is
 available, it sends the safe `/learn` fallback instead of leaving the email
-empty. Learn interview links use the live V3
-`/learn/interviews-analyses/<slug>` CMS route; legacy
-`/learn/interviews/<slug>` records are normalized to that route while keeping
-their query parameters and fragment.
+empty. Legacy `/learn/interviews/<slug>` records are normalized to the live
+Learn ungated CMS route in the
+[V3 lead-entry route table](v3/README.md#v3-collection-learn-and-starter-lead-entry-registration)
+while keeping their query parameters and fragment.
 The Memberstack session exchange accepts every response shape used by the
 shared V3 trade-token endpoint: a raw string, `{authToken}`, or `{token}`.
 

@@ -288,7 +288,7 @@
         if (url.pathname.startsWith(legacyInterviewPrefix)) {
             url.pathname = url.pathname.replace(
                 legacyInterviewPrefix,
-                '/learn/interviews-analyses/',
+                '/learn/interviews-analysis/',
             )
         }
 

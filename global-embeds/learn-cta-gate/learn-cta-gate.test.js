@@ -409,7 +409,7 @@ async function harness(opts = {}) {
   }
 
   const windowObj = {
-    location: { hostname, pathname: '/learn/interviews-analyses/how-to-build-trust' },
+    location: { hostname, pathname: '/learn/interviews-analysis/how-to-build-trust' },
     getComputedStyle: (el) => el.computed,
     matchMedia: (q) => ({ matches: reducedMotion && /reduce/.test(q) }),
     dispatchEvent: (e) => events.push(e),

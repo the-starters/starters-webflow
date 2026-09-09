@@ -394,7 +394,7 @@
             posthogSourceContext: true,
         },
         {
-            prefix: '/learn/interviews-analyses/',
+            prefix: '/learn/interviews-analysis/',
             collectionId: '69dca9df095d2fbcf34e255b',
             pageId: '69dca9df095d2fbcf34e2575',
             intentSubtype: 'learn_signup',

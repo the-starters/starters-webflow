@@ -926,7 +926,7 @@ test('every V3 Xano Collection and Learn route produces its exact observable con
         ['/categories/example', '69f2329d4f5bacf6765c1ca1', '69f2329e4f5bacf6765c1cc6', 'collection_signup'],
         ['/subcategories/example', '69f233f6f3e97748419e3a3d', '69f233f7f3e97748419e3a43', 'collection_signup'],
         ['/learn/playbooks-frameworks/example', '69e1e416f6476e12f572b39b', '69e1e417f6476e12f572b468', 'learn_unlock'],
-        ['/learn/interviews-analyses/example', '69dca9df095d2fbcf34e255b', '69dca9df095d2fbcf34e2575', 'learn_signup'],
+        ['/learn/interviews-analysis/example', '69dca9df095d2fbcf34e255b', '69dca9df095d2fbcf34e2575', 'learn_signup'],
         ['/learn/sessions/example', '69e08554183023227aa46c1e', '69e08554183023227aa46c24', 'session_signup'],
     ]
 
@@ -1054,7 +1054,7 @@ test('a Hire signup without a supported CTA intent fails closed', async () => {
 test('the normal ungated Learn Get Started link opens the existing signup modal', async () => {
     const harness = boot({
         hostname: 'thestarters.com',
-        pathname: '/learn/interviews-analyses/operator-story',
+        pathname: '/learn/interviews-analysis/operator-story',
         pageId: '69dca9df095d2fbcf34e2575',
         forms: ['signup'],
         member: null,
@@ -1071,7 +1071,7 @@ test('the normal ungated Learn Get Started link opens the existing signup modal'
 test('the ungated Learn Get Started link keeps its normal route for logged-in viewers', async () => {
     const harness = boot({
         hostname: 'thestarters.com',
-        pathname: '/learn/interviews-analyses/operator-story',
+        pathname: '/learn/interviews-analysis/operator-story',
         pageId: '69dca9df095d2fbcf34e2575',
         forms: ['signup'],
         member: loggedInMember,
@@ -1242,7 +1242,7 @@ test('an accepted lead entry uses the bounded same-page PostHog retry schedule',
 test('the same-page retry captures once when PostHog finishes loading', async () => {
     const harness = boot({
         hostname: 'thestarters.com',
-        pathname: '/learn/interviews-analyses/operator-story',
+        pathname: '/learn/interviews-analysis/operator-story',
         pageId: '69dca9df095d2fbcf34e2575',
         forms: ['signup'],
         member: null,
@@ -1269,7 +1269,7 @@ test('the same-page retry captures once when PostHog finishes loading', async ()
             properties: {
                 track_key: 'learn_ungated',
                 intent_subtype: 'learn_signup',
-                source_route: '/learn/interviews-analyses/operator-story',
+                source_route: '/learn/interviews-analysis/operator-story',
                 source_collection_id: '69dca9df095d2fbcf34e255b',
                 source_resource_slug: 'operator-story',
                 payload_version: 'lead_entry_browser_v1',
