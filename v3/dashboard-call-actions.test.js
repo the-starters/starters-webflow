@@ -224,6 +224,7 @@ function actionChainHarness(kind, restart) {
   const contents = names.map(function (name) {
     return {
       hidden: name !== 'base',
+      querySelectorAll() { return [] },
       style: { display: name === 'base' ? 'flex' : 'none' },
       getAttribute(attribute) {
         return attribute === 'booking-popup-content' ? name : null
@@ -1429,6 +1430,7 @@ test('the modal back and close chrome is module-owned', () => {
   const contents = ['base', 'cancel'].map(function (name) {
     return {
       hidden: name !== 'base',
+      querySelectorAll() { return [] },
       style: { display: name === 'base' ? 'flex' : 'none' },
       getAttribute(attribute) {
         return attribute === 'booking-popup-content' ? name : null
@@ -2010,7 +2012,9 @@ test('the authored booking-copy hooks are preferred over matching the copy strin
 test('card Decline opens the selected booking before changing the modal panel', async () => {
   const booking = pendingBooking()
   const order = []
-  const panel = { style: {}, getAttribute: () => 'decline' }
+  const label = { textContent: 'Cancel Call' }
+  const control = { querySelectorAll: () => [label] }
+  const panel = { style: {}, getAttribute: () => 'decline', querySelectorAll: () => [control] }
   const modal = { querySelectorAll: selector => selector === '[booking-popup-content]' ? (order.push('panel'), [panel]) : [] }
   const card = {}
   const button = { getAttribute: key => key === 'booking-action-btn' ? 'switch-decline' : null,
@@ -2020,5 +2024,6 @@ test('card Decline opens the selected booking before changing the modal panel', 
     getBooking: () => booking, openDetail: (actualModal, actualBooking) => { assert.equal(actualModal, modal); assert.equal(actualBooking, booking); order.push('open'); return true } })
   await handler({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
   assert.deepEqual(order, ['open', 'panel'])
+  assert.equal(label.textContent, 'Decline Call')
   assert.equal(panel.hidden, false)
 })

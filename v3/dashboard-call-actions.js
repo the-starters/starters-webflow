@@ -555,7 +555,16 @@
       const active = content.getAttribute('booking-popup-content') === target
       content.hidden = !active
       content.style.display = active ? 'flex' : 'none'
-      if (active) found = true
+      if (active) {
+        found = true
+        if (target === 'decline') {
+          content.querySelectorAll(
+            '[booking-action-btn="switch-decline-reason"], [booking-card-action-btn="switch-decline-reason"]',
+          ).forEach(function (control) {
+            setAuthoredActionLabel(control, 'Decline Call')
+          })
+        }
+      }
     })
     // The authored back control returns to the base panel, so it is only
     // meaningful away from it. Hiding it there removes the doubled close icon
