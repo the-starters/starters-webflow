@@ -1007,7 +1007,8 @@
         label: role === 'starter' ? 'Brand' : 'Starter',
         value: clean(counterpart && counterpart.name),
       },
-      { field: 'start-date', label: 'Date and time', value: formatDate(booking && booking.start, timezone) },
+      { field: 'start-date-old', label: 'Current confirmed time', value: proposalOldDate(booking, timezone) },
+      { field: 'start-date', label: clean(booking && booking.status).toLowerCase() === 'rescheduled' ? 'Proposed time' : 'Date and time', value: formatDate(booking && booking.start, timezone) },
       { field: 'duration', label: 'Duration', value: formatDuration(booking && booking.duration) },
       { field: 'context', label: 'Call', value: clean(booking && booking.call_context) },
       { field: 'reschedule-reason', label: 'Reschedule reason', value: clean(booking && booking.rescheduled_reason) },
@@ -1470,11 +1471,32 @@
       })
   }
 
+  function proposalOldDate(booking, timezone) {
+    if (clean(booking && booking.status).toLowerCase() !== 'rescheduled') return ''
+    return formatDate(normalizeTimestamp(booking && booking.start_old), timezone)
+  }
+
+  function proposalStatusText(booking, role) {
+    if (clean(booking && booking.status).toLowerCase() !== 'rescheduled') return ''
+    const proposer = clean(booking && booking.rescheduled_by).toLowerCase()
+    if (!['brand', 'starter'].includes(proposer) || !['brand', 'starter'].includes(role)) return ''
+    if (proposer !== role) return ' — Awaiting your confirmation of the proposed time.'
+    return ' — Awaiting ' + (role === 'brand' ? 'Starter' : 'Brand') + ' confirmation of the proposed time.'
+  }
+
   function populateDetailSchedule(root, booking, role) {
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
     const own = role === 'starter' ? booking.starter_data : booking.brand_data
     const timezone = (own && own.timezone) || (other && other.timezone)
     setBookingField(root, 'start-date', formatDate(booking.start, timezone), true)
+    // The shared date formatter already includes time and timezone.
+    ;['start-time', 'start-time-old'].forEach(function (name) {
+      bookingFields(root, name).forEach(function (field) { show(field, false) })
+    })
+    const oldDate = proposalOldDate(booking, timezone)
+    setBookingField(root, 'start-date-old', oldDate, oldDate !== '')
+    const statusText = proposalStatusText(booking, role)
+    setBookingField(root, 'status-text', statusText, statusText !== '')
     setBookingField(root, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
   }
 

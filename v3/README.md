@@ -2150,6 +2150,16 @@ panel is the opening view rather than one the member navigated to, the authored
 `switch-base` back control stays hidden until a chain leaves the panel, keeping
 the doubled close icon off the entry view.
 
+For a canonical `rescheduled` row, `[booking-element="start-date-old"]`
+shows `start_old` as the current confirmed time and `start-date` shows `start`
+as the proposed time. Both use the viewing participant's timezone, falling back
+to the counterpart's timezone. The shared formatter includes time and timezone,
+so standalone `start-time` and `start-time-old` nodes stay hidden without hiding
+their date wrappers. Missing or invalid `start_old` hides the old-date field.
+The `status-text` hook tells the counterpart that their confirmation is awaited,
+or tells the proposer which role must confirm; an unknown proposer hides that
+copy. Binding a non-rescheduled row hides both proposal-only fields.
+
 Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
 `data-starters-call-summary` block inserted before the authored Close control's
@@ -2157,7 +2167,8 @@ group when that group is a direct child of the panel, otherwise appended after
 the authored content. A modal that authors no such panel receives one block on
 the modal itself. Generated content uses no classes or generated IDs. The block
 lists only the fields that panel has no usable `[booking-element]` hook for and
-that the canonical row has a value for — counterpart name, date and time,
+that the canonical row has a value for — counterpart name, date and time
+(including the current confirmed and proposed times described above),
 duration, call context, reschedule reason, and cancellation reason — as
 `data-starters-call-summary-row` lines keyed by that field name. A hook counts
 as usable only while it renders: a hook that is itself hidden, that sits inside

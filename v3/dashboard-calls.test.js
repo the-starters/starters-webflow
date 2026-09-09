@@ -1500,6 +1500,10 @@ function detailModalHarness() {
     'title',
     'context',
     'start-date',
+    'start-date-old',
+    'start-time',
+    'start-time-old',
+    'status-text',
     'duration',
     'price',
     'payment-status-text',
@@ -1515,7 +1519,7 @@ function detailModalHarness() {
   })
   // The authored cancel panel duplicates some base-panel fields; every copy
   // must be filled together (Kaeser QA F3).
-  ;['context', 'start-date', 'meeting-link'].forEach((name) => {
+  ;['context', 'start-date', 'start-date-old', 'meeting-link'].forEach((name) => {
     const copy = fieldNode(name)
     panelCopies[name] = copy
     fieldCopies[name].push(copy)
@@ -1642,6 +1646,37 @@ test('Free Call details hide paid copy, duplicate copy, and unsupported actions'
   api.populateDetailModal(view.modal, booking, 'starter', 2_000)
   assert.equal(view.pendingOne.hidden, true)
   assert.equal(view.actions[4].hidden, true)
+})
+
+test('proposal details show old and proposed times and the correct waiting role', () => {
+  const booking = {
+    booking_id: 'proposal-comparison', status: 'rescheduled', rescheduled_by: 'brand',
+    start: Date.parse('2026-09-17T08:30:00Z'), start_old: Date.parse('2026-09-16T08:30:00Z'),
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'Asia/Manila' },
+  }
+  for (const role of ['brand', 'starter']) {
+    const view = detailModalHarness()
+    api.populateDetailModal(view.modal, booking, role)
+    assert.equal(view.fields['start-date-old'].textContent, role === 'brand' ? 'Wed, Sep 16, 8:30 AM UTC' : 'Wed, Sep 16, 4:30 PM GMT+8')
+    assert.equal(view.panelCopies['start-date-old'].textContent, view.fields['start-date-old'].textContent)
+    assert.equal(view.fields['start-time'].hidden, true)
+    assert.equal(view.fields['start-time-old'].hidden, true)
+    assert.equal(view.fields['start-date'].textContent, role === 'brand' ? 'Thu, Sep 17, 8:30 AM UTC' : 'Thu, Sep 17, 4:30 PM GMT+8')
+    assert.match(view.fields['status-text'].textContent, role === 'starter' ? /your confirmation/ : /Starter/)
+    api.populateDetailModal(view.modal, { ...booking, rescheduled_by: 'starter' }, role)
+    assert.match(view.fields['status-text'].textContent, role === 'brand' ? /your confirmation/ : /Brand/)
+    api.populateDetailModal(view.modal, { ...booking, status: 'confirmed' }, role)
+    assert.equal(view.fields['start-date-old'].hidden, true)
+    assert.equal(view.fields['status-text'].hidden, true)
+  }
+})
+
+test('proposal details hide unavailable old time and unknown proposer copy', () => {
+  const view = detailModalHarness()
+  api.populateDetailModal(view.modal, { booking_id: 'missing-old', status: 'rescheduled', start: Date.now() + 86400000, start_old: null }, 'starter')
+  assert.equal(view.fields['start-date-old'].hidden, true)
+  assert.equal(view.fields['status-text'].hidden, true)
 })
 
 test('details fill every authored panel copy of a booking field', () => {
