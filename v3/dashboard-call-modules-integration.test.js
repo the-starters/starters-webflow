@@ -304,7 +304,7 @@ test('optional modules wire once when they load after the fallback', async () =>
   }
 })
 
-test('unsupported lifecycle and payment controls stay inactive', () => {
+test('unsupported lifecycle and payment controls stay inactive', async () => {
   const cancel = button('switch-cancel')
   const reschedule = button('reschedule')
   const payment = button('replace-payment-method')
@@ -325,7 +325,7 @@ test('unsupported lifecycle and payment controls stay inactive', () => {
   assert.equal(cancel.hidden, true)
   assert.equal(reschedule.hidden, true)
   assert.equal(payment.hidden, true)
-  assert.equal(global.StartersDashboardCallPayment.wire(), false)
+  assert.equal(await global.StartersDashboardCallPayment.wire(), false)
 })
 
 test('Details exposes the full cancel chain for booked participant calls only', () => {

@@ -955,6 +955,7 @@
     'decline-reason',
     'reschedule',
     'reschedule-calendar',
+    'payment-methods',
   ]
 
   /** Every authored Message control, link or button, card or modal. */
@@ -1346,6 +1347,15 @@
           global.StartersDashboardCallMedia.canReadMedia(booking, status)
         const message =
           action === 'message' && bookingMessageHref(role, booking) !== ''
+        const paymentAction = clean(button.getAttribute('payment-action-btn'))
+        const paymentControl = ['change-card', 'change-card-v2', 'add-card'].includes(paymentAction) ||
+          (typeof button.hasAttribute === 'function' &&
+            (button.hasAttribute('popup-stripe-card-open') || button.hasAttribute('pm-use-this')))
+        const preferredPaymentControl = paymentAction !== 'change-card' ||
+          !modal.querySelector('[payment-action-btn="change-card-v2"]')
+        const payment = paymentControl && preferredPaymentControl &&
+          typeof global.StartersDashboardCallPayment?.canManageCards === 'function' &&
+          global.StartersDashboardCallPayment.canManageCards(role, booking)
         if (action === 'reschedule') {
           if (!gates.rescheduleAnchor) gates.rescheduleAnchor = button
           if (proposeReschedule) gates.rescheduleShown = true
@@ -1366,6 +1376,7 @@
             proposeReschedule ||
             respondReschedule ||
             media ||
+            payment ||
             message,
         )
       })
@@ -1401,6 +1412,7 @@
   }
 
   function resetDetailActionState(modal) {
+    global.StartersDashboardCallPayment?.invalidateModal?.(modal)
     const actionsModule = global.StartersDashboardCallActions
     if (!validDashboardModule(actionsModule)) return
     if (typeof actionsModule.resetRescheduleState === 'function') {

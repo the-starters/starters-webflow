@@ -1094,7 +1094,8 @@ contract is owned by the
 [Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
 
 `paid-call-brand-payment.js` receives the exact accepted Paid configuration and
-owns that authored CTA, Stripe Card Element, and paid booking command. Only
+owns that authored CTA and the
+[shared payment flow](README.md#brand-paid-call-payment-method-client). Only
 successfully installed configurations can pass the
 [Brand readiness contract](#signed-in-brand-readiness) into the chooser and
 matching page projections. A call type without one exact accepted and installed

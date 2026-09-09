@@ -7,6 +7,132 @@ global.window = global
 const api = require('./paid-call-brand-payment.js')
 const SOURCE = fs.readFileSync(require.resolve('./paid-call-brand-payment.js'), 'utf8')
 
+test('shared card setup refuses invalid or changed payment modes', async () => {
+  const previous = global.xanoAuthFetch
+  const calls = []
+  global.xanoAuthFetch = async (url, options) => {
+    calls.push(url)
+    if (url.endsWith(api.SETUP_PATH)) return response({ client_secret: 'seti_test' })
+    if (url.endsWith(api.SET_DEFAULT_PATH)) return response({ bookable: true, environment: 'test' })
+    if (url.endsWith(api.READINESS_PATH)) return response({ bookable: true, environment: 'live' })
+    throw new Error('Unexpected command')
+  }
+  try {
+    const attempt = {}
+    const settings = { environment: 'invalid', isCurrent: () => true,
+      stripe: { confirmCardSetup: async () => ({ setupIntent: { payment_method: 'pm_test' } }) }, card: {} }
+    await assert.rejects(api.completeCardSetupAttempt(attempt, settings), /environment is invalid/)
+    assert.equal(calls.length, 0)
+    await assert.rejects(api.completeCardSetupAttempt(attempt, { ...settings, environment: 'test' }), /environment changed/)
+    assert.equal(attempt.ready, undefined)
+    assert.ok(attempt.setupAttempt, 'failed readback keeps retry identity')
+    assert.ok(attempt.defaultAttempt, 'failed readback keeps default-selection identity')
+    const count = calls.length
+    assert.equal(await api.completeCardSetupAttempt(attempt, { ...settings, environment: 'test', isCurrent: () => false }), false)
+    assert.equal(calls.length, count, 'a stale owner cannot issue another request')
+  } finally { global.xanoAuthFetch = previous }
+})
+
+test('saved card selection verifies the default and preserves command identity on retry', async () => {
+  const previous = global.xanoAuthFetch
+  const posts = []
+  let currentDefault = 'pm_one'
+  let failReadback = false
+  const cards = () => ['pm_one', 'pm_two'].map(id => ({ id, brand: 'visa', last4: '4242',
+    exp_month: 12, exp_year: 2030, is_default: currentDefault === id }))
+  global.xanoAuthFetch = async (url, options) => {
+    if (options.method === 'POST') {
+      posts.push(JSON.parse(options.body))
+      currentDefault = posts.at(-1).payment_method_id
+      return response({ environment: 'test', bookable: true })
+    }
+    if (failReadback) { failReadback = false; throw new Error('readback unavailable') }
+    return response({ environment: 'test', items: cards(), has_more: false, next_cursor: '' })
+  }
+  try {
+    const selection = api.createSavedCardSelection('test')
+    await selection.load()
+    assert.equal(selection.snapshot().selectedId, 'pm_one')
+    assert.equal(selection.select('pm_unknown'), false)
+    assert.equal(selection.select('pm_two'), true)
+    failReadback = true
+    const first = selection.save()
+    assert.equal(selection.save(), first, 'double click reuses the in-flight operation')
+    assert.equal(selection.select('pm_one'), false)
+    await assert.rejects(selection.load(), /busy/)
+    await assert.rejects(first, /readback unavailable/)
+    assert.equal(selection.snapshot().busy, false)
+    assert.equal(selection.snapshot().cards.find(card => card.is_default).id, 'pm_one', 'no optimistic default label')
+    const saved = await selection.save()
+    assert.equal(saved.busy, false)
+    assert.equal(saved.cards.find(card => card.is_default).id, 'pm_two')
+    assert.deepEqual(posts[1], posts[0], 'readback failure retains the same idempotency key')
+    saved.cards[0].last4 = '0000'
+    assert.equal(selection.snapshot().cards[0].last4, '4242', 'callers cannot mutate internal display state')
+    selection.select('pm_one')
+    await selection.save()
+    assert.notEqual(posts[2].idempotency_key, posts[1].idempotency_key)
+    currentDefault = 'pm_two'
+    await selection.load()
+    assert.equal(selection.snapshot().selectedId, 'pm_one', 'Back preserves the selected card')
+    await selection.load({ selectDefault: true })
+    assert.equal(selection.snapshot().selectedId, 'pm_two', 'successful Add card selects the new default')
+  } finally { global.xanoAuthFetch = previous }
+})
+
+test('saved cards use authenticated pagination and return only display fields', async () => {
+  const previous = global.xanoAuthFetch
+  const calls = []
+  const card = (id, isDefault) => ({ id, brand: 'visa', last4: '4242',
+    exp_month: 12, exp_year: 2030, is_default: isDefault, customer: 'must-not-escape' })
+  global.xanoAuthFetch = async (url, options) => {
+    calls.push({ url, options })
+    return response(calls.length === 1
+      ? { environment: 'test', items: [card('pm_one', true)], has_more: true, next_cursor: 'pm_one' }
+      : { environment: 'test', items: [card('pm_two', false)], has_more: false, next_cursor: '' })
+  }
+  try {
+    const result = await api.getSavedPaymentMethods('test')
+    assert.deepEqual(result.items.map(item => item.id), ['pm_one', 'pm_two'])
+    assert.equal(result.items[0].customer, undefined)
+    assert.equal(result.items[0].is_default, true)
+    assert.equal(calls[1].url, api.XANO_BASE + api.PAYMENT_METHODS_PATH + '?starting_after=pm_one')
+    assert.ok(calls.every(call => call.options.method === 'GET' && call.options.body === undefined))
+  } finally { global.xanoAuthFetch = previous }
+})
+
+test('saved cards reject mode drift, malformed cards and broken pagination', async () => {
+  const previous = global.xanoAuthFetch
+  const card = { id: 'pm_one', brand: 'visa', last4: '4242', exp_month: 12, exp_year: 2030, is_default: true }
+  const base = { environment: 'test', items: [card], has_more: false, next_cursor: '' }
+  try {
+    for (const result of [
+      { ...base, environment: 'live' },
+      { ...base, items: [{ ...card, last4: 4242 }] },
+      { ...base, items: [{ ...card, exp_month: 13 }] },
+      { ...base, items: [card, { ...card, id: 'pm_two' }] },
+      { ...base, items: [card, card] },
+      { ...base, has_more: true, next_cursor: 'pm_other' },
+      { ...base, items: [], has_more: true, next_cursor: 'pm_one' },
+      { ...base, next_cursor: 'pm_one' },
+    ]) {
+      global.xanoAuthFetch = async () => response(result)
+      await assert.rejects(api.getSavedPaymentMethods('test'))
+    }
+    let requests = 0
+    global.xanoAuthFetch = async () => {
+      requests += 1
+      return response({ ...base, has_more: true, next_cursor: 'pm_one' })
+    }
+    await assert.rejects(api.getSavedPaymentMethods('test'))
+    assert.equal(requests, 2, 'a repeated page fails instead of looping')
+    await assert.rejects(api.getSavedPaymentMethods('unknown'))
+    assert.equal(requests, 2, 'invalid mode performs no request')
+    global.xanoAuthFetch = async () => response({ ...base, items: [] })
+    assert.deepEqual(await api.getSavedPaymentMethods('test'), { environment: 'test', items: [] })
+  } finally { global.xanoAuthFetch = previous }
+})
+
 /** The close selector the controller actually ships, read off the source. */
 function bookingCloseSelector() {
   const match = /const BOOKING_CLOSE_SELECTOR =\s*([\s\S]*?)\n\s*const /.exec(SOURCE)
@@ -765,6 +891,27 @@ function siteButtonParts(wrap) {
     line: element && element.children[1],
   }
 }
+
+test('card save label preserves the authored click target and spinner', () => {
+  const control = new CalendarElement('div')
+  const clickWrap = control.appendChild(new CalendarElement('div'))
+  const button = clickWrap.appendChild(new CalendarElement('button'))
+  const content = control.appendChild(new CalendarElement('div'))
+  const label = content.appendChild(new CalendarElement('div'))
+  label.textContent = 'Save card'
+  const spinner = content.appendChild(new CalendarElement('div'))
+  spinner.setAttribute('data-button-spinner', '')
+  let clicks = 0
+  button.addEventListener('click', () => { clicks += 1 })
+  api.labelCardSaveControl(control)
+  api.labelCardSaveControl(control)
+  assert.equal(label.textContent, 'Add card')
+  assert.equal(button.getAttribute('aria-label'), 'Add card')
+  assert.deepEqual(control.children, [clickWrap, content])
+  assert.deepEqual(content.children, [label, spinner])
+  button.listeners.click()
+  assert.equal(clicks, 1)
+})
 
 async function mountFooterFixture(options = {}) {
   const previous = {
@@ -3288,10 +3435,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
     disabled: false,
     addEventListener(name, listener) { listeners[name] = listener },
   }
-  const cardMount = {
-    attrs: {},
-    setAttribute(name, value) { this.attrs[name] = value },
-  }
+  const cardMount = new CalendarElement('div')
   const errorText = {
     textContent: '',
     attrs: {},
@@ -3321,6 +3465,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
   const openCard = { click() { openCardClicks += 1 } }
   const closeCard = { click() {} }
   global.document = {
+    createElement: tag => new CalendarElement(tag),
     querySelector(selector) {
       if (selector === '[popup-booking]') return popup
       if (selector.includes('[card-element]')) return cardMount
@@ -3334,17 +3479,18 @@ test('card setup retries reuse the same setup and default-selection attempts', a
     },
     querySelectorAll() { return [cta] },
   }
-  let cardChange
+  const cardChanges = []
+  const cardChange = event => cardChanges.forEach(fn => fn(event))
   let cardCreateOptions
   const card = {
     mount() {},
     clear() {},
-    on(name, listener) { if (name === 'change') cardChange = listener },
+    on(name, listener) { if (name === 'change') cardChanges.push(listener) },
   }
   global.Stripe = () => ({
     elements: () => ({
       create(type, options) {
-        assert.equal(type, 'card')
+        assert.ok(['cardNumber', 'cardExpiry', 'cardCvc'].includes(type))
         cardCreateOptions = options
         return card
       },
@@ -3412,7 +3558,6 @@ test('card setup retries reuse the same setup and default-selection attempts', a
       timezone: 'Pacific/Auckland',
     })
     assert.equal(openCardClicks, 1)
-    assert.equal(cardCreateOptions.hidePostalCode, true)
     assert.equal(cardCreateOptions.style.base['::placeholder'].color, '#74786f')
     assert.equal(requests.filter(({ url }) => url.endsWith(api.SETUP_PATH)).length, 0)
     const saveEvent = {
@@ -3420,9 +3565,11 @@ test('card setup retries reuse the same setup and default-selection attempts', a
       stopImmediatePropagation() {},
     }
     await listeners.click(saveEvent)
-    assert.equal(errorText.textContent, 'Enter complete card details.')
+    assert.equal(save.disabled, true)
+    assert.equal(errorText.textContent, '')
     assert.equal(requests.filter(({ url }) => url.endsWith(api.SETUP_PATH)).length, 0)
     cardChange({ complete: true })
+    assert.equal(save.disabled, false)
     await listeners.click(saveEvent)
     await listeners.click(saveEvent)
 
@@ -3489,7 +3636,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   const paymentBackdrop = control()
   const bookingBackdrop = control()
   const save = control()
-  const cardMount = { setAttribute() {} }
+  const cardMount = new CalendarElement('div')
   const errorText = { textContent: '', setAttribute() {} }
   const statusText = { textContent: '', setAttribute() {} }
   const paymentModalListeners = {}
@@ -3556,6 +3703,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   let openCount = 0
   const openPayment = { click() { openCount += 1 } }
   global.document = {
+    createElement: tag => new CalendarElement(tag),
     querySelector(selector) {
       if (selector === '[popup-booking]') return popup
       if (selector.includes('[card-element]')) return cardMount
@@ -3580,6 +3728,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
     },
   }
   const cardListeners = {}
+  const secureListeners = new Map()
   let cardCreates = 0
   let cardDestroys = 0
   let activeCards = 0
@@ -3592,7 +3741,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   }
   global.Stripe = () => ({
     elements: () => ({
-      create() {
+      create(type) {
         cardCreates += 1
         return {
           clear() {},
@@ -3600,9 +3749,13 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
           destroy() {
             cardDestroys += 1
             activeCards -= 1
-            delete cardListeners.change
+            secureListeners.delete(type)
+            if (!secureListeners.size) delete cardListeners.change
           },
-          on(name, listener) { cardListeners[name] = listener },
+          on(name, listener) {
+            secureListeners.set(type, listener)
+            cardListeners[name] = event => secureListeners.forEach(fn => fn(event))
+          },
         }
       },
     }),
@@ -3725,7 +3878,7 @@ test('selected-slot readiness controls card setup without a second read', async 
       timezone: 'UTC',
     })
     assert.equal(readinessCount, 1)
-    assert.equal(fixture.getCardCreates(), 1)
+    assert.equal(fixture.getCardCreates(), 3)
     assert.equal(fixture.getOpenCount(), 1)
   } finally {
     fixture.restore()
@@ -3870,7 +4023,7 @@ test('overlapping paid generations share one card setup installation', async () 
     await second
     resolveFirstReadiness()
     await Promise.all([first, second])
-    assert.equal(fixture.getCardCreates(), 1)
+    assert.equal(fixture.getCardCreates(), 3)
     assert.equal(fixture.getSaveBindings(), 1)
     assert.equal(fixture.getOpenCount(), 1)
   } finally {
@@ -4528,17 +4681,17 @@ test('replacing the paid controller destroys its mounted card Element', async ()
   const fixture = makePaidLifecycleFixture(async () => response({ environment: 'test', bookable: false }))
   try {
     await openCardSetup(fixture)
-    assert.equal(fixture.getActiveCards(), 1)
+    assert.equal(fixture.getActiveCards(), 3)
     fixture.paymentClose.click()
     fixture.reinstall()
-    assert.equal(fixture.getCardDestroys(), 1)
+    assert.equal(fixture.getCardDestroys(), 3)
     assert.equal(fixture.getActiveCards(), 0)
     assert.equal(fixture.cardListeners.change, undefined)
     assert.equal(fixture.save.listeners.click.length, 0)
     await fixture.paid.onclick({ preventDefault() {} })
     await fixture.calendars[1].options.onConfirm(SCOPING_SLOT)
-    assert.equal(fixture.getCardCreates(), 2)
-    assert.equal(fixture.getActiveCards(), 1)
+    assert.equal(fixture.getCardCreates(), 6)
+    assert.equal(fixture.getActiveCards(), 3)
     assert.equal(fixture.save.listeners.click.length, 1)
     assert.equal(fixture.getOpenCount(), 2)
   } finally {
@@ -4578,7 +4731,7 @@ test('replacing the paid controller while Stripe loads prevents a stale mount', 
     assert.equal(fixture.getSaveBindings(), 0)
     await fixture.paid.onclick({ preventDefault() {} })
     await fixture.calendars[1].options.onConfirm(SCOPING_SLOT)
-    assert.equal(fixture.getActiveCards(), 1)
+    assert.equal(fixture.getActiveCards(), 3)
     assert.equal(fixture.getOpenCount(), 1)
   } finally {
     fixture.restore()
@@ -4605,4 +4758,46 @@ test('dashboard calendar does not gain booking call summary', async () => {
   const fixture = await mountFooterFixture({ container: new CalendarElement('div') })
   assert.equal(fixture.container.querySelectorAll('[data-paid-calendar-element]')
     .some(node => node.getAttribute('data-paid-calendar-element') === 'call-summary'), false)
+})
+
+test('split secure fields share one Elements owner and aggregate completion, errors and teardown', () => {
+  const fields = {}
+  const states = []
+  let owners = 0
+  const mounts = { cardNumber: {}, cardExpiry: {}, cardCvc: {} }
+  const stripe = { elements() { owners += 1; return { create(type) {
+    const field = { clears: 0, destroys: 0, mount(node) { assert.equal(node, mounts[type]) },
+      on(_name, callback) { this.change = callback }, clear() { this.clears += 1 }, destroy() { this.destroys += 1 } }
+    fields[type] = field
+    return field
+  } } } }
+  const result = api.mountSecureCardFields(stripe, mounts, state => states.push(state))
+  assert.equal(owners, 1)
+  assert.equal(result.card, fields.cardNumber)
+  fields.cardNumber.change({ complete: true })
+  fields.cardExpiry.change({ complete: true })
+  assert.equal(states.at(-1).complete, false)
+  fields.cardCvc.change({ complete: true })
+  assert.equal(states.at(-1).complete, true)
+  fields.cardExpiry.change({ complete: false, error: { message: 'Expiry invalid' } })
+  fields.cardCvc.change({ complete: true })
+  assert.equal(states.at(-1).error.message, 'Expiry invalid')
+  result.clear()
+  assert.deepEqual(states.at(-1), { complete: false, error: null })
+  assert.ok(Object.values(fields).every(field => field.clears === 1))
+  result.destroy()
+  result.destroy()
+  const count = states.length
+  fields.cardNumber.change({ complete: true })
+  assert.equal(states.length, count)
+  assert.ok(Object.values(fields).every(field => field.destroys === 1))
+})
+
+test('split secure fields destroy partially mounted resources on setup failure', () => {
+  let destroyed = 0
+  const stripe = { elements: () => ({ create(type) { return {
+    on() {}, mount() { if (type === 'cardExpiry') throw new Error('mount failed') }, destroy() { destroyed += 1 },
+  } } }) }
+  assert.throws(() => api.mountSecureCardFields(stripe, { cardNumber: {}, cardExpiry: {}, cardCvc: {} }), /mount failed/)
+  assert.equal(destroyed, 2)
 })

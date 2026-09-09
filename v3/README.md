@@ -2406,18 +2406,31 @@ availability flag and is never returned to the dashboard consumer. Direct
 transcript fetch and rendering remain closed because there is no reviewed
 authenticated V3 transcript proxy with an exact ownership contract.
 
-`dashboard-call-payment.js` provides server-owned Paid Call recovery helpers
-without activating UI. For an owning Brand and an exact canonical payment state,
-the helpers can request `brand/booking/payment-action/v3` with only the booking
-ID, or send an existing `pm_` PaymentMethod ID plus a bounded idempotency key to
-`brand/booking/payment-method-replace/v3`. Eligibility requires the booking's
-payment environment to be exactly `test` or `live`. Both commands run through
-`window.xanoAuthFetch`; the browser never calls Stripe or another provider
-directly. `wire()` remains inert, so no card form, authentication-secret flow,
-or payment-replacement control is active until the native dashboard UI has a
-separately reviewed ownership contract.
+### Dashboard payment recovery
 
-This controller is also the single owner of the Starter request-expiry
+`dashboard-call-payment.js` owns the Brand dashboard payment-method panel for
+eligible declined Paid bookings in a canonical `test` or `live` environment.
+It loads the [shared payment client](#brand-paid-call-payment-method-client)
+and binds the authored saved-card list and Add card dialog. “Use this card”
+changes the Brand default for future bookings, verifies that default through
+an authenticated card-list readback, then explicitly recovers only the selected
+booking through `brand/booking/payment-method-replace/v3`. That command sends
+the booking ID, selected `pm_` ID and a bounded idempotency key through
+`window.xanoAuthFetch`; Xano owns customer and booking authorization. Success
+returns to the base panel and refreshes the canonical booking list. Changing
+the default alone does not rewrite other existing bookings.
+
+Selection and recovery share an exclusive owner with Add card. A failed recovery
+retains its command identity and verified selection for retry without another
+default command. Closing or replacing the booking modal permanently invalidates
+that owner, including when the same booking is reopened. Add card saves through
+the shared setup flow and reloads the picker with the new default selected;
+booking recovery still requires “Use this card”. Back returns to the picker.
+The `auth_required` helper for `brand/booking/payment-action/v3` remains available
+without activating authentication-confirmation UI. Paid cancellation, reschedule
+policy, charging and payout policy are unchanged.
+
+`dashboard-calls.js` is also the single owner of the Starter request-expiry
 countdown; the legacy inline dashboard helper no longer renders that list, so
 its copy of the countdown is dead and must not be re-enabled. The countdown
 reads canonical `confirmation_expires_at` and falls back to canonical `start`
@@ -3615,8 +3628,9 @@ node --test v3/starter-dashboard-stripe-connect.test.js
 ## Brand paid-call payment method client
 
 `paid-call-brand-payment.js` owns the authenticated Paid option inside the
-Designer-authored Book Call modal. It creates no application form markup. It
-mounts Stripe's secure Card Element in `[card-element]`, then replaces the
+Designer-authored Book Call modal and provides shared card-screen helpers. It
+builds labeled mounts inside `[card-element]` for Stripe-hosted card number,
+expiry and CVC fields sharing one Elements instance, then replaces the
 Nylas paid-booking submit boundary with the canonical Xano booking command.
 Load it after `scheduling-auth.js` on the approved Hire surfaces:
 
@@ -3626,6 +3640,15 @@ Load it after `scheduling-auth.js` on the approved Hire surfaces:
 ```
 
 For Messages, the [call-entry adapter](#messages-call-entry) loads this controller.
+
+The dashboard picker reads `GET /brand/payment-methods/v3` through the
+authenticated client, following `starting_after` cursors and rejecting malformed
+pagination, duplicate IDs and mode drift. It accepts only card summaries and
+never takes a caller-supplied customer ID. Empty lists and read failures show
+visible status; selection is disabled until a valid list is loaded. See
+[dashboard payment recovery](#dashboard-payment-recovery) for selection semantics
+and [payment verification](fixtures/PAYMENT-VERIFICATION.md) for local fixtures
+and outstanding provider evidence.
 
 The scheduling auth bridge allowlists these paid-call paths:
 
@@ -3645,9 +3668,9 @@ flowchart TD
     C --> D[Read canonical payment readiness]
     D --> E{Bookable?}
     E -- Yes --> K[Retain the confirmed slot]
-    E -- No --> F[Open native Stripe Card Element]
+    E -- No --> F[Open secure card dialog]
     F --> G{Card details complete?}
-    G -- No --> X[Stop and show an inline error]
+    G -- No --> Q[Keep Add card disabled; show field errors]
     G -- Yes --> H[Create and confirm the SetupIntent]
     H --> I[Set the PaymentMethod as default]
     I --> J[Recheck canonical payment readiness]
@@ -3658,7 +3681,7 @@ flowchart TD
     M --> N[Submit the booking request]
     N --> O{Xano rechecks slot, price, readiness, revision, and authority}
     O -- Pass --> P[Create the provider booking]
-    O -- Fail --> X
+    O -- Fail --> X[Show an inline error]
 ```
 
 1. Read the next 14 days through authenticated
@@ -3860,8 +3883,8 @@ flowchart TD
 3. When the Brand confirms a slot, read payment readiness. A canonical
    `bookable=true` result can continue directly to the booking command.
 4. If no ready payment method exists, retain that exact selected slot and open
-   the native Stripe Card Element dialog. Incomplete card details stop before a
-   SetupIntent request and show an inline error.
+   the secure card dialog. Add card stays disabled until all three fields are
+   complete and error-free; field and submission errors remain visible inline.
 5. Call `StartersPaidCallBrandPayment.createSetupAttempt()` once for the current
    card-setup attempt. Retry its `.run()` method with the same idempotency key
    until Xano returns the Stripe SetupIntent client secret or a terminal error.
@@ -3889,18 +3912,18 @@ booking would not change the booking's server-owned payment snapshot. The
 success copy says that the saved payment method will be used. It does not show
 the Designer placeholder last-four digits because the readiness DTO does not
 return card details. When a newly saved card resumes and completes the booking,
-the controller closes only the owning Stripe Card Element dialog. It does not
+the controller closes only the owning secure card dialog. It does not
 activate the earlier booking backdrop, so the paid-call success step remains
 visible.
 
 Closing the main booking modal, its backdrop, or ESC invalidates the shared
 calendar generation and restores `schedule-step="default"`. It also clears the
 selected slot, guest fields, topic, context, calendar, errors, status text, and
-Stripe Card Element. Closing only the Stripe dialog before canonical booking
+Stripe fields. Closing only the Stripe dialog before canonical booking
 proof clears its card/error state, retained slot, and Paid guest state without
 creating a booking. Reinstalling the Paid controller on the same booking dialog
-disposes the previous controller's listeners and destroys its Stripe Card
-Element. A pending Stripe load cannot mount an Element for a disposed controller.
+disposes the previous controller's listeners and destroys its Stripe
+fields. A pending Stripe load cannot mount fields for a disposed controller.
 The shared booking lifecycle replaces each call type's reset callback on
 reinstallation. Replacement and delayed-load regressions are covered in
 [`paid-call-brand-payment.test.js`](paid-call-brand-payment.test.js).
@@ -3909,13 +3932,14 @@ Hire call-service routing and chooser behavior are owned by
 Messages routing is owned by [Messages call entry](#messages-call-entry).
 
 The native `[popup-stripe-card]` component must keep its visible payment title
-(`Payment Methods` today; `Card details` is also supported) and retain
+(the controller relabels it `Your Cards`) and retain
 `[card-element]`, `[card-error]`,
 `[save-card-status]`, `[save-card-btn]`, and `[popup-stripe-card-close]`. The
-controller links that native title to the dialog and Card Element, applies live
-regions to the authored error and status nodes, and hides the retired
-`[pm-use-this]` action. Stripe Elements supplies the card-number, expiry, and
-CVC placeholders; raw card data never enters Webflow or Xano.
+Hire controller links that native title to the dialog and secure field group,
+applies live regions to the authored error and status nodes, and hides the retired
+`[pm-use-this]` action inside the Add card dialog. The save control reads
+`Add card`; Back clears the form and returns to its owning screen. Stripe
+Elements supplies the card-number, expiry, and CVC placeholders; raw card data never enters Webflow or Xano.
 
 The authoritative Free controller ownership and chooser contract lives in
 [`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).

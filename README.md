@@ -220,8 +220,8 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   cancel, reschedule, Back, and Close boundary
 - `v3/dashboard-call-media.js` — owner-scoped read-only notetaker recording
   binder; direct transcript provider access stays closed
-- `v3/dashboard-call-payment.js` — server-owned Paid Call recovery helpers;
-  browser Stripe writes and the unreviewed dashboard card UI stay inactive
+- `v3/dashboard-call-payment.js` — Paid Call recovery and card-screen owner;
+  see [dashboard payment recovery](v3/README.md#dashboard-payment-recovery)
 - `v3/scheduling-availability-init.js` — scheduling availability and Calendar
   connection-state initializer. Saved hours remain independent from canonical
   grant/calendar/configuration proof, and the Designer-authored Dashboard

@@ -76,6 +76,26 @@ function matchesAttributeSelector(node, selector) {
   return actual != null && (match[2] == null || actual === match[2])
 }
 
+test('payment actions prefer the authored saved-card entry and remain gated', () => {
+  const previous = global.StartersDashboardCallPayment
+  const legacy = element({ 'payment-action-btn': 'change-card' })
+  const preferred = element({ 'payment-action-btn': 'change-card-v2' })
+  const modal = element()
+  modal.querySelectorAll = () => [legacy, preferred]
+  modal.querySelector = selector => selector === '[payment-action-btn="change-card-v2"]' ? preferred : null
+  try {
+    global.StartersDashboardCallPayment = { canManageCards: role => role === 'brand' }
+    api.configureDetailActions(modal, 'brand', 'confirmed', {})
+    assert.equal(legacy.hidden, true)
+    assert.equal(preferred.hidden, false)
+    api.configureDetailActions(modal, 'starter', 'confirmed', {})
+    assert.equal(preferred.hidden, true)
+    modal.querySelector = () => null
+    api.configureDetailActions(modal, 'brand', 'confirmed', {})
+    assert.equal(legacy.hidden, false, 'the legacy entry remains usable when no newer entry exists')
+  } finally { global.StartersDashboardCallPayment = previous }
+})
+
 function domElement(tag, attributes = {}) {
   const node = {
     tagName: tag,
@@ -1753,6 +1773,7 @@ test('missing panel details and role-correct Message actions are supplied withou
   base.appendChild(domElement('span', { 'booking-element': 'start-date' }))
   const cancelled = domElement('div', { 'booking-popup-content': 'cancelled' })
   const composePanels = [
+    'payment-methods',
     'cancel-reason',
     'decline-reason',
     'reschedule',
