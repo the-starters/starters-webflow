@@ -3847,3 +3847,32 @@ test('generated reschedule receipts preserve canonical base dates across deferre
     global.requestAnimationFrame = originalFrame
   }
 })
+
+
+test('call card binds its Join Call destination and clears it for ineligible rebinding', () => {
+  const card = element()
+  const wrap = element()
+  const link = element({ 'booking-element': 'meeting-link', href: '/' })
+  link.closest = () => wrap
+  card.querySelectorAll = (selector) => selector === '[booking-element="meeting-link"]' ? [link] : []
+  const booking = { status: 'confirmed', start: Date.now() + 86400000, end: Date.now() + 88200000, meeting_link: 'https://meet.google.com/abc-defg-hij' }
+  for (const role of ['brand', 'starter']) {
+    api.bindCard(card, booking, role)
+    assert.equal(link.getAttribute('href'), booking.meeting_link)
+    assert.equal(link.hidden, false)
+    assert.equal(wrap.hidden, false)
+    for (const changed of [
+      { status: 'pending' }, { status: 'cancelled' }, { status: 'completed' },
+      { meeting_link: '' }, { meeting_link: 'javascript:alert(1)' },
+      { meeting_link: '/' },
+    ]) {
+      api.bindCard(card, { ...booking, ...changed }, role)
+      assert.equal(link.getAttribute('href'), null)
+      assert.equal(link.hidden, true)
+      assert.equal(wrap.hidden, true)
+    }
+    api.bindCard(card, { ...booking, status: 'rescheduled' }, role)
+    assert.equal(link.getAttribute('href'), booking.meeting_link)
+    assert.equal(link.hidden, false)
+  }
+})

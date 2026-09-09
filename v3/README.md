@@ -2109,6 +2109,22 @@ completed, cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
 The selected `[booking-filter]` is the only control with `is-active`,
 `aria-pressed="true"`, and the matching checked visual state.
 
+On both roles' cards, the authored Join Call anchor
+`[booking-element="meeting-link"]` receives the canonical `meeting_link` as a
+URL only when it is absolute HTTP(S) and the normalized lifecycle is confirmed
+(including rescheduled calls whose end has not passed). Otherwise, binding
+removes any previous or placeholder `href` and hides the anchor and its closest
+`[booking-element-wrap]`. Rebinding an eligible call restores both. This reader
+does not generate provider links or modify bookings; missing provider
+conferencing remains a separate dependency.
+
+For a local preview, serve the repository root with an HTTP server and open
+[`fixtures/dashboard-join-call.html`](fixtures/dashboard-join-call.html). Its
+authored Starter card uses the actual controller with a synthetic booking;
+Confirmed, Missing link, and Pending exercise rebinding without opening the
+external meeting. This fixture is local evidence, not authenticated production
+workflow proof.
+
 The authored View Details trigger opens the existing `popup-booking-info`
 dialog. Before Webflow opens it, the controller binds the selected canonical
 row to the authored fields. When the base, cancel, and cancelled panels repeat
