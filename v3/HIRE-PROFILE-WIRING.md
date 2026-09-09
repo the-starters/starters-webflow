@@ -1088,9 +1088,9 @@ The Free controller uses the calendar and idempotent booking-command primitives
 exported by `paid-call-brand-payment.js`. It does not mount the public Nylas
 scheduler or create a provider booking directly. Success requires the server
 response to contain both the provider booking ID and the canonical Xano row ID.
-After that response, the shared success step labels the booking `Free Call`,
-shows only the Free actions, displays the Free request confirmation, and hides
-the legacy card-charge notice. The Paid success-state contract is owned by the
+After that response, the controller renders the
+[Free booking confirmation](#free-booking-confirmation). The Paid success-state
+contract is owned by the
 [Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
 
 `paid-call-brand-payment.js` receives the exact accepted Paid configuration and
@@ -1120,6 +1120,30 @@ installed, its complete five-row native Designer-authored tree sits outside
 `[nylas-container]` and enables Paid guests. Any partial guest tree or stray
 guest hook fails closed. The Paid controller owns the complete tree's
 Paid/Free/close/success visibility and reset lifecycle.
+
+### Free booking confirmation
+
+After canonical success, `free-call-booking.js` labels the shared success step
+`Free Call`, shows only the Free actions, and hides the legacy card-charge notice.
+Inside `[schedule-step="success"]`, it populates every authored
+`[booking-element="context"]`, `[booking-element="start-date"]`, and
+`[booking-element="start-time"]` from the submitted request snapshot. Context is
+trimmed, including clearing the field for an empty submission. The existing
+`formatWithTimezone` formatter renders the selected start in the selected timezone,
+falling back to UTC when the timezone is absent or invalid.
+
+Every success-panel `[booking-element="price"]` has its nearest
+`[booking-element-wrap]` hidden, or the price element itself when no wrapper exists.
+Shared popup reset on close or call-type handoff restores the original authored
+receipt HTML and the price rows' inline display and `aria-hidden` values. Later
+Free requests populate fresh values.
+
+Paid receipt population is a separate pre-existing gap: restoring authored
+placeholders prevents Free details from leaking into Paid reuse, but does not
+supply correct Paid booking details. The existing Starter-name placeholder is
+also a separate remaining issue. The executable regressions in
+[`free-call-booking.test.js`](free-call-booking.test.js) cover receipt refresh
+and the shared reset boundary; they do not prove a production Paid booking.
 
 ## The owner paints from their own settings
 

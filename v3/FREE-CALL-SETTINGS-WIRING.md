@@ -248,3 +248,8 @@ order, after the PR merges:
 
 Record the served-asset check and the TEST enable and disable results before the Free card is
 activated for any Starter outside TEST.
+
+## Free booking confirmation reuse
+
+The Free receipt and shared popup reset contract are owned by
+[Free booking confirmation](HIRE-PROFILE-WIRING.md#free-booking-confirmation).
