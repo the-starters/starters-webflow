@@ -3428,10 +3428,12 @@ labels, stamps each row with `data-points-rule`, and marks the dialog with
 `data-points-rules-version="2026-09-09"`. It clones the existing project row
 once to create the completed free-or-paid-call rule. This preserves the native
 row structure and styling without adding a second page script. Repeated mounts
-do not duplicate the row. The visible rules must match Xano: project starts and
-completed calls `+2,000`; initial responses `+1,000 / +500 / 0` for the three
-time bands; no response after seven days `-1,000`; verified invoices `+1` per
-paid dollar; approved five-star/four-star reviews `+5,000 / 0`; and approved
+do not duplicate the row. The visible rules must match Xano: project starts
+`+2,000`; free or paid calls `+2,000` only at completion; initial responses
+`+1,000 / +500 / 0` for under 24 hours, 24 hours to under 72 hours, and
+72 hours to seven days, respectively; no response after seven days `-1,000`;
+verified invoices `+1` per paid dollar; approved five-star/four-star reviews
+`+5,000 / 0`; and approved
 one-to-three-star reviews `-5,000`.
 
 Each root reflects its resolved state onto `data-points-status`
