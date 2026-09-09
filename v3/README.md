@@ -2152,8 +2152,10 @@ the doubled close icon off the entry view.
 
 Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
-`data-starters-call-summary` block appended after the authored content; a modal
-that authors no such panel receives one block on the modal itself. The block
+`data-starters-call-summary` block inserted before the authored Close control's
+group when that group is a direct child of the panel, otherwise appended after
+the authored content. A modal that authors no such panel receives one block on
+the modal itself. Generated content uses no classes or generated IDs. The block
 lists only the fields that panel has no usable `[booking-element]` hook for and
 that the canonical row has a value for — counterpart name, date and time,
 duration, call context, reschedule reason, and cancellation reason — as
@@ -2173,10 +2175,11 @@ wrapper render. The module-owned fields render inside one bordered
 `data-starters-call-summary-rows` group. Each field is a padded two-column row,
 so counterpart and duration use the same visual structure as the authored call
 details instead of appearing as loose text below them. The block ends with a
-right-aligned `data-starters-call-summary-actions` area containing a
-role-correct `data-starters-call-message` button (`Message Brand` for the
-Starter, `Message Starter` for the Brand) pointing at
-`/messages?with=<counterpart memberstack_id>`; the button is omitted when the
+`data-starters-call-summary-actions` paragraph: “If you’d like to discuss
+options, reach out to [counterpart name] via the Messages tab.” The name falls
+back to `the Brand` for the Starter or `the Starter` for the Brand. Its underlined
+inline `data-starters-call-message` link reads `Messages tab` and points at
+`/messages?with=<counterpart memberstack_id>`; the paragraph is omitted when the
 counterpart has no canonical Memberstack ID, and — by the same
 renders-to-be-authoritative rule the rows follow — omitted from any panel that
 itself renders an authored Message control. The block is created once per
