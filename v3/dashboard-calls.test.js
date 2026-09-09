@@ -206,6 +206,39 @@ test('normalizes canonical Unix seconds once while preserving milliseconds', () 
   )
 })
 
+test('reschedule proposals stay distinct from initial requests and confirmed calls', () => {
+  const booking = { booking_id: 'proposal', status: 'rescheduled', start: 3000, end: 4000 }
+  for (const role of ['brand', 'starter']) {
+    assert.equal(api.bookingStatus(booking, 2000), 'rescheduled')
+    assert.equal(api.statusLabel(api.bookingStatus(booking, 2000), role), 'Pending')
+    assert.deepEqual(api.sectionBookings([booking], role, 'calls', 2000), [booking])
+  }
+  assert.deepEqual(api.sectionBookings([booking], 'starter', 'requests', 2000), [])
+  assert.equal(api.responseWindowOpen(booking, 2000), false)
+  assert.equal(api.responseWindowOpen({ ...booking, response_expires_at: 1000 }, 2000), false)
+  assert.equal(api.bookingStatus(booking, 5000), 'completed')
+  for (const role of ['brand', 'starter']) {
+    assert.equal(api.canConfirmBooking(role, booking, 2000), false)
+  }
+  assert.equal(api.bookingStatus({ ...booking, status: 'confirmed' }, 2000), 'confirmed')
+})
+
+test('both roles see Pending proposal details without losing an existing meeting link', () => {
+  for (const role of ['brand', 'starter']) {
+    const view = detailModalHarness()
+    const booking = {
+      booking_id: 'proposal-details', status: 'rescheduled', start: 3000, end: 4000,
+      duration: 30, meeting_link: 'https://meet.google.com/test-room',
+      brand_data: { name: 'Brand', timezone: 'UTC' },
+      starter_data: { name: 'Starter', timezone: 'UTC' },
+    }
+    api.populateDetailModal(view.modal, booking, role, 2000)
+    assert.equal(view.fields.status.textContent, 'Pending')
+    assert.equal(view.fields['meeting-link'].hidden, false)
+    assert.equal(view.fields['meeting-link'].href, booking.meeting_link)
+  }
+})
+
 test('builds the current confirm payload only when booking_ref identities match', () => {
   const configId = '11111111-2222-3333-4444-555555555555'
   const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -1520,6 +1553,10 @@ function detailModalHarness() {
     'title',
     'context',
     'start-date',
+    'start-date-old',
+    'start-time',
+    'start-time-old',
+    'status-text',
     'duration',
     'price',
     'payment-status-text',
@@ -1535,7 +1572,7 @@ function detailModalHarness() {
   })
   // The authored cancel panel duplicates some base-panel fields; every copy
   // must be filled together (Kaeser QA F3).
-  ;['context', 'start-date', 'meeting-link'].forEach((name) => {
+  ;['context', 'start-date', 'start-date-old', 'meeting-link'].forEach((name) => {
     const copy = fieldNode(name)
     panelCopies[name] = copy
     fieldCopies[name].push(copy)
@@ -1664,6 +1701,37 @@ test('Free Call details hide paid copy, duplicate copy, and unsupported actions'
   assert.equal(view.actions[4].hidden, true)
 })
 
+test('proposal details show old and proposed times and the correct waiting role', () => {
+  const booking = {
+    booking_id: 'proposal-comparison', status: 'rescheduled', rescheduled_by: 'brand',
+    start: Date.parse('2026-09-17T08:30:00Z'), start_old: Date.parse('2026-09-16T08:30:00Z'),
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'Asia/Manila' },
+  }
+  for (const role of ['brand', 'starter']) {
+    const view = detailModalHarness()
+    api.populateDetailModal(view.modal, booking, role)
+    assert.equal(view.fields['start-date-old'].textContent, role === 'brand' ? 'Wed, Sep 16, 8:30 AM UTC' : 'Wed, Sep 16, 4:30 PM GMT+8')
+    assert.equal(view.panelCopies['start-date-old'].textContent, view.fields['start-date-old'].textContent)
+    assert.equal(view.fields['start-time'].hidden, true)
+    assert.equal(view.fields['start-time-old'].hidden, true)
+    assert.equal(view.fields['start-date'].textContent, role === 'brand' ? 'Thu, Sep 17, 8:30 AM UTC' : 'Thu, Sep 17, 4:30 PM GMT+8')
+    assert.match(view.fields['status-text'].textContent, role === 'starter' ? /your confirmation/ : /Starter/)
+    api.populateDetailModal(view.modal, { ...booking, rescheduled_by: 'starter' }, role)
+    assert.match(view.fields['status-text'].textContent, role === 'brand' ? /your confirmation/ : /Brand/)
+    api.populateDetailModal(view.modal, { ...booking, status: 'confirmed' }, role)
+    assert.equal(view.fields['start-date-old'].hidden, true)
+    assert.equal(view.fields['status-text'].hidden, true)
+  }
+})
+
+test('proposal details hide unavailable old time and unknown proposer copy', () => {
+  const view = detailModalHarness()
+  api.populateDetailModal(view.modal, { booking_id: 'missing-old', status: 'rescheduled', start: Date.now() + 86400000, start_old: null }, 'starter')
+  assert.equal(view.fields['start-date-old'].hidden, true)
+  assert.equal(view.fields['status-text'].hidden, true)
+})
+
 test('details fill every authored panel copy of a booking field', () => {
   // The authored cancel/cancelled panels duplicate base-panel fields. Filling
   // only the first match rendered the cancel flow with blank call details
@@ -1732,7 +1800,7 @@ test('missing panel details and role-correct Message actions are supplied withou
     'Schedule changed',
   )
   const starterMessage = cancelled.querySelector('[data-starters-call-message]')
-  assert.equal(starterMessage.textContent, 'Message Brand')
+  assert.equal(starterMessage.textContent, 'Messages tab')
   assert.equal(starterMessage.href, '/messages?with=mem_brand')
 
   const rowGroup = cancelled.querySelector('[data-starters-call-summary-rows]')
@@ -1746,12 +1814,14 @@ test('missing panel details and role-correct Message actions are supplied withou
 
   const messageActions = cancelled.querySelector('[data-starters-call-summary-actions]')
   assert.ok(messageActions)
-  assert.equal(messageActions.style.justifyContent, 'flex-end')
+  assert.equal(messageActions.tagName, 'p')
+  assert.equal(messageActions.children[0].textContent, 'If you’d like to discuss options, reach out to Northwind via the ')
+  assert.equal(messageActions.children[2].textContent, '.')
   assert.equal(starterMessage.parentNode, messageActions)
-  assert.equal(starterMessage.style.display, 'inline-flex')
-  assert.equal(starterMessage.style.backgroundColor, '#1f231f')
-  assert.equal(starterMessage.style.color, '#ffffff')
-  assert.equal(starterMessage.style.textDecoration, 'none')
+  assert.equal(starterMessage.style.display, 'inline')
+  assert.equal(starterMessage.style.backgroundColor, undefined)
+  assert.equal(starterMessage.style.color, 'inherit')
+  assert.equal(starterMessage.style.textDecoration, 'underline')
 
   const supplement = cancelled.querySelector('[data-starters-call-summary]')
   assert.equal(supplement.hidden, false)
@@ -1778,7 +1848,7 @@ test('missing panel details and role-correct Message actions are supplied withou
   api.ensureDetailSupplements(modal, booking, 'brand', 'UTC')
   assert.equal(cancelled.querySelectorAll('[data-starters-call-summary]').length, 1)
   const brandMessage = cancelled.querySelector('[data-starters-call-message]')
-  assert.equal(brandMessage.textContent, 'Message Starter')
+  assert.equal(brandMessage.textContent, 'Messages tab')
   assert.equal(brandMessage.href, '/messages?with=mem_starter')
   assert.equal(
     cancelled.querySelectorAll('[data-starters-call-summary-rows]').length,

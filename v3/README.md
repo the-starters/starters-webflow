@@ -2105,7 +2105,11 @@ requests and all other rows under calls; Brand keeps pending and accepted rows
 in its calls list. Each card's authored status pill receives the canonical,
 role-aware lifecycle label and the matching Designer variant: pending is
 `Pending` for Starter and `Requested` for Brand, confirmed is `Upcoming`, and
-completed, cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
+rescheduled is `Pending` for both roles on cards and in call details.
+Reschedule proposals retain the distinct canonical `rescheduled` state and stay
+in both roles' calls lists, without initial-request expiry or initial Accept
+actions. Once their end time passes, they display as completed. Completed,
+cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
 The selected `[booking-filter]` is the only control with `is-active`,
 `aria-pressed="true"`, and the matching checked visual state.
 
@@ -2150,12 +2154,25 @@ panel is the opening view rather than one the member navigated to, the authored
 `switch-base` back control stays hidden until a chain leaves the panel, keeping
 the doubled close icon off the entry view.
 
+For a canonical `rescheduled` row, `[booking-element="start-date-old"]`
+shows `start_old` as the current confirmed time and `start-date` shows `start`
+as the proposed time. Both use the viewing participant's timezone, falling back
+to the counterpart's timezone. The shared formatter includes time and timezone,
+so standalone `start-time` and `start-time-old` nodes stay hidden without hiding
+their date wrappers. Missing or invalid `start_old` hides the old-date field.
+The `status-text` hook tells the counterpart that their confirmation is awaited,
+or tells the proposer which role must confirm; an unknown proposer hides that
+copy. Binding a non-rescheduled row hides both proposal-only fields.
+
 Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
-`data-starters-call-summary` block appended after the authored content; a modal
-that authors no such panel receives one block on the modal itself. The block
+`data-starters-call-summary` block inserted before the authored Close control's
+group when that group is a direct child of the panel, otherwise appended after
+the authored content. A modal that authors no such panel receives one block on
+the modal itself. Generated content uses no classes or generated IDs. The block
 lists only the fields that panel has no usable `[booking-element]` hook for and
-that the canonical row has a value for — counterpart name, date and time,
+that the canonical row has a value for — counterpart name, date and time
+(including the current confirmed and proposed times described above),
 duration, call context, reschedule reason, and cancellation reason — as
 `data-starters-call-summary-row` lines keyed by that field name. A hook counts
 as usable only while it renders: a hook that is itself hidden, that sits inside
@@ -2173,10 +2190,11 @@ wrapper render. The module-owned fields render inside one bordered
 `data-starters-call-summary-rows` group. Each field is a padded two-column row,
 so counterpart and duration use the same visual structure as the authored call
 details instead of appearing as loose text below them. The block ends with a
-right-aligned `data-starters-call-summary-actions` area containing a
-role-correct `data-starters-call-message` button (`Message Brand` for the
-Starter, `Message Starter` for the Brand) pointing at
-`/messages?with=<counterpart memberstack_id>`; the button is omitted when the
+`data-starters-call-summary-actions` paragraph: “If you’d like to discuss
+options, reach out to [counterpart name] via the Messages tab.” The name falls
+back to `the Brand` for the Starter or `the Starter` for the Brand. Its underlined
+inline `data-starters-call-message` link reads `Messages tab` and points at
+`/messages?with=<counterpart memberstack_id>`; the paragraph is omitted when the
 counterpart has no canonical Memberstack ID, and — by the same
 renders-to-be-authoritative rule the rows follow — omitted from any panel that
 itself renders an authored Message control. The block is created once per
@@ -2186,9 +2204,10 @@ previous member's ID survives an identity change. Compose steps are excluded
 never receive it, because a summary and a navigating Message link below a
 reason form or the slot picker would discard in-progress input.
 
-Confirmed calls can show their canonical meeting link; cancelled and archived
-calls cannot. The authored Message controls navigate to the counterpart's
-thread. Only the counterpart's identity row carries a link — the Starter's
+Confirmed calls and active reschedule proposals can show their existing canonical
+meeting link; cancelled and archived calls cannot. The authored Message controls
+navigate to the counterpart's thread. Only the counterpart's identity row carries
+a link — the Starter's
 dashboard restores `brand-message-link`, the Brand's restores
 `starter-message-link`, and the member's own row is left alone, because a link
 to a thread with oneself has no destination. Each restored link reads
@@ -2307,9 +2326,11 @@ contracts never claim the same booking. Every command requires a booking ID,
 configuration ID, participant identity, and exact `test` or `production` data
 environment.
 
-For an active upcoming row where neither a reschedule action nor a response is
-available, the modal shows `Rescheduling is available for Free calls.`
-below the authored Reschedule control. Both eligibility explanations are
+For an active upcoming initial request or confirmed row where neither a
+reschedule action nor a response is available, the modal shows
+`Rescheduling is available for Free calls.` below the authored Reschedule
+control. A rescheduled proposal hides this hint for both roles, including when
+reusing a modal that previously showed it. Both eligibility explanations are
 module-owned `data-starters-action-hint` nodes inserted after the authored
 buttons; the script does not edit Designer markup. The early Reschedule guard
 resolves the confirmed proposal or pending direct-update contract and passes an
