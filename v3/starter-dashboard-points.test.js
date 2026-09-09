@@ -8,7 +8,7 @@ const ATTR = 'data-points-element'
 const selector = (name) => '[' + ATTR + '="' + name + '"]'
 
 class FakeElement {
-  constructor(name = '') {
+  constructor(name = '', tagName = 'div') {
     this.attributes = new Map()
     this.childNodes = []
     this.children = new Map()
@@ -18,6 +18,7 @@ class FakeElement {
     this.parentElement = null
     this.previousElementSibling = null
     this.style = {}
+    this.tagName = tagName.toUpperCase()
     this.textContent = ''
   }
 
@@ -29,7 +30,50 @@ class FakeElement {
   }
 
   querySelector(value) {
-    return this.children.get(value) || null
+    const direct = this.children.get(value)
+    if (direct) return direct
+    return this.querySelectorAll(value)[0] || null
+  }
+
+  querySelectorAll(value) {
+    const matches = []
+    const attributeMatch = value.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
+    const visit = (node) => {
+      if (!node || node.nodeType !== 1) return
+      const matchesTag = value === 'p' && node.tagName === 'P'
+      const matchesAttribute =
+        attributeMatch &&
+        node.attributes.has(attributeMatch[1]) &&
+        (attributeMatch[2] === undefined ||
+          node.getAttribute(attributeMatch[1]) === attributeMatch[2])
+      if (matchesTag || matchesAttribute) matches.push(node)
+      node.childNodes.forEach(visit)
+    }
+    this.childNodes.forEach(visit)
+    return matches
+  }
+
+  cloneNode(deep = false) {
+    const clone = new FakeElement(this.name, this.tagName)
+    clone.hidden = this.hidden
+    clone.style = { ...this.style }
+    clone.textContent = this.textContent
+    this.attributes.forEach((value, name) => clone.setAttribute(name, value))
+    if (deep) clone.append(...this.childNodes.map((node) => node.cloneNode(true)))
+    return clone
+  }
+
+  insertBefore(node, referenceNode) {
+    const index = referenceNode ? this.childNodes.indexOf(referenceNode) : -1
+    if (index === -1) this.childNodes.push(node)
+    else this.childNodes.splice(index, 0, node)
+    node.parentElement = this
+  }
+
+  get nextSibling() {
+    if (!this.parentElement) return null
+    const siblings = this.parentElement.childNodes
+    return siblings[siblings.indexOf(this) + 1] || null
   }
 
   setAttribute(name, value) {
@@ -46,6 +90,65 @@ class FakeText {
     this.nodeType = 3
     this.textContent = value
   }
+
+  cloneNode() {
+    return new FakeText(this.textContent)
+  }
+}
+
+function paragraph(value) {
+  const element = new FakeElement('', 'p')
+  element.textContent = value
+  return element
+}
+
+function pointsRuleRow(label, points, unit, subtitle = '') {
+  const row = new FakeElement('rule-row')
+  const title = new FakeElement('rule-title')
+  title.append(paragraph(label))
+  if (subtitle) title.append(paragraph(subtitle))
+  const body = new FakeElement('rule-body')
+  body.append(paragraph(points))
+  if (unit) body.append(paragraph(unit))
+  row.append(title, body)
+  return row
+}
+
+function pointsRulesFixture() {
+  const dialog = new FakeElement('points-dialog', 'dialog')
+  dialog.setAttribute('data-modal-target', 'how-to-earn-points')
+  const headline = new FakeElement('headline')
+  headline.append(
+    paragraph('Planned earning rules. Automatic earning is not active yet.'),
+  )
+  const list = new FakeElement('rule-list')
+  list.append(
+    pointsRuleRow('Starting a new project with a brand', '+2,000', '/project'),
+    pointsRuleRow(
+      'Responding to initial brand outreach',
+      '+1,000 / +500 / 0',
+      '',
+      'Within 24h / 72h / 7 days',
+    ),
+    pointsRuleRow('No response within 7 days', '-1,000', ''),
+    pointsRuleRow(
+      'Paid invoices through The Starters',
+      '+1',
+      '/dollar',
+      'Per $1 paid · Coming soon',
+    ),
+    pointsRuleRow('Approved 4–5 star review', '+5,000', '/review'),
+    pointsRuleRow('Approved 1–3 star review', '-5,000', '/review'),
+  )
+  dialog.append(headline, list)
+  const document = {
+    querySelector(value) {
+      return value === '[data-modal-target="how-to-earn-points"]'
+        ? dialog
+        : null
+    },
+  }
+  return { dialog, document, list }
 }
 
 function visibleText(node) {
@@ -107,6 +210,64 @@ function tile(options = {}) {
   elements.overallSuffix = overallSuffix
   return { root, elements }
 }
+
+test('earning rules become active and include one completed-call row', () => {
+  const { dialog, document, list } = pointsRulesFixture()
+
+  const result = api.syncEarningRules(document)
+  const copy = dialog.querySelectorAll('p').map((item) => item.textContent)
+
+  assert.deepEqual(result, {
+    status: 'current',
+    insertedCallRow: true,
+    ruleRowCount: 7,
+  })
+  assert.equal(
+    dialog.getAttribute('data-points-rules-version'),
+    '2026-09-09',
+  )
+  assert.equal(list.childNodes.length, 7)
+  assert.equal(
+    list.childNodes[1].querySelectorAll('p')[0].textContent,
+    'Completed free or paid call',
+  )
+  assert.equal(
+    list.childNodes[1].getAttribute('data-points-rule'),
+    'call-completed',
+  )
+  assert.ok(
+    copy.includes(
+      'Active points rules update automatically after each eligible activity is verified.',
+    ),
+  )
+  assert.ok(copy.includes('Within 24h / 24–72h / 72h–7 days'))
+  assert.ok(copy.includes('Verified paid invoices through The Starters'))
+  assert.ok(copy.includes('Per verified $1 paid'))
+  assert.ok(copy.includes('Approved 5-star / 4-star review'))
+  assert.ok(copy.includes('+5,000 / 0'))
+  assert.ok(copy.includes('/completed call'))
+  assert.equal(copy.includes('Coming soon'), false)
+})
+
+test('earning-rule synchronization is idempotent', () => {
+  const { dialog, document, list } = pointsRulesFixture()
+
+  api.syncEarningRules(document)
+  const result = api.syncEarningRules(document)
+
+  assert.deepEqual(result, {
+    status: 'current',
+    insertedCallRow: false,
+    ruleRowCount: 7,
+  })
+  assert.equal(list.childNodes.length, 7)
+  assert.equal(
+    dialog
+      .querySelectorAll('[data-points-rule="call-completed"]')
+      .length,
+    1,
+  )
+})
 
 test('ready state renders compact rank positions and clear sublines', () => {
   const { root, elements } = tile()

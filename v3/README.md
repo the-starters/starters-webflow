@@ -3408,18 +3408,31 @@ hide both the role card and missing-role guidance. An absent `consult_only`
 value defaults to `false` for compatibility with cached responses. No state
 renders raw `N/A`.
 
-All state containers, links, and styling live in Webflow. The controller does
-not create markup or inject state sentences. For ready ranks it combines the
-canonical rank and cohort into an ordinal position (`6th/21`), uses the existing
-cohort hook in each authored small-text row for the role name and `Starters
-Overall`, suppresses that row's former surrounding copy such as `Out of` and
-`eligible Starters` without replacing its markup, and keeps the legacy tie
-labels hidden. Xano tie counts remain part of the read model and rank semantics;
-only the compact presentation omits the word “Tied”. The root preserves those
-semantics as `data-overall-tied="true|false"` and
+All state containers, links, and styling live in Webflow. For ready ranks the
+controller combines the canonical rank and cohort into an ordinal position
+(`6th/21`), uses the existing cohort hook in each authored small-text row for
+the role name and `Starters Overall`, suppresses that row's former surrounding
+copy such as `Out of` and `eligible Starters` without replacing its markup, and
+keeps the legacy tie labels hidden. Xano tie counts remain part of the read
+model and rank semantics; only the compact presentation omits the word “Tied”.
+The root preserves those semantics as `data-overall-tied="true|false"` and
 `data-role-tied="true|false"` for diagnostics without restoring visible tie
 copy. It also reflects Xano's consult-only classification as
 `data-consult-only="true|false"` for Designer styling.
+
+The same controller owns the copy contract inside
+`[data-modal-target="how-to-earn-points"]`. Webflow does not currently expose
+stable attributes on the individual rule rows through the available headless
+element tools. The controller therefore identifies the exact authored rule
+labels, stamps each row with `data-points-rule`, and marks the dialog with
+`data-points-rules-version="2026-09-09"`. It clones the existing project row
+once to create the completed free-or-paid-call rule. This preserves the native
+row structure and styling without adding a second page script. Repeated mounts
+do not duplicate the row. The visible rules must match Xano: project starts and
+completed calls `+2,000`; initial responses `+1,000 / +500 / 0` for the three
+time bands; no response after seven days `-1,000`; verified invoices `+1` per
+paid dollar; approved five-star/four-star reviews `+5,000 / 0`; and approved
+one-to-three-star reviews `-5,000`.
 
 Each root reflects its resolved state onto `data-points-status`
 (`loading`, `ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so
