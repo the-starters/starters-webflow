@@ -480,11 +480,11 @@
     }
     return {
       snapshot,
-      load: function () {
+      load: function (options) {
         return exclusive('load', async function () {
           const result = await getSavedPaymentMethods(environment)
           cards = result.items
-          if (!cards.some(card => card.id === selectedId)) {
+          if ((options && options.selectDefault) || !cards.some(card => card.id === selectedId)) {
             selectedId = (cards.find(card => card.is_default) || {}).id || ''
             attempt = null
           }
@@ -553,9 +553,126 @@
   }
 
   const savedCardPickerInstallations = new WeakMap()
+  const cardSetupFormInstallations = new WeakMap()
+
+  function installCardSetupForm(modal, options) {
+    const settings = options || {}
+    if (!['test', 'live'].includes(settings.environment)) throw new Error('Card setup environment is invalid')
+    const host = modal && modal.querySelector('[card-element]')
+    const save = modal && modal.querySelector('[save-card-btn]')
+    const error = modal && modal.querySelector('[card-error]')
+    const status = modal && modal.querySelector('[save-card-status]')
+    if (!host || !save || !error || !status) throw new Error('The authored payment form is incomplete')
+    const previous = cardSetupFormInstallations.get(modal)
+    if (previous) previous.dispose()
+    const document = modal.ownerDocument
+    let generation = 0
+    let disposed = false
+    let complete = false
+    let busy = false
+    let attempt = {}
+    const ownsContext = () => typeof settings.isCurrent !== 'function' || settings.isCurrent()
+    const back = buildSiteButton(document, 'Back', 'secondary')
+    back.wrap.setAttribute('data-payment-card-back', '')
+    save.parentNode.insertBefore(back.wrap, save)
+    host.parentNode.insertBefore(error, host)
+    error.setAttribute('role', 'alert')
+    status.setAttribute('role', 'status')
+    const title = modal.querySelector('[booking-popup-title]')
+    if (title) title.textContent = 'Your Cards'
+    modal.querySelectorAll('[pm-use-this]').forEach(control => { control.hidden = true; control.style.display = 'none' })
+    labelCardSaveControl(save)
+    function paint() {
+      if (disposed) return
+      const disabled = busy || !ownsContext() || (!complete && !attempt.ready)
+      save.disabled = disabled
+      save.setAttribute('aria-disabled', String(disabled))
+      save.querySelectorAll('button').forEach(button => { button.disabled = disabled })
+      modal.setAttribute('aria-busy', String(busy))
+    }
+    let fields
+    try { fields = mountSecureCardFields(settings.stripe, secureCardMounts(document, host), function (event) {
+      if (disposed) return
+      complete = event.complete
+      paintCardError(error, event.error ? event.error.message : '')
+      paint()
+    }) } catch (failure) { back.wrap.remove(); throw failure }
+    function reset() {
+      if (disposed) return
+      generation += 1
+      attempt = {}
+      busy = false
+      complete = false
+      fields.clear()
+      paintCardError(error, '')
+      status.textContent = ''
+      paint()
+    }
+    function goBack(event) {
+      event.preventDefault()
+      reset()
+      if (typeof settings.onBack === 'function') settings.onBack()
+    }
+    async function submit(event) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (disposed || save.disabled || busy || !ownsContext()) return
+      const ownedGeneration = generation
+      const isCurrent = () => !disposed && generation === ownedGeneration && ownsContext()
+      busy = true
+      paint()
+      paintCardError(error, '')
+      status.textContent = 'Saving card…'
+      try {
+        const done = await completeCardSetupAttempt(attempt, {
+          stripe: settings.stripe, card: fields.card, environment: settings.environment,
+          brandName: settings.brandName, brandEmail: settings.brandEmail, isCurrent,
+        })
+        if (!done || !isCurrent()) return
+        status.textContent = 'Card saved.'
+        if (typeof settings.onSaved === 'function') await settings.onSaved()
+      } catch (failure) {
+        if (!isCurrent()) return
+        paintCardError(error, failure.message || 'Card setup failed')
+        status.textContent = ''
+      } finally {
+        if (!disposed && generation === ownedGeneration) {
+          busy = false
+          if (!ownsContext()) status.textContent = ''
+          paint()
+        }
+      }
+    }
+    save.addEventListener('click', submit, true)
+    back.button.addEventListener('click', goBack)
+    const closeControls = Array.from(modal.querySelectorAll('[data-modal-close], [popup-stripe-card-close]'))
+    closeControls.forEach(control => control.addEventListener('click', reset))
+    modal.addEventListener('cancel', reset)
+    modal.addEventListener('close', reset)
+    reset()
+    const controller = {
+      reset,
+      dispose: function () {
+        if (disposed) return
+        disposed = true
+        generation += 1
+        fields.destroy()
+        save.removeEventListener('click', submit, true)
+        back.button.removeEventListener('click', goBack)
+        closeControls.forEach(control => control.removeEventListener('click', reset))
+        modal.removeEventListener('cancel', reset)
+        modal.removeEventListener('close', reset)
+        back.wrap.remove()
+        if (cardSetupFormInstallations.get(modal) === controller) cardSetupFormInstallations.delete(modal)
+      },
+    }
+    cardSetupFormInstallations.set(modal, controller)
+    return controller
+  }
 
   function installSavedCardPicker(panel, options) {
     const settings = options || {}
+    const ownsContext = () => typeof settings.isCurrent !== 'function' || settings.isCurrent()
     const template = panel && panel.querySelector('[pm-card-template]')
     const list = panel && panel.querySelector('[customer-cards-list]')
     const use = panel && panel.querySelector('[pm-use-this]')
@@ -578,12 +695,14 @@
     let disposed = false
     let loading = false
     let loaded = false
+    let saving = false
+    let verifiedDefaultId = ''
     let rows = []
     function paint() {
       if (disposed) return
       const state = selection.snapshot()
-      const busy = loading || state.busy || !loaded
-      panel.setAttribute('aria-busy', String(loading || state.busy))
+      const busy = loading || saving || state.busy || !loaded || !ownsContext()
+      panel.setAttribute('aria-busy', String(loading || saving || state.busy))
       use.setAttribute('aria-disabled', String(busy || !state.selectedId))
       use.querySelectorAll('button').forEach(button => { button.disabled = busy || !state.selectedId })
       rows.forEach(function (row) {
@@ -614,17 +733,17 @@
         const badge = row.querySelector('[tag-default]')
         if (badge) { badge.hidden = !card.is_default; badge.style.display = card.is_default ? '' : 'none' }
         function select(event) {
-          if (disposed || loading || !loaded || selection.snapshot().busy) return
+          if (disposed || loading || saving || !loaded || selection.snapshot().busy || !ownsContext()) return
           if (event.type === 'keydown' && ['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(event.key)) {
             event.preventDefault()
             const offset = ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1
             const next = rows[(rows.indexOf(row) + offset + rows.length) % rows.length]
-            if (next && selection.select(next.getAttribute('data-id'))) { paint(); next.focus() }
+            if (next && selection.select(next.getAttribute('data-id'))) { verifiedDefaultId = ''; paint(); next.focus() }
             return
           }
           if (event.type === 'keydown' && ![' ', 'Enter'].includes(event.key)) return
           event.preventDefault()
-          if (selection.select(card.id)) { status.textContent = ''; paint() }
+          if (selection.select(card.id)) { verifiedDefaultId = ''; status.textContent = ''; paint() }
         }
         row.addEventListener('click', select)
         row.addEventListener('keydown', select)
@@ -634,37 +753,45 @@
       status.textContent = state.cards.length ? '' : 'No saved cards. Add a payment method to continue.'
       paint()
     }
-    async function load() {
-      if (disposed || loading || selection.snapshot().busy) return false
+    async function load(options) {
+      if (disposed || loading || saving || selection.snapshot().busy || !ownsContext()) return false
       loading = true
       loaded = false
       status.textContent = 'Loading cards…'
       paint()
       try {
-        await selection.load()
+        await selection.load(options)
+        if (disposed || !ownsContext()) return false
         loaded = true
+        verifiedDefaultId = ''
         render()
         return true
       } catch (error) {
-        if (!disposed) status.textContent = 'Cards could not be loaded. Please try again.'
+        if (!disposed && ownsContext()) status.textContent = 'Cards could not be loaded. Please try again.'
         return false
       } finally { loading = false; paint() }
     }
     async function save(event) {
       event.preventDefault()
-      if (disposed || loading || !loaded || selection.snapshot().busy || !selection.snapshot().selectedId) return
-      const request = selection.save()
+      if (disposed || loading || saving || !loaded || selection.snapshot().busy || !selection.snapshot().selectedId || !ownsContext()) return
+      saving = true
+      const snapshot = selection.snapshot()
+      const request = verifiedDefaultId === snapshot.selectedId ? Promise.resolve(snapshot) : selection.save()
       status.textContent = 'Updating your default card…'
       paint()
       try {
         const state = await request
-        if (disposed) return
+        if (disposed || !ownsContext()) return
+        verifiedDefaultId = state.selectedId
         render()
         status.textContent = 'Default card updated.'
-        if (typeof settings.onSaved === 'function') settings.onSaved(state.selectedId)
+        if (typeof settings.onSaved === 'function') await settings.onSaved(state.selectedId)
+        verifiedDefaultId = ''
       } catch (error) {
-        if (!disposed) status.textContent = 'The default card could not be verified. Please try again.'
-      } finally { paint() }
+        if (!disposed && ownsContext()) status.textContent = verifiedDefaultId
+          ? 'Your default card changed, but the booking update failed. Please try again.'
+          : 'The default card could not be verified. Please try again.'
+      } finally { saving = false; paint() }
     }
     use.addEventListener('click', save)
     paint()
@@ -737,6 +864,12 @@
       throw new Error('The canonical booking response is incomplete')
     }
     return result
+  }
+
+  async function stripeForPaymentEnvironment(environment) {
+    if (!['test', 'live'].includes(environment)) throw new Error('Payment environment is invalid')
+    const Stripe = await loadStripe()
+    return Stripe(environment === 'test' ? STRIPE_PUBLIC_KEY_TEST : STRIPE_PUBLIC_KEY_LIVE)
   }
 
   function loadStripe() {
@@ -3143,6 +3276,8 @@
     createDefaultSelectionAttempt,
     createSavedCardSelection,
     completeCardSetupAttempt,
+    installCardSetupForm,
+    stripeForPaymentEnvironment,
     installSavedCardPicker,
     createSetupAttempt,
     availabilityQuery,

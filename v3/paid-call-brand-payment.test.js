@@ -72,6 +72,11 @@ test('saved card selection verifies the default and preserves command identity o
     selection.select('pm_one')
     await selection.save()
     assert.notEqual(posts[2].idempotency_key, posts[1].idempotency_key)
+    currentDefault = 'pm_two'
+    await selection.load()
+    assert.equal(selection.snapshot().selectedId, 'pm_one', 'Back preserves the selected card')
+    await selection.load({ selectDefault: true })
+    assert.equal(selection.snapshot().selectedId, 'pm_two', 'successful Add card selects the new default')
   } finally { global.xanoAuthFetch = previous }
 })
 

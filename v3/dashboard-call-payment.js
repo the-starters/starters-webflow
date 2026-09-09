@@ -137,18 +137,142 @@
     return result
   }
 
-  // UI activation remains deliberately closed. Xano can retrieve the
-  // authentication secret and replace an already attached PaymentMethod, but
-  // the current native dashboard form has no reviewed, canonical card-setup
-  // ownership contract. The Hire controller must not be reused implicitly.
-  function wire() {
-    return false
+  function createCardReplacementAttempt(role, booking, paymentMethodId, isCurrent) {
+    if (!canReplacePaymentMethod(role, booking) || !validPaymentMethodId(paymentMethodId) ||
+        typeof isCurrent !== 'function') throw new Error('A current Brand payment recovery context is required')
+    const snapshot = Object.assign({}, booking)
+    const methodId = clean(paymentMethodId)
+    const key = createReplacementKey()
+    if (!key) throw new Error('Payment replacement identity is unavailable')
+    let pending = null
+    let result = null
+    return {
+      run: function () {
+        if (!isCurrent()) return Promise.reject(new Error('Payment recovery context changed'))
+        if (result) return Promise.resolve(result)
+        if (pending) return pending
+        pending = replacePaymentMethod(role, snapshot, methodId, key).then(function (response) {
+          result = response
+          if (!isCurrent()) throw new Error('Payment recovery context changed')
+          return response
+        }).finally(function () { pending = null })
+        return pending
+      },
+    }
+  }
+
+  const wiredDocuments = new WeakSet()
+  let managementReady = false
+  function canManageCards(role, booking) {
+    return managementReady && canReplacePaymentMethod(role, booking)
+  }
+
+  async function loadPaymentClient(document) {
+    const valid = client => client && ['getReadiness', 'installSavedCardPicker', 'installCardSetupForm', 'stripeForPaymentEnvironment']
+      .every(name => typeof client[name] === 'function')
+    if (valid(global.StartersPaidCallBrandPayment)) return global.StartersPaidCallBrandPayment
+    return new Promise(function (resolve, reject) {
+      let script = document.querySelector('script[data-dashboard-payment-client]')
+      if (!script) {
+        script = document.createElement('script')
+        script.src = 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/paid-call-brand-payment.js'
+        script.setAttribute('data-dashboard-payment-client', '')
+        script.defer = true
+        document.head.appendChild(script)
+      }
+      function finish() {
+        const client = global.StartersPaidCallBrandPayment
+        if (valid(client)) resolve(client)
+        else reject(new Error('Payment form client unavailable'))
+      }
+      script.addEventListener('load', finish, { once: true })
+      script.addEventListener('error', finish, { once: true })
+      global.setTimeout(finish, 10000)
+    })
+  }
+
+  async function wire(options) {
+    const settings = options || {}
+    const document = settings.document || global.document
+    if (settings.role !== 'brand' || !document || typeof settings.getBooking !== 'function') return false
+    if (wiredDocuments.has(document)) return true
+    let client
+    try { client = await loadPaymentClient(document) } catch (error) { return false }
+    if (wiredDocuments.has(document)) return true
+    wiredDocuments.add(document)
+    managementReady = true
+    let active = null
+    let opening = false
+    document.addEventListener('click', async function (event) {
+      const target = event.target && event.target.closest
+        ? event.target.closest('[payment-action-btn], [popup-stripe-card-open]') : null
+      if (!target) return
+      const action = target.getAttribute('payment-action-btn')
+      const add = action === 'add-card' || target.hasAttribute('popup-stripe-card-open')
+      if (!add && !['change-card', 'change-card-v2'].includes(action)) return
+      const modal = target.closest('[popup-booking-info]')
+      const booking = modal && settings.getBooking(modal)
+      if (!modal || !canManageCards(settings.role, booking)) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (opening) return
+      const actions = global.StartersDashboardCallActions
+      if (!actions || typeof actions.switchPopupContent !== 'function') return
+      opening = true
+      try {
+        if (!active || !active.picker || !active.isCurrent() || active.bookingId !== booking.booking_id) {
+          if (active) { active.picker?.dispose(); active.form?.dispose() }
+          const context = { bookingId: booking.booking_id, booking: Object.assign({}, booking), attempts: new Map() }
+          context.isCurrent = () => active === context &&
+            (!('open' in modal) || modal.open) &&
+            clean(settings.getBooking(modal)?.booking_id) === clean(context.bookingId) &&
+            canReplacePaymentMethod(settings.role, settings.getBooking(modal))
+          active = context
+          const readiness = await client.getReadiness()
+          if (!context.isCurrent()) return
+          if (readiness.environment !== booking.payment_environment) throw new Error('Payment environment changed')
+          const panel = modal.querySelector('[booking-popup-content="payment-methods"]')
+          context.picker = client.installSavedCardPicker(panel, {
+            environment: readiness.environment, isCurrent: context.isCurrent,
+            onSaved: async function (methodId) {
+              if (!context.attempts.has(methodId)) context.attempts.set(methodId,
+                createCardReplacementAttempt(settings.role, context.booking, methodId, context.isCurrent))
+              await context.attempts.get(methodId).run()
+              if (!context.isCurrent()) return
+              actions.switchPopupContent(modal, 'base')
+              if (typeof settings.restart === 'function') await settings.restart()
+            },
+          })
+        }
+        const context = active
+        actions.switchPopupContent(modal, 'payment-methods')
+        if (!add) { await context.picker.load(); return }
+        const cardModal = document.querySelector('[popup-stripe-card]')
+        const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
+        if (!context.isCurrent()) return
+        context.form?.dispose()
+        context.form = client.installCardSetupForm(cardModal, {
+          stripe, environment: booking.payment_environment, isCurrent: context.isCurrent,
+          onBack: () => { cardModal.close(); context.picker.load() },
+          onSaved: async () => { cardModal.close(); await context.picker.load({ selectDefault: true }) },
+        })
+        cardModal.showModal()
+      } catch (error) {
+        if (active && active.isCurrent() && typeof actions.showActionError === 'function') {
+          actions.showActionError(modal, error.message || 'Payment methods unavailable')
+        }
+      } finally { opening = false }
+    }, true)
+    if (typeof settings.onAvailable === 'function') settings.onAvailable()
+    return true
   }
 
   const api = {
     canReplacePaymentMethod,
     canRequestPaymentAction,
+    canManageCards,
     createReplacementKey,
+    createCardReplacementAttempt,
     getPaymentAction,
     replacePaymentMethod,
     validPaymentMethodId,
