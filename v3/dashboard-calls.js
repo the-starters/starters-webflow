@@ -725,6 +725,20 @@
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
     paintStatusPill(card, status, role)
+    let meetingHref = ''
+    if (['confirmed', 'rescheduled'].includes(status)) {
+      try {
+        const url = new URL(clean(booking.meeting_link))
+        if (url.protocol === 'https:' || url.protocol === 'http:') meetingHref = url.href
+      } catch (_error) {}
+    }
+    bookingFields(card, 'meeting-link').forEach(function (link) {
+      if (meetingHref) link.setAttribute('href', meetingHref)
+      else link.removeAttribute('href')
+      show(link, meetingHref !== '')
+      const wrap = link.closest && link.closest('[booking-element-wrap]')
+      if (wrap) show(wrap, meetingHref !== '')
+    })
     text(card, '[booking-element="brand-name"]', other && other.name)
     text(card, '[booking-element="starter-name"]', other && other.name)
     text(card, '[booking-element="title"]', booking.call_context || 'Call')
@@ -2353,6 +2367,7 @@
   }
 
   const api = {
+    bindCard,
     bookingStatus,
     paidBooking,
     responseWindowOpen,
