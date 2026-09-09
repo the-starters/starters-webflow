@@ -73,11 +73,20 @@ a dismissed gate cannot come back on that page. A fresh load starts clean. That
 is the whole of the "stays closed" behaviour — there is deliberately no cookie
 and no `localStorage`.
 
-## Who is gated is Memberstack's decision, not this script's
+## Who is gated
 
-The wrapper carries Memberstack's `data-ms-content="!learn-access"`. The embed
-reads the wrapper's **computed display** and exits without writing a single style
-when it resolves to `none`.
+The canonical Learn Gating sheet gives every authenticated member full Article
+access: Brand Free, Brand Paid, and Starter. Only logged-out readers receive the
+sign-up gate. After `window.memberReady` settles, the embed calls
+`$memberstackDom.getCurrentMember()` and exits before querying or styling the
+gate when `response.data` contains a member. The `memberReady` resolved value is
+not used as identity because it is `{}` for both logged-in and logged-out
+visitors on this site.
+
+The wrapper still carries Memberstack's `data-ms-content="!learn-access"` as a
+second guard. For logged-out or unresolved visitors, the embed reads the
+wrapper's **computed display** and exits without writing a single style when it
+resolves to `none`.
 
 - **Computed style, not element presence.** This site does both: Memberstack
   removes some gate variants and merely hides others, so presence proves nothing
@@ -98,10 +107,12 @@ is hidden, so the close inside it is hidden too and `dismissible` resolves false
 
 So the embed guards that window twice:
 
-1. Boot waits on `window.memberReady`, the site's own readiness promise, used the
-   same way by `route-guard.js`, `expert-card-browse-loader.js` and
-   `posthog-identity.js`.
-2. Reveal re-checks computed display **before** the scroll lock, covering a gate
+1. Boot waits on `window.memberReady`, then asks the real Memberstack member API.
+2. Authenticated members exit with `skipped: 'authenticated-member'` before any
+   gate style or trigger is written.
+3. Logged-out or unresolved visitors continue through the authored wrapper
+   guard.
+4. Reveal re-checks computed display **before** the scroll lock, covering a gate
    that Memberstack hides later still. On that path it stands down, tears the
    triggers down and records `skipped: 'memberstack-hidden-late'` without locking
    anything.
@@ -120,7 +131,9 @@ survives.
 
 ## Who may close it is also Memberstack's decision
 
-The gate is a **hard paywall** unless the Designer authors a close control:
+For the current canonical Article policy, authenticated members never reach the
+gate. The dismissal contract remains a defense for legacy or unresolved
+authoring states. The gate is a **hard paywall** unless the Designer authors a close control:
 `[data-learn-gate-close-button]`, inside the wrapper, carrying its own
 `data-ms-content`. A logged-in non-paying member sees one and may dismiss; a
 logged-out reader gets no such element and the gate stays exactly as hard as it

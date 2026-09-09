@@ -2,7 +2,7 @@
  * Learn CTA gate — open the sign-up gate once the reader has read enough of a
  * Learn article, or after a short wait on articles too short to scroll.
  *
- * @release v1.59.183
+ * @release v1.59.559
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * article template's before-</body> code. Pair it with learn-cta-gate.css in
@@ -28,10 +28,15 @@
  * never be added to a node that already has a role — and in Designer the close
  * control is quite likely to be exactly such a node. See DISMISSAL below.
  *
- * WHO SEES IT — NOT THIS SCRIPT'S DECISION. The wrapper carries Memberstack's
- * `data-ms-content="!learn-access"`. Memberstack alone decides who is gated.
- * This script reads the wrapper's COMPUTED display and exits without writing a
- * single style when it resolves to `none`. That guard matters because GSAP
+ * WHO SEES IT. The canonical Learn Gating sheet says every authenticated
+ * member — Brand Free, Brand Paid, or Starter — gets the complete Article with
+ * no membership upsell. Only logged-out readers get this sign-up gate. After
+ * `memberReady` settles, this script asks Memberstack's real
+ * `$memberstackDom.getCurrentMember()` API and exits before writing a style
+ * whenever it returns a member. The wrapper's existing
+ * `data-ms-content="!learn-access"` remains a second guard: this script reads
+ * its COMPUTED display and also exits when it resolves to `none`. These guards
+ * matter because GSAP
  * writes inline styles, and an inline `opacity`/`visibility` on an element
  * Memberstack meant to hide is how a paywall leaks to a paying member. The
  * guard is computed-style rather than "is the element present" because this
@@ -170,7 +175,7 @@
   if (window.__startersLearnCtaGateBooted) return
   window.__startersLearnCtaGateBooted = true
 
-  var RELEASE = 'v1.59.183'
+  var RELEASE = 'v1.59.559'
   var LOG_PREFIX = '[learn-cta-gate]'
 
   var WRAPPER_SELECTOR = '[data-learn-gate-element="wrapper"]'
@@ -845,9 +850,18 @@
     info('armed on timer, ' + state.delaySeconds + 's')
   }
 
-  function boot() {
+  function boot(authenticatedMember) {
     if (state.booted) return
     state.booted = true
+
+    // The canonical Article policy gives every authenticated member full
+    // access. Exit before querying or styling the gate so a Brand Free reader
+    // never sees an upgrade flash and can never be scroll-locked behind it.
+    if (authenticatedMember) {
+      state.skipped = 'authenticated-member'
+      info('authenticated member — Article stays fully open')
+      return
+    }
 
     wrapper = document.querySelector(WRAPPER_SELECTOR)
     if (!wrapper) {
@@ -952,23 +966,46 @@
   }
 
   /**
-   * Boot only once Memberstack has had its say. `window.memberReady` is the
-   * site's own readiness promise; boot on either settlement, because a rejected
-   * promise still means "as resolved as this is going to get" and a gate that
-   * never arms is worse than one that arms a beat late. Absent promise (an
-   * older page, or a load failure) falls straight through to boot.
+   * `memberReady` is only a readiness signal on this site. Its resolved value
+   * is `{}` for every visitor, so it cannot prove authentication. After it
+   * settles, ask the real Memberstack API and test `response.data`. If the SDK
+   * is missing or rejects, keep the existing logged-out behavior and let the
+   * wrapper's computed display provide the second guard.
    */
+  function resolveMemberAndBoot() {
+    var ms = window.$memberstackDom
+    if (!ms || typeof ms.getCurrentMember !== 'function') {
+      warn('$memberstackDom.getCurrentMember unavailable — using authored gate')
+      boot(false)
+      return
+    }
+    try {
+      ms.getCurrentMember().then(
+        function (response) {
+          boot(!!(response && response.data))
+        },
+        function () {
+          warn('getCurrentMember rejected — using authored gate')
+          boot(false)
+        }
+      )
+    } catch (err) {
+      warn('getCurrentMember threw — using authored gate')
+      boot(false)
+    }
+  }
+
   function start() {
     var ready = window.memberReady
     if (ready && typeof ready.then === 'function') {
-      ready.then(boot, function () {
-        warn('memberReady rejected — booting anyway')
-        boot()
+      ready.then(resolveMemberAndBoot, function () {
+        warn('memberReady rejected — resolving member anyway')
+        resolveMemberAndBoot()
       })
       return
     }
-    info('no memberReady on the page, booting immediately')
-    boot()
+    info('no memberReady on the page, resolving member immediately')
+    resolveMemberAndBoot()
   }
 
   if (document.readyState === 'loading') {

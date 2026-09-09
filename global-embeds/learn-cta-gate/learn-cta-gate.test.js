@@ -231,6 +231,8 @@ function createTreeWalker(root, whatToShow, filter) {
  * @param {'resolved'|'rejected'|'absent'} [opts.memberReady] how the site's
  *        Memberstack readiness promise behaves. Defaults to 'resolved', which
  *        is the real production shape — boot must wait for it.
+ * @param {boolean|null} [opts.authenticated] true/false makes the Memberstack
+ *        SDK answer with a member/null; null leaves the SDK unavailable.
  *
  * Async because boot is now gated on that promise: the harness flushes
  * microtasks before returning so callers see a booted embed.
@@ -248,6 +250,7 @@ async function harness(opts = {}) {
     reducedMotion = false,
     hostname = 'www.thestarters.com',
     memberReady = 'resolved',
+    authenticated = null,
   } = opts
 
   const body = new Element('body')
@@ -414,6 +417,12 @@ async function harness(opts = {}) {
     matchMedia: (q) => ({ matches: reducedMotion && /reduce/.test(q) }),
     dispatchEvent: (e) => events.push(e),
     posthog: { capture: (name, props) => captured.push({ name, props }) },
+  }
+
+  if (authenticated !== null) {
+    windowObj.$memberstackDom = {
+      getCurrentMember: () => Promise.resolve({ data: authenticated ? { id: 'member-1' } : null }),
+    }
   }
 
   // The site's readiness promise. Deliberately NOT already-resolved: a promise
@@ -622,6 +631,24 @@ test('Memberstack hiding the gate AFTER boot cancels the reveal without locking 
   )
   assert.equal(h.captured.length, 0, 'and nothing is reported as shown')
   assert.ok(h.observers[0].disconnected, 'the trigger is still torn down')
+})
+
+test('an authenticated member gets the full Article and the gate never arms', async () => {
+  const h = await harness({ chars: 6000, authenticated: true })
+  const status = h.api.status()
+
+  assert.equal(status.skipped, 'authenticated-member')
+  assert.equal(status.mode, null)
+  assert.equal(status.revealed, false)
+  assert.equal(h.timers.length, 0)
+  assert.equal(h.observers.length, 0)
+  assert.notEqual(h.document.body.style.overflow, 'hidden')
+})
+
+test('an authenticated check that returns null keeps the logged-out Article gate', async () => {
+  const h = await harness({ chars: 6000, authenticated: false })
+  assert.equal(h.api.status().mode, 'scroll')
+  assert.equal(h.api.status().skipped, null)
 })
 
 test('the late guard runs before the lock on the timer path too', async () => {
