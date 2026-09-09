@@ -24,6 +24,7 @@
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const chooserBindings = new WeakMap()
+  const freeReceiptPriceStates = new WeakMap()
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
 
@@ -428,7 +429,35 @@
     }
   }
 
-  function showFreeSuccess(popup) {
+  function showFreeSuccess(popup, input) {
+    let date
+    const options = { month: 'long', year: 'numeric', timeZone: clean(input && input.timezone) || 'UTC' }
+    try {
+      date = formatWithTimezone(input && input.start, options).list
+    } catch (_error) {
+      date = formatWithTimezone(input && input.start, Object.assign({}, options, { timeZone: 'UTC' })).list
+    }
+    const fields = {
+      'start-date': date.year ? date.month + ' ' + date.day + ', ' + date.year : '',
+      'start-time': date.hour ? date.hour + ':' + date.minute + ' ' + date.dayPeriod + ' ' + date.timeZoneName : '',
+      context: clean(input && input.context),
+    }
+    Object.keys(fields).forEach(function (name) {
+      popup.querySelectorAll('[schedule-step="success"] [booking-element="' + name + '"]').forEach(function (element) {
+        element.textContent = fields[name]
+      })
+    })
+    popup.querySelectorAll('[schedule-step="success"] [booking-element="price"]').forEach(function (element) {
+      const wrap = element.closest('[booking-element-wrap]') || element
+      let states = freeReceiptPriceStates.get(popup)
+      if (!states) {
+        states = new Map()
+        freeReceiptPriceStates.set(popup, states)
+      }
+      if (!states.has(wrap)) states.set(wrap, { display: wrap.style.display, ariaHidden: wrap.getAttribute('aria-hidden') })
+      wrap.style.display = 'none'
+      wrap.setAttribute('aria-hidden', 'true')
+    })
     popup.querySelectorAll('[success-call-buttons]').forEach(function (element) {
       element.style.display = element.getAttribute('data-type') === 'free' ? 'flex' : 'none'
     })
@@ -540,6 +569,15 @@
     }
 
     function resetFreeUi() {
+      const priceStates = freeReceiptPriceStates.get(popup)
+      if (priceStates) {
+        priceStates.forEach(function (state, wrap) {
+          wrap.style.display = state.display
+          if (state.ariaHidden == null) wrap.removeAttribute('aria-hidden')
+          else wrap.setAttribute('aria-hidden', state.ariaHidden)
+        })
+        freeReceiptPriceStates.delete(popup)
+      }
       if (clearFreeCalendarSelection) clearFreeCalendarSelection()
       clearFreeCalendarSelection = null
       guestUi.hide()
@@ -621,7 +659,7 @@
                   },
                 )
                 if (!bookingSurfaceOwnership.owns(container, generation)) return result
-                showFreeSuccess(current.popup)
+                showFreeSuccess(current.popup, input)
                 return result
               } finally {
                 bookingLocks.delete(generation)
