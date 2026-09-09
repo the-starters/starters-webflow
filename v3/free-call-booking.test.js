@@ -75,6 +75,10 @@ class Element {
     this.value = ''
   }
 
+  get innerHTML() { return this.textContent }
+
+  set innerHTML(value) { this.textContent = value }
+
   setQuery(selector, values) {
     this.queries.set(selector, Array.isArray(values) ? values : [values])
   }
@@ -497,6 +501,8 @@ test('a later Free receipt clears previous context and refreshes its selected da
     await booking.state.mounts[0].onConfirm({ start: 1780000000000, end: 1780001800000, timezone: 'Asia/Manila' })
     assert.equal(fixture.receiptFields.context.textContent, 'First request context')
     closeThroughFade(fixture)
+    assert.equal(fixture.receiptFields.context.textContent, 'Authored placeholder')
+    assert.equal(fixture.receiptFields['start-date'].textContent, 'Authored placeholder')
     await fixture.cta.onclick(event())
     await booking.state.mounts[1].onConfirm({ start: 1780086400000, end: 1780088200000, timezone: 'Asia/Manila' })
     assert.equal(fixture.receiptFields.context.textContent, '')
@@ -504,6 +510,37 @@ test('a later Free receipt clears previous context and refreshes its selected da
     assert.equal(fixture.receiptPriceWrap.style.display, 'none')
   })
 })
+
+for (const closeFirst of [false, true]) {
+  test(`Free receipt restores authored fields for Paid reuse with close=${closeFirst}`, async () => {
+    const fixture = chooserFixture()
+    const booking = bookingApiFixture()
+    const repeated = new Element('p', { 'booking-element': 'context' })
+    repeated.textContent = 'Second authored context'
+    fixture.popup.setQuery('[schedule-step="success"] [booking-element="context"]', [fixture.receiptFields.context, repeated])
+    fixture.receiptPriceWrap.style.display = 'grid'
+    fixture.receiptPriceWrap.setAttribute('aria-hidden', 'false')
+    await withGlobals({ document: fixture.document }, async () => {
+      api.installFreeBookingController(installSettings(booking.bookingApi))
+      await fixture.cta.onclick(event())
+      fixture.context.value = 'Free context A'
+      await booking.state.mounts[0].onConfirm({ start: 1780000000000, end: 1780001800000, timezone: 'Asia/Manila' })
+      assert.equal(repeated.textContent, 'Free context A')
+      assert.equal(fixture.receiptPriceWrap.style.display, 'none')
+      if (closeFirst) closeThroughFade(fixture)
+      global.StartersBookingSurfaceLifecycle.reset(fixture.popup, 'paid')
+      fixture.context.value = 'Paid context B'
+      for (const name of ['context', 'start-date', 'start-time']) {
+        assert.equal(fixture.receiptFields[name].textContent, 'Authored placeholder')
+      }
+      assert.equal(repeated.textContent, 'Second authored context')
+      assert.equal(fixture.receiptPriceWrap.style.display, 'grid')
+      assert.equal(fixture.receiptPriceWrap.getAttribute('aria-hidden'), 'false')
+      global.StartersBookingSurfaceLifecycle.reset(fixture.popup, 'paid')
+      assert.equal(repeated.textContent, 'Second authored context')
+    })
+  })
+}
 
 test('Free success requires both canonical row and provider booking identifiers', async () => {
   const fixture = chooserFixture()

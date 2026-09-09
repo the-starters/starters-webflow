@@ -25,6 +25,7 @@
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const chooserBindings = new WeakMap()
   const freeReceiptPriceStates = new WeakMap()
+  const freeReceiptFieldStates = new WeakMap()
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
 
@@ -444,6 +445,12 @@
     }
     Object.keys(fields).forEach(function (name) {
       popup.querySelectorAll('[schedule-step="success"] [booking-element="' + name + '"]').forEach(function (element) {
+        let states = freeReceiptFieldStates.get(popup)
+        if (!states) {
+          states = new Map()
+          freeReceiptFieldStates.set(popup, states)
+        }
+        if (!states.has(element)) states.set(element, element.innerHTML)
         element.textContent = fields[name]
       })
     })
@@ -569,6 +576,13 @@
     }
 
     function resetFreeUi() {
+      const fieldStates = freeReceiptFieldStates.get(popup)
+      if (fieldStates) {
+        fieldStates.forEach(function (content, element) {
+          element.innerHTML = content
+        })
+        freeReceiptFieldStates.delete(popup)
+      }
       const priceStates = freeReceiptPriceStates.get(popup)
       if (priceStates) {
         priceStates.forEach(function (state, wrap) {
