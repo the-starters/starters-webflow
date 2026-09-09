@@ -808,6 +808,16 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
     )
     assert.equal(modal.hints.cancel.hidden, false)
 
+    // A proposal must clear a stale Free-only hint for either dashboard role.
+    for (const role of ['brand', 'starter']) {
+      const proposal = { ...paidBooking, status: 'rescheduled' }
+      dashboard.configureDetailActions(
+        modal, role, dashboard.bookingStatus(proposal), proposal, Date.now(),
+      )
+      assert.equal(modal.hints.reschedule.hidden, true)
+      assert.equal(modal.hints.cancel.hidden, false)
+    }
+
     // When the actions become available the hints hide again.
     global.StartersDashboardCallActions.rescheduleKindFor = () => 'reschedule-propose'
     global.StartersDashboardCallActions.canCancel = () => true

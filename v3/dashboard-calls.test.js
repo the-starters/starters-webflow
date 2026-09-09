@@ -195,6 +195,11 @@ test('reschedule proposals stay distinct from initial requests and confirmed cal
   }
   assert.deepEqual(api.sectionBookings([booking], 'starter', 'requests', 2000), [])
   assert.equal(api.responseWindowOpen(booking, 2000), false)
+  assert.equal(api.responseWindowOpen({ ...booking, response_expires_at: 1000 }, 2000), false)
+  assert.equal(api.bookingStatus(booking, 5000), 'completed')
+  for (const role of ['brand', 'starter']) {
+    assert.equal(api.canConfirmBooking(role, booking, 2000), false)
+  }
   assert.equal(api.bookingStatus({ ...booking, status: 'confirmed' }, 2000), 'confirmed')
 })
 
