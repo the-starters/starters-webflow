@@ -186,6 +186,34 @@ test('normalizes canonical Unix seconds once while preserving milliseconds', () 
   )
 })
 
+test('reschedule proposals stay distinct from initial requests and confirmed calls', () => {
+  const booking = { booking_id: 'proposal', status: 'rescheduled', start: 3000, end: 4000 }
+  for (const role of ['brand', 'starter']) {
+    assert.equal(api.bookingStatus(booking, 2000), 'rescheduled')
+    assert.equal(api.statusLabel(api.bookingStatus(booking, 2000), role), 'Pending')
+    assert.deepEqual(api.sectionBookings([booking], role, 'calls', 2000), [booking])
+  }
+  assert.deepEqual(api.sectionBookings([booking], 'starter', 'requests', 2000), [])
+  assert.equal(api.responseWindowOpen(booking, 2000), false)
+  assert.equal(api.bookingStatus({ ...booking, status: 'confirmed' }, 2000), 'confirmed')
+})
+
+test('both roles see Pending proposal details without losing an existing meeting link', () => {
+  for (const role of ['brand', 'starter']) {
+    const view = detailModalHarness()
+    const booking = {
+      booking_id: 'proposal-details', status: 'rescheduled', start: 3000, end: 4000,
+      duration: 30, meeting_link: 'https://meet.google.com/test-room',
+      brand_data: { name: 'Brand', timezone: 'UTC' },
+      starter_data: { name: 'Starter', timezone: 'UTC' },
+    }
+    api.populateDetailModal(view.modal, booking, role, 2000)
+    assert.equal(view.fields.status.textContent, 'Pending')
+    assert.equal(view.fields['meeting-link'].hidden, false)
+    assert.equal(view.fields['meeting-link'].href, booking.meeting_link)
+  }
+})
+
 test('builds the current confirm payload only when booking_ref identities match', () => {
   const configId = '11111111-2222-3333-4444-555555555555'
   const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
