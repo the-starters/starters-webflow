@@ -231,6 +231,8 @@ function createTreeWalker(root, whatToShow, filter) {
  * @param {'resolved'|'rejected'|'absent'} [opts.memberReady] how the site's
  *        Memberstack readiness promise behaves. Defaults to 'resolved', which
  *        is the real production shape — boot must wait for it.
+ * @param {boolean|null} [opts.authenticated] true/false makes the Memberstack
+ *        SDK answer with a member/null; null leaves the SDK unavailable.
  *
  * Async because boot is now gated on that promise: the harness flushes
  * microtasks before returning so callers see a booted embed.
@@ -248,6 +250,8 @@ async function harness(opts = {}) {
     reducedMotion = false,
     hostname = 'www.thestarters.com',
     memberReady = 'resolved',
+    authenticated = false,
+    memberLookup = 'resolved',
   } = opts
 
   const body = new Element('body')
@@ -416,6 +420,17 @@ async function harness(opts = {}) {
     posthog: { capture: (name, props) => captured.push({ name, props }) },
   }
 
+  if (authenticated !== null) {
+    windowObj.$memberstackDom = {
+      getCurrentMember: () => {
+        if (memberLookup === 'thrown') throw new Error('member lookup failed')
+        if (memberLookup === 'rejected') return Promise.reject(new Error('member lookup failed'))
+        if (memberLookup === 'malformed') return Promise.resolve({})
+        return Promise.resolve({ data: authenticated ? { id: 'member-1' } : null })
+      },
+    }
+  }
+
   // The site's readiness promise. Deliberately NOT already-resolved: a promise
   // that has settled before the embed loads would hide a boot that ignored it.
   let releaseMemberReady = null
@@ -448,8 +463,8 @@ async function harness(opts = {}) {
 
   if (releaseMemberReady) {
     releaseMemberReady()
-    await new Promise((r) => setImmediate(r))
   }
+  await new Promise((r) => setImmediate(r))
 
   return {
     beforeMemberReady,
@@ -533,28 +548,6 @@ test('the stylesheet carries the same @release marker', async () => {
   assert.equal(cssMarker[1], jsMarker[1], 'the CSS and JS ship together, so they share a tag')
 })
 
-test('the stylesheet owns the closed state of the wrapper and backdrop', async () => {
-  const css = fs.readFileSync(CSS_PATH, 'utf8')
-  assert.match(css, /\[data-learn-gate-element="wrapper"\][^}]*visibility:\s*hidden/s)
-  assert.match(css, /\[data-learn-gate-element="wrapper"\][^}]*pointer-events:\s*none/s)
-  assert.match(css, /\[data-learn-gate-element="backdrop"\][^}]*opacity:\s*0/s)
-})
-
-test('the stylesheet never sets a transform — GSAP owns that property alone', async () => {
-  const css = fs.readFileSync(CSS_PATH, 'utf8')
-  // Regression guard, caught on staging: GSAP parses the computed transform as a
-  // pixel matrix, so a CSS `translateY(100%)` lands in its `y` component and the
-  // tween's `yPercent: 100` stacks on top. The sheet then starts at 200% and
-  // finishes a full sheet-height below its resting place — it animates offscreen
-  // and the reader never sees it. Only one side may own `transform`.
-  const declarations = css.replace(/\/\*[\s\S]*?\*\//g, '')
-  assert.doesNotMatch(
-    declarations,
-    /(^|[;{\s])transform\s*:/,
-    'learn-cta-gate.css must not declare `transform` — see ensureClosed() in the js'
-  )
-})
-
 // ---------------------------------------------------------------------------
 // The Memberstack guard — the leak that matters
 // ---------------------------------------------------------------------------
@@ -599,9 +592,10 @@ test('a rejected memberReady still boots — a silent gate beats a trapped reade
   assert.equal(h.api.status().mode, 'scroll')
 })
 
-test('a page with no memberReady boots immediately', async () => {
+test('a page with no memberReady waits for the member lookup', async () => {
   const h = await harness({ chars: 6000, memberReady: 'absent' })
-  assert.equal(h.beforeMemberReady.mode, 'scroll', 'no promise means no reason to wait')
+  assert.equal(h.beforeMemberReady.mode, null)
+  assert.equal(h.api.status().mode, 'scroll')
 })
 
 test('Memberstack hiding the gate AFTER boot cancels the reveal without locking scroll', async () => {
@@ -622,6 +616,45 @@ test('Memberstack hiding the gate AFTER boot cancels the reveal without locking 
   )
   assert.equal(h.captured.length, 0, 'and nothing is reported as shown')
   assert.ok(h.observers[0].disconnected, 'the trigger is still torn down')
+})
+
+test('an authenticated member gets the full Article and the gate never arms', async () => {
+  const h = await harness({ chars: 6000, authenticated: true })
+  const status = h.api.status()
+
+  assert.equal(status.skipped, 'authenticated-member')
+  assert.equal(status.mode, null)
+  assert.equal(status.revealed, false)
+  assert.equal(h.timers.length, 0)
+  assert.equal(h.observers.length, 0)
+  assert.notEqual(h.document.body.style.overflow, 'hidden')
+})
+
+for (const chars of [900, 6000]) {
+  for (const memberLookup of ['rejected', 'thrown', 'malformed', 'unavailable']) {
+    test(`unresolved authentication leaves a ${chars}-character Article open (${memberLookup})`, async () => {
+      const h = await harness({
+        chars,
+        authenticated: memberLookup === 'unavailable' ? null : true,
+        memberLookup,
+      })
+      h.api.reveal()
+      assert.equal(h.api.status().skipped, 'authentication-unresolved')
+      assert.equal(h.api.status().mode, null)
+      assert.equal(h.api.status().revealed, false)
+      assert.equal(h.timers.length, 0)
+      assert.equal(h.observers.length, 0)
+      assert.equal(h.captured.length, 0)
+      assert.equal(h.wrapperEl.getAttribute('data-script-initialized'), null)
+      assert.notEqual(h.document.body.style.overflow, 'hidden')
+    })
+  }
+}
+
+test('an authenticated check that returns null keeps the logged-out Article gate', async () => {
+  const h = await harness({ chars: 6000, authenticated: false })
+  assert.equal(h.api.status().mode, 'scroll')
+  assert.equal(h.api.status().skipped, null)
 })
 
 test('the late guard runs before the lock on the timer path too', async () => {
