@@ -1400,6 +1400,7 @@
   }
 
   function resetDetailActionState(modal) {
+    global.StartersDashboardCallPayment?.invalidateModal?.(modal)
     const actionsModule = global.StartersDashboardCallActions
     if (!validDashboardModule(actionsModule)) return
     if (typeof actionsModule.resetRescheduleState === 'function') {

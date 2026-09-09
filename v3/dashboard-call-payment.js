@@ -162,6 +162,8 @@
   }
 
   const wiredDocuments = new WeakSet()
+  const paymentOwners = new WeakMap()
+  function invalidateModal(modal) { paymentOwners.get(modal)?.() }
   let managementReady = false
   function canManageCards(role, booking) {
     return managementReady && canReplacePaymentMethod(role, booking)
@@ -203,7 +205,17 @@
     managementReady = true
     let active = null
     let opening = false
+    let selecting = false
+    function paintAdd(context) {
+      context.modal.querySelectorAll?.('[popup-stripe-card-open], [payment-action-btn="add-card"]').forEach(control => {
+        control.setAttribute('aria-disabled', String(selecting || context.adding))
+        control.querySelectorAll('button').forEach(button => { button.disabled = selecting || context.adding })
+      })
+    }
+    document.addEventListener('close', event => { invalidateModal(event.target) }, true)
     document.addEventListener('click', async function (event) {
+      const close = event.target?.closest?.('[data-modal-close], [booking-popup-info-close], [booking-action-btn="switch-close"], [booking-card-action-btn="switch-close"]')
+      if (close) invalidateModal(close.closest('[popup-booking-info]'))
       const target = event.target && event.target.closest
         ? event.target.closest('[payment-action-btn], [popup-stripe-card-open]') : null
       if (!target) return
@@ -215,15 +227,33 @@
       if (!modal || !canManageCards(settings.role, booking)) return
       event.preventDefault()
       event.stopImmediatePropagation()
-      if (opening) return
+      if (opening || selecting || (active?.isCurrent() && active.adding)) return
       const actions = global.StartersDashboardCallActions
       if (!actions || typeof actions.switchPopupContent !== 'function') return
       opening = true
       try {
         if (!active || !active.picker || !active.isCurrent() || active.bookingId !== booking.booking_id) {
-          if (active) { active.picker?.dispose(); active.form?.dispose() }
-          const context = { bookingId: booking.booking_id, booking: Object.assign({}, booking), attempts: new Map() }
-          context.isCurrent = () => active === context &&
+          if (active) active.invalidate()
+          const context = { modal, bookingId: booking.booking_id, booking: Object.assign({}, booking), attempts: new Map(), adding: false }
+          let valid = true
+          let observer
+          context.invalidate = () => {
+            valid = false
+            observer?.disconnect()
+            context.picker?.dispose()
+            context.form?.dispose()
+            context.adding = false
+            paintAdd(context)
+          }
+          paymentOwners.set(modal, context.invalidate)
+          if (typeof global.MutationObserver === 'function') {
+            observer = new global.MutationObserver(records => {
+              if (records.some(record => record.attributeName === 'open' ||
+                  (record.attributeName === 'data-booking-id' && record.oldValue !== modal.getAttribute('data-booking-id')))) context.invalidate()
+            })
+            observer.observe(modal, { attributes: true, attributeOldValue: true, attributeFilter: ['open', 'data-booking-id'] })
+          }
+          context.isCurrent = () => valid && active === context &&
             (!('open' in modal) || modal.open) &&
             clean(settings.getBooking(modal)?.booking_id) === clean(context.bookingId) &&
             canReplacePaymentMethod(settings.role, settings.getBooking(modal))
@@ -233,7 +263,14 @@
           if (readiness.environment !== booking.payment_environment) throw new Error('Payment environment changed')
           const panel = modal.querySelector('[booking-popup-content="payment-methods"]')
           context.picker = client.installSavedCardPicker(panel, {
-            environment: readiness.environment, isCurrent: context.isCurrent,
+            environment: readiness.environment, isCurrent: () => context.isCurrent() && !context.adding,
+            acquire: () => {
+              if (selecting || opening || context.adding || !context.isCurrent()) return false
+              selecting = true
+              paintAdd(context)
+              return true
+            },
+            release: () => { selecting = false; if (active) paintAdd(active) },
             onSaved: async function (methodId) {
               if (!context.attempts.has(methodId)) context.attempts.set(methodId,
                 createCardReplacementAttempt(settings.role, context.booking, methodId, context.isCurrent))
@@ -248,16 +285,21 @@
         actions.switchPopupContent(modal, 'payment-methods')
         if (!add) { await context.picker.load(); return }
         const cardModal = document.querySelector('[popup-stripe-card]')
+        context.adding = true
+        paintAdd(context)
         const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
         if (!context.isCurrent()) return
         context.form?.dispose()
+        const finishAdd = () => { context.adding = false; paintAdd(context) }
+        cardModal.addEventListener('close', finishAdd, { once: true })
         context.form = client.installCardSetupForm(cardModal, {
           stripe, environment: booking.payment_environment, isCurrent: context.isCurrent,
-          onBack: () => { cardModal.close(); context.picker.load() },
-          onSaved: async () => { cardModal.close(); await context.picker.load({ selectDefault: true }) },
+          onBack: () => { finishAdd(); cardModal.close(); context.picker.load() },
+          onSaved: async () => { finishAdd(); cardModal.close(); await context.picker.load({ selectDefault: true }) },
         })
         cardModal.showModal()
       } catch (error) {
+        if (active) { active.adding = false; paintAdd(active) }
         if (active && active.isCurrent() && typeof actions.showActionError === 'function') {
           actions.showActionError(modal, error.message || 'Payment methods unavailable')
         }
@@ -268,6 +310,7 @@
   }
 
   const api = {
+    invalidateModal,
     canReplacePaymentMethod,
     canRequestPaymentAction,
     canManageCards,

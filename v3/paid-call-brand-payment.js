@@ -774,6 +774,7 @@
     async function save(event) {
       event.preventDefault()
       if (disposed || loading || saving || !loaded || selection.snapshot().busy || !selection.snapshot().selectedId || !ownsContext()) return
+      if (typeof settings.acquire === 'function' && !settings.acquire()) return
       saving = true
       const snapshot = selection.snapshot()
       const request = verifiedDefaultId === snapshot.selectedId ? Promise.resolve(snapshot) : selection.save()
@@ -791,7 +792,11 @@
         if (!disposed && ownsContext()) status.textContent = verifiedDefaultId
           ? 'Your default card changed, but the booking update failed. Please try again.'
           : 'The default card could not be verified. Please try again.'
-      } finally { saving = false; paint() }
+      } finally {
+        saving = false
+        if (typeof settings.release === 'function') settings.release()
+        paint()
+      }
     }
     use.addEventListener('click', save)
     paint()

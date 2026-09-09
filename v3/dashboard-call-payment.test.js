@@ -218,3 +218,125 @@ test('payment module requires an explicit Brand booking context to activate', as
   assert.equal(api.validPaymentMethodId('card_test_1'), false)
   assert.equal(api.validReplacementKey('invalid'), false)
 })
+
+async function paymentRaceHarness(run) {
+  const client = require('./paid-call-brand-payment.js')
+  const previous = { client: global.StartersPaidCallBrandPayment, actions: global.StartersDashboardCallActions, fetch: global.xanoAuthFetch }
+  class Node {
+    constructor() { this.listeners = {}; this.style = {}; this.attrs = {}; this.children = [] }
+    setAttribute(key, value) { this.attrs[key] = value }
+    getAttribute(key) { return this.attrs[key] }
+    removeAttribute(key) { delete this.attrs[key] }
+    querySelectorAll() { return [] }
+    querySelector() { return null }
+    addEventListener(key, fn) { this.listeners[key] = fn }
+    removeEventListener(key) { delete this.listeners[key] }
+    appendChild(child) { this.children.push(child) }
+    replaceChildren() { this.children = [] }
+    insertBefore() {}
+    remove() {}
+    cloneNode() { return new Node() }
+  }
+  const document = new Node()
+  document.createElement = () => new Node()
+  const panel = new Node(), use = new Node(), list = new Node(), template = new Node()
+  list.parentNode = new Node()
+  panel.ownerDocument = document
+  panel.querySelector = selector => selector === '[pm-use-this]' ? use : selector === '[customer-cards-list]' ? list : template
+  const modal = new Node(), add = new Node(), nativeAdd = new Node(), cardModal = new Node()
+  modal.open = true
+  modal.querySelector = () => panel
+  modal.querySelectorAll = () => [add]
+  add.querySelectorAll = () => [nativeAdd]
+  let forms = 0, refreshes = 0, defaults = 0, recoveries = 0, lists = 0
+  let releaseRead, releaseRecovery
+  let holdRead = false, holdRecovery = false
+  cardModal.showModal = () => { cardModal.open = true }
+  cardModal.close = () => { cardModal.open = false; cardModal.listeners.close?.() }
+  document.querySelector = () => cardModal
+  const booking = paidBooking('card_or_payment_declined')
+  global.StartersPaidCallBrandPayment = { ...client, getReadiness: async () => ({ environment: 'test' }),
+    stripeForPaymentEnvironment: async () => ({}), installCardSetupForm: () => { forms++; return { dispose() {} } } }
+  global.StartersDashboardCallActions = { switchPopupContent() {} }
+  global.xanoAuthFetch = async url => {
+    if (url.endsWith(client.SET_DEFAULT_PATH)) { defaults++; return { ok: true, json: async () => ({ environment: 'test', bookable: true }) } }
+    if (url.endsWith(client.PAYMENT_METHODS_PATH)) {
+      lists++
+      if (holdRead) await new Promise(resolve => { releaseRead = resolve })
+      return { ok: true, json: async () => ({ environment: 'test', items: [{ id: 'pm_one', brand: 'visa', last4: '4242', exp_month: 12, exp_year: 2030, is_default: true }], has_more: false, next_cursor: '' }) }
+    }
+    recoveries++
+    if (holdRecovery) await new Promise(resolve => { releaseRecovery = resolve })
+    return { ok: true, json: async () => ({ payment_recovery: { booking_id: booking.booking_id, payment_status: 'authorized' } }) }
+  }
+  const event = target => ({ target, preventDefault() {}, stopImmediatePropagation() {} })
+  const click = async action => {
+    const button = new Node()
+    button.getAttribute = () => action
+    button.hasAttribute = () => false
+    button.closest = selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null
+    await document.listeners.click(event(button))
+  }
+  const tick = () => new Promise(resolve => setImmediate(resolve))
+  try {
+    await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => { refreshes++ } })
+    await click('change-card')
+    await run({ click, tick, modal, nativeAdd, cardModal,
+      save: () => use.listeners.click(event(use)),
+      close: () => { modal.open = false; document.listeners.close(event(modal)); modal.open = true },
+      holdRead: () => { holdRead = true }, releaseRead: () => { holdRead = false; releaseRead() },
+      holdRecovery: () => { holdRecovery = true }, releaseRecovery: () => { holdRecovery = false; releaseRecovery() },
+      state: () => ({ forms, refreshes, defaults, recoveries, lists }) })
+  } finally {
+    global.StartersPaidCallBrandPayment = previous.client
+    global.StartersDashboardCallActions = previous.actions
+    global.xanoAuthFetch = previous.fetch
+  }
+}
+
+test('close and reopen during canonical default readback cannot revive recovery', async () => {
+  await paymentRaceHarness(async h => {
+    h.holdRead()
+    const pending = h.save()
+    await h.tick()
+    assert.equal(h.state().defaults, 1)
+    h.close()
+    h.releaseRead()
+    await pending
+    assert.equal(h.state().recoveries, 0)
+    assert.equal(h.state().refreshes, 0)
+    await h.click('change-card')
+    await h.save()
+    assert.equal(h.state().recoveries, 1)
+    assert.equal(h.state().refreshes, 1)
+  })
+})
+
+test('Add and double selection stay blocked through default readback and recovery', async () => {
+  await paymentRaceHarness(async h => {
+    h.holdRead()
+    h.holdRecovery()
+    const pending = h.save()
+    await h.tick()
+    assert.equal(h.nativeAdd.disabled, true)
+    await h.click('add-card')
+    await h.save()
+    assert.equal(h.state().forms, 0)
+    assert.equal(h.state().defaults, 1)
+    h.releaseRead()
+    await h.tick()
+    assert.equal(h.state().recoveries, 1)
+    await h.click('add-card')
+    assert.equal(h.state().forms, 0)
+    h.releaseRecovery()
+    await pending
+    assert.equal(h.nativeAdd.disabled, false)
+    await h.click('add-card')
+    assert.equal(h.state().forms, 1)
+    await h.save()
+    assert.equal(h.state().defaults, 1)
+    h.cardModal.close()
+    await h.click('add-card')
+    assert.equal(h.state().forms, 2)
+  })
+})
