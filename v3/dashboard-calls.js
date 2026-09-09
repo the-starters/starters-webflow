@@ -725,6 +725,20 @@
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
     paintStatusPill(card, status, role)
+    let meetingHref = ''
+    if (['confirmed', 'rescheduled'].includes(status)) {
+      try {
+        const url = new URL(clean(booking.meeting_link))
+        if (url.protocol === 'https:' || url.protocol === 'http:') meetingHref = url.href
+      } catch (_error) {}
+    }
+    bookingFields(card, 'meeting-link').forEach(function (link) {
+      if (meetingHref) link.setAttribute('href', meetingHref)
+      else link.removeAttribute('href')
+      show(link, meetingHref !== '')
+      const wrap = link.closest && link.closest('[booking-element-wrap]')
+      if (wrap) show(wrap, meetingHref !== '')
+    })
     text(card, '[booking-element="brand-name"]', other && other.name)
     text(card, '[booking-element="starter-name"]', other && other.name)
     text(card, '[booking-element="title"]', booking.call_context || 'Call')
@@ -1107,7 +1121,13 @@
         supplement.style.gap = '16px'
         supplement.style.width = '100%'
         supplement.style.marginTop = '12px'
-        panel.appendChild(supplement)
+        const close = panel.querySelector('[booking-action-btn="switch-close"]')
+        const controls = close && close.parentNode
+        if (controls && controls.parentNode === panel && typeof panel.insertBefore === 'function') {
+          panel.insertBefore(supplement, controls)
+        } else {
+          panel.appendChild(supplement)
+        }
       }
       supplement.textContent = ''
 
@@ -1156,26 +1176,28 @@
       // none that renders.
       const authoredMessage = panelHasUsableMatch(panel, MESSAGE_CONTROL_SELECTOR)
       if (counterpartId && !authoredMessage) {
-        const actions = document.createElement('div')
+        const actions = document.createElement('p')
         actions.setAttribute('data-starters-call-summary-actions', '')
-        actions.style.display = 'flex'
-        actions.style.justifyContent = 'flex-end'
         actions.style.width = '100%'
+        actions.style.margin = '0'
+        actions.style.fontSize = '0.875rem'
+        actions.style.lineHeight = '1.5'
+        const copy = document.createElement('span')
+        const counterpartName = clean(counterpart && counterpart.name) ||
+          (role === 'starter' ? 'the Brand' : 'the Starter')
+        copy.textContent = 'If you’d like to discuss options, reach out to ' + counterpartName + ' via the '
+        actions.appendChild(copy)
         const message = document.createElement('a')
         message.setAttribute('data-starters-call-message', '')
         message.href = '/messages?with=' + encodeURIComponent(counterpartId)
-        message.textContent = role === 'starter' ? 'Message Brand' : 'Message Starter'
-        message.style.display = 'inline-flex'
-        message.style.alignItems = 'center'
-        message.style.justifyContent = 'center'
-        message.style.minHeight = '44px'
-        message.style.padding = '10px 20px'
-        message.style.borderRadius = '4px'
-        message.style.backgroundColor = '#1f231f'
-        message.style.color = '#ffffff'
-        message.style.fontWeight = '600'
-        message.style.textDecoration = 'none'
+        message.textContent = 'Messages tab'
+        message.style.display = 'inline'
+        message.style.color = 'inherit'
+        message.style.textDecoration = 'underline'
         actions.appendChild(message)
+        const period = document.createElement('span')
+        period.textContent = '.'
+        actions.appendChild(period)
         supplement.appendChild(actions)
         rendered += 1
       }
@@ -2375,6 +2397,7 @@
   }
 
   const api = {
+    bindCard,
     bookingStatus,
     paidBooking,
     responseWindowOpen,
