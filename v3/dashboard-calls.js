@@ -1440,8 +1440,22 @@
       })
   }
 
-  function populateDetailModal(modal, booking, role, now) {
+  function populateDetailSchedule(root, booking, role) {
+    const other = role === 'starter' ? booking.brand_data : booking.starter_data
+    const own = role === 'starter' ? booking.starter_data : booking.brand_data
+    const timezone = (own && own.timezone) || (other && other.timezone)
+    setBookingField(root, 'start-date', formatDate(booking.start, timezone), true)
+    setBookingField(root, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
+  }
+
+  function populateDetailModal(modal, booking, role, now, content) {
     if (!modal || !booking) return false
+    if (content) {
+      const panel = modal.querySelector('[booking-popup-content="' + content + '"]')
+      if (!panel) return false
+      populateDetailSchedule(panel, booking, role)
+      return true
+    }
     const nextBookingId = clean(booking.booking_id || booking.id)
     const previousBookingId = clean(modal.getAttribute('data-booking-id'))
     if (previousBookingId !== nextBookingId) resetDetailActionState(modal)
@@ -1490,11 +1504,10 @@
     setBookingField(modal, 'starter-name', booking.starter_data && booking.starter_data.name, true)
     setBookingField(modal, 'title', booking.call_context || 'Call', true)
     setBookingField(modal, 'context', booking.call_context, true)
-    setBookingField(modal, 'start-date', formatDate(booking.start, timezone), true)
+    populateDetailSchedule(modal, booking, role)
     setBookingField(modal, 'duration', formatDuration(booking.duration), true)
     setBookingPrice(modal, formatPrice(booking.price, isPaid), isPaid)
     setBookingField(modal, 'payment-status-text', paymentText, isPaid)
-    setBookingField(modal, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
 
     const showMeeting = status === 'confirmed' && clean(booking.meeting_link) !== ''
@@ -2311,8 +2324,8 @@
       getBookingStatus: bookingStatus,
       // Lets the actions module re-render the open modal from a booking it has
       // just mutated, so a success panel cannot show pre-change values.
-      refreshDetail: function (modal, booking) {
-        return populateDetailModal(modal, booking, role)
+      refreshDetail: function (modal, booking, content) {
+        return populateDetailModal(modal, booking, role, undefined, content)
       },
       onAvailable: function () {
         refreshDetailExpiration(refs, role)

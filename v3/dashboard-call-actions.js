@@ -1238,7 +1238,7 @@
             start: Number(slot && slot.start),
             end: Number(slot && slot.end),
             rescheduled_reason: reason || booking.rescheduled_reason,
-          }))
+          }), config.successContent)
         }
         switchPopupContent(modal, config.successContent)
         restartAfterModalClose(document, modal, restart)
