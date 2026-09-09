@@ -1,9 +1,9 @@
 /**
  * Canonical Paid Call dashboard recovery commands.
  *
- * This module never writes Stripe objects directly. It only calls the two
- * booking-scoped Xano commands that verify the owning Brand, immutable booking
- * payment identity, Stripe mode, and idempotency before provider access.
+ * Booking recovery stays behind Xano ownership and idempotency checks. Card
+ * setup is delegated to the shared payment client; modal ownership must remain
+ * current before a verified default can trigger booking recovery.
  */
 ;(function (global) {
   'use strict'
