@@ -1821,7 +1821,7 @@ test('the shared reason panel carries the copy of the contract in play', () => {
   )
 })
 
-test('only the pending contract restates the booking before showing its success panel', async () => {
+test('reschedule receipts show the selected slot without moving a confirmed booking', async () => {
   const originalCalendar = global.StartersPaidCallBrandPayment
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
@@ -1891,24 +1891,30 @@ test('only the pending contract restates the booking before showing its success 
     assert.equal(pending.start, start)
     assert.notEqual(pending.start, pendingStart)
 
-    // Confirmed: the time holds until the counterpart answers, so nothing is restated.
-    // The successful pending confirm clears the authored reason field, so refill it.
-    reasonField.value = 'Need a later time'
-    currentId = 'booking-confirmed-1'
-    const confirmed = rescheduleBooking({
-      status: 'confirmed',
-      booking_id: 'booking-confirmed-1',
-      start: Date.now() + 72 * 60 * 60 * 1000,
-    })
-    const confirmedStart = confirmed.start
-    const notRefreshed = []
-    await api.mountRescheduleCalendar({}, modal, confirmed, 'starter', reasonField.value, undefined,
-      function (_modal, booking) {
-        notRefreshed.push(booking)
+    for (const role of ['starter', 'brand']) {
+      // Confirmed: the receipt shows the proposal, but the confirmed booking stays unchanged.
+      // The successful pending confirm clears the authored reason field, so refill it.
+      reasonField.value = 'Need a later time'
+      currentId = 'booking-confirmed-' + role
+      const confirmed = rescheduleBooking({
+        status: 'confirmed',
+        booking_id: currentId,
+        start: Date.now() + 72 * 60 * 60 * 1000,
       })
-    await mounts[1].onConfirm(slot)
-    assert.equal(notRefreshed.length, 0)
-    assert.equal(confirmed.start, confirmedStart)
+      const confirmedStart = confirmed.start
+      const proposalViews = []
+      await api.mountRescheduleCalendar({}, modal, confirmed, role, reasonField.value, undefined,
+        function (_modal, booking) {
+          proposalViews.push(booking)
+        })
+      await mounts[mounts.length - 1].onConfirm(slot)
+      assert.equal(proposalViews.length, 1)
+      assert.notEqual(proposalViews[0], confirmed)
+      assert.equal(proposalViews[0].start, slot.start)
+      assert.equal(proposalViews[0].end, slot.end)
+      assert.equal(proposalViews[0].rescheduled_reason, 'Need a later time')
+      assert.equal(confirmed.start, confirmedStart)
+    }
   } finally {
     global.StartersPaidCallBrandPayment = originalCalendar
     global.xanoAuthFetch = originalFetch

@@ -1224,16 +1224,21 @@
         if (!isCurrent()) return result
         const reasonField = modal.querySelector('[booking-reschedule-reason]')
         if (reasonField) reasonField.value = ''
-        /* The success panel renders the booking's own `[booking-element]`
-           fields, filled when the modal opened, so its date row would still
-           show the pre-change time. Only the pending contract actually moved
-           the call: a proposal leaves the time alone until the counterpart
-           answers, so its panel is correct as-is and must not be rewritten. */
+        // The receipt describes the selected slot. A pending request moves
+        // immediately; a confirmed call keeps its canonical time until the
+        // counterpart accepts, so render its proposal from a separate model.
         if (kind === 'reschedule-request' && booking) {
           booking.start = Number(slot && slot.start)
           booking.end = Number(slot && slot.end)
           booking.rescheduled_reason = reason || booking.rescheduled_reason
           if (typeof refreshDetail === 'function') refreshDetail(modal, booking)
+        }
+        if (kind === 'reschedule-propose' && booking && typeof refreshDetail === 'function') {
+          refreshDetail(modal, Object.assign({}, booking, {
+            start: Number(slot && slot.start),
+            end: Number(slot && slot.end),
+            rescheduled_reason: reason || booking.rescheduled_reason,
+          }))
         }
         switchPopupContent(modal, config.successContent)
         restartAfterModalClose(document, modal, restart)
