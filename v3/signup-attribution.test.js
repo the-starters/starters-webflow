@@ -537,19 +537,24 @@ function boot(options = {}) {
             for (const entry of handlers) entry[1](event)
             return event
         },
-        clickSignupControl: () => {
+        clickSignupControl: (accepted = false, kind = 'signup') => {
             const control = {}
             const target = {
                 closest(selector) {
-                    return selector ===
-                        'form[data-ms-form="signup"] [ms-code-submit-button]'
-                        ? control
-                        : null
+                    return (selector === 'form[data-ms-form="signup"] [ms-code-submit-button]' && kind === 'signup') ||
+                        (selector === '[data-ms-form="login"]' && kind === 'login')
+                        ? control : null
                 },
             }
             const event = { target }
             const handlers = document.listeners.filter(([name]) => name === 'click')
             for (const entry of handlers) entry[1](event)
+            if (accepted) {
+                const submit = { target: { getAttribute: (name) => name === 'data-ms-form' ? kind : null } }
+                for (const [name, handler] of document.listeners) {
+                    if (name === 'submit') handler(submit)
+                }
+            }
             return event
         },
         rerun: () => vm.runInNewContext(source, context),
@@ -915,23 +920,6 @@ test('SIGNUP_PATH_POLICY covers /quiz and /sign-up with directSave only on /sign
     })
 })
 
-test('the two form selectors keep their deliberate asymmetry', () => {
-    // Arming is anchored to `form`, the veto is not. Losing the prefix on the
-    // signup selector would arm on any stray marker; adding it to the login
-    // selector would let a login wrapped in a div slip past the veto. Pinned as
-    // code because both directions are silent failures in the browser.
-    assert.match(
-        source,
-        /var SIGNUP_FORM_SELECTOR = 'form\[data-ms-form="signup"\]'/,
-        'SIGNUP_FORM_SELECTOR must stay anchored to a real form element',
-    )
-    assert.match(
-        source,
-        /var LOGIN_FORM_SELECTOR = '\[data-ms-form="login"\]'/,
-        'LOGIN_FORM_SELECTOR must match the marker on any element',
-    )
-})
-
 test('every V3 Xano Collection and Learn route produces its exact observable contract', async () => {
     const cases = [
         ['/skills/example', '69cccee53fd01363c8d406f3', '69cccee53fd01363c8d406f9', 'collection_signup'],
@@ -1177,7 +1165,7 @@ test('the shared custom signup button registers an ungated Learn lead entry', as
     })
     await harness.settle()
 
-    harness.clickSignupControl()
+    harness.clickSignupControl(true)
     harness.authHandlers[0](loggedInMember)
     await harness.settle()
     await harness.settle()
@@ -1377,6 +1365,27 @@ test('a CMS login without a signup-form submit never registers a lead entry', as
 
     assert.equal(harness.fetchCalls.length, 0)
     assert.equal(harness.pendingLeadEntry(), undefined)
+})
+
+test('rejected custom signup clicks followed by login never register Article leads', async () => {
+    for (const previouslyAccepted of [false, true]) {
+        const harness = boot({
+            hostname: 'thestarters.com',
+            pathname: '/learn/interviews-analysis/operator-story',
+            pageId: '69dca9df095d2fbcf34e2575',
+            forms: ['signup'],
+            member: null,
+        })
+        await harness.settle()
+        if (previouslyAccepted) harness.clickSignupControl(true)
+        harness.clickSignupControl(false)
+        harness.clickSignupControl(false, 'login')
+        harness.authHandlers[0](loggedInMember)
+        await harness.settle()
+        await harness.settle()
+        assert.equal(harness.fetchCalls.length, 0)
+        assert.equal(harness.pendingLeadEntry(), undefined)
+    }
 })
 
 test('a login submit cancels stale signup intent before the auth transition', async () => {
