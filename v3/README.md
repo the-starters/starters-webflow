@@ -2254,6 +2254,15 @@ accessible textarea label `Why do you need a new time?`. It loads
 `paid-call-brand-payment.js` on demand and reuses the same slot picker as
 `/hire`.
 
+Dashboard availability reads pass the canonical booking's `booking_id` through
+the shared calendar config to `scheduler/get_availability/v3`. The query helper
+trims and URL-encodes this optional identifier; new-booking queries omit it.
+This supplies the identity needed for backend participant validation and private
+retained-booking availability when Free Call is Off. That backend support in
+endpoint #1658 remains a separate draft requiring native runtime tests and
+individual publication; this frontend change does not establish backend or
+production proof.
+
 A confirmed-call proposal posts `booking/reschedule/propose/v3` with a required
 reason, the selected slot's unchanged timestamps, the selected IANA timezone,
 and a durable `dashboard-reschedule-propose:` key. Only the counterpart sees
@@ -2279,6 +2288,10 @@ the current mount paints or fails. Closing, resetting, or switching the modal
 also hides it. A stale overlapping mount cannot hide the loader owned by the
 current mount. Without this wrapper, the calendar mount shows the text fallback
 `Loading available times...` instead.
+If availability fails, the current calendar displays `Available times could
+not load. Go back and try again.` and hides its loader. A stale failure cannot
+overwrite a newer modal mount, and availability failure does not change the
+booking's confirmed dates.
 
 From 768px up, the dashboard calendar uses a small sheet scoped only to
 `[data-modal-target="popup-booking-info"]`. The month occupies the left column.
