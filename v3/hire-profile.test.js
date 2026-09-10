@@ -8016,3 +8016,61 @@ test('owner Book Call explanation links to existing call settings', async () => 
   assert.equal(hint.querySelector('a').getAttribute('href'), '/starter-dashboard')
   assert.equal(hint.querySelector('a').textContent, 'Manage call settings')
 })
+
+for (const owner of [false, true]) {
+  test(`Book Call hint retains independent hover and focus for ${owner ? 'owner' : 'visitor'}`, async () => {
+    const page = makePage()
+    const context = owner
+      ? ownerContext(page, ownerController())
+      : makeContext({ page, record: { 'free-consulting-calls-t-f': false, 'paid-consulting-calls-t-f': false } })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    const button = page.bookingButton
+    const hint = page.root.querySelector('[data-call-availability-hint]')
+    const focusTarget = owner ? hint.querySelector('a') : hint
+    const fire = (surface, type, relatedTarget = null) => {
+      surface.listeners[type].forEach(fn => fn({ relatedTarget }))
+    }
+
+    fire(button, 'focusin')
+    fire(button, 'mouseenter')
+    fire(button, 'mouseleave')
+    assert.equal(hint.style.display, 'block', 'pointer exit preserves button focus')
+    fire(button, 'focusout')
+    assert.equal(hint.style.display, 'none', 'ending both interactions dismisses')
+
+    fire(button, 'mouseenter')
+    fire(button, 'focusin')
+    fire(button, 'focusout')
+    assert.equal(hint.style.display, 'block', 'focus exit preserves button hover')
+    fire(button, 'mouseleave', hint)
+    fire(hint, 'mouseenter', button)
+    assert.equal(hint.style.display, 'block', 'pointer can enter the hint')
+    fire(hint, 'mouseleave')
+    assert.equal(hint.style.display, 'none')
+
+    fire(button, 'focusin')
+    fire(button, 'focusout', focusTarget)
+    assert.equal(hint.style.display, 'block', 'focus transfer keeps the hint visible')
+    fire(hint, 'focusin', button)
+    fire(hint, 'mouseenter')
+    fire(hint, 'mouseleave')
+    assert.equal(hint.style.display, 'block', 'pointer exit preserves hint focus')
+    fire(hint, 'focusout', button)
+    fire(button, 'focusin', focusTarget)
+    assert.equal(hint.style.display, 'block', 'focus can return to the trigger')
+    fire(button, 'focusout')
+    assert.equal(hint.style.display, 'none')
+
+    fire(hint, 'mouseenter')
+    fire(hint, 'focusin')
+    fire(hint, 'focusout')
+    assert.equal(hint.style.display, 'block', 'focus exit preserves hint hover')
+    fire(hint, 'mouseleave')
+    assert.equal(hint.style.display, 'none')
+    assert.equal(button.getAttribute('aria-disabled'), 'true')
+    assert.equal(button.getAttribute('data-modal-trigger'), null)
+    assert.equal(button.getAttribute('data-signup-trigger-element'), null)
+  })
+}

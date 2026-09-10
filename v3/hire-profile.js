@@ -579,16 +579,32 @@
           const reveal = function () {
               if (trigger.getAttribute('aria-disabled') === 'true') hint.style.display = 'block';
           };
-          const dismissOutside = function (event) {
-              if (event.relatedTarget && (trigger.contains(event.relatedTarget) || hint.contains(event.relatedTarget))) return;
-              hint.style.display = 'none';
+          let hovered = false;
+          let focused = false;
+          const isInside = function (target) {
+              return !!target && (trigger.contains(target) || hint.contains(target));
           };
-          trigger.addEventListener('mouseleave', dismissOutside);
-          trigger.addEventListener('focusout', dismissOutside);
-          hint.addEventListener('mouseleave', dismissOutside);
-          hint.addEventListener('focusout', dismissOutside);
-          trigger.addEventListener('mouseenter', reveal);
-          trigger.addEventListener('focusin', reveal);
+          const dismissInactive = function () {
+              if (!hovered && !focused) hint.style.display = 'none';
+          };
+          [trigger, hint].forEach(function (surface) {
+              surface.addEventListener('mouseenter', function () {
+                  hovered = true;
+                  reveal();
+              });
+              surface.addEventListener('mouseleave', function (event) {
+                  hovered = isInside(event.relatedTarget);
+                  dismissInactive();
+              });
+              surface.addEventListener('focusin', function () {
+                  focused = true;
+                  reveal();
+              });
+              surface.addEventListener('focusout', function (event) {
+                  focused = isInside(event.relatedTarget);
+                  dismissInactive();
+              });
+          });
           trigger.addEventListener('click', function (event) {
               if (trigger.getAttribute('aria-disabled') !== 'true') return;
               event.preventDefault();
