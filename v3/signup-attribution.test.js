@@ -1218,6 +1218,53 @@ test('the shared custom signup button registers an ungated Learn lead entry', as
     })
 })
 
+test('Article acceptance captures immediately once across repeated auth and redirect reload', async () => {
+    const first = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analysis/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'],
+        member: null,
+        fetchHandler: async (url) => ({
+            ok: true,
+            status: 200,
+            json: async () => String(url).includes('/auth/trade-token/v3')
+                ? { token: 'test-token' } : { ok: true, replayed: false },
+        }),
+    })
+    await first.settle()
+    first.clickSignupControl(true)
+    first.authHandlers[0](loggedInMember)
+    first.authHandlers[0](loggedInMember)
+    await first.settle()
+    await first.settle()
+    await first.settle()
+    const registrations = first.fetchCalls.filter((call) =>
+        /lead_email\/register\/v3$/.test(call.url))
+    assert.equal(registrations.length, 1)
+    assert.equal(first.posthogCalls.length, 1)
+    assert.deepEqual(plain(first.posthogCaptureOptions), [
+        { send_instantly: true, transport: 'sendBeacon' },
+    ])
+    const next = boot({
+        hostname: 'thestarters.com', pathname: '/quiz', forms: [],
+        member: loggedInMember, session: Object.fromEntries(first.session),
+    })
+    await next.settle()
+    await next.settle()
+    assert.equal(next.fetchCalls.length, 0)
+    assert.equal(next.posthogCalls.length, 0)
+    assert.equal(next.pendingLeadEntryPosthog(), undefined)
+    console.log('Article simulated integration trace:', JSON.stringify({
+        environment: 'VM browser with Memberstack, Xano and PostHog doubles',
+        registration: JSON.parse(registrations[0].init.body),
+        captures: plain(first.posthogCalls),
+        captureOptions: plain(first.posthogCaptureOptions),
+        redirectRequests: next.fetchCalls,
+        redirectCaptures: next.posthogCalls,
+    }))
+})
+
 test('a validated form-target submit survives Memberstack stopping document bubbling', async () => {
     const harness = boot({
         hostname: 'thestarters.com',
