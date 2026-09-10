@@ -1836,10 +1836,9 @@
 
   /* ---- owner-path actions ----
      The owner's own /hire page is a preview of what a brand is shown, not a
-     surface they can act on. Book Call is already closed to them: nothing
-     outside the brand's canonical discovery ever calls
-     setBookingButtonAvailable(true), so the trigger keeps the structural
-     fail-closed hide it starts with. The authored Hire and Message CTAs have
+     surface they can act on. Book Call stays disabled and offers settings
+     guidance, including inside the native mobile-hidden action groups.
+     The authored Hire and Message CTAs have
      no such gate — they are plain Designer entry points — so a starter could
      open a contact surface pointed at themselves.
 
@@ -1870,6 +1869,20 @@
               action.removeAttribute('data-modal-trigger');
           });
       });
+
+      // Memberstack removes the brand-only mobile alternatives for owners.
+      // Reveal only the native action groups containing our disabled control;
+      // retain their flex layout, spacing, and every surrounding visibility gate.
+      qsa('[data-profile-book-call]').forEach(function (trigger) {
+          const group = trigger.closest('.profile-hero_action-buttons, .profile-nav_actions');
+          if (group) group.setAttribute('data-profile-owner-call-actions', '');
+      });
+      if (!document.getElementById('profile-owner-call-actions-style')) {
+          const style = document.createElement('style');
+          style.id = 'profile-owner-call-actions-style';
+          style.textContent = '@media(max-width:767px){[data-profile-owner-call-actions]{display:flex!important}}';
+          (document.head || document.documentElement).appendChild(style);
+      }
   }
 
   // Park the beside-services calendar experiment. The live Hire experience
