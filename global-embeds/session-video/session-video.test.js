@@ -76,6 +76,7 @@ class Element {
 function matches(el, sel) {
   let rest = String(sel).trim()
   if (!rest) return false
+  if (/^[a-z][a-z0-9]*$/i.test(rest)) return el.nodeName === rest.toUpperCase()
   while (rest) {
     const m = /^\[([\w-]+)(?:=(?:"([^"]*)"|'([^']*)'))?\]/.exec(rest)
     if (!m) return false
@@ -115,6 +116,62 @@ function template({ videoId = '1212735272', cut = null, bg = null, nativeMin = n
   return h('section', attrs, kids)
 }
 const ATTR_ID = 'data-session-video-id'
+
+test('Session wall uses the current title and preserves the native signup form', async () => {
+  const root = template()
+  const title = h('h1', {})
+  title.textContent = 'Partnerships Playbook'
+  root.append(title)
+  const spans = [h('span', {}), h('span', { class: 'authored-emphasis' }), h('span', {})]
+  spans[0].textContent = 'Read more about '
+  spans[1].textContent = 'How building'
+  spans[2].textContent = ' by signing up.'
+  const input = h('input', { type: 'email' })
+  const form = h('form', { 'data-ms-form': 'signup' }, [h('h2', {}, spans), input])
+  const dialog = h('dialog', { 'data-modal-target': 'authored-in-designer' }, [form])
+  const s = await setup({ roots: [root, dialog] })
+  s.api.reveal()
+  assert.deepEqual(spans.map(n => n.textContent), ['Watch ', 'Partnerships Playbook', ' by signing up.'])
+  assert.equal(spans[1].getAttribute('class'), 'authored-emphasis')
+  assert.equal(form.querySelector('input'), input)
+  s.watch().click()
+  assert.equal(root.querySelector('[data-session-video="signup-trigger"]').clicks, 2)
+  assert.equal(spans[1].textContent, 'Partnerships Playbook')
+})
+
+for (const nestedTag of ['span', 'em']) {
+  test(`Session wall leaves nested ${nestedTag} heading structure unchanged`, async () => {
+    const root = template()
+    const title = h('h1', {})
+    title.textContent = 'Partnerships Playbook'
+    root.append(title)
+    const emphasis = h(nestedTag, { class: 'authored-emphasis' })
+    emphasis.textContent = 'How building'
+    const prefix = h('span', {}, [{ nodeType: 3, textContent: 'Read more about ' }, emphasis])
+    Object.defineProperty(prefix, 'textContent', {
+      get() { return [...this.childNodes].map(node => node.textContent).join('') },
+      set(value) {
+        for (const node of [...this.childNodes]) this.removeChild(node)
+        this.append({ nodeType: 3, textContent: value })
+      },
+    })
+    const suffix = h('span', {})
+    suffix.textContent = ' by signing up.'
+    const spans = nestedTag === 'span' ? [prefix, suffix] : [prefix, h('span', {}), suffix]
+    const heading = h('h2', {}, spans)
+    const form = h('form', { 'data-ms-form': 'signup' }, [heading])
+    const dialog = h('dialog', { 'data-modal-target': 'authored-in-designer' }, [form])
+    const s = await setup({ roots: [root, dialog] })
+    s.api.reveal()
+    s.watch().click()
+    assert.equal(prefix.textContent, 'Read more about How building')
+    assert.equal(emphasis.textContent, 'How building')
+    assert.equal(emphasis.parentNode, prefix)
+    assert.equal(emphasis.getAttribute('class'), 'authored-emphasis')
+    assert.equal(suffix.textContent, ' by signing up.')
+    assert.equal(s.trigger().clicks, 2)
+  })
+}
 
 class FakePlayer {
   constructor(frame, reg) {
@@ -1424,12 +1481,11 @@ test('diagnostics are silent in production', async () => {
   assert.deepEqual(s.logs.info, [])
 })
 
-test('the module hardcodes no modal identifier', () => {
-  assert.doesNotMatch(source, /data-modal-target/)
-  assert.doesNotMatch(source, /['"][\w-]*signup-modal[\w-]*['"]/)
-  // Also must not reach for modal.js's trigger attribute itself: the trigger is
-  // found by its data-session-video role, and the modal name stays in the Designer.
-  assert.doesNotMatch(source, /querySelector[^\n]*data-modal-trigger/)
+test('an absent modal heading does not prevent the authored signup trigger', async () => {
+  const s = await setup()
+  s.api.reveal()
+  assert.equal(s.trigger().getAttribute('data-modal-trigger'), 'authored-in-designer')
+  assert.equal(s.trigger().clicks, 1)
 })
 
 test('the release marker in the header matches the API', () => {
