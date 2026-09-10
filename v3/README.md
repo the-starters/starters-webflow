@@ -963,9 +963,11 @@ suppression, and provider worker. The browser never calls Mailchimp.
 After Xano accepts the row, the script stores a non-PII browser-session snapshot
 and captures `v3_lead_entry_registered` only after the real PostHog SDK is ready.
 The current page retries on a short bounded schedule, and a same-tab page reload
-resumes the same snapshot. The accepted capture uses PostHog's immediate beacon
-transport so a Memberstack redirect cannot cancel the analytics request. It
-records the capture at most once per accepted event
+resumes the same snapshot. The accepted capture requests immediate dispatch
+with `send_instantly: true` and `transport: 'sendBeacon'` to support delivery
+across Memberstack redirects. The browser-session marker records the capture
+attempt, not confirmed PostHog receipt; only a synchronous capture failure
+clears it for retry. It prevents repeated capture attempts per accepted event
 and CMS resource. Missing analytics never affects registration. Properties
 always contain the track, intent, collection ID, and payload version. For
 allowlisted non-person Collection and Learn resources, they also contain the
