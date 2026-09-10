@@ -1204,6 +1204,7 @@
       await calendarModule.mountPaidCalendar({
       container,
       config: {
+        booking_id: clean(booking && booking.booking_id),
         config_id: clean(booking && booking.config_id),
         grant_id: clean(booking && booking.grant_id),
         duration: Number(booking && booking.duration),
@@ -1253,6 +1254,11 @@
         restartAfterModalClose(document, modal, restart)
       },
       })
+    } catch (error) {
+      if (isCurrent()) {
+        container.textContent = 'Available times could not load. Go back and try again.'
+      }
+      throw error
     } finally {
       // The engine has painted (or failed) by here, so the loader comes down
       // either way rather than covering a rendered calendar.

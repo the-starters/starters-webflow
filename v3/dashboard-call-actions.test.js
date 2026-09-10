@@ -2027,3 +2027,48 @@ test('card Decline opens the selected booking before changing the modal panel', 
   assert.equal(label.textContent, 'Decline Call')
   assert.equal(panel.hidden, false)
 })
+
+
+test('availability rejection renders an error only for the current booking mount', async () => {
+  const original = global.StartersPaidCallBrandPayment
+  const container = { textContent: '' }
+  const loader = { hidden: true, style: { display: 'none' } }
+  let bookingId = 'booking-retained'
+  let rejectRequest
+  let receivedConfig
+  const modal = {
+    getAttribute() { return bookingId },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      if (selector === '[booking-calendar-loader]') return loader
+      return null
+    },
+    querySelectorAll() { return [] },
+  }
+  try {
+    global.StartersPaidCallBrandPayment = {
+      mountPaidCalendar(options) {
+        receivedConfig = options.config
+        return new Promise((resolve, reject) => { rejectRequest = reject })
+      },
+    }
+    const booking = rescheduleBooking({ booking_id: bookingId })
+    const first = api.mountRescheduleCalendar({}, modal, booking, 'starter', '')
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(receivedConfig.booking_id, bookingId)
+    rejectRequest(new Error('403'))
+    await assert.rejects(first, /403/)
+    assert.match(container.textContent, /Available times could not load/)
+    assert.equal(loader.hidden, true)
+
+    container.textContent = 'new booking content'
+    const stale = api.mountRescheduleCalendar({}, modal, booking, 'starter', '')
+    await new Promise((resolve) => setImmediate(resolve))
+    bookingId = 'different-booking'
+    rejectRequest(new Error('late 403'))
+    await assert.rejects(stale, /late 403/)
+    assert.equal(container.textContent, 'new booking content')
+  } finally {
+    global.StartersPaidCallBrandPayment = original
+  }
+})
