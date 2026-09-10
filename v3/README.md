@@ -4347,16 +4347,15 @@ Install [`messages-payment-dialog.html`](messages-payment-dialog.html) in the
 empty Messages footer for Brands that need the Hire payment-method dialog.
 The native dialog guest fields are optional, as on older Hire markup.
 
-### CS-17 merge and release blocker
+### CS-17 backend release prerequisite
 
-The reschedule-decline frontend is preparation only. Do not merge or release it
-until endpoint 5760's prepared shared-cancellation draft is published and full
-provider tests have verified the cancellation contract for both responding roles.
-The supplied backend status still restores `confirmed`; frontend rejection of
-that response does not undo the backend mutation or make deployment safe.
+The prepared shared-cancellation endpoint5760 and dependencies2098/2099 are
+published, with exact source readback and both-role native Test cancellation
+and provider evidence. See [release evidence](fixtures/RESCHEDULE-DECLINE-RELEASE-PROOF.md)
+for revisions, scope, cleanup, and remaining verification limits. This replaces
+the earlier supplied status in which endpoint5760 restored `confirmed`.
 
-The outer delivery owner must attach the published backend revision and provider
-test evidence before clearing this blocker. That evidence is not available in
-this review phase. Local frontend tests do not establish Paid settlement,
-production canaries, or completion of the full 20-workflow checklist. Historical
-completed backend receipts must remain immutable.
+The frontend remains subject to no-mistakes review and CI before merge/release.
+Backend evidence does not establish Paid settlement, production canaries, or
+completion of the full20-workflow checklist. Historical completed backend
+receipts must remain immutable.
