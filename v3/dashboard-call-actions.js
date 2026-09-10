@@ -88,7 +88,7 @@
       attemptPrefix: 'dashboard-reschedule-decline',
       reasonField: null,
       responseKey: 'reschedule_decline',
-      successStatus: 'confirmed',
+      successStatus: 'cancelled',
       successContent: 'reschedule-declined',
       failureMessage: 'Canonical reschedule response failed',
     },
@@ -1048,9 +1048,9 @@
 
     if (!modal.querySelector('[booking-popup-content="reschedule-declined"]')) {
       const declinedPanel = reschedulePanel(document, 'reschedule-declined')
-      declinedPanel.appendChild(panelText(document, 'h3', 'Proposal declined'))
+      declinedPanel.appendChild(panelText(document, 'h3', 'Call cancelled'))
       declinedPanel.appendChild(
-        panelText(document, 'p', 'The call keeps its original time.', true),
+        panelText(document, 'p', 'The proposed time was declined and the call was cancelled.', true),
       )
       host.appendChild(declinedPanel)
     }
@@ -1090,6 +1090,11 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
+    if (typeof modal.querySelectorAll === 'function') {
+      modal.querySelectorAll('[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]').forEach(function (control) {
+        setAuthoredActionLabel(control, 'Cancel call')
+      })
+    }
     if (modal.querySelector('[data-starters-reschedule-respond]')) return true
     /* Both views now author the respond pair in the base panel, where the
        member can reach it. Generating a second pair there left four controls
@@ -1125,7 +1130,7 @@
       document,
       modal,
       'reschedule-decline',
-      'Keep current time',
+      'Cancel call',
     )
     decline.setAttribute('data-starters-reschedule-respond', '')
     anchor.parentNode.insertBefore(accept, anchor.nextSibling)
@@ -1412,8 +1417,8 @@
             const result = await respondReschedule(step.kind, booking, settings.role)
             if (!result) throw new Error(config.failureMessage)
             if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
-            if (step.kind === 'reschedule-confirm') {
-              const confirmed = result.reschedule_confirm
+            if (step.kind === 'reschedule-confirm' || step.kind === 'reschedule-decline') {
+              const confirmed = result[config.responseKey]
               booking.status = confirmed.status
               if (Number.isFinite(Number(confirmed.start)) && Number(confirmed.start) > 0) booking.start = Number(confirmed.start)
               if (Number.isFinite(Number(confirmed.end)) && Number(confirmed.end) > 0) booking.end = Number(confirmed.end)

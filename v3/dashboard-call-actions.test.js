@@ -818,7 +818,7 @@ test('a reschedule proposal posts slot, reason, and a durable propose key', asyn
   }
 })
 
-test('reschedule responses post the correct endpoint and succeed only on confirmed', async () => {
+test('reschedule responses require confirmed acceptance and cancelled decline', async () => {
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
   const originalCrypto = global.crypto
@@ -835,7 +835,7 @@ test('reschedule responses post the correct endpoint and succeed only on confirm
       requests.push({ url, options })
       const key = url.includes('/confirm/') ? 'reschedule_confirm' : 'reschedule_decline'
       const body = {}
-      body[key] = { booking_id: 'booking-test-3', status: 'confirmed', revision: 4 }
+      body[key] = { booking_id: 'booking-test-3', status: key === 'reschedule_confirm' ? 'confirmed' : 'cancelled', revision: 4 }
       body.duplicate = false
       return { ok: true, async json() { return body } }
     }
@@ -845,7 +845,7 @@ test('reschedule responses post the correct endpoint and succeed only on confirm
     assert.match(requests[0].url, /\/booking\/reschedule\/confirm\/v3$/)
     assert.match(JSON.parse(requests[0].options.body).idempotency_key, /^dashboard-reschedule-confirm:/)
     const declined = await api.respondReschedule('reschedule-decline', booking, 'brand')
-    assert.equal(declined.reschedule_decline.status, 'confirmed')
+    assert.equal(declined.reschedule_decline.status, 'cancelled')
     assert.match(requests[1].url, /\/booking\/reschedule\/decline\/v3$/)
     assert.equal(await api.respondReschedule('reschedule-confirm', booking, 'starter'), null)
     assert.equal(await api.respondReschedule('cancel', booking, 'brand'), null)
