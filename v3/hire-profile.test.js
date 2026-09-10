@@ -2064,8 +2064,8 @@ test('an empty canonical configuration response fails closed without booking act
   assert.equal(bookingComponentCalls, 0)
   assert.equal(schedulerCalls, 0)
   assert.equal(page.inlineWrapper.style.display, 'none')
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
-  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
   assert.equal(
@@ -2237,8 +2237,8 @@ test('a failed GitHub Free controller load keeps booking hidden', async () => {
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
-  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.ok(context.warnings.some((line) => line.includes('failed to load')))
@@ -2318,7 +2318,7 @@ test('a page loader still in flight is reused instead of adding a second one', a
     (inFlight.listeners.load || []).length > 0,
     'expected the in-flight page loader to be watched rather than duplicated',
   )
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
 
   context.StartersFreeCallBooking = lateController
   for (const listener of inFlight.listeners.load) listener()
@@ -2421,8 +2421,8 @@ test('the TEST fixture booking surface stays hidden and inert on production', as
 
   assert.equal(starterReads, 0)
   assert.equal(configReads, 0)
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
-  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.ok(context.warnings.some((line) => line.includes('TEST booking fixture stayed closed')))
@@ -2640,8 +2640,8 @@ test('a Starter viewing their own hire page gets no Book Call action', async () 
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
-  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
   assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
@@ -2709,7 +2709,7 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(
     guard.textContent,
     '[data-booking-unavailable]{display:none!important}' +
-      '[data-booking-trigger-unavailable]{display:none!important}' +
+      '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}' +
       '[data-canonical-call-unavailable]{display:none!important}' +
       '[data-call-offer-superseded]{display:none!important}' +
       '[data-header-tout-excluded]{display:none!important}' +
@@ -2789,7 +2789,7 @@ test('an anonymous viewer sees only the call touts enabled by canonical public p
   assert.equal(paidSurface.getAttribute('data-logged-out-call-tout'), 'paid')
 })
 
-test('an anonymous viewer sees no call tout or Book Call when both public projections are off', async () => {
+test('an anonymous viewer sees a disabled Book Call when both public projections are off', async () => {
   const page = makePage()
   const paidSurface = makeElement('div', {
     'data-service-card': 'component',
@@ -2815,8 +2815,8 @@ test('an anonymous viewer sees no call tout or Book Call when both public projec
     assert.equal(surface.style.display, 'none')
     assert.equal(surface.getAttribute('data-logged-out-call-tout'), null)
   }
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
-  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), 'popup-booking-main')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
 })
 
@@ -2845,7 +2845,7 @@ test('a chooser trigger outside booking-button-wrapper stays hidden until discov
   assert.equal(strayTrigger.getAttribute('aria-disabled'), 'true')
   const guard = context.document.getElementById('hire-booking-modal-availability-guard')
   assert.ok(guard.textContent.includes(
-    '[data-booking-trigger-unavailable]{display:none!important}',
+    '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}',
   ))
 })
 
@@ -3734,8 +3734,8 @@ test('Paid-only discovery stays closed when the V3 controller is unavailable', a
   vm.runInContext(source, context)
   await settle()
 
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
-  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
   assert.equal(page.freeModalOption.style.display, 'none')
   assert.equal(page.paidModalOption.style.display, 'none')
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
@@ -3791,8 +3791,8 @@ test('wf-xano call cards use public Xano availability for logged-out signup pres
   assert.equal(xano.free.root.getAttribute('data-signup-trigger-element'), null)
   assert.equal(xano.free.root.getAttribute('data-signup-trigger-value'), null)
   assert.equal(xano.free.root.getAttribute('data-xano-call-card'), null)
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
-  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
   assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
@@ -3919,7 +3919,7 @@ test('the latest canonical wf-xano result controls logged-out Book Call across b
 
   headerWfx.emit({ items: [] })
   await settle()
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
   assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
 
@@ -3932,7 +3932,7 @@ test('the latest canonical wf-xano result controls logged-out Book Call across b
     assert.equal(card.root.style.display, 'none')
     assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
   }
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
 })
 
 test('a logged-out wf-xano call card answers from its own item, not a sibling row of the same type', async () => {
@@ -4098,7 +4098,7 @@ test('a late stale-success replay cannot reopen calls after wf-xano refresh fail
   await settle()
   assert.equal(xano.free.root.style.display, 'none')
   assert.equal(xano.paid.root.style.display, 'none')
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
 })
 
 for (const isBrand of [false, true]) {
@@ -4131,7 +4131,7 @@ for (const isBrand of [false, true]) {
           assert.equal(card.root.getAttribute('data-call-service-direct'), null)
         }
       }
-      assert.equal(page.bookingButtonWrapper.style.display, 'none')
+      assert.equal(page.bookingButtonWrapper.style.display, 'flex')
       for (const paidAvailable of [true, false, true]) {
         lists[keys.indexOf(failedKey)].emit(callCardResult({ paid: paidAvailable }))
         await settle()
@@ -4163,7 +4163,7 @@ for (const isBrand of [false, true]) {
             assert.equal(card.root.getAttribute('data-call-service-direct'), null)
           }
         }
-        assert.equal(page.bookingButtonWrapper.style.display, 'none')
+        assert.equal(page.bookingButtonWrapper.style.display, 'flex')
       }
     })
   }
@@ -4234,7 +4234,7 @@ for (const publicFirst of [false, true]) {
     ])
     await settle()
     if (!publicFirst) {
-      assert.equal(page.bookingButtonWrapper.style.display, 'none', 'discovery alone must not admit cards')
+      assert.equal(page.bookingButtonWrapper.style.display, 'flex', 'discovery alone must not admit cards')
       wfx.emit(callCardResult({ free: true, paid: false }))
       await settle()
     }
@@ -4246,7 +4246,7 @@ for (const publicFirst of [false, true]) {
     await settle()
     assert.equal(xano.free.root.style.display, 'none')
     assert.equal(xano.paid.root.style.display, 'none')
-    assert.equal(page.bookingButtonWrapper.style.display, 'none')
+    assert.equal(page.bookingButtonWrapper.style.display, 'flex')
     wfx.emit(callCardResult({ free: false, paid: true }))
     await settle()
     assert.equal(xano.free.root.style.display, 'none')
@@ -4257,7 +4257,7 @@ for (const publicFirst of [false, true]) {
     await settle()
     assert.equal(xano.free.root.style.display, 'none')
     assert.equal(xano.paid.root.style.display, 'none')
-    assert.equal(page.bookingButtonWrapper.style.display, 'none')
+    assert.equal(page.bookingButtonWrapper.style.display, 'flex')
   })
 }
 
@@ -6828,7 +6828,7 @@ function actionState(element) {
   }
 }
 
-test('owner actions: the owner gets no Book Call, Hire or Message action', async () => {
+test('owner actions: the owner gets call settings without a self-booking, Hire or Message action', async () => {
   const page = makePage()
   addContractDialog(page)
   const actions = addContactActions(page)
@@ -6853,8 +6853,8 @@ test('owner actions: the owner gets no Book Call, Hire or Message action', async
   })
   // The third action in the same sentence of the contract: Book Call stays
   // structurally closed for the owner, since only the brand path opens it.
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
-  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
   assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
@@ -7594,7 +7594,7 @@ test('the availability gate preserves Hire wrappers when calls are unavailable',
 
   assert.equal(hireWrapper.style.display, undefined)
   assert.equal(hireWrapper.getAttribute('aria-hidden'), null)
-  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
 })
 
@@ -7676,7 +7676,7 @@ for (const canonical of [false, true]) {
           assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), available ? null : '')
           assert.equal(page.bookingButton.getAttribute('aria-disabled'), available ? null : 'true')
           assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), available ? '' : null)
-          assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), 'book-call')
+          assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), available ? 'book-call' : null)
           if (available) assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
           assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
         }
@@ -7978,4 +7978,41 @@ test('a re-entry during the close fade keeps its stamp when the close lands', as
   context.fireModalClose(booking)
   assert.equal(booking.getAttribute('data-booking-entry'), null)
   assert.equal(backArrowShown(context, booking, back), false)
+})
+
+
+test('unavailable Book Call explains on focus and tap without opening booking', async () => {
+  const page = makePage()
+  const context = makeContext({ page, record: { 'free-consulting-calls-t-f': false, 'paid-consulting-calls-t-f': false } })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  const button = page.bookingButton
+  const hint = page.root.querySelector('[data-call-availability-hint]')
+  assert.equal(button.getAttribute('aria-disabled'), 'true')
+  assert.equal(button.getAttribute('data-modal-trigger'), null)
+  assert.equal(button.getAttribute('data-signup-trigger-element'), null)
+  assert.equal(hint.style.display, 'none')
+  button.listeners.focusin.forEach(fn => fn({}))
+  assert.equal(hint.style.display, 'block')
+  assert.match(hint.textContent, /isn’t accepting calls/)
+  button.listeners.keydown.forEach(fn => fn({ key: 'Escape' }))
+  assert.equal(hint.style.display, 'none')
+  let prevented = false
+  button.listeners.click.forEach(fn => fn({ preventDefault() { prevented = true }, stopPropagation() {}, stopImmediatePropagation() {} }))
+  assert.equal(prevented, true)
+  assert.equal(hint.style.display, 'block')
+})
+
+test('owner Book Call explanation links to existing call settings', async () => {
+  const page = makePage()
+  const context = ownerContext(page, ownerController())
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  const hint = page.root.querySelector('[data-call-availability-hint]')
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+  assert.match(hint.textContent, /Your call/)
+  assert.equal(hint.querySelector('a').getAttribute('href'), '/starter-dashboard')
+  assert.equal(hint.querySelector('a').textContent, 'Manage call settings')
 })

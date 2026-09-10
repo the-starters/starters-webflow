@@ -74,7 +74,7 @@
       style.setAttribute('id', guardId);
       style.textContent = [
           '[data-booking-unavailable]{display:none!important}',
-          '[data-booking-trigger-unavailable]{display:none!important}',
+          '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}',
           '[data-canonical-call-unavailable]{display:none!important}',
           '[data-call-offer-superseded]{display:none!important}',
           '[data-header-tout-excluded]{display:none!important}',
@@ -550,9 +550,88 @@
           return;
       }
       if (!wrapper.querySelector('[data-modal-trigger="popup-booking-main"]') &&
-          !wrapper.querySelector('[data-signup-trigger-element="book-call"]')) return;
-      wrapper.style.display = available ? 'flex' : 'none';
-      wrapper.setAttribute('aria-hidden', available ? 'false' : 'true');
+          !wrapper.querySelector('[data-signup-trigger-element="book-call"]') &&
+          !wrapper.querySelector('[data-profile-book-call]')) return;
+      wrapper.style.display = 'flex';
+      wrapper.setAttribute('aria-hidden', 'false');
+  }
+
+  // These controls remain discoverable while their booking action is closed.
+  // Strip delegate hooks while disabled so signup and Lumos cannot open first.
+  const bookingHints = new Map();
+  let bookingOwner = false;
+  let ownerBookingReady = false;
+  function explainBookingAvailability(trigger, available) {
+      let entry = bookingHints.get(trigger);
+      if (!entry) {
+          const hint = document.createElement('div');
+          hint.setAttribute('id', 'call-availability-hint-' + (bookingHints.size + 1));
+          hint.setAttribute('data-call-availability-hint', '');
+          hint.setAttribute('role', 'note');
+          hint.style.cssText = 'position:absolute;z-index:20;background:#fff;color:#20241f;border:1px solid #ccc;border-radius:4px;padding:12px;max-width:280px;font-size:14px;line-height:1.4;box-shadow:0 4px 16px #0002';
+          hint.style.display = 'none';
+          if (trigger.parentElement) {
+              trigger.parentElement.style.position = 'relative';
+              trigger.parentElement.appendChild(hint);
+          }
+          entry = { hint: hint, signup: trigger.getAttribute('data-signup-trigger-element'), modal: trigger.getAttribute('data-modal-trigger') };
+          bookingHints.set(trigger, entry);
+          const reveal = function () {
+              if (trigger.getAttribute('aria-disabled') === 'true') hint.style.display = 'block';
+          };
+          const dismissOutside = function (event) {
+              if (event.relatedTarget && (trigger.contains(event.relatedTarget) || hint.contains(event.relatedTarget))) return;
+              hint.style.display = 'none';
+          };
+          trigger.addEventListener('mouseleave', dismissOutside);
+          trigger.addEventListener('focusout', dismissOutside);
+          hint.addEventListener('mouseleave', dismissOutside);
+          hint.addEventListener('focusout', dismissOutside);
+          trigger.addEventListener('mouseenter', reveal);
+          trigger.addEventListener('focusin', reveal);
+          trigger.addEventListener('click', function (event) {
+              if (trigger.getAttribute('aria-disabled') !== 'true') return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+              reveal();
+          }, true);
+          trigger.addEventListener('keydown', function (event) {
+              if (event.key === 'Escape') hint.style.display = 'none';
+              if (trigger.getAttribute('aria-disabled') === 'true' && (event.key === 'Enter' || event.key === ' ')) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  reveal();
+              }
+          }, true);
+          hint.addEventListener('keydown', function (event) {
+              if (event.key === 'Escape') hint.style.display = 'none';
+          });
+      }
+      if (available) {
+          entry.hint.style.display = 'none';
+          trigger.removeAttribute('aria-describedby');
+          if (entry.signup) trigger.setAttribute('data-signup-trigger-element', entry.signup);
+          if (entry.modal && !trigger.hasAttribute('data-logged-out-book-call')) trigger.setAttribute('data-modal-trigger', entry.modal);
+          return;
+      }
+      trigger.removeAttribute('data-signup-trigger-element');
+      trigger.removeAttribute('data-modal-trigger');
+      trigger.setAttribute('data-profile-book-call', '');
+      trigger.setAttribute('tabindex', '0');
+      trigger.setAttribute('role', 'button');
+      trigger.setAttribute('aria-label', 'Book a Call');
+      trigger.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
+      const owner = bookingOwner;
+      entry.hint.textContent = owner
+          ? (ownerBookingReady ? 'Your calls are available to brands. ' : 'Your call booking is unavailable. ')
+          : 'This Starter isn’t accepting calls right now.';
+      if (owner) {
+          const settings = document.createElement('a');
+          settings.textContent = 'Manage call settings';
+          settings.setAttribute('href', '/starter-dashboard');
+          entry.hint.appendChild(settings);
+      }
   }
 
   function setBookingButtonAvailable(available) {
@@ -573,7 +652,7 @@
       // stamping it unavailable would hand it to the guard stylesheet's
       // display:none rule — hiding the way back out for the rest of the visit.
       document.querySelectorAll(
-          '[data-modal-trigger="popup-booking-main"]:not([data-booking-back])'
+          '[data-modal-trigger="popup-booking-main"]:not([data-booking-back]), [data-profile-book-call]'
       ).forEach(function (trigger) {
           if (available) {
               trigger.removeAttribute('data-booking-trigger-unavailable');
@@ -582,6 +661,7 @@
               trigger.setAttribute('data-booking-trigger-unavailable', '');
               trigger.setAttribute('aria-disabled', 'true');
           }
+          explainBookingAvailability(trigger, available);
       });
 
       document.querySelectorAll('[data-modal-target="popup-booking-main"]').forEach(function (dialog) {
@@ -606,8 +686,7 @@
   function setLoggedOutBookingButtonAvailable(available) {
       const show = available !== false;
       const selector =
-          '[data-signup-trigger-element="book-call"]' +
-          ':not([data-booking-back])';
+          '[data-signup-trigger-element="book-call"]:not([data-booking-back]), [data-profile-book-call]';
 
       document.querySelectorAll(selector).forEach(function (trigger) {
           const wasLoggedOutAvailable = trigger.hasAttribute('data-logged-out-book-call');
@@ -624,6 +703,7 @@
 
           const wrapper = trigger.closest('[booking-button-wrapper]');
           setBookingWrapperAvailable(wrapper, show);
+          explainBookingAvailability(trigger, show);
       });
   }
 
@@ -1760,6 +1840,8 @@
 
   function hideOwnerContactActions() {
       if (!isProfileOwner(MEMBER)) return;
+      bookingOwner = true;
+      setBookingButtonAvailable(false);
 
       OWNER_HIDDEN_ACTIONS.forEach(function (element) {
           qsa('[data-signup-trigger-element="' + element + '"]').forEach(function (action) {
@@ -2458,6 +2540,9 @@
       const accepted = Array.isArray(records)
           ? records
           : (snapshot && Array.isArray(snapshot.records) ? snapshot.records : []);
+      bookingOwner = true;
+      ownerBookingReady = accepted.length > 0;
+      setBookingButtonAvailable(false);
       document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (card) {
           const type = card.getAttribute('data-type');
           const settings = snapshot && snapshot[type];
