@@ -917,13 +917,16 @@ signup. This path is V3 production only. It requires all three conditions:
 2. The current path is one CMS item route in the Xano `lead_email/register/v3`
    allowlist, and the rendered `data-wf-page` is that collection's published
    Webflow template page. A 404 with a valid-looking URL fails closed.
-3. The browser observed `submit` on `form[data-ms-form="signup"]` before the
-   logged-out to logged-in Memberstack transition.
+3. The browser observed `submit` on `form[data-ms-form="signup"]` in the
+   document bubble phase before the logged-out to logged-in Memberstack transition.
+   This includes the shared Join Now control's bridged submit after validation;
+   a rejected click or a submit stopped by validation does not arm registration.
 
 The submit requirement is separate from the broader attribution watch. A CMS
 modal can later swap to an "already have an account" login. That login can still
-look like an auth transition, but it did not submit the signup form, so it cannot
-create a lead-entry event.
+look like an auth transition. Clicking within a `data-ms-form="login"` element
+(including a non-form wrapper), or submitting a login form, clears any earlier
+signup intent so the login cannot create a lead-entry event.
 
 | Track | Exact route prefix | Webflow collection ID | Template page ID | Intent subtype |
 | --- | --- | --- | --- | --- |
@@ -986,8 +989,9 @@ the watch is armed and is a no-op once it is, because a second `onAuthChange` li
 would fire `CompleteRegistration` twice.
 
 The script binds a capture-phase `click` listener for Signup Trigger
-(`data-signup-trigger-element`) and a delegated capture-phase `submit` listener
-for the V3 lead-entry gate. It reads the DOM to decide whether to watch, and
+(`data-signup-trigger-element`). The separate lead-entry listeners follow the
+[signup and login gate above](#v3-collection-learn-and-starter-lead-entry-registration).
+It reads the DOM to decide whether to watch, and
 stamps a trigger only when a confirmed logged-out visitor clicks a tagged CTA
 (opening the signup modal).
 

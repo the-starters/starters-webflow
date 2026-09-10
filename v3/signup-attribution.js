@@ -1208,11 +1208,31 @@
         }
     }
 
+    var onLeadEntrySignupControlClick = function (event) {
+        try {
+            if (
+                !leadEntryContextForPath(
+                    (window.location && window.location.pathname) || '',
+                )
+            ) {
+                return
+            }
+            var target = event && event.target
+            if (!target || typeof target.closest !== 'function') return
+            if (target.closest(LOGIN_FORM_SELECTOR)) {
+                leadEntrySignupSubmitted = false
+            }
+        } catch (error) {
+            /* an unreadable control fails closed */
+        }
+    }
+
     /** @returns {void} */
     var bindLeadEntrySignupSubmit = function () {
         try {
             if (!document || typeof document.addEventListener !== 'function') return
-            document.addEventListener('submit', onLeadEntrySignupSubmit, true)
+            document.addEventListener('submit', onLeadEntrySignupSubmit, false)
+            document.addEventListener('click', onLeadEntrySignupControlClick, true)
         } catch (error) {
             /* a page that cannot listen never registers a lead entry */
         }
