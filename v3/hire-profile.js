@@ -568,16 +568,25 @@
           hint.setAttribute('id', 'call-availability-hint-' + (bookingHints.size + 1));
           hint.setAttribute('data-call-availability-hint', '');
           hint.setAttribute('role', 'note');
-          hint.style.cssText = 'position:absolute;z-index:20;background:#fff;color:#20241f;border:1px solid #ccc;border-radius:4px;padding:12px;max-width:280px;font-size:14px;line-height:1.4;box-shadow:0 4px 16px #0002';
+          hint.style.cssText = 'position:fixed;z-index:1000;background:#fff;color:#20241f;border:1px solid #ccc;border-radius:4px;padding:12px;max-width:280px;font-size:14px;line-height:1.4;box-shadow:0 4px 16px #0002';
           hint.style.display = 'none';
           if (trigger.parentElement) {
-              trigger.parentElement.style.position = 'relative';
-              trigger.parentElement.appendChild(hint);
+              document.body.appendChild(hint);
           }
           entry = { hint: hint, signup: trigger.getAttribute('data-signup-trigger-element'), modal: trigger.getAttribute('data-modal-trigger') };
           bookingHints.set(trigger, entry);
           const reveal = function () {
-              if (trigger.getAttribute('aria-disabled') === 'true') hint.style.display = 'block';
+              if (trigger.getAttribute('aria-disabled') !== 'true') return;
+              hint.style.display = 'block';
+              if (!trigger.getBoundingClientRect || !hint.getBoundingClientRect) return;
+              const rect = trigger.getBoundingClientRect();
+              const width = window.innerWidth || document.documentElement.clientWidth;
+              const height = window.innerHeight || document.documentElement.clientHeight;
+              hint.style.maxWidth = Math.max(0, Math.min(280, width - 24)) + 'px';
+              const box = hint.getBoundingClientRect();
+              hint.style.left = Math.max(12, Math.min(rect.left, width - box.width - 12)) + 'px';
+              hint.style.top = Math.max(12, rect.bottom + box.height + 8 <= height - 12
+                  ? rect.bottom + 8 : rect.top - box.height - 8) + 'px';
           };
           let hovered = false;
           let focused = false;
@@ -1873,13 +1882,19 @@
       // Reveal only the native action groups containing our disabled control;
       // retain their flex layout, spacing, and every surrounding visibility gate.
       qsa('[data-profile-book-call]').forEach(function (trigger) {
-          const group = trigger.closest('.profile-hero_action-buttons, .profile-nav_actions');
-          if (group) group.setAttribute('data-profile-owner-call-actions', '');
+          let group = trigger.parentElement;
+          while (group) {
+              if (group.matches && group.matches('.profile-hero_action-buttons, .profile-nav_actions')) {
+                  group.setAttribute('data-profile-owner-call-actions', '');
+                  if (group.matches('.profile-nav_actions')) group.setAttribute('data-profile-owner-mobile-call', '');
+              }
+              group = group.parentElement;
+          }
       });
       if (!document.getElementById('profile-owner-call-actions-style')) {
           const style = document.createElement('style');
           style.id = 'profile-owner-call-actions-style';
-          style.textContent = '@media(max-width:767px){[data-profile-owner-call-actions]{display:flex!important}}';
+          style.textContent = '@media(max-width:767px){[data-profile-owner-call-actions]{display:flex!important}[data-profile-owner-mobile-call]{position:fixed;left:0;bottom:0;width:100%;box-sizing:border-box;justify-content:center;padding:12px 20px;margin:0;background:#fff;z-index:30}}';
           (document.head || document.documentElement).appendChild(style);
       }
   }
