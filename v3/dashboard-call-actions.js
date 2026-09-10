@@ -4,8 +4,9 @@
  * Webflow owns the base modal plus the authored decline, cancel, and reschedule
  * reason fields. This module binds those elements, creates only missing
  * supporting reschedule views, and sends environment-safe commands with
- * published V3 contracts: decline, cancel, direct pending-request time updates,
- * and propose-then-confirm reschedule for eligible Free calls.
+ * V3 contracts: decline, cancel, direct pending-request time updates,
+ * and proposal responses for eligible Free calls. Reschedule-decline release
+ * prerequisites are owned by README.md, "CS-17 backend release prerequisite".
  */
 ;(function (global) {
   'use strict'
@@ -88,7 +89,7 @@
       attemptPrefix: 'dashboard-reschedule-decline',
       reasonField: null,
       responseKey: 'reschedule_decline',
-      successStatus: 'confirmed',
+      successStatus: 'cancelled',
       successContent: 'reschedule-declined',
       failureMessage: 'Canonical reschedule response failed',
     },
@@ -958,6 +959,17 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
+    const declinedReceipt = modal.querySelector('[booking-popup-content="reschedule-declined"]')
+    if (declinedReceipt && typeof declinedReceipt.querySelectorAll === 'function') {
+      Array.prototype.forEach.call(declinedReceipt.querySelectorAll('p, h1, h2, h3'), function (node) {
+        if (node.children && node.children.length) return
+        const text = clean(node.textContent)
+        if (text === 'Proposal declined') node.textContent = 'Call cancelled'
+        if (text === 'The call keeps its original time.') {
+          node.textContent = 'The proposed time was declined and the call was cancelled.'
+        }
+      })
+    }
     const hasAuthoredRescheduleView = normalizeRescheduleViewCopy(modal)
     if (modal.querySelector('[data-starters-reschedule-views]')) {
       ensureRespondButtons(document, modal)
@@ -1048,9 +1060,9 @@
 
     if (!modal.querySelector('[booking-popup-content="reschedule-declined"]')) {
       const declinedPanel = reschedulePanel(document, 'reschedule-declined')
-      declinedPanel.appendChild(panelText(document, 'h3', 'Proposal declined'))
+      declinedPanel.appendChild(panelText(document, 'h3', 'Call cancelled'))
       declinedPanel.appendChild(
-        panelText(document, 'p', 'The call keeps its original time.', true),
+        panelText(document, 'p', 'The proposed time was declined and the call was cancelled.', true),
       )
       host.appendChild(declinedPanel)
     }
@@ -1090,6 +1102,11 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
+    if (typeof modal.querySelectorAll === 'function') {
+      modal.querySelectorAll('[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]').forEach(function (control) {
+        setAuthoredActionLabel(control, 'Cancel call')
+      })
+    }
     if (modal.querySelector('[data-starters-reschedule-respond]')) return true
     /* Both views now author the respond pair in the base panel, where the
        member can reach it. Generating a second pair there left four controls
@@ -1125,7 +1142,7 @@
       document,
       modal,
       'reschedule-decline',
-      'Keep current time',
+      'Cancel call',
     )
     decline.setAttribute('data-starters-reschedule-respond', '')
     anchor.parentNode.insertBefore(accept, anchor.nextSibling)
@@ -1412,8 +1429,8 @@
             const result = await respondReschedule(step.kind, booking, settings.role)
             if (!result) throw new Error(config.failureMessage)
             if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
-            if (step.kind === 'reschedule-confirm') {
-              const confirmed = result.reschedule_confirm
+            if (step.kind === 'reschedule-confirm' || step.kind === 'reschedule-decline') {
+              const confirmed = result[config.responseKey]
               booking.status = confirmed.status
               if (Number.isFinite(Number(confirmed.start)) && Number(confirmed.start) > 0) booking.start = Number(confirmed.start)
               if (Number.isFinite(Number(confirmed.end)) && Number(confirmed.end) > 0) booking.end = Number(confirmed.end)

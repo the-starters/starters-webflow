@@ -818,7 +818,7 @@ test('a reschedule proposal posts slot, reason, and a durable propose key', asyn
   }
 })
 
-test('reschedule responses post the correct endpoint and succeed only on confirmed', async () => {
+test('reschedule responses require confirmed acceptance and cancelled decline', async () => {
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
   const originalCrypto = global.crypto
@@ -835,7 +835,7 @@ test('reschedule responses post the correct endpoint and succeed only on confirm
       requests.push({ url, options })
       const key = url.includes('/confirm/') ? 'reschedule_confirm' : 'reschedule_decline'
       const body = {}
-      body[key] = { booking_id: 'booking-test-3', status: 'confirmed', revision: 4 }
+      body[key] = { booking_id: 'booking-test-3', status: key === 'reschedule_confirm' ? 'confirmed' : 'cancelled', revision: 4 }
       body.duplicate = false
       return { ok: true, async json() { return body } }
     }
@@ -845,7 +845,7 @@ test('reschedule responses post the correct endpoint and succeed only on confirm
     assert.match(requests[0].url, /\/booking\/reschedule\/confirm\/v3$/)
     assert.match(JSON.parse(requests[0].options.body).idempotency_key, /^dashboard-reschedule-confirm:/)
     const declined = await api.respondReschedule('reschedule-decline', booking, 'brand')
-    assert.equal(declined.reschedule_decline.status, 'confirmed')
+    assert.equal(declined.reschedule_decline.status, 'cancelled')
     assert.match(requests[1].url, /\/booking\/reschedule\/decline\/v3$/)
     assert.equal(await api.respondReschedule('reschedule-confirm', booking, 'starter'), null)
     assert.equal(await api.respondReschedule('cancel', booking, 'brand'), null)
@@ -2072,3 +2072,28 @@ test('availability rejection renders an error only for the current booking mount
     global.StartersPaidCallBrandPayment = original
   }
 })
+
+for (const role of ['brand', 'starter']) {
+  test(`${role} authored declined receipt is normalized before the existing-view return`, () => {
+    const title = { textContent: 'Proposal declined', children: [] }
+    const body = { textContent: 'The call keeps its original time.', children: [] }
+    const detail = { textContent: 'Date and time', children: [] }
+    const receipt = { querySelectorAll: () => [title, body, detail] }
+    const modal = {
+      querySelector(selector) {
+        if (selector === '[booking-popup-content="reschedule-declined"]') return receipt
+        if (selector === '[data-starters-reschedule-views]') return {}
+        if (selector === '[data-starters-reschedule-respond]') return {}
+        return null
+      },
+      querySelectorAll: () => [],
+    }
+    const document = { createElement() { throw new Error('Authored views must be reused') } }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      assert.equal(api.ensureRescheduleViews(document, modal), true)
+      assert.equal(title.textContent, 'Call cancelled')
+      assert.equal(body.textContent, 'The proposed time was declined and the call was cancelled.')
+      assert.equal(detail.textContent, 'Date and time')
+    }
+  })
+}

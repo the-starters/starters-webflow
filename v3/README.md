@@ -2272,15 +2272,10 @@ production proof.
 
 A confirmed-call proposal posts `booking/reschedule/propose/v3` with a required
 reason, the selected slot's unchanged timestamps, the selected IANA timezone,
-and a durable `dashboard-reschedule-propose:` key. Only the counterpart sees
-the Designer-authored "Accept new time" and "Keep current time" actions in the
-base view beside the authored reschedule trigger. The controller uses that pair
-without generating duplicates. It generates a fallback pair only for a legacy
-page where the authored confirm control still sits in a hidden step panel and
-the counterpart cannot reach it. Those actions post
-`booking/reschedule/confirm/v3` or `booking/reschedule/decline/v3` with their
-own durable keys, and the call keeps its current provider time until the
-counterpart confirms. A pending-request update posts the same slot and reason
+and a durable `dashboard-reschedule-propose:` key. Counterpart response controls,
+endpoints, and receipt behavior are owned by the
+[dashboard booking action contract](#dashboard-booking-action-contract).
+A pending-request update posts the same slot and reason
 fields to `booking/reschedule/request/v3` with a durable
 `dashboard-reschedule-request:` key, then opens `reschedule-updated`; it has no
 response actions and does not enter the proposal lifecycle. Direct transcript
@@ -2400,8 +2395,12 @@ pending path's `reschedule-updated` result. A modal that lacks that panel receiv
 a module fallback, so the direct-update success cannot switch to a missing
 target. A modal with no authored `reschedule` view receives the module fallback
 instead.
-The module uses the base "Accept new time" and "Keep current time" responses
-authored beside the reschedule trigger. If either control is missing from the
+The module uses the base "Accept new time" and "Cancel call" responses
+authored beside the reschedule trigger, normalizing authored decline labels to
+"Cancel call". Declining a proposed time cancels the confirmed call under the
+responding actor policy; it does not retain the original appointment. See the
+[CS-17 backend release prerequisite](#cs-17-backend-release-prerequisite) for the
+required backend prerequisite. If either control is missing from the
 base panel, it creates the fallback pair once per modal and marks both controls
 with `data-starters-reschedule-respond`. Decline, cancel, and both reschedule
 commands require a non-empty reason. Decline posts `booking_id`, `config_id`,
@@ -2428,7 +2427,8 @@ timezone, and each response uses a fixed `respond` scope. An ambiguous or
 malformed result keeps the key for safe replay. Only an exact nested result for
 the same booking clears the matching key: decline must be `declined`, cancel
 must be `cancelled`, a proposal must be `rescheduled`, a pending-request update
-must remain `pending`, and either response must be `confirmed`. The success
+must remain `pending`, acceptance must be `confirmed`, and the nested
+`reschedule_decline` response must be `cancelled`. The success
 panel replaces `[Starter]` and `[Brand]` in its leaf text nodes with the
 counterpart's canonical booking name, or `the other participant` when that name
 is blank. Before the pending direct-update panel opens, the module updates the
@@ -2436,13 +2436,17 @@ open modal from the new start, end, and reason, so its booking fields do not sho
 the pre-change time. For either Brand or Starter, a confirmed-call proposal
 renders the selected date and reason only in the `reschedule-proposed` receipt,
 using the shared detail formatter for both authored booking fields and generated
-supplement rows. The base panel and canonical booking retain the confirmed time
-until the counterpart accepts, including when the participant returns with Back.
-After a validated acceptance for either role, the module applies the confirmed
+supplement rows. While awaiting the counterpart response, the base panel and
+canonical booking retain the confirmed time, including when the participant
+returns with Back.
+After a validated response for either role, the module applies the returned
 status and valid returned start/end times to the booking and runs the shared
-detail formatter before opening `reschedule-accepted`. Both the receipt and
-base show the accepted time without proposal-only fields or summary rows,
-while retaining counterpart and call-context fields. A delayed confirm or
+detail formatter before opening `reschedule-accepted` or `reschedule-declined`.
+Both the receipt and base omit proposal-only fields and summary rows while
+retaining counterpart and call-context fields. The declined receipt says
+"Call cancelled" and "The proposed time was declined and the call was cancelled."
+The module also normalizes the known legacy authored receipt copy before
+reusing existing views. A delayed confirm or
 decline response, whether successful or failed, does not replace the displayed
 details, switch panels, or show an error if the modal now holds another booking.
 Other authored content stays unchanged. The panel remains visible until the
@@ -4342,3 +4346,16 @@ Messages requires the native `popup-booking-main` and `popup-booking` dialogs.
 Install [`messages-payment-dialog.html`](messages-payment-dialog.html) in the
 empty Messages footer for Brands that need the Hire payment-method dialog.
 The native dialog guest fields are optional, as on older Hire markup.
+
+### CS-17 backend release prerequisite
+
+The prepared shared-cancellation endpoint5760 and dependencies2098/2099 are
+published, with exact source readback and both-role native Test cancellation
+and provider evidence. See [release evidence](fixtures/RESCHEDULE-DECLINE-RELEASE-PROOF.md)
+for revisions, scope, cleanup, and remaining verification limits. This replaces
+the earlier supplied status in which endpoint5760 restored `confirmed`.
+
+The frontend remains subject to no-mistakes review and CI before merge/release.
+Backend evidence does not establish Paid settlement, production canaries, or
+completion of the full20-workflow checklist. Historical completed backend
+receipts must remain immutable.
