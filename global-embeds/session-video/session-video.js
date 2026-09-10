@@ -961,6 +961,11 @@
     if (headings.length !== 1) return
     var spans = headings[0].querySelectorAll('span')
     if (spans.length !== 3) return
+    for (var j = 0; j < spans.length; j += 1) {
+      for (var k = 0; k < spans[j].childNodes.length; k += 1) {
+        if (spans[j].childNodes[k].nodeType !== 3) return
+      }
+    }
     spans[0].textContent = 'Watch '
     spans[1].textContent = title
     spans[2].textContent = ' by signing up.'

@@ -139,6 +139,40 @@ test('Session wall uses the current title and preserves the native signup form',
   assert.equal(spans[1].textContent, 'Partnerships Playbook')
 })
 
+for (const nestedTag of ['span', 'em']) {
+  test(`Session wall leaves nested ${nestedTag} heading structure unchanged`, async () => {
+    const root = template()
+    const title = h('h1', {})
+    title.textContent = 'Partnerships Playbook'
+    root.append(title)
+    const emphasis = h(nestedTag, { class: 'authored-emphasis' })
+    emphasis.textContent = 'How building'
+    const prefix = h('span', {}, [{ nodeType: 3, textContent: 'Read more about ' }, emphasis])
+    Object.defineProperty(prefix, 'textContent', {
+      get() { return [...this.childNodes].map(node => node.textContent).join('') },
+      set(value) {
+        for (const node of [...this.childNodes]) this.removeChild(node)
+        this.append({ nodeType: 3, textContent: value })
+      },
+    })
+    const suffix = h('span', {})
+    suffix.textContent = ' by signing up.'
+    const spans = nestedTag === 'span' ? [prefix, suffix] : [prefix, h('span', {}), suffix]
+    const heading = h('h2', {}, spans)
+    const form = h('form', { 'data-ms-form': 'signup' }, [heading])
+    const dialog = h('dialog', { 'data-modal-target': 'authored-in-designer' }, [form])
+    const s = await setup({ roots: [root, dialog] })
+    s.api.reveal()
+    s.watch().click()
+    assert.equal(prefix.textContent, 'Read more about How building')
+    assert.equal(emphasis.textContent, 'How building')
+    assert.equal(emphasis.parentNode, prefix)
+    assert.equal(emphasis.getAttribute('class'), 'authored-emphasis')
+    assert.equal(suffix.textContent, ' by signing up.')
+    assert.equal(s.trigger().clicks, 2)
+  })
+}
+
 class FakePlayer {
   constructor(frame, reg) {
     this.frame = frame; this.calls = []; this.handlers = new Map(); reg.push(this)
