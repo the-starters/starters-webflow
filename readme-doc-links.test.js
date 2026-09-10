@@ -164,6 +164,9 @@ const NON_BROWSER_SCRIPTS = new Set([
   // Synthetic data/controllers for the local Hire call-card browser harness;
   // loaded only by its fixture page, never installed on Webflow.
   'v3/browser-tests/hire-calls-fixture.js',
+  // Synthetic Messages call controllers loaded only by the local browser
+  // fixture page, never installed on Webflow.
+  'v3/browser-tests/messages-calls-fixture.js',
   // Read-only Slater.app exports kept as the readable reference for
   // v2/contract.js. Generated artifacts, never edited and never loaded.
   'slater/4885.readable.js',

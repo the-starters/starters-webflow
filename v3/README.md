@@ -4326,7 +4326,7 @@ Preserve the existing redirects and mobile styles.
 The adapter binds the native `[booking-button-wrapper]` and its authored button,
 then removes the unconditional chooser trigger. Keep the page-head fail-closed
 style `[booking-button-wrapper]{display:none}` until the authenticated adapter
-reveals the selected conversation's eligible call types.
+confirms the selected Starter's call availability.
 Remove the native wrapper's `data-ms-content="paid-plans"` attribute during
 page activation. Memberstack can remove that element before the adapter starts
 for Brand Free accounts; the adapter owns role gating for this control.
@@ -4337,8 +4337,16 @@ ownership. On each entry, read the canonical public call DTO and authenticated
 booking configuration again. Manual readiness probes must send the production
 `Origin` header because the endpoint selects its environment from that context.
 Both admitted types show the native chooser; one
-type uses the existing hidden-chooser pass-through to its calendar. Neither or
-a failed lookup stays hidden. The adapter loads the existing scheduling auth,
+type uses the existing hidden-chooser pass-through to its calendar. When neither
+type is admitted, the “Schedule a call” control remains visible with
+`aria-disabled="true"` and cannot open booking. Hover, keyboard focus, or tap
+shows “This Starter isn’t accepting calls right now.” Escape dismisses the hint.
+An independently resolved published profile plus the precise booking response
+`404 Bookable Starter calendar not found` also permits this unavailable state.
+The adapter uses `authenticatedRequest` to preserve that error distinction.
+No selection, an unresolved or non-Starter participant, or a failed availability
+read keeps the control hidden; network failures never imply calls are off.
+The adapter loads the existing scheduling auth,
 Free booking and Paid booking controllers, and never writes TalkJS eligibility
 metadata. All booking requests remain owned by the shared controllers.
 

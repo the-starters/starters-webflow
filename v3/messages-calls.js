@@ -40,7 +40,11 @@
       if (!target) return
       try {
         const result = await options.discover(target)
-        if (own !== generation || !result || !result.configs.length) return
+        if (own !== generation || !result) return
+        if (!result.configs.length) {
+          if (options.unavailable) options.unavailable({ ...target, ...result })
+          return
+        }
         current = { ...target, ...result }
         options.show(current)
       } catch (error) {
@@ -59,6 +63,7 @@
         if (!result || !result.configs.length) {
           current = null
           options.clear()
+          if (result && options.unavailable) options.unavailable({ ...target, ...result })
           return false
         }
         current = { ...target, ...result }
@@ -116,7 +121,7 @@
       })
     })
     const style = doc.createElement('style')
-    style.textContent = '[booking-button-wrapper][data-messages-call-hidden]{display:none!important}[data-booking-pass-through],[data-booking-pass-through] *{visibility:hidden!important}[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"]) [data-booking-back]{display:none!important}'
+    style.textContent = '[booking-button-wrapper][data-messages-call-hidden]{display:none!important}[data-messages-call-trigger] button[aria-disabled=true]{opacity:.55;cursor:help}[data-booking-pass-through],[data-booking-pass-through] *{visibility:hidden!important}[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"]) [data-booking-back]{display:none!important}'
     doc.head.appendChild(style)
   }
 
@@ -132,6 +137,34 @@
     // The native wrapper was gated to paid plans. The authenticated role check
     // owns both Brand Free and Brand Paid; Starter never enters this branch.
     wrapper.removeAttribute('data-ms-content')
+    const hint = doc.createElement('div')
+    hint.id = 'messages-call-availability-hint'
+    hint.setAttribute('role', 'tooltip')
+    hint.textContent = 'This Starter isn’t accepting calls right now.'
+    hint.style.cssText = 'display:none;box-sizing:border-box;position:fixed;z-index:1000;background:#fff;color:#20241f;border:1px solid #ccc;border-radius:4px;padding:12px;max-width:280px;font-size:14px;line-height:1.4;box-shadow:0 4px 16px #0002'
+    doc.body.appendChild(hint)
+    function hideHint() { hint.style.display = 'none' }
+    function revealHint() {
+      if (button.getAttribute('aria-disabled') !== 'true') return
+      hint.style.display = 'block'
+      const rect = button.getBoundingClientRect()
+      const width = global.innerWidth || doc.documentElement.clientWidth
+      const height = global.innerHeight || doc.documentElement.clientHeight
+      hint.style.width = Math.max(0, Math.min(280, width - 24)) + 'px'
+      const box = hint.getBoundingClientRect()
+      hint.style.left = Math.max(12, Math.min(rect.left, width - box.width - 12)) + 'px'
+      hint.style.top = Math.max(12, rect.bottom + box.height + 8 <= height - 12 ? rect.bottom + 8 : rect.top - box.height - 8) + 'px'
+    }
+    let hovered = false
+    let focused = false
+    button.addEventListener('mouseenter', () => { hovered = true; revealHint() })
+    button.addEventListener('mouseleave', () => { hovered = false; if (!focused) hideHint() })
+    button.addEventListener('focus', () => { focused = true; revealHint() })
+    button.addEventListener('blur', () => { focused = false; if (!hovered) hideHint() })
+    button.addEventListener('keydown', event => { if (event.key === 'Escape') hideHint() })
+    doc.addEventListener('pointerdown', event => { if (!trigger.contains(event.target) && !hint.contains(event.target)) hideHint() })
+    global.addEventListener('resize', hideHint)
+    global.addEventListener('scroll', hideHint, true)
     const chooser = doc.querySelector('[popup-booking-main]')
     const popup = doc.querySelector('[popup-booking]')
     const rows = Array.from(doc.querySelectorAll('[call-type-item] [booking-popup-open][data-type]'))
@@ -146,6 +179,9 @@
     function clear() {
       wrapper.setAttribute('data-messages-call-hidden', '')
       button.disabled = false
+      button.removeAttribute('aria-disabled')
+      button.removeAttribute('aria-describedby')
+      hideHint()
       button.removeAttribute('data-conversation-id')
       closeDialogs()
       rows.forEach(cta => {
@@ -161,14 +197,26 @@
       await dependencies()
       if (!chooser || !popup || !registry() || !registry()['popup-booking-main']) return null
       const api = global.StartersFreeCallBooking
-      const starter = await api.getStarterByMemberId(target.memberId)
-      if (!starter || !starter.nylas_grant_id || !Number.isInteger(Number(starter.id))) return null
-      const [records, response, slug] = await Promise.all([
-        api.getConfigs(starter.nylas_grant_id),
+      const slug = await identity.prefetch(target.memberId)
+      if (!slug) return null
+      let starter
+      try {
+        starter = await api.authenticatedRequest(api.STARTER_PATH, 'POST', { member_id: target.memberId })
+      } catch (error) {
+        // The booking endpoint returns 404 before its Starter lookup when no
+        // calendar exists. A resolved published profile plus that precise
+        // response confirms unavailable calls; outages remain unknown.
+        if (error.status === 404 && error.data && error.data.message === 'Bookable Starter calendar not found') {
+          return { slug, configs: [] }
+        }
+        throw error
+      }
+      if (!starter || !Number.isInteger(Number(starter.id)) || Number(starter.id) <= 0) return null
+      const [records, response] = await Promise.all([
+        starter.nylas_grant_id ? api.authenticatedRequest(api.CONFIGS_PATH, 'POST', { grant_id: starter.nylas_grant_id }) : Promise.resolve([]),
         global.fetch(PUBLIC_CALLS + '?starter_id=' + encodeURIComponent(starter.id), { cache: 'no-store' }),
-        identity.prefetch(target.memberId),
       ])
-      if (!response.ok || !slug) return null
+      if (!response.ok || !Array.isArray(records)) return null
       const dto = await response.json()
       if (!dto || Number(dto.starter_id) !== Number(starter.id) || dto.slug !== slug) return null
       const items = dto.items
@@ -179,6 +227,13 @@
     }
     const controller = createController({
       member, clear, discover,
+      unavailable(target) {
+        button.setAttribute('data-conversation-id', target.conversationId)
+        button.setAttribute('aria-disabled', 'true')
+        button.setAttribute('aria-describedby', hint.id)
+        wrapper.removeAttribute('data-messages-call-hidden')
+        wrapper.style.display = 'flex'
+      },
       warn: () => console.warn('[messages-calls] Call availability could not be confirmed'),
       show(target) {
         button.setAttribute('data-conversation-id', target.conversationId)
@@ -241,7 +296,13 @@
         return true
       },
     })
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', async event => {
+      if (button.getAttribute('aria-disabled') === 'true') {
+        event.preventDefault()
+        event.stopPropagation()
+        revealHint()
+        return
+      }
       button.disabled = true
       await controller.open()
       button.disabled = false
