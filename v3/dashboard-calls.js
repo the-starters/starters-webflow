@@ -750,7 +750,9 @@
     text(
       card,
       '[booking-element="start-date"]',
-      formatDate(booking.start, (own && own.timezone) || (other && other.timezone)),
+      clean(booking.status).toLowerCase() === 'rescheduled'
+        ? proposalOldDate(booking, (own && own.timezone) || (other && other.timezone)) || 'Confirmed time unavailable'
+        : formatDate(booking.start, (own && own.timezone) || (other && other.timezone)),
     )
     text(card, '[booking-element="duration"]', formatDuration(booking.duration))
     text(

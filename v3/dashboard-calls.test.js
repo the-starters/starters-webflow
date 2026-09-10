@@ -3986,3 +3986,27 @@ test('Starter request Decline is exposed only with a loaded eligible contract an
     assert.equal(button.hidden, true)
   } finally { global.StartersDashboardCallActions = prior }
 })
+
+
+test('pending proposal cards retain confirmed time for both roles and adopt the accepted slot', () => {
+  const booking = { status: 'rescheduled', start: Date.parse('2027-09-16T02:00:00Z'),
+    start_old: Date.parse('2027-09-15T01:00:00Z'),
+    brand_data: { timezone: 'UTC' }, starter_data: { timezone: 'Asia/Manila' } }
+  for (const role of ['brand', 'starter']) {
+    const card = element()
+    const date = element()
+    card.querySelector = selector => selector === '[booking-element="start-date"]' ? date : null
+    const original = role === 'brand' ? 'Wed, Sep 15, 1:00 AM UTC' : 'Wed, Sep 15, 9:00 AM GMT+8'
+    const proposed = role === 'brand' ? 'Thu, Sep 16, 2:00 AM UTC' : 'Thu, Sep 16, 10:00 AM GMT+8'
+    api.bindCard(card, booking, role)
+    assert.equal(date.textContent, original)
+    for (const status of ['pending', 'confirmed', 'completed', 'cancelled']) {
+      api.bindCard(card, { ...booking, status }, role)
+      assert.equal(date.textContent, proposed)
+    }
+    for (const start_old of [null, 0, -1, 'invalid']) {
+      api.bindCard(card, { ...booking, start_old }, role)
+      assert.equal(date.textContent, 'Confirmed time unavailable')
+    }
+  }
+})

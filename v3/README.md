@@ -2126,6 +2126,13 @@ cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
 The selected `[booking-filter]` is the only control with `is-active`,
 `aria-pressed="true"`, and the matching checked visual state.
 
+On both Brand and Starter cards, `[booking-element="start-date"]` shows the
+confirmed `start_old` while the canonical status is `rescheduled`, including
+after a list refresh. Missing or invalid original timestamps display
+`Confirmed time unavailable` instead of the proposal. Other statuses use
+`start`, so accepting a proposal displays the accepted slot. Dates use the
+viewing participant's timezone, falling back to the counterpart's timezone.
+
 On both roles' cards, the authored Join Call anchor
 `[booking-element="meeting-link"]` receives the canonical `meeting_link` as a
 URL only when it is absolute HTTP(S) and the normalized lifecycle is confirmed
@@ -2167,7 +2174,7 @@ panel is the opening view rather than one the member navigated to, the authored
 `switch-base` back control stays hidden until a chain leaves the panel, keeping
 the doubled close icon off the entry view.
 
-For a canonical `rescheduled` row, `[booking-element="start-date-old"]`
+In call details for a canonical `rescheduled` row, `[booking-element="start-date-old"]`
 shows `start_old` as the current confirmed time and `start-date` shows `start`
 as the proposed time. Both use the viewing participant's timezone, falling back
 to the counterpart's timezone. The shared formatter includes time and timezone,
