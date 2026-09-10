@@ -149,6 +149,7 @@ function createEnvironment(fetchImpl, {
       '#service-2': createField('#service-2', { value: '' }),
       '#service-3': createField('#service-3', { value: '' }),
       '#availability-required': createField('#availability-required', { value: '1' }),
+      '[select-wrap-entity="availability"]': createGroup('[select-wrap-entity="availability"]', 1),
       '[name="free-consulting-calls"]': createField('[name="free-consulting-calls"]', { value: 'yes' }),
       '[name="free-call-description"]': createField('[name="free-call-description"]', { value: 'Legacy free description' }),
       '[name="paid-consulting-calls"]': createField('[name="paid-consulting-calls"]', { value: 'yes' }),
@@ -1618,7 +1619,7 @@ async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(
   for (const [stepIndex, selector, emptyOverride] of [
     [5, '[select-wrap-entity="skills"]', { chips: 0 }],
     [5, '[select-wrap-entity="tools"]', { chips: 1 }],
-    [6, '#availability-required', { value: '' }],
+    [6, '[select-wrap-entity="availability"]', { chips: 0 }],
   ]) {
     const consult = createEnvironment(async () => ({
       ok: true,
@@ -1905,6 +1906,7 @@ Promise.all([
   testProfileTypeSelectsOnlyItsOwnedMirrorBranch(),
   testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(),
   testStepFiveGroupRulesCountChipsAndSyncBounds(),
+  testAvailabilityGroupIgnoresMirrorAndSyncsTypeBounds(),
   testConditionalLocationRequirementTransitions(),
   testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
   testDynamicRequiredCaptureBlocksBeforeLoading(),
@@ -1953,4 +1955,33 @@ async function testStepFiveGroupRulesCountChipsAndSyncBounds() {
   await submit(consult)
   assert.equal(consult.requests.length, 1, 'Consult profile: no skills minimum')
   assert.equal(consult.stepFields['[select-wrap-entity="skills"]'].getAttribute('wf-validate-min'), null, 'Consult profile: no wf-validate-min on the wrapper')
+}
+
+async function testAvailabilityGroupIgnoresMirrorAndSyncsTypeBounds() {
+  const selector = '[select-wrap-entity="availability"]'
+  const blocked = createEnvironment(async () => { throw new Error('fetch must not run') }, {
+    stepIndex: 6,
+    workflowDiagnostics: true,
+    fieldOverrides: { [selector]: { chips: 0 }, '#availability-required': { value: 'stale' } },
+  })
+  await submit(blocked)
+  assert.equal(blocked.requests.length, 0, 'a stale mirror cannot replace a selected availability chip')
+  assert.equal(blocked.focusTarget.focusCount, 1)
+  assert.equal(blocked.window.__startersWorkflowDiagnosticLast.error_code, 'GROUP_MIN_NOT_MET')
+  assert.equal(blocked.stepFields[selector].getAttribute('wf-validate-min'), '1')
+
+  const saved = createEnvironment(async () => ({
+    ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }),
+  }), { stepIndex: 6, fieldOverrides: { '#availability-required': { value: '' } } })
+  await submit(saved)
+  assert.equal(saved.requests.length, 1, 'one chip saves even when the legacy mirror is empty')
+  assert.equal(saved.stepFields[selector].getAttribute('wf-validate-min'), '1')
+
+  const consult = createEnvironment(async () => ({
+    ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }),
+  }), { stepIndex: 6, profileType: 'consult', fieldOverrides: { [selector]: { chips: 0 } } })
+  consult.stepFields[selector].setAttribute('wf-validate-min', '1')
+  await submit(consult)
+  assert.equal(consult.requests.length, 1, 'Consult does not require availability')
+  assert.equal(consult.stepFields[selector].getAttribute('wf-validate-min'), null, 'a stale Full minimum is removed')
 }
