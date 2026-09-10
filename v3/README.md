@@ -2438,6 +2438,13 @@ renders the selected date and reason only in the `reschedule-proposed` receipt,
 using the shared detail formatter for both authored booking fields and generated
 supplement rows. The base panel and canonical booking retain the confirmed time
 until the counterpart accepts, including when the participant returns with Back.
+After a validated acceptance for either role, the module applies the confirmed
+status and valid returned start/end times to the booking and runs the shared
+detail formatter before opening `reschedule-accepted`. Both the receipt and
+base show the accepted time without proposal-only fields or summary rows,
+while retaining counterpart and call-context fields. A delayed confirm or
+decline response, whether successful or failed, does not replace the displayed
+details, switch panels, or show an error if the modal now holds another booking.
 Other authored content stays unchanged. The panel remains visible until the
 participant closes the modal; closing it then refreshes the canonical list.
 

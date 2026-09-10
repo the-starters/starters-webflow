@@ -2409,8 +2409,8 @@
       openDetail: function (modal, booking) {
         return openBookingDetail(modal, booking, role)
       },
-      // A proposal model must be scoped to its receipt; only a direct update
-      // re-renders the entire modal with a changed canonical booking.
+      // A proposal model must be scoped to its receipt; a direct update or
+      // accepted proposal re-renders the modal with the confirmed booking.
       refreshDetail: function (modal, booking, content) {
         return populateDetailModal(modal, booking, role, undefined, content)
       },
