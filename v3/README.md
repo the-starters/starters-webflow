@@ -919,10 +919,12 @@ signup. This path is V3 production only. It requires all three conditions:
    Webflow template page. A 404 with a valid-looking URL fails closed.
 3. The browser observed `submit` on `form[data-ms-form="signup"]` after the
    form's capture-phase validation gate and before the logged-out to logged-in
-   Memberstack transition. The listener is attached directly to each rendered
-   signup form, before the delegated document fallback, so Memberstack cannot
-   stop the accepted bridged event before attribution sees it. A rejected click
-   or a submit stopped by validation does not arm registration.
+   Memberstack transition. At initialization, the listener attaches directly to
+   each existing signup and login form, ahead of the delegated document fallback.
+   This lets attribution observe an accepted bridged submit before Memberstack
+   stops bubbling at document level. Forms inserted later rely on the delegated
+   fallback. A rejected click or a submit stopped by validation does not arm
+   registration.
 
 The submit requirement is separate from the broader attribution watch. A CMS
 modal can later swap to an "already have an account" login. That login can still
