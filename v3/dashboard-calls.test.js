@@ -8,10 +8,12 @@ const api = require('./dashboard-calls.js')
 
 function deferred() {
   let resolve
-  const promise = new Promise((done) => {
+  let reject
+  const promise = new Promise((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function element(attributes = {}) {
@@ -4016,7 +4018,7 @@ test('acceptance refreshes receipt and base without retaining proposal-only summ
   const previous = { fetch: global.xanoAuthFetch, storage: global.sessionStorage, actions: global.StartersDashboardCallActions }
   context.after(() => { global.xanoAuthFetch = previous.fetch; global.sessionStorage = previous.storage; global.StartersDashboardCallActions = previous.actions })
   global.StartersDashboardCallActions = actions
-  for (const role of ['brand', 'starter']) for (const scenario of ['success', 'failure', 'switched-success', 'switched-failure']) {
+  for (const role of ['brand', 'starter']) for (const scenario of ['success', 'failure', 'transport-failure', 'switched-success', 'switched-failure', 'switched-transport-failure']) {
     const values = new Map()
     global.sessionStorage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
     const handlers = []
@@ -4039,20 +4041,38 @@ test('acceptance refreshes receipt and base without retaining proposal-only summ
     button.closest = selector => selector.includes('popup-booking-info') ? modal : button
     const action = handlers[0]({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
     await requested.promise
+    const retryKeys = Array.from(values.entries())
+    assert.ok(retryKeys.length > 0)
     if (scenario.startsWith('switched')) {
-      api.populateDetailModal(modal, { ...booking, booking_id: 'other', status: 'confirmed' }, role)
+      api.populateDetailModal(modal, { ...booking, booking_id: 'other', status: 'confirmed', start: booking.start + 86400000, end: booking.end + 86400000 }, role)
     }
-    response.resolve({ ok: !scenario.endsWith('failure'), json: async () => scenario.endsWith('failure') ? { message: 'Controlled failure' } : { reschedule_confirm: { booking_id: booking.booking_id, status: 'confirmed', start: booking.start, end: booking.end } } })
+    const panelState = () => modal.querySelectorAll('[booking-popup-content]').map(panel => ({
+      panel: panel.getAttribute('booking-popup-content'),
+      hidden: panel.hidden,
+      display: panel.style.display,
+      rows: panel.querySelectorAll('[data-starters-call-summary-row]').map(row => ({
+        field: row.getAttribute('data-starters-call-summary-row'),
+        text: row.children.map(child => child.textContent),
+      })),
+    }))
+    const pendingState = panelState()
+    if (scenario.includes('transport')) {
+      response.reject(new Error('Controlled transport failure'))
+    } else {
+      response.resolve({ ok: !scenario.endsWith('failure'), json: async () => scenario.endsWith('failure') ? { message: 'Controlled failure' } : { reschedule_confirm: { booking_id: booking.booking_id, status: 'confirmed', start: booking.start, end: booking.end } } })
+    }
     await action
+    if (scenario.endsWith('failure')) assert.deepEqual(Array.from(values.entries()), retryKeys, 'Failed attempt retains the same retry key')
     if (scenario !== 'success') {
       assert.equal(booking.status, 'rescheduled')
       assert.equal(receipt.hidden, true)
+      assert.deepEqual(panelState(), pendingState, 'Delayed response preserves displayed dates and panels')
       if (scenario.startsWith('switched')) {
         assert.equal(modal.getAttribute('data-booking-id'), 'other')
         assert.equal(modal.querySelector('[data-starters-action-error]'), null)
       } else {
         assert.ok(values.size > 0, 'Failed attempt remains retryable')
-        assert.equal(modal.querySelector('[data-starters-action-error]').textContent, 'Controlled failure')
+        assert.equal(modal.querySelector('[data-starters-action-error]').textContent, scenario.includes('transport') ? 'Controlled transport failure' : 'Controlled failure')
       }
       continue
     }
