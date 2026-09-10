@@ -941,6 +941,31 @@
     this.openWall()
   }
 
+  // The shared signup form contains Article placeholder copy. Scope this adapter
+  // to the Session's authored trigger and preserve its native form and spans.
+  function setSessionSignupHeading(root, trigger) {
+    var titles = root.querySelectorAll('h1')
+    if (titles.length !== 1) return
+    var title = (titles[0].textContent || '').trim()
+    var target = trigger.getAttribute('data-modal-trigger')
+    if (!title || !target) return
+    var dialogs = document.querySelectorAll('[data-modal-target]')
+    var matches = []
+    for (var i = 0; i < dialogs.length; i += 1) {
+      if (dialogs[i].getAttribute('data-modal-target') === target) matches.push(dialogs[i])
+    }
+    if (matches.length !== 1) return
+    var forms = matches[0].querySelectorAll('[data-ms-form="signup"]')
+    if (forms.length !== 1) return
+    var headings = forms[0].querySelectorAll('h2')
+    if (headings.length !== 1) return
+    var spans = headings[0].querySelectorAll('span')
+    if (spans.length !== 3) return
+    spans[0].textContent = 'Watch '
+    spans[1].textContent = title
+    spans[2].textContent = ' by signing up.'
+  }
+
   Controller.prototype.openWall = function () {
     this.wallOpens += 1
     if (!this.wallEmitted) {
@@ -952,6 +977,7 @@
       warn('no signup-trigger authored; the wall cannot open')
       return
     }
+    setSessionSignupHeading(this.root, trigger)
     trigger.click()
   }
 
