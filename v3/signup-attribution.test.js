@@ -8,7 +8,7 @@ const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.232'
+const RELEASE = 'v1.59.564'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
@@ -282,6 +282,7 @@ function boot(options = {}) {
     const updateCalls = []
     const fetchCalls = []
     const posthogCalls = []
+    const posthogCaptureOptions = []
     const memberReads = []
     let releaseMember = () => {}
 
@@ -420,7 +421,10 @@ function boot(options = {}) {
             ? undefined
             : {
                   __loaded: options.posthogLoaded !== false,
-                  capture: (name, properties) => posthogCalls.push({ name, properties }),
+                  capture: (name, properties, captureOptions) => {
+                      posthogCalls.push({ name, properties })
+                      posthogCaptureOptions.push(captureOptions)
+                  },
               },
     }
     if (!options.noFbq) {
@@ -472,6 +476,7 @@ function boot(options = {}) {
         updateCalls,
         fetchCalls,
         posthogCalls,
+        posthogCaptureOptions,
         warnings,
         window,
         openedSignup,
@@ -1170,6 +1175,9 @@ test('a real production CMS signup registers one authenticated V3 lead entry', a
                 payload_version: 'lead_entry_browser_v1',
             },
         },
+    ])
+    assert.deepEqual(plain(harness.posthogCaptureOptions), [
+        { send_instantly: true, transport: 'sendBeacon' },
     ])
 })
 
