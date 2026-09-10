@@ -1,7 +1,7 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.564
+ * @release v1.59.565
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code) rather than on
  * one funnel, which is why it lives here in `v3/` alongside the other standalone
@@ -214,7 +214,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.564'
+    var RELEASE = 'v1.59.565'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72
@@ -330,7 +330,7 @@
     var LEAD_ENTRY_API_URL =
         'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/lead_email/register/v3'
     var LEAD_ENTRY_RETRY_DELAYS = [0, 750, 2000, 5000]
-    var LEAD_ENTRY_POSTHOG_RETRY_DELAYS = [0, 250, 1000, 3000, 7500]
+    var LEAD_ENTRY_POSTHOG_RETRY_DELAYS = [0, 250, 1000, 3000, 7500, 15000]
     var LEAD_ENTRY_MAX_AGE_MS = 24 * 60 * 60 * 1000
     var LEAD_ENTRY_PRODUCTION_HOSTS = {
         'thestarters.com': true,

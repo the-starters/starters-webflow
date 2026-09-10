@@ -8,7 +8,7 @@ const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.564'
+const RELEASE = 'v1.59.565'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
@@ -1373,7 +1373,7 @@ test('an accepted lead entry uses the bounded same-page PostHog retry schedule',
     assert.deepEqual(harness.parkedTimerDelays(), [250])
     assert.equal(harness.posthogCalls.length, 0)
 
-    for (const expectedDelay of [250, 1000, 3000, 7500]) {
+    for (const expectedDelay of [250, 1000, 3000, 7500, 15000]) {
         assert.equal(harness.runNextParkedTimer(), expectedDelay)
         await harness.settle()
     }
