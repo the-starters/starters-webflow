@@ -288,6 +288,7 @@
     if (!launcher || !panel || !form || !input) return
 
     let pending = false
+    let resetting = false
     let requestGeneration = 0
     let activeController = null
     let lastTraceId = ''
@@ -456,32 +457,51 @@
       ))
     }
     if (startOver) startOver.addEventListener('click', async () => {
+      if (resetting || !canInteract || !session) return
+      resetting = true
       requestGeneration += 1
       if (activeController) activeController.abort()
       activeController = null
-      pending = false
-      if (submit) submit.disabled = false
-      input.disabled = false
+      pending = true
+      startOver.disabled = true
+      if (submit) submit.disabled = true
+      input.disabled = true
       const previous = session.session_id
-      session = {
-        session_id: uuid(),
-        consented: session.consented,
-        consented_at: session.consented_at,
-        member_id: memberId,
-        consent_version: CONSENT_VERSION,
-      }
-      writeSession(session)
-      const messages = root.querySelector(selectors.messages)
-      const candidates = root.querySelector(selectors.candidateList)
-      if (messages) messages.replaceChildren()
-      if (candidates) candidates.replaceChildren()
-      lastTraceId = ''
-      stateBlock(root, 'ready')
+      const controller = new AbortController()
+      const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+      setStatus(root, 'Starting a new conversation…')
       try {
-        await api('ai-recruiter/session-reset', { session_id: previous })
+        const result = await api('ai-recruiter/session-reset', { session_id: previous }, controller.signal)
+        if (!result || result.ok !== true) throw new Error('Reset was not confirmed')
+        session = {
+          session_id: uuid(),
+          consented: session.consented,
+          consented_at: session.consented_at,
+          member_id: memberId,
+          consent_version: CONSENT_VERSION,
+        }
+        writeSession(session)
+        const messages = root.querySelector(selectors.messages)
+        const candidates = root.querySelector(selectors.candidateList)
+        if (messages) messages.replaceChildren()
+        if (candidates) candidates.replaceChildren()
+        lastTraceId = ''
+        input.value = ''
+        stateBlock(root, session.consented ? 'ready' : 'consent')
+        setStatus(root, 'New conversation ready.')
         report('request', { operation: 'session-reset', outcome: 'success' })
       } catch (error) {
+        stateBlock(root, 'retry')
+        setStatus(root, 'Could not confirm the reset. Your conversation is kept. Try Start over again.')
         report('failure', { operation: 'session-reset', outcome: 'error', status: error.status })
+      } finally {
+        window.clearTimeout(timeout)
+        resetting = false
+        pending = false
+        startOver.disabled = false
+        if (submit) submit.disabled = false
+        input.disabled = false
+        input.focus()
       }
     })
 
