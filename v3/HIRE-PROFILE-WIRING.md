@@ -330,7 +330,11 @@ production route map. Generic Book Call controls remain visible across primary,
 sticky, and mobile CTAs when unavailable, with `data-booking-trigger-unavailable`
 and `aria-disabled="true"`. Hover, keyboard focus, or tap reveals “This Starter
 isn’t accepting calls right now.” Hover and focus are tracked independently
-across the control and hint; Escape dismisses the hint. Disabled controls lose
+across the control and hint. Pointer exit allows a cancellable 180ms grace period
+to cross the gap; dismissal waits until neither surface is hovered or focused.
+The hint is attached to the body with fixed viewport positioning, constrained
+horizontally and placed above the control when there is insufficient room below.
+Escape dismisses the hint. Disabled controls lose
 signup and modal delegate hooks so they cannot open either flow. A confirmed
 logged-out viewer gets signup-only activation when either public call type is
 available; its Lumos modal hook remains removed. Brand triggers and chooser options follow the
@@ -392,9 +396,9 @@ authored main trigger opens `popup-booking-main` through the Lumos modal
 registry before activating the ready CTA. If neither entry path can open the
 authored dialog, the shortcut fails closed. A missing,
 hidden, unavailable, or uninstalled matching CTA fails closed. On the
-authenticated Brand path, generic Book Call buttons retain
+authenticated Brand path, enabled generic Book Call buttons retain
 `data-modal-trigger="popup-booking-main"` and continue to open the Free/Paid
-chooser; the logged-out rule above is the one exception. The direct service
+chooser; disabled and logged-out controls follow the availability contract above. The direct service
 click does not itself perform booking, payment, or Stripe-readiness work.
 
 The controller repeats this idempotent shortcut binding after canonical call
@@ -1178,12 +1182,18 @@ Book Call control. Its hint reports “Your calls are available to brands.” wh
 accepted call records exist, otherwise “Your call booking is unavailable.” It
 includes a **Manage call settings** link to `/starter-dashboard`; booking stays
 closed even when the owner's calls are ready.
+Tab from the disabled control enters this link; Shift+Tab returns to the control,
+while Tab from the link continues to the next page control. Escape returns focus
+to Book Call and dismisses the hint.
 
 Memberstack removes the brand-only mobile alternatives for owners. The controller
 marks only `.profile-hero_action-buttons` and `.profile-nav_actions` ancestors
 containing its disabled `[data-profile-book-call]` control with
 `data-profile-owner-call-actions`. At widths up to 767px those groups use
 `display:flex!important`, preserving flex spacing and surrounding visibility gates.
+All matching ancestors are marked, including nested hero groups. The marked
+`.profile-nav_actions` also receives `data-profile-owner-mobile-call` and becomes
+a fixed, full-width bottom call bar at that breakpoint.
 Hire and Message remain hidden.
 
 The authored Hire and Message CTAs have no such gate — they are plain Designer

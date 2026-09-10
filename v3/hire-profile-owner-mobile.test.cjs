@@ -58,6 +58,8 @@ test('owner primary and sticky calls remain discoverable on mobile without self-
             await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
             const hint = page.locator('[data-call-availability-hint]').nth(i);
             assert(await hint.isVisible());
+            const hintBounds = await hint.boundingBox();
+            assert(hintBounds.x >= 0 && hintBounds.y >= 0 && hintBounds.x + hintBounds.width <= width && hintBounds.y + hintBounds.height <= 900, 'explanation fits viewport');
             assert.equal(await hint.locator('a').getAttribute('href'), '/starter-dashboard');
             assert.equal(await calls.nth(i).getAttribute('aria-disabled'), 'true');
             assert.equal(await calls.nth(i).getAttribute('data-modal-trigger'), null);
@@ -102,7 +104,7 @@ test('owner primary and sticky calls remain discoverable on mobile without self-
             await hint.locator('a').hover();
             assert(await hint.isVisible());
             await page.mouse.move(width - 1, 800);
-            await page.waitForTimeout(220);
+            await hint.waitFor({ state: 'hidden', timeout: 2000 });
             assert.equal(await hint.isVisible(), false);
           }
           assert.equal(await page.locator('dialog[open]').count(), 0);
