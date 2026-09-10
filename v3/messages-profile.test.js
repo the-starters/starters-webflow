@@ -987,7 +987,7 @@ test('a free Brand click never opens the modal', async () => {
   assert.deepEqual(loaded.navigations, ['/pricing'])
 })
 
-test('a free Brand who finished the quiz goes to /quiz-results', async () => {
+test('a free Brand who finished the quiz goes to membership pricing', async () => {
   const loaded = load({
     triggers: [starterTrigger()],
     member: { id: VIEWER_ID },
@@ -999,7 +999,7 @@ test('a free Brand who finished the quiz goes to /quiz-results', async () => {
   loaded.openModal()
   await settle()
 
-  assert.deepEqual(loaded.navigations, ['/quiz-results'])
+  assert.deepEqual(loaded.navigations, ['/why-us#join-starters-cta'])
   assert.equal(loaded.calls.mounted.length, 0)
   assert.equal(
     loaded.warnings.filter((w) => w.indexOf(UPGRADE_ATTRIBUTE) !== -1).length,
@@ -1008,7 +1008,7 @@ test('a free Brand who finished the quiz goes to /quiz-results', async () => {
   )
 })
 
-test('a free Brand who has not finished the quiz goes to /quiz', async () => {
+test('a free Brand who has not finished the quiz also goes to membership pricing', async () => {
   const loaded = load({
     triggers: [starterTrigger()],
     member: { id: VIEWER_ID },
@@ -1020,7 +1020,7 @@ test('a free Brand who has not finished the quiz goes to /quiz', async () => {
   loaded.openModal()
   await settle()
 
-  assert.deepEqual(loaded.navigations, ['/quiz'])
+  assert.deepEqual(loaded.navigations, ['/why-us#join-starters-cta'])
 })
 
 test('talent gets the modal closed rather than a chat', async () => {
@@ -1054,13 +1054,13 @@ test('a starter opening their own profile gets the modal closed', async () => {
   assert.ok(loaded.warnings.some((line) => /self-chat/.test(line)))
 })
 
-test('hidden roles also lose the trigger itself', async () => {
+test('Brand Free retains the Message trigger', async () => {
   const element = starterTrigger()
   load({ triggers: [element], member: { id: VIEWER_ID }, role: 'brand-free' })
 
   await settle()
 
-  assert.equal(element.hidden, true)
+  assert.equal(element.hidden, false)
 })
 
 test('an unknown role still gets the chat, since this is not an auth boundary', async () => {
@@ -1149,3 +1149,14 @@ test('production is silent', async () => {
   assert.deepEqual(warnings, [])
   assert.equal(element.hidden, true, 'still hidden, just quietly')
 })
+
+ test('the published legacy quiz override now reaches membership pricing', async () => {
+ const element = starterTrigger()
+ const loaded = load({ triggers: [element], containerAttributes: { [UPGRADE_ATTRIBUTE]: '/quiz' }, member: { id: VIEWER_ID }, role: 'brand-free' })
+ await settle()
+ element.click()
+ await settle()
+ assert.equal(element.hidden, false)
+ assert.deepEqual(loaded.navigations, ['/why-us#join-starters-cta'])
+ assert.equal(loaded.calls.mounted.length, 0)
+ })

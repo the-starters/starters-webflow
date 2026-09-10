@@ -46,8 +46,8 @@ execute its legacy helpers.
 `hire-profile.js` also verifies this dependency at runtime. If an older saved
 page head does not contain `free-call-booking.js`, it adds that exact jsDelivr
 asset once and waits up to five seconds for that loader before booking
-discovery. A load error or timeout leaves every Book Call trigger and both call
-options hidden. An existing controller or matching loader that can still settle
+discovery. A load error or timeout keeps booking disabled and both call options hidden;
+see the [Book Call availability contract](#call-modal-and-project-service-routing). An existing controller or matching loader that can still settle
 — an `async` or `defer` tag, or a loader this recovery already injected — is
 reused, so this recovery does not create a second chooser owner. Each watched
 loader gets its own five-second wait, so the reuse path can wait once for the
@@ -281,10 +281,10 @@ are aligned before selecting the canary.
    public compatibility projections are true — `public_available` from
    `profile/starter/calls/v3` for the wf-xano cards — subject to
    [Header offer selection](#header-offer-selection). Each revealed tout
-   carries no "Next Available" row at all. Generic Book Call CTAs appear when
-   either call type is on. The Free/Paid chooser stays structurally closed,
+   carries no "Next Available" row at all. Generic Book Call CTAs follow the
+   [availability contract](#call-modal-and-project-service-routing). The Free/Paid chooser stays structurally closed,
    and no authenticated booking discovery runs.
-2. Anonymous click on a visible call tout, Book Call CTA, or non-call service
+2. Anonymous click on a visible call tout, enabled Book Call CTA, or non-call service
    card opens the signup modal in place. Logged-out Book Call CTAs have no
    `data-modal-trigger`, so a missing signup controller cannot open the booking
    chooser by mistake.
@@ -296,7 +296,7 @@ are aligned before selecting the canary.
 3. Eligible signed-in Brand: canonical discovery keeps every call projection
    closed until the [Brand readiness contract](#signed-in-brand-readiness)
    admits the type. Verify both arrival orders, refresh failure, sibling cached
-   replay, and recovery of both Header and Services cards. Generic Book Call
+   replay, and recovery of both Header and Services cards. Enabled generic Book Call
    buttons open the authored chooser. A visible Free or Paid call service in the hero or
    Services section reuses its exact installed
    chooser CTA and opens that call flow directly, including on a migrated
@@ -326,12 +326,18 @@ eligible Free or Paid option opens `popup-booking`. Free and Paid use the
 authenticated authored calendar. Paid uses the booking flow owned by
 [`README.md`](README.md#brand-paid-call-payment-method-client) inside the same
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
-production route map. Every authored
-`[data-modal-trigger="popup-booking-main"]` starts hidden with
-`data-booking-trigger-unavailable` and `aria-disabled="true"`. A confirmed
-logged-out viewer gets only CTAs carrying
-`data-signup-trigger-element="book-call"`, and those CTAs lose their Lumos modal
-trigger before they are shown. Brand triggers and chooser options follow the
+production route map. Generic Book Call controls remain visible across primary,
+sticky, and mobile CTAs when unavailable, with `data-booking-trigger-unavailable`
+and `aria-disabled="true"`. Hover, keyboard focus, or tap reveals “This Starter
+isn’t accepting calls right now.” Hover and focus are tracked independently
+across the control and hint. Pointer exit allows a cancellable 180ms grace period
+to cross the gap; dismissal waits until neither surface is hovered or focused.
+The hint is attached to the body with fixed viewport positioning, constrained
+horizontally and placed above the control when there is insufficient room below.
+Escape dismisses the hint. Disabled controls lose
+signup and modal delegate hooks so they cannot open either flow. A confirmed
+logged-out viewer gets signup-only activation when either public call type is
+available; its Lumos modal hook remains removed. Brand triggers and chooser options follow the
 [Brand readiness contract](#signed-in-brand-readiness). Triggers outside these
 two approved paths stay closed, so no entry point can open an empty chooser.
 The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
@@ -348,8 +354,9 @@ default outside Designer. Merely skipping inline visibility writes leaves Hire
 hidden by that CSS. Authored styles, classes and ARIA states remain unchanged.
 Those groups retain their authored display, ARIA state, and existing CMS and
 Memberstack role visibility for both authenticated and logged-out viewers. The
-per-trigger unavailable attribute hides Book Call independently inside mixed
-groups. Regression coverage in [`hire-profile.test.js`](hire-profile.test.js)
+per-trigger unavailable attribute dims and disables Book Call inside mixed
+groups without removing its spacing. The owner-only mobile exception is described
+[below](#the-owner-gets-call-settings-guidance-without-self-booking). Regression coverage in [`hire-profile.test.js`](hire-profile.test.js)
 exercises unavailable and ready calls, including authored hidden groups that
 must stay hidden.
 
@@ -389,9 +396,9 @@ authored main trigger opens `popup-booking-main` through the Lumos modal
 registry before activating the ready CTA. If neither entry path can open the
 authored dialog, the shortcut fails closed. A missing,
 hidden, unavailable, or uninstalled matching CTA fails closed. On the
-authenticated Brand path, generic Book Call buttons retain
+authenticated Brand path, enabled generic Book Call buttons retain
 `data-modal-trigger="popup-booking-main"` and continue to open the Free/Paid
-chooser; the logged-out rule above is the one exception. The direct service
+chooser; disabled and logged-out controls follow the availability contract above. The direct service
 click does not itself perform booking, payment, or Stripe-readiness work.
 
 The controller repeats this idempotent shortcut binding after canonical call
@@ -1168,18 +1175,26 @@ which the legacy reveal deliberately does not touch; that contract is described
 under [The Free and Paid call cards render from one wf-xano template per
 surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface).
 
-### The owner gets no Book Call, Hire or Message action
+### The owner gets call settings guidance without self-booking
 
-A starter reading their own `/hire/<slug>` sees the rates read-only: the page is
-a preview of what a brand is shown, not a surface they can act on.
+A starter reading their own `/hire/<slug>` sees rates read-only and a disabled
+Book Call control. Its hint reports “Your calls are available to brands.” when
+accepted call records exist, otherwise “Your call booking is unavailable.” It
+includes a **Manage call settings** link to `/starter-dashboard`; booking stays
+closed even when the owner's calls are ready.
+Tab from the disabled control enters this link; Shift+Tab returns to the control,
+while Tab from the link continues to the next page control. Escape returns focus
+to Book Call and dismisses the hint.
 
-Book Call needs no extra rule — only the brand's canonical discovery ever calls
-`setBookingButtonAvailable(true)`. Wrapper visibility follows the
-[booking availability gate contract](#call-modal-and-project-service-routing).
-For the owner, every
-`[data-modal-trigger="popup-booking-main"]` keeps
-`data-booking-trigger-unavailable` and `aria-disabled="true"`, and the dialog
-keeps `data-booking-surface-unavailable`.
+Memberstack removes the brand-only mobile alternatives for owners. The controller
+marks only `.profile-hero_action-buttons` and `.profile-nav_actions` ancestors
+containing its disabled `[data-profile-book-call]` control with
+`data-profile-owner-call-actions`. At widths up to 767px those groups use
+`display:flex!important`, preserving flex spacing and surrounding visibility gates.
+All matching ancestors are marked, including nested hero groups. The marked
+`.profile-nav_actions` also receives `data-profile-owner-mobile-call` and becomes
+a fixed, full-width bottom call bar at that breakpoint.
+Hire and Message remain hidden.
 
 The authored Hire and Message CTAs have no such gate — they are plain Designer
 entry points — so `hire-profile.js` hides them on the same ownership check as
@@ -1197,10 +1212,9 @@ ids are already on the page — so the owner stays covered when that module is
 absent or its Designer bindings are incomplete. Both writers make the same
 hide, so running both is idempotent.
 
-Covered by `owner actions: the owner gets no Book Call, Hire or Message
-action`, `owner actions: a talent on someone else's profile keeps Hire and
-Message`, and `owner actions: a logged-out visitor keeps the Hire and Message
-signup CTAs` in [`hire-profile.test.js`](hire-profile.test.js).
+Owner action coverage lives in [`hire-profile.test.js`](hire-profile.test.js);
+[`hire-profile-owner-mobile.test.cjs`](hire-profile-owner-mobile.test.cjs) covers
+the native responsive wrapper shape and settings affordance.
 
 ### Where the owner's canonical values come from
 
