@@ -28,14 +28,12 @@ page exactly as authored.
 
 ### Session signup heading
 
-Before opening the authored signup trigger, the controller reads the root's
-single `h1` and the trigger's `data-modal-trigger`. In the matching
-`data-modal-target`, a single native `data-ms-form="signup"` form with one
-three-span `h2` receives `Watch <Session title> by signing up.` The three
-existing spans and their styles are preserved. No form, input, consent, redirect,
-or email registration setting changes. Missing or ambiguous markup leaves the
-heading unchanged and still opens the normal trigger. This adapter is confined
-to Session walls; Article and other signup surfaces are unchanged.
+Before each opening of the authored signup trigger, the controller sets the
+heading to `Watch <Session title> by signing up.`, preserving the three existing
+spans and their styles. The optional signup-heading adapter's markup requirements
+and fallback are defined in the [module header](session-video.js). No form,
+input, consent, redirect, or email registration setting changes. This adapter is
+confined to Session walls; Article and other signup surfaces are unchanged.
 
 ## The three phases
 
