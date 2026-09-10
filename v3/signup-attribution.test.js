@@ -164,8 +164,20 @@ const markerOnDiv = (kind) => ({ kind, isForm: false })
  *
  * @param {string | {kind: string, isForm: boolean}} entry
  */
-const markerElement = (entry) =>
-    typeof entry === 'string' ? { kind: entry, isForm: true } : entry
+const markerElement = (entry) => {
+    const marker = typeof entry === 'string' ? { kind: entry, isForm: true } : entry
+    const listeners = []
+    return Object.assign({}, marker, {
+        listeners,
+        addEventListener(name, handler, options) {
+            const capture = options === true || (options && options.capture === true)
+            listeners.push([name, handler, capture])
+        },
+        getAttribute(name) {
+            return name === 'data-ms-form' ? marker.kind : null
+        },
+    })
+}
 
 /**
  * `document` double whose `cookie` accessor behaves like the browser's: reading
@@ -187,6 +199,7 @@ function documentDouble(initial, readOnly, forms, referrer) {
     const jar = new Map(Object.entries(initial || {}))
     const writes = []
     const markers = forms || []
+    const markerElements = []
 
     return {
         readyState: 'complete',
@@ -214,7 +227,10 @@ function documentDouble(initial, readOnly, forms, referrer) {
             const formOnly = Boolean(match[1])
             const kind = match[2]
             return markers
-                .map(markerElement)
+                .map((entry, index) => {
+                    if (!markerElements[index]) markerElements[index] = markerElement(entry)
+                    return markerElements[index]
+                })
                 .filter(
                     (element) =>
                         element.kind === kind &&
@@ -550,9 +566,15 @@ function boot(options = {}) {
             const handlers = document.listeners.filter(([name]) => name === 'click')
             for (const entry of handlers) entry[1](event)
             if (accepted) {
-                const submit = { target: { getAttribute: (name) => name === 'data-ms-form' ? kind : null } }
-                for (const [name, handler] of document.listeners) {
+                const form = document.querySelectorAll(`form[data-ms-form="${kind}"]`)[0]
+                const submit = { target: form || { getAttribute: (name) => name === 'data-ms-form' ? kind : null } }
+                for (const [name, handler] of form?.listeners || []) {
                     if (name === 'submit') handler(submit)
+                }
+                if (!options.blockDocumentSubmit) {
+                    for (const [name, handler] of document.listeners) {
+                        if (name === 'submit') handler(submit)
+                    }
                 }
             }
             return event
@@ -1186,6 +1208,33 @@ test('the shared custom signup button registers an ungated Learn lead entry', as
             signup_source: '/learn/interviews-analysis/operator-story',
         },
     })
+})
+
+test('a validated form-target submit survives Memberstack stopping document bubbling', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analysis/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'],
+        member: null,
+        blockDocumentSubmit: true,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await harness.settle()
+
+    harness.clickSignupControl(true)
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(
+        harness.fetchCalls.filter((call) => /lead_email\/register\/v3$/.test(call.url)).length,
+        1,
+    )
 })
 
 test('an accepted lead entry retries PostHog after the real SDK loads', async () => {

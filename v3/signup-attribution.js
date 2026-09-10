@@ -1227,10 +1227,40 @@
         }
     }
 
+    var bindLeadEntryFormSubmit = function (form) {
+        try {
+            if (!form || typeof form.addEventListener !== 'function') return
+            if (form.__startersLeadEntrySubmitBound) return
+            form.__startersLeadEntrySubmitBound = true
+            form.addEventListener('submit', onLeadEntrySignupSubmit, false)
+        } catch (error) {
+            /* a form that cannot listen stays on the delegated fallback */
+        }
+    }
+
+    var bindLeadEntryFormSubmits = function () {
+        try {
+            if (!document || typeof document.querySelectorAll !== 'function') return
+            var selectors = [SIGNUP_FORM_SELECTOR, 'form[data-ms-form="login"]']
+            selectors.forEach(function (selector) {
+                var forms = document.querySelectorAll(selector)
+                for (var index = 0; index < forms.length; index += 1) {
+                    bindLeadEntryFormSubmit(forms[index])
+                }
+            })
+        } catch (error) {
+            /* delegated submit remains the fail-closed fallback */
+        }
+    }
+
     /** @returns {void} */
     var bindLeadEntrySignupSubmit = function () {
         try {
             if (!document || typeof document.addEventListener !== 'function') return
+            // The shared Memberstack bridge dispatches submit on the form. A
+            // direct target listener runs after its capture-phase validation
+            // gate but before Memberstack can stop bubbling at document level.
+            bindLeadEntryFormSubmits()
             document.addEventListener('submit', onLeadEntrySignupSubmit, false)
             document.addEventListener('click', onLeadEntrySignupControlClick, true)
         } catch (error) {
