@@ -1424,6 +1424,59 @@ test('the same-page retry captures once when PostHog finishes loading', async ()
     assert.equal(harness.pendingLeadEntryPosthog(), undefined)
 })
 
+test('Article redirect captures once when SDK readiness follows the old retry window', async () => {
+    const first = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analysis/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'], member: null, posthogLoaded: false, parkTimers: true,
+        fetchHandler: async (url) => ({ ok: true, status: 200,
+            json: async () => String(url).includes('/auth/trade-token/v3')
+                ? { token: 'xano-token' } : { ok: true } }),
+    })
+    await first.settle()
+    first.clickSignupControl(true)
+    first.authHandlers[0](loggedInMember)
+    await first.settle()
+    await first.settle()
+    assert.equal(first.fetchCalls.filter(call => /lead_email\/register\/v3$/.test(call.url)).length, 1)
+    assert.equal(first.posthogCalls.length, 0)
+    const redirected = boot({
+        hostname: 'thestarters.com', pathname: '/quiz', member: loggedInMember,
+        session: Object.fromEntries(first.session), posthogLoaded: false, parkTimers: true,
+    })
+    await redirected.settle()
+    let elapsed = 0
+    for (const delay of [250, 1000, 3000, 7500]) {
+        assert.equal(redirected.runNextParkedTimer(), delay)
+        elapsed += delay
+        await redirected.settle()
+    }
+    assert.equal(redirected.posthogCalls.length, 0)
+    assert.ok(redirected.pendingLeadEntryPosthog())
+    redirected.window.posthog.__loaded = true
+    redirected.runNextParkedTimer()
+    await redirected.settle()
+    assert.equal(redirected.posthogCalls.length, 1)
+    assert.equal(redirected.posthogCalls[0].properties.source_route, '/learn/interviews-analysis/operator-story')
+    assert.deepEqual(plain(redirected.posthogCaptureOptions), [{ send_instantly: true, transport: 'sendBeacon' }])
+    assert.equal(redirected.pendingLeadEntryPosthog(), undefined)
+    assert.equal(redirected.fetchCalls.length, 0)
+    const reload = boot({ hostname: 'thestarters.com', pathname: '/quiz',
+        member: loggedInMember, session: Object.fromEntries(redirected.session) })
+    await reload.settle()
+    assert.equal(reload.posthogCalls.length, 0)
+    assert.equal(reload.fetchCalls.length, 0)
+    console.log('Delayed Article redirect evidence:', JSON.stringify({
+        environment: 'executed CDN script in VM; Memberstack, Xano and PostHog doubles',
+        sdkUnavailableThroughMs: elapsed,
+        registrationRequests: first.fetchCalls.filter(call => /lead_email\/register\/v3$/.test(call.url)).length,
+        redirectRegistrationRequests: redirected.fetchCalls.length,
+        captures: plain(redirected.posthogCalls), captureOptions: plain(redirected.posthogCaptureOptions),
+        reloadCaptures: reload.posthogCalls.length, reloadRequests: reload.fetchCalls.length,
+    }))
+})
+
 test('blocked PostHog storage cannot retry an accepted Xano registration', async () => {
     const harness = boot({
         hostname: 'thestarters.com',
