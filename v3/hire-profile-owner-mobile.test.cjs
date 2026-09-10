@@ -25,8 +25,8 @@ test('owner primary and sticky calls remain discoverable on mobile without self-
         .profile-nav_actions{display:flex;gap:12px}
         .button-group{display:flex;gap:16px}
         @media(max-width:767px){.profile-hero_action-buttons,.profile-nav_actions{display:none}}
-      </style>${group('profile-hero_action-buttons')}${group('profile-nav_actions')}
-      <dialog data-modal-target="popup-booking-main"></dialog>`);
+      </style><button id=before>Before</button>${group('profile-hero_action-buttons')}${group('profile-nav_actions')}
+      <button id=after>After</button><dialog data-modal-target="popup-booking-main"></dialog>`);
       await page.evaluate(owner => {
         window.MEMBER = { id: owner ? 'fixture' : 'other' };
         window.memberReady = Promise.resolve(MEMBER);
@@ -69,6 +69,41 @@ test('owner primary and sticky calls remain discoverable on mobile without self-
             await page.mouse.move(width - 1, 800);
             await page.keyboard.press('Escape');
             await calls.nth(i).evaluate(el => el.blur());
+          }
+          await page.mouse.move(width - 1, 800);
+          await page.locator('#before').click();
+          await page.keyboard.press('Tab');
+          assert(await calls.nth(0).evaluate(el => el === document.activeElement));
+          await page.keyboard.press('Tab');
+          const firstSettings = page.locator('[data-call-availability-hint]').nth(0).locator('a');
+          assert(await firstSettings.evaluate(el => el === document.activeElement));
+          await page.keyboard.press('Shift+Tab');
+          assert(await calls.nth(0).evaluate(el => el === document.activeElement));
+          await page.keyboard.press('Tab');
+          await page.keyboard.press('Tab');
+          assert(await calls.nth(1).evaluate(el => el === document.activeElement));
+          await page.keyboard.press('Tab');
+          await page.keyboard.press('Tab');
+          assert(await page.locator('#after').evaluate(el => el === document.activeElement));
+          await page.locator('#before').click();
+          for (let i = 0; i < 2; i++) {
+            const bounds = await calls.nth(i).boundingBox();
+            await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+            const hint = page.locator('[data-call-availability-hint]').nth(i);
+            const box = await hint.boundingBox();
+            const below = box.y > bounds.y;
+            const x = Math.max(bounds.x, box.x) + 5;
+            await page.mouse.move(x, below ? bounds.y + bounds.height + 4 : bounds.y - 4);
+            await page.waitForTimeout(50);
+            assert(await hint.isVisible(), 'hint survives pointer crossing the gap');
+            await page.mouse.move(x, below ? box.y + 4 : box.y + box.height - 4);
+            await page.waitForTimeout(220);
+            assert(await hint.isVisible(), 'entering hint cancels dismissal');
+            await hint.locator('a').hover();
+            assert(await hint.isVisible());
+            await page.mouse.move(width - 1, 800);
+            await page.waitForTimeout(220);
+            assert.equal(await hint.isVisible(), false);
           }
           assert.equal(await page.locator('dialog[open]').count(), 0);
         }

@@ -575,7 +575,9 @@
           }
           entry = { hint: hint, signup: trigger.getAttribute('data-signup-trigger-element'), modal: trigger.getAttribute('data-modal-trigger') };
           bookingHints.set(trigger, entry);
+          let dismissalTimer;
           const reveal = function () {
+              clearTimeout(dismissalTimer);
               if (trigger.getAttribute('aria-disabled') !== 'true') return;
               hint.style.display = 'block';
               if (!trigger.getBoundingClientRect || !hint.getBoundingClientRect) return;
@@ -603,7 +605,8 @@
               });
               surface.addEventListener('mouseleave', function (event) {
                   hovered = isInside(event.relatedTarget);
-                  dismissInactive();
+                  clearTimeout(dismissalTimer);
+                  dismissalTimer = setTimeout(dismissInactive, 180);
               });
               surface.addEventListener('focusin', function () {
                   focused = true;
@@ -622,6 +625,14 @@
               reveal();
           }, true);
           trigger.addEventListener('keydown', function (event) {
+              if (event.key === 'Tab' && !event.shiftKey && trigger.getAttribute('aria-disabled') === 'true') {
+                  const settings = hint.querySelector('a');
+                  if (settings) {
+                      event.preventDefault();
+                      reveal();
+                      settings.focus();
+                  }
+              }
               if (event.key === 'Escape') hint.style.display = 'none';
               if (trigger.getAttribute('aria-disabled') === 'true' && (event.key === 'Enter' || event.key === ' ')) {
                   event.preventDefault();
@@ -630,7 +641,14 @@
               }
           }, true);
           hint.addEventListener('keydown', function (event) {
-              if (event.key === 'Escape') hint.style.display = 'none';
+              if (event.key === 'Tab') {
+                  if (event.shiftKey) event.preventDefault();
+                  trigger.focus();
+              }
+              if (event.key === 'Escape') {
+                  trigger.focus();
+                  hint.style.display = 'none';
+              }
           });
       }
       if (available) {
