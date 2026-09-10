@@ -1138,7 +1138,7 @@ And an empty container inside that modal, which is where the chat renders:
   <div class="modal_backdrop" data-modal-close></div>
   <div class="modal_content">
     <div class="modal_slot">
-      <div messages-profile-chat messages-profile-upgrade="/pricing"></div>
+      <div messages-profile-chat messages-profile-upgrade="/why-us#join-starters-cta"></div>
     </div>
   </div>
 </dialog>
@@ -1181,7 +1181,7 @@ Who gets through:
 | viewer | outcome |
 | --- | --- |
 | logged out | hire-page signup modal (`data-modal-target="signup-modal"`). Chat intent is dropped in v1; the visitor is not sent to `/quiz` |
-| free Brand | `messages-profile-upgrade` when set, else route-guard's `brandFreeHome`: `/quiz-results` once the Memberstack `starter-quiz` field records completion, `/quiz` until then |
+| free Brand | Message stays visible and opens membership pricing at `/why-us#join-starters-cta`; an explicit non-quiz `messages-profile-upgrade` overrides this destination. Legacy `/quiz` and `/quiz-results` overrides (including query strings and fragments) are ignored |
 | talent | trigger hidden; modal closes if opened anyway |
 | viewer is this starter | trigger hidden; modal closes if opened anyway |
 | paid Brand | the chat |
