@@ -2399,7 +2399,7 @@ The module uses the base "Accept new time" and "Cancel call" responses
 authored beside the reschedule trigger, normalizing authored decline labels to
 "Cancel call". Declining a proposed time cancels the confirmed call under the
 responding actor policy; it does not retain the original appointment. See the
-[CS-17 merge and release blocker](#cs-17-merge-and-release-blocker) for the
+[CS-17 backend release prerequisite](#cs-17-backend-release-prerequisite) for the
 required backend prerequisite. If either control is missing from the
 base panel, it creates the fallback pair once per modal and marks both controls
 with `data-starters-reschedule-respond`. Decline, cancel, and both reschedule

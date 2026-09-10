@@ -6,7 +6,7 @@
  * supporting reschedule views, and sends environment-safe commands with
  * V3 contracts: decline, cancel, direct pending-request time updates,
  * and proposal responses for eligible Free calls. Reschedule-decline release
- * prerequisites are owned by README.md, "CS-17 merge and release blocker".
+ * prerequisites are owned by README.md, "CS-17 backend release prerequisite".
  */
 ;(function (global) {
   'use strict'
