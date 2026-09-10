@@ -958,6 +958,17 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
+    const declinedReceipt = modal.querySelector('[booking-popup-content="reschedule-declined"]')
+    if (declinedReceipt && typeof declinedReceipt.querySelectorAll === 'function') {
+      Array.prototype.forEach.call(declinedReceipt.querySelectorAll('p, h1, h2, h3'), function (node) {
+        if (node.children && node.children.length) return
+        const text = clean(node.textContent)
+        if (text === 'Proposal declined') node.textContent = 'Call cancelled'
+        if (text === 'The call keeps its original time.') {
+          node.textContent = 'The proposed time was declined and the call was cancelled.'
+        }
+      })
+    }
     const hasAuthoredRescheduleView = normalizeRescheduleViewCopy(modal)
     if (modal.querySelector('[data-starters-reschedule-views]')) {
       ensureRespondButtons(document, modal)

@@ -4342,3 +4342,17 @@ Messages requires the native `popup-booking-main` and `popup-booking` dialogs.
 Install [`messages-payment-dialog.html`](messages-payment-dialog.html) in the
 empty Messages footer for Brands that need the Hire payment-method dialog.
 The native dialog guest fields are optional, as on older Hire markup.
+
+### CS-17 merge and release blocker
+
+The reschedule-decline frontend is preparation only. Do not merge or release it
+until endpoint 5760's prepared shared-cancellation draft is published and full
+provider tests have verified the cancellation contract for both responding roles.
+The supplied backend status still restores `confirmed`; frontend rejection of
+that response does not undo the backend mutation or make deployment safe.
+
+The outer delivery owner must attach the published backend revision and provider
+test evidence before clearing this blocker. That evidence is not available in
+this review phase. Local frontend tests do not establish Paid settlement,
+production canaries, or completion of the full 20-workflow checklist. Historical
+completed backend receipts must remain immutable.

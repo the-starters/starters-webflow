@@ -2072,3 +2072,28 @@ test('availability rejection renders an error only for the current booking mount
     global.StartersPaidCallBrandPayment = original
   }
 })
+
+for (const role of ['brand', 'starter']) {
+  test(`${role} authored declined receipt is normalized before the existing-view return`, () => {
+    const title = { textContent: 'Proposal declined', children: [] }
+    const body = { textContent: 'The call keeps its original time.', children: [] }
+    const detail = { textContent: 'Date and time', children: [] }
+    const receipt = { querySelectorAll: () => [title, body, detail] }
+    const modal = {
+      querySelector(selector) {
+        if (selector === '[booking-popup-content="reschedule-declined"]') return receipt
+        if (selector === '[data-starters-reschedule-views]') return {}
+        if (selector === '[data-starters-reschedule-respond]') return {}
+        return null
+      },
+      querySelectorAll: () => [],
+    }
+    const document = { createElement() { throw new Error('Authored views must be reused') } }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      assert.equal(api.ensureRescheduleViews(document, modal), true)
+      assert.equal(title.textContent, 'Call cancelled')
+      assert.equal(body.textContent, 'The proposed time was declined and the call was cancelled.')
+      assert.equal(detail.textContent, 'Date and time')
+    }
+  })
+}
