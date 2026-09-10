@@ -31,8 +31,17 @@ window.WfAlgolia={getObject:async()=>({'free-consulting-calls-t-f':${ready},'pai
 setTimeout(()=>{
  const mixed=document.getElementById('mixed');
  const visible=id=>document.getElementById(id).getClientRects().length>0;
- const actual={hire:visible('hire'),book:visible('book'),hookRemoved:!mixed.hasAttribute('booking-button-wrapper'),display:mixed.style.display,aria:mixed.getAttribute('aria-hidden')};
- const pass=actual.hire===${!hidden}&&actual.book===${ready && !hidden}&&actual.hookRemoved&&actual.display===${JSON.stringify(hidden ? 'none' : '')}&&actual.aria===${JSON.stringify(hidden ? 'true' : null)};
+ const button=document.getElementById('book');
+ const hint=document.querySelector('[data-call-availability-hint]');
+ let interaction=true;
+ if (!${ready} && !${hidden}) {
+   button.focus();
+   button.dispatchEvent(new MouseEvent('mouseenter'));
+   button.dispatchEvent(new MouseEvent('mouseleave'));
+   interaction=hint.style.display==='block';
+ }
+ const actual={interaction,hire:visible('hire'),book:visible('book'),hookRemoved:!mixed.hasAttribute('booking-button-wrapper'),display:mixed.style.display,aria:mixed.getAttribute('aria-hidden')};
+ const pass=interaction&&actual.hire===${!hidden}&&actual.book===${!hidden}&&actual.hookRemoved&&actual.display===${JSON.stringify(hidden ? 'none' : '')}&&actual.aria===${JSON.stringify(hidden ? 'true' : null)};
  document.getElementById('result').textContent=JSON.stringify({pass,...actual},null,2);
  parent.postMessage({fixture:'hire-wrapper-css',caseId:${caseId},pass,actual},'*');
 },500);
@@ -40,7 +49,7 @@ setTimeout(()=>{
   return `<iframe id="case-${caseId}" srcdoc="${escape(page)}"></iframe>`;
 });
 const html = `<!doctype html><title>Hire wrapper CSS regression</title>
-<style>body{font:18px Arial;background:#edf0f3;margin:24px}main{display:grid;grid-template-columns:1fr 1fr;gap:16px}iframe{width:100%;height:310px;border:0;background:white}</style>
+<style>body{font:18px Arial;background:#edf0f3;margin:24px}main{display:grid;grid-template-columns:1fr 1fr;gap:16px}iframe{width:100%;height:370px;border:0;background:white}</style>
 <h1>Hire / Book Call with production hiding CSS</h1><p>Actual controller; mocked public availability; network disabled in each case.</p><pre id="summary" data-status="pending">Waiting for four cases…</pre>
 <script>const results=new Map();addEventListener('message',e=>{const d=e.data;if(d?.fixture!=='hire-wrapper-css'||e.source!==document.getElementById('case-'+d.caseId)?.contentWindow)return;results.set(d.caseId,d);const all=[...results.values()].sort((a,b)=>a.caseId-b.caseId);const summary=document.getElementById('summary');summary.textContent=all.filter(r=>r.pass).length+' / 4 cases passed';summary.dataset.results=JSON.stringify(all);summary.dataset.status=results.size===4?(all.every(r=>r.pass)?'pass':'fail'):'pending';});</script>
 <main>${frames.join('')}</main>`;
