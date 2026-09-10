@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { chromium } = require('playwright');
-const source = fs.readFileSync(require.resolve('./hire-profile.js'), 'utf8');
+const source = fs.readFileSync(process.env.PROFILE_CTA_SOURCE || require.resolve('./hire-profile.js'), 'utf8');
 
 // Published profile stylesheet: these two flex groups become display:none
 // at the mobile-landscape breakpoint. Brand-only mobile alternatives are
@@ -54,13 +54,21 @@ test('owner primary and sticky calls remain discoverable on mobile without self-
           const calls = page.locator('[data-profile-book-call]');
           for (let i = 0; i < 2; i++) {
             // aria-disabled intentionally remains focusable/tappable.
-            await calls.nth(i).dispatchEvent('click');
+            const bounds = await calls.nth(i).boundingBox();
+            await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
             const hint = page.locator('[data-call-availability-hint]').nth(i);
             assert(await hint.isVisible());
             assert.equal(await hint.locator('a').getAttribute('href'), '/starter-dashboard');
             assert.equal(await calls.nth(i).getAttribute('aria-disabled'), 'true');
             assert.equal(await calls.nth(i).getAttribute('data-modal-trigger'), null);
             assert.equal(await calls.nth(i).getAttribute('data-signup-trigger-element'), null);
+            if (process.env.PROFILE_CTA_EVIDENCE_DIR) {
+              await page.screenshot({ path: `${process.env.PROFILE_CTA_EVIDENCE_DIR}/owner-${width}-${i === 0 ? 'primary' : 'sticky'}.png`, fullPage: true });
+            }
+            await calls.nth(i).focus();
+            await page.mouse.move(width - 1, 800);
+            await page.keyboard.press('Escape');
+            await calls.nth(i).evaluate(el => el.blur());
           }
           assert.equal(await page.locator('dialog[open]').count(), 0);
         }

@@ -54,7 +54,7 @@
  *
  * StartersFreeCallBooking is loaded from the GitHub/jsDelivr asset when an
  * older Webflow page head does not install it yet. The dependency stays
- * fail-closed: booking remains hidden if the hosted controller cannot load.
+ * fail-closed: booking remains disabled if the hosted controller cannot load.
  *
  * The Algolia index is READ FROM THE PAGE, never hardcoded: v3/algolia-environment.js
  * rewrites [wf-algolia-index] per environment and the search key 403s any other
@@ -665,8 +665,7 @@
       // the same discovery result.
       // The calendar engine renders a back control carrying this same trigger
       // name inside the booking dialog. It is not a page-level entry point, and
-      // stamping it unavailable would hand it to the guard stylesheet's
-      // display:none rule — hiding the way back out for the rest of the visit.
+      // stamping it unavailable would disable navigation back to the chooser.
       document.querySelectorAll(
           '[data-modal-trigger="popup-booking-main"]:not([data-booking-back]), [data-profile-book-call]'
       ).forEach(function (trigger) {
