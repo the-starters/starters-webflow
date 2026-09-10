@@ -4801,3 +4801,11 @@ test('split secure fields destroy partially mounted resources on setup failure',
   assert.throws(() => api.mountSecureCardFields(stripe, { cardNumber: {}, cardExpiry: {}, cardCvc: {} }), /mount failed/)
   assert.equal(destroyed, 2)
 })
+
+
+test('retained booking availability carries its booking identity without changing new booking queries', () => {
+  const config = { config_id: 'config_free', grant_id: 'grant_test', duration: 30 }
+  const query = (value) => new URL('https://example.test' + api.availabilityQuery(value))
+  assert.equal(query(config).searchParams.has('booking_id'), false)
+  assert.equal(query({ ...config, booking_id: ' booking/937 &retained ' }).searchParams.get('booking_id'), 'booking/937 &retained')
+})

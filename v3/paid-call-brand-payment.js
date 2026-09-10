@@ -398,6 +398,8 @@
       end_time: String(end),
       region: 'us',
     })
+    const bookingId = String((config && config.booking_id) || '').trim()
+    if (bookingId) query.set('booking_id', bookingId)
     return AVAILABILITY_PATH + '?' + query.toString()
   }
 
