@@ -4010,3 +4010,55 @@ test('pending proposal cards retain confirmed time for both roles and adopt the 
     }
   }
 })
+
+test('acceptance refreshes receipt and base without retaining proposal-only summary rows', async (context) => {
+  const actions = require('./dashboard-call-actions.js')
+  const previous = { fetch: global.xanoAuthFetch, storage: global.sessionStorage, actions: global.StartersDashboardCallActions }
+  context.after(() => { global.xanoAuthFetch = previous.fetch; global.sessionStorage = previous.storage; global.StartersDashboardCallActions = previous.actions })
+  global.StartersDashboardCallActions = actions
+  for (const role of ['brand', 'starter']) for (const scenario of ['success', 'failure', 'switched-success', 'switched-failure']) {
+    const values = new Map()
+    global.sessionStorage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
+    const handlers = []
+    const document = { createElement: tag => domElement(tag), addEventListener(type, handler) { if (type === 'click') handlers.push(handler) } }
+    const modal = domElement('dialog', { 'popup-booking-info': '' })
+    modal.ownerDocument = document
+    document.querySelector = () => modal
+    const base = domElement('div', { 'booking-popup-content': 'base' })
+    modal.appendChild(base)
+    actions.ensureRescheduleViews(document, modal)
+    const booking = { booking_id: 'accept-' + role, config_id: 'config', data_environment: 'test', status: 'rescheduled', rescheduled_by: role === 'brand' ? 'starter' : 'brand', start: Date.now() + 172800000, end: Date.now() + 174600000, start_old: Date.now() + 86400000, duration: 30, price: 0, is_paid: false, brand_data: { memberstack_id: 'mem-brand', timezone: 'UTC' }, starter_data: { memberstack_id: 'mem-starter', timezone: 'Asia/Manila' } }
+    api.populateDetailModal(modal, booking, role)
+    const receipt = modal.querySelector('[booking-popup-content="reschedule-accepted"]')
+    assert.ok(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'))
+    const requested = deferred()
+    const response = deferred()
+    global.xanoAuthFetch = async () => { requested.resolve(); return response.promise }
+    actions.wire({ document, role, getBooking: () => booking, refreshDetail: (target, model) => api.populateDetailModal(target, model, role) })
+    const button = domElement('button', { 'booking-action-btn': 'confirm-reschedule' })
+    button.closest = selector => selector.includes('popup-booking-info') ? modal : button
+    const action = handlers[0]({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+    await requested.promise
+    if (scenario.startsWith('switched')) {
+      api.populateDetailModal(modal, { ...booking, booking_id: 'other', status: 'confirmed' }, role)
+    }
+    response.resolve({ ok: !scenario.endsWith('failure'), json: async () => scenario.endsWith('failure') ? { message: 'Controlled failure' } : { reschedule_confirm: { booking_id: booking.booking_id, status: 'confirmed', start: booking.start, end: booking.end } } })
+    await action
+    if (scenario !== 'success') {
+      assert.equal(booking.status, 'rescheduled')
+      assert.equal(receipt.hidden, true)
+      if (scenario.startsWith('switched')) {
+        assert.equal(modal.getAttribute('data-booking-id'), 'other')
+        assert.equal(modal.querySelector('[data-starters-action-error]'), null)
+      } else {
+        assert.ok(values.size > 0, 'Failed attempt remains retryable')
+        assert.equal(modal.querySelector('[data-starters-action-error]').textContent, 'Controlled failure')
+      }
+      continue
+    }
+    assert.equal(booking.status, 'confirmed')
+    assert.equal(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
+    assert.equal(base.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
+    assert.equal(receipt.hidden, false)
+  }
+})

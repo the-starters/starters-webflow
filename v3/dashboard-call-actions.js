@@ -1411,10 +1411,19 @@
           try {
             const result = await respondReschedule(step.kind, booking, settings.role)
             if (!result) throw new Error(config.failureMessage)
+            if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
+            if (step.kind === 'reschedule-confirm') {
+              const confirmed = result.reschedule_confirm
+              booking.status = confirmed.status
+              if (Number.isFinite(Number(confirmed.start)) && Number(confirmed.start) > 0) booking.start = Number(confirmed.start)
+              if (Number.isFinite(Number(confirmed.end)) && Number(confirmed.end) > 0) booking.end = Number(confirmed.end)
+              if (typeof settings.refreshDetail === 'function') settings.refreshDetail(modal, booking)
+            }
             ensureRescheduleViews(document, modal)
             switchPopupContent(modal, config.successContent)
             restartAfterModalClose(document, modal, settings.restart)
           } catch (error) {
+            if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
             console.error(
               '[dashboard-call-actions] ' + step.kind + ' failed closed:',
               error && error.message,
