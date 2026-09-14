@@ -118,6 +118,24 @@ whatever a duplicate name contributed. Never widen those two lookups back to a
 `[name=…]` or document-wide query: a hidden duplicate would win by document order
 and submit a stale contact value the member cannot see.
 
+### Request Reviews validation
+
+Step 7 validates all three optional reviewer slots in `starter-edit-profile.js`.
+Blank slots remain valid; a started tuple requires both first name and email.
+Non-empty emails are checked after trimming surrounding whitespace. The check
+preserves plus addressing and rejects internal whitespace, missing or repeated
+`@`, undotted domains, empty domain labels, domain characters other than ASCII
+letters, digits, dots and hyphens, leading or trailing domain-label hyphens,
+and addresses longer than 320 characters. Email-check failures use
+`REVIEWER_EMAIL_INVALID`.
+
+The submit handler checks before asynchronous preparation, then validates the
+exact reviewer snapshot used to build `Reviewers` before sending the profile
+request. An invalid edit during preparation therefore also blocks the PATCH.
+The submit-handler regressions in
+[`../../starter-edit-profile.test.js`](../../starter-edit-profile.test.js) cover
+each slot, plus addressing, and edits during deferred preparation.
+
 ### Canonical required-mirror hydration
 
 `canonical-profile-loader.js` hydrates the authored required validation mirrors
