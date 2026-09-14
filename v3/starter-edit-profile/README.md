@@ -122,11 +122,13 @@ and submit a stale contact value the member cannot see.
 
 Step 7 validates all three optional reviewer slots in `starter-edit-profile.js`.
 Blank slots remain valid; a started tuple requires both first name and email.
-Non-empty emails are checked after trimming surrounding whitespace. The check
-preserves plus addressing and rejects internal whitespace, missing or repeated
-`@`, undotted domains, empty domain labels, domain characters other than ASCII
-letters, digits, dots and hyphens, leading or trailing domain-label hyphens,
-and addresses longer than 320 characters. Email-check failures use
+Non-empty emails are trimmed before validation and serialization, preserving
+case and plus tags without changing other reviewer fields. The accepted syntax
+is an unquoted ASCII dot-atom local part and a dotted DNS domain whose labels
+contain 1–63 ASCII letters, digits, or hyphens, with no edge hyphens. Commas,
+angle brackets, internal whitespace, missing or repeated `@`, and doubled or
+edge dots are rejected. The normalized address is limited to 320 characters.
+Email-check failures use
 `REVIEWER_EMAIL_INVALID`.
 
 The submit handler checks before asynchronous preparation, then validates the
@@ -134,7 +136,8 @@ exact reviewer snapshot used to build `Reviewers` before sending the profile
 request. An invalid edit during preparation therefore also blocks the PATCH.
 The submit-handler regressions in
 [`../../starter-edit-profile.test.js`](../../starter-edit-profile.test.js) cover
-each slot, plus addressing, and edits during deferred preparation.
+each slot, plus addressing, trimmed serialized emails, and edits during
+deferred preparation.
 
 ### Canonical required-mirror hydration
 
