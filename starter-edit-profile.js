@@ -451,6 +451,10 @@ function validationFailure(code, rule, element = null) {
 	return { code, rule, element };
 }
 
+function normalizeReviewerEmail(email) {
+	return String(email ?? '').trim();
+}
+
 function validateReviewerTuple(rule, step, snapshot) {
 	const failures = [];
 	for (const selector of [rule.selector, ...(rule.optionalSelectors || [])]) {
@@ -478,7 +482,7 @@ function validateReviewerTuple(rule, step, snapshot) {
 			failures.push(validationFailure('REVIEWER_TUPLE_INCOMPLETE', { ...rule, selector }, field));
 		}
 
-		const email = String(reviewer?.email ?? '').trim();
+		const email = normalizeReviewerEmail(reviewer?.email);
 		if (email && (email.length > 320 || !/^[a-z0-9!#$%&'*+\/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+\/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email))) {
 			failures.push(validationFailure('REVIEWER_EMAIL_INVALID', { ...rule, selector }, field));
 		}
@@ -1010,7 +1014,7 @@ onDomReady(function () {
 						'last-name': reviewer.lname || '',
 						position: reviewer.job || '',
 						company: reviewer.company || '',
-						email: reviewer.email || '',
+						email: normalizeReviewerEmail(reviewer.email),
 					};
 				};
 

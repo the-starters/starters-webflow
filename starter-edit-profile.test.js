@@ -1736,9 +1736,46 @@ async function testReviewerEmailValidationBlocksEverySlotBeforeFetch() {
   assert.equal(valid.requests.length, 1)
 }
 
+async function testReviewerEmailsAreNormalizedBeforeSerialization() {
+  for (const duringPreparation of [false, true]) {
+    const ready = deferred()
+    const names = ['reviewer', 'reviewer-2', 'reviewer-3']
+    const tuple = (index, padded) => ({
+      fname: ` Reviewer ${index} `, lname: ' Last ', job: ' Role ', company: ' Company ',
+      email: padded ? ` \tOwned+Tag${index}@Example.COM\n ` : 'initial@example.com',
+    })
+    const environment = createEnvironment(async () => ({
+      ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }),
+    }), {
+      stepIndex: 7,
+      workflowDiagnosticsReady: ready.promise,
+      fieldOverrides: Object.fromEntries(names.map((name, index) => [
+        `[name="${name}"]`, { value: JSON.stringify(tuple(index, !duringPreparation)) },
+      ])),
+    })
+    const submission = submit(environment)
+    await new Promise(setImmediate)
+    if (duringPreparation) {
+      names.forEach((name, index) => {
+        environment.fields[`[name="${name}"]`].value = JSON.stringify(tuple(index, true))
+      })
+    }
+    ready.resolve(null)
+    await submission
+    assert.equal(environment.requests.length, 1)
+    const payload = JSON.parse(environment.requests[0][1].body)
+    names.forEach((name, index) => {
+      assert.deepEqual(payload.Reviewers[`reviewer-${index + 1}`], {
+        'first-name': ` Reviewer ${index} `, 'last-name': ' Last ',
+        position: ' Role ', company: ' Company ', email: `Owned+Tag${index}@Example.COM`,
+      })
+    })
+  }
+}
+
 async function testReviewerEditsDuringPreparationAreValidated() {
   for (const name of ['reviewer', 'reviewer-2', 'reviewer-3']) {
-    for (const email of ['not-an-email', 'a@example..com', 'a@example.com,']) {
+    for (const email of ['not-an-email', 'a@example..com', 'a@example.com,', ' a b@example.com ', 'a@exam ple.com']) {
       const ready = deferred()
       const environment = createEnvironment(async () => { throw new Error('fetch must not run') }, {
         stepIndex: 7,
@@ -1955,6 +1992,7 @@ Promise.all([
   testConditionalLocationRequirementTransitions(),
   testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
   testReviewerEmailValidationBlocksEverySlotBeforeFetch(),
+  testReviewerEmailsAreNormalizedBeforeSerialization(),
   testReviewerEditsDuringPreparationAreValidated(),
   testDynamicRequiredCaptureBlocksBeforeLoading(),
   testPersonalDetailsValidationBoundary(),
