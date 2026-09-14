@@ -1713,7 +1713,7 @@ async function testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots() 
 
 async function testReviewerEmailValidationBlocksEverySlotBeforeFetch() {
   for (const selector of ['[name="reviewer"]', '[name="reviewer-2"]', '[name="reviewer-3"]']) {
-    for (const email of ['a@example..com', 'a@example.com,', 'a@-example.com', 'a@example-.com', 'not-an-email', 'a@@example.com', 'a b@example.com', 'a@localhost', '@example.com', 'a@', 'a'.repeat(310) + '@example.com']) {
+    for (const email of ['a@example..com', 'a@example.com,', 'a@-example.com', 'a@example-.com', 'not-an-email', 'a,b@example.com', 'a<b@example.com', '.a@example.com', 'a..b@example.com', 'a.@example.com', 'a@@example.com', 'a b@example.com', 'a@localhost', '@example.com', 'a@', 'a'.repeat(310) + '@example.com']) {
       const environment = createEnvironment(async () => { throw new Error('fetch must not run') }, {
         stepIndex: 7,
         workflowDiagnostics: true,

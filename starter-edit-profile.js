@@ -479,7 +479,7 @@ function validateReviewerTuple(rule, step, snapshot) {
 		}
 
 		const email = String(reviewer?.email ?? '').trim();
-		if (email && (email.length > 320 || !/^[^\s@]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email))) {
+		if (email && (email.length > 320 || !/^[a-z0-9!#$%&'*+\/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+\/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email))) {
 			failures.push(validationFailure('REVIEWER_EMAIL_INVALID', { ...rule, selector }, field));
 		}
 	}
