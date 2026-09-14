@@ -1713,7 +1713,7 @@ async function testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots() 
 
 async function testReviewerEmailValidationBlocksEverySlotBeforeFetch() {
   for (const selector of ['[name="reviewer"]', '[name="reviewer-2"]', '[name="reviewer-3"]']) {
-    for (const email of ['not-an-email', 'a@@example.com', 'a b@example.com', 'a@localhost', '@example.com', 'a@', 'a'.repeat(310) + '@example.com']) {
+    for (const email of ['a@example..com', 'a@example.com,', 'a@-example.com', 'a@example-.com', 'not-an-email', 'a@@example.com', 'a b@example.com', 'a@localhost', '@example.com', 'a@', 'a'.repeat(310) + '@example.com']) {
       const environment = createEnvironment(async () => { throw new Error('fetch must not run') }, {
         stepIndex: 7,
         workflowDiagnostics: true,
@@ -1734,6 +1734,28 @@ async function testReviewerEmailValidationBlocksEverySlotBeforeFetch() {
   })
   await submit(valid)
   assert.equal(valid.requests.length, 1)
+}
+
+async function testReviewerEditsDuringPreparationAreValidated() {
+  for (const name of ['reviewer', 'reviewer-2', 'reviewer-3']) {
+    for (const email of ['not-an-email', 'a@example..com', 'a@example.com,']) {
+      const ready = deferred()
+      const environment = createEnvironment(async () => { throw new Error('fetch must not run') }, {
+        stepIndex: 7,
+        workflowDiagnosticsReady: ready.promise,
+        fieldOverrides: { [`[name="${name}"]`]: { value: JSON.stringify({ fname: 'Reviewer', email: 'valid+review@example.com' }) } },
+      })
+      const submission = submit(environment)
+      await new Promise(setImmediate)
+      environment.fields[`[name="${name}"]`].value = JSON.stringify({ fname: 'Reviewer', email })
+      ready.resolve(null)
+      await submission
+      assert.equal(environment.requests.length, 0, `${name}: ${email}`)
+      assert.equal(environment.button.style.pointerEvents, '')
+      assert.equal(environment.button.style.opacity, '')
+      assert.equal(environment.modalEvents.success, 0)
+    }
+  }
 }
 
 async function testDynamicRequiredCaptureBlocksBeforeLoading() {
@@ -1933,6 +1955,7 @@ Promise.all([
   testConditionalLocationRequirementTransitions(),
   testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
   testReviewerEmailValidationBlocksEverySlotBeforeFetch(),
+  testReviewerEditsDuringPreparationAreValidated(),
   testDynamicRequiredCaptureBlocksBeforeLoading(),
   testPersonalDetailsValidationBoundary(),
   testReplayProofRejectsChangedMemberAtCapture(),

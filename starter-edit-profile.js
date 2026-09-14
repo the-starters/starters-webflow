@@ -451,7 +451,7 @@ function validationFailure(code, rule, element = null) {
 	return { code, rule, element };
 }
 
-function validateReviewerTuple(rule, step) {
+function validateReviewerTuple(rule, step, snapshot) {
 	const failures = [];
 	for (const selector of [rule.selector, ...(rule.optionalSelectors || [])]) {
 		const field = qs(selector, step);
@@ -462,7 +462,7 @@ function validateReviewerTuple(rule, step) {
 			continue;
 		}
 
-		const rawValue = String(field.value ?? '').trim();
+		const rawValue = String((snapshot ? snapshot[field.name] : field.value) ?? '').trim();
 		if (!rawValue) continue;
 
 		let reviewer = null;
@@ -479,14 +479,14 @@ function validateReviewerTuple(rule, step) {
 		}
 
 		const email = String(reviewer?.email ?? '').trim();
-		if (email && (email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+		if (email && (email.length > 320 || !/^[^\s@]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email))) {
 			failures.push(validationFailure('REVIEWER_EMAIL_INVALID', { ...rule, selector }, field));
 		}
 	}
 	return failures;
 }
 
-function validateOwnedStep(stepIndex, { report = false } = {}) {
+function validateOwnedStep(stepIndex, { report = false, reviewerSnapshot } = {}) {
 	const step = stepElement(stepIndex);
 	if (!step) {
 		return {
@@ -510,7 +510,7 @@ function validateOwnedStep(stepIndex, { report = false } = {}) {
 	const failures = [];
 	rules.filter((rule) => ruleApplies(rule)).forEach((rule) => {
 		if (rule.kind === 'reviewerTuple') {
-			failures.push(...validateReviewerTuple(rule, step));
+			failures.push(...validateReviewerTuple(rule, step, reviewerSnapshot));
 			return;
 		}
 
@@ -991,6 +991,17 @@ onDomReady(function () {
 			// same canonical shape as the Build Profile writer.
 			if (Object.prototype.hasOwnProperty.call(payload, 'Reviewers')) {
 				const formData = getFormDataObject();
+				const validation = validateOwnedStep(stepIndex, { report: true, reviewerSnapshot: formData });
+				if (!validation.valid) {
+					recordProfileDiagnostic(null, {
+						result: 'failed',
+						stage: 'validation',
+						error_code: validation.failures[0]?.code || 'VALIDATION_FAILED',
+						request_started: false,
+					});
+					setSubmitLoading(submitButton, false);
+					return false;
+				}
 				const normalizeReviewer = (reviewer) => {
 					if (!reviewer?.fname || !reviewer?.email) return null;
 
