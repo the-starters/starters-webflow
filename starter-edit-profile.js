@@ -477,6 +477,11 @@ function validateReviewerTuple(rule, step) {
 		if (started && (!String(reviewer.fname ?? '').trim() || !String(reviewer.email ?? '').trim())) {
 			failures.push(validationFailure('REVIEWER_TUPLE_INCOMPLETE', { ...rule, selector }, field));
 		}
+
+		const email = String(reviewer?.email ?? '').trim();
+		if (email && (email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+			failures.push(validationFailure('REVIEWER_EMAIL_INVALID', { ...rule, selector }, field));
+		}
 	}
 	return failures;
 }

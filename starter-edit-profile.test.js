@@ -1711,6 +1711,31 @@ async function testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots() 
   assert.equal(absentOptionalSlots.requests.length, 1)
 }
 
+async function testReviewerEmailValidationBlocksEverySlotBeforeFetch() {
+  for (const selector of ['[name="reviewer"]', '[name="reviewer-2"]', '[name="reviewer-3"]']) {
+    for (const email of ['not-an-email', 'a@@example.com', 'a b@example.com', 'a@localhost', '@example.com', 'a@', 'a'.repeat(310) + '@example.com']) {
+      const environment = createEnvironment(async () => { throw new Error('fetch must not run') }, {
+        stepIndex: 7,
+        workflowDiagnostics: true,
+        fieldOverrides: { [selector]: { value: JSON.stringify({ fname: 'Reviewer', email }) } },
+      })
+      await submit(environment)
+      assert.equal(environment.requests.length, 0, `${selector}: ${email}`)
+      assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'REVIEWER_EMAIL_INVALID')
+    }
+  }
+  const valid = createEnvironment(async () => ({
+    ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }),
+  }), {
+    stepIndex: 7,
+    fieldOverrides: Object.fromEntries(['reviewer', 'reviewer-2', 'reviewer-3'].map((name, index) => [
+      `[name="${name}"]`, { value: JSON.stringify({ fname: `Reviewer ${index}`, email: `owned+${index}@example.com` }) },
+    ])),
+  })
+  await submit(valid)
+  assert.equal(valid.requests.length, 1)
+}
+
 async function testDynamicRequiredCaptureBlocksBeforeLoading() {
   const environment = createEnvironment(async () => {
     throw new Error('fetch must not run')
@@ -1907,6 +1932,7 @@ Promise.all([
   testStepFiveGroupRulesCountChipsAndSyncBounds(),
   testConditionalLocationRequirementTransitions(),
   testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
+  testReviewerEmailValidationBlocksEverySlotBeforeFetch(),
   testDynamicRequiredCaptureBlocksBeforeLoading(),
   testPersonalDetailsValidationBoundary(),
   testReplayProofRejectsChangedMemberAtCapture(),
