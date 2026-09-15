@@ -76,7 +76,7 @@ remain deferred (`paid-call-brand-payment.js`,
 
 | Area | Audience | Owner / source |
 | --- | --- | --- |
-| Notable Experience | everyone, incl. logged out | Webflow-authored `starter-work-histories` wf-xano wrapper / public Xano endpoint `#5860` |
+| Notable Experience | everyone, incl. logged out | Webflow-authored `starter-work-histories` wf-xano wrapper / public Xano endpoint `#5860`; cards bind the preformatted `date_range` value (`Month Year`) |
 | Clients ("also worked with") | everyone, incl. logged out | Webflow-authored `starter-clients` wf-xano wrapper / public Xano endpoint `#5860` |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: [readiness contract](#signed-in-brand-readiness) | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
 | Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
