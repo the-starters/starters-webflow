@@ -1,4 +1,4 @@
-/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/accordions */
+/* Docs: global-embeds/accordions/README.md */
 .wf-design-mode .accordion_content_wrap,
 .wf-design-mode [data-accordion="content-wrap"]{
 	display: block;
