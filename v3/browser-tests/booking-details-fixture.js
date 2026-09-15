@@ -42,6 +42,15 @@ if (fixtureParams.has('legacy')) {
     row.setAttribute('data-call-guest-row', '')
     document.querySelector('#legacy-host').appendChild(row)
   }
+  if (fixtureParams.has('nested')) {
+    document.querySelector('[nylas-container]').appendChild(document.querySelector('#legacy-host'))
+  }
+  if (fixtureParams.has('preserve')) {
+    const host = document.querySelector('#legacy-host')
+    host.querySelectorAll('input').forEach((field, index) => { field.value = `guest${index}@example.invalid` })
+    const authored = [host, ...host.querySelectorAll('*')].map(node => ({ node, parent: node.parentNode, value: node.value }))
+    fixture.authoredIntact = () => authored.every(({ node, parent, value }) => node.isConnected && node.parentNode === parent && node.value === value)
+  }
 }
 const fixtureSettings = paid => ({ config: fixtureConfig(paid), grantId: 'fixture-grant',
   starterSlug: 'fixture-starter', brandName: 'Brand Fixture', brandEmail: 'brand@example.invalid',
@@ -76,6 +85,8 @@ fixture.mountReschedule = async () => {
 }
 fixture.initialize = async () => {
   const entry = fixtureParams.get('entry')
+  if (fixtureParams.get('preinstall') === 'paid') fixtureApi.installPaidBookingController(fixtureSettings(true))
+  if (fixtureParams.get('preinstall') === 'free') window.StartersFreeCallBooking.installFreeBookingController(fixtureSettings(false))
   if (!entry) {
     fixture.installs.free = window.StartersFreeCallBooking.installFreeBookingController(fixtureSettings(false))
     fixture.installs.paid = fixtureApi.installPaidBookingController(fixtureSettings(true))

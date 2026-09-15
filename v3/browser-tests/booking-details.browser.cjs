@@ -253,6 +253,55 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.deepEqual(await evaluate('fixture.bookings[0].guest_emails'), ['restored@example.invalid'])
       observations.push(type + '-authored-guests-survive-other-error-controller')
     }
+    for (const entry of ['hire', 'messages']) {
+      for (const placement of ['nested', 'nested-complete', 'outside']) {
+        for (const first of ['free', 'paid']) {
+          await navigate(`legacy=1&preserve=1&entry=${entry}&preinstall=${first}${placement !== 'outside' ? '&nested=1' : ''}${placement !== 'nested-complete' ? '&partial=1' : ''}`)
+          if (entry === 'hire') await waitFor(`document.querySelector('#paid').getAttribute('data-paid-call-v3') === 'ready'`)
+          assert.equal(await evaluate('fixture.authoredIntact()'), true, 'installation preserves authored nodes, parents, and supplied guests')
+          for (const type of ['free', 'paid', 'free']) {
+            await click('#book-entry')
+            await waitFor('fixtureChooser.open')
+            await click('#' + type)
+            await waitFor(`fixturePopup.open && !!document.querySelector('[data-paid-calendar-status="error"]')`)
+            assert.equal(await evaluate('fixture.authoredIntact()'), true, 'error rendering preserves rejected markup in place')
+            assert.equal(await evaluate(`document.querySelector('[data-paid-calendar-status="error"]').getClientRects().length > 0`), true)
+            assert.equal(await evaluate(`document.querySelectorAll('${confirm}, [data-paid-calendar-slot]').length`), 0)
+            assert.equal(await evaluate(`document.querySelector('[data-call-guest-fields]').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))`), false)
+            await evaluate(`fixtureApi.installPaidBookingController(fixtureSettings(true)); StartersFreeCallBooking.installFreeBookingController(fixtureSettings(false))`)
+            assert.equal(await evaluate('fixture.authoredIntact()'), true, 'reinstalling against an open error preserves markup')
+            await click('#close')
+            assert.equal(await evaluate('fixture.authoredIntact()'), true, 'close and reset preserve rejected markup')
+          }
+          assert.equal(await evaluate('fixture.bookings.length'), 0)
+          assert.equal(await evaluate('fixture.requests.some(request => /payment/.test(request.path))'), false)
+          await evaluate(`(() => {
+            const host = document.querySelector('#legacy-host')
+            fixturePopup.querySelector('[schedule-step="default"]').appendChild(host)
+            const list = host.querySelector('[data-call-guest-list]')
+            if (list.querySelectorAll('[data-call-guest-row]').length < 5) {
+              const row = list.querySelector('[data-call-guest-row]').cloneNode(true)
+              row.querySelector('input').value = ''
+              list.appendChild(row)
+            }
+            StartersFreeCallBooking.installFreeBookingController(fixtureSettings(false))
+            fixtureApi.installPaidBookingController(fixtureSettings(true))
+          })()`)
+          for (const type of ['free', 'paid']) {
+            await click('#book-entry')
+            await waitFor('fixtureChooser.open')
+            await openDetails(type)
+            const before = await evaluate('fixture.bookings.length')
+            await fill('[data-call-guest-email]', 'repaired@example.invalid')
+            await click(confirm)
+            await waitFor(`fixture.bookings.length === ${before + 1}`)
+            assert.deepEqual(await evaluate('fixture.bookings.at(-1).guest_emails'), ['repaired@example.invalid'], 'actual markup repair permits authored guest submission')
+            await click('#close')
+          }
+          observations.push(`${entry}-${placement}-${first}-first-preserved-and-repaired`)
+        }
+      }
+    }
     await navigate()
     await evaluate('fixture.mountReschedule()')
     assert.equal(await evaluate(`document.querySelector('#reschedule').querySelectorAll('input,textarea').length`), 0)

@@ -38,6 +38,7 @@
     '[data-call-guest-email]',
     '[data-call-guest-remove]',
   ]
+  const bookingErrorSurfaces = new WeakMap()
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   // The back arrow carries a close marker too, because closing the booking
   // dialog is half of its hand-off back to the chooser. A synthesized close
@@ -2846,15 +2847,20 @@
   function installBookingErrorController(options) {
     const { popup, container, ctas, config } = options
     const type = config.is_paid ? 'paid' : 'free'
-    const hiddenGuests = new Map()
+    let surface = bookingErrorSurfaces.get(container)
+    if (!surface) {
+      surface = { mount: null, hiddenGuests: new Map() }
+      bookingErrorSurfaces.set(container, surface)
+    }
     function reset() {
-      container.textContent = ''
+      if (surface.mount) surface.mount.remove()
+      surface.mount = null
       container.removeAttribute('data-paid-calendar-state')
       popup.querySelectorAll('[schedule-step]').forEach(function (step) {
         step.style.display = step.getAttribute('schedule-step') === 'default' ? 'flex' : 'none'
       })
-      hiddenGuests.forEach(function (display, element) { element.style.display = display })
-      hiddenGuests.clear()
+      surface.hiddenGuests.forEach(function (display, element) { element.style.display = display })
+      surface.hiddenGuests.clear()
     }
     if (!bookingSurfaceLifecycle.register(popup, container, reset, type)) return false
     installGuestFormSubmitGuard(popup)
@@ -2878,11 +2884,17 @@
             if (guestElements.has(parent)) return
             parent = parent.parentElement
           }
-          hiddenGuests.set(element, element.style.display)
+          surface.hiddenGuests.set(element, element.style.display)
           element.style.display = 'none'
         })
+        const mount = global.document.createElement('div')
+        mount.setAttribute('data-booking-error-mount', '')
+        mount.style.width = '100%'
+        container.appendChild(mount)
+        container.setAttribute('data-paid-calendar-state', 'error')
+        surface.mount = mount
         return mountPaidCalendar({
-          container,
+          container: mount,
           config,
           bookingError: 'We could not load the booking form. Please contact support.',
           onConfirm: function () {},
