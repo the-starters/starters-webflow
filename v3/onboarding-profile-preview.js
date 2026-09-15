@@ -84,7 +84,7 @@
  * wf-xano tag, in the scripts embed — ONE pair of tags for the page, however many
  * form-block wrappers it has. The wf-xano wrapper attributes live on each FORM
  * BLOCK, which contains its own structure embed. See
- * v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md for the per-form attribute table, the
+ * docs/wiring/ONBOARDING-PROFILE-PREVIEW-WIRING.md for the per-form attribute table, the
  * form-block switching, and the tune-ables.
  */
 ;(function () {

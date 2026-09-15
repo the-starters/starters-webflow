@@ -113,7 +113,7 @@
  * changes and reads it once at init in case a submit somehow beat it to the
  * page. Diagnostics are staging-only (`*.webflow.io`, localhost, 127.0.0.1,
  * `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`); production is
- * silent. Wiring: v3/COMPLETE-PROFILE-LOADER-WIRING.md.
+ * silent. Wiring: docs/wiring/COMPLETE-PROFILE-LOADER-WIRING.md.
  */
 ;(function () {
   'use strict'

@@ -197,8 +197,8 @@ un-requires the legacy Free Call toggle and description plus the Paid Call toggl
 description, and rate. It omits all five fields from the profile payload and adds a
 link to `/starter-dashboard#calendar`. The dashboard Free and Paid Call settings
 controllers and their canonical Xano endpoints are the only member-facing writers
-for those services; see the [Free Call settings contract](../FREE-CALL-SETTINGS-WIRING.md)
-and [Paid Call settings contract](../PAID-CALL-SETTINGS-WIRING.md). The root
+for those services; see the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
+and [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md). The root
 [Current Scripts](../../README.md#current-scripts) entry owns the profile endpoint's
 canonical-save and asynchronous-projection response contract.
 

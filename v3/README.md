@@ -1,5 +1,8 @@
 # V3 browser scripts
 
+Webflow wiring contracts and installation checklists live in the shared
+[wiring guide folder](../docs/wiring/README.md).
+
 ## Opportunity-alert email preferences
 
 `opp-alerts-unsubscribe.js` binds the native Webflow content on the V3
@@ -133,7 +136,7 @@ the minimal-controller conditional. Remove the old page-level `auth-route.js`
 tags only through the overlap, delivery, and one-path-at-a-time behavior proof
 in the wiring guide. It runs on the V3 Webflow staging hostname and both custom
 domains; see
-[AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
+[AUTH-ROUTE-WIRING.md](../docs/wiring/AUTH-ROUTE-WIRING.md) for the
 installation, error contract, privacy-safe login timing evidence, and release
 gate. The versioned
 [V3 Member Access Matrix](ACCESS-MATRIX.md) maps stable plan IDs to roles and
@@ -150,7 +153,7 @@ Talent logins additionally fork on funnel position, read from Xano
 `/starter-onboarding` (winning over any stored `next`), and both true routes
 normally. Brand and unmapped members never trigger that call, and every
 inconclusive answer fails open to the standard destination. The signal became
-stricter on 2026-08-04; see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
+stricter on 2026-08-04; see [AUTH-ROUTE-WIRING.md](../docs/wiring/AUTH-ROUTE-WIRING.md) for the
 endpoint contract and the 282-row reason.
 
 Paid Brands take a parallel check through
@@ -160,7 +163,7 @@ Paid Brands take a parallel check through
 as complete without a network call. `brand-free` and unmapped members stay
 zero-network. The same eight-second budget and fail-open rule apply.
 `/complete-profile` is not an allowed client-supplied `next`; the router constructs
-that destination. See [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the endpoint
+that destination. See [AUTH-ROUTE-WIRING.md](../docs/wiring/AUTH-ROUTE-WIRING.md) for the endpoint
 contract.
 
 ## Talent applications admin
@@ -327,7 +330,7 @@ without a resolved guard. A configured guard that never boots and still has no
 mapped role fails closed with
 `data-route-guard-error="member-role-unavailable"` rather than redirecting to
 `/`.
-[ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md) documents the DOM states, events,
+[ROUTE-GUARD-WIRING.md](../docs/wiring/ROUTE-GUARD-WIRING.md) documents the DOM states, events,
 diagnostics, exclusions, and release gate. The guard is a routing/UX layer and
 does not replace Memberstack visibility rules or Xano authorization.
 `/quiz`, `/quiz-results`, and `/all-starters` are intentionally absent from the
@@ -362,7 +365,7 @@ still does stay. And a free Brand who has not finished the quiz stays on `/`
 instead of being pushed to `/quiz`, which is where the login pages still send
 them. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
 member with no mapped role, since deep-link intent does not depend on plan state.
-`ROUTE-GUARD-WIRING.md` has the exact precedence and the cancelled-plan
+[Route guard wiring](../docs/wiring/ROUTE-GUARD-WIRING.md) has the exact precedence and the cancelled-plan
 definition. **Per-page logged-out destinations:** the three
 build-profile pages send a logged-out visitor to `/` instead of `/login?next=`,
 because they are entered from marketing flows where a login form would ask a
@@ -423,8 +426,8 @@ conflicted members, logged-out visitors, a missing or half-loaded role contract,
 and a lookup that throws are all left untouched. The page needs the native form
 contract plus the account controller and redirect embeds installed after the guard;
 see
-[BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md) and
-[COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
+[BRAND-ACCOUNT-WIRING.md](../docs/wiring/BRAND-ACCOUNT-WIRING.md) and
+[COMPLETE-PROFILE-REDIRECT-WIRING.md](../docs/wiring/COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
 ## Complete-profile back button
 
@@ -468,7 +471,7 @@ bubbling press is still one navigation. A missing wrapper, a missing label, stor
 that throws, or a DOM that refuses to be queried all leave the page exactly as
 authored — the button is already hidden, so the failure mode is the status quo.
 Needs the two Designer attributes plus one page-level embed; see
-[COMPLETE-PROFILE-BACK-WIRING.md](COMPLETE-PROFILE-BACK-WIRING.md).
+[COMPLETE-PROFILE-BACK-WIRING.md](../docs/wiring/COMPLETE-PROFILE-BACK-WIRING.md).
 
 Run its focused test with:
 
@@ -499,7 +502,7 @@ submit that initiated a redirect, `bindForm()` now latches busy so the form stay
 across the navigation; `location.assign()` only queues a redirect, so the old
 code released the form while the browser was still fetching the destination. The
 reasoning and the accepted cancelled-navigation consequence live under Failure
-semantics in [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md). Busy therefore
+semantics in [BRAND-ACCOUNT-WIRING.md](../docs/wiring/BRAND-ACCOUNT-WIRING.md). Busy therefore
 clears on an error, and on a success that resolved no redirect URL.
 
 Show and hide are inline `display` writes, because Webflow's Display:None
@@ -522,7 +525,7 @@ element is an immediate silent bail with the exported `show`/`hide` replaced by
 no-ops, which is what makes the file safe to load site-wide, and an
 authored-visible loader is force-hidden once at init as a self-heal. Needs the
 Designer checklist plus one page-level embed; see
-[COMPLETE-PROFILE-LOADER-WIRING.md](COMPLETE-PROFILE-LOADER-WIRING.md).
+[COMPLETE-PROFILE-LOADER-WIRING.md](../docs/wiring/COMPLETE-PROFILE-LOADER-WIRING.md).
 
 Run its focused tests with:
 
@@ -539,7 +542,7 @@ while its login-email interception remains configuration-gated for Brand
 Account Security and the visible Talent form on `/starter-edit-profile`. The
 authoritative identity scope, stable-ID propagation, failure, release-gate, and
 reversible-canary contract is in
-[BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md).
+[BRAND-ACCOUNT-WIRING.md](../docs/wiring/BRAND-ACCOUNT-WIRING.md).
 
 ## Build-profile funnel redirect
 
@@ -567,7 +570,7 @@ open on a 4-second overall budget with a shared `AbortController`: a missing rol
 contract, a rejected trade, a 401, a 500, an unparseable body, a body without a
 boolean `build_profile_done`, or a browser without `fetch` all leave the page
 exactly as authored. It needs three page-level embeds installed after the guard;
-see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md).
+see [BUILD-PROFILE-REDIRECT-WIRING.md](../docs/wiring/BUILD-PROFILE-REDIRECT-WIRING.md).
 
 Two rules were added on 2026-08-14. A visible authored `[build-profile-success]`
 state stands the redirect down, checked at redirect time rather than at boot so it
@@ -597,7 +600,7 @@ accepted until Designer adds `[data-page-spinner]`; the script picks that
 element up with no code change.
 
 It needs six page-level embeds installed after the guard; see
-[STARTER-PROFILE-REDIRECT-WIRING.md](STARTER-PROFILE-REDIRECT-WIRING.md). Ticket
+[STARTER-PROFILE-REDIRECT-WIRING.md](../docs/wiring/STARTER-PROFILE-REDIRECT-WIRING.md). Ticket
 06 is the paste + headed QA.
 
 Run its focused test with:
@@ -786,7 +789,7 @@ non-call service controls so a click stamps `signup_trigger` and opens the signu
 modal (`data-modal-target="signup-modal"`). Which call entry points a logged-out
 visitor is shown, and why a logged-out Book Call CTA can never open the booking
 chooser, are defined by
-[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
+[`HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
 Create the Memberstack `signup-trigger` field before shipping a release that
 writes it.
 
@@ -1235,7 +1238,7 @@ to provide. It is deliberately scoped to the
 `[data-modal-trigger="generate-contract"]` triggers and the
 `dialog[data-modal-target="generate-contract"]` modal, and generates no form
 HTML. The authoritative field, prefill, state, and release contract lives in
-[PROJECT-FORM-WIRING.md](PROJECT-FORM-WIRING.md).
+[PROJECT-FORM-WIRING.md](../docs/wiring/PROJECT-FORM-WIRING.md).
 Release progress and no-submit verification are tracked in
 [PROJECT-CREATION-PROGRESS-CHECKLIST.md](PROJECT-CREATION-PROGRESS-CHECKLIST.md).
 
@@ -1252,7 +1255,7 @@ node --test v3/project-form.test.js v3/project-form-workflow.test.js \
 `starter-project-form.js` binds the Starter Dashboard copy of the shared
 **Contract Generation** component used on `/hire/<slug>`. The authoritative
 scope, endpoint, Designer, user-state, and release contract lives in
-[STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md).
+[STARTER-PROJECT-FORM-WIRING.md](../docs/wiring/STARTER-PROJECT-FORM-WIRING.md).
 
 ## Superseded Brand proposal approval
 
@@ -1549,7 +1552,7 @@ titles and descriptions from the live page's heading and body fonts with
 brand-font fallbacks. Query-string start/reset controls and `Alt+Shift+T` allow
 support and QA to replay tours on staging or production without editing member
 JSON. It is presentation-only and does not grant or restrict access. See
-[ONBOARDING-TOUR-WIRING.md](ONBOARDING-TOUR-WIRING.md) for the Designer
+[ONBOARDING-TOUR-WIRING.md](../docs/wiring/ONBOARDING-TOUR-WIRING.md) for the Designer
 attributes, install snippet, persistence behavior, diagnostics, and release
 checks.
 
@@ -1559,7 +1562,7 @@ checks.
 `onboarding-self-preview` — the freelancer's own profile rendered as a
 profile-preview card on the onboarding completion page ("Your 30-day visibility
 boost is already running"). The card's CSS and markup live in the structure embed
-in [ONBOARDING-PROFILE-PREVIEW-WIRING.md](ONBOARDING-PROFILE-PREVIEW-WIRING.md);
+in [ONBOARDING-PROFILE-PREVIEW-WIRING.md](../docs/wiring/ONBOARDING-PROFILE-PREVIEW-WIRING.md);
 the script owns exactly one thing, the `beforeRender` transform.
 
 The page runs **one wf-xano instance per form block**, and the wiring doc is the
@@ -1710,7 +1713,7 @@ authored, because the redirect is a UX courtesy and never a security boundary.
 It never writes to Xano; the post-submit journey belongs entirely to its
 pinned pair, `patch-onboarding-status.js` (below) — never ship one half
 without the other. The authoritative wiring, QA order, and troubleshooting
-live in [ONBOARDING-DONE-REDIRECT-WIRING.md](ONBOARDING-DONE-REDIRECT-WIRING.md).
+live in [ONBOARDING-DONE-REDIRECT-WIRING.md](../docs/wiring/ONBOARDING-DONE-REDIRECT-WIRING.md).
 
 Run its focused test with:
 
@@ -1733,7 +1736,7 @@ submit.
 `window.StartersPatchOnboardingStatus.markOnboardingDone()` exercises the
 write by hand on staging. Installs only as a pinned pair with
 `onboarding-done-redirect.js` (above); the authoritative wiring lives in
-[ONBOARDING-PATCH-STATUS-WIRING.md](ONBOARDING-PATCH-STATUS-WIRING.md).
+[ONBOARDING-PATCH-STATUS-WIRING.md](../docs/wiring/ONBOARDING-PATCH-STATUS-WIRING.md).
 
 Run its focused test with:
 
@@ -1755,7 +1758,7 @@ the script writes exactly two things — `textContent` on a non-IMG landing, and
 
 The full attribute table, the onboarding photo checklist and the debug overlay
 columns live in
-[xano-grabber/XANO-GRABBER-WIRING.md](xano-grabber/XANO-GRABBER-WIRING.md). The
+[xano-grabber/XANO-GRABBER-WIRING.md](../docs/wiring/XANO-GRABBER-WIRING.md). The
 short version: `wf-xano-grab-element="source"` / `="landing"` plus a shared
 `wf-xano-grab-id`; add `wf-xano-grab-list` on a source container and
 `wf-xano-grab-list-container` + a `wf-xano-grab-element="list-item"` child on the
@@ -1865,7 +1868,7 @@ The head install above stays the final contract. `hire-profile.js` also carries
 a bounded fail-closed recovery that loads `free-call-booking.js` itself when an
 older saved head still omits it, so Free and Paid discovery keeps working before
 that head is corrected; that recovery contract is owned by
-[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#install).
+[`HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#install).
 
 Current safety boundary:
 
@@ -1901,7 +1904,7 @@ Current safety boundary:
   `window.getXanoAuthToken` when a browser session holds a cached
   `opportunities-3.0.js` without `Opp30.API.starterProfile`, so keep
   `/starter-dashboard` inside the boundary above; that fallback is owned by
-  [STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md#profile-request-paths).
+  [STARTER-PROJECT-FORM-WIRING.md](../docs/wiring/STARTER-PROJECT-FORM-WIRING.md#profile-request-paths).
 - Transparently wraps reviewed direct `/v3` requests while the stage adapter
   migrates legacy component callers.
 - Installs synchronously and takes ownership from the legacy bridge in
@@ -2302,7 +2305,7 @@ it, and the plain confirm control spans the bottom row. At narrower widths the
 engine's document order stays in control: month, timezone, times, then confirm.
 This dashboard sheet does not include the `/hire` footer, status, button, or
 datepicker appearance rules. The full `/hire` surface contract remains in the
-[Hire Profile wiring reference](HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
+[Hire Profile wiring reference](../docs/wiring/HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
 
 `dashboard-call-actions.js` owns the details dialog's authored Back and Close
 controls on both dashboards. Populate starts with Back hidden on whichever panel
@@ -3813,7 +3816,7 @@ flowchart TD
    hairline at either width any more. An authored class may still add what the
    engine does not declare; it can no longer remove the frame. Full contract,
    including the specificity split and the gap rules:
-   [the footer frame contract](HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
+   [the footer frame contract](../docs/wiring/HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
 
    The shared engine also renders a timezone control — a `<label>` wrapping a
    caption and the `<select>` that names the clock the times are shown in. It
@@ -3897,7 +3900,7 @@ flowchart TD
    `loading` and `error` — and the empty-availability state pushes its footer to
    the bottom of it, so the banner never covers a collapsed panel. Full
    contract:
-   [the status banner and the four-state min-height](HIRE-PROFILE-WIRING.md#the-status-banner-and-the-four-state-min-height).
+   [the status banner and the four-state min-height](../docs/wiring/HIRE-PROFILE-WIRING.md#the-status-banner-and-the-four-state-min-height).
 
    On the booking surface the shell writes only `width` inline and leaves its
    `display` and both gaps to the sheet, because an inline declaration outranks
@@ -3999,7 +4002,7 @@ The shared booking lifecycle replaces each call type's reset callback on
 reinstallation. Replacement and delayed-load regressions are covered in
 [`paid-call-brand-payment.test.js`](paid-call-brand-payment.test.js).
 Hire call-service routing and chooser behavior are owned by
-[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing);
+[`HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing);
 Messages routing is owned by [Messages call entry](#messages-call-entry).
 
 The native `[popup-stripe-card]` component must keep its visible payment title
@@ -4013,7 +4016,7 @@ applies live regions to the authored error and status nodes, and hides the retir
 Elements supplies the card-number, expiry, and CVC placeholders; raw card data never enters Webflow or Xano.
 
 The authoritative Free controller ownership and chooser contract lives in
-[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
+[`HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
 After that controller installs, `hire-profile.js` gives the exact active Paid
 configuration and the canonical Starter Nylas grant to this controller. The
 controller uses that grant with the canonical Paid duration for availability
@@ -4146,7 +4149,7 @@ The browse row is the `.dash-hero_action-item` containing an exact
 `href="/all-starters"` link. When a paid or free Brand visits `/all-starters`,
 the sitewide `route-guard.js` records the visit in Memberstack JSON. The Brand
 dashboard reads that completion marker and hides the browse row. See
-[ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md#brand-action-items-completion-marker)
+[ROUTE-GUARD-WIRING.md](../docs/wiring/ROUTE-GUARD-WIRING.md#brand-action-items-completion-marker)
 for the marker, role, preservation, and failure contracts.
 
 The panel settles at the first of: an item becoming visible, a Stripe

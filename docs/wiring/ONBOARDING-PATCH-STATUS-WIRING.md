@@ -23,7 +23,7 @@ half now also attempts to load the repository's shared privacy-safe workflow
 receipt helper from the same jsDelivr repository ref. The pair still installs
 and versions together.
 
-It is not a sibling of [route-guard.js](route-guard.js) and does not replace it.
+It is not a sibling of [route-guard.js](../../v3/route-guard.js) and does not replace it.
 The route guard answers "may this role open this page" from Memberstack plans;
 this module makes no access decision at all. It writes a completion flag for the
 Xano record it is authorized for and then moves the member on from a page they
@@ -223,7 +223,7 @@ learns that anyone finished.
 This is the canonical walk for the pair — it exercises both files, so run it
 here rather than in the read half's doc. Run it behind the Webflow password on
 `the-starters-3-0.webflow.io`, or through `./dev-tunnel.sh` (both modules'
-[staging gate](../README.md#staging-only-console-diagnostics) covers the
+[staging gate](../../README.md#staging-only-console-diagnostics) covers the
 quick-tunnel hostname, so the tunnel loop works). Open the console — staging is
 chatty, production is silent.
 
@@ -290,7 +290,7 @@ chatty, production is silent.
 ## Diagnostics
 
 The completion attempt uses the shared receipt contract owned by
-[`../README.md`](../README.md#current-scripts). It records only allowlisted
+[`../README.md`](../../README.md#current-scripts). It records only allowlisted
 workflow metadata and never records the member, form values, token, headers, or
 request/response bodies. Because the normal success/fail-open path hides the
 form and redirects, retrieve the retained receipt on the dashboard with:

@@ -2,7 +2,7 @@
 
 Status: Tagged **v1.59.243**. No Webflow embed yet — ticket 06 is the paste.
 Tickets: `.scratch/starter-profile-redirect/issues/`. Spec:
-[STARTER-PROFILE-REDIRECT-SPEC.md](STARTER-PROFILE-REDIRECT-SPEC.md).
+[STARTER-PROFILE-REDIRECT-SPEC.md](../../v3/STARTER-PROFILE-REDIRECT-SPEC.md).
 The Layer 3 funnel map lives in workspace-root `REDIRECT-STRATEGIES.md` (outside
 this git repo by design; already updated for the v1.59.243 tag, not yet embedded).
 

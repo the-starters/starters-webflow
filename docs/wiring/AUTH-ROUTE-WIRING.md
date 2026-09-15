@@ -153,7 +153,7 @@ moved to `get_build_profile_status` on 2026-08-04.
    **Keep both PostHog helper tags out of this block and unconditional sitewide
    too**, for the same sitewide-capture reason: `utils/posthog-identity.js` and
    `utils/posthog-track.js` are deferred site-wide helpers, not application
-   controllers ([README](../README.md#analytics-helpers-utils)).
+   controllers ([README](../../README.md#analytics-helpers-utils)).
    `posthog-identity.js` owns the logged-out `posthog.reset()` that stops a
    shared browser chaining new anonymous events to the previous member's
    `mem_*` distinct id, and `/login` is exactly where `route-guard.js` sends
@@ -166,7 +166,7 @@ moved to `get_build_profile_status` on 2026-08-04.
    **Keep `v3/native-form-diagnostics.js` out of this block and unconditional
    sitewide too.** It is a deferred sitewide observer of the provider-owned
    native forms, not an application controller, and its install contract is
-   already sitewide `defer` ([README](../README.md#current-scripts)). Its
+   already sitewide `defer` ([README](../../README.md#current-scripts)). Its
    `form[data-ms-form="login"]` selector is what records the `brand_login` and
    `talent_login` receipts, and `/login` and `/starter-login` are the only
    pages that produce them — the same going-dark argument as `posthog-track.js`
@@ -279,7 +279,7 @@ It deliberately does **not** reuse `window.memberReady`'s resolved value: on
 this site that promise resolves an empty object for every visitor, logged in or
 not, so it carries no identity to reuse and awaiting it would only add latency
 and an unbounded wait to the one page this change exists to speed up. See
-[`global-embeds/session-video/README.md`](../global-embeds/session-video/README.md#membership-resolution).
+[`global-embeds/session-video/README.md`](../../global-embeds/session-video/README.md#membership-resolution).
 
 ## Routing
 
@@ -432,7 +432,7 @@ to `/login` with no `?next=`, so there is no round trip for this router to close
 `v3/route-guard.js` does not list the page either. A paid Brand asking for it as a
 `next` lands on `/brand-dashboard`.
 
-The allowlist is derived from [ACCESS-MATRIX.md](ACCESS-MATRIX.md). It governs
+The allowlist is derived from [ACCESS-MATRIX.md](../../v3/ACCESS-MATRIX.md). It governs
 post-authentication routing only. Memberstack gated content and Xano endpoint
 authorization remain separate enforcement layers.
 
@@ -495,7 +495,7 @@ body rather than a freelancer envelope and answers `'build-profile'`,
 
 The funnel never produces a `data-auth-route-error`; it fails open instead. It
 narrates each decision to the console (which state was found, where routing
-goes) only on [staging](../README.md#staging-only-console-diagnostics).
+goes) only on [staging](../../README.md#staging-only-console-diagnostics).
 Production stays silent apart from the configuration errors in the table above.
 
 ## Release Gate

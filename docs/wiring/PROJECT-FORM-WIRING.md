@@ -146,7 +146,7 @@ pre-submit validity check before it delegates to native `reportValidity()`.
 The modal-open sync restores authored requirements that the captured Hire click
 temporarily removed while the modal was still hidden, but later-tab fields stay
 stashed until their destination is visible. The adapter consumes the global
-tabs [panel-visible activation contract](../global-embeds/tabs/tabs.js) to
+tabs [panel-visible activation contract](../../global-embeds/tabs/tabs.js) to
 restore that panel's native required state before Continue can be enabled. The
 duration sync described above runs alongside these points, plus once when the
 adapter installs, so the Monthly end date is already hidden and cleared before

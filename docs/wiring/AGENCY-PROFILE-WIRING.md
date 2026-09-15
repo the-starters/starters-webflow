@@ -509,7 +509,7 @@ shares this failure mode.
 ## Diagnostics
 
 Staging-only, per the authoritative predicate in
-[`README.md`](../README.md#staging-only-console-diagnostics). Production is
+[`README.md`](../../README.md#staging-only-console-diagnostics). Production is
 silent.
 
 Every message is prefixed `[agency-profile]`, so console output is attributable

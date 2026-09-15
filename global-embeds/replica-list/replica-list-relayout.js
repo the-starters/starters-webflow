@@ -19,7 +19,7 @@
  *
  * Contract:
  * - Target: every `[wf-algolia-element="browse"][wf-algolia-disable-filters="true"]`
- *   block — wf-algolia's static-list mode (see REPLICA-LIST-WIRING.md). A page
+ *   block — wf-algolia's static-list mode (see docs/wiring/REPLICA-LIST-WIRING.md). A page
  *   may hold several; a page may hold none, in which case this embed binds
  *   nothing at all and costs one querySelectorAll.
  * - A block that is ALREADY visible at init is marked done WITHOUT dispatching.
