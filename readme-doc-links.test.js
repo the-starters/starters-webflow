@@ -205,6 +205,9 @@ const NON_BROWSER_SCRIPTS = new Set([
   // Synthetic Messages call controllers loaded only by the local browser
   // fixture page, never installed on Webflow.
   'v3/browser-tests/messages-calls-fixture.js',
+  // Synthetic booking responses and DOM setup for the local booking-details
+  // browser fixture, never installed on Webflow.
+  'v3/browser-tests/booking-details-fixture.js',
   // Read-only Slater.app exports kept as the readable reference for
   // v2/contract.js. Generated artifacts, never edited and never loaded.
   'slater/4885.readable.js',
