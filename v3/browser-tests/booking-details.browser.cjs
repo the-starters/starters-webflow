@@ -87,9 +87,18 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await fs.writeFile(path.join(evidence, label + '.png'), Buffer.from(shot.data, 'base64'))
       observations.push(label)
     }
-    const openDetails = async type => {
+    const openDetails = async (type, captureCalendar = false) => {
       await click('#' + type)
       await waitFor(`!!document.querySelector('[data-paid-calendar-slot]')`)
+      if (captureCalendar) {
+        await screenshot(type + '-calendar')
+        assert.equal(await evaluate(`(() => {
+          const slot = document.querySelector('[data-paid-calendar-slot]');
+          const rect = slot.getBoundingClientRect();
+          const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          return slot === target || slot.contains(target);
+        })()`), true, type + ' calendar time button must be clickable at its visible center')
+      }
       await click('[data-paid-calendar-slot]')
       assert.match(await evaluate(`document.querySelector('${role('confirm')}').textContent`), /Continue/)
       const before = await evaluate('fixture.bookings.length')
@@ -101,7 +110,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     for (const type of ['free', 'paid']) {
       await navigate()
       assert.deepEqual(await evaluate('fixture.installs'), { free: true, paid: true })
-      await openDetails(type)
+      await openDetails(type, true)
       await screenshot(type + '-desktop-initial')
       const guestLayout = await evaluate(`(() => {
         const input=document.querySelector('${guests}').getBoundingClientRect(), remove=document.querySelector('${role('guest-remove')}').getBoundingClientRect();

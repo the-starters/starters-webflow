@@ -1508,6 +1508,9 @@
       // ---- from the site's tablet breakpoint up ----
       '@media (min-width:768px){',
       role + '"shell"]{',
+      // The fallback date list can be shorter than the timezone control.
+      // Size the grid itself so its times row gets the mount's minimum space.
+      'min-height:' + CALENDAR_MIN_HEIGHT + ';',
       // More air between the month and the times than between the stacked
       // rows on the right. Rem, so it tracks the site's responsive root font
       // size rather than pinning a pixel width.
