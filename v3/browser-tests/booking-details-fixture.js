@@ -45,6 +45,20 @@ if (fixtureParams.has('legacy')) {
   if (fixtureParams.has('nested')) {
     document.querySelector('[nylas-container]').appendChild(document.querySelector('#legacy-host'))
   }
+  if (fixtureParams.has('protected')) {
+    fixturePopup.querySelector('header').appendChild(document.querySelector('#close'))
+    document.querySelector('#close').setAttribute('data-modal-close', '')
+    const placements = {
+      container: '[nylas-container]', step: '[schedule-step="default"]',
+      body: '.modal_content-layout', header: 'header', close: '#close',
+    }
+    const target = fixturePopup.querySelector(placements[fixtureParams.get('protected')])
+    target.setAttribute(['step', 'body', 'header'].includes(fixtureParams.get('protected'))
+      ? 'data-call-guest-fields' : 'data-call-guest-row', '')
+    const parent = target.parentNode
+    fixture.protectedIntact = () => target.isConnected && target.parentNode === parent
+    document.querySelector('#legacy-host [data-call-guest-fields]').style.setProperty('display', 'block', 'important')
+  }
   if (fixtureParams.has('preserve')) {
     const host = document.querySelector('#legacy-host')
     host.querySelectorAll('input').forEach((field, index) => { field.value = `guest${index}@example.invalid` })

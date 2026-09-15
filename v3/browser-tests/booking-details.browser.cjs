@@ -302,6 +302,51 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         }
       }
     }
+    for (const entry of ['hire', 'messages']) {
+      for (const placement of ['container', 'step', 'body', 'header', 'close']) {
+        await navigate(`legacy=1&partial=1&preserve=1&entry=${entry}&protected=${placement}`)
+        assert.deepEqual(await evaluate('[fixturePopup.open, fixtureChooser.open]'), [false, false])
+        if (entry === 'hire') await waitFor(`document.querySelector('#paid').getAttribute('data-paid-call-v3') === 'ready'`)
+        const assertErrorVisible = async () => {
+          await waitFor(`fixturePopup.open && !!document.querySelector('[data-paid-calendar-status="error"]')`)
+          assert.deepEqual(await evaluate(`(() => {
+            const banner = document.querySelector('[data-paid-calendar-status="error"]')
+            const close = document.querySelector('#close')
+            const back = document.querySelector('[data-booking-back] button')
+            const visible = node => {
+              const rect = node.getBoundingClientRect()
+              if (!rect.width || !rect.height || rect.top < 0 || rect.bottom > innerHeight) return false
+              for (let ancestor = node; ancestor; ancestor = ancestor.parentElement) {
+                const style = getComputedStyle(ancestor)
+                if (style.display === 'none' || style.visibility === 'hidden') return false
+              }
+              return true
+            }
+            return { visible: [banner, close, back].every(visible),
+              background: getComputedStyle(banner).backgroundColor, color: getComputedStyle(banner).color,
+              intact: fixture.authoredIntact() && fixture.protectedIntact() }
+          })()`), { visible: true, background: 'rgb(221, 85, 85)', color: 'rgb(255, 255, 255)', intact: true })
+          assert.equal(await evaluate(`document.querySelectorAll('${confirm}, [data-paid-calendar-slot]').length`), 0)
+          assert.equal(await evaluate(`document.querySelector('#legacy-host form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))`), false)
+        }
+        for (const type of ['free', 'paid']) {
+          await click('#book-entry')
+          await waitFor('fixtureChooser.open')
+          await click('#' + type)
+          await assertErrorVisible()
+          await click(role('back') + ' button')
+          await waitFor('fixtureChooser.open && !fixturePopup.open')
+          await click('#' + type)
+          await assertErrorVisible()
+          await click('#close')
+          assert.equal(await evaluate('fixturePopup.open'), false)
+          assert.deepEqual(await evaluate(`(() => { const style = document.querySelector('#legacy-host [data-call-guest-fields]').style; return [style.display, style.getPropertyPriority('display')] })()`), ['block', 'important'])
+        }
+        assert.equal(await evaluate('fixture.bookings.length'), 0)
+        assert.equal(await evaluate('fixture.requests.some(request => /payment/.test(request.path))'), false)
+        observations.push(`${entry}-${placement}-keeps-error-and-navigation-visible`)
+      }
+    }
     await navigate()
     await evaluate('fixture.mountReschedule()')
     assert.equal(await evaluate(`document.querySelector('#reschedule').querySelectorAll('input,textarea').length`), 0)

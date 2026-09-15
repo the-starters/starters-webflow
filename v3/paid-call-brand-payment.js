@@ -2852,14 +2852,29 @@
       surface = { mount: null, hiddenGuests: new Map() }
       bookingErrorSurfaces.set(container, surface)
     }
+    function protectedPaths() {
+      const protectedNodes = [container, popup].concat(Array.from(popup.querySelectorAll(
+        BOOKING_CLOSE_SELECTOR + ', [data-booking-back]',
+      )))
+      return function (element) {
+        return protectedNodes.some(function (node) {
+          return element === node || element.contains(node)
+        })
+      }
+    }
     function reset() {
       if (surface.mount) surface.mount.remove()
       surface.mount = null
       container.removeAttribute('data-paid-calendar-state')
+      const isProtected = protectedPaths()
       popup.querySelectorAll('[schedule-step]').forEach(function (step) {
-        step.style.display = step.getAttribute('schedule-step') === 'default' ? 'flex' : 'none'
+        if (step.getAttribute('schedule-step') === 'default') step.style.display = 'flex'
+        else if (!isProtected(step)) step.style.display = 'none'
       })
-      surface.hiddenGuests.forEach(function (display, element) { element.style.display = display })
+      surface.hiddenGuests.forEach(function (display, element) {
+        if (display.value) element.style.setProperty('display', display.value, display.priority)
+        else element.style.removeProperty('display')
+      })
       surface.hiddenGuests.clear()
     }
     if (!bookingSurfaceLifecycle.register(popup, container, reset, type)) return false
@@ -2877,14 +2892,19 @@
       cta.onclick = function (event) {
         event.preventDefault()
         const generation = bookingSurfaceLifecycle.reset(popup, type)
-        const guestElements = new Set(popup.querySelectorAll(AUTHORED_GUEST_SELECTORS.join(', ')))
+        const isProtected = protectedPaths()
+        const guestElements = new Set(Array.from(popup.querySelectorAll(AUTHORED_GUEST_SELECTORS.join(', ')))
+          .filter(function (element) { return !isProtected(element) }))
         guestElements.forEach(function (element) {
           let parent = element.parentElement
           while (parent && parent !== popup) {
             if (guestElements.has(parent)) return
             parent = parent.parentElement
           }
-          surface.hiddenGuests.set(element, element.style.display)
+          surface.hiddenGuests.set(element, {
+            value: element.style.getPropertyValue('display'),
+            priority: element.style.getPropertyPriority('display'),
+          })
           element.style.display = 'none'
         })
         const mount = global.document.createElement('div')
