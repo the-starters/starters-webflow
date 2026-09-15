@@ -2936,7 +2936,7 @@ test('Paid installation stays bookable without optional guest markup', async () 
   }
 })
 
-test('Paid installation fails closed when optional guest markup is incomplete', () => {
+test('Paid installation retains error entry when optional guest markup is incomplete', () => {
   const previous = global.document
   const price = { textContent: '$50' }
   const item = {
@@ -2977,16 +2977,16 @@ test('Paid installation fails closed when optional guest markup is incomplete', 
         currency: 'usd',
         price_cents: 500,
       },
-    }), false)
-    assert.equal(price.textContent, '$50')
-    assert.equal(item.style.display, 'none')
-    assert.equal(cta.getAttribute('data-paid-call-v3'), null)
+    }), true)
+    assert.equal(price.textContent, api.canonicalPaidPrice({ is_paid: true, duration: 60, currency: 'usd', price_cents: 500 }))
+    assert.equal(item.style.display, 'block')
+    assert.equal(cta.getAttribute('data-paid-call-v3'), 'ready')
   } finally {
     global.document = previous
   }
 })
 
-test('Paid installation fails closed for every stray guest hook outside the wrapper', () => {
+test('Paid installation retains error entry for every stray guest hook outside the wrapper', () => {
   const previous = global.document
   const guestSelectors = [
     '[data-call-guest-fields]',
@@ -3036,10 +3036,10 @@ test('Paid installation fails closed for every stray guest hook outside the wrap
           currency: 'usd',
           price_cents: 500,
         },
-      }), false, guestSelector)
-      assert.equal(price.textContent, '$50', guestSelector)
-      assert.equal(item.style.display, 'none', guestSelector)
-      assert.equal(cta.getAttribute('data-paid-call-v3'), null, guestSelector)
+      }), true, guestSelector)
+      assert.equal(price.textContent, api.canonicalPaidPrice({ is_paid: true, duration: 60, currency: 'usd', price_cents: 500 }), guestSelector)
+      assert.equal(item.style.display, 'block', guestSelector)
+      assert.equal(cta.getAttribute('data-paid-call-v3'), 'ready', guestSelector)
     })
   } finally {
     global.document = previous

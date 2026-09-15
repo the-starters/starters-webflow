@@ -5,12 +5,20 @@ const fixtureParams = new URLSearchParams(location.search)
 const fixturePopup = document.querySelector('[popup-booking]')
 const fixtureConfig = paid => ({ config_id: paid ? 'fixture-paid' : 'fixture-free',
   grant_id: 'fixture-grant', duration: paid ? 60 : 30, price_cents: paid ? 25000 : 0,
-  currency: 'USD', is_paid: paid, active: true, payment_environment: 'test' })
+  currency: 'USD', is_paid: paid, active: true, data_environment: 'production',
+  payment_environment: fixtureParams.has('entry') ? 'live' : 'test' })
+const fixtureConfigs = () => [fixtureConfig(false), fixtureConfig(true)]
+  .filter(config => !fixtureParams.has('only') || (config.is_paid ? 'paid' : 'free') === fixtureParams.get('only'))
+const fixtureStarter = { id: 383, nylas_grant_id: 'fixture-grant', nylas_grant_email: 'starter@example.invalid' }
 window.xanoAuthFetch = async (url, options) => {
   const parsed = new URL(url)
   fixture.requests.push({ path: parsed.pathname, method: options.method })
   let body
-  if (parsed.pathname.endsWith(fixtureApi.AVAILABILITY_PATH)) {
+  if (parsed.pathname.endsWith(window.StartersFreeCallBooking.STARTER_PATH)) {
+    body = fixtureStarter
+  } else if (parsed.pathname.endsWith(window.StartersFreeCallBooking.CONFIGS_PATH)) {
+    body = fixtureConfigs()
+  } else if (parsed.pathname.endsWith(fixtureApi.AVAILABILITY_PATH)) {
     const start = Number(parsed.searchParams.get('start_time')) + 86400
     const duration = parsed.searchParams.get('configuration_id') === 'fixture-paid' ? 3600 : 1800
     body = { time_slots: [0, 7200, 86400].map(offset => ({ start_time: start + offset, end_time: start + offset + duration })) }
@@ -25,21 +33,80 @@ window.xanoAuthFetch = async (url, options) => {
   return { ok: true, status: 200, json: async () => body }
 }
 if (fixtureParams.has('legacy')) {
-  document.querySelector('#legacy-host').innerHTML = '<div data-call-guest-fields><div data-call-guest-list>' +
+  document.querySelector('#legacy-host').innerHTML = '<form data-call-guest-fields><div data-call-guest-list>' +
     Array.from({ length: fixtureParams.has('partial') ? 4 : 5 }, (_, i) => '<div data-call-guest-row><input type="email" aria-label="Authored guest ' + (i + 1) + '" data-call-guest-email><button type="button" data-call-guest-remove>Remove</button></div>').join('') +
-    '</div><button type="button" data-call-guest-add>Add guest</button><p data-call-guest-error role="alert"></p></div>'
+    '</div><button type="button" data-call-guest-add>Add guest</button><p data-call-guest-error role="alert"></p></form>'
 }
 const fixtureSettings = paid => ({ config: fixtureConfig(paid), grantId: 'fixture-grant',
   starterSlug: 'fixture-starter', brandName: 'Brand Fixture', brandEmail: 'brand@example.invalid',
   starterEmail: 'starter@example.invalid', bookingApi: fixtureApi })
-fixture.installs.free = window.StartersFreeCallBooking.installFreeBookingController(fixtureSettings(false))
-fixture.installs.paid = fixtureApi.installPaidBookingController(fixtureSettings(true))
+const fixtureChooser = document.querySelector('[popup-booking-main]')
+window.lumos = { modal: { list: {} } }
+for (const [name, el] of [['popup-booking-main', fixtureChooser], ['popup-booking', fixturePopup]]) {
+  lumos.modal.list[name] = {
+    el,
+    open() { el.showModal(); window.dispatchEvent(new CustomEvent('modal-open', { detail: { modal: el } })) },
+    close() { el.close(); window.dispatchEvent(new CustomEvent('modal-close', { detail: { modal: el } })) },
+  }
+}
+document.addEventListener('click', event => {
+  const row = event.target.closest('[booking-popup-open]')
+  if (row && !row.closest('[call-type-item]').hasAttribute('data-booking-unavailable')) {
+    lumos.modal.list['popup-booking-main'].close()
+    lumos.modal.list['popup-booking'].open()
+  } else {
+    const trigger = event.target.closest('[data-modal-trigger]')
+    if (trigger) lumos.modal.list[trigger.getAttribute('data-modal-trigger')]?.open()
+  }
+})
 document.querySelector('#close').addEventListener('click', () => {
-  window.dispatchEvent(new CustomEvent('modal-close', { detail: { modal: fixturePopup } }))
+  lumos.modal.list['popup-booking'].close()
 })
 fixture.mountReschedule = async () => {
   fixturePopup.style.display = 'none'
   return fixtureApi.mountPaidCalendar({ container: document.querySelector('#reschedule'), config: fixtureConfig(false),
     confirmText: 'Propose new time', onConfirm: async slot => { fixture.reschedule = slot } })
 }
-fixture.ready = true
+fixture.initialize = async () => {
+  const entry = fixtureParams.get('entry')
+  if (!entry) {
+    fixture.installs.free = window.StartersFreeCallBooking.installFreeBookingController(fixtureSettings(false))
+    fixture.installs.paid = fixtureApi.installPaidBookingController(fixtureSettings(true))
+    fixture.ready = true
+    return
+  }
+  fixturePopup.querySelector('header').appendChild(document.querySelector('#close'))
+  fixtureChooser.appendChild(document.querySelector('nav'))
+  window.MEMBER = { id: 'mem_brand', auth: { email: 'brand@example.invalid' },
+    customFields: { 'free-user': 'Brand', 'last-name': 'Fixture' },
+    planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true }] }
+  window.__tsSchedulingAuthFetch = window.xanoAuthFetch
+  window.fetch = async () => ({ ok: true, json: async () => ({ starter_id: 383, slug: 'fixture-starter',
+    items: fixtureConfigs().map(config => ({ type: config.is_paid ? 'paid' : 'free', public_available: true })) }) })
+  const load = name => new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = '../' + name + '.js'
+    script.onload = resolve
+    script.onerror = reject
+    document.head.appendChild(script)
+  })
+  if (entry === 'hire') {
+    window.qs = (selector, root = document) => root.querySelector(selector)
+    window.qsa = (selector, root = document) => Array.from(root.querySelectorAll(selector))
+    window.memberReady = Promise.resolve(MEMBER)
+    window.waitForMember = callback => memberReady.then(callback)
+    window.starter_memberstack_id = 'mem_starter'
+    window.WfAlgolia = { getObject: async () => ({}) }
+    await load('hire-profile')
+  } else {
+    await load('messages-calls')
+    window.StartersMessagesCalls.install({
+      member: MEMBER,
+      inbox: { onConversationSelected(select) { fixture.selectConversation = select } },
+      identity: { prefetch: async () => 'fixture-starter' },
+    })
+    await fixture.selectConversation({ conversation: { id: 'fixture-conversation' }, others: [{ id: 'mem_starter' }] })
+  }
+  fixture.ready = true
+}
+fixture.initialize()

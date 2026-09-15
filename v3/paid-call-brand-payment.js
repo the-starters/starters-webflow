@@ -2082,10 +2082,11 @@
     let timezone = String(
       settings.initialTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     ).trim() || 'UTC'
-    const slots = await getPaidAvailability(config)
+    const bookingError = String(settings.bookingError || '').trim()
+    const slots = bookingError ? [] : await getPaidAvailability(config)
     if (!isCurrent()) return { slots: [], stale: true }
     container.textContent = ''
-    container.setAttribute('data-paid-calendar-state', slots.length ? 'ready' : 'empty')
+    container.setAttribute('data-paid-calendar-state', bookingError ? 'error' : slots.length ? 'ready' : 'empty')
 
     /* Whether this mount is the profile's booking dialog. Everything the
        booking surface adds — the injected stylesheet, the component buttons,
@@ -2254,7 +2255,8 @@
         container.appendChild(summary)
       }
       container.appendChild(status)
-      setStatus('No available times were found in the next 14 days.', 'empty')
+      if (bookingError) status.setAttribute('role', 'alert')
+      setStatus(bookingError || 'No available times were found in the next 14 days.', bookingError ? 'error' : 'empty')
       // An empty calendar is exactly when a visitor most wants the other kind
       // of call, so the way back out has to survive the early return.
       if (footer) container.appendChild(footer)
@@ -2786,6 +2788,46 @@
     }
   }
 
+  function installBookingErrorController(options) {
+    const { popup, container, ctas, config } = options
+    const type = config.is_paid ? 'paid' : 'free'
+    function reset() {
+      container.textContent = ''
+      container.removeAttribute('data-paid-calendar-state')
+      popup.querySelectorAll('[schedule-step]').forEach(function (step) {
+        step.style.display = step.getAttribute('schedule-step') === 'default' ? 'flex' : 'none'
+      })
+      popup.querySelectorAll('[data-call-guest-fields], [data-call-guest-list], [data-call-guest-error], [data-call-guest-add], [data-call-guest-row], [data-call-guest-email], [data-call-guest-remove]').forEach(function (element) {
+        if (element.style) element.style.display = 'none'
+      })
+    }
+    if (!bookingSurfaceLifecycle.register(popup, container, reset, type)) return false
+    installGuestFormSubmitGuard(popup)
+    bookingSurfaceLifecycle.reset(popup)
+    ctas.forEach(function (cta) {
+      cta.setAttribute('data-config', config.config_id)
+      cta.setAttribute('data-' + type + '-call-v3', 'ready')
+      const item = cta.closest('[call-type-item]')
+      if (item) {
+        item.style.display = 'block'
+        const price = item.querySelector('[call-type-price]')
+        if (price && type === 'paid') price.textContent = canonicalPaidPrice(config)
+      }
+      cta.onclick = function (event) {
+        event.preventDefault()
+        const generation = bookingSurfaceLifecycle.reset(popup, type)
+        return mountPaidCalendar({
+          container,
+          config,
+          bookingError: 'We could not load the booking form. Please contact support.',
+          onConfirm: function () {},
+          isCurrent: function () { return bookingSurfaceOwnership.owns(container, generation) },
+        })
+      }
+    })
+    return true
+  }
+
   function installPaidBookingController(options) {
     const settings = options || {}
     const config = settings.config
@@ -2873,9 +2915,7 @@
       !(typeof container.contains === 'function' && container.contains(guestWrapper)),
     )
     if (hasGuestMarkup && !hasCompleteGuestMarkup) {
-      container.setAttribute('data-paid-calendar-state', 'error')
-      container.textContent = 'The booking form is incomplete. Please contact support.'
-      return false
+      return installBookingErrorController({ popup, container, ctas, config: availabilityConfig })
     }
     const guestUiEnabled = hasCompleteGuestMarkup
     const bindings = ctas.map(function (cta) {
@@ -3557,6 +3597,7 @@
     getPaidAvailability,
     timezoneLabel,
     installGuestFormSubmitGuard,
+    installBookingErrorController,
     installPaidBookingController,
     mountPaidCalendar,
     minimumBookingNoticeMinutes,

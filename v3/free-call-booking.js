@@ -549,9 +549,8 @@
     if (!popup || !container || !ctas.length) return false
     const guestUi = installGuestUi(bookingApi, popup, container)
     if (!guestUi) {
-      container.setAttribute('data-paid-calendar-state', 'error')
-      container.textContent = 'The booking form is incomplete. Please contact support.'
-      return false
+      return typeof bookingApi.installBookingErrorController === 'function' &&
+        bookingApi.installBookingErrorController({ popup, container, ctas, config })
     }
 
     const state = {

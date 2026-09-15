@@ -177,9 +177,46 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(await evaluate('fixture.bookings[0].guest_emails'), undefined)
     assert.equal(await evaluate('fixture.bookings[0].context'), undefined)
     observations.push('keyboard-enter-empty-optional-fields-passed')
-    await navigate('legacy=1&partial=1')
-    assert.deepEqual(await evaluate('fixture.installs'), { free: false, paid: false })
-    observations.push('partial-authored-guests-fail-closed')
+    for (const entry of ['hire', 'messages']) {
+      for (const type of ['free', 'paid']) {
+        for (const direct of [false, true]) {
+          await navigate(`legacy=1&partial=1&entry=${entry}${direct && entry === 'messages' ? '&only=' + type : ''}`, direct ? 390 : 1100)
+          assert.deepEqual(await evaluate('[fixturePopup.open, fixtureChooser.open]'), [false, false], 'entry starts with both dialogs closed')
+          const enter = async () => {
+            if (entry === 'hire') await waitFor(`document.querySelector('#${type}').getAttribute('data-${type}-call-v3') === 'ready'`)
+            if (direct && entry === 'hire') {
+              await click('#direct-' + type)
+            } else {
+              await click('#book-entry')
+              if (!direct) {
+                await waitFor('fixtureChooser.open')
+                assert.equal(await evaluate(`document.querySelector('#${type}').getClientRects().length > 0`), true, 'rejected form keeps its call option reachable')
+                await click('#' + type)
+              }
+            }
+            await waitFor(`fixturePopup.open && !!document.querySelector('[data-paid-calendar-status="error"]')`)
+          }
+          await enter()
+          assert.deepEqual(await evaluate(`(() => {
+            const banner = document.querySelector('[data-paid-calendar-status="error"]')
+            const style = getComputedStyle(banner), rect = banner.getBoundingClientRect()
+            return { text: banner.textContent, role: banner.getAttribute('role'), background: style.backgroundColor,
+              color: style.color, visible: rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight && style.visibility === 'visible' }
+          })()`), { text: 'We could not load the booking form. Please contact support.', role: 'alert',
+            background: 'rgb(221, 85, 85)', color: 'rgb(255, 255, 255)', visible: true })
+          assert.equal(await evaluate(`document.querySelectorAll('${confirm}, [data-paid-calendar-slot]').length`), 0, 'invalid form cannot select or request a call')
+          assert.equal(await evaluate(`document.querySelector('[data-call-guest-fields]').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))`), false, 'native form submission is blocked')
+          assert.equal(await evaluate('fixture.bookings.length'), 0)
+          assert.equal(await evaluate('fixture.requests.some(request => /payment/.test(request.path))'), false, 'invalid form never enters payment setup')
+          await screenshot(`${entry}-${type}-${direct ? 'direct' : 'chooser'}-legacy-error`)
+          await click('#close')
+          assert.equal(await evaluate('fixturePopup.open'), false)
+          await enter()
+          assert.equal(await evaluate('fixture.bookings.length'), 0, 'reopening remains blocked')
+          observations.push(`${entry}-${type}-${direct ? 'direct' : 'chooser'}-legacy-error-passed`)
+        }
+      }
+    }
     await navigate()
     await evaluate('fixture.mountReschedule()')
     assert.equal(await evaluate(`document.querySelector('#reschedule').querySelectorAll('input,textarea').length`), 0)
