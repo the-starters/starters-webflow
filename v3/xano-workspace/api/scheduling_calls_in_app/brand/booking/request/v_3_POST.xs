@@ -204,10 +204,6 @@ query "brand/booking/request/v3" verb=POST {
       error = "Bookable service does not match the authenticated environment"
     }
   
-    precondition (($input.end|subtract:$input.start) == (($configuration.duration|multiply:60)|multiply:1000)) {
-      error_type = "inputerror"
-      error = "Selected slot does not match the service duration"
-    }
   
     var $brand_customer {
       value = $payment_environment == "test" ? $brand.stripe_customer_id_test : $brand.stripe_customer_id_live
@@ -270,7 +266,7 @@ query "brand/booking/request/v3" verb=POST {
   
     // Preserve existing clients' fingerprints. New choices bind their own command identity.
     conditional {
-      if ($configuration.is_paid && $reviewed_payment_method != "") {
+      if ($reviewed_payment_method != "") {
         var.update $fingerprint {
           value = $fingerprint|concat:"|payment_method=":""|concat:$reviewed_payment_method:""
         }
@@ -348,24 +344,30 @@ query "brand/booking/request/v3" verb=POST {
           value = $command_environment == ""
         }
       
-        precondition (($command_environment == $expected_data_environment || $legacy_null_environment) && $existing_command.command_type == "booking_request" && $existing_command.actor_memberstack_id == $brand_member_id && $existing_command.configuration_id == $configuration.config_id && $existing_command.request_fingerprint == $fingerprint && (($existing_command|get:"booking_id":"") == "" || $existing_command.booking_id == $recovery_booking.booking_id) && (($existing_command|get:"provider_request_id":"") == "" || $existing_command.provider_request_id == $recovery_booking.nylas_request_id) && ($recovery_booking.data_environment|first_notempty:"") == $expected_data_environment && $recovery_booking.unique_id == $input.idempotency_key && $recovery_booking.config_id == $configuration.config_id && $recovery_booking.grant_id == $configuration.grant_id && ($recovery_booking.starter_data|get:"memberstack_id":"") == $starter.memberstack_id && ($recovery_booking.brand_data|get:"memberstack_id":"") == $brand.memberstack_id && ($recovery_booking.another_participants|first_notempty:[]) == $guest_participants && $recovery_booking.start == $input.start && $recovery_booking.end == $input.end && $recovery_booking.call_context == ($input.context|first_notempty:"") && $recovery_booking.amount_cents == $configuration.price_cents && $recovery_booking.duration == $configuration.duration && $recovery_booking.paid_meeting == $configuration.is_paid && $recovery_booking.payment_environment == $payment_environment && $recovery_booking.currency == $configuration.currency && $recovery_booking.payment_revision == 0 && $recovery_booking.status == "pending" && $recovery_booking.from_pending) {
+        precondition (($command_environment == $expected_data_environment || $legacy_null_environment) && $existing_command.command_type == "booking_request" && $existing_command.actor_memberstack_id == $brand_member_id && $existing_command.configuration_id == $configuration.config_id && $existing_command.request_fingerprint == $fingerprint && (($existing_command|get:"booking_id":"") == "" || $existing_command.booking_id == $recovery_booking.booking_id) && (($existing_command|get:"provider_request_id":"") == "" || $existing_command.provider_request_id == $recovery_booking.nylas_request_id) && ($recovery_booking.data_environment|first_notempty:"") == $expected_data_environment && $recovery_booking.unique_id == $input.idempotency_key && $recovery_booking.config_id == $configuration.config_id && ($recovery_booking.starter_data|get:"memberstack_id":"") == $starter.memberstack_id && ($recovery_booking.brand_data|get:"memberstack_id":"") == $brand.memberstack_id && ($recovery_booking.another_participants|first_notempty:[]) == $guest_participants && $recovery_booking.start == $input.start && $recovery_booking.end == $input.end && $recovery_booking.call_context == ($input.context|first_notempty:"") && ($input.end|subtract:$input.start) == (($recovery_booking.duration|multiply:60)|multiply:1000) && $recovery_booking.payment_environment == $payment_environment) {
           error_type = "accessdenied"
           error = "Booking reconciliation does not match the authenticated request"
         }
       
         conditional {
-          if ($configuration.is_paid) {
-            var $recovery_expected_payment_method {
-              value = $reviewed_payment_method != "" ? $reviewed_payment_method : $brand_payment_method
+          if ($recovery_booking.paid_meeting) {
+            var $recovery_claim {
+              value = $existing_command|get:"safe_result":null
             }
-            precondition ($recovery_booking.payment_status == "waiting_for_intent" && $recovery_booking.stripe_destination_account == $starter_connect_id && $recovery_booking.stripe_customer_id_snapshot == $brand_customer && $recovery_booking.stripe_payment_method_id_snapshot == $recovery_expected_payment_method) {
+            var $recovery_expected_payment_method {
+              value = $reviewed_payment_method != "" ? $reviewed_payment_method : ($recovery_claim|get:"claimed_payment_method_id":$recovery_booking.stripe_payment_method_id_snapshot)
+            }
+            var $recovery_expected_customer {
+              value = $recovery_claim|get:"claimed_customer_id":$recovery_booking.stripe_customer_id_snapshot
+            }
+            precondition ($recovery_booking.amount_cents > 0 && $recovery_booking.currency == "usd" && ($recovery_booking.stripe_destination_account|first_notempty:"") != "" && ($recovery_booking.stripe_customer_id_snapshot|first_notempty:"") != "" && $recovery_booking.stripe_customer_id_snapshot == $recovery_expected_customer && ($recovery_booking.stripe_payment_method_id_snapshot|first_notempty:"") != "" && $recovery_booking.stripe_payment_method_id_snapshot == $recovery_expected_payment_method) {
               error_type = "accessdenied"
               error = "Paid booking reconciliation snapshot does not match"
             }
           }
         
           else {
-            precondition (($recovery_booking.stripe_destination_account|first_notempty:"") == "" && ($recovery_booking.stripe_customer_id_snapshot|first_notempty:"") == "" && ($recovery_booking.stripe_payment_method_id_snapshot|first_notempty:"") == "") {
+            precondition ($reviewed_payment_method == "" && $recovery_booking.amount_cents == 0 && ($recovery_booking.stripe_destination_account|first_notempty:"") == "" && ($recovery_booking.stripe_customer_id_snapshot|first_notempty:"") == "" && ($recovery_booking.stripe_payment_method_id_snapshot|first_notempty:"") == "") {
               error_type = "accessdenied"
               error = "Free booking reconciliation snapshot does not match"
             }
@@ -427,6 +429,11 @@ query "brand/booking/request/v3" verb=POST {
         precondition ($input.start > now) {
           error_type = "inputerror"
           error = "Booking details are invalid"
+        }
+
+        precondition (($input.end|subtract:$input.start) == (($configuration.duration|multiply:60)|multiply:1000)) {
+          error_type = "inputerror"
+          error = "Selected slot does not match the service duration"
         }
 
         // A public Brand booking must not depend on the Starter opening their dashboard within the

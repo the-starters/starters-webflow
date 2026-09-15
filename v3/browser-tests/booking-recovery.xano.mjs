@@ -71,6 +71,40 @@ try {
   await control('booking-patch', { booking_id: booking.booking_id, patch: { data_environment: 'production' } })
   rejected(await request(), /reconciliation does not match/)
   await control('booking-patch', { booking_id: booking.booking_id, patch: { data_environment: 'test' } })
+  const patchBooking = patch => control('booking-patch', { booking_id: booking.booking_id, patch })
+  await patchCommand({ status: 'reconciliation_required', safe_result: {
+    claimed_payment_method_id: seed.card_a, claimed_customer_id: seed.customer
+  } })
+  await control('configuration-patch', { patch: { price_cents: 5000, price: 50, duration: 60, revision: 2 } })
+  await patchBooking({ status: 'confirmed', from_pending: false, payment_status: 'intent_created', payment_revision: 1 })
+  for (const [patch, restore, message] of [
+    [{ brand_data: { memberstack_id: 'mem_sb_foreign' } }, { brand_data: { memberstack_id: seed.brand_member } }, /reconciliation does not match/],
+    [{ stripe_payment_method_id_snapshot: seed.card_b }, { stripe_payment_method_id_snapshot: seed.card_a }, /snapshot does not match/],
+    [{ stripe_customer_id_snapshot: 'cus_foreign' }, { stripe_customer_id_snapshot: seed.customer }, /snapshot does not match/],
+    [{ start: input.start - 60000 }, { start: input.start }, /reconciliation does not match/]
+  ]) {
+    await patchBooking(patch)
+    rejected(await request(), message)
+    await patchBooking(restore)
+  }
+  const accepted = good(await request())
+  assert.equal(accepted.recovered, true)
+  assert.equal(accepted.booking.booking_id, booking.booking_id)
+  assert.equal(accepted.booking.status, 'confirmed')
+  assert.equal(accepted.booking.amount_cents, 2500)
+  assert.equal(accepted.booking.start, input.start)
+  assert.equal(accepted.booking.end, input.end)
+  assert.equal(accepted.booking.payment_method_id, seed.card_a)
+  evidence.cases.push('accepted booking reconciles at original price and duration after service changes')
+  evidence.cases.push('foreign actor, customer, card and slot snapshots are rejected')
+  const future = Date.now() + 86400000
+  const fresh = { idempotency_key: runId + '-fresh', start: future, end: future + 1800000 }
+  rejected(await request(fresh), /service duration/)
+  await control('configuration-patch', { patch: { price_cents: 50 } })
+  rejected(await request({ ...fresh, end: future + 3600000 }), /payment readiness/)
+  await control('configuration-patch', { patch: { price_cents: 5000, active: false } })
+  rejected(await request({ ...fresh, end: future + 3600000 }), /service was not found/)
+  evidence.cases.push('fresh requests retain current duration, price and active-service validation')
   const final = await control('inspect')
   assert.equal(final.commands.length, 1)
   assert.equal(final.bookings.length, 1)
