@@ -451,7 +451,11 @@ function validationFailure(code, rule, element = null) {
 	return { code, rule, element };
 }
 
-function validateReviewerTuple(rule, step) {
+function normalizeReviewerEmail(email) {
+	return String(email ?? '').trim();
+}
+
+function validateReviewerTuple(rule, step, snapshot) {
 	const failures = [];
 	for (const selector of [rule.selector, ...(rule.optionalSelectors || [])]) {
 		const field = qs(selector, step);
@@ -462,7 +466,7 @@ function validateReviewerTuple(rule, step) {
 			continue;
 		}
 
-		const rawValue = String(field.value ?? '').trim();
+		const rawValue = String((snapshot ? snapshot[field.name] : field.value) ?? '').trim();
 		if (!rawValue) continue;
 
 		let reviewer = null;
@@ -477,11 +481,16 @@ function validateReviewerTuple(rule, step) {
 		if (started && (!String(reviewer.fname ?? '').trim() || !String(reviewer.email ?? '').trim())) {
 			failures.push(validationFailure('REVIEWER_TUPLE_INCOMPLETE', { ...rule, selector }, field));
 		}
+
+		const email = normalizeReviewerEmail(reviewer?.email);
+		if (email && (email.length > 320 || !/^[a-z0-9!#$%&'*+\/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+\/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email))) {
+			failures.push(validationFailure('REVIEWER_EMAIL_INVALID', { ...rule, selector }, field));
+		}
 	}
 	return failures;
 }
 
-function validateOwnedStep(stepIndex, { report = false } = {}) {
+function validateOwnedStep(stepIndex, { report = false, reviewerSnapshot } = {}) {
 	const step = stepElement(stepIndex);
 	if (!step) {
 		return {
@@ -505,7 +514,7 @@ function validateOwnedStep(stepIndex, { report = false } = {}) {
 	const failures = [];
 	rules.filter((rule) => ruleApplies(rule)).forEach((rule) => {
 		if (rule.kind === 'reviewerTuple') {
-			failures.push(...validateReviewerTuple(rule, step));
+			failures.push(...validateReviewerTuple(rule, step, reviewerSnapshot));
 			return;
 		}
 
@@ -986,6 +995,17 @@ onDomReady(function () {
 			// same canonical shape as the Build Profile writer.
 			if (Object.prototype.hasOwnProperty.call(payload, 'Reviewers')) {
 				const formData = getFormDataObject();
+				const validation = validateOwnedStep(stepIndex, { report: true, reviewerSnapshot: formData });
+				if (!validation.valid) {
+					recordProfileDiagnostic(null, {
+						result: 'failed',
+						stage: 'validation',
+						error_code: validation.failures[0]?.code || 'VALIDATION_FAILED',
+						request_started: false,
+					});
+					setSubmitLoading(submitButton, false);
+					return false;
+				}
 				const normalizeReviewer = (reviewer) => {
 					if (!reviewer?.fname || !reviewer?.email) return null;
 
@@ -994,7 +1014,7 @@ onDomReady(function () {
 						'last-name': reviewer.lname || '',
 						position: reviewer.job || '',
 						company: reviewer.company || '',
-						email: reviewer.email || '',
+						email: normalizeReviewerEmail(reviewer.email),
 					};
 				};
 
@@ -1364,6 +1384,8 @@ function counterFields(wrapper = null) {
 			});
 
 			input.addEventListener('paste', (event) => {
+				// The shared validator may already have inserted the clipboard text.
+				if (event.defaultPrevented) return;
 				event.preventDefault();
 
 				const pastedText = event.clipboardData?.getData('text') || '';

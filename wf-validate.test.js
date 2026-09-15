@@ -211,6 +211,16 @@ class Element {
     this.selectionEnd = end
   }
 
+  dispatchEvent(event) {
+    event.target = this
+    let node = this
+    do {
+      for (const listener of node._listeners.get(event.type) || []) listener(event)
+      node = event.bubbles && !event.stopped ? node.parentElement : null
+    } while (node)
+    return !event.defaultPrevented
+  }
+
   addEventListener(type, listener) {
     const list = this._listeners.get(type) || []
     list.push(listener)
@@ -265,6 +275,9 @@ function mount(root, options = {}) {
   window.window = window
   const context = vm.createContext({
     Element,
+    Event: class {
+      constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) }
+    },
     console,
     document,
     setTimeout,
@@ -1335,4 +1348,115 @@ test('group: bounds are read live, so a controller can add or drop a minimum aft
   assert.equal(f.wrapper.classList.contains(INVALID), false)
   assert.equal(isEnabled(f.submit), true)
   assert.equal(f.meter.textContent, '1 / 15 selected')
+})
+
+
+test('limited paste notifies field and form consumers once with the final value', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '10' })
+  const app = mount(f.root)
+  const fieldValues = []
+  const formValues = []
+  f.brief.addEventListener('input', e => fieldValues.push(e.target.value))
+  f.form.addEventListener('input', e => formValues.push(e.target.value))
+  f.brief.value = ''
+  const event = app.fire(f.brief, 'paste', f.brief, {
+    clipboardData: { getData: () => 'Chief Marketing Officer' },
+  })
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(f.brief.value, 'Chief Mark')
+  assert.deepEqual(fieldValues, ['Chief Mark'])
+  assert.deepEqual(formValues, ['Chief Mark'])
+  assert.equal(f.brief.selectionStart, 10)
+  assert.equal(isEnabled(f.submit), true)
+  f.brief.setSelectionRange(0, 10)
+  app.fire(f.brief, 'paste', f.brief, { clipboardData: { getData: () => 'QA Lead' } })
+  assert.deepEqual(fieldValues, ['Chief Mark', 'QA Lead'])
+  assert.deepEqual(formValues, ['Chief Mark', 'QA Lead'])
+  assert.equal(f.brief.selectionStart, 7)
+})
+
+test('paste with no available room does not emit an input mutation', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '3' })
+  const app = mount(f.root)
+  f.brief.value = 'ABC'
+  f.brief.setSelectionRange(3, 3)
+  let mutations = 0
+  f.brief.addEventListener('input', () => mutations++)
+  app.fire(f.brief, 'paste', f.brief, { clipboardData: { getData: () => 'D' } })
+  assert.equal(f.brief.value, 'ABC')
+  assert.equal(mutations, 0)
+})
+
+// Both production controllers bind paste listeners to counted profile fields.
+for (const surface of ['build', 'edit']) {
+for (const order of ['counter-first', 'validator-first']) {
+  for (const mode of ['characters', 'words', 'profile-words']) {
+    const words = mode !== 'characters'
+    test(`profile paste has one owner: ${surface}, ${order}, ${mode}`, () => {
+      const maximum = words ? 3 : 20
+      const f = countLimitFixture(words ? { 'count-by-words': '' } : { maxlength: String(maximum) }, {
+        'wf-validate-count-max': String(maximum),
+        ...(words ? { 'wf-validate-count-mode': 'words' } : {}),
+      })
+      if (mode === 'profile-words') {
+        f.count.removeAttribute('wf-validate-element')
+        f.brief.setAttribute('maxlength', '5000')
+        f.brief.setAttribute('data-max-words', String(maximum))
+      }
+      f.brief.parentElement.classList.add('form_input-wr')
+      f.brief.maxLength = maximum
+      f.brief.dataset = { maxWords: String(maximum) }
+      const counterSpan = { textContent: '' }
+      const bindCounter = () => vm.runInNewContext(
+        surface === 'build'
+          ? fs.readFileSync(path.join(__dirname, 'v3/build-profile/field-counters.js'), 'utf8')
+          : fs.readFileSync(path.join(__dirname, 'starter-edit-profile.js'), 'utf8').split('// Inline block 2')[1].split('// Inline block 3')[0],
+        {
+          onDomReady: callback => callback(),
+          qsa: () => [f.brief],
+          qs: selector => selector === '.count-input' ? counterSpan : null,
+          Event: class { constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) } },
+        },
+      )
+      let app
+      if (order === 'counter-first') { bindCounter(); app = mount(f.root) }
+      else { app = mount(f.root); bindCounter() }
+      const mutations = []
+      f.form.addEventListener('input', e => mutations.push(e.target.value))
+      const paste = text => app.fire(f.brief, 'paste', f.brief, { clipboardData: { getData: () => text } })
+      f.brief.setSelectionRange(0, 0)
+      paste('Paste once')
+      assert.equal(f.brief.value, 'Paste once')
+      assert.deepEqual(mutations, ['Paste once'])
+      assert.equal(counterSpan.textContent, words ? '02' : '10')
+      f.brief.setSelectionRange(0, f.brief.value.length)
+      paste('New content')
+      assert.equal(f.brief.value, 'New content')
+      assert.equal(mutations.length, 2)
+      f.brief.setSelectionRange(0, f.brief.value.length)
+      paste(words ? 'one two three four five' : '1234567890123456789012345')
+      const capped = words ? 'one two three' : '12345678901234567890'
+      assert.equal(f.brief.value, capped)
+      assert.equal(mutations.length, 3)
+      assert.equal(f.brief.selectionStart, capped.length)
+      paste('extra')
+      assert.equal(f.brief.value, capped)
+      assert.equal(mutations.length, 3, 'full field emits no mutation')
+    })
+  }
+}
+
+}
+
+test('profile word contract validates restored values and defaults to 160', () => {
+  const f = countLimitFixture({ 'count-by-words': '', maxlength: '5000' }, {})
+  f.count.removeAttribute('wf-validate-element')
+  const app = mount(f.root)
+  f.brief.value = Array(161).fill('word').join(' ')
+  app.fire(f.form, 'input', f.brief)
+  assert.equal(isDisabled(f.submit), true)
+  assert.equal(app.fireDocument('submit', f.form).defaultPrevented, true)
+  f.brief.value = Array(160).fill('word').join(' ')
+  app.fire(f.form, 'input', f.brief)
+  assert.equal(isEnabled(f.submit), true)
 })

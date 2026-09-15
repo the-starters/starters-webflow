@@ -120,6 +120,27 @@ whatever a duplicate name contributed. Never widen those two lookups back to a
 `[name=…]` or document-wide query: a hidden duplicate would win by document order
 and submit a stale contact value the member cannot see.
 
+### Request Reviews validation
+
+Step 7 validates all three optional reviewer slots in `starter-edit-profile.js`.
+Blank slots remain valid; a started tuple requires both first name and email.
+Non-empty emails are trimmed before validation and serialization, preserving
+case and plus tags without changing other reviewer fields. The accepted syntax
+is an unquoted ASCII dot-atom local part and a dotted DNS domain whose labels
+contain 1–63 ASCII letters, digits, or hyphens, with no edge hyphens. Commas,
+angle brackets, internal whitespace, missing or repeated `@`, and doubled or
+edge dots are rejected. The normalized address is limited to 320 characters.
+Email-check failures use
+`REVIEWER_EMAIL_INVALID`.
+
+The submit handler checks before asynchronous preparation, then validates the
+exact reviewer snapshot used to build `Reviewers` before sending the profile
+request. An invalid edit during preparation therefore also blocks the PATCH.
+The submit-handler regressions in
+[`../../starter-edit-profile.test.js`](../../starter-edit-profile.test.js) cover
+each slot, plus addressing, trimmed serialized emails, and edits during
+deferred preparation.
+
 ### Canonical required-mirror hydration
 
 `canonical-profile-loader.js` hydrates the authored required validation mirrors
@@ -179,8 +200,8 @@ un-requires the legacy Free Call toggle and description plus the Paid Call toggl
 description, and rate. It omits all five fields from the profile payload and adds a
 link to `/starter-dashboard#calendar`. The dashboard Free and Paid Call settings
 controllers and their canonical Xano endpoints are the only member-facing writers
-for those services; see the [Free Call settings contract](../FREE-CALL-SETTINGS-WIRING.md)
-and [Paid Call settings contract](../PAID-CALL-SETTINGS-WIRING.md). The root
+for those services; see the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
+and [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md). The root
 [Current Scripts](../../README.md#current-scripts) entry owns the profile endpoint's
 canonical-save and asynchronous-projection response contract.
 

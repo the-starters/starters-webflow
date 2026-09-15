@@ -11,7 +11,7 @@
  *   - projects safe pending/success/error state into authored elements;
  *   - owns the three prefill behaviors this form's Code Embeds used to provide:
  *     Memberstack hiring-manager name, CMS [data-sp-fill] attribute presets, and
- *     [data-set-current-date] initialization (see PROJECT-FORM-WIRING.md).
+ *     [data-set-current-date] initialization (see docs/wiring/PROJECT-FORM-WIRING.md).
  *
  * Xano remains authoritative for identity, ownership, project creation,
  * PandaDoc, lifecycle state, and duplicate prevention. This script never

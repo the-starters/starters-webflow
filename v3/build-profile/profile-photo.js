@@ -54,6 +54,8 @@
       const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
       const BUILD_PROFILE_PATHS = ['/build-profile/full-profile', '/build-profile/consult'];
       const isBuildProfile = BUILD_PROFILE_PATHS.includes(String(window.location?.pathname || ''));
+      const SYNC_RETRY_BUDGET_MS = 180000;
+      const MAX_SYNC_RETRIES = 12;
       let currentUploadIntent = null;
       let buildProfileSaved = false;
 
@@ -104,6 +106,7 @@
 
       function resetPhoto() {
         currentUploadIntent = null;
+        showError('', false);
         input.value = '';
         previewImg.src = '';
         label.classList.remove('dropping');
@@ -219,12 +222,11 @@
         uploadIntent.state = 'uploading';
         uploadIntent.promise = (async () => {
           setLoader(true, preview);
-          const wf_photo_data = await uploadImage(
-            uploadIntent.file,
-            uploadIntent.sourceMutationId,
-          );
+          const wf_photo_data = await uploadImage(uploadIntent);
           if (currentUploadIntent !== uploadIntent) return;
           uploadIntent.state = 'applying';
+          showError('', false);
+          wrap.style.display = 'none';
           restorePhotoCaptureAttribute();
           photoUrlInput.value = wf_photo_data['starter_image'];
           photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -265,9 +267,15 @@
       async function commitPreparedUpload() {
         if (!isBuildProfile || !currentUploadIntent) return null;
         if (!buildProfileSaved) throw new Error('Save the profile before uploading its photo');
+        const uploadIntent = currentUploadIntent;
         try {
-          return await applyUploadIntent(currentUploadIntent);
+          const result = await applyUploadIntent(uploadIntent);
+          if (currentUploadIntent !== uploadIntent) {
+            throw new Error('Photo selection changed. Submit the profile again.');
+          }
+          return result;
         } catch (error) {
+          if (currentUploadIntent !== uploadIntent) throw error;
           setLoader(false, preview);
           wrap.style.display = 'block';
           showError('Image upload failed. Click here to try again.');
@@ -282,18 +290,37 @@
         buildPhotoApi.commitPending = commitPreparedUpload;
       }
 
-      async function uploadImage(file, sourceMutationId) {
+      async function uploadImage(uploadIntent) {
+        // A running projection owns a lease that image commit must respect. Reuse
+        // the exact file and mutation identity while waiting; never bypass that lease.
         const formData = new FormData();
-        formData.append('image', file);
-        formData.append('source_mutation_id', sourceMutationId);
-        const data = await requestJson(
-          XANO_BASE_URL + '/api:KZf7nFnk/build_profile/starter/profile_image',
-          {
-            method: 'POST',
-            body: formData,
-          },
-          'Image upload failed',
-        );
+        formData.append('image', uploadIntent.file);
+        formData.append('source_mutation_id', uploadIntent.sourceMutationId);
+        const startedAt = Date.now();
+        let data;
+        for (let retry = 0; ; retry += 1) {
+          if (currentUploadIntent !== uploadIntent) return null;
+          try {
+            data = await requestJson(
+              XANO_BASE_URL + '/api:KZf7nFnk/build_profile/starter/profile_image',
+              { method: 'POST', body: formData },
+              'Image upload failed',
+            );
+            break;
+          } catch (error) {
+            if (currentUploadIntent !== uploadIntent) return null;
+            const delay = Math.min(1000 * (2 ** retry), 20000);
+            if (!error.profileSyncRetryable || retry >= MAX_SYNC_RETRIES ||
+                Date.now() - startedAt + delay >= SYNC_RETRY_BUDGET_MS) throw error;
+            uploadIntent.state = 'waiting';
+            wrap.style.display = 'block';
+            showError('Your profile is still syncing. We will retry the photo automatically.');
+            await new Promise(resolve => setTimeout(resolve, delay));
+            if (currentUploadIntent !== uploadIntent) return null;
+            if (Date.now() - startedAt >= SYNC_RETRY_BUDGET_MS) throw error;
+            uploadIntent.state = 'uploading';
+          }
+        }
         if (
           typeof data?.starter_image !== 'string' ||
           data.starter_image.trim() === '' ||
@@ -314,7 +341,10 @@
         const data = await response.json();
         if (!response.ok) {
           console.error(`${errorLabel}:`, data);
-          throw new Error(data.message || errorLabel);
+          const error = new Error(data.message || errorLabel);
+          error.profileSyncRetryable = response.status === 500 &&
+            data.message === 'PROFILE_IMAGE_CAS_RETRY_EXHAUSTED';
+          throw error;
         }
         return data;
       }

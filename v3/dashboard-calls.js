@@ -294,6 +294,7 @@
       return 'completed'
     }
     if (['completed', 'complete', 'done'].includes(raw)) return 'completed'
+    if (raw === 'rescheduled') return 'rescheduled'
     return 'confirmed'
   }
 
@@ -447,6 +448,7 @@
   function statusLabel(status, role) {
     return {
       pending: role === 'starter' ? 'Pending' : 'Requested',
+      rescheduled: 'Pending',
       confirmed: 'Upcoming',
       completed: 'Completed',
       cancelled: 'Cancelled',
@@ -705,14 +707,17 @@
       const accept =
         action === 'switch-confirm' &&
         canConfirmBooking(role, booking || { status: status }, now)
+      const actions = global.StartersDashboardCallActions
+      const decline = action === 'switch-decline' &&
+        responseWindowOpen(booking, now) &&
+        validDashboardModule(actions) && typeof actions.canDecline === 'function' &&
+        actions.canDecline(role, booking)
       const messageHref = action === 'message' ? bookingMessageHref(role, booking) : ''
       const message = action === 'message' && messageHref !== ''
       if (action === 'message') setMessageControlDestination(button, messageHref)
-      // Details and Message are read-only. Accept is the first V3-native
-      // mutation. Every other legacy control stays hidden until it has a
-      // populated current endpoint contract and tests. In particular, never
-      // open empty Reschedule UI.
-      show(button, details || accept || message)
+      // Only expose actions backed by a loaded canonical action contract.
+      // Pending Starter rescheduling still has no supported contract.
+      show(button, details || accept || decline || message)
     })
   }
 
@@ -725,13 +730,29 @@
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
     paintStatusPill(card, status, role)
+    let meetingHref = ''
+    if (['confirmed', 'rescheduled'].includes(status)) {
+      try {
+        const url = new URL(clean(booking.meeting_link))
+        if (url.protocol === 'https:' || url.protocol === 'http:') meetingHref = url.href
+      } catch (_error) {}
+    }
+    bookingFields(card, 'meeting-link').forEach(function (link) {
+      if (meetingHref) link.setAttribute('href', meetingHref)
+      else link.removeAttribute('href')
+      show(link, meetingHref !== '')
+      const wrap = link.closest && link.closest('[booking-element-wrap]')
+      if (wrap) show(wrap, meetingHref !== '')
+    })
     text(card, '[booking-element="brand-name"]', other && other.name)
     text(card, '[booking-element="starter-name"]', other && other.name)
     text(card, '[booking-element="title"]', booking.call_context || 'Call')
     text(
       card,
       '[booking-element="start-date"]',
-      formatDate(booking.start, (own && own.timezone) || (other && other.timezone)),
+      clean(booking.status).toLowerCase() === 'rescheduled'
+        ? proposalOldDate(booking, (own && own.timezone) || (other && other.timezone)) || 'Confirmed time unavailable'
+        : formatDate(booking.start, (own && own.timezone) || (other && other.timezone)),
     )
     text(card, '[booking-element="duration"]', formatDuration(booking.duration))
     text(
@@ -939,6 +960,7 @@
     'decline-reason',
     'reschedule',
     'reschedule-calendar',
+    'payment-methods',
   ]
 
   /** Every authored Message control, link or button, card or modal. */
@@ -993,7 +1015,8 @@
         label: role === 'starter' ? 'Brand' : 'Starter',
         value: clean(counterpart && counterpart.name),
       },
-      { field: 'start-date', label: 'Date and time', value: formatDate(booking && booking.start, timezone) },
+      { field: 'start-date-old', label: 'Current confirmed time', value: proposalOldDate(booking, timezone) },
+      { field: 'start-date', label: clean(booking && booking.status).toLowerCase() === 'rescheduled' ? 'Proposed time' : 'Date and time', value: formatDate(booking && booking.start, timezone) },
       { field: 'duration', label: 'Duration', value: formatDuration(booking && booking.duration) },
       { field: 'context', label: 'Call', value: clean(booking && booking.call_context) },
       { field: 'reschedule-reason', label: 'Reschedule reason', value: clean(booking && booking.rescheduled_reason) },
@@ -1066,12 +1089,14 @@
    * a navigating Message link below a reason form or the slot picker is noise
    * that can also discard the participant's in-progress input.
    */
-  function ensureDetailSupplements(modal, booking, role, timezone) {
+  function ensureDetailSupplements(modal, booking, role, timezone, content) {
     if (!modal || !booking || typeof modal.querySelectorAll !== 'function') return 0
     const document = modal.ownerDocument || global.document
     if (!document || typeof document.createElement !== 'function') return 0
     const authored = Array.prototype.slice.call(
-      modal.querySelectorAll('[booking-popup-content]'),
+      modal.querySelectorAll(content
+        ? '[booking-popup-content="' + content + '"]'
+        : '[booking-popup-content]'),
     )
     const panels = authored.filter(function (panel) {
       return (
@@ -1080,7 +1105,7 @@
         ) === -1
       )
     })
-    if (!authored.length) panels.push(modal)
+    if (!authored.length && !content) panels.push(modal)
     const rows = detailSupplementRows(booking, role, timezone)
     const counterpart = detailCounterpart(role, booking)
     const counterpartId = clean(counterpart && counterpart.memberstack_id)
@@ -1104,7 +1129,13 @@
         supplement.style.gap = '16px'
         supplement.style.width = '100%'
         supplement.style.marginTop = '12px'
-        panel.appendChild(supplement)
+        const close = panel.querySelector('[booking-action-btn="switch-close"]')
+        const controls = close && close.parentNode
+        if (controls && controls.parentNode === panel && typeof panel.insertBefore === 'function') {
+          panel.insertBefore(supplement, controls)
+        } else {
+          panel.appendChild(supplement)
+        }
       }
       supplement.textContent = ''
 
@@ -1153,26 +1184,28 @@
       // none that renders.
       const authoredMessage = panelHasUsableMatch(panel, MESSAGE_CONTROL_SELECTOR)
       if (counterpartId && !authoredMessage) {
-        const actions = document.createElement('div')
+        const actions = document.createElement('p')
         actions.setAttribute('data-starters-call-summary-actions', '')
-        actions.style.display = 'flex'
-        actions.style.justifyContent = 'flex-end'
         actions.style.width = '100%'
+        actions.style.margin = '0'
+        actions.style.fontSize = '0.875rem'
+        actions.style.lineHeight = '1.5'
+        const copy = document.createElement('span')
+        const counterpartName = clean(counterpart && counterpart.name) ||
+          (role === 'starter' ? 'the Brand' : 'the Starter')
+        copy.textContent = 'If you’d like to discuss options, reach out to ' + counterpartName + ' via the '
+        actions.appendChild(copy)
         const message = document.createElement('a')
         message.setAttribute('data-starters-call-message', '')
         message.href = '/messages?with=' + encodeURIComponent(counterpartId)
-        message.textContent = role === 'starter' ? 'Message Brand' : 'Message Starter'
-        message.style.display = 'inline-flex'
-        message.style.alignItems = 'center'
-        message.style.justifyContent = 'center'
-        message.style.minHeight = '44px'
-        message.style.padding = '10px 20px'
-        message.style.borderRadius = '4px'
-        message.style.backgroundColor = '#1f231f'
-        message.style.color = '#ffffff'
-        message.style.fontWeight = '600'
-        message.style.textDecoration = 'none'
+        message.textContent = 'Messages tab'
+        message.style.display = 'inline'
+        message.style.color = 'inherit'
+        message.style.textDecoration = 'underline'
         actions.appendChild(message)
+        const period = document.createElement('span')
+        period.textContent = '.'
+        actions.appendChild(period)
         supplement.appendChild(actions)
         rendered += 1
       }
@@ -1196,21 +1229,27 @@
    * module-owned row in its place.
    *
    * The frame callback re-reads `data-booking-id` so a modal that was closed,
-   * reset, or rebound to another call in the meantime is left alone.
+   * reset, or rebound to another call in the meantime is left alone. A newer
+   * render also supersedes queued work so canonical rows cannot overwrite a
+   * scoped proposal receipt.
    * @param {HTMLElement|null} modal Detail modal being populated.
-   * @param {object} booking Canonical row bound to the modal.
+   * @param {object} booking Canonical row or receipt-only proposal model.
    * @param {string} role Signed-in member's role.
    * @param {string} [timezone] Display timezone.
+   * @param {string} [content] Limit rendering to this booking-popup-content panel.
    * @returns {boolean} Whether a recompute was scheduled.
    */
-  function scheduleDetailSupplements(modal, booking, role, timezone) {
+  function scheduleDetailSupplements(modal, booking, role, timezone, content) {
     if (!modal || !booking || typeof modal.getAttribute !== 'function') return false
     if (typeof global.requestAnimationFrame !== 'function') return false
     const bookingId = clean(modal.getAttribute('data-booking-id'))
+    const render = {}
+    modal.__startersDetailSupplementRender = render
     try {
       global.requestAnimationFrame(function () {
         if (clean(modal.getAttribute('data-booking-id')) !== bookingId) return
-        ensureDetailSupplements(modal, booking, role, timezone)
+        if (modal.__startersDetailSupplementRender !== render) return
+        ensureDetailSupplements(modal, booking, role, timezone, content)
       })
     } catch (_error) {
       return false
@@ -1313,6 +1352,15 @@
           global.StartersDashboardCallMedia.canReadMedia(booking, status)
         const message =
           action === 'message' && bookingMessageHref(role, booking) !== ''
+        const paymentAction = clean(button.getAttribute('payment-action-btn'))
+        const paymentControl = ['change-card', 'change-card-v2', 'add-card'].includes(paymentAction) ||
+          (typeof button.hasAttribute === 'function' &&
+            (button.hasAttribute('popup-stripe-card-open') || button.hasAttribute('pm-use-this')))
+        const preferredPaymentControl = paymentAction !== 'change-card' ||
+          !modal.querySelector('[payment-action-btn="change-card-v2"]')
+        const payment = paymentControl && preferredPaymentControl &&
+          typeof global.StartersDashboardCallPayment?.canManageCards === 'function' &&
+          global.StartersDashboardCallPayment.canManageCards(role, booking)
         if (action === 'reschedule') {
           if (!gates.rescheduleAnchor) gates.rescheduleAnchor = button
           if (proposeReschedule) gates.rescheduleShown = true
@@ -1333,6 +1381,7 @@
             proposeReschedule ||
             respondReschedule ||
             media ||
+            payment ||
             message,
         )
       })
@@ -1349,6 +1398,7 @@
       'Rescheduling is available for Free calls.',
       Boolean(gates.rescheduleAnchor) &&
         active &&
+        status !== 'rescheduled' &&
         upcoming &&
         !gates.rescheduleShown &&
         !gates.respondShown,
@@ -1367,6 +1417,7 @@
   }
 
   function resetDetailActionState(modal) {
+    global.StartersDashboardCallPayment?.invalidateModal?.(modal)
     const actionsModule = global.StartersDashboardCallActions
     if (!validDashboardModule(actionsModule)) return
     if (typeof actionsModule.resetRescheduleState === 'function') {
@@ -1440,16 +1491,53 @@
       })
   }
 
-  function populateDetailModal(modal, booking, role, now) {
+  function proposalOldDate(booking, timezone) {
+    if (clean(booking && booking.status).toLowerCase() !== 'rescheduled') return ''
+    return formatDate(normalizeTimestamp(booking && booking.start_old), timezone)
+  }
+
+  function proposalStatusText(booking, role) {
+    if (clean(booking && booking.status).toLowerCase() !== 'rescheduled') return ''
+    const proposer = clean(booking && booking.rescheduled_by).toLowerCase()
+    if (!['brand', 'starter'].includes(proposer) || !['brand', 'starter'].includes(role)) return ''
+    if (proposer !== role) return ' — Awaiting your confirmation of the proposed time.'
+    return ' — Awaiting ' + (role === 'brand' ? 'Starter' : 'Brand') + ' confirmation of the proposed time.'
+  }
+
+  function populateDetailSchedule(root, booking, role) {
+    const other = role === 'starter' ? booking.brand_data : booking.starter_data
+    const own = role === 'starter' ? booking.starter_data : booking.brand_data
+    const timezone = (own && own.timezone) || (other && other.timezone)
+    setBookingField(root, 'start-date', formatDate(booking.start, timezone), true)
+    // The shared date formatter already includes time and timezone.
+    ;['start-time', 'start-time-old'].forEach(function (name) {
+      bookingFields(root, name).forEach(function (field) { show(field, false) })
+    })
+    const oldDate = proposalOldDate(booking, timezone)
+    setBookingField(root, 'start-date-old', oldDate, oldDate !== '')
+    const statusText = proposalStatusText(booking, role)
+    setBookingField(root, 'status-text', statusText, statusText !== '')
+    setBookingField(root, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
+  }
+
+  function populateDetailModal(modal, booking, role, now, content) {
     if (!modal || !booking) return false
+    const other = role === 'starter' ? booking.brand_data : booking.starter_data
+    const own = role === 'starter' ? booking.starter_data : booking.brand_data
+    const timezone = (own && own.timezone) || (other && other.timezone)
+    if (content) {
+      const panel = modal.querySelector('[booking-popup-content="' + content + '"]')
+      if (!panel) return false
+      populateDetailSchedule(panel, booking, role)
+      ensureDetailSupplements(modal, booking, role, timezone, content)
+      scheduleDetailSupplements(modal, booking, role, timezone, content)
+      return true
+    }
     const nextBookingId = clean(booking.booking_id || booking.id)
     const previousBookingId = clean(modal.getAttribute('data-booking-id'))
     if (previousBookingId !== nextBookingId) resetDetailActionState(modal)
     const status = bookingStatus(booking, now)
     const isPaid = paidBooking(booking)
-    const other = role === 'starter' ? booking.brand_data : booking.starter_data
-    const own = role === 'starter' ? booking.starter_data : booking.brand_data
-    const timezone = (own && own.timezone) || (other && other.timezone)
     const paymentText = isPaid && status !== 'cancelled' && status !== 'archived'
       ? booking.pm_confirmed
         ? 'Payment method confirmed.'
@@ -1490,14 +1578,13 @@
     setBookingField(modal, 'starter-name', booking.starter_data && booking.starter_data.name, true)
     setBookingField(modal, 'title', booking.call_context || 'Call', true)
     setBookingField(modal, 'context', booking.call_context, true)
-    setBookingField(modal, 'start-date', formatDate(booking.start, timezone), true)
+    populateDetailSchedule(modal, booking, role)
     setBookingField(modal, 'duration', formatDuration(booking.duration), true)
     setBookingPrice(modal, formatPrice(booking.price, isPaid), isPaid)
     setBookingField(modal, 'payment-status-text', paymentText, isPaid)
-    setBookingField(modal, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
 
-    const showMeeting = status === 'confirmed' && clean(booking.meeting_link) !== ''
+    const showMeeting = ['confirmed', 'rescheduled'].includes(status) && clean(booking.meeting_link) !== ''
     bookingFields(modal, 'meeting-link').forEach(function (meetingLink) {
       if ('href' in meetingLink) meetingLink.href = showMeeting ? clean(booking.meeting_link) : ''
       meetingLink.textContent = showMeeting ? clean(booking.meeting_link) : ''
@@ -1591,6 +1678,16 @@
       .forEach(function (element) {
         show(element, false)
       })
+  }
+
+  function openBookingDetail(modal, booking, role) {
+    const system = global.lumos && global.lumos.modal
+    const dialog = modal && modal.closest && modal.closest('dialog')
+    if (!system || typeof system.open !== 'function' ||
+        !system.list || !system.list['popup-booking-info']) return false
+    if (!populateDetailModal(modal, booking, role)) return false
+    system.open('popup-booking-info')
+    return !dialog || dialog.open
   }
 
   function wireBookingDetails(refs, role) {
@@ -2309,10 +2406,13 @@
         return bookingForActionTarget(refs, target)
       },
       getBookingStatus: bookingStatus,
-      // Lets the actions module re-render the open modal from a booking it has
-      // just mutated, so a success panel cannot show pre-change values.
-      refreshDetail: function (modal, booking) {
-        return populateDetailModal(modal, booking, role)
+      openDetail: function (modal, booking) {
+        return openBookingDetail(modal, booking, role)
+      },
+      // A proposal model must be scoped to its receipt; a direct update or
+      // accepted proposal re-renders the modal with the confirmed booking.
+      refreshDetail: function (modal, booking, content) {
+        return populateDetailModal(modal, booking, role, undefined, content)
       },
       onAvailable: function () {
         refreshDetailExpiration(refs, role)
@@ -2330,6 +2430,8 @@
   }
 
   const api = {
+    openBookingDetail,
+    bindCard,
     bookingStatus,
     paidBooking,
     responseWindowOpen,

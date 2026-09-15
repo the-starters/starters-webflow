@@ -1,5 +1,8 @@
 # V3 browser scripts
 
+Webflow wiring contracts and installation checklists live in the shared
+[wiring guide folder](../docs/wiring/README.md).
+
 ## Opportunity-alert email preferences
 
 `opp-alerts-unsubscribe.js` binds the native Webflow content on the V3
@@ -133,7 +136,7 @@ the minimal-controller conditional. Remove the old page-level `auth-route.js`
 tags only through the overlap, delivery, and one-path-at-a-time behavior proof
 in the wiring guide. It runs on the V3 Webflow staging hostname and both custom
 domains; see
-[AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
+[AUTH-ROUTE-WIRING.md](../docs/wiring/AUTH-ROUTE-WIRING.md) for the
 installation, error contract, privacy-safe login timing evidence, and release
 gate. The versioned
 [V3 Member Access Matrix](ACCESS-MATRIX.md) maps stable plan IDs to roles and
@@ -150,7 +153,7 @@ Talent logins additionally fork on funnel position, read from Xano
 `/starter-onboarding` (winning over any stored `next`), and both true routes
 normally. Brand and unmapped members never trigger that call, and every
 inconclusive answer fails open to the standard destination. The signal became
-stricter on 2026-08-04; see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
+stricter on 2026-08-04; see [AUTH-ROUTE-WIRING.md](../docs/wiring/AUTH-ROUTE-WIRING.md) for the
 endpoint contract and the 282-row reason.
 
 Paid Brands take a parallel check through
@@ -160,7 +163,7 @@ Paid Brands take a parallel check through
 as complete without a network call. `brand-free` and unmapped members stay
 zero-network. The same eight-second budget and fail-open rule apply.
 `/complete-profile` is not an allowed client-supplied `next`; the router constructs
-that destination. See [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the endpoint
+that destination. See [AUTH-ROUTE-WIRING.md](../docs/wiring/AUTH-ROUTE-WIRING.md) for the endpoint
 contract.
 
 ## Talent applications admin
@@ -327,7 +330,7 @@ without a resolved guard. A configured guard that never boots and still has no
 mapped role fails closed with
 `data-route-guard-error="member-role-unavailable"` rather than redirecting to
 `/`.
-[ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md) documents the DOM states, events,
+[ROUTE-GUARD-WIRING.md](../docs/wiring/ROUTE-GUARD-WIRING.md) documents the DOM states, events,
 diagnostics, exclusions, and release gate. The guard is a routing/UX layer and
 does not replace Memberstack visibility rules or Xano authorization.
 `/quiz`, `/quiz-results`, and `/all-starters` are intentionally absent from the
@@ -362,7 +365,7 @@ still does stay. And a free Brand who has not finished the quiz stays on `/`
 instead of being pushed to `/quiz`, which is where the login pages still send
 them. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
 member with no mapped role, since deep-link intent does not depend on plan state.
-`ROUTE-GUARD-WIRING.md` has the exact precedence and the cancelled-plan
+[Route guard wiring](../docs/wiring/ROUTE-GUARD-WIRING.md) has the exact precedence and the cancelled-plan
 definition. **Per-page logged-out destinations:** the three
 build-profile pages send a logged-out visitor to `/` instead of `/login?next=`,
 because they are entered from marketing flows where a login form would ask a
@@ -423,8 +426,8 @@ conflicted members, logged-out visitors, a missing or half-loaded role contract,
 and a lookup that throws are all left untouched. The page needs the native form
 contract plus the account controller and redirect embeds installed after the guard;
 see
-[BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md) and
-[COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
+[BRAND-ACCOUNT-WIRING.md](../docs/wiring/BRAND-ACCOUNT-WIRING.md) and
+[COMPLETE-PROFILE-REDIRECT-WIRING.md](../docs/wiring/COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
 ## Complete-profile back button
 
@@ -468,7 +471,7 @@ bubbling press is still one navigation. A missing wrapper, a missing label, stor
 that throws, or a DOM that refuses to be queried all leave the page exactly as
 authored — the button is already hidden, so the failure mode is the status quo.
 Needs the two Designer attributes plus one page-level embed; see
-[COMPLETE-PROFILE-BACK-WIRING.md](COMPLETE-PROFILE-BACK-WIRING.md).
+[COMPLETE-PROFILE-BACK-WIRING.md](../docs/wiring/COMPLETE-PROFILE-BACK-WIRING.md).
 
 Run its focused test with:
 
@@ -499,7 +502,7 @@ submit that initiated a redirect, `bindForm()` now latches busy so the form stay
 across the navigation; `location.assign()` only queues a redirect, so the old
 code released the form while the browser was still fetching the destination. The
 reasoning and the accepted cancelled-navigation consequence live under Failure
-semantics in [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md). Busy therefore
+semantics in [BRAND-ACCOUNT-WIRING.md](../docs/wiring/BRAND-ACCOUNT-WIRING.md). Busy therefore
 clears on an error, and on a success that resolved no redirect URL.
 
 Show and hide are inline `display` writes, because Webflow's Display:None
@@ -522,7 +525,7 @@ element is an immediate silent bail with the exported `show`/`hide` replaced by
 no-ops, which is what makes the file safe to load site-wide, and an
 authored-visible loader is force-hidden once at init as a self-heal. Needs the
 Designer checklist plus one page-level embed; see
-[COMPLETE-PROFILE-LOADER-WIRING.md](COMPLETE-PROFILE-LOADER-WIRING.md).
+[COMPLETE-PROFILE-LOADER-WIRING.md](../docs/wiring/COMPLETE-PROFILE-LOADER-WIRING.md).
 
 Run its focused tests with:
 
@@ -539,7 +542,7 @@ while its login-email interception remains configuration-gated for Brand
 Account Security and the visible Talent form on `/starter-edit-profile`. The
 authoritative identity scope, stable-ID propagation, failure, release-gate, and
 reversible-canary contract is in
-[BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md).
+[BRAND-ACCOUNT-WIRING.md](../docs/wiring/BRAND-ACCOUNT-WIRING.md).
 
 ## Build-profile funnel redirect
 
@@ -567,7 +570,7 @@ open on a 4-second overall budget with a shared `AbortController`: a missing rol
 contract, a rejected trade, a 401, a 500, an unparseable body, a body without a
 boolean `build_profile_done`, or a browser without `fetch` all leave the page
 exactly as authored. It needs three page-level embeds installed after the guard;
-see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md).
+see [BUILD-PROFILE-REDIRECT-WIRING.md](../docs/wiring/BUILD-PROFILE-REDIRECT-WIRING.md).
 
 Two rules were added on 2026-08-14. A visible authored `[build-profile-success]`
 state stands the redirect down, checked at redirect time rather than at boot so it
@@ -597,7 +600,7 @@ accepted until Designer adds `[data-page-spinner]`; the script picks that
 element up with no code change.
 
 It needs six page-level embeds installed after the guard; see
-[STARTER-PROFILE-REDIRECT-WIRING.md](STARTER-PROFILE-REDIRECT-WIRING.md). Ticket
+[STARTER-PROFILE-REDIRECT-WIRING.md](../docs/wiring/STARTER-PROFILE-REDIRECT-WIRING.md). Ticket
 06 is the paste + headed QA.
 
 Run its focused test with:
@@ -786,7 +789,7 @@ non-call service controls so a click stamps `signup_trigger` and opens the signu
 modal (`data-modal-target="signup-modal"`). Which call entry points a logged-out
 visitor is shown, and why a logged-out Book Call CTA can never open the booking
 chooser, are defined by
-[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
+[`HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
 Create the Memberstack `signup-trigger` field before shipping a release that
 writes it.
 
@@ -917,13 +920,20 @@ signup. This path is V3 production only. It requires all three conditions:
 2. The current path is one CMS item route in the Xano `lead_email/register/v3`
    allowlist, and the rendered `data-wf-page` is that collection's published
    Webflow template page. A 404 with a valid-looking URL fails closed.
-3. The browser observed `submit` on `form[data-ms-form="signup"]` before the
-   logged-out to logged-in Memberstack transition.
+3. The browser observed `submit` on `form[data-ms-form="signup"]` after the
+   form's capture-phase validation gate and before the logged-out to logged-in
+   Memberstack transition. At initialization, the listener attaches directly to
+   each existing signup and login form, ahead of the delegated document fallback.
+   This lets attribution observe an accepted bridged submit before Memberstack
+   stops bubbling at document level. Forms inserted later rely on the delegated
+   fallback. A rejected click or a submit stopped by validation does not arm
+   registration.
 
 The submit requirement is separate from the broader attribution watch. A CMS
 modal can later swap to an "already have an account" login. That login can still
-look like an auth transition, but it did not submit the signup form, so it cannot
-create a lead-entry event.
+look like an auth transition. Clicking within a `data-ms-form="login"` element
+(including a non-form wrapper), or submitting a login form, clears any earlier
+signup intent so the login cannot create a lead-entry event.
 
 | Track | Exact route prefix | Webflow collection ID | Template page ID | Intent subtype |
 | --- | --- | --- | --- | --- |
@@ -934,7 +944,7 @@ create a lead-entry event.
 | Collection | `/categories/` | `69f2329d4f5bacf6765c1ca1` | `69f2329e4f5bacf6765c1cc6` | `collection_signup` |
 | Collection | `/subcategories/` | `69f233f6f3e97748419e3a3d` | `69f233f7f3e97748419e3a43` | `collection_signup` |
 | Learn gated | `/learn/playbooks-frameworks/` | `69e1e416f6476e12f572b39b` | `69e1e417f6476e12f572b468` | `learn_unlock` |
-| Learn ungated | `/learn/interviews-analyses/` | `69dca9df095d2fbcf34e255b` | `69dca9df095d2fbcf34e2575` | `learn_signup` |
+| Learn ungated | `/learn/interviews-analysis/` | `69dca9df095d2fbcf34e255b` | `69dca9df095d2fbcf34e2575` | `learn_signup` |
 | Learn session | `/learn/sessions/` | `69e08554183023227aa46c1e` | `69e08554183023227aa46c24` | `session_signup` |
 | Starter Connect | `/hire/` | `69f241ec147b71addb6f1531` | `69f241ed147b71addb6f153d` | `hire` or `message` |
 | Starter Booking | `/hire/` | `69f241ec147b71addb6f1531` | `69f241ed147b71addb6f153d` | `booking`, `booking_free`, or `booking_paid` |
@@ -955,8 +965,13 @@ suppression, and provider worker. The browser never calls Mailchimp.
 
 After Xano accepts the row, the script stores a non-PII browser-session snapshot
 and captures `v3_lead_entry_registered` only after the real PostHog SDK is ready.
-The current page retries on a short bounded schedule, and a same-tab page reload
-resumes the same snapshot. It records the capture at most once per accepted event
+The current page retries on a bounded schedule that covers the measured SDK
+startup after a Memberstack redirect, and a same-tab page reload resumes the
+same snapshot. The accepted capture requests immediate dispatch
+with `send_instantly: true` and `transport: 'sendBeacon'` to support delivery
+across Memberstack redirects. The browser-session marker records the capture
+attempt, not confirmed PostHog receipt; only a synchronous capture failure
+clears it for retry. It prevents repeated capture attempts per accepted event
 and CMS resource. Missing analytics never affects registration. Properties
 always contain the track, intent, collection ID, and payload version. For
 allowlisted non-person Collection and Learn resources, they also contain the
@@ -986,8 +1001,9 @@ the watch is armed and is a no-op once it is, because a second `onAuthChange` li
 would fire `CompleteRegistration` twice.
 
 The script binds a capture-phase `click` listener for Signup Trigger
-(`data-signup-trigger-element`) and a delegated capture-phase `submit` listener
-for the V3 lead-entry gate. It reads the DOM to decide whether to watch, and
+(`data-signup-trigger-element`). The separate lead-entry listeners follow the
+[signup and login gate above](#v3-collection-learn-and-starter-lead-entry-registration).
+It reads the DOM to decide whether to watch, and
 stamps a trigger only when a confirmed logged-out visitor clicks a tagged CTA
 (opening the signup modal).
 
@@ -1125,7 +1141,7 @@ And an empty container inside that modal, which is where the chat renders:
   <div class="modal_backdrop" data-modal-close></div>
   <div class="modal_content">
     <div class="modal_slot">
-      <div messages-profile-chat messages-profile-upgrade="/pricing"></div>
+      <div messages-profile-chat messages-profile-upgrade="/why-us#join-starters-cta"></div>
     </div>
   </div>
 </dialog>
@@ -1168,7 +1184,7 @@ Who gets through:
 | viewer | outcome |
 | --- | --- |
 | logged out | hire-page signup modal (`data-modal-target="signup-modal"`). Chat intent is dropped in v1; the visitor is not sent to `/quiz` |
-| free Brand | `messages-profile-upgrade` when set, else route-guard's `brandFreeHome`: `/quiz-results` once the Memberstack `starter-quiz` field records completion, `/quiz` until then |
+| free Brand | Message stays visible and opens membership pricing at `/why-us#join-starters-cta`; an explicit non-quiz `messages-profile-upgrade` overrides this destination. Legacy `/quiz` and `/quiz-results` overrides (including query strings and fragments) are ignored |
 | talent | trigger hidden; modal closes if opened anyway |
 | viewer is this starter | trigger hidden; modal closes if opened anyway |
 | paid Brand | the chat |
@@ -1222,7 +1238,7 @@ to provide. It is deliberately scoped to the
 `[data-modal-trigger="generate-contract"]` triggers and the
 `dialog[data-modal-target="generate-contract"]` modal, and generates no form
 HTML. The authoritative field, prefill, state, and release contract lives in
-[PROJECT-FORM-WIRING.md](PROJECT-FORM-WIRING.md).
+[PROJECT-FORM-WIRING.md](../docs/wiring/PROJECT-FORM-WIRING.md).
 Release progress and no-submit verification are tracked in
 [PROJECT-CREATION-PROGRESS-CHECKLIST.md](PROJECT-CREATION-PROGRESS-CHECKLIST.md).
 
@@ -1239,7 +1255,7 @@ node --test v3/project-form.test.js v3/project-form-workflow.test.js \
 `starter-project-form.js` binds the Starter Dashboard copy of the shared
 **Contract Generation** component used on `/hire/<slug>`. The authoritative
 scope, endpoint, Designer, user-state, and release contract lives in
-[STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md).
+[STARTER-PROJECT-FORM-WIRING.md](../docs/wiring/STARTER-PROJECT-FORM-WIRING.md).
 
 ## Superseded Brand proposal approval
 
@@ -1536,7 +1552,7 @@ titles and descriptions from the live page's heading and body fonts with
 brand-font fallbacks. Query-string start/reset controls and `Alt+Shift+T` allow
 support and QA to replay tours on staging or production without editing member
 JSON. It is presentation-only and does not grant or restrict access. See
-[ONBOARDING-TOUR-WIRING.md](ONBOARDING-TOUR-WIRING.md) for the Designer
+[ONBOARDING-TOUR-WIRING.md](../docs/wiring/ONBOARDING-TOUR-WIRING.md) for the Designer
 attributes, install snippet, persistence behavior, diagnostics, and release
 checks.
 
@@ -1546,7 +1562,7 @@ checks.
 `onboarding-self-preview` — the freelancer's own profile rendered as a
 profile-preview card on the onboarding completion page ("Your 30-day visibility
 boost is already running"). The card's CSS and markup live in the structure embed
-in [ONBOARDING-PROFILE-PREVIEW-WIRING.md](ONBOARDING-PROFILE-PREVIEW-WIRING.md);
+in [ONBOARDING-PROFILE-PREVIEW-WIRING.md](../docs/wiring/ONBOARDING-PROFILE-PREVIEW-WIRING.md);
 the script owns exactly one thing, the `beforeRender` transform.
 
 The page runs **one wf-xano instance per form block**, and the wiring doc is the
@@ -1697,7 +1713,7 @@ authored, because the redirect is a UX courtesy and never a security boundary.
 It never writes to Xano; the post-submit journey belongs entirely to its
 pinned pair, `patch-onboarding-status.js` (below) — never ship one half
 without the other. The authoritative wiring, QA order, and troubleshooting
-live in [ONBOARDING-DONE-REDIRECT-WIRING.md](ONBOARDING-DONE-REDIRECT-WIRING.md).
+live in [ONBOARDING-DONE-REDIRECT-WIRING.md](../docs/wiring/ONBOARDING-DONE-REDIRECT-WIRING.md).
 
 Run its focused test with:
 
@@ -1720,7 +1736,7 @@ submit.
 `window.StartersPatchOnboardingStatus.markOnboardingDone()` exercises the
 write by hand on staging. Installs only as a pinned pair with
 `onboarding-done-redirect.js` (above); the authoritative wiring lives in
-[ONBOARDING-PATCH-STATUS-WIRING.md](ONBOARDING-PATCH-STATUS-WIRING.md).
+[ONBOARDING-PATCH-STATUS-WIRING.md](../docs/wiring/ONBOARDING-PATCH-STATUS-WIRING.md).
 
 Run its focused test with:
 
@@ -1742,7 +1758,7 @@ the script writes exactly two things — `textContent` on a non-IMG landing, and
 
 The full attribute table, the onboarding photo checklist and the debug overlay
 columns live in
-[xano-grabber/XANO-GRABBER-WIRING.md](xano-grabber/XANO-GRABBER-WIRING.md). The
+[xano-grabber/XANO-GRABBER-WIRING.md](../docs/wiring/XANO-GRABBER-WIRING.md). The
 short version: `wf-xano-grab-element="source"` / `="landing"` plus a shared
 `wf-xano-grab-id`; add `wf-xano-grab-list` on a source container and
 `wf-xano-grab-list-container` + a `wf-xano-grab-element="list-item"` child on the
@@ -1852,7 +1868,7 @@ The head install above stays the final contract. `hire-profile.js` also carries
 a bounded fail-closed recovery that loads `free-call-booking.js` itself when an
 older saved head still omits it, so Free and Paid discovery keeps working before
 that head is corrected; that recovery contract is owned by
-[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#install).
+[`HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#install).
 
 Current safety boundary:
 
@@ -1888,7 +1904,7 @@ Current safety boundary:
   `window.getXanoAuthToken` when a browser session holds a cached
   `opportunities-3.0.js` without `Opp30.API.starterProfile`, so keep
   `/starter-dashboard` inside the boundary above; that fallback is owned by
-  [STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md#profile-request-paths).
+  [STARTER-PROJECT-FORM-WIRING.md](../docs/wiring/STARTER-PROJECT-FORM-WIRING.md#profile-request-paths).
 - Transparently wraps reviewed direct `/v3` requests while the stage adapter
   migrates legacy component callers.
 - Installs synchronously and takes ownership from the legacy bridge in
@@ -2105,9 +2121,36 @@ requests and all other rows under calls; Brand keeps pending and accepted rows
 in its calls list. Each card's authored status pill receives the canonical,
 role-aware lifecycle label and the matching Designer variant: pending is
 `Pending` for Starter and `Requested` for Brand, confirmed is `Upcoming`, and
-completed, cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
+rescheduled is `Pending` for both roles on cards and in call details.
+Reschedule proposals retain the distinct canonical `rescheduled` state and stay
+in both roles' calls lists, without initial-request expiry or initial Accept
+actions. Once their end time passes, they display as completed. Completed,
+cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
 The selected `[booking-filter]` is the only control with `is-active`,
 `aria-pressed="true"`, and the matching checked visual state.
+
+On both Brand and Starter cards, `[booking-element="start-date"]` shows the
+confirmed `start_old` while the canonical status is `rescheduled`, including
+after a list refresh. Missing or invalid original timestamps display
+`Confirmed time unavailable` instead of the proposal. Other statuses use
+`start`, so accepting a proposal displays the accepted slot. Dates use the
+viewing participant's timezone, falling back to the counterpart's timezone.
+
+On both roles' cards, the authored Join Call anchor
+`[booking-element="meeting-link"]` receives the canonical `meeting_link` as a
+URL only when it is absolute HTTP(S) and the normalized lifecycle is confirmed
+(including rescheduled calls whose end has not passed). Otherwise, binding
+removes any previous or placeholder `href` and hides the anchor and its closest
+`[booking-element-wrap]`. Rebinding an eligible call restores both. This reader
+does not generate provider links or modify bookings; missing provider
+conferencing remains a separate dependency.
+
+For a local preview, serve the repository root with an HTTP server and open
+[`fixtures/dashboard-join-call.html`](fixtures/dashboard-join-call.html). Its
+authored Starter card uses the actual controller with a synthetic booking;
+Confirmed, Missing link, and Pending exercise rebinding without opening the
+external meeting. This fixture is local evidence, not authenticated production
+workflow proof.
 
 The authored View Details trigger opens the existing `popup-booking-info`
 dialog. Before Webflow opens it, the controller binds the selected canonical
@@ -2134,12 +2177,25 @@ panel is the opening view rather than one the member navigated to, the authored
 `switch-base` back control stays hidden until a chain leaves the panel, keeping
 the doubled close icon off the entry view.
 
+In call details for a canonical `rescheduled` row, `[booking-element="start-date-old"]`
+shows `start_old` as the current confirmed time and `start-date` shows `start`
+as the proposed time. Both use the viewing participant's timezone, falling back
+to the counterpart's timezone. The shared formatter includes time and timezone,
+so standalone `start-time` and `start-time-old` nodes stay hidden without hiding
+their date wrappers. Missing or invalid `start_old` hides the old-date field.
+The `status-text` hook tells the counterpart that their confirmation is awaited,
+or tells the proposer which role must confirm; an unknown proposer hides that
+copy. Binding a non-rescheduled row hides both proposal-only fields.
+
 Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
-`data-starters-call-summary` block appended after the authored content; a modal
-that authors no such panel receives one block on the modal itself. The block
+`data-starters-call-summary` block inserted before the authored Close control's
+group when that group is a direct child of the panel, otherwise appended after
+the authored content. A modal that authors no such panel receives one block on
+the modal itself. Generated content uses no classes or generated IDs. The block
 lists only the fields that panel has no usable `[booking-element]` hook for and
-that the canonical row has a value for — counterpart name, date and time,
+that the canonical row has a value for — counterpart name, date and time
+(including the current confirmed and proposed times described above),
 duration, call context, reschedule reason, and cancellation reason — as
 `data-starters-call-summary-row` lines keyed by that field name. A hook counts
 as usable only while it renders: a hook that is itself hidden, that sits inside
@@ -2157,10 +2213,11 @@ wrapper render. The module-owned fields render inside one bordered
 `data-starters-call-summary-rows` group. Each field is a padded two-column row,
 so counterpart and duration use the same visual structure as the authored call
 details instead of appearing as loose text below them. The block ends with a
-right-aligned `data-starters-call-summary-actions` area containing a
-role-correct `data-starters-call-message` button (`Message Brand` for the
-Starter, `Message Starter` for the Brand) pointing at
-`/messages?with=<counterpart memberstack_id>`; the button is omitted when the
+`data-starters-call-summary-actions` paragraph: “If you’d like to discuss
+options, reach out to [counterpart name] via the Messages tab.” The name falls
+back to `the Brand` for the Starter or `the Starter` for the Brand. Its underlined
+inline `data-starters-call-message` link reads `Messages tab` and points at
+`/messages?with=<counterpart memberstack_id>`; the paragraph is omitted when the
 counterpart has no canonical Memberstack ID, and — by the same
 renders-to-be-authoritative rule the rows follow — omitted from any panel that
 itself renders an authored Message control. The block is created once per
@@ -2170,9 +2227,10 @@ previous member's ID survives an identity change. Compose steps are excluded
 never receive it, because a summary and a navigating Message link below a
 reason form or the slot picker would discard in-progress input.
 
-Confirmed calls can show their canonical meeting link; cancelled and archived
-calls cannot. The authored Message controls navigate to the counterpart's
-thread. Only the counterpart's identity row carries a link — the Starter's
+Confirmed calls and active reschedule proposals can show their existing canonical
+meeting link; cancelled and archived calls cannot. The authored Message controls
+navigate to the counterpart's thread. Only the counterpart's identity row carries
+a link — the Starter's
 dashboard restores `brand-message-link`, the Brand's restores
 `starter-message-link`, and the member's own row is left alone, because a link
 to a thread with oneself has no destination. Each restored link reads
@@ -2189,13 +2247,10 @@ is left untouched rather than swallowed. Every other authored payment or
 booking action stays hidden except Close, Back, the
 Starter's eligible pending-call Accept and Decline actions, the participant
 Cancel chain for eligible Free booked calls, and owner-scoped recording access
-for eligible completed or archived calls. These migrated actions remain inside
-View Details; apart from that Message button, card-level decline, cancel,
-media, and other legacy controls stay hidden. The exact Cancel and reschedule
-eligibility and feedback rules live in the
-[dashboard booking action contract](#dashboard-booking-action-contract). The
-decline chain now also exposes its authored reason step
-(`switch-decline-reason`), so the reason dialog is reachable. Free-call
+for eligible completed or archived calls. Card-level cancel, media, and other
+unsupported legacy controls stay hidden. Card-level Decline and the exact
+Cancel and reschedule eligibility and feedback rules live in the
+[dashboard booking action contract](#dashboard-booking-action-contract). Free-call
 reschedule has two separate contracts on the published environment-bound
 endpoints. For a confirmed call, either participant proposes a time and the
 counterpart responds. For a pending request, only the Brand can update the
@@ -2209,17 +2264,21 @@ accessible textarea label `Why do you need a new time?`. It loads
 `paid-call-brand-payment.js` on demand and reuses the same slot picker as
 `/hire`.
 
+Dashboard availability reads pass the canonical booking's `booking_id` through
+the shared calendar config to `scheduler/get_availability/v3`. The query helper
+trims and URL-encodes this optional identifier; new-booking queries omit it.
+This supplies the identity needed for backend participant validation and private
+retained-booking availability when Free Call is Off. That backend support in
+endpoint #1658 remains a separate draft requiring native runtime tests and
+individual publication; this frontend change does not establish backend or
+production proof.
+
 A confirmed-call proposal posts `booking/reschedule/propose/v3` with a required
 reason, the selected slot's unchanged timestamps, the selected IANA timezone,
-and a durable `dashboard-reschedule-propose:` key. Only the counterpart sees
-the Designer-authored "Accept new time" and "Keep current time" actions in the
-base view beside the authored reschedule trigger. The controller uses that pair
-without generating duplicates. It generates a fallback pair only for a legacy
-page where the authored confirm control still sits in a hidden step panel and
-the counterpart cannot reach it. Those actions post
-`booking/reschedule/confirm/v3` or `booking/reschedule/decline/v3` with their
-own durable keys, and the call keeps its current provider time until the
-counterpart confirms. A pending-request update posts the same slot and reason
+and a durable `dashboard-reschedule-propose:` key. Counterpart response controls,
+endpoints, and receipt behavior are owned by the
+[dashboard booking action contract](#dashboard-booking-action-contract).
+A pending-request update posts the same slot and reason
 fields to `booking/reschedule/request/v3` with a durable
 `dashboard-reschedule-request:` key, then opens `reschedule-updated`; it has no
 response actions and does not enter the proposal lifecycle. Direct transcript
@@ -2234,6 +2293,10 @@ the current mount paints or fails. Closing, resetting, or switching the modal
 also hides it. A stale overlapping mount cannot hide the loader owned by the
 current mount. Without this wrapper, the calendar mount shows the text fallback
 `Loading available times...` instead.
+If availability fails, the current calendar displays `Available times could
+not load. Go back and try again.` and hides its loader. A stale failure cannot
+overwrite a newer modal mount, and availability failure does not change the
+booking's confirmed dates.
 
 From 768px up, the dashboard calendar uses a small sheet scoped only to
 `[data-modal-target="popup-booking-info"]`. The month occupies the left column.
@@ -2242,7 +2305,7 @@ it, and the plain confirm control spans the bottom row. At narrower widths the
 engine's document order stays in control: month, timezone, times, then confirm.
 This dashboard sheet does not include the `/hire` footer, status, button, or
 datepicker appearance rules. The full `/hire` surface contract remains in the
-[Hire Profile wiring reference](HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
+[Hire Profile wiring reference](../docs/wiring/HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
 
 `dashboard-call-actions.js` owns the details dialog's authored Back and Close
 controls on both dashboards. Populate starts with Back hidden on whichever panel
@@ -2253,9 +2316,10 @@ so the shared modal close flow and refresh listener run, with the native dialog
 `close()` method used only as a fallback. These two navigation actions remain
 available regardless of booking state.
 
-The Starter pending card exposes only the Designer-authored Accept lifecycle
-control while the canonical response window remains open. The details dialog
-exposes both Accept and Decline under their separate eligibility contracts.
+The Starter pending card exposes the Designer-authored Accept lifecycle
+control while the canonical response window remains open. Decline eligibility
+and card-to-modal behavior are defined in the
+[dashboard booking action contract](#dashboard-booking-action-contract).
 Before the controller calls `booking/confirm/v3`, it decodes the
 canonical `booking_ref`, requires its booking and configuration IDs to match the
 row, and supplies an idempotency key scoped to the canonical booking,
@@ -2275,7 +2339,21 @@ contracts.
 
 `dashboard-call-actions.js` owns the details-dialog navigation plus the
 supported decline, cancel, and Free-call reschedule commands. Decline is
-available only to the Starter on a canonical pending row. Cancel is available
+available only to the Starter on a canonical pending row. The authored card
+Decline control also requires an open response window and a loaded, valid
+action module that approves the booking through `canDecline`. Clicking it
+populates the existing details modal with the selected booking and counterpart,
+opens it through the shared Lumos modal owner, then switches to the decline
+panel. If the modal cannot be populated or opened, the panel switch stops.
+In the decline panel, the authored `switch-decline-reason` control reads
+`Decline Call` and opens the reason step for the selected booking. Both
+`booking-action-btn` and `booking-card-action-btn` hooks use the shared
+`setAuthoredActionLabel` formatter to preserve the nested button structure.
+This label applies to eligible Free and Paid requests; cancellation labels
+are unchanged.
+Pending Starter rescheduling remains unsupported.
+
+Cancel is available
 to either participant only on a canonical Free
 confirmed or rescheduled row whose start is in the future. Xano
 `booking/cancel/v3` rejects Paid cancellation until the paid-cancel follow-up
@@ -2291,9 +2369,11 @@ contracts never claim the same booking. Every command requires a booking ID,
 configuration ID, participant identity, and exact `test` or `production` data
 environment.
 
-For an active upcoming row where neither a reschedule action nor a response is
-available, the modal shows `Rescheduling is available for Free calls.`
-below the authored Reschedule control. Both eligibility explanations are
+For an active upcoming initial request or confirmed row where neither a
+reschedule action nor a response is available, the modal shows
+`Rescheduling is available for Free calls.` below the authored Reschedule
+control. A rescheduled proposal hides this hint for both roles, including when
+reusing a modal that previously showed it. Both eligibility explanations are
 module-owned `data-starters-action-hint` nodes inserted after the authored
 buttons; the script does not edit Designer markup. The early Reschedule guard
 resolves the confirmed proposal or pending direct-update contract and passes an
@@ -2318,8 +2398,12 @@ pending path's `reschedule-updated` result. A modal that lacks that panel receiv
 a module fallback, so the direct-update success cannot switch to a missing
 target. A modal with no authored `reschedule` view receives the module fallback
 instead.
-The module uses the base "Accept new time" and "Keep current time" responses
-authored beside the reschedule trigger. If either control is missing from the
+The module uses the base "Accept new time" and "Cancel call" responses
+authored beside the reschedule trigger, normalizing authored decline labels to
+"Cancel call". Declining a proposed time cancels the confirmed call under the
+responding actor policy; it does not retain the original appointment. See the
+[CS-17 backend release prerequisite](#cs-17-backend-release-prerequisite) for the
+required backend prerequisite. If either control is missing from the
 base panel, it creates the fallback pair once per modal and marks both controls
 with `data-starters-reschedule-respond`. Decline, cancel, and both reschedule
 commands require a non-empty reason. Decline posts `booking_id`, `config_id`,
@@ -2346,13 +2430,28 @@ timezone, and each response uses a fixed `respond` scope. An ambiguous or
 malformed result keeps the key for safe replay. Only an exact nested result for
 the same booking clears the matching key: decline must be `declined`, cancel
 must be `cancelled`, a proposal must be `rescheduled`, a pending-request update
-must remain `pending`, and either response must be `confirmed`. The success
+must remain `pending`, acceptance must be `confirmed`, and the nested
+`reschedule_decline` response must be `cancelled`. The success
 panel replaces `[Starter]` and `[Brand]` in its leaf text nodes with the
 counterpart's canonical booking name, or `the other participant` when that name
 is blank. Before the pending direct-update panel opens, the module updates the
 open modal from the new start, end, and reason, so its booking fields do not show
-the pre-change time. A confirmed-call proposal does not update those fields,
-because its current time stays authoritative until the counterpart confirms.
+the pre-change time. For either Brand or Starter, a confirmed-call proposal
+renders the selected date and reason only in the `reschedule-proposed` receipt,
+using the shared detail formatter for both authored booking fields and generated
+supplement rows. While awaiting the counterpart response, the base panel and
+canonical booking retain the confirmed time, including when the participant
+returns with Back.
+After a validated response for either role, the module applies the returned
+status and valid returned start/end times to the booking and runs the shared
+detail formatter before opening `reschedule-accepted` or `reschedule-declined`.
+Both the receipt and base omit proposal-only fields and summary rows while
+retaining counterpart and call-context fields. The declined receipt says
+"Call cancelled" and "The proposed time was declined and the call was cancelled."
+The module also normalizes the known legacy authored receipt copy before
+reusing existing views. A delayed confirm or
+decline response, whether successful or failed, does not replace the displayed
+details, switch panels, or show an error if the modal now holds another booking.
 Other authored content stays unchanged. The panel remains visible until the
 participant closes the modal; closing it then refreshes the canonical list.
 
@@ -2366,18 +2465,31 @@ availability flag and is never returned to the dashboard consumer. Direct
 transcript fetch and rendering remain closed because there is no reviewed
 authenticated V3 transcript proxy with an exact ownership contract.
 
-`dashboard-call-payment.js` provides server-owned Paid Call recovery helpers
-without activating UI. For an owning Brand and an exact canonical payment state,
-the helpers can request `brand/booking/payment-action/v3` with only the booking
-ID, or send an existing `pm_` PaymentMethod ID plus a bounded idempotency key to
-`brand/booking/payment-method-replace/v3`. Eligibility requires the booking's
-payment environment to be exactly `test` or `live`. Both commands run through
-`window.xanoAuthFetch`; the browser never calls Stripe or another provider
-directly. `wire()` remains inert, so no card form, authentication-secret flow,
-or payment-replacement control is active until the native dashboard UI has a
-separately reviewed ownership contract.
+### Dashboard payment recovery
 
-This controller is also the single owner of the Starter request-expiry
+`dashboard-call-payment.js` owns the Brand dashboard payment-method panel for
+eligible declined Paid bookings in a canonical `test` or `live` environment.
+It loads the [shared payment client](#brand-paid-call-payment-method-client)
+and binds the authored saved-card list and Add card dialog. “Use this card”
+changes the Brand default for future bookings, verifies that default through
+an authenticated card-list readback, then explicitly recovers only the selected
+booking through `brand/booking/payment-method-replace/v3`. That command sends
+the booking ID, selected `pm_` ID and a bounded idempotency key through
+`window.xanoAuthFetch`; Xano owns customer and booking authorization. Success
+returns to the base panel and refreshes the canonical booking list. Changing
+the default alone does not rewrite other existing bookings.
+
+Selection and recovery share an exclusive owner with Add card. A failed recovery
+retains its command identity and verified selection for retry without another
+default command. Closing or replacing the booking modal permanently invalidates
+that owner, including when the same booking is reopened. Add card saves through
+the shared setup flow and reloads the picker with the new default selected;
+booking recovery still requires “Use this card”. Back returns to the picker.
+The `auth_required` helper for `brand/booking/payment-action/v3` remains available
+without activating authentication-confirmation UI. Paid cancellation, reschedule
+policy, charging and payout policy are unchanged.
+
+`dashboard-calls.js` is also the single owner of the Starter request-expiry
 countdown; the legacy inline dashboard helper no longer renders that list, so
 its copy of the countdown is dead and must not be re-enabled. The countdown
 reads canonical `confirmation_expires_at` and falls back to canonical `start`
@@ -3355,18 +3467,33 @@ hide both the role card and missing-role guidance. An absent `consult_only`
 value defaults to `false` for compatibility with cached responses. No state
 renders raw `N/A`.
 
-All state containers, links, and styling live in Webflow. The controller does
-not create markup or inject state sentences. For ready ranks it combines the
-canonical rank and cohort into an ordinal position (`6th/21`), uses the existing
-cohort hook in each authored small-text row for the role name and `Starters
-Overall`, suppresses that row's former surrounding copy such as `Out of` and
-`eligible Starters` without replacing its markup, and keeps the legacy tie
-labels hidden. Xano tie counts remain part of the read model and rank semantics;
-only the compact presentation omits the word “Tied”. The root preserves those
-semantics as `data-overall-tied="true|false"` and
+All state containers, links, and styling live in Webflow. For ready ranks the
+controller combines the canonical rank and cohort into an ordinal position
+(`6th/21`), uses the existing cohort hook in each authored small-text row for
+the role name and `Starters Overall`, suppresses that row's former surrounding
+copy such as `Out of` and `eligible Starters` without replacing its markup, and
+keeps the legacy tie labels hidden. Xano tie counts remain part of the read
+model and rank semantics; only the compact presentation omits the word “Tied”.
+The root preserves those semantics as `data-overall-tied="true|false"` and
 `data-role-tied="true|false"` for diagnostics without restoring visible tie
 copy. It also reflects Xano's consult-only classification as
 `data-consult-only="true|false"` for Designer styling.
+
+The same controller owns the copy contract inside
+`[data-modal-target="how-to-earn-points"]`. Webflow does not currently expose
+stable attributes on the individual rule rows through the available headless
+element tools. The controller therefore identifies the exact authored rule
+labels, stamps each row with `data-points-rule`, and marks the dialog with
+`data-points-rules-version="2026-09-09"`. It clones the existing project row
+once to create the completed free-or-paid-call rule. This preserves the native
+row structure and styling without adding a second page script. Repeated mounts
+do not duplicate the row. The visible rules must match Xano: project starts
+`+2,000`; free or paid calls `+2,000` only at completion; initial responses
+`+1,000 / +500 / 0` for under 24 hours, 24 hours to under 72 hours, and
+72 hours to seven days, respectively; no response after seven days `-1,000`;
+verified invoices `+1` per paid dollar; approved five-star/four-star reviews
+`+5,000 / 0`; and approved
+one-to-three-star reviews `-5,000`.
 
 Each root reflects its resolved state onto `data-points-status`
 (`loading`, `ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so
@@ -3575,8 +3702,9 @@ node --test v3/starter-dashboard-stripe-connect.test.js
 ## Brand paid-call payment method client
 
 `paid-call-brand-payment.js` owns the authenticated Paid option inside the
-Designer-authored Book Call modal. It creates no application form markup. It
-mounts Stripe's secure Card Element in `[card-element]`, then replaces the
+Designer-authored Book Call modal and provides shared card-screen helpers. It
+builds labeled mounts inside `[card-element]` for Stripe-hosted card number,
+expiry and CVC fields sharing one Elements instance, then replaces the
 Nylas paid-booking submit boundary with the canonical Xano booking command.
 Load it after `scheduling-auth.js` on the approved Hire surfaces:
 
@@ -3586,6 +3714,15 @@ Load it after `scheduling-auth.js` on the approved Hire surfaces:
 ```
 
 For Messages, the [call-entry adapter](#messages-call-entry) loads this controller.
+
+The dashboard picker reads `GET /brand/payment-methods/v3` through the
+authenticated client, following `starting_after` cursors and rejecting malformed
+pagination, duplicate IDs and mode drift. It accepts only card summaries and
+never takes a caller-supplied customer ID. Empty lists and read failures show
+visible status; selection is disabled until a valid list is loaded. See
+[dashboard payment recovery](#dashboard-payment-recovery) for selection semantics
+and [payment verification](fixtures/PAYMENT-VERIFICATION.md) for local fixtures
+and outstanding provider evidence.
 
 The scheduling auth bridge allowlists these paid-call paths:
 
@@ -3605,9 +3742,9 @@ flowchart TD
     C --> D[Read canonical payment readiness]
     D --> E{Bookable?}
     E -- Yes --> K[Retain the confirmed slot]
-    E -- No --> F[Open native Stripe Card Element]
+    E -- No --> F[Open secure card dialog]
     F --> G{Card details complete?}
-    G -- No --> X[Stop and show an inline error]
+    G -- No --> Q[Keep Add card disabled; show field errors]
     G -- Yes --> H[Create and confirm the SetupIntent]
     H --> I[Set the PaymentMethod as default]
     I --> J[Recheck canonical payment readiness]
@@ -3618,7 +3755,7 @@ flowchart TD
     M --> N[Submit the booking request]
     N --> O{Xano rechecks slot, price, readiness, revision, and authority}
     O -- Pass --> P[Create the provider booking]
-    O -- Fail --> X
+    O -- Fail --> X[Show an inline error]
 ```
 
 1. Read the next 14 days through authenticated
@@ -3630,6 +3767,15 @@ flowchart TD
    right column, with the time buttons below it. The confirmation row spans both
    columns. A narrow mount uses the document order: calendar, timezone, time
    buttons, then confirmation. The selected slot is advisory only.
+
+   In the Hire and Messages booking modals, the selected call's summary sits
+   above the month: `Free consultation call` or `Paid consultation call`, followed
+   by its duration in minutes and, for paid calls, the canonical USD price from
+   `canonicalPaidPrice(config)`. The `data-paid-calendar-element="month"`
+   wrapper contains this `call-summary` and the `month-dates` host. The summary
+   remains visible when availability is empty and is replaced on each current
+   remount. Dashboard rescheduling does not render this summary and retains its
+   existing `month` host and controls.
 
    The timezone dropdown defaults to the visitor's browser timezone.
    Changing it clears the selected slot, regroups slots by local date and
@@ -3670,7 +3816,7 @@ flowchart TD
    hairline at either width any more. An authored class may still add what the
    engine does not declare; it can no longer remove the frame. Full contract,
    including the specificity split and the gap rules:
-   [the footer frame contract](HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
+   [the footer frame contract](../docs/wiring/HIRE-PROFILE-WIRING.md#the-footer-frame-contract-reversed-august-2026).
 
    The shared engine also renders a timezone control — a `<label>` wrapping a
    caption and the `<select>` that names the clock the times are shown in. It
@@ -3754,7 +3900,7 @@ flowchart TD
    `loading` and `error` — and the empty-availability state pushes its footer to
    the bottom of it, so the banner never covers a collapsed panel. Full
    contract:
-   [the status banner and the four-state min-height](HIRE-PROFILE-WIRING.md#the-status-banner-and-the-four-state-min-height).
+   [the status banner and the four-state min-height](../docs/wiring/HIRE-PROFILE-WIRING.md#the-status-banner-and-the-four-state-min-height).
 
    On the booking surface the shell writes only `width` inline and leaves its
    `display` and both gaps to the sheet, because an inline declaration outranks
@@ -3811,8 +3957,8 @@ flowchart TD
 3. When the Brand confirms a slot, read payment readiness. A canonical
    `bookable=true` result can continue directly to the booking command.
 4. If no ready payment method exists, retain that exact selected slot and open
-   the native Stripe Card Element dialog. Incomplete card details stop before a
-   SetupIntent request and show an inline error.
+   the secure card dialog. Add card stays disabled until all three fields are
+   complete and error-free; field and submission errors remain visible inline.
 5. Call `StartersPaidCallBrandPayment.createSetupAttempt()` once for the current
    card-setup attempt. Retry its `.run()` method with the same idempotency key
    until Xano returns the Stripe SetupIntent client secret or a terminal error.
@@ -3840,36 +3986,37 @@ booking would not change the booking's server-owned payment snapshot. The
 success copy says that the saved payment method will be used. It does not show
 the Designer placeholder last-four digits because the readiness DTO does not
 return card details. When a newly saved card resumes and completes the booking,
-the controller closes only the owning Stripe Card Element dialog. It does not
+the controller closes only the owning secure card dialog. It does not
 activate the earlier booking backdrop, so the paid-call success step remains
 visible.
 
 Closing the main booking modal, its backdrop, or ESC invalidates the shared
 calendar generation and restores `schedule-step="default"`. It also clears the
 selected slot, guest fields, topic, context, calendar, errors, status text, and
-Stripe Card Element. Closing only the Stripe dialog before canonical booking
+Stripe fields. Closing only the Stripe dialog before canonical booking
 proof clears its card/error state, retained slot, and Paid guest state without
 creating a booking. Reinstalling the Paid controller on the same booking dialog
-disposes the previous controller's listeners and destroys its Stripe Card
-Element. A pending Stripe load cannot mount an Element for a disposed controller.
+disposes the previous controller's listeners and destroys its Stripe
+fields. A pending Stripe load cannot mount fields for a disposed controller.
 The shared booking lifecycle replaces each call type's reset callback on
 reinstallation. Replacement and delayed-load regressions are covered in
 [`paid-call-brand-payment.test.js`](paid-call-brand-payment.test.js).
 Hire call-service routing and chooser behavior are owned by
-[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing);
+[`HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing);
 Messages routing is owned by [Messages call entry](#messages-call-entry).
 
 The native `[popup-stripe-card]` component must keep its visible payment title
-(`Payment Methods` today; `Card details` is also supported) and retain
+(the controller relabels it `Your Cards`) and retain
 `[card-element]`, `[card-error]`,
 `[save-card-status]`, `[save-card-btn]`, and `[popup-stripe-card-close]`. The
-controller links that native title to the dialog and Card Element, applies live
-regions to the authored error and status nodes, and hides the retired
-`[pm-use-this]` action. Stripe Elements supplies the card-number, expiry, and
-CVC placeholders; raw card data never enters Webflow or Xano.
+Hire controller links that native title to the dialog and secure field group,
+applies live regions to the authored error and status nodes, and hides the retired
+`[pm-use-this]` action inside the Add card dialog. The save control reads
+`Add card`; Back clears the form and returns to its owning screen. Stripe
+Elements supplies the card-number, expiry, and CVC placeholders; raw card data never enters Webflow or Xano.
 
 The authoritative Free controller ownership and chooser contract lives in
-[`HIRE-PROFILE-WIRING.md`](HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
+[`HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#call-modal-and-project-service-routing).
 After that controller installs, `hire-profile.js` gives the exact active Paid
 configuration and the canonical Starter Nylas grant to this controller. The
 controller uses that grant with the canonical Paid duration for availability
@@ -4002,7 +4149,7 @@ The browse row is the `.dash-hero_action-item` containing an exact
 `href="/all-starters"` link. When a paid or free Brand visits `/all-starters`,
 the sitewide `route-guard.js` records the visit in Memberstack JSON. The Brand
 dashboard reads that completion marker and hides the browse row. See
-[ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md#brand-action-items-completion-marker)
+[ROUTE-GUARD-WIRING.md](../docs/wiring/ROUTE-GUARD-WIRING.md#brand-action-items-completion-marker)
 for the marker, role, preservation, and failure contracts.
 
 The panel settles at the first of: an item becoming visible, a Stripe
@@ -4182,7 +4329,7 @@ Preserve the existing redirects and mobile styles.
 The adapter binds the native `[booking-button-wrapper]` and its authored button,
 then removes the unconditional chooser trigger. Keep the page-head fail-closed
 style `[booking-button-wrapper]{display:none}` until the authenticated adapter
-reveals the selected conversation's eligible call types.
+confirms the selected Starter's call availability.
 Remove the native wrapper's `data-ms-content="paid-plans"` attribute during
 page activation. Memberstack can remove that element before the adapter starts
 for Brand Free accounts; the adapter owns role gating for this control.
@@ -4193,8 +4340,16 @@ ownership. On each entry, read the canonical public call DTO and authenticated
 booking configuration again. Manual readiness probes must send the production
 `Origin` header because the endpoint selects its environment from that context.
 Both admitted types show the native chooser; one
-type uses the existing hidden-chooser pass-through to its calendar. Neither or
-a failed lookup stays hidden. The adapter loads the existing scheduling auth,
+type uses the existing hidden-chooser pass-through to its calendar. When neither
+type is admitted, the “Schedule a call” control remains visible with
+`aria-disabled="true"` and cannot open booking. Hover, keyboard focus, or tap
+shows “This Starter isn’t accepting calls right now.” Escape dismisses the hint.
+An independently resolved published profile plus the precise booking response
+`404 Bookable Starter calendar not found` also permits this unavailable state.
+The adapter uses `authenticatedRequest` to preserve that error distinction.
+No selection, an unresolved or non-Starter participant, or a failed availability
+read keeps the control hidden; network failures never imply calls are off.
+The adapter loads the existing scheduling auth,
 Free booking and Paid booking controllers, and never writes TalkJS eligibility
 metadata. All booking requests remain owned by the shared controllers.
 
@@ -4202,3 +4357,16 @@ Messages requires the native `popup-booking-main` and `popup-booking` dialogs.
 Install [`messages-payment-dialog.html`](messages-payment-dialog.html) in the
 empty Messages footer for Brands that need the Hire payment-method dialog.
 The native dialog guest fields are optional, as on older Hire markup.
+
+### CS-17 backend release prerequisite
+
+The prepared shared-cancellation endpoint5760 and dependencies2098/2099 are
+published, with exact source readback and both-role native Test cancellation
+and provider evidence. See [release evidence](fixtures/RESCHEDULE-DECLINE-RELEASE-PROOF.md)
+for revisions, scope, cleanup, and remaining verification limits. This replaces
+the earlier supplied status in which endpoint5760 restored `confirmed`.
+
+The frontend remains subject to no-mistakes review and CI before merge/release.
+Backend evidence does not establish Paid settlement, production canaries, or
+completion of the full20-workflow checklist. Historical completed backend
+receipts must remain immutable.

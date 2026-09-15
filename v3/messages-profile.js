@@ -41,9 +41,8 @@
  *   logged out    -> the hire-page signup modal (`data-modal-target="signup-modal"`).
  *                    Chat intent is dropped in v1 — no auto-continue after signup.
  *                    Does not send the visitor to /quiz.
- *   free Brand    -> `messages-profile-upgrade` when set, else route-guard's
- *                    brandFreeHome: /quiz-results once the Memberstack
- *                    `starter-quiz` field says the quiz is done, /quiz until then
+ *   free Brand    -> visible Message; membership pricing at /why-us#join-starters-cta.
+ *                    Explicit upgrade overrides remain supported; old quiz URLs are retired.
  *   talent, self  -> trigger hidden, and the modal closes if opened anyway
  *   paid Brand    -> the chat
  * Role comes from `window.StartersV3RouteGuard.memberRole`, so route-guard.js has
@@ -83,7 +82,7 @@
   var DEEP_LINK_PARAM = 'with'
   var MODAL_PARAM = 'modal-id'
   var SIGNUP_MODAL_ID = 'signup-modal'
-  var FALLBACK_FREE_BRAND_PATH = '/quiz'
+  var FALLBACK_FREE_BRAND_PATH = '/why-us#join-starters-cta'
 
   var TALKJS_APP_ID = 'LmYV8DIA'
   var TALKJS_THEME = 'the-starters-3-0-profile'
@@ -100,7 +99,7 @@
   var MEMBER_ID_PATTERN = /^mem_(?:sb_)?[A-Za-z0-9]+$/
   var MAX_NAME_LENGTH = 120
   // Hidden from the trigger. `brand-free` is additionally redirected on open.
-  var HIDDEN_ROLES = ['brand-free', 'talent']
+  var HIDDEN_ROLES = ['talent']
   var REDIRECTED_ROLES = ['brand-free']
 
   var LOG_PREFIX = '[messages-profile]'
@@ -321,18 +320,7 @@
 
   /* ============================ DESTINATIONS ========================= */
 
-  /**
-   * Where a free Brand goes instead of the chat: `/quiz-results` once they have
-   * completed the quiz, `/quiz` until then — i.e. route-guard's brandFreeHome,
-   * which reads the Memberstack `starter-quiz` custom field. An explicit
-   * `messages-profile-upgrade` on the chat container or an identity carrier
-   * overrides both, for when a real upgrade page exists. It is read from the
-   * carriers, not the outer modal-trigger wrappers, because Webflow publishes it
-   * on the same nested `clickable_link` as the other `messages-profile-*`
-   * attributes.
-   * @param {object} member
-   * @returns {string}
-   */
+  /** Resolve membership pricing, preserving explicit non-quiz overrides. */
   function upgradeUrl(member) {
     var container = chatContainer()
     var configured = container ? text(container.getAttribute(UPGRADE_ATTRIBUTE)) : ''
@@ -342,19 +330,10 @@
         return !!configured
       })
     }
-    if (configured) return configured
-
-    var guard = window.StartersV3RouteGuard
-    var home =
-      guard && typeof guard.brandFreeHome === 'function' ? guard.brandFreeHome(member) : ''
-    if (!home) {
-      warn(
-        'route-guard.js is absent, so quiz completion is unknown; sending the ' +
-          'free Brand to ' +
-          FALLBACK_FREE_BRAND_PATH,
-      )
-    }
-    return home || FALLBACK_FREE_BRAND_PATH
+    // Retire the template's old quiz destinations: those are onboarding,
+    // not membership upgrades. Preserve deliberate page-level overrides.
+    if (configured && !/^\/quiz(?:-results)?(?:[?#].*)?$/.test(configured)) return configured
+    return FALLBACK_FREE_BRAND_PATH
   }
 
   function goTo(url) {

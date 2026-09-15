@@ -1,5 +1,8 @@
 # global-embeds
 
+Webflow wiring guides, including replica lists, live in the shared
+[wiring guide folder](../docs/wiring/README.md).
+
 **This folder is the source of truth.** The code that lives in Webflow (page/site
 custom code and embed elements) is a mirror of what's in here — not the other way
 around.

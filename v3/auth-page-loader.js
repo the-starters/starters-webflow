@@ -8,7 +8,7 @@
  * `route-guard.js` tag, and `signup-attribution.js`, and before the
  * conditional application block. The page-level `auth-route.js` tag is the
  * only tag it ever replaces, and only after the cutover proof in
- * AUTH-ROUTE-WIRING.md.
+ * docs/wiring/AUTH-ROUTE-WIRING.md.
  *
  * On /login, /starter-login, and /auth-route it inserts auth-route.js, and the
  * site application block skips the controllers unrelated to authentication and

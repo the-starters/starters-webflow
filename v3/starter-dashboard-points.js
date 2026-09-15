@@ -12,7 +12,10 @@
  *
  * State copy and its containers are authored in Webflow. This controller binds
  * authenticated values, formats compact rank positions, and selects which
- * authored state is visible.
+ * authored state is visible. The earning-rules dialog currently has no native
+ * custom attributes on its rows. Until those attributes can be added through
+ * Webflow's headless element builder, this controller also normalizes that one
+ * dialog from its exact authored labels and stamps stable runtime attributes.
  */
 ;(function (global) {
   'use strict'
@@ -31,6 +34,9 @@
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const SUMMARY_REFRESH_INTERVAL_MS = 10000
   const SUMMARY_REFRESH_MAX_ATTEMPTS = 60
+  const POINTS_RULES_VERSION = '2026-09-09'
+  const POINTS_DIALOG_SELECTOR =
+    '[data-modal-target="how-to-earn-points"]'
   const ATTR = 'data-points-element'
   const selector = (name) => '[' + ATTR + '="' + name + '"]'
   const STATE_ELEMENTS = [
@@ -140,6 +146,135 @@
 
   function find(root, name) {
     return root.querySelector(selector(name))
+  }
+
+  function normalizedText(element) {
+    return String((element && element.textContent) || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  function paragraphByText(scope, acceptedText) {
+    if (!scope || typeof scope.querySelectorAll !== 'function') return null
+    const accepted = Array.isArray(acceptedText) ? acceptedText : [acceptedText]
+    return (
+      Array.prototype.find.call(
+        scope.querySelectorAll('p'),
+        function (item) {
+          return accepted.includes(normalizedText(item))
+        },
+      ) || null
+    )
+  }
+
+  function ruleRow(dialog, labels) {
+    const label = paragraphByText(dialog, labels)
+    const titleWrapper = label && label.parentElement
+    const row = titleWrapper && titleWrapper.parentElement
+    return row && row.parentElement ? row : null
+  }
+
+  function replaceParagraphText(scope, acceptedText, nextText) {
+    const paragraph = paragraphByText(scope, acceptedText)
+    if (!paragraph) return false
+    paragraph.textContent = nextText
+    return true
+  }
+
+  function syncEarningRules(documentRoot) {
+    if (!documentRoot || typeof documentRoot.querySelector !== 'function') {
+      return { status: 'missing-document', insertedCallRow: false }
+    }
+
+    const dialog = documentRoot.querySelector(POINTS_DIALOG_SELECTOR)
+    if (!dialog) return { status: 'missing-dialog', insertedCallRow: false }
+
+    const projectRow = ruleRow(dialog, 'Starting a new project with a brand')
+    let callRow = ruleRow(dialog, 'Completed free or paid call')
+    let insertedCallRow = false
+
+    if (!callRow && projectRow && typeof projectRow.cloneNode === 'function') {
+      callRow = projectRow.cloneNode(true)
+      const label = paragraphByText(
+        callRow,
+        'Starting a new project with a brand',
+      )
+      const points = paragraphByText(callRow, '+2,000')
+      const unit = paragraphByText(callRow, '/project')
+      if (label && points && unit) {
+        label.textContent = 'Completed free or paid call'
+        points.textContent = '+2,000'
+        unit.textContent = '/completed call'
+        projectRow.parentElement.insertBefore(callRow, projectRow.nextSibling)
+        insertedCallRow = true
+      } else {
+        callRow = null
+      }
+    }
+
+    const rowLabels = [
+      ['Starting a new project with a brand', 'project-start'],
+      ['Completed free or paid call', 'call-completed'],
+      ['Responding to initial brand outreach', 'initial-response'],
+      ['No response within 7 days', 'response-expired'],
+      [
+        [
+          'Paid invoices through The Starters',
+          'Verified paid invoices through The Starters',
+        ],
+        'invoice-paid',
+      ],
+      [
+        ['Approved 4–5 star review', 'Approved 5-star / 4-star review'],
+        'review-five-four',
+      ],
+      ['Approved 1–3 star review', 'review-one-three'],
+    ]
+    rowLabels.forEach(function (entry) {
+      const row = ruleRow(dialog, entry[0])
+      if (row) row.setAttribute('data-points-rule', entry[1])
+    })
+
+    replaceParagraphText(
+      dialog,
+      [
+        'Planned earning rules. Automatic earning is not active yet.',
+        'Active points rules update automatically after each eligible activity is verified.',
+      ],
+      'Active points rules update automatically after each eligible activity is verified.',
+    )
+    replaceParagraphText(
+      dialog,
+      [
+        'Within 24h / 72h / 7 days',
+        'Within 24h / 24–72h / 72h–7 days',
+        'Under 24h / 24h to under 72h / 72h to 7 days',
+      ],
+      'Under 24h / 24h to under 72h / 72h to 7 days',
+    )
+    replaceParagraphText(
+      dialog,
+      ['Paid invoices through The Starters', 'Verified paid invoices through The Starters'],
+      'Verified paid invoices through The Starters',
+    )
+    replaceParagraphText(
+      dialog,
+      ['Per $1 paid · Coming soon', 'Per verified $1 paid'],
+      'Per verified $1 paid',
+    )
+    replaceParagraphText(
+      dialog,
+      ['Approved 4–5 star review', 'Approved 5-star / 4-star review'],
+      'Approved 5-star / 4-star review',
+    )
+    replaceParagraphText(dialog, ['+5,000', '+5,000 / 0'], '+5,000 / 0')
+
+    dialog.setAttribute('data-points-rules-version', POINTS_RULES_VERSION)
+    return {
+      status: callRow ? 'current' : 'missing-call-row-template',
+      insertedCallRow,
+      ruleRowCount: dialog.querySelectorAll('[data-points-rule]').length,
+    }
   }
 
   function show(element, visible) {
@@ -331,6 +466,7 @@
   }
 
   async function mount() {
+    syncEarningRules(global.document)
     const roots = Array.prototype.slice.call(
       global.document.querySelectorAll(selector('root')),
     )
@@ -368,6 +504,7 @@
     render,
     renderError,
     renderLoading,
+    syncEarningRules,
     viewModel,
   }
 
