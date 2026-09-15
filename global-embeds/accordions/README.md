@@ -43,8 +43,8 @@ and `aria-controls`; panels receive generated IDs and `aria-labelledby`.
 
 GSAP is optional. When available at initialization, it animates panel height
 between zero and auto over 0.3 seconds with `power1.inOut` easing. Default-open
-cards skip to the completed state. When ScrollTrigger is also available, animation
-completion and reverse completion refresh it and invalidate the timeline.
+cards skip to the completed state. Animation completion and reverse completion
+invalidate the timeline and also refresh ScrollTrigger when it is available.
 
 Without GSAP, panels toggle instantly between `display: none` and `display: block`.
 All wrapper options, active classes, and ARIA state updates still apply. This path
