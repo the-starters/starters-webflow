@@ -10,10 +10,8 @@ Treat the GitHub repo under the `the-starters` org as the source of truth for th
 
 ## Wiring guides
 
-For Webflow attributes, integration ownership, installation, and QA, start with
-the [wiring guide index and folder context](docs/wiring/README.md). Keep new
-`*-WIRING.md` guides in `docs/wiring/` and update the relevant guide when its
-contract changes.
+For Webflow attributes, integration ownership, installation, QA, and guide
+maintenance, start with the [wiring guide index and folder context](docs/wiring/README.md).
 
 ## Before Editing
 

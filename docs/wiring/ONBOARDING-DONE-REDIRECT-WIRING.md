@@ -21,7 +21,7 @@ and were split at v1.59.47. Their host allowlist, path gate, trade-token auth,
 8-second request budget, and staging-only console diagnostics remain
 self-contained. The write half separately uses the shared privacy-safe workflow
 receipt helper documented in
-[`../README.md`](../../README.md#current-scripts). The pair still installs and
+[repository README](../../README.md#current-scripts). The pair still installs and
 versions together.
 
 It is not a sibling of [route-guard.js](../../v3/route-guard.js) and does not replace it.

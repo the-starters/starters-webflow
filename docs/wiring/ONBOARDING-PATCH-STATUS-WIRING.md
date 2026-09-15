@@ -290,7 +290,7 @@ chatty, production is silent.
 ## Diagnostics
 
 The completion attempt uses the shared receipt contract owned by
-[`../README.md`](../../README.md#current-scripts). It records only allowlisted
+[repository README](../../README.md#current-scripts). It records only allowlisted
 workflow metadata and never records the member, form values, token, headers, or
 request/response bodies. Because the normal success/fail-open path hides the
 form and redirects, retrieve the retained receipt on the dashboard with:

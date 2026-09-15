@@ -157,7 +157,7 @@ redemption canaries plus the Edit no-password-email replay canary pass.
 
 Build Account and guarded Brand/Talent login-email mutations use the shared
 privacy-safe receipt contract owned by
-[`../README.md`](../../README.md#current-scripts). Before the mutation starts, the
+[repository README](../../README.md#current-scripts). Before the mutation starts, the
 controller attempts to load that helper from the same jsDelivr repository ref.
 A helper load failure does not block the existing account workflow. Validation
 failures remain distinct from attempted requests through the receipt's

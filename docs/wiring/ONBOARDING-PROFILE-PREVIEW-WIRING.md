@@ -598,7 +598,7 @@ of the record but never consulted — do not "restore" them as an ordering input
 
 If the record carries a non-empty **`roles_resolved`** array, it wins outright and
 no string parsing happens. This is the shape the endpoint should move to (see
-[Roles: resolve role_refs in Xano](#roles-resolve-role_refs-in-xano)); the client
+[Roles: resolve role_refs in Xano](#roles-and-categories-resolve-the-refs-in-xano)); the client
 already supports it, so the Xano change needs no code release here.
 
 The client accepts it tolerantly:
