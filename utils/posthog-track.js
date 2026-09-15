@@ -115,11 +115,8 @@
       // detail. They name no script, so forwarding them only files issues that
       // point back at this listener. Drop the ones with nothing to triage.
       if (!e.error && !e.filename) return
-      // window.onerror is an uncaught path, so mark it unhandled — captureException
-      // otherwise records every call as handled. A DOMException such as
-      // InvalidStateError is not an Error and carries no stack, so filename,
-      // lineno, and colno on the event are the only record of which script broke;
-      // forward them as properties because the error object cannot preserve them.
+      // If the error lacks a usable stack, the browser event may be the only
+      // source location. Forward it separately without replacing the original error.
       const props = { starters_error_source: 'onuncaughtexception' }
       if (e.filename) props.filename = e.filename
       if (e.lineno) props.lineno = e.lineno
