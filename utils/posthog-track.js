@@ -43,10 +43,44 @@
   function wireErrorCapture() {
     if (window.__startersErrorsWired) return
     window.__startersErrorsWired = true
+    // captureException creates handled metadata before merging custom properties.
+    // Correct only this forwarder's root exception at the public send boundary;
+    // existing hooks still run afterward, including privacy filters and drops.
+    const installed = new WeakSet()
+    const queued = new WeakSet()
+    const markUnhandled = (event) => {
+      const props = event && event.properties
+      const source = props && props.starters_error_source
+      if (!event || event.event !== '$exception' || !['onuncaughtexception', 'onunhandledrejection'].includes(source)) return event
+      const exceptions = props.$exception_list
+      if (!Array.isArray(exceptions) || !exceptions[0]) return event
+      return Object.assign({}, event, { properties: Object.assign({}, props, {
+        $exception_list: [Object.assign({}, exceptions[0], {
+          mechanism: Object.assign({}, exceptions[0].mechanism, { handled: false }),
+        }), ...exceptions.slice(1)],
+      }) })
+    }
+    const install = (posthog) => {
+      if (!posthog || installed.has(posthog) || !posthog.config || typeof posthog.set_config !== 'function') return
+      const previous = posthog.config.before_send
+      const hooks = Array.isArray(previous) ? previous : previous ? [previous] : []
+      posthog.set_config({ before_send: [markUnhandled, ...hooks] })
+      installed.add(posthog)
+    }
+    const prepare = (posthog) => {
+      install(posthog)
+      if (!installed.has(posthog) && !queued.has(posthog) && typeof posthog.push === 'function') {
+        queued.add(posthog)
+        // The snippet queues this function before the capture call. The SDK
+        // invokes it with the initialized instance as `this` when it loads.
+        posthog.push(function () { install(this) })
+      }
+    }
     const send = (err, extra) => {
       try {
         const posthog = window.posthog
         if (posthog && typeof posthog.captureException === 'function' && err) {
+          prepare(posthog)
           posthog.captureException(err, Object.assign({ platform: platform() }, extra || {}))
         }
       } catch (e) {
@@ -86,14 +120,14 @@
       // InvalidStateError is not an Error and carries no stack, so filename,
       // lineno, and colno on the event are the only record of which script broke;
       // forward them as properties because the error object cannot preserve them.
-      const props = { handled: false, mechanism: 'onerror' }
+      const props = { starters_error_source: 'onuncaughtexception' }
       if (e.filename) props.filename = e.filename
       if (e.lineno) props.lineno = e.lineno
       if (e.colno) props.colno = e.colno
       send(e.error || new Error(e.message), props)
     })
     window.addEventListener('unhandledrejection', (e) =>
-      send(rejectionError(e.reason), { handled: false, mechanism: 'onunhandledrejection' }),
+      send(rejectionError(e.reason), { starters_error_source: 'onunhandledrejection' }),
     )
   }
 
