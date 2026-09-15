@@ -306,6 +306,7 @@ class PaymentElement extends CalendarElement {
   }
   appendChild(child) { child.parentNode = this; return super.appendChild(child) }
   append(...nodes) { nodes.forEach(node => this.appendChild(node)) }
+  prepend(node) { this.insertBefore(node, this.children[0]) }
   insertBefore(child, next) {
     child.parentNode = child.parentElement = this
     const index = this.children.indexOf(next)
@@ -353,11 +354,20 @@ class PaymentElement extends CalendarElement {
   }
   set innerHTML(html) {
     this.children = []
-    for (const match of html.matchAll(/<span ([^>]*)>([^<]*)<\/span>/g)) {
-      const span = new PaymentElement('span', this.ownerDocument)
-      span.setAttribute(match[1], '')
-      span.textContent = match[2]
-      this.appendChild(span)
+    const stack = [this]
+    for (const token of html.matchAll(/<\/([\w-]+)>|<([\w-]+)([^>]*)>|([^<]+)/g)) {
+      if (token[1]) {
+        if (stack.length > 1) stack.pop()
+      } else if (token[2]) {
+        const node = new PaymentElement(token[2], this.ownerDocument)
+        for (const attribute of token[3].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) {
+          node.setAttribute(attribute[1], attribute[2] || '')
+        }
+        stack.at(-1).appendChild(node)
+        if (!['input', 'br', 'img', 'hr'].includes(token[2])) stack.push(node)
+      } else {
+        stack.at(-1)._textContent += token[4]
+      }
     }
   }
   focus() { this.ownerDocument.activeElement = this }

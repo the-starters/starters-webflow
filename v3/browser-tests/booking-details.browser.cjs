@@ -68,9 +68,13 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       throw new Error('Timed out: ' + expression)
     }
     let chooseDefaultForBooking = false
-    const click = async selector => {
+    const click = async (selector, trusted = false) => {
       assert.ok(await evaluate(`!!document.querySelector(${JSON.stringify(selector)})`), selector)
-      await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`)
+      if (trusted) {
+        const point = await evaluate(`(() => { const node = document.querySelector(${JSON.stringify(selector)}); node.scrollIntoView({block:'center'}); const rect = node.getBoundingClientRect(); return {x:rect.x + rect.width / 2,y:rect.y + rect.height / 2} })()`)
+        await send('Input.dispatchMouseEvent', {type:'mousePressed',...point,button:'left',clickCount:1})
+        await send('Input.dispatchMouseEvent', {type:'mouseReleased',...point,button:'left',clickCount:1})
+      } else await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`)
       await pause(30)
       if (chooseDefaultForBooking && selector === confirm && await evaluate(`document.querySelector('[data-modal-target="popup-stripe-card"]').open`)) {
         await waitFor(`document.querySelector('[customer-cards-list] [aria-checked="true"]') && !document.querySelector('[pm-use-this] button').disabled`)
@@ -137,7 +141,18 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(await evaluate(`getComputedStyle(document.querySelector('[data-payment-card-label]')).fontSize`), '18px', 'payment title follows the 1.125rem design')
     assert.equal(await evaluate('fixture.bookings.length'), 0, 'opening payment selection does not request the Call')
     await waitFor(`document.querySelectorAll('[customer-cards-list] [role="radio"]').length === 2`)
+    assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('[customer-cards-list] [role="radio"]')).map(row => ({
+      component: row.matches('.pm-card') && !!row.querySelector('.pm-card__heading [last-numbers]') && !!row.querySelector('.pm-card__dots svg') && !!row.querySelector('.pm-card__circle .pm-card__circle-inner'),
+      brand: row.querySelector('[data-payment-card-brand]').textContent,
+      expiry: row.querySelector('[data-payment-card-expiry]').textContent,
+      defaultVisible: row.querySelector('.pm-card__default').getClientRects().length > 0,
+      selected: row.getAttribute('aria-checked'),
+    }))`), [
+      {component:true,brand:'visa',expiry:' · Expires 12/2030',defaultVisible:true,selected:'true'},
+      {component:true,brand:'mastercard',expiry:' · Expires 9/2031',defaultVisible:false,selected:'false'},
+    ], 'rendered cards preserve the authored component and show verified metadata')
     await click('[customer-cards-list] [data-id="pm_other"]')
+    assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('[customer-cards-list] [role="radio"]')).map(row => [row.getAttribute('aria-checked'), row.querySelector('[tag-default]').getClientRects().length > 0, getComputedStyle(row.querySelector('.pm-card__circle-inner')).opacity])`), [['false',true,'0'],['true',false,'1']], 'tentative choice changes the radio while the current default badge stays put')
     await click('[pm-use-this]')
     await waitFor(`!document.querySelector('[data-modal-target="popup-stripe-card"]').open`)
     assert.equal(await evaluate('fixture.bookings.length'), 0, 'Use this card returns to review')
@@ -150,8 +165,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(await evaluate(`document.querySelector('[paid-call-text]').textContent`),
       'Your card ending in 0042 will be used for this call.', 'receipt identifies the booked card and preserves leading zeroes')
     observations.push('booking-linked-card-receipt')
-    const openPayment = async () => {
-      await click(confirm)
+    const openPayment = async (trusted = false) => {
+      await click(confirm, trusted)
       await waitFor(`document.querySelector('[data-modal-target="popup-stripe-card"]').open`)
     }
     const chooseCard = async (id = 'pm_original') => {
@@ -160,8 +175,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await click('[pm-use-this]')
       await waitFor(`!document.querySelector('[data-modal-target="popup-stripe-card"]').open`)
     }
-    const addCard = async () => {
-      await click('[data-booking-payment-picker] [aria-label="Add payment method"]')
+    const addCard = async (trusted = false) => {
+      await click('[data-booking-payment-picker] [aria-label="Add payment method"]', trusted)
       await waitFor(`document.querySelectorAll('[data-stripe-field] input').length === 3`)
     }
     const fillCard = async () => {
@@ -235,7 +250,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(await evaluate('fixture.bookings[0].expected_payment_method_id'), 'pm_added')
     observations.push('empty-list-retry-add-card-review-mobile')
     for (const dismissal of ['back', 'close', 'backdrop', 'nested-backdrop', 'escape']) {
-      await navigate()
+      await navigate(dismissal === 'escape' ? 'real-modal=1' : '')
       await openDetails('paid')
       if (dismissal === 'nested-backdrop') await evaluate(`(() => {
         const modal = document.querySelector('[popup-stripe-card]');
@@ -244,13 +259,19 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       })()`)
       await fill(context, 'Keep through ' + dismissal)
       await fill(guests, 'stay@example.invalid')
-      await openPayment()
-      await addCard()
+      await openPayment(dismissal === 'escape')
+      await addCard(dismissal === 'escape')
       if (dismissal === 'back') await click('[data-payment-card-back] button')
       if (dismissal.endsWith('backdrop')) await click('[data-fixture-payment-backdrop]')
       if (dismissal === 'close') await click('[popup-stripe-card] [data-modal-close]')
-      if (dismissal === 'escape') await evaluate(`document.querySelector('[popup-stripe-card]').dispatchEvent(new Event('cancel', {cancelable:true}))`)
-      await waitFor(`document.querySelector('[data-modal-target="popup-stripe-card"]').getAttribute('data-booking-payment-mode') === 'picker'`)
+      if (dismissal === 'escape') {
+        assert.equal(await evaluate(`document.querySelector('[popup-stripe-card]').dataset.scriptInitialized`), 'true', 'real modal embed initializes before the payment owner')
+        await evaluate(`window.escapeEvents = []; document.addEventListener('cancel', event => escapeEvents.push([event.target.getAttribute('data-modal-target'), event.target.getAttribute('data-booking-payment-mode')]), true)`)
+        await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+        await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+        await pause(350)
+      }
+      assert.deepEqual(await evaluate(`(() => { const modal = document.querySelector('[data-modal-target="popup-stripe-card"]'); return {open:modal.open,mode:modal.getAttribute('data-booking-payment-mode'),cancel:window.escapeEvents || []} })()`), {open:true,mode:'picker',cancel:dismissal === 'escape' ? [['popup-stripe-card','entry']] : []}, dismissal + ' returns to the owned picker')
       assert.equal(await evaluate(`document.querySelector('[data-modal-target="popup-stripe-card"]').open`), true)
       await chooseCard()
       assert.equal(await evaluate(`document.querySelector('${context}').value`), 'Keep through ' + dismissal)
@@ -362,6 +383,50 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     await waitFor('fixture.bookings.length === 2')
     assert.deepEqual(await evaluate('fixture.bookings[0]'), await evaluate('fixture.bookings[1]'))
     observations.push('ambiguous-booking-locks-card-and-draft-until-resolved')
+    await navigate()
+    await openDetails('paid')
+    await fill(context, 'Keep the original command')
+    await fill(guests, 'original@example.invalid')
+    await openPayment()
+    await chooseCard()
+    await evaluate('fixture.loseBookingResponse = true')
+    await click(confirm)
+    await waitFor('fixture.bookings.length === 1')
+    assert.equal(await evaluate('fixture.canonicalBookings.size'), 1, 'server committed the request whose response was lost')
+    for (const status of [401, 403, 404, 422, 400, 409]) {
+      await evaluate(`fixture.rejectBookingStatus = ${status}`)
+      await click(confirm)
+      await waitFor(`!document.querySelector('${confirm}').disabled`)
+      assert.equal(await evaluate(`document.querySelector('[data-booking-payment-change] button').disabled`), true, status + ' cannot resolve an earlier uncertain command')
+      assert.equal(await evaluate(`document.querySelector('${context}').readOnly`), true)
+      await click('[data-booking-payment-change] button')
+      assert.equal(await evaluate(`document.querySelector('[popup-stripe-card]').open`), false)
+      assert.deepEqual(await evaluate('fixture.bookings.at(-1)'), await evaluate('fixture.bookings[0]'))
+    }
+    await evaluate("fixture.defaultCard = 'pm_other'")
+    await click(confirm)
+    await waitFor(`getComputedStyle(document.querySelector('[schedule-step="success"]')).display !== 'none'`)
+    assert.equal(await evaluate('fixture.canonicalBookings.size'), 1, 'all retries resolve the single original booking')
+    assert.equal(await evaluate(`document.querySelector('[paid-call-text]').textContent`), 'Your card ending in 4242 will be used for this call.')
+    assert.deepEqual(await evaluate('fixture.bookings.at(-1)'), await evaluate('fixture.bookings[0]'))
+    observations.push('lost-success-then-auth-rejection-retains-reviewed-command')
+
+    await navigate()
+    await openDetails('paid')
+    await openPayment()
+    await chooseCard()
+    await evaluate('fixture.failBookings = 1')
+    await click(confirm)
+    await waitFor('fixture.bookings.length === 1')
+    await evaluate("fixture.rejectBookingStatus = 400; fixture.rejectBookingMessage = 'This booking request previously failed; use a new idempotency key'")
+    await click(confirm)
+    await waitFor('fixture.bookings.length === 2')
+    assert.equal(await evaluate(`document.querySelector('[data-booking-payment-change] button').disabled`), false, 'terminal command failure releases review')
+    assert.equal(await evaluate(`document.querySelector('${context}').readOnly`), false)
+    await click(confirm)
+    await waitFor('fixture.bookings.length === 3')
+    assert.notEqual(await evaluate('fixture.bookings[2].idempotency_key'), await evaluate('fixture.bookings[0].idempotency_key'), 'an explicitly retried terminal failure receives a fresh command identity')
+    observations.push('terminal-command-failure-releases-review-and-command')
     await navigate('legacy=1')
     await openDetails('paid')
     await fill('[data-call-guest-email]', 'retained@example.invalid')

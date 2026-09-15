@@ -165,12 +165,12 @@
         }
         let entry = state.active
         if (entry && entry.fingerprint !== fingerprint) {
-          throw new Error('Another booking request is still being processed')
+          throw Object.assign(new Error('Another booking request is still being processed'), { retrySameBooking: Boolean(entry.uncertain) })
         }
         if (!entry) {
           entry = state.attempts.get(fingerprint)
           if (!entry) {
-            entry = { attempt: createAttempt(), fingerprint, inFlight: null }
+            entry = { attempt: createAttempt(), fingerprint, inFlight: null, uncertain: false }
             state.attempts.set(fingerprint, entry)
           }
           state.active = entry
@@ -179,9 +179,17 @@
           entry.inFlight = entry.attempt.run().then(function (result) {
             if (validateResult) validateResult(result)
             if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
+            entry.uncertain = false
             return result
+          }).catch(function (error) {
+            if (typeof entry.attempt.isDefinitiveRejection === 'function') {
+              entry.uncertain = !entry.attempt.isDefinitiveRejection(error, entry.uncertain)
+              error.retrySameBooking = entry.uncertain
+              if (!entry.uncertain) state.attempts.delete(fingerprint)
+            }
+            throw error
           }).finally(function () {
-            if (state.active === entry) state.active = null
+            if (state.active === entry && !entry.uncertain) state.active = null
             entry.inFlight = null
           })
         }
@@ -872,6 +880,13 @@
     return {
       idempotencyKey: key,
       payload,
+      isDefinitiveRejection: payload.expected_payment_method_id ? function (error, uncertain) {
+        const message = String(error.data && error.data.message)
+        if (error.status === 400 && message === 'This booking request previously failed; use a new idempotency key') return true
+        if (uncertain || /reconcil|unresolved/i.test(message)) return false
+        return [400, 401, 403, 404, 422].includes(error.status) ||
+          (error.status === 409 && /payment_method_changed/i.test(String(error.data && error.data.code)))
+      } : null,
       run: async function () {
         const result = await authenticatedPost(BOOKING_PATH, payload)
         return requireCanonicalBookingProof(result)
@@ -2718,6 +2733,10 @@
       [popup-stripe-card] [save-card-btn][aria-disabled="true"] .button_main-element,
       [popup-stripe-card] [pm-use-this][aria-disabled="true"] .button_main-element { background: #e5e5e5; border-color: #e5e5e5; color: #a3a3a3; }
       [popup-stripe-card] [aria-disabled="true"] { cursor: not-allowed; }
+      [data-booking-payment-picker] .pm-card__heading { flex-wrap: wrap; min-width: 0; }
+      [data-booking-payment-picker] .pm-card__circle { flex-shrink: 0; }
+      [data-booking-payment-picker] .pm-card[aria-checked="true"] .pm-card__circle-inner { opacity: 1; }
+      [data-booking-payment-picker] .pm-card[aria-checked="false"] .pm-card__circle-inner { opacity: 0; }
     `
     document.head.appendChild(style)
   }
@@ -3020,10 +3039,26 @@
     disclosure.textContent = 'The card you confirm becomes your default for future payments.'
     const list = document.createElement('div')
     list.setAttribute('customer-cards-list', '')
-    const template = document.createElement('div')
+    list.className = 'pm-list'
+    const authoredTemplate = document.querySelector('.pm-card[pm-card-template]')
+    const template = authoredTemplate ? authoredTemplate.cloneNode(true) : document.createElement('div')
+    template.removeAttribute('id')
     template.setAttribute('pm-card-template', '')
-    template.innerHTML = '<span data-payment-card-brand></span> ending in <span last-numbers></span><span data-payment-card-expiry></span><span tag-default> Default</span>'
-    applyStyles(template, { padding: '1rem', border: '1px solid #ddd', borderRadius: '.25rem', marginBottom: '.75rem' })
+    if (!authoredTemplate) {
+      template.className = 'pm-card'
+      template.innerHTML = '<div class="pm-card__heading"><div class="pm-card__dots w-embed"><svg fill="none" height="8" viewBox="0 0 50 8" width="50" xmlns="http://www.w3.org/2000/svg"><circle cx="4" cy="4" fill="#D9D9D9" r="4"></circle><circle cx="18" cy="4" fill="#D9D9D9" r="4"></circle><circle cx="32" cy="4" fill="#D9D9D9" r="4"></circle><circle cx="46" cy="4" fill="#D9D9D9" r="4"></circle></svg></div><div last-numbers></div><div class="pm-card__default" tag-default><div>Default</div></div></div><div class="pm-card__circle"><div class="pm-card__circle-inner"></div></div>'
+    }
+    const heading = template.querySelector('.pm-card__heading')
+    if (!template.querySelector('[data-payment-card-brand]')) {
+      const brand = document.createElement('span')
+      brand.setAttribute('data-payment-card-brand', '')
+      heading.prepend(brand)
+    }
+    if (!template.querySelector('[data-payment-card-expiry]')) {
+      const expiry = document.createElement('span')
+      expiry.setAttribute('data-payment-card-expiry', '')
+      heading.insertBefore(expiry, heading.querySelector('[tag-default]'))
+    }
     host.parentNode.insertBefore(disclosure, host)
     generated.push(disclosure)
     panel.append(template, list)
@@ -3154,7 +3189,7 @@
     back.button.addEventListener('click', returnToReview)
     change.button.addEventListener('click', () => open(environment))
     modal.addEventListener('click', dismiss, true)
-    modal.addEventListener('cancel', dismiss)
+    modal.addEventListener('cancel', dismiss, true)
     function closed() { if (mode !== 'closed') returnToReview() }
     modal.addEventListener('close', closed)
     async function open(nextEnvironment) {
@@ -3180,7 +3215,7 @@
         returnToReview()
         disposed = true
         modal.removeEventListener('click', dismiss, true)
-        modal.removeEventListener('cancel', dismiss)
+        modal.removeEventListener('cancel', dismiss, true)
         modal.removeEventListener('close', closed)
         modal.removeAttribute('data-booking-payment-mode')
         generated.forEach(node => node.remove())
@@ -3579,10 +3614,7 @@
         return result
       } catch (error) {
         if (ownsSurface(generation)) {
-          const unresolved = /reconcil|unresolved/i.test(String(error.data && error.data.message))
-          const safeRejection = !unresolved && ([400, 401, 403, 404, 422].includes(error.status) ||
-            (error.status === 409 && /payment_method_changed/i.test(String(error.data && error.data.code))))
-          if (safeRejection) {
+          if (error.retrySameBooking === false) {
             pendingBookingInput = null
             paymentChoice.setPending(false)
             lockAuthoredDetails(false)

@@ -2,6 +2,7 @@
 Date.now = () => Date.UTC(2026, 8, 30, 12)
 window.fixture = { requests: [], bookings: [], failBookings: 0, installs: {} }
 fixture.defaultCard = 'pm_original'
+fixture.canonicalBookings = new Map()
 fixture.cards = [{ id:'pm_original',brand:'visa',last4:'4242',exp_month:12,exp_year:2030 }, {id:'pm_other',brand:'mastercard',last4:'0042',exp_month:9,exp_year:2031}]
 const fixtureApi = window.StartersPaidCallBrandPayment
 const fixtureParams = new URLSearchParams(location.search)
@@ -44,6 +45,14 @@ window.xanoAuthFetch = async (url, options) => {
   } else if (parsed.pathname.endsWith(fixtureApi.BOOKING_PATH)) {
     const payload = JSON.parse(options.body)
     fixture.bookings.push(payload)
+    if (fixture.rejectBookingStatus) {
+      const status = fixture.rejectBookingStatus
+      fixture.rejectBookingStatus = 0
+      return {ok:false,status,json:async () => ({message:fixture.rejectBookingMessage || 'Synthetic request rejected before command lookup'})}
+    }
+    if (fixture.canonicalBookings.has(payload.idempotency_key)) {
+      return {ok:true,status:200,json:async () => fixture.canonicalBookings.get(payload.idempotency_key)}
+    }
     if (payload.expected_payment_method_id && payload.expected_payment_method_id !== fixture.defaultCard) {
       return {ok:false,status:409,json:async () => ({code:'PAYMENT_METHOD_CHANGED'})}
     }
@@ -51,6 +60,8 @@ window.xanoAuthFetch = async (url, options) => {
     if (fixture.failBookings > 0) { fixture.failBookings--; throw new Error('Synthetic ambiguous booking response') }
     body = { booking: { booking_id: 'fixture-provider', row_id: 71, payment_method_id: 'receiptMethodId' in fixture ? fixture.receiptMethodId : payload.expected_payment_method_id,
       payment_method: fixture.receiptCard === undefined ? fixture.cards.find(card => card.id === payload.expected_payment_method_id) : fixture.receiptCard } }
+    fixture.canonicalBookings.set(payload.idempotency_key, body)
+    if (fixture.loseBookingResponse) { fixture.loseBookingResponse = false; throw new Error('Synthetic successful booking response lost') }
   } else throw new Error('Unexpected fixture request: ' + parsed.pathname)
   return { ok: true, status: 200, json: async () => body }
 }
@@ -113,12 +124,16 @@ const fixtureSettings = paid => ({ config: fixtureConfig(paid), grantId: 'fixtur
   starterSlug: 'fixture-starter', starterName: 'Starter Fixture', brandName: 'Brand Fixture', brandEmail: 'brand@example.invalid',
   starterEmail: 'starter@example.invalid', bookingApi: fixtureApi })
 const fixtureChooser = document.querySelector('[popup-booking-main]')
-window.lumos = { modal: { list: {} } }
-for (const [name, el] of [['popup-booking-main', fixtureChooser], ['popup-booking', fixturePopup], ['popup-stripe-card', document.querySelector('[popup-stripe-card]')]]) {
-  lumos.modal.list[name] = {
-    el,
-    open() { el.showModal(); window.dispatchEvent(new CustomEvent('modal-open', { detail: { modal: el } })) },
-    close() { el.close(); window.dispatchEvent(new CustomEvent('modal-close', { detail: { modal: el } })) },
+if (fixtureParams.has('real-modal')) {
+  document.querySelectorAll('dialog[data-modal-target]').forEach(el => el.classList.add('modal_dialog'))
+} else {
+  window.lumos = { modal: { list: {} } }
+  for (const [name, el] of [['popup-booking-main', fixtureChooser], ['popup-booking', fixturePopup], ['popup-stripe-card', document.querySelector('[popup-stripe-card]')]]) {
+    lumos.modal.list[name] = {
+      el,
+      open() { el.showModal(); window.dispatchEvent(new CustomEvent('modal-open', { detail: { modal: el } })) },
+      close() { el.close(); window.dispatchEvent(new CustomEvent('modal-close', { detail: { modal: el } })) },
+    }
   }
 }
 document.addEventListener('click', event => {
@@ -126,7 +141,7 @@ document.addEventListener('click', event => {
   if (row && !row.closest('[call-type-item]').hasAttribute('data-booking-unavailable')) {
     lumos.modal.list['popup-booking-main'].close()
     lumos.modal.list['popup-booking'].open()
-  } else {
+  } else if (!fixtureParams.has('real-modal')) {
     const trigger = event.target.closest('[data-modal-trigger]')
     if (trigger && trigger.hasAttribute('data-modal-close')) lumos.modal.list['popup-booking'].close()
     if (trigger) lumos.modal.list[trigger.getAttribute('data-modal-trigger')]?.open()
@@ -188,4 +203,5 @@ fixture.initialize = async () => {
   }
   fixture.ready = true
 }
-fixture.initialize()
+if (fixtureParams.has('real-modal')) document.addEventListener('DOMContentLoaded', () => fixture.initialize())
+else fixture.initialize()

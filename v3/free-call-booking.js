@@ -140,12 +140,12 @@
         }
         let entry = state.active
         if (entry && entry.fingerprint !== fingerprint) {
-          throw new Error('Another booking request is still being processed')
+          throw Object.assign(new Error('Another booking request is still being processed'), { retrySameBooking: Boolean(entry.uncertain) })
         }
         if (!entry) {
           entry = state.attempts.get(fingerprint)
           if (!entry) {
-            entry = { attempt: createAttempt(), fingerprint, inFlight: null }
+            entry = { attempt: createAttempt(), fingerprint, inFlight: null, uncertain: false }
             state.attempts.set(fingerprint, entry)
           }
           state.active = entry
@@ -154,9 +154,17 @@
           entry.inFlight = entry.attempt.run().then(function (result) {
             if (validateResult) validateResult(result)
             if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
+            entry.uncertain = false
             return result
+          }).catch(function (error) {
+            if (typeof entry.attempt.isDefinitiveRejection === 'function') {
+              entry.uncertain = !entry.attempt.isDefinitiveRejection(error, entry.uncertain)
+              error.retrySameBooking = entry.uncertain
+              if (!entry.uncertain) state.attempts.delete(fingerprint)
+            }
+            throw error
           }).finally(function () {
-            if (state.active === entry) state.active = null
+            if (state.active === entry && !entry.uncertain) state.active = null
             entry.inFlight = null
           })
         }
