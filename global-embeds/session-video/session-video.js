@@ -106,6 +106,14 @@
  *   [data-session-video="stage"]           the iframe is built in here
  *   [data-session-video="signup-trigger"]  hidden; carries data-modal-trigger
  *
+ * Optional signup-heading adapter: the root must contain exactly one h1 with
+ * nonempty trimmed text. The trigger's nonempty data-modal-trigger must match
+ * exactly one data-modal-target in the document, containing exactly one
+ * [data-ms-form="signup"] with exactly one h2. That heading must contain exactly
+ * three spans, each with text nodes only (or empty); nested elements, including
+ * nested spans, are unsupported. Missing, ambiguous or unsupported markup skips
+ * the heading update without preventing the authored trigger from opening.
+ *
  * Absorbed from the template (pre-existing, do not rename):
  *   [data-element="hero-element"]           the overlay
  *   [data-element-trigger="show-video"]     the watch control
@@ -134,8 +142,9 @@
  * deliberately never does so if the video never loads.
  *
  * NO MODAL ID LIVES IN THIS FILE. The trigger carries modal.js's own
- * `data-modal-trigger`, authored in the Designer, and this file only clicks it —
- * so modal.js needs no public API. A test pins that.
+ * `data-modal-trigger`, authored in the Designer. The heading adapter resolves
+ * that target before this file clicks the trigger; modal.js still owns opening
+ * the modal and needs no public API.
  *
  * Debug: `StartersSessionVideo.status()`, or force the wall with `.reveal()`.
  */
@@ -941,6 +950,36 @@
     this.openWall()
   }
 
+  // The shared signup form contains Article placeholder copy. Scope this adapter
+  // to the Session's authored trigger and preserve its native form and spans.
+  function setSessionSignupHeading(root, trigger) {
+    var titles = root.querySelectorAll('h1')
+    if (titles.length !== 1) return
+    var title = (titles[0].textContent || '').trim()
+    var target = trigger.getAttribute('data-modal-trigger')
+    if (!title || !target) return
+    var dialogs = document.querySelectorAll('[data-modal-target]')
+    var matches = []
+    for (var i = 0; i < dialogs.length; i += 1) {
+      if (dialogs[i].getAttribute('data-modal-target') === target) matches.push(dialogs[i])
+    }
+    if (matches.length !== 1) return
+    var forms = matches[0].querySelectorAll('[data-ms-form="signup"]')
+    if (forms.length !== 1) return
+    var headings = forms[0].querySelectorAll('h2')
+    if (headings.length !== 1) return
+    var spans = headings[0].querySelectorAll('span')
+    if (spans.length !== 3) return
+    for (var j = 0; j < spans.length; j += 1) {
+      for (var k = 0; k < spans[j].childNodes.length; k += 1) {
+        if (spans[j].childNodes[k].nodeType !== 3) return
+      }
+    }
+    spans[0].textContent = 'Watch '
+    spans[1].textContent = title
+    spans[2].textContent = ' by signing up.'
+  }
+
   Controller.prototype.openWall = function () {
     this.wallOpens += 1
     if (!this.wallEmitted) {
@@ -952,6 +991,7 @@
       warn('no signup-trigger authored; the wall cannot open')
       return
     }
+    setSessionSignupHeading(this.root, trigger)
     trigger.click()
   }
 

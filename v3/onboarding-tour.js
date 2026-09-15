@@ -52,7 +52,7 @@
  * This module is presentation-only: it never gates access. Route protection
  * stays with v3/route-guard.js and Memberstack gated content.
  *
- * See v3/ONBOARDING-TOUR-WIRING.md and INITIATIVE-125.
+ * See docs/wiring/ONBOARDING-TOUR-WIRING.md and INITIATIVE-125.
  */
 ;(function () {
   'use strict'

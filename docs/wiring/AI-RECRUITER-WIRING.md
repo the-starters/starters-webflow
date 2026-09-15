@@ -10,7 +10,7 @@ session ownership, rate limits, and all calls to n8n, Supabase, and OpenAI.
 
 ## Native Webflow markup
 
-Build the root from [`ai-recruiter-webflow.html`](ai-recruiter-webflow.html) as
+Build the root from [`ai-recruiter-webflow.html`](../../v3/ai-recruiter-webflow.html) as
 native Designer elements. The file is the complete attribute, copy, state, and
 responsive-style contract. Do not install it as an HTML embed and do not make
 the controller generate its markup. Keep one root per page and load the

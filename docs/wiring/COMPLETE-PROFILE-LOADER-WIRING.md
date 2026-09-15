@@ -92,7 +92,7 @@ parsing as 1 and 1000. That strictness is deliberate. `parseInt` would accept
 both, and `"1s"` in particular would quietly reduce the anti-flash window to a
 single millisecond with nothing wrong-looking in the markup. Anything that is not
 a plain integer falls back to **200ms**, the same default the sibling
-[explore-search list loader](../explore-search/explore-search-list-loader.js)
+[explore-search list loader](../../explore-search/explore-search-list-loader.js)
 uses. `data-loader="0"` is honored as zero rather than treated as missing.
 
 ### Fail-open, and why it is not optional
@@ -323,7 +323,7 @@ state: the loader is either up or down.
   unrelated page does nothing.
 
 Diagnostics narrate every decision on
-[staging only](../README.md#staging-only-console-diagnostics).
+[staging only](../../README.md#staging-only-console-diagnostics).
 Production is completely silent, on the applied path and on every fail-open path
 alike.
 

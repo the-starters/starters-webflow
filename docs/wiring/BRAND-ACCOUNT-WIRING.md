@@ -157,7 +157,7 @@ redemption canaries plus the Edit no-password-email replay canary pass.
 
 Build Account and guarded Brand/Talent login-email mutations use the shared
 privacy-safe receipt contract owned by
-[`../README.md`](../README.md#current-scripts). Before the mutation starts, the
+[repository README](../../README.md#current-scripts). Before the mutation starts, the
 controller attempts to load that helper from the same jsDelivr repository ref.
 A helper load failure does not block the existing account workflow. Validation
 failures remain distinct from attempted requests through the receipt's
@@ -338,7 +338,7 @@ projection.
   queues a navigation, so the promise chain settles while the browser is still
   fetching the destination, and releasing there would hand the member back a
   live-looking form for the whole of that window. The `/complete-profile` submit
-  loader ([`v3/COMPLETE-PROFILE-LOADER-WIRING.md`](COMPLETE-PROFILE-LOADER-WIRING.md))
+  loader ([`docs/wiring/COMPLETE-PROFILE-LOADER-WIRING.md`](COMPLETE-PROFILE-LOADER-WIRING.md))
   watches that attribute and depends on this.
 - The latch is scoped to the path that called `location.assign()`. A successful
   submit with no redirect URL resolved, and every error, release the form as

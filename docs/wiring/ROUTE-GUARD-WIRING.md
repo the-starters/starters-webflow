@@ -12,11 +12,11 @@ the served release before operator testing.
 Tracking: Jira `INITIATIVE-132`. This router release remains independent from
 the `INITIATIVE-131` points reconciliation and dashboard tile rollout.
 
-`v3/route-guard.js` is the sitewide companion to [auth-route.js](auth-route.js).
+`v3/route-guard.js` is the sitewide companion to [auth-route.js](../../v3/auth-route.js).
 `auth-route.js` only runs at `/login`, `/starter-login`, and `/auth-route`, so a
 logged-in member can still open another role's page by navigating directly. This guard closes
 that direct-access gap using the same stable plan-ID role matrix documented in
-[ACCESS-MATRIX.md](ACCESS-MATRIX.md).
+[ACCESS-MATRIX.md](../../v3/ACCESS-MATRIX.md).
 
 Before it evaluates any access table or waits for Memberstack, the guard owns
 one V3 compatibility redirect. On the three approved V3 hosts only,
@@ -118,7 +118,7 @@ too. The guard/router parity test in `v3/auth-route.test.js` enforces that pair 
 a new `PAGE_ROLES` row without the matching router entry fails the suite rather
 than silently dropping a `next`. The standalone page is still live and stays
 guarded: the Generate Invoice modal that `opportunities-3.0.js` drives on
-`/starter-dashboard` (see the root [`README.md`](../README.md#opportunities-30-invoice-generation))
+`/starter-dashboard` (see the root [`README.md`](../../README.md#opportunities-30-invoice-generation))
 is a second entry point to invoicing, not a replacement for this route.
 
 `/complete-profile` briefly lived in this table on 2026-08-03 and was removed the
@@ -306,7 +306,7 @@ about to persist. Properties worth knowing:
   bounces run first, so a Talent member on `/quiz-results` is still sent to its
   own home whatever sits in `sessionStorage`. A paid Brand is also sent home
   unless it matches the separately gated production canary documented in the
-  root [Quiz-results email tester](../README.md#quiz-results-email-tester)
+  root [Quiz-results email tester](../../README.md#quiz-results-email-tester)
   section.
   `brandFreeHome()`, `roleHome()`, `redirectTargetFor()`, the member-home bounce,
   and the homepage overrides all still read the durable field only.
@@ -370,7 +370,7 @@ inactive plans are unaffected. On entry, `quiz-main.js` combines the logged-in
 member's saved quiz answers with any homepage-bucket selections.
 Logged-out and missing-data handling on `/quiz-results` stays entirely with
 `quiz-results.js`; the authoritative redirect and query-preservation contract
-is in the [access matrix](ACCESS-MATRIX.md#route-level-access). `/all-starters` is
+is in the [access matrix](../../v3/ACCESS-MATRIX.md#route-level-access). `/all-starters` is
 excluded from `PAGE_ROLES` permanently (decision 2026-08-03): its content
 gating is Memberstack `data-ms-content` on the page plus list/render-level
 limiting for free Brands, and the Talent role bounce is the only route-level rule
@@ -474,7 +474,7 @@ The guard exports `hasBrandAllStartersVisit(memberstack, member)` for
 `dashboard-action-items.js`. That reader uses the same paid/free Brand boundary
 and returns `false` for missing data, unavailable APIs, other roles, or read
 failures. The Action Items behavior and Designer row selector remain owned by
-the [Dashboard Action Items panel](README.md#dashboard-action-items-panel)
+the [Dashboard Action Items panel](../../v3/README.md#dashboard-action-items-panel)
 documentation.
 
 ## Integration checklist

@@ -224,6 +224,7 @@ function actionChainHarness(kind, restart) {
   const contents = names.map(function (name) {
     return {
       hidden: name !== 'base',
+      querySelectorAll() { return [] },
       style: { display: name === 'base' ? 'flex' : 'none' },
       getAttribute(attribute) {
         return attribute === 'booking-popup-content' ? name : null
@@ -817,7 +818,7 @@ test('a reschedule proposal posts slot, reason, and a durable propose key', asyn
   }
 })
 
-test('reschedule responses post the correct endpoint and succeed only on confirmed', async () => {
+test('reschedule responses require confirmed acceptance and cancelled decline', async () => {
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
   const originalCrypto = global.crypto
@@ -834,7 +835,7 @@ test('reschedule responses post the correct endpoint and succeed only on confirm
       requests.push({ url, options })
       const key = url.includes('/confirm/') ? 'reschedule_confirm' : 'reschedule_decline'
       const body = {}
-      body[key] = { booking_id: 'booking-test-3', status: 'confirmed', revision: 4 }
+      body[key] = { booking_id: 'booking-test-3', status: key === 'reschedule_confirm' ? 'confirmed' : 'cancelled', revision: 4 }
       body.duplicate = false
       return { ok: true, async json() { return body } }
     }
@@ -844,7 +845,7 @@ test('reschedule responses post the correct endpoint and succeed only on confirm
     assert.match(requests[0].url, /\/booking\/reschedule\/confirm\/v3$/)
     assert.match(JSON.parse(requests[0].options.body).idempotency_key, /^dashboard-reschedule-confirm:/)
     const declined = await api.respondReschedule('reschedule-decline', booking, 'brand')
-    assert.equal(declined.reschedule_decline.status, 'confirmed')
+    assert.equal(declined.reschedule_decline.status, 'cancelled')
     assert.match(requests[1].url, /\/booking\/reschedule\/decline\/v3$/)
     assert.equal(await api.respondReschedule('reschedule-confirm', booking, 'starter'), null)
     assert.equal(await api.respondReschedule('cancel', booking, 'brand'), null)
@@ -1429,6 +1430,7 @@ test('the modal back and close chrome is module-owned', () => {
   const contents = ['base', 'cancel'].map(function (name) {
     return {
       hidden: name !== 'base',
+      querySelectorAll() { return [] },
       style: { display: name === 'base' ? 'flex' : 'none' },
       getAttribute(attribute) {
         return attribute === 'booking-popup-content' ? name : null
@@ -1821,7 +1823,7 @@ test('the shared reason panel carries the copy of the contract in play', () => {
   )
 })
 
-test('only the pending contract restates the booking before showing its success panel', async () => {
+test('reschedule receipts show the selected slot without moving a confirmed booking', async () => {
   const originalCalendar = global.StartersPaidCallBrandPayment
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
@@ -1841,6 +1843,42 @@ test('only the pending contract restates the booking before showing its success 
     querySelectorAll() {
       return []
     },
+  }
+  const details = require('./dashboard-calls.js')
+  const panels = ['base', 'reschedule-proposed', 'reschedule-updated'].map(name => ({
+    hidden: false,
+    style: {},
+    date: { textContent: '', style: {} },
+    reason: { textContent: '', style: {} },
+    getAttribute(attribute) { return attribute === 'booking-popup-content' ? name : null },
+    querySelectorAll(selector) {
+      if (selector === '[booking-element="start-date"]') return [this.date]
+      if (selector === '[booking-element="reschedule-reason"]') return [this.reason]
+      return []
+    },
+  }))
+  const originalQuery = modal.querySelector
+  modal.setAttribute = () => {}
+  modal.querySelector = selector => panels.find(panel =>
+    selector === '[booking-popup-content="' + panel.getAttribute('booking-popup-content') + '"]'
+  ) || originalQuery(selector)
+  modal.querySelectorAll = selector => selector === '[booking-popup-content]'
+    ? panels : panels.flatMap(panel => panel.querySelectorAll(selector))
+  const handlers = []
+  const document = {
+    addEventListener(event, handler) { if (event === 'click') handlers.push(handler) },
+    querySelector() { return modal },
+  }
+  api.wire({ document, role: 'brand', getBooking() { throw new Error('Unexpected booking lookup') } })
+  function returnToBase() {
+    const button = {
+      getAttribute(name) { return name === 'booking-action-btn' ? 'switch-base' : null },
+      closest(selector) { return selector.includes('popup-booking-info') ? modal : this },
+    }
+    handlers.forEach(handler => handler({
+      target: button, preventDefault() {}, stopImmediatePropagation() {},
+    }))
+    assert.equal(panels[0].hidden, false)
   }
   const mounts = []
   try {
@@ -1882,7 +1920,9 @@ test('only the pending contract restates the booking before showing its success 
     const pendingStart = pending.start
     const refreshed = []
     await api.mountRescheduleCalendar({}, modal, pending, 'brand', reasonField.value, undefined,
-      function (_modal, booking) {
+      function (_modal, booking, content) {
+        assert.equal(content, undefined)
+        details.populateDetailModal(_modal, booking, 'brand', undefined, content)
         refreshed.push(booking)
       })
     await mounts[0].onConfirm(slot)
@@ -1890,25 +1930,49 @@ test('only the pending contract restates the booking before showing its success 
     assert.equal(refreshed[0], pending)
     assert.equal(pending.start, start)
     assert.notEqual(pending.start, pendingStart)
+    assert.equal(pending.end, slot.end)
+    assert.equal(panels[2].hidden, false)
+    const updatedDate = panels[2].date.textContent
+    assert.ok(updatedDate)
+    returnToBase()
+    assert.equal(panels[0].date.textContent, updatedDate)
 
-    // Confirmed: the time holds until the counterpart answers, so nothing is restated.
-    // The successful pending confirm clears the authored reason field, so refill it.
-    reasonField.value = 'Need a later time'
-    currentId = 'booking-confirmed-1'
-    const confirmed = rescheduleBooking({
-      status: 'confirmed',
-      booking_id: 'booking-confirmed-1',
-      start: Date.now() + 72 * 60 * 60 * 1000,
-    })
-    const confirmedStart = confirmed.start
-    const notRefreshed = []
-    await api.mountRescheduleCalendar({}, modal, confirmed, 'starter', reasonField.value, undefined,
-      function (_modal, booking) {
-        notRefreshed.push(booking)
+    for (const role of ['starter', 'brand']) {
+      // Confirmed: the receipt shows the proposal, but the confirmed booking stays unchanged.
+      // The successful pending confirm clears the authored reason field, so refill it.
+      reasonField.value = 'Need a later time'
+      currentId = 'booking-confirmed-' + role
+      const confirmed = rescheduleBooking({
+        status: 'confirmed',
+        booking_id: currentId,
+        start: Date.now() + 72 * 60 * 60 * 1000,
       })
-    await mounts[1].onConfirm(slot)
-    assert.equal(notRefreshed.length, 0)
-    assert.equal(confirmed.start, confirmedStart)
+      const confirmedStart = confirmed.start
+      const confirmedEnd = confirmed.end
+      details.populateDetailModal(modal, confirmed, role)
+      const canonicalDate = panels[0].date.textContent
+      assert.notEqual(canonicalDate, updatedDate)
+      const proposalViews = []
+      await api.mountRescheduleCalendar({}, modal, confirmed, role, reasonField.value, undefined,
+        function (_modal, booking, content) {
+          details.populateDetailModal(_modal, booking, role, undefined, content)
+          proposalViews.push(booking)
+        })
+      await mounts[mounts.length - 1].onConfirm(slot)
+      assert.equal(proposalViews.length, 1)
+      assert.notEqual(proposalViews[0], confirmed)
+      assert.equal(proposalViews[0].start, slot.start)
+      assert.equal(proposalViews[0].end, slot.end)
+      assert.equal(proposalViews[0].rescheduled_reason, 'Need a later time')
+      assert.equal(confirmed.start, confirmedStart)
+      assert.equal(confirmed.end, confirmedEnd)
+      assert.equal(panels[1].hidden, false)
+      assert.equal(panels[1].date.textContent, updatedDate)
+      assert.equal(panels[1].reason.textContent, 'Need a later time')
+      returnToBase()
+      assert.equal(panels[0].date.textContent, canonicalDate)
+      assert.equal(panels[1].hidden, true)
+    }
   } finally {
     global.StartersPaidCallBrandPayment = originalCalendar
     global.xanoAuthFetch = originalFetch
@@ -1944,3 +2008,92 @@ test('the authored booking-copy hooks are preferred over matching the copy strin
   assert.equal(title.textContent, 'Propose a new time')
   assert.match(body.textContent, /until the other participant confirms/)
 })
+
+test('card Decline opens the selected booking before changing the modal panel', async () => {
+  const booking = pendingBooking()
+  const order = []
+  const label = { textContent: 'Cancel Call' }
+  const control = { querySelectorAll: () => [label] }
+  const panel = { style: {}, getAttribute: () => 'decline', querySelectorAll: () => [control] }
+  const modal = { querySelectorAll: selector => selector === '[booking-popup-content]' ? (order.push('panel'), [panel]) : [] }
+  const card = {}
+  const button = { getAttribute: key => key === 'booking-action-btn' ? 'switch-decline' : null,
+    closest: selector => selector === '[data-booking-id]' ? card : selector.includes('[popup-booking-info]') ? null : button }
+  let handler
+  api.wire({ document: { addEventListener: (_name, fn) => { handler = fn }, querySelector: () => modal }, role: 'starter',
+    getBooking: () => booking, openDetail: (actualModal, actualBooking) => { assert.equal(actualModal, modal); assert.equal(actualBooking, booking); order.push('open'); return true } })
+  await handler({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+  assert.deepEqual(order, ['open', 'panel'])
+  assert.equal(label.textContent, 'Decline Call')
+  assert.equal(panel.hidden, false)
+})
+
+
+test('availability rejection renders an error only for the current booking mount', async () => {
+  const original = global.StartersPaidCallBrandPayment
+  const container = { textContent: '' }
+  const loader = { hidden: true, style: { display: 'none' } }
+  let bookingId = 'booking-retained'
+  let rejectRequest
+  let receivedConfig
+  const modal = {
+    getAttribute() { return bookingId },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      if (selector === '[booking-calendar-loader]') return loader
+      return null
+    },
+    querySelectorAll() { return [] },
+  }
+  try {
+    global.StartersPaidCallBrandPayment = {
+      mountPaidCalendar(options) {
+        receivedConfig = options.config
+        return new Promise((resolve, reject) => { rejectRequest = reject })
+      },
+    }
+    const booking = rescheduleBooking({ booking_id: bookingId })
+    const first = api.mountRescheduleCalendar({}, modal, booking, 'starter', '')
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(receivedConfig.booking_id, bookingId)
+    rejectRequest(new Error('403'))
+    await assert.rejects(first, /403/)
+    assert.match(container.textContent, /Available times could not load/)
+    assert.equal(loader.hidden, true)
+
+    container.textContent = 'new booking content'
+    const stale = api.mountRescheduleCalendar({}, modal, booking, 'starter', '')
+    await new Promise((resolve) => setImmediate(resolve))
+    bookingId = 'different-booking'
+    rejectRequest(new Error('late 403'))
+    await assert.rejects(stale, /late 403/)
+    assert.equal(container.textContent, 'new booking content')
+  } finally {
+    global.StartersPaidCallBrandPayment = original
+  }
+})
+
+for (const role of ['brand', 'starter']) {
+  test(`${role} authored declined receipt is normalized before the existing-view return`, () => {
+    const title = { textContent: 'Proposal declined', children: [] }
+    const body = { textContent: 'The call keeps its original time.', children: [] }
+    const detail = { textContent: 'Date and time', children: [] }
+    const receipt = { querySelectorAll: () => [title, body, detail] }
+    const modal = {
+      querySelector(selector) {
+        if (selector === '[booking-popup-content="reschedule-declined"]') return receipt
+        if (selector === '[data-starters-reschedule-views]') return {}
+        if (selector === '[data-starters-reschedule-respond]') return {}
+        return null
+      },
+      querySelectorAll: () => [],
+    }
+    const document = { createElement() { throw new Error('Authored views must be reused') } }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      assert.equal(api.ensureRescheduleViews(document, modal), true)
+      assert.equal(title.textContent, 'Call cancelled')
+      assert.equal(body.textContent, 'The proposed time was declined and the call was cancelled.')
+      assert.equal(detail.textContent, 'Date and time')
+    }
+  })
+}

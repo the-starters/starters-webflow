@@ -54,7 +54,7 @@
  *
  * StartersFreeCallBooking is loaded from the GitHub/jsDelivr asset when an
  * older Webflow page head does not install it yet. The dependency stays
- * fail-closed: booking remains hidden if the hosted controller cannot load.
+ * fail-closed: booking remains disabled if the hosted controller cannot load.
  *
  * The Algolia index is READ FROM THE PAGE, never hardcoded: v3/algolia-environment.js
  * rewrites [wf-algolia-index] per environment and the search key 403s any other
@@ -74,7 +74,7 @@
       style.setAttribute('id', guardId);
       style.textContent = [
           '[data-booking-unavailable]{display:none!important}',
-          '[data-booking-trigger-unavailable]{display:none!important}',
+          '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}',
           '[data-canonical-call-unavailable]{display:none!important}',
           '[data-call-offer-superseded]{display:none!important}',
           '[data-header-tout-excluded]{display:none!important}',
@@ -550,9 +550,131 @@
           return;
       }
       if (!wrapper.querySelector('[data-modal-trigger="popup-booking-main"]') &&
-          !wrapper.querySelector('[data-signup-trigger-element="book-call"]')) return;
-      wrapper.style.display = available ? 'flex' : 'none';
-      wrapper.setAttribute('aria-hidden', available ? 'false' : 'true');
+          !wrapper.querySelector('[data-signup-trigger-element="book-call"]') &&
+          !wrapper.querySelector('[data-profile-book-call]')) return;
+      wrapper.style.display = 'flex';
+      wrapper.setAttribute('aria-hidden', 'false');
+  }
+
+  // These controls remain discoverable while their booking action is closed.
+  // Strip delegate hooks while disabled so signup and Lumos cannot open first.
+  const bookingHints = new Map();
+  let bookingOwner = false;
+  let ownerBookingReady = false;
+  function explainBookingAvailability(trigger, available) {
+      let entry = bookingHints.get(trigger);
+      if (!entry) {
+          const hint = document.createElement('div');
+          hint.setAttribute('id', 'call-availability-hint-' + (bookingHints.size + 1));
+          hint.setAttribute('data-call-availability-hint', '');
+          hint.setAttribute('role', 'note');
+          hint.style.cssText = 'position:fixed;z-index:1000;background:#fff;color:#20241f;border:1px solid #ccc;border-radius:4px;padding:12px;max-width:280px;font-size:14px;line-height:1.4;box-shadow:0 4px 16px #0002';
+          hint.style.display = 'none';
+          if (trigger.parentElement) {
+              document.body.appendChild(hint);
+          }
+          entry = { hint: hint, signup: trigger.getAttribute('data-signup-trigger-element'), modal: trigger.getAttribute('data-modal-trigger') };
+          bookingHints.set(trigger, entry);
+          let dismissalTimer;
+          const reveal = function () {
+              clearTimeout(dismissalTimer);
+              if (trigger.getAttribute('aria-disabled') !== 'true') return;
+              hint.style.display = 'block';
+              if (!trigger.getBoundingClientRect || !hint.getBoundingClientRect) return;
+              const rect = trigger.getBoundingClientRect();
+              const width = window.innerWidth || document.documentElement.clientWidth;
+              const height = window.innerHeight || document.documentElement.clientHeight;
+              hint.style.maxWidth = Math.max(0, Math.min(280, width - 24)) + 'px';
+              const box = hint.getBoundingClientRect();
+              hint.style.left = Math.max(12, Math.min(rect.left, width - box.width - 12)) + 'px';
+              hint.style.top = Math.max(12, rect.bottom + box.height + 8 <= height - 12
+                  ? rect.bottom + 8 : rect.top - box.height - 8) + 'px';
+          };
+          let hovered = false;
+          let focused = false;
+          const isInside = function (target) {
+              return !!target && (trigger.contains(target) || hint.contains(target));
+          };
+          const dismissInactive = function () {
+              if (!hovered && !focused) hint.style.display = 'none';
+          };
+          [trigger, hint].forEach(function (surface) {
+              surface.addEventListener('mouseenter', function () {
+                  hovered = true;
+                  reveal();
+              });
+              surface.addEventListener('mouseleave', function (event) {
+                  hovered = isInside(event.relatedTarget);
+                  clearTimeout(dismissalTimer);
+                  dismissalTimer = setTimeout(dismissInactive, 180);
+              });
+              surface.addEventListener('focusin', function () {
+                  focused = true;
+                  reveal();
+              });
+              surface.addEventListener('focusout', function (event) {
+                  focused = isInside(event.relatedTarget);
+                  dismissInactive();
+              });
+          });
+          trigger.addEventListener('click', function (event) {
+              if (trigger.getAttribute('aria-disabled') !== 'true') return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+              reveal();
+          }, true);
+          trigger.addEventListener('keydown', function (event) {
+              if (event.key === 'Tab' && !event.shiftKey && trigger.getAttribute('aria-disabled') === 'true') {
+                  const settings = hint.querySelector('a');
+                  if (settings) {
+                      event.preventDefault();
+                      reveal();
+                      settings.focus();
+                  }
+              }
+              if (event.key === 'Escape') hint.style.display = 'none';
+              if (trigger.getAttribute('aria-disabled') === 'true' && (event.key === 'Enter' || event.key === ' ')) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  reveal();
+              }
+          }, true);
+          hint.addEventListener('keydown', function (event) {
+              if (event.key === 'Tab') {
+                  if (event.shiftKey) event.preventDefault();
+                  trigger.focus();
+              }
+              if (event.key === 'Escape') {
+                  trigger.focus();
+                  hint.style.display = 'none';
+              }
+          });
+      }
+      if (available) {
+          entry.hint.style.display = 'none';
+          trigger.removeAttribute('aria-describedby');
+          if (entry.signup) trigger.setAttribute('data-signup-trigger-element', entry.signup);
+          if (entry.modal && !trigger.hasAttribute('data-logged-out-book-call')) trigger.setAttribute('data-modal-trigger', entry.modal);
+          return;
+      }
+      trigger.removeAttribute('data-signup-trigger-element');
+      trigger.removeAttribute('data-modal-trigger');
+      trigger.setAttribute('data-profile-book-call', '');
+      trigger.setAttribute('tabindex', '0');
+      trigger.setAttribute('role', 'button');
+      trigger.setAttribute('aria-label', 'Book a Call');
+      trigger.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
+      const owner = bookingOwner;
+      entry.hint.textContent = owner
+          ? (ownerBookingReady ? 'Your calls are available to brands. ' : 'Your call booking is unavailable. ')
+          : 'This Starter isn’t accepting calls right now.';
+      if (owner) {
+          const settings = document.createElement('a');
+          settings.textContent = 'Manage call settings';
+          settings.setAttribute('href', '/starter-dashboard');
+          entry.hint.appendChild(settings);
+      }
   }
 
   function setBookingButtonAvailable(available) {
@@ -570,10 +692,9 @@
       // the same discovery result.
       // The calendar engine renders a back control carrying this same trigger
       // name inside the booking dialog. It is not a page-level entry point, and
-      // stamping it unavailable would hand it to the guard stylesheet's
-      // display:none rule — hiding the way back out for the rest of the visit.
+      // stamping it unavailable would disable navigation back to the chooser.
       document.querySelectorAll(
-          '[data-modal-trigger="popup-booking-main"]:not([data-booking-back])'
+          '[data-modal-trigger="popup-booking-main"]:not([data-booking-back]), [data-profile-book-call]'
       ).forEach(function (trigger) {
           if (available) {
               trigger.removeAttribute('data-booking-trigger-unavailable');
@@ -582,6 +703,7 @@
               trigger.setAttribute('data-booking-trigger-unavailable', '');
               trigger.setAttribute('aria-disabled', 'true');
           }
+          explainBookingAvailability(trigger, available);
       });
 
       document.querySelectorAll('[data-modal-target="popup-booking-main"]').forEach(function (dialog) {
@@ -606,8 +728,7 @@
   function setLoggedOutBookingButtonAvailable(available) {
       const show = available !== false;
       const selector =
-          '[data-signup-trigger-element="book-call"]' +
-          ':not([data-booking-back])';
+          '[data-signup-trigger-element="book-call"]:not([data-booking-back]), [data-profile-book-call]';
 
       document.querySelectorAll(selector).forEach(function (trigger) {
           const wasLoggedOutAvailable = trigger.hasAttribute('data-logged-out-book-call');
@@ -624,6 +745,7 @@
 
           const wrapper = trigger.closest('[booking-button-wrapper]');
           setBookingWrapperAvailable(wrapper, show);
+          explainBookingAvailability(trigger, show);
       });
   }
 
@@ -1740,10 +1862,9 @@
 
   /* ---- owner-path actions ----
      The owner's own /hire page is a preview of what a brand is shown, not a
-     surface they can act on. Book Call is already closed to them: nothing
-     outside the brand's canonical discovery ever calls
-     setBookingButtonAvailable(true), so the trigger keeps the structural
-     fail-closed hide it starts with. The authored Hire and Message CTAs have
+     surface they can act on. Book Call stays disabled and offers settings
+     guidance, including inside the native mobile-hidden action groups.
+     The authored Hire and Message CTAs have
      no such gate — they are plain Designer entry points — so a starter could
      open a contact surface pointed at themselves.
 
@@ -1760,6 +1881,8 @@
 
   function hideOwnerContactActions() {
       if (!isProfileOwner(MEMBER)) return;
+      bookingOwner = true;
+      setBookingButtonAvailable(false);
 
       OWNER_HIDDEN_ACTIONS.forEach(function (element) {
           qsa('[data-signup-trigger-element="' + element + '"]').forEach(function (action) {
@@ -1772,6 +1895,26 @@
               action.removeAttribute('data-modal-trigger');
           });
       });
+
+      // Memberstack removes the brand-only mobile alternatives for owners.
+      // Reveal only the native action groups containing our disabled control;
+      // retain their flex layout, spacing, and every surrounding visibility gate.
+      qsa('[data-profile-book-call]').forEach(function (trigger) {
+          let group = trigger.parentElement;
+          while (group) {
+              if (group.matches && group.matches('.profile-hero_action-buttons, .profile-nav_actions')) {
+                  group.setAttribute('data-profile-owner-call-actions', '');
+                  if (group.matches('.profile-nav_actions')) group.setAttribute('data-profile-owner-mobile-call', '');
+              }
+              group = group.parentElement;
+          }
+      });
+      if (!document.getElementById('profile-owner-call-actions-style')) {
+          const style = document.createElement('style');
+          style.id = 'profile-owner-call-actions-style';
+          style.textContent = '@media(max-width:767px){[data-profile-owner-call-actions]{display:flex!important}[data-profile-owner-mobile-call]{position:fixed;left:0;bottom:0;width:100%;box-sizing:border-box;justify-content:center;padding:12px 20px;margin:0;background:#fff;z-index:30}}';
+          (document.head || document.documentElement).appendChild(style);
+      }
   }
 
   // Park the beside-services calendar experiment. The live Hire experience
@@ -2458,6 +2601,9 @@
       const accepted = Array.isArray(records)
           ? records
           : (snapshot && Array.isArray(snapshot.records) ? snapshot.records : []);
+      bookingOwner = true;
+      ownerBookingReady = accepted.length > 0;
+      setBookingButtonAvailable(false);
       document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (card) {
           const type = card.getAttribute('data-type');
           const settings = snapshot && snapshot[type];

@@ -8,10 +8,12 @@ const api = require('./dashboard-calls.js')
 
 function deferred() {
   let resolve
-  const promise = new Promise((done) => {
+  let reject
+  const promise = new Promise((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function element(attributes = {}) {
@@ -75,6 +77,26 @@ function matchesAttributeSelector(node, selector) {
   const actual = node.getAttribute && node.getAttribute(match[1])
   return actual != null && (match[2] == null || actual === match[2])
 }
+
+test('payment actions prefer the authored saved-card entry and remain gated', () => {
+  const previous = global.StartersDashboardCallPayment
+  const legacy = element({ 'payment-action-btn': 'change-card' })
+  const preferred = element({ 'payment-action-btn': 'change-card-v2' })
+  const modal = element()
+  modal.querySelectorAll = () => [legacy, preferred]
+  modal.querySelector = selector => selector === '[payment-action-btn="change-card-v2"]' ? preferred : null
+  try {
+    global.StartersDashboardCallPayment = { canManageCards: role => role === 'brand' }
+    api.configureDetailActions(modal, 'brand', 'confirmed', {})
+    assert.equal(legacy.hidden, true)
+    assert.equal(preferred.hidden, false)
+    api.configureDetailActions(modal, 'starter', 'confirmed', {})
+    assert.equal(preferred.hidden, true)
+    modal.querySelector = () => null
+    api.configureDetailActions(modal, 'brand', 'confirmed', {})
+    assert.equal(legacy.hidden, false, 'the legacy entry remains usable when no newer entry exists')
+  } finally { global.StartersDashboardCallPayment = previous }
+})
 
 function domElement(tag, attributes = {}) {
   const node = {
@@ -184,6 +206,39 @@ test('normalizes canonical Unix seconds once while preserving milliseconds', () 
     api.normalizeBooking({ booking_id: 'milliseconds', start: 1_709_645_400_000 }),
     { booking_id: 'milliseconds', start: 1_709_645_400_000, end: Number.NaN },
   )
+})
+
+test('reschedule proposals stay distinct from initial requests and confirmed calls', () => {
+  const booking = { booking_id: 'proposal', status: 'rescheduled', start: 3000, end: 4000 }
+  for (const role of ['brand', 'starter']) {
+    assert.equal(api.bookingStatus(booking, 2000), 'rescheduled')
+    assert.equal(api.statusLabel(api.bookingStatus(booking, 2000), role), 'Pending')
+    assert.deepEqual(api.sectionBookings([booking], role, 'calls', 2000), [booking])
+  }
+  assert.deepEqual(api.sectionBookings([booking], 'starter', 'requests', 2000), [])
+  assert.equal(api.responseWindowOpen(booking, 2000), false)
+  assert.equal(api.responseWindowOpen({ ...booking, response_expires_at: 1000 }, 2000), false)
+  assert.equal(api.bookingStatus(booking, 5000), 'completed')
+  for (const role of ['brand', 'starter']) {
+    assert.equal(api.canConfirmBooking(role, booking, 2000), false)
+  }
+  assert.equal(api.bookingStatus({ ...booking, status: 'confirmed' }, 2000), 'confirmed')
+})
+
+test('both roles see Pending proposal details without losing an existing meeting link', () => {
+  for (const role of ['brand', 'starter']) {
+    const view = detailModalHarness()
+    const booking = {
+      booking_id: 'proposal-details', status: 'rescheduled', start: 3000, end: 4000,
+      duration: 30, meeting_link: 'https://meet.google.com/test-room',
+      brand_data: { name: 'Brand', timezone: 'UTC' },
+      starter_data: { name: 'Starter', timezone: 'UTC' },
+    }
+    api.populateDetailModal(view.modal, booking, role, 2000)
+    assert.equal(view.fields.status.textContent, 'Pending')
+    assert.equal(view.fields['meeting-link'].hidden, false)
+    assert.equal(view.fields['meeting-link'].href, booking.meeting_link)
+  }
 })
 
 test('builds the current confirm payload only when booking_ref identities match', () => {
@@ -1500,6 +1555,10 @@ function detailModalHarness() {
     'title',
     'context',
     'start-date',
+    'start-date-old',
+    'start-time',
+    'start-time-old',
+    'status-text',
     'duration',
     'price',
     'payment-status-text',
@@ -1515,7 +1574,7 @@ function detailModalHarness() {
   })
   // The authored cancel panel duplicates some base-panel fields; every copy
   // must be filled together (Kaeser QA F3).
-  ;['context', 'start-date', 'meeting-link'].forEach((name) => {
+  ;['context', 'start-date', 'start-date-old', 'meeting-link'].forEach((name) => {
     const copy = fieldNode(name)
     panelCopies[name] = copy
     fieldCopies[name].push(copy)
@@ -1644,6 +1703,37 @@ test('Free Call details hide paid copy, duplicate copy, and unsupported actions'
   assert.equal(view.actions[4].hidden, true)
 })
 
+test('proposal details show old and proposed times and the correct waiting role', () => {
+  const booking = {
+    booking_id: 'proposal-comparison', status: 'rescheduled', rescheduled_by: 'brand',
+    start: Date.parse('2026-09-17T08:30:00Z'), start_old: Date.parse('2026-09-16T08:30:00Z'),
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'Asia/Manila' },
+  }
+  for (const role of ['brand', 'starter']) {
+    const view = detailModalHarness()
+    api.populateDetailModal(view.modal, booking, role)
+    assert.equal(view.fields['start-date-old'].textContent, role === 'brand' ? 'Wed, Sep 16, 8:30 AM UTC' : 'Wed, Sep 16, 4:30 PM GMT+8')
+    assert.equal(view.panelCopies['start-date-old'].textContent, view.fields['start-date-old'].textContent)
+    assert.equal(view.fields['start-time'].hidden, true)
+    assert.equal(view.fields['start-time-old'].hidden, true)
+    assert.equal(view.fields['start-date'].textContent, role === 'brand' ? 'Thu, Sep 17, 8:30 AM UTC' : 'Thu, Sep 17, 4:30 PM GMT+8')
+    assert.match(view.fields['status-text'].textContent, role === 'starter' ? /your confirmation/ : /Starter/)
+    api.populateDetailModal(view.modal, { ...booking, rescheduled_by: 'starter' }, role)
+    assert.match(view.fields['status-text'].textContent, role === 'brand' ? /your confirmation/ : /Brand/)
+    api.populateDetailModal(view.modal, { ...booking, status: 'confirmed' }, role)
+    assert.equal(view.fields['start-date-old'].hidden, true)
+    assert.equal(view.fields['status-text'].hidden, true)
+  }
+})
+
+test('proposal details hide unavailable old time and unknown proposer copy', () => {
+  const view = detailModalHarness()
+  api.populateDetailModal(view.modal, { booking_id: 'missing-old', status: 'rescheduled', start: Date.now() + 86400000, start_old: null }, 'starter')
+  assert.equal(view.fields['start-date-old'].hidden, true)
+  assert.equal(view.fields['status-text'].hidden, true)
+})
+
 test('details fill every authored panel copy of a booking field', () => {
   // The authored cancel/cancelled panels duplicate base-panel fields. Filling
   // only the first match rendered the cancel flow with blank call details
@@ -1685,6 +1775,7 @@ test('missing panel details and role-correct Message actions are supplied withou
   base.appendChild(domElement('span', { 'booking-element': 'start-date' }))
   const cancelled = domElement('div', { 'booking-popup-content': 'cancelled' })
   const composePanels = [
+    'payment-methods',
     'cancel-reason',
     'decline-reason',
     'reschedule',
@@ -1711,7 +1802,7 @@ test('missing panel details and role-correct Message actions are supplied withou
     'Schedule changed',
   )
   const starterMessage = cancelled.querySelector('[data-starters-call-message]')
-  assert.equal(starterMessage.textContent, 'Message Brand')
+  assert.equal(starterMessage.textContent, 'Messages tab')
   assert.equal(starterMessage.href, '/messages?with=mem_brand')
 
   const rowGroup = cancelled.querySelector('[data-starters-call-summary-rows]')
@@ -1725,12 +1816,14 @@ test('missing panel details and role-correct Message actions are supplied withou
 
   const messageActions = cancelled.querySelector('[data-starters-call-summary-actions]')
   assert.ok(messageActions)
-  assert.equal(messageActions.style.justifyContent, 'flex-end')
+  assert.equal(messageActions.tagName, 'p')
+  assert.equal(messageActions.children[0].textContent, 'If you’d like to discuss options, reach out to Northwind via the ')
+  assert.equal(messageActions.children[2].textContent, '.')
   assert.equal(starterMessage.parentNode, messageActions)
-  assert.equal(starterMessage.style.display, 'inline-flex')
-  assert.equal(starterMessage.style.backgroundColor, '#1f231f')
-  assert.equal(starterMessage.style.color, '#ffffff')
-  assert.equal(starterMessage.style.textDecoration, 'none')
+  assert.equal(starterMessage.style.display, 'inline')
+  assert.equal(starterMessage.style.backgroundColor, undefined)
+  assert.equal(starterMessage.style.color, 'inherit')
+  assert.equal(starterMessage.style.textDecoration, 'underline')
 
   const supplement = cancelled.querySelector('[data-starters-call-summary]')
   assert.equal(supplement.hidden, false)
@@ -1757,7 +1850,7 @@ test('missing panel details and role-correct Message actions are supplied withou
   api.ensureDetailSupplements(modal, booking, 'brand', 'UTC')
   assert.equal(cancelled.querySelectorAll('[data-starters-call-summary]').length, 1)
   const brandMessage = cancelled.querySelector('[data-starters-call-message]')
-  assert.equal(brandMessage.textContent, 'Message Starter')
+  assert.equal(brandMessage.textContent, 'Messages tab')
   assert.equal(brandMessage.href, '/messages?with=mem_starter')
   assert.equal(
     cancelled.querySelectorAll('[data-starters-call-summary-rows]').length,
@@ -3781,4 +3874,212 @@ test('opening on a terminal panel hides the authored back control', (context) =>
   // Navigating away from base inside the open modal still exposes the control.
   global.StartersDashboardCallActions.switchPopupContent(view.modal, 'cancelled')
   assert.equal(view.back.hidden, false)
+})
+
+test('generated reschedule receipts preserve canonical base dates across deferred rendering', () => {
+  const actions = require('./dashboard-call-actions.js')
+  const originalFrame = global.requestAnimationFrame
+  try {
+    for (const role of ['brand', 'starter']) {
+      const frames = []
+      global.requestAnimationFrame = callback => frames.push(callback)
+      const document = { createElement: tag => domElement(tag) }
+      const modal = domElement('dialog', { 'popup-booking-info': '' })
+      modal.ownerDocument = document
+      const base = domElement('div', { 'booking-popup-content': 'base' })
+      modal.appendChild(base)
+      actions.ensureRescheduleViews(document, modal)
+      const receipt = modal.querySelector('[booking-popup-content="reschedule-proposed"]')
+      assert.ok(receipt)
+      const booking = {
+        booking_id: 'generated-' + role,
+        status: 'confirmed',
+        start: Date.now() + 72 * 60 * 60 * 1000,
+        end: Date.now() + 73 * 60 * 60 * 1000,
+        duration: 60,
+        brand_data: { name: 'Brand', timezone: 'UTC' },
+        starter_data: { name: 'Starter', timezone: 'Asia/Manila' },
+      }
+      const date = panel => panel.querySelector('[data-starters-call-summary-row="start-date"]').children[1].textContent
+      api.populateDetailModal(modal, booking, role)
+      const canonicalDate = date(base)
+      assert.equal(date(receipt), canonicalDate)
+      const proposal = { ...booking, start: booking.start + 86400000, end: booking.end + 86400000 }
+      api.populateDetailModal(modal, proposal, role, undefined, 'reschedule-proposed')
+      actions.switchPopupContent(modal, 'reschedule-proposed')
+      const proposedDate = date(receipt)
+      assert.notEqual(proposedDate, canonicalDate)
+      assert.equal(date(base), canonicalDate)
+      frames.splice(0).forEach(callback => callback())
+      assert.equal(date(receipt), proposedDate)
+      assert.equal(date(base), canonicalDate)
+
+      const handlers = []
+      document.addEventListener = (event, handler) => {
+        if (event === 'click') handlers.push(handler)
+      }
+      document.querySelector = () => modal
+      actions.wire({ document, role, getBooking() { throw new Error('Unexpected booking lookup') } })
+      const button = {
+        getAttribute(name) { return name === 'booking-action-btn' ? 'switch-base' : null },
+        closest(selector) { return selector.includes('popup-booking-info') ? modal : this },
+      }
+      handlers.forEach(handler => handler({
+        target: button, preventDefault() {}, stopImmediatePropagation() {},
+      }))
+      assert.equal(base.hidden, false)
+      assert.equal(receipt.hidden, true)
+      assert.equal(date(base), canonicalDate)
+
+      api.populateDetailModal(modal, { ...proposal, status: 'pending' }, role)
+      frames.splice(0).forEach(callback => callback())
+      assert.equal(date(base), proposedDate)
+      assert.equal(date(modal.querySelector('[booking-popup-content="reschedule-updated"]')), proposedDate)
+    }
+  } finally {
+    global.requestAnimationFrame = originalFrame
+  }
+})
+
+
+test('call card binds its Join Call destination and clears it for ineligible rebinding', () => {
+  const card = element()
+  const wrap = element()
+  const link = element({ 'booking-element': 'meeting-link', href: '/' })
+  link.closest = () => wrap
+  card.querySelectorAll = (selector) => selector === '[booking-element="meeting-link"]' ? [link] : []
+  const booking = { status: 'confirmed', start: Date.now() + 86400000, end: Date.now() + 88200000, meeting_link: 'https://meet.google.com/abc-defg-hij' }
+  for (const role of ['brand', 'starter']) {
+    api.bindCard(card, booking, role)
+    assert.equal(link.getAttribute('href'), booking.meeting_link)
+    assert.equal(link.hidden, false)
+    assert.equal(wrap.hidden, false)
+    for (const changed of [
+      { status: 'pending' }, { status: 'cancelled' }, { status: 'completed' },
+      { meeting_link: '' }, { meeting_link: 'javascript:alert(1)' },
+      { meeting_link: '/' },
+    ]) {
+      api.bindCard(card, { ...booking, ...changed }, role)
+      assert.equal(link.getAttribute('href'), null)
+      assert.equal(link.hidden, true)
+      assert.equal(wrap.hidden, true)
+    }
+    api.bindCard(card, { ...booking, status: 'rescheduled' }, role)
+    assert.equal(link.getAttribute('href'), booking.meeting_link)
+    assert.equal(link.hidden, false)
+  }
+})
+
+test('Starter request Decline is exposed only with a loaded eligible contract and open response window', () => {
+  const prior = global.StartersDashboardCallActions
+  const button = element({ 'booking-action-btn': 'switch-decline' })
+  const card = { querySelectorAll: () => [button] }
+  const booking = { status: 'pending', data_environment: 'test', booking_id: 'b', config_id: 'c', start: Date.now() + 86400000 }
+  try {
+    global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
+    api.configureActionButtons(card, 'starter', 'pending', booking)
+    assert.equal(button.hidden, false)
+    api.configureActionButtons(card, 'brand', 'pending', booking)
+    assert.equal(button.hidden, true)
+    api.configureActionButtons(card, 'starter', 'pending', { ...booking, confirmation_expires_at: Date.now() - 1000 })
+    assert.equal(button.hidden, true)
+    global.StartersDashboardCallActions = undefined
+    api.configureActionButtons(card, 'starter', 'pending', booking)
+    assert.equal(button.hidden, true)
+  } finally { global.StartersDashboardCallActions = prior }
+})
+
+
+test('pending proposal cards retain confirmed time for both roles and adopt the accepted slot', () => {
+  const booking = { status: 'rescheduled', start: Date.parse('2027-09-16T02:00:00Z'),
+    start_old: Date.parse('2027-09-15T01:00:00Z'),
+    brand_data: { timezone: 'UTC' }, starter_data: { timezone: 'Asia/Manila' } }
+  for (const role of ['brand', 'starter']) {
+    const card = element()
+    const date = element()
+    card.querySelector = selector => selector === '[booking-element="start-date"]' ? date : null
+    const original = role === 'brand' ? 'Wed, Sep 15, 1:00 AM UTC' : 'Wed, Sep 15, 9:00 AM GMT+8'
+    const proposed = role === 'brand' ? 'Thu, Sep 16, 2:00 AM UTC' : 'Thu, Sep 16, 10:00 AM GMT+8'
+    api.bindCard(card, booking, role)
+    assert.equal(date.textContent, original)
+    for (const status of ['pending', 'confirmed', 'completed', 'cancelled']) {
+      api.bindCard(card, { ...booking, status }, role)
+      assert.equal(date.textContent, proposed)
+    }
+    for (const start_old of [null, 0, -1, 'invalid']) {
+      api.bindCard(card, { ...booking, start_old }, role)
+      assert.equal(date.textContent, 'Confirmed time unavailable')
+    }
+  }
+})
+
+test('reschedule responses refresh receipt and base without retaining proposal-only summary rows', async (context) => {
+  const actions = require('./dashboard-call-actions.js')
+  const previous = { fetch: global.xanoAuthFetch, storage: global.sessionStorage, actions: global.StartersDashboardCallActions }
+  context.after(() => { global.xanoAuthFetch = previous.fetch; global.sessionStorage = previous.storage; global.StartersDashboardCallActions = previous.actions })
+  global.StartersDashboardCallActions = actions
+  for (const kind of ['confirm', 'decline']) for (const role of ['brand', 'starter']) for (const scenario of ['success', 'failure', 'transport-failure', 'switched-success', 'switched-failure', 'switched-transport-failure']) {
+    const expectedStatus = kind === 'confirm' ? 'confirmed' : 'cancelled'
+    const values = new Map()
+    global.sessionStorage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
+    const handlers = []
+    const document = { createElement: tag => domElement(tag), addEventListener(type, handler) { if (type === 'click') handlers.push(handler) } }
+    const modal = domElement('dialog', { 'popup-booking-info': '' })
+    modal.ownerDocument = document
+    document.querySelector = () => modal
+    const base = domElement('div', { 'booking-popup-content': 'base' })
+    modal.appendChild(base)
+    actions.ensureRescheduleViews(document, modal)
+    const booking = { booking_id: 'accept-' + role, config_id: 'config', data_environment: 'test', status: 'rescheduled', rescheduled_by: role === 'brand' ? 'starter' : 'brand', start: Date.now() + 172800000, end: Date.now() + 174600000, start_old: Date.now() + 86400000, duration: 30, price: 0, is_paid: false, brand_data: { memberstack_id: 'mem-brand', timezone: 'UTC' }, starter_data: { memberstack_id: 'mem-starter', timezone: 'Asia/Manila' } }
+    api.populateDetailModal(modal, booking, role)
+    const receipt = modal.querySelector('[booking-popup-content="' + (kind === 'confirm' ? 'reschedule-accepted' : 'reschedule-declined') + '"]')
+    assert.ok(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'))
+    const requested = deferred()
+    const response = deferred()
+    global.xanoAuthFetch = async () => { requested.resolve(); return response.promise }
+    actions.wire({ document, role, getBooking: () => booking, refreshDetail: (target, model) => api.populateDetailModal(target, model, role) })
+    const button = domElement('button', { 'booking-action-btn': kind === 'confirm' ? 'confirm-reschedule' : 'reschedule-decline' })
+    button.closest = selector => selector.includes('popup-booking-info') ? modal : button
+    const action = handlers[0]({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+    await requested.promise
+    const retryKeys = Array.from(values.entries())
+    assert.ok(retryKeys.length > 0)
+    if (scenario.startsWith('switched')) {
+      api.populateDetailModal(modal, { ...booking, booking_id: 'other', status: 'confirmed', start: booking.start + 86400000, end: booking.end + 86400000 }, role)
+    }
+    const panelState = () => modal.querySelectorAll('[booking-popup-content]').map(panel => ({
+      panel: panel.getAttribute('booking-popup-content'),
+      hidden: panel.hidden,
+      display: panel.style.display,
+      rows: panel.querySelectorAll('[data-starters-call-summary-row]').map(row => ({
+        field: row.getAttribute('data-starters-call-summary-row'),
+        text: row.children.map(child => child.textContent),
+      })),
+    }))
+    const pendingState = panelState()
+    if (scenario.includes('transport')) {
+      response.reject(new Error('Controlled transport failure'))
+    } else {
+      response.resolve({ ok: !scenario.endsWith('failure'), json: async () => scenario.endsWith('failure') ? { message: 'Controlled failure' } : { ['reschedule_' + kind]: { booking_id: booking.booking_id, status: expectedStatus, start: booking.start, end: booking.end } } })
+    }
+    await action
+    if (scenario.endsWith('failure')) assert.deepEqual(Array.from(values.entries()), retryKeys, 'Failed attempt retains the same retry key')
+    if (scenario !== 'success') {
+      assert.equal(booking.status, 'rescheduled')
+      assert.equal(receipt.hidden, true)
+      assert.deepEqual(panelState(), pendingState, 'Delayed response preserves displayed dates and panels')
+      if (scenario.startsWith('switched')) {
+        assert.equal(modal.getAttribute('data-booking-id'), 'other')
+        assert.equal(modal.querySelector('[data-starters-action-error]'), null)
+      } else {
+        assert.ok(values.size > 0, 'Failed attempt remains retryable')
+        assert.equal(modal.querySelector('[data-starters-action-error]').textContent, scenario.includes('transport') ? 'Controlled transport failure' : 'Controlled failure')
+      }
+      continue
+    }
+    assert.equal(booking.status, expectedStatus)
+    assert.equal(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
+    assert.equal(base.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
+    assert.equal(receipt.hidden, false)
+  }
 })

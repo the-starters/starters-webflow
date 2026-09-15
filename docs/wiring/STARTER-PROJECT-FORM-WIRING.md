@@ -111,7 +111,7 @@ paths and would pass this `api:opp30` route through unauthenticated.
 **The fallback therefore requires `v3/scheduling-auth.js` on the page.** That
 script owns `window.getXanoAuthToken`, and `/starter-dashboard` is inside its
 install boundary; the authoritative host and path list lives in
-[Scheduling auth](README.md#scheduling-auth). Without the bridge the fallback
+[Scheduling auth](../../v3/README.md#scheduling-auth). Without the bridge the fallback
 issues no request at all and no error is surfaced. The modal still removes the
 generic service placeholders, removes `Monthly retainer`, and keeps every other
 valid authored option. Keep the

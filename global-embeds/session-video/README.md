@@ -26,6 +26,15 @@ The module is **inert until that markup exists**. With no
 `[data-session-video="root"]` on the page it returns immediately and leaves the
 page exactly as authored.
 
+### Session signup heading
+
+Before each opening of the authored signup trigger, the controller sets the
+heading to `Watch <Session title> by signing up.`, preserving the three existing
+spans and their styles. The optional signup-heading adapter's markup requirements
+and fallback are defined in the [module header](session-video.js). No form,
+input, consent, redirect, or email registration setting changes. This adapter is
+confined to Session walls; Article and other signup surfaces are unchanged.
+
 ## The three phases
 
 | Phase | Trigger | Behaviour | Gate |
