@@ -196,7 +196,7 @@ nothing to author.
   read and returns the same three-state answer.
 
 Diagnostics narrate every decision on
-[staging only](../README.md#staging-only-console-diagnostics). Production
+[staging only](../../README.md#staging-only-console-diagnostics). Production
 is completely silent, on the role redirects and on every fail-open path alike.
 
 ## Release gate

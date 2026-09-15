@@ -34,7 +34,7 @@ The current Designer form works without generated IDs or styling selectors:
   `On` and `Off` copy and then stamped with the canonical `data-call-settings-output` attribute.
   Matching ignores case, surrounding whitespace, and non-breaking spaces, but renamed copy resolves
   neither pill, shows both pills at once, and warns once in the console on staging (see
-  [Staging-only console diagnostics](../README.md#staging-only-console-diagnostics))
+  [Staging-only console diagnostics](../../README.md#staging-only-console-diagnostics))
 - Radio visual: Webflow's own `w-radio-input` element inside each radio's `label`; the controller
   adds and removes `w--redirected-checked` on it so the authored visual follows canonical state
   instead of the last click
@@ -208,7 +208,7 @@ published, so they are not runnable from CI or from a local test phase; both
 local phase cannot read the live authored DOM either. The release owner runs them by hand, in this
 order, after the PR merges:
 
-1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm the served
+1. Release through the sequence in [Sync Safety](../../README.md#sync-safety), then confirm the served
    asset is the new build: the served `v3/free-call-settings.js` must contain
    `data-call-settings-error-message` together with `.w-form-fail`. The previous build already
    shipped `data-call-settings-native-spinner`, `data-button-spinner`, `paintSaveBusy`,

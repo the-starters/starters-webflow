@@ -91,7 +91,7 @@ These rules are approved and apply to every curated list.
    host-resolved Algolia client and must not share a page with
    `v3/algolia-environment.js`; that resolver intentionally blocks unexpected
    indexes. See
-   [`v3/ALGOLIA-ENVIRONMENT-WIRING.md`](../../v3/ALGOLIA-ENVIRONMENT-WIRING.md)
+   [`docs/wiring/ALGOLIA-ENVIRONMENT-WIRING.md`](ALGOLIA-ENVIRONMENT-WIRING.md)
    for its exact resource contract.
 4. **Curation happens in the Algolia dashboard.** Jerico owns the ranking. No
    ordering logic lives in Webflow or in this repo.

@@ -99,7 +99,7 @@
  * path gate exits immediately elsewhere), AFTER v3/route-guard.js so role
  * routing has already run. Diagnostics are staging-only (`*.webflow.io`,
  * localhost, 127.0.0.1, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`);
- * production is silent. Page wiring and QA: see v3/BRAND-PROFILE-REDIRECT-WIRING.md.
+ * production is silent. Page wiring and QA: see docs/wiring/BRAND-PROFILE-REDIRECT-WIRING.md.
  */
 ;(function () {
   'use strict'

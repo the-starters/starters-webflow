@@ -11,12 +11,19 @@ const DOCS = [
   path.join('global-embeds', 'session-video', 'README.md'),
   path.join('global-embeds', 'learn-cta-gate', 'README.md'),
   path.join('global-embeds', 'form-embeds', 'README.md'),
+  path.join('global-embeds', 'README.md'),
+  path.join('freelancer-cms', 'README.md'),
+  path.join('v3', 'starter-edit-profile', 'README.md'),
+  path.join('v3', 'ACCESS-MATRIX.md'),
+  ...fs.readdirSync(path.join('docs', 'wiring'))
+    .filter((file) => file.endsWith('.md'))
+    .map((file) => path.join('docs', 'wiring', file)),
 ]
 
 function slugify(heading) {
   return heading
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/[`*_~]/g, '')
+    .replace(/[`*~]/g, '')
     .trim()
     .toLowerCase()
     .replace(/[^\w\- ]/g, '')
@@ -34,6 +41,10 @@ function headingSlugs(file) {
       continue
     }
     if (inFence) continue
+
+    for (const anchor of line.matchAll(/<a\b[^>]*\bid=["']([^"']+)["']/g)) {
+      slugs.add(anchor[1])
+    }
 
     const heading = /^#{1,6}\s+(.*?)\s*#*\s*$/.exec(line)
     if (!heading) continue
@@ -55,12 +66,12 @@ function relativeLinks(file) {
 
   while ((match = pattern.exec(source))) {
     const target = match[1]
-    if (/^(https?:|mailto:|#)/.test(target)) continue
+    if (/^(https?:|mailto:)/.test(target)) continue
 
     const [relative, anchor] = target.split('#')
     links.push({
       target,
-      file: path.resolve(path.dirname(file), relative),
+      file: relative ? path.resolve(path.dirname(file), relative) : path.resolve(file),
       anchor,
     })
   }
@@ -77,8 +88,9 @@ function slugsFor(file) {
 for (const doc of DOCS) {
   test(`${doc} relative links resolve to existing files`, () => {
     const links = relativeLinks(doc)
-    assert.ok(links.length > 0, `${doc} has no relative links to check`)
-
+    if (path.basename(doc) === 'README.md') {
+      assert.ok(links.length > 0, `${doc} has no relative links to check`)
+    }
     for (const link of links) {
       assert.ok(fs.existsSync(link.file), `${doc}: ${link.target} does not exist`)
     }
@@ -94,6 +106,32 @@ for (const doc of DOCS) {
     }
   })
 }
+
+// The wiring index is a public navigation contract: every guide is reachable,
+// and the existing repository/module entry points lead readers to that index.
+test('wiring index lists every guide exactly once', () => {
+  const directory = path.resolve('docs', 'wiring')
+  const guides = fs.readdirSync(directory)
+    .filter((file) => file.endsWith('-WIRING.md'))
+    .map((file) => path.join(directory, file))
+    .sort()
+  assert.ok(guides.length > 0)
+  const indexed = relativeLinks(path.join(directory, 'README.md'))
+    .filter((link) => link.file.endsWith('-WIRING.md'))
+    .map((link) => link.file)
+    .sort()
+  assert.deepEqual(indexed, guides)
+})
+
+test('repository and module READMEs link to the wiring index', () => {
+  for (const doc of ['README.md', 'v3/README.md', 'global-embeds/README.md']) {
+    assert.ok(
+      relativeLinks(doc).some((link) =>
+        link.file === path.resolve('docs', 'wiring', 'README.md')),
+      `${doc} does not link to the wiring index`,
+    )
+  }
+})
 
 test('pointer-style inventory entries retain an owner-document link', () => {
   const pointerEntries = [

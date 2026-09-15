@@ -69,7 +69,7 @@
  * the sitewide route guard. Diagnostics are staging-only (`*.webflow.io`,
  * localhost, 127.0.0.1, `*.trycloudflare.com`, or `window.STARTERS_DEBUG ===
  * true`); production is silent. Wiring: see
- * v3/BUILD-PROFILE-REDIRECT-WIRING.md.
+ * docs/wiring/BUILD-PROFILE-REDIRECT-WIRING.md.
  */
 ;(function () {
   'use strict'

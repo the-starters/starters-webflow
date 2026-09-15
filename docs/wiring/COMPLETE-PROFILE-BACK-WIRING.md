@@ -222,7 +222,7 @@ revealed or left as authored.
 - `init()` is idempotent: calling it once the button is applied re-binds nothing.
 
 Diagnostics narrate every decision on
-[staging only](../README.md#staging-only-console-diagnostics).
+[staging only](../../README.md#staging-only-console-diagnostics).
 Production is completely silent, on the applied path and on every fail-open path
 alike.
 

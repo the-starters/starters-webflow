@@ -21,10 +21,10 @@ and were split at v1.59.47. Their host allowlist, path gate, trade-token auth,
 8-second request budget, and staging-only console diagnostics remain
 self-contained. The write half separately uses the shared privacy-safe workflow
 receipt helper documented in
-[`../README.md`](../README.md#current-scripts). The pair still installs and
+[repository README](../../README.md#current-scripts). The pair still installs and
 versions together.
 
-It is not a sibling of [route-guard.js](route-guard.js) and does not replace it.
+It is not a sibling of [route-guard.js](../../v3/route-guard.js) and does not replace it.
 The route guard answers "may this role open this page" from Memberstack plans;
 this module answers "has this Talent already finished" from the Xano record.
 Both can run on the page; the guard runs sitewide and first.
@@ -172,7 +172,7 @@ learns that anyone finished.
 
 This is the slim solo walk for the redirect alone. Run it behind the Webflow
 password on `the-starters-3-0.webflow.io`, or through `./dev-tunnel.sh` (the
-module's [staging gate](../README.md#staging-only-console-diagnostics) covers the
+module's [staging gate](../../README.md#staging-only-console-diagnostics) covers the
 quick-tunnel hostname, so the tunnel loop works). Open the console — staging is
 chatty, production is silent.
 

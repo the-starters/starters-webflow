@@ -56,7 +56,7 @@
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   // Canonical Paid Call duration, owned by paid-call-settings.js
-  // (FIXED_DURATION_MINUTES) and PAID-CALL-SETTINGS-WIRING.md.
+  // (FIXED_DURATION_MINUTES) and docs/wiring/PAID-CALL-SETTINGS-WIRING.md.
   const PAID_DURATION_MINUTES = 60
   const FREE_DURATION_MINUTES = 30
   const SYNC_READY_STATES = ['ready', 'ok', 'synced', 'active', 'complete', 'completed', 'true']

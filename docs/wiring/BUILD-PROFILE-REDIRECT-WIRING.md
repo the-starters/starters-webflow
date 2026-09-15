@@ -172,7 +172,7 @@ body rather than a freelancer envelope and answers `'build-profile'`,
 staging: it returns the destination (or `null` to stay) without navigating.
 
 Diagnostics narrate every decision on
-[staging only](../README.md#staging-only-console-diagnostics).
+[staging only](../../README.md#staging-only-console-diagnostics).
 Production is completely silent, including on failure paths.
 
 ## Release gate

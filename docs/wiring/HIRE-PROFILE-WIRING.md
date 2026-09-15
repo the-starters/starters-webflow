@@ -37,7 +37,7 @@ Webflow → hire template → Page Settings → Custom Code → **Head**:
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/free-call-booking.js"></script>
 ```
 
-Use [`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
+Use [`scheduling-v3-hire-template-head.html`](../../v3/scheduling-v3-hire-template-head.html)
 as the owned embed source. All three tags are intentionally synchronous. The
 adapter must own scheduling requests, and the Free controller must define its
 namespace, before the shared **Call Scheduling - Global Code** component can
@@ -324,7 +324,7 @@ but runtime keeps `[data-availability-element="wrapper"]` hidden. The live flow
 uses the existing modal sequence: Book Call opens `popup-booking-main`, and an
 eligible Free or Paid option opens `popup-booking`. Free and Paid use the
 authenticated authored calendar. Paid uses the booking flow owned by
-[`README.md`](README.md#brand-paid-call-payment-method-client) inside the same
+[`README.md`](../../v3/README.md#brand-paid-call-payment-method-client) inside the same
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
 production route map. Generic Book Call controls remain visible across primary,
 sticky, and mobile CTAs when unavailable, with `data-booking-trigger-unavailable`
@@ -356,7 +356,7 @@ Those groups retain their authored display, ARIA state, and existing CMS and
 Memberstack role visibility for both authenticated and logged-out viewers. The
 per-trigger unavailable attribute dims and disables Book Call inside mixed
 groups without removing its spacing. The owner-only mobile exception is described
-[below](#the-owner-gets-call-settings-guidance-without-self-booking). Regression coverage in [`hire-profile.test.js`](hire-profile.test.js)
+[below](#the-owner-gets-call-settings-guidance-without-self-booking). Regression coverage in [`hire-profile.test.js`](../../v3/hire-profile.test.js)
 exercises unavailable and ready calls, including authored hidden groups that
 must stay hidden.
 
@@ -442,7 +442,7 @@ entry. A close-complete event that arrives after the dialog has already reopened
 leaves the fresh stamp alone.
 
 `[data-booking-back]` is **built by the shared calendar engine**
-([`paid-call-brand-payment.js`](paid-call-brand-payment.js), `mountPaidCalendar`),
+([`paid-call-brand-payment.js`](../../v3/paid-call-brand-payment.js), `mountPaidCalendar`),
 in the footer row it renders beside the Request call button. It has to be:
 the calendar mounts into `[nylas-container]`, which every reset of the booking
 surface clears, so an authored element inside it would not survive the first
@@ -495,7 +495,7 @@ column, and the shared engine's timezone control — a `<label>` wrapping a
 caption and a `<select>` — takes the top of the right column above the slots,
 with the month spanning down beside it so the control costs the panel no
 height. Its booking-only closed-face treatment and the corresponding inline-style
-split are owned by the [paid-call client reference](README.md#brand-paid-call-payment-method-client).
+split are owned by the [paid-call client reference](../../v3/README.md#brand-paid-call-payment-method-client).
 Stacked, `order` holds that control
 between the month and the first row of chips; the engine appends it under the
 month, ahead of the times, so document order already reads that way and its
@@ -635,7 +635,7 @@ inside the dialog, every document-wide pass over
 `[data-modal-trigger="popup-booking-main"]` excludes `[data-booking-back]`:
 the availability gate and the direct-entry trigger lookup here, and the Free
 controller's next-slot prefetch in
-[`free-call-booking.js`](free-call-booking.js). Without that, the availability
+[`free-call-booking.js`](../../v3/free-call-booking.js). Without that, the availability
 gate could stamp the back control unavailable (the guard stylesheet would then
 hide it for good), the direct-entry lookup could click it instead of a real
 chooser opener, and the prefetch would fire a stray availability read on the way
@@ -643,7 +643,7 @@ back to the chooser.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
-native `Services` option. The consumer here is [`project-form.js`](project-form.js),
+native `Services` option. The consumer here is [`project-form.js`](../../v3/project-form.js),
 not the `freelancer-cms/pre-fill-attr-val.js` embed, which is not loaded on
 `/hire/<slug>`. The stamped `data-sp-fill-category` is therefore `service`,
 singular: `project-form.js` routes a category normalizing to `service` straight
@@ -699,7 +699,7 @@ in `data-millify` and removes stale `data-millify-raw`; it does not clamp legacy
 above-cap rates or mutate canonical data. The authored template, shared millify
 defaults, and Paid/custom-service guards remain unchanged. Real-library load
 order and refresh coverage lives in
-[`hire-services-retainer.integration.cjs`](hire-services-retainer.integration.cjs),
+[`hire-services-retainer.integration.cjs`](../../v3/hire-services-retainer.integration.cjs),
 whose header gives the explicit invocation and external wf-xano dependency.
 
 The Algolia-derived runtime Retainer clone remains visible while the canonical
@@ -854,7 +854,7 @@ state`, `the owner setup CTA on a wf-xano call card is not cancelled by the
 direct-entry wiring`, `the rate cards clone the authored card even when a
 wf-xano clone precedes it in the list`, and `the rate cards refuse the wf-xano
 template that precedes the authored card` in
-[`hire-profile.test.js`](hire-profile.test.js).
+[`hire-profile.test.js`](../../v3/hire-profile.test.js).
 
 ## Call rate surfaces are repainted from the canonical source
 
@@ -1040,12 +1040,12 @@ render.
 Free-call access keeps the V2 product rule: any signed-in Brand, including
 Brand Free, can select a free call without an upgrade. The controller resolves
 the role from the active, stable Memberstack plan IDs defined in
-[`ACCESS-MATRIX.md`](ACCESS-MATRIX.md), using the same map as `route-guard.js`.
+[`ACCESS-MATRIX.md`](../../v3/ACCESS-MATRIX.md), using the same map as `route-guard.js`.
 An explicit empty, inactive, unknown-only, or cross-role plan state fails
 closed. The legacy `brands-dashboard-url` field is only a compatibility
 fallback when the SDK payload omits `planConnections`; it cannot override
 supplied plan state. Regression coverage in
-[`hire-profile.test.js`](hire-profile.test.js) includes Test Brand and Brand
+[`hire-profile.test.js`](../../v3/hire-profile.test.js) includes Test Brand and Brand
 Free plan-only members, plus empty, inactive, and cross-role plan states.
 Paid direct entry remains gated by the existing canonical configuration.
 Stripe readiness is read only after the Brand confirms a slot, and booking
@@ -1057,7 +1057,7 @@ itself.
 filter. `hire-profile.js` applies a second, fail-closed check before it gives
 that set to the two GitHub modal controllers. The shared
 `free-call-booking.js` export `selectBookableConfigurations` owns this client
-check for Hire and [Messages](README.md#messages-call-entry); Hire retains a
+check for Hire and [Messages](../../v3/README.md#messages-call-entry); Hire retains a
 local fallback for older controller versions. Each record must have a `config_id`, `active ===
 true`, and the host's exact `data_environment` (`test` on the Webflow test host,
 `production` on the production hosts). Free records must have `is_paid ===
@@ -1090,7 +1090,7 @@ Book Call click makes one availability request, and each Free option click
 mounts one authored calendar in the existing `[nylas-container]` and submits
 one idempotent canonical booking command for the selected slot.
 The timezone dropdown and slot-selection contract are owned by the
-[Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
+[Brand paid-call payment method client](../../v3/README.md#brand-paid-call-payment-method-client).
 The Free controller uses the calendar and idempotent booking-command primitives
 exported by `paid-call-brand-payment.js`. It does not mount the public Nylas
 scheduler or create a provider booking directly. Success requires the server
@@ -1098,11 +1098,11 @@ response to contain both the provider booking ID and the canonical Xano row ID.
 After that response, the controller renders the
 [Free booking confirmation](#free-booking-confirmation). The Paid success-state
 contract is owned by the
-[Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
+[Brand paid-call payment method client](../../v3/README.md#brand-paid-call-payment-method-client).
 
 `paid-call-brand-payment.js` receives the exact accepted Paid configuration and
 owns that authored CTA and the
-[shared payment flow](README.md#brand-paid-call-payment-method-client). Only
+[shared payment flow](../../v3/README.md#brand-paid-call-payment-method-client). Only
 successfully installed configurations can pass the
 [Brand readiness contract](#signed-in-brand-readiness) into the chooser and
 matching page projections. A call type without one exact accepted and installed
@@ -1122,7 +1122,7 @@ No guest hooks keep Free bookable without `guest_emails`; a partial guest tree
 fails closed.
 
 The Paid guest-field markup, validation, payload, and retry contract is owned by
-the [Brand paid-call payment method client](README.md#brand-paid-call-payment-method-client).
+the [Brand paid-call payment method client](../../v3/README.md#brand-paid-call-payment-method-client).
 Zero guest hooks keep Paid bookable without `guest_emails`. When guest entry is
 installed, its complete five-row native Designer-authored tree sits outside
 `[nylas-container]` and enables Paid guests. Any partial guest tree or stray
@@ -1150,7 +1150,7 @@ Paid receipt population is a separate pre-existing gap: restoring authored
 placeholders prevents Free details from leaking into Paid reuse, but does not
 supply correct Paid booking details. The existing Starter-name placeholder is
 also a separate remaining issue. The executable regressions in
-[`free-call-booking.test.js`](free-call-booking.test.js) cover receipt refresh
+[`free-call-booking.test.js`](../../v3/free-call-booking.test.js) cover receipt refresh
 and the shared reset boundary; they do not prove a production Paid booking.
 
 ## The owner paints from their own settings
@@ -1205,15 +1205,15 @@ regression cannot leave a live opener behind. A talent viewing **someone
 else's** profile, a Brand, and a logged-out visitor all keep both CTAs
 untouched, so the anonymous signup-attribution flow is unaffected.
 
-[`messages-profile.js`](messages-profile.js) also hides its own trigger for a
+[`messages-profile.js`](../../v3/messages-profile.js) also hides its own trigger for a
 self-view, but only after route-guard resolves a role **and** the CMS identity
 attributes on the trigger parse. The rule here needs neither — both Memberstack
 ids are already on the page — so the owner stays covered when that module is
 absent or its Designer bindings are incomplete. Both writers make the same
 hide, so running both is idempotent.
 
-Owner action coverage lives in [`hire-profile.test.js`](hire-profile.test.js);
-[`hire-profile-owner-mobile.test.cjs`](hire-profile-owner-mobile.test.cjs) covers
+Owner action coverage lives in [`hire-profile.test.js`](../../v3/hire-profile.test.js);
+[`hire-profile-owner-mobile.test.cjs`](../../v3/hire-profile-owner-mobile.test.cjs) covers
 the native responsive wrapper shape and settings affordance.
 
 ### Where the owner's canonical values come from
@@ -1366,7 +1366,7 @@ DTO's own `price`, so its amount is observable without a session — but it come
 from the public contract, not from the canonical repaint. The non-call
 [hero rate cards](#hero-rate-cards) have their own public-read contract.
 
-Local automated coverage includes [`hire-profile.test.js`](hire-profile.test.js)
+Local automated coverage includes [`hire-profile.test.js`](../../v3/hire-profile.test.js)
 and the native Chrome fixture:
 
 ```sh

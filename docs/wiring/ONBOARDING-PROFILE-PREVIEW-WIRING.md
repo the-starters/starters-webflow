@@ -167,7 +167,7 @@ differences then live in their own rules, as the harness does with
 ```html
 <!-- ==========================================================================
      Onboarding profile preview — STRUCTURE (style + markup)
-     SOURCE OF TRUTH: v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md (this file)
+     SOURCE OF TRUTH: docs/wiring/ONBOARDING-PROFILE-PREVIEW-WIRING.md (this file)
      Paste into an HTML Embed INSIDE each form block (the element carrying the
      wf-xano wrapper attributes). Requires the SCRIPTS embed on the same page,
      or the skeleton loader shows forever.
@@ -598,7 +598,7 @@ of the record but never consulted — do not "restore" them as an ordering input
 
 If the record carries a non-empty **`roles_resolved`** array, it wins outright and
 no string parsing happens. This is the shape the endpoint should move to (see
-[Roles: resolve role_refs in Xano](#roles-resolve-role_refs-in-xano)); the client
+[Roles: resolve role_refs in Xano](#roles-and-categories-resolve-the-refs-in-xano)); the client
 already supports it, so the Xano change needs no code release here.
 
 The client accepts it tolerantly:
@@ -1194,7 +1194,7 @@ rule in the structure embed does.
 - If no instance reads the endpoint it warns instead:
   `[starters onboarding-preview] no wf-xano instance reading starters_onboarding/get_freelancers* (and none keyed "onboarding-self-preview") — …`.
   All of this is gated to
-  [staging hosts](../README.md#staging-only-console-diagnostics), and silent in
+  [staging hosts](../../README.md#staging-only-console-diagnostics), and silent in
   production. The warning matters because the failure is otherwise invisible: with
   no transform the binds resolve against the envelope, the template's
   `wf-xano-if` guard hides the card, and the page shows the empty state to a member

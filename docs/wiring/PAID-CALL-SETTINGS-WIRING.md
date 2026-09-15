@@ -66,7 +66,7 @@ Both authored pills carry the same `call-pill-on` attribute, so the fallback can
 apart by copy. Matching ignores case, surrounding whitespace, and non-breaking spaces, but the pill
 text itself must still read `On` or `Off`. Rename that copy in Designer and neither pill resolves,
 both pills render at once again, and the controller says so once in the console on staging (see
-[Staging-only console diagnostics](../README.md#staging-only-console-diagnostics)). Add the canonical
+[Staging-only console diagnostics](../../README.md#staging-only-console-diagnostics)). Add the canonical
 output attributes in Designer to make the copy irrelevant.
 
 Yes and No are resolved as one pair, never independently, so a single radio can never be bound as
@@ -224,7 +224,7 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   resets the busy attributes when the mutation and canonical readback settle. The same in-flight
   lock covers native submit and Update click, so they cannot start duplicate writes.
 - The browser sends product intent only. It never sends a member ID, grant ID, calendar ID, Stripe account ID, or payment environment.
-- Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`. Its bookable-slots preview does read the canonical Paid service to render duration and price read-only; the admission rules for that card live in [Booking-stage availability section](README.md#booking-stage-availability-section).
+- Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`. Its bookable-slots preview does read the canonical Paid service to render duration and price read-only; the admission rules for that card live in [Booking-stage availability section](../../v3/README.md#booking-stage-availability-section).
 - Calendar transitions carry a one-use intent captured from canonical paid-call GET through the existing OAuth session envelope, then recreate it through paid-call upsert and canonical readback. A canonical rate outside the `$1` to `$1,000` whole-dollar range stops that capture before any destructive provider or calendar request and surfaces the rate-specific remediation message, so the stored service is never preserved, rounded, or silently dropped.
 - The Xano projection function remains the only writer to `freelancers_v3.Paid_Call_Enabled` and `Paid_Call_Rate` for this flow.
 - The controller uses the owner-specific fetch reference retained by `scheduling-auth.js`. It accepts
@@ -280,7 +280,7 @@ and `thestarters.com` answer `401` behind the site password, so a local phase ca
 read the live authored DOM.
 The release owner runs them by hand, in this order, after the PR merges:
 
-1. Release through the sequence in [Sync Safety](../README.md#sync-safety), then confirm
+1. Release through the sequence in [Sync Safety](../../README.md#sync-safety), then confirm
    the served asset is the new build: the served file must contain
    `data-paid-call-rate-source` together with `data-paid-call-card-state`. The previous build already
    shipped `data-call-settings-error-message`, `.w-form-fail`,

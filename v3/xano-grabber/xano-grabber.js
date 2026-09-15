@@ -11,7 +11,7 @@
  *
  * It never fetches anything, never reads storage, and writes only two things:
  * `textContent` on a non-IMG landing, and `src` (after `srcset` is stripped) on
- * an IMG landing. See v3/xano-grabber/XANO-GRABBER-WIRING.md for the attribute
+ * an IMG landing. See docs/wiring/XANO-GRABBER-WIRING.md for the attribute
  * table and the Designer checklist.
  *
  * WHY A DOM MIRROR AND NOT A wf-xano BIND:
