@@ -28,6 +28,21 @@ on a generated form control.
 Replace `<release-tag>` with the release that passed the production canaries.
 Do not use `latest` in production.
 
+## Start over
+
+Start over keeps the current session, messages, candidates, and draft until
+the authenticated `ai-recruiter/session-reset` request succeeds with
+`ok: true`. Only then does the controller create a new session, clear the
+conversation and draft, and return to ready or consent while preserving the
+member's existing consent.
+
+While reset is pending, Start over and message input are disabled. Duplicate
+resets are ignored, and an earlier in-flight message is aborted and its late
+reply cannot update the conversation. The reset request uses a 35-second
+abort timer. A failed, timed-out, or unconfirmed reset retains the conversation
+and session, shows a retry status, and re-enables the controls so the member
+can try Start over again.
+
 ## Monitoring
 
 The controller emits `ai_recruiter_request` and `ai_recruiter_failure` PostHog
@@ -40,10 +55,17 @@ response text.
 Monitor the Xano endpoint error rate, timeout outcomes, rate-limit outcomes,
 and the n8n execution linked by `trace_id`. Alert when message failures exceed
 5% for 10 minutes or when five consecutive message requests fail. Confirm that
-feedback and session-reset failures remain visible even though they do not stop
-the conversation.
+feedback failures remain visible in monitoring. Session-reset failures also
+show the member the retry status described under [Start over](#start-over).
 
 ## Release and rollback
+
+This frontend reset fix does not complete the V3 migration or authorize feature
+activation. Keep Xano access disabled until credential alignment, projection
+reconciliation, and integration acceptance are complete. After backend
+readiness, the owning CDN release and production browser screenshot proof
+remain required. This scoped change authorizes neither production data repair
+nor a Webflow whole-site publish.
 
 Release the controller behind the native Webflow root. Before broad release,
 verify one paid Brand canary, one free Brand, one inactive paid Brand, one Test
