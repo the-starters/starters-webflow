@@ -726,13 +726,14 @@ selected. Talent, the profile owner, and unknown roles stay inert.
 
 [`hire-profile-taxonomy.css`](../../v3/hire-profile-taxonomy.css) hides each authored
 `[xwf-empty-check]` group until its wf-xano list contains a rendered
-`[wf-xano-item]`. The rule does not hide, remove, or disable the wf-xano wrapper
-or its template. wf-xano can initialize and fetch while the ancestor is hidden,
-and the browser shows the group automatically when wf-xano inserts the first
-rendered item. The `display: none` is `!important` so that an inline `display`
+`[wf-xano-item]`. Hiding the ancestor also hides its contents visually, but leaves
+the wf-xano wrapper and template in the DOM for initialization, fetching, and
+clone insertion. When wf-xano inserts the first rendered item, this rule stops
+matching and the group's existing display styles apply again. The
+`display: none` is `!important` so that a normal inline `display`
 written on the group — by an IX2 initial state or by a wf-xano state projection
-— cannot defeat it. The rule stops matching the moment the first clone lands,
-so it can never pin a populated group hidden.
+— cannot defeat it. Other hiding styles still apply independently. Removing the
+last rendered item makes this rule match again.
 
 The marker is per list, not per section. Three separate
 `profile-content_artifacts` groups already carry it in the published Designer,
@@ -752,9 +753,7 @@ Keep the marker on the group that directly holds one wrapper: never move it up
 to a common ancestor, and never author it twice on nested elements around the
 same list.
 
-The stylesheet loads from the Hire template page **Head**, in the `## Install`
-block above, so the rule applies before first paint and an empty group never
-flashes visible.
+For stylesheet placement and the first-paint requirement, see [Install](#install).
 
 ## The Free and Paid call cards render from one wf-xano template per surface
 
