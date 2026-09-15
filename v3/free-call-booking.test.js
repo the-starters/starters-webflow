@@ -317,6 +317,7 @@ function bookingApiFixture(options = {}) {
     runs: 0,
   }
   const bookingApi = {
+    inspectAuthoredGuests: require('./paid-call-brand-payment.js').inspectAuthoredGuests,
     bookingRequestFingerprint(input) {
       return JSON.stringify(input)
     },

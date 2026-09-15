@@ -36,6 +36,12 @@ if (fixtureParams.has('legacy')) {
   document.querySelector('#legacy-host').innerHTML = '<form data-call-guest-fields><div data-call-guest-list>' +
     Array.from({ length: fixtureParams.has('partial') ? 4 : 5 }, (_, i) => '<div data-call-guest-row><input type="email" aria-label="Authored guest ' + (i + 1) + '" data-call-guest-email><button type="button" data-call-guest-remove>Remove</button></div>').join('') +
     '</div><button type="button" data-call-guest-add>Add guest</button><p data-call-guest-error role="alert"></p></form>'
+  if (fixtureParams.has('stray')) {
+    const row = document.createElement('div')
+    row.id = 'stray-guest-row'
+    row.setAttribute('data-call-guest-row', '')
+    document.querySelector('#legacy-host').appendChild(row)
+  }
 }
 const fixtureSettings = paid => ({ config: fixtureConfig(paid), grantId: 'fixture-grant',
   starterSlug: 'fixture-starter', brandName: 'Brand Fixture', brandEmail: 'brand@example.invalid',
@@ -56,6 +62,7 @@ document.addEventListener('click', event => {
     lumos.modal.list['popup-booking'].open()
   } else {
     const trigger = event.target.closest('[data-modal-trigger]')
+    if (trigger && trigger.hasAttribute('data-modal-close')) lumos.modal.list['popup-booking'].close()
     if (trigger) lumos.modal.list[trigger.getAttribute('data-modal-trigger')]?.open()
   }
 })

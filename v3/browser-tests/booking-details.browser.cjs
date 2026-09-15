@@ -217,6 +217,42 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         }
       }
     }
+    for (const entry of ['hire', 'messages']) {
+      await navigate(`legacy=1&stray=1&entry=${entry}`)
+      assert.deepEqual(await evaluate('[fixturePopup.open, fixtureChooser.open]'), [false, false])
+      if (entry === 'hire') await waitFor(`document.querySelector('#free').getAttribute('data-free-call-v3') === 'ready'`)
+      await click('#book-entry')
+      await waitFor('fixtureChooser.open')
+      for (const type of ['free', 'paid', 'free']) {
+        await click('#' + type)
+        await waitFor(`fixturePopup.open && !!document.querySelector('[data-paid-calendar-status="error"]')`)
+        assert.equal(await evaluate(`document.querySelector('[data-paid-calendar-status="error"]').getClientRects().length > 0`), true)
+        assert.equal(await evaluate(`document.querySelectorAll('${confirm}, [data-paid-calendar-slot]').length`), 0, 'stray markup blocks both controllers')
+        assert.equal(await evaluate(`document.querySelector('[data-call-guest-fields]').getClientRects().length`), 0, 'invalid form is hidden only during error entry')
+        assert.equal(await evaluate(`document.querySelector('[data-call-guest-fields]').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))`), false)
+        await click(role('back') + ' button')
+        await waitFor('fixtureChooser.open && !fixturePopup.open')
+      }
+      assert.equal(await evaluate('fixture.bookings.length'), 0, 'switching invalid call types never books')
+      assert.equal(await evaluate('fixture.requests.some(request => /payment/.test(request.path))'), false)
+      observations.push(entry + '-stray-guest-switching-blocked')
+    }
+    for (const type of ['free', 'paid']) {
+      await navigate('legacy=1&stray=1')
+      await click('#' + type)
+      await waitFor(`!!document.querySelector('[data-paid-calendar-status="error"]')`)
+      await evaluate(`document.querySelector('#stray-guest-row').remove()`)
+      assert.equal(await evaluate(type === 'free'
+        ? 'StartersFreeCallBooking.installFreeBookingController(fixtureSettings(false))'
+        : 'fixtureApi.installPaidBookingController(fixtureSettings(true))'), true)
+      await openDetails(type)
+      assert.equal(await evaluate(`document.querySelector('[data-call-guest-email]').getClientRects().length > 0`), true, 'another error controller cannot hide accepted guest fields')
+      await fill('[data-call-guest-email]', 'restored@example.invalid')
+      await click(confirm)
+      await waitFor('fixture.bookings.length === 1')
+      assert.deepEqual(await evaluate('fixture.bookings[0].guest_emails'), ['restored@example.invalid'])
+      observations.push(type + '-authored-guests-survive-other-error-controller')
+    }
     await navigate()
     await evaluate('fixture.mountReschedule()')
     assert.equal(await evaluate(`document.querySelector('#reschedule').querySelectorAll('input,textarea').length`), 0)

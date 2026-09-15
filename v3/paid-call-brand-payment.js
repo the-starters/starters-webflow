@@ -29,6 +29,15 @@
   const MAX_KEY_LENGTH = 128
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
+  const AUTHORED_GUEST_SELECTORS = [
+    '[data-call-guest-fields]',
+    '[data-call-guest-list]',
+    '[data-call-guest-error]',
+    '[data-call-guest-add]',
+    '[data-call-guest-row]',
+    '[data-call-guest-email]',
+    '[data-call-guest-remove]',
+  ]
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   // The back arrow carries a close marker too, because closing the booking
   // dialog is half of its hand-off back to the chooser. A synthesized close
@@ -2788,18 +2797,64 @@
     }
   }
 
+  function inspectAuthoredGuests(popup, container) {
+    const guestHooks = AUTHORED_GUEST_SELECTORS.reduce(function (hooks, selector) {
+      hooks[selector] = Array.from(popup.querySelectorAll(selector))
+      return hooks
+    }, {})
+    const guestWrapper = guestHooks['[data-call-guest-fields]'][0] || null
+    const guestList = guestWrapper && guestWrapper.querySelector('[data-call-guest-list]')
+    const guestError = guestWrapper && guestWrapper.querySelector('[data-call-guest-error]')
+    const guestAdd = guestWrapper && guestWrapper.querySelector('[data-call-guest-add]')
+    const guestRows = guestList
+      ? Array.from(guestList.querySelectorAll('[data-call-guest-row]'))
+      : []
+    const guestBindings = guestRows.map(function (row) {
+      return {
+        row,
+        field: row.querySelector('[data-call-guest-email]'),
+        remove: row.querySelector('[data-call-guest-remove]'),
+      }
+    })
+    const authoredGuestFields = guestHooks['[data-call-guest-email]']
+    const authoredGuestRemoves = guestHooks['[data-call-guest-remove]']
+    const hasGuestMarkup = AUTHORED_GUEST_SELECTORS.some(function (selector) {
+      return guestHooks[selector].length > 0
+    })
+    const hasCompleteGuestMarkup = Boolean(
+      guestHooks['[data-call-guest-fields]'].length === 1 &&
+      guestHooks['[data-call-guest-list]'].length === 1 &&
+      guestHooks['[data-call-guest-error]'].length === 1 &&
+      guestHooks['[data-call-guest-add]'].length === 1 &&
+      guestHooks['[data-call-guest-row]'].length === MAX_GUEST_EMAILS &&
+      authoredGuestFields.length === MAX_GUEST_EMAILS &&
+      authoredGuestRemoves.length === MAX_GUEST_EMAILS &&
+      guestWrapper &&
+      guestList === guestHooks['[data-call-guest-list]'][0] &&
+      guestError === guestHooks['[data-call-guest-error]'][0] &&
+      guestAdd === guestHooks['[data-call-guest-add]'][0] &&
+      guestRows.length === MAX_GUEST_EMAILS &&
+      guestRows.every(function (row) { return guestHooks['[data-call-guest-row]'].includes(row) }) &&
+      !guestBindings.some(function (binding) { return !binding.field || !binding.remove }) &&
+      !guestBindings.some(function (binding) { return !authoredGuestFields.includes(binding.field) }) &&
+      !guestBindings.some(function (binding) { return !authoredGuestRemoves.includes(binding.remove) }) &&
+      !(typeof container.contains === 'function' && container.contains(guestWrapper)),
+    )
+    return { hasGuestMarkup, hasCompleteGuestMarkup, guestWrapper, guestError, guestAdd, guestBindings }
+  }
+
   function installBookingErrorController(options) {
     const { popup, container, ctas, config } = options
     const type = config.is_paid ? 'paid' : 'free'
+    const hiddenGuests = new Map()
     function reset() {
       container.textContent = ''
       container.removeAttribute('data-paid-calendar-state')
       popup.querySelectorAll('[schedule-step]').forEach(function (step) {
         step.style.display = step.getAttribute('schedule-step') === 'default' ? 'flex' : 'none'
       })
-      popup.querySelectorAll('[data-call-guest-fields], [data-call-guest-list], [data-call-guest-error], [data-call-guest-add], [data-call-guest-row], [data-call-guest-email], [data-call-guest-remove]').forEach(function (element) {
-        if (element.style) element.style.display = 'none'
-      })
+      hiddenGuests.forEach(function (display, element) { element.style.display = display })
+      hiddenGuests.clear()
     }
     if (!bookingSurfaceLifecycle.register(popup, container, reset, type)) return false
     installGuestFormSubmitGuard(popup)
@@ -2816,6 +2871,16 @@
       cta.onclick = function (event) {
         event.preventDefault()
         const generation = bookingSurfaceLifecycle.reset(popup, type)
+        const guestElements = new Set(popup.querySelectorAll(AUTHORED_GUEST_SELECTORS.join(', ')))
+        guestElements.forEach(function (element) {
+          let parent = element.parentElement
+          while (parent && parent !== popup) {
+            if (guestElements.has(parent)) return
+            parent = parent.parentElement
+          }
+          hiddenGuests.set(element, element.style.display)
+          element.style.display = 'none'
+        })
         return mountPaidCalendar({
           container,
           config,
@@ -2863,57 +2928,9 @@
     const authoredPaidCallText = paidCallMessage
       ? String(paidCallMessage.textContent || '')
       : ''
-    const guestHookSelectors = [
-      '[data-call-guest-fields]',
-      '[data-call-guest-list]',
-      '[data-call-guest-error]',
-      '[data-call-guest-add]',
-      '[data-call-guest-row]',
-      '[data-call-guest-email]',
-      '[data-call-guest-remove]',
-    ]
-    const guestHooks = guestHookSelectors.reduce(function (hooks, selector) {
-      hooks[selector] = Array.from(popup.querySelectorAll(selector))
-      return hooks
-    }, {})
-    const guestWrapper = guestHooks['[data-call-guest-fields]'][0] || null
-    const guestList = guestWrapper && guestWrapper.querySelector('[data-call-guest-list]')
-    const guestError = guestWrapper && guestWrapper.querySelector('[data-call-guest-error]')
-    const guestAdd = guestWrapper && guestWrapper.querySelector('[data-call-guest-add]')
-    const guestRows = guestList
-      ? Array.from(guestList.querySelectorAll('[data-call-guest-row]'))
-      : []
-    const guestBindings = guestRows.map(function (row) {
-      return {
-        row,
-        field: row.querySelector('[data-call-guest-email]'),
-        remove: row.querySelector('[data-call-guest-remove]'),
-      }
-    })
-    const authoredGuestFields = guestHooks['[data-call-guest-email]']
-    const authoredGuestRemoves = guestHooks['[data-call-guest-remove]']
-    const hasGuestMarkup = guestHookSelectors.some(function (selector) {
-      return guestHooks[selector].length > 0
-    })
-    const hasCompleteGuestMarkup = Boolean(
-      guestHooks['[data-call-guest-fields]'].length === 1 &&
-      guestHooks['[data-call-guest-list]'].length === 1 &&
-      guestHooks['[data-call-guest-error]'].length === 1 &&
-      guestHooks['[data-call-guest-add]'].length === 1 &&
-      guestHooks['[data-call-guest-row]'].length === MAX_GUEST_EMAILS &&
-      authoredGuestFields.length === MAX_GUEST_EMAILS &&
-      authoredGuestRemoves.length === MAX_GUEST_EMAILS &&
-      guestWrapper &&
-      guestList === guestHooks['[data-call-guest-list]'][0] &&
-      guestError === guestHooks['[data-call-guest-error]'][0] &&
-      guestAdd === guestHooks['[data-call-guest-add]'][0] &&
-      guestRows.length === MAX_GUEST_EMAILS &&
-      guestRows.every(function (row) { return guestHooks['[data-call-guest-row]'].includes(row) }) &&
-      !guestBindings.some(function (binding) { return !binding.field || !binding.remove }) &&
-      !guestBindings.some(function (binding) { return !authoredGuestFields.includes(binding.field) }) &&
-      !guestBindings.some(function (binding) { return !authoredGuestRemoves.includes(binding.remove) }) &&
-      !(typeof container.contains === 'function' && container.contains(guestWrapper)),
-    )
+    const {
+      hasGuestMarkup, hasCompleteGuestMarkup, guestWrapper, guestError, guestAdd, guestBindings,
+    } = inspectAuthoredGuests(popup, container)
     if (hasGuestMarkup && !hasCompleteGuestMarkup) {
       return installBookingErrorController({ popup, container, ctas, config: availabilityConfig })
     }
@@ -3596,6 +3613,7 @@
     getSavedPaymentMethods,
     getPaidAvailability,
     timezoneLabel,
+    inspectAuthoredGuests,
     installGuestFormSubmitGuard,
     installBookingErrorController,
     installPaidBookingController,

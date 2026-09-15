@@ -331,7 +331,6 @@
   }
 
   function installGuestUi(api, popup, container) {
-    const wrapper = popup.querySelector('[data-call-guest-fields]')
     const hookSelector =
       '[data-call-guest-fields], [data-call-guest-list], [data-call-guest-error], [data-call-guest-add], [data-call-guest-row], [data-call-guest-email], [data-call-guest-remove]'
     if (!popup.querySelectorAll(hookSelector).length) {
@@ -342,24 +341,12 @@
         setVisible: function () {},
       }
     }
-    const list = wrapper && wrapper.querySelector('[data-call-guest-list]')
-    const error = wrapper && wrapper.querySelector('[data-call-guest-error]')
-    const add = wrapper && wrapper.querySelector('[data-call-guest-add]')
-    const rows = list ? Array.from(list.querySelectorAll('[data-call-guest-row]')) : []
-    const bindings = rows.map(function (row) {
-      return {
-        row,
-        field: row.querySelector('[data-call-guest-email]'),
-        remove: row.querySelector('[data-call-guest-remove]'),
-      }
-    })
-    if (
-      !wrapper || !list || !error || !add || rows.length !== 5 ||
-      popup.querySelectorAll('[data-call-guest-email]').length !== 5 ||
-      popup.querySelectorAll('[data-call-guest-remove]').length !== 5 ||
-      bindings.some(function (binding) { return !binding.field || !binding.remove }) ||
-      (typeof container.contains === 'function' && container.contains(wrapper))
-    ) return null
+    if (typeof api.inspectAuthoredGuests !== 'function') return null
+    const markup = api.inspectAuthoredGuests(popup, container)
+    if (!markup.hasCompleteGuestMarkup) return null
+    const wrapper = markup.guestWrapper
+    const add = markup.guestAdd
+    const bindings = markup.guestBindings
 
     if (typeof api.installGuestFormSubmitGuard === 'function') {
       api.installGuestFormSubmitGuard(wrapper)
