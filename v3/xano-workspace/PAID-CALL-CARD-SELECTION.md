@@ -1,6 +1,6 @@
 # Paid Call card selection: backend deployment candidate
 
-Status: all ten isolated Xano runtime groups passed on 2026-09-15; production publication remains pending.
+Status: production publication remains pending. See the [verification record](../fixtures/PAYMENT-VERIFICATION.md#r8-canonical-recovery-verification--2026-09-16) for the latest candidate evidence and its test boundary.
 
 These files are backend source, not browser scripts. Shipping them through GitHub/jsDelivr does not install them in Xano. Deploy and verify this contract before releasing the frontend that sends a reviewed card. The older endpoint ignores the additional request field and cannot provide its guarantee.
 
@@ -26,11 +26,18 @@ Response additions under `booking`:
 
 Either addition can be null. The frontend must retain booking success and use generic receipt copy when the summary is unavailable or invalid. Completed retries return the stored result; they do not look up the current default or require current payment readiness.
 
+Authenticated, fingerprint-matched existing commands can replay or reconcile after
+the requested start time. Reconciliation validates the original canonical booking
+snapshot, including its duration, actors, environment, command/booking identity,
+customer and reviewed card. It does not require the Call to remain pending or
+match the service's current price, duration or availability. Fresh requests still
+require a future start and current service, slot, price and readiness validation.
+
 Before calling Nylas, the command checks the card under the Brand row lock and stores the verified claim. If the default changed before this boundary, the request fails before provider booking creation. After this boundary, canonical persistence uses the claimed card even if the default changes while the provider responds. No payment timing or collection policy changes.
 
 ## Required backend runtime checks
 
-Run the approved focused tests through the real booking command using isolated test records and mocked provider responses. All ten groups below passed in isolated workspace 6/v1 using real authenticated HTTP requests and simulated providers. The dashboard portion of case 10 separately passed 100 Node tests. See [runtime evidence and importer fixes](../fixtures/PAYMENT-VERIFICATION.md#isolated-xano-runtime-execution-and-importer-fixes). This does not establish production or real-provider behavior.
+Run the approved focused tests through the real booking command using isolated test records and mocked provider responses. See the [verification record](../fixtures/PAYMENT-VERIFICATION.md) for executed cases, candidate versions and limitations; historical results are not proof of later candidate changes.
 
 1. Select default card A, request with `expected_payment_method_id=A`, receive booking A and last4 `0042`; repeat identical request and require the original booking and card, with no second Nylas booking.
 2. Confirm saved card B as default, submit B and verify the canonical payment snapshot and receipt both identify B.
@@ -39,7 +46,7 @@ Run the approved focused tests through the real booking command using isolated t
 5. Retry a successful key with a different reviewed card. Require an idempotency conflict and no provider request.
 6. Reject a foreign customer's card, a wrong Stripe mode, invalid method ID, detached/unavailable card, and unauthenticated/wrong-origin/wrong-member-environment requests before booking creation.
 7. Return a malformed or unavailable summary after canonical creation. Require a successful booking and null card metadata; retry must not create a second booking.
-8. Reconcile a provider-created canonical row after the account default changes. The reviewed card and original command fingerprint must still match; a foreign booking, environment, or claimed card must be rejected.
+8. Reconcile a provider-created canonical row after the account default changes. The reviewed card and original command fingerprint must still match; a foreign booking, environment, customer or claimed card must be rejected. Repeat after the start time, booking acceptance, and service price/duration/availability changes; return the original booking snapshot. Fresh requests must still satisfy current validation.
 9. Exercise an unclaimed internal upsert and a forged/mismatched claim. Preserve legacy expected-default validation; never accept another actor, configuration, provider booking identity, customer, environment or command phase.
 10. Regression-check Free Call submission and existing dashboard payment recovery.
 
