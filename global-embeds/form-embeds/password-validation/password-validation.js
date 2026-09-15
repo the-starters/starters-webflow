@@ -15,6 +15,9 @@
 // nearest <form> ancestor; the password input (data-ms-member="password") and
 // the submit button (ms-code-submit-button) are Memberstack's own hooks.
 //
+// Rule semantics and login compatibility guidance:
+// ../../../README.md#password-checklist-rules
+//
 // One validated instance per form, however many wrappers it holds — Webflow's
 // way to vary a component per breakpoint is two instances in one form, so all
 // of them are rendered and flip together. The first wrapper that enables a
