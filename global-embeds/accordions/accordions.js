@@ -1,4 +1,4 @@
-// Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/accordions
+// Docs: global-embeds/accordions/README.md
 document.addEventListener("DOMContentLoaded", function () {
     document.querySelectorAll("[data-accordion='wrapper']").forEach((component, listIndex) => {
       if (component.dataset.scriptInitialized) return;
