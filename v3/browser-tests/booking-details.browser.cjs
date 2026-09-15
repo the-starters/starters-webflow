@@ -139,7 +139,13 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.deepEqual(payloads[0].guest_emails, ['guest@example.invalid'])
       assert.equal(payloads[0].start, Number(slot))
       assert.ok(!('brand_email' in payloads[0]) && !('name' in payloads[0]) && !('email' in payloads[0]))
+      await fs.writeFile(path.join(evidence, type + '-booking-requests.json'), JSON.stringify({
+        boundary: 'Synthetic authenticated API; requests emitted by the real booking controller.',
+        requests: await evaluate('fixture.requests.filter(request => request.method === "POST")'),
+        payloads,
+      }, null, 2))
       await waitFor(`getComputedStyle(document.querySelector('[schedule-step="success"]')).display !== 'none'`)
+      await screenshot(type + '-request-success')
       await click('#close')
       await openDetails(type)
       assert.equal(await evaluate(`document.querySelector('${context}').value`), '')
@@ -150,10 +156,12 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.equal(await evaluate(`document.querySelector('${context}').value`), '')
       observations.push(type + '-request-retry-close-passed')
     }
-    await navigate('', 390)
-    await openDetails('free')
-    assert.deepEqual(await evaluate(`(() => {const a=document.querySelector('${role('selected-event')}').getBoundingClientRect(),b=document.querySelector('${role('details-fields')}').getBoundingClientRect();return {stacked:b.y>=a.bottom-1,overflow:document.documentElement.scrollWidth>innerWidth}})()`), { stacked: true, overflow: false })
-    await screenshot('free-mobile-details')
+    for (const type of ['free', 'paid']) {
+      await navigate('', 390)
+      await openDetails(type)
+      assert.deepEqual(await evaluate(`(() => {const a=document.querySelector('${role('selected-event')}').getBoundingClientRect(),b=document.querySelector('${role('details-fields')}').getBoundingClientRect();return {stacked:b.y>=a.bottom-1,overflow:document.documentElement.scrollWidth>innerWidth}})()`), { stacked: true, overflow: false })
+      await screenshot(type + '-mobile-details')
+    }
     for (const type of ['free', 'paid']) {
       await navigate('legacy=1')
       await openDetails(type)
@@ -334,6 +342,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
           await waitFor('fixtureChooser.open')
           await click('#' + type)
           await assertErrorVisible()
+          await screenshot(`${entry}-${type}-${placement}-protected-error`)
           await click(role('back') + ' button')
           await waitFor('fixtureChooser.open && !fixturePopup.open')
           await click('#' + type)

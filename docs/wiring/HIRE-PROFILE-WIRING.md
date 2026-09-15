@@ -1112,21 +1112,9 @@ Paid has no accepted configuration. A failed Paid install does not remove an
 installed Free chooser row or add a duplicate call row. A Paid-only set also
 keeps the Book Call trigger closed when the Paid controller cannot install.
 
-Free and Paid new bookings use a code-rendered details step in the existing
-`[nylas-container]`. Select a time, then choose **Continue** to review its date,
-time and selected timezone. Name and Email show the signed-in member's identity
-read-only; Call Context and up to five guest emails are optional. **Back** returns
-to the calendar while preserving the slot and draft. **Request Call** uses the
-existing authenticated canonical Xano command; it never books directly with the
-provider. The same controllers supply this screen in Messages. Dashboard
-rescheduling does not enable the details step.
-
 The [shared details and guest contract](../../v3/README.md#booking-details-and-guests)
-owns rendering, payload validation, and compatibility. With no native guest hooks,
-the script generates guest controls. A complete five-row Designer-authored tree
-outside `[nylas-container]` remains supported and appears on the details step.
-Partial trees fail closed with a booking-form configuration error. Authored
-context fields remain supported; a textarea is generated when none exists.
+owns the Free/Paid details flow, rendering, payload validation, authored-form
+compatibility, and entry behavior for rejected guest markup.
 
 ### Free booking confirmation
 

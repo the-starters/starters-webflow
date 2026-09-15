@@ -4092,9 +4092,18 @@ For compatibility, a complete native Designer guest structure outside
 All five rows and their controls must exist. The wrapper becomes visible on
 **Continue**, hides on details **Back**, and preserves its draft between those
 steps. Add and Remove manage the existing rows. Call-type changes, modal close,
-and success reset the rows and hide the wrapper. Partial or stray guest hooks
-fail closed with `The booking form is incomplete. Please contact support.`
-With no native hooks, the generated form supplies guest entry.
+and success reset the rows and hide the wrapper. With no native hooks, the
+generated form supplies guest entry.
+
+Partial or stray guest hooks, including guest trees inside `[nylas-container]`,
+block booking in both controllers. Installation retains the call options so
+Hire and Messages entry opens the existing red-background, white-text calendar
+error banner with actionable support guidance. There are no slot or request
+controls, and native form submission is blocked. A dedicated script-owned error
+mount preserves rejected authored nodes and values through Back, close, call-type
+changes, and reinstallation. Temporary guest hiding preserves the banner,
+container, and navigation paths and restores prior display styles on reset.
+Repairing the authored structure and reinstalling permits booking again.
 
 The guest wrapper can remain a native Webflow Form Block for Designer ownership,
 but it is not an email form. The controller captures submit events on the
@@ -4114,20 +4123,9 @@ node --test v3/scheduling-auth.test.js v3/free-call-booking.test.js \
   v3/hire-profile.test.js v3/paid-call-brand-payment.test.js
 ```
 
-Run the booking-details browser regression with:
-
-```sh
-node v3/browser-tests/booking-details.browser.cjs
-```
-
-It runs the real Free/Paid controllers and renderer in isolated Chrome with
-synthetic availability and booking responses, including desktop/mobile layout,
-draft preservation, guest validation, retries, authored-form compatibility, and
-unchanged rescheduling. Screenshots and observations default to
-`/tmp/nylas-details-browser` (`BOOKING_BROWSER_EVIDENCE` overrides it). Browser
-payment coverage uses an already-ready card; retained card-setup submission is
-covered in the focused unit suite. This is local verification, not evidence of
-a published Webflow booking or a real Nylas/Stripe transaction.
+See [Booking details browser verification](browser-tests/BOOKING-DETAILS.md)
+for the browser command, prerequisites, evidence locations, coverage, and limits.
+The focused unit suite covers retained card-setup submission and retry.
 
 ## Dashboard Action Items panel
 

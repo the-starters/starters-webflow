@@ -1739,8 +1739,8 @@
 
   /**
    * Human label for the calendar's timezone, e.g. "Asia/Manila (GMT+8)". The
-   * calendar renders in the visitor's detected zone and offers no picker, so
-   * this label is what tells them which clock the times use (Kaeser QA B4).
+   * calendar starts in the visitor's detected zone; the picker and details
+   * summary use this label to identify the clock used for the displayed times.
    * The reference timestamp keeps the offset DST-correct for the shown dates.
    */
   function timezoneLabel(timezone, referenceMsInput) {
@@ -2138,9 +2138,8 @@
 
     /**
      * The one place the status line is written, so the sheet always has a tone
-     * to colour it by. Three strings ever reach it — the empty-availability
-     * notice, the in-flight notice and the booking failure — and only the last
-     * is a failure, which is why they are not all the same red.
+     * to colour it by. Availability and in-flight notices use a different tone
+     * from booking failures and rejected-form errors.
      *
      * The tone is a booking-surface concern (it is what the injected sheet
      * keys on), so it is not written on the dashboard's reschedule calendar:

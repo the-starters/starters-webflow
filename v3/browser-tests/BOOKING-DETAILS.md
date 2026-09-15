@@ -17,10 +17,12 @@ Checks cover:
 - Optional context, five guest rows, add/remove, validation and normalization.
 - Back retains the selected slot and draft; close/reopen clears drafts.
 - Free and ready-card Paid commands; an ambiguous response retries the same payload/key.
-- Authored guest compatibility and incomplete markup failing closed.
+- Complete authored guest compatibility and recovery after repairing rejected markup.
+- Closed-dialog Hire/Messages entry, including direct entry, exposes the existing error banner for incomplete guest markup and blocks booking and native form submission.
+- Stray and nested guest hooks remain rejected across call-type switches, installation order, close/reopen, and reinstall without losing authored nodes or values. Hooks on the calendar container or navigation ancestors keep the banner and Back/close controls visible, and reset restores guest display styles.
 - Native keyboard Enter submits empty optional fields.
 - Rescheduling keeps its existing one-step calendar.
 
 The fixture approximates site button styling. Container sizing mirrors the `.call-details_layout` and `.nylas_custom_container` rules in the public Webflow page stylesheet referenced by `v3/fixtures/card-setup-owner.html`. This is local browser evidence, not full published Webflow visual parity. Paid card collection/setup and authenticated live endpoints are outside this runner's scope.
 
-For regression proof, `BOOKING_SCRIPT_ROOT` can point to a directory containing baseline `free-call-booking.js` and `paid-call-brand-payment.js`. The same fixture then serves those two scripts instead. The pre-change `origin/main` scripts fail because selecting a slot offers **Request free call** immediately instead of **Continue**.
+For regression proof, `BOOKING_SCRIPT_ROOT` can point to a directory containing baseline `free-call-booking.js` and `paid-call-brand-payment.js`. The same fixture then serves those two scripts instead. The pre-change scripts at `86848bad6e843c10f74cb781f4391546537e976b` fail because selecting a slot offers **Request free call** immediately instead of **Continue**.
