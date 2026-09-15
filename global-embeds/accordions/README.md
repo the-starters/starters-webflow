@@ -64,3 +64,34 @@ Executable coverage for initialization, clicks, defaults, grouping, hover,
 reinitialization, and optional animation hooks lives in
 [`accordions.test.js`](accordions.test.js). Run it from the repository root with
 `node --test global-embeds/accordions/accordions.test.js`.
+
+## Mobile membership accordions
+
+Join CTA and Signup Modal use `mobile-accordions.js`. Replace their inline
+accordion JavaScript embeds with the same include in each shared component:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/global-embeds/accordions/mobile-accordions.js"></script>
+```
+
+Keep the existing component CSS and tab scripts. A page-level installation guard
+allows both components to include this file without duplicating click or media
+listeners. Release the file before publishing these includes.
+
+Each `[data-accordion-item-wrapper]` contains `[data-accordion-component]` cards
+with `[data-accordion-button-toggle]` controls and `[data-accordion-content-wrap]`
+panels. This contract is separate from the generic accordion above; do not swap
+the two scripts. Use native buttons for controls.
+
+At widths up to 767px, the first valid card opens immediately. Opening another
+card closes the previous one within that wrapper; a second click closes it.
+Open cards receive `is-active` and `is-open`, and controls/panels get linked ARIA
+attributes. Optional GSAP provides the existing 0.3-second height animation;
+without GSAP, all the same interactions toggle display instantly.
+
+At 768px and above, initialization is skipped or existing listeners, open states,
+and animation styles are removed so component CSS controls the layout. Returning
+to mobile initializes once and opens the first card again. This script does not
+flatten CMS markup or read the generic accordion's configuration attributes.
+
+Run both suites with `node --test global-embeds/accordions/*.test.js`.
