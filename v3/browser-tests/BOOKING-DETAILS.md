@@ -22,6 +22,10 @@ Checks cover:
 - Stray and nested guest hooks remain rejected across call-type switches, installation order, close/reopen, and reinstall without losing authored nodes or values. Hooks on the calendar container or navigation ancestors keep the banner and Back/close controls visible, and reset restores guest display styles.
 - Native keyboard Enter submits empty optional fields.
 - Rescheduling keeps its existing one-step calendar.
+- Calendar heading removal, guest remove-button containment, and the shared secondary add button.
+- Authored confirmation table groups: both date/time copies and context are revealed;
+  Paid shows its canonical price and Free hides it. The fixture uses the Hire receipt
+  markup captured on September 15, 2026, including initially hidden groups.
 
 The fixture approximates site button styling. Container sizing mirrors the `.call-details_layout` and `.nylas_custom_container` rules in the public Webflow page stylesheet referenced by `v3/fixtures/card-setup-owner.html`. This is local browser evidence, not full published Webflow visual parity. Paid card collection/setup and authenticated live endpoints are outside this runner's scope.
 

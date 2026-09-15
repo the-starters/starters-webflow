@@ -4817,8 +4817,8 @@ test('replacing the paid controller while Stripe loads prevents a stale mount', 
   }
 })
 
-for (const [paid, expected] of [[false, '30 minutes'], [true, '60 minutes · $250 USD']]) {
-  test('booking calendar shows selected ' + (paid ? 'paid' : 'free') + ' call details and replaces them on remount', async () => {
+for (const paid of [false, true]) {
+  test('booking calendar omits the redundant ' + (paid ? 'paid' : 'free') + ' heading, including empty availability', async () => {
     const container = bookingMount()
     const config = { config_id: 'chosen', grant_id: 'grant_test', is_paid: paid,
       duration: paid ? 60 : 30, price_cents: paid ? 25000 : 0, currency: 'USD' }
@@ -4826,9 +4826,7 @@ for (const [paid, expected] of [[false, '30 minutes'], [true, '60 minutes · $25
       await mountFooterFixture({ container, config, slots })
       const summaries = container.querySelectorAll('[data-paid-calendar-element]')
         .filter(node => node.getAttribute('data-paid-calendar-element') === 'call-summary')
-      assert.equal(summaries.length, 1)
-      assert.equal(summaries[0].children[0].textContent, paid ? 'Paid consultation call' : 'Free consultation call')
-      assert.equal(summaries[0].children[1].textContent, expected)
+      assert.equal(summaries.length, 0)
     }
   })
 }

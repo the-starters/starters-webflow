@@ -3781,14 +3781,10 @@ flowchart TD
    columns. A narrow mount uses the document order: calendar, timezone, time
    buttons, then confirmation. The selected slot is advisory only.
 
-   In the Hire and Messages booking modals, the selected call's summary sits
-   above the month: `Free consultation call` or `Paid consultation call`, followed
-   by its duration in minutes and, for paid calls, the canonical USD price from
-   `canonicalPaidPrice(config)`. The `data-paid-calendar-element="month"`
-   wrapper contains this `call-summary` and the `month-dates` host. The summary
-   remains visible when availability is empty and is replaced on each current
-   remount. Dashboard rescheduling does not render this summary and retains its
-   existing `month` host and controls.
+   Hire and Messages calendars begin with the month selector, without a repeated
+   call title or duration block. The `data-paid-calendar-element="month"` wrapper
+   contains the `month-dates` host. Dashboard rescheduling retains its existing
+   month host and controls.
 
    The timezone dropdown defaults to the visitor's browser timezone.
    Changing it clears the selected slot, regroups slots by local date and
@@ -4054,6 +4050,16 @@ The shared Free/Paid controllers opt into `mountPaidCalendar({ bookingDetails })
 for new bookings in Hire and Messages. Other callers, including dashboard
 rescheduling, keep their existing single calendar confirmation. An empty calendar
 shows its existing availability notice and does not create a details form.
+
+Generated guest rows place their accessible remove button inside the input's
+right edge. Add another guest uses the shared secondary button component,
+including its disabled theme at the five-guest limit and during submission.
+
+Successful Free and Paid requests populate the authored date, time, and optional
+context fields and reveal their `booking-element-wrap` groups. Both desktop and
+mobile date fields receive the selected timezone. Paid receipts show the canonical
+per-call price; Free receipts hide payment details. Empty context stays hidden,
+and closing or switching call types restores the authored receipt state.
 
 **Continue** opens the selected date/time/timezone summary beside the fields on
 wide screens; narrow containers stack the summary above them. Name and Email
