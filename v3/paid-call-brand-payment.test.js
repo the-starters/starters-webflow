@@ -3,6 +3,8 @@ const fs = require('node:fs')
 const test = require('node:test')
 const vm = require('node:vm')
 
+const { authoredBookingReceipt } = require('./test-helpers/authored-booking-receipt.cjs')
+
 global.window = global
 const api = require('./paid-call-brand-payment.js')
 const SOURCE = fs.readFileSync(require.resolve('./paid-call-brand-payment.js'), 'utf8')
@@ -3759,6 +3761,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
       return []
     },
   }
+  const receipt = fixtureOptions.authoredReceipt ? authoredBookingReceipt(popup) : null
   const price = { textContent: '' }
   const item = { style: {}, querySelector: () => price }
   const paid = {
@@ -3842,6 +3845,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
       price_cents: 500,
     },
     starterSlug: 'lifecycle-test',
+    starterName: fixtureOptions.starterName,
     mountCalendar(options) {
       const state = { clearCount: 0, options }
       calendars.push(state)
@@ -3857,7 +3861,8 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   }
   install(installOptions)
   return {
-    reinstall: () => install(installOptions),
+    receipt,
+    reinstall: (overrides = {}) => install({ ...installOptions, ...overrides }),
     getCardDestroys: () => cardDestroys,
     getActiveCards: () => activeCards,
     calendars,
@@ -4886,3 +4891,44 @@ test('retained booking availability carries its booking identity without changin
   assert.equal(query(config).searchParams.has('booking_id'), false)
   assert.equal(query({ ...config, booking_id: ' booking/937 &retained ' }).searchParams.get('booking_id'), 'booking/937 &retained')
 })
+
+for (const reset of ['close', 'reuse', 'reinstall']) {
+  test(`Paid authored receipt restores groups and name on ${reset}`, async () => {
+    const fixture = makePaidLifecycleFixture(async url => {
+      if (url.endsWith(api.READINESS_PATH)) return response({ environment: 'test', bookable: true })
+      if (url.endsWith(api.BOOKING_PATH)) return response({ booking: { booking_id: 'receipt', row_id: 91 } })
+      throw new Error('Unexpected synthetic request: ' + url)
+    }, { authoredReceipt: true, starterName: 'Alex <Chen>' })
+    const { receipt } = fixture
+    const slot = { start: Date.UTC(2026, 4, 29, 12), end: Date.UTC(2026, 4, 29, 13), timezone: 'UTC' }
+    try {
+      await fixture.paid.onclick({ preventDefault() {} })
+      fixture.context.value = 'Discuss launch plans'
+      await fixture.calendars.at(-1).options.onConfirm(slot)
+      assert.equal(receipt.fields['start-date'].length, 2)
+      receipt.assertVisible('start-date', true, 'May 29, 2026')
+      receipt.assertVisible('start-time', true, '12:00 PM UTC')
+      receipt.assertVisible('context', true, 'Discuss launch plans')
+      receipt.assertVisible('starter-name', true, 'Alex <Chen>')
+      receipt.assertVisible('price', true, '$5')
+      if (reset === 'close') fixture.closeThroughFade()
+      if (reset === 'reuse') global.StartersBookingSurfaceLifecycle.reset(fixture.popup, 'free')
+      if (reset === 'reinstall') assert.equal(fixture.reinstall({ starterName: 'Robin' }), true)
+      receipt.assertRestored()
+      assert.equal(fixture.reinstall({ starterName: '' }), true)
+      await fixture.paid.onclick({ preventDefault() {} })
+      await fixture.calendars.at(-1).options.onConfirm({ ...slot, start: slot.start + 86400000, end: slot.end + 86400000 })
+      receipt.assertVisible('start-date', true, 'May 30, 2026')
+      receipt.assertVisible('context', false, '')
+      receipt.assertVisible('starter-name', false, 'the Starter')
+      fixture.closeThroughFade()
+      receipt.assertRestored()
+      await fixture.paid.onclick({ preventDefault() {} })
+      fixture.context.value = 'Message without a known name'
+      await fixture.calendars.at(-1).options.onConfirm(slot)
+      receipt.assertVisible('starter-name', true, 'the Starter')
+      fixture.closeThroughFade()
+      receipt.assertRestored()
+    } finally { fixture.restore() }
+  })
+}

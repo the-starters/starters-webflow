@@ -67,7 +67,7 @@ if (fixtureParams.has('legacy')) {
   }
 }
 const fixtureSettings = paid => ({ config: fixtureConfig(paid), grantId: 'fixture-grant',
-  starterSlug: 'fixture-starter', brandName: 'Brand Fixture', brandEmail: 'brand@example.invalid',
+  starterSlug: 'fixture-starter', starterName: 'Starter Fixture', brandName: 'Brand Fixture', brandEmail: 'brand@example.invalid',
   starterEmail: 'starter@example.invalid', bookingApi: fixtureApi })
 const fixtureChooser = document.querySelector('[popup-booking-main]')
 window.lumos = { modal: { list: {} } }
@@ -123,6 +123,10 @@ fixture.initialize = async () => {
     document.head.appendChild(script)
   })
   if (entry === 'hire') {
+    const identity = document.createElement('a')
+    identity.setAttribute('messages-profile-message', 'mem_starter')
+    identity.setAttribute('messages-profile-name', 'Starter Fixture')
+    document.body.appendChild(identity)
     window.qs = (selector, root = document) => root.querySelector(selector)
     window.qsa = (selector, root = document) => Array.from(root.querySelectorAll(selector))
     window.memberReady = Promise.resolve(MEMBER)
@@ -137,7 +141,7 @@ fixture.initialize = async () => {
       inbox: { onConversationSelected(select) { fixture.selectConversation = select } },
       identity: { prefetch: async () => 'fixture-starter' },
     })
-    await fixture.selectConversation({ conversation: { id: 'fixture-conversation' }, others: [{ id: 'mem_starter' }] })
+    await fixture.selectConversation({ conversation: { id: 'fixture-conversation' }, others: [{ id: 'mem_starter', name: 'Starter Fixture' }] })
   }
   fixture.ready = true
 }

@@ -8085,3 +8085,39 @@ for (const owner of [false, true]) {
     assert.equal(button.getAttribute('data-signup-trigger-element'), null)
   })
 }
+
+test('booking discovery passes the matching CMS Starter name to Free and Paid', async () => {
+  for (const name of ['Alex Chen', '']) {
+    const page = makePage()
+    page.root.appendChild(makeElement('a', { 'messages-profile-message': 'mem_unrelated', 'messages-profile-name': 'Someone Else' }))
+    page.root.appendChild(makeElement('a', { 'messages-profile-message': 'mem_canary', 'messages-profile-name': name }))
+    const installed = []
+    const freeController = {
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod', nylas_grant_email: 'starter@example.com' }),
+      getConfigs: async () => [
+        { config_id: 'free_live', is_paid: false, active: true, data_environment: 'production', duration: 30 },
+        { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 1200, duration: 60 },
+      ],
+      getNearestSlot: async () => null,
+      installFreeBookingController: options => { installed.push(options); return true },
+    }
+    const context = makeContext({
+      page, freeController,
+      member: { id: 'brand_member', auth: { email: 'brand@example.com' },
+        customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+        planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }] },
+      paidController: { installPaidBookingController: options => { installed.push(options); return true } },
+    })
+    const queryAll = context.qsa
+    context.qsa = (selector, scope) => {
+      const matches = queryAll(selector, scope)
+      return selector === '[messages-profile-message][messages-profile-name]'
+        ? { ...matches, length: matches.length } : matches
+    }
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    assert.deepEqual(installed.map(options => options.config.is_paid), [false, true])
+    assert.deepEqual(installed.map(options => options.starterName), [name, name])
+  }
+})

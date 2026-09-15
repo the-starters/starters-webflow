@@ -19,10 +19,12 @@
     if (!id) return null
     const participants = conversation && conversation.participants
     const users = Array.isArray(event.others) ? event.others : Array.isArray(participants)
-      ? participants : Object.keys(participants || {}).map(id => ({ id }))
+      ? participants : Object.keys(participants || {}).map(id => ({ ...participants[id], id }))
     const others = [...new Set(users.map(u => u && u.id).filter(id => id && id !== myId))]
-    return others.length === 1 && MEMBER_ID.test(others[0])
-      ? { conversationId: String(id), memberId: others[0] } : null
+    if (others.length !== 1 || !MEMBER_ID.test(others[0])) return null
+    const participant = users.find(user => user && user.id === others[0])
+    const starterName = String(participant && participant.name || '').trim()
+    return { conversationId: String(id), memberId: others[0], ...(starterName ? { starterName } : {}) }
   }
 
   // Each selection owns its response. Clearing is synchronous, before any I/O.
@@ -257,6 +259,7 @@
             brandName: [member.customFields && member.customFields['free-user'], member.customFields && member.customFields['last-name']].filter(Boolean).join(' '),
             brandEmail: member.auth && member.auth.email,
             starterEmail: target.starter.nylas_grant_email,
+            starterName: target.starterName,
           }
           const success = config.is_paid
             ? global.StartersPaidCallBrandPayment.installPaidBookingController(settings)

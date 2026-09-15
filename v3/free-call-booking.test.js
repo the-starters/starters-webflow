@@ -3,6 +3,7 @@ const fs = require('node:fs')
 const test = require('node:test')
 const vm = require('node:vm')
 
+const { authoredBookingReceipt } = require('./test-helpers/authored-booking-receipt.cjs')
 const api = require('./free-call-booking.js')
 const SOURCE = fs.readFileSync(require.resolve('./free-call-booking.js'), 'utf8')
 
@@ -928,3 +929,43 @@ test('an older singleton already installed is adopted with no extra close wiring
   assert.equal(adopted, control, 'adopting the old singleton must not add a second reset')
   assert.equal(adoptedFixture.defaultStep.style.display, 'flex')
 })
+
+for (const reset of ['close', 'reuse', 'reinstall']) {
+  test(`Free authored receipt restores groups and name on ${reset}`, async () => {
+    const fixture = chooserFixture()
+    const receipt = authoredBookingReceipt(fixture.popup)
+    const booking = bookingApiFixture()
+    const slot = { start: Date.UTC(2026, 4, 29, 12), end: Date.UTC(2026, 4, 29, 12, 30), timezone: 'UTC' }
+    const settings = { ...installSettings(booking.bookingApi), starterName: 'Alex <Chen>' }
+    await withGlobals({ document: fixture.document }, async () => {
+      assert.equal(api.installFreeBookingController(settings), true)
+      await fixture.cta.onclick(event())
+      fixture.context.value = 'Discuss launch plans'
+      await booking.state.mounts.at(-1).onConfirm(slot)
+      assert.equal(receipt.fields['start-date'].length, 2)
+      receipt.assertVisible('start-date', true, 'May 29, 2026')
+      receipt.assertVisible('start-time', true, '12:00 PM UTC')
+      receipt.assertVisible('context', true, 'Discuss launch plans')
+      receipt.assertVisible('starter-name', true, 'Alex <Chen>')
+      receipt.assertVisible('price', false)
+      if (reset === 'close') closeThroughFade(fixture)
+      if (reset === 'reuse') global.StartersBookingSurfaceLifecycle.reset(fixture.popup, 'paid')
+      if (reset === 'reinstall') assert.equal(api.installFreeBookingController({ ...settings, starterName: '' }), true)
+      receipt.assertRestored()
+      assert.equal(api.installFreeBookingController({ ...settings, starterName: '' }), true)
+      await fixture.cta.onclick(event())
+      await booking.state.mounts.at(-1).onConfirm({ ...slot, start: slot.start + 86400000, end: slot.end + 86400000 })
+      receipt.assertVisible('start-date', true, 'May 30, 2026')
+      receipt.assertVisible('context', false, '')
+      receipt.assertVisible('starter-name', false, 'the Starter')
+      closeThroughFade(fixture)
+      receipt.assertRestored()
+      await fixture.cta.onclick(event())
+      fixture.context.value = 'Message without a known name'
+      await booking.state.mounts.at(-1).onConfirm(slot)
+      receipt.assertVisible('starter-name', true, 'the Starter')
+      closeThroughFade(fixture)
+      receipt.assertRestored()
+    })
+  })
+}

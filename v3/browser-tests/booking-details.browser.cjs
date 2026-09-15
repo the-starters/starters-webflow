@@ -153,7 +153,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await waitFor(`getComputedStyle(document.querySelector('[schedule-step="success"]')).display !== 'none'`)
       const receipt = await evaluate(`(() => {
         const step = document.querySelector('[schedule-step="success"]');
-        return Object.fromEntries(['start-date','start-time','context','price'].map(name => [name,
+        return Object.fromEntries(['start-date','start-time','starter-name','context','price'].map(name => [name,
           [...step.querySelectorAll('[booking-element="'+name+'"]')].map(el => ({text:el.textContent, groupVisible:getComputedStyle(el.closest('[booking-element-wrap]')).display !== 'none'}))]));
       })()`)
       for (const name of ['start-date', 'start-time', 'context']) {
@@ -161,6 +161,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         assert.ok(receipt[name].every(field => field.groupVisible), type + ' receipt reveals ' + name)
       }
       assert.ok(receipt.context.every(field => field.text === 'Discuss the launch plan'))
+      assert.ok(receipt['starter-name'].every(field => field.text === 'Starter Fixture' && field.groupVisible))
       const expectedDate = new Intl.DateTimeFormat('en-US', {month:'long',day:'numeric',year:'numeric',timeZone:payloads[0].timezone}).format(new Date(payloads[0].start))
       assert.ok(receipt['start-date'].every(field => field.text === expectedDate))
       assert.ok(receipt['start-time'].every(field => field.text !== '3:00PM EST'))
@@ -170,6 +171,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.equal(await evaluate(`document.querySelectorAll('${role('call-summary')}').length`), 0)
       await click('#close')
       await waitFor(`[...document.querySelectorAll('[schedule-step="success"] [booking-element-wrap]')].every(el => getComputedStyle(el).display === 'none')`)
+      assert.equal(await evaluate(`document.querySelector('[booking-element="starter-name"]').textContent`), '[Starter]')
       await openDetails(type)
       assert.equal(await evaluate(`document.querySelector('${context}').value`), '')
       assert.equal(await evaluate(`document.querySelector('${guests}').value`), '')

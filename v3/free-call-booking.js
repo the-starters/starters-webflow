@@ -428,6 +428,7 @@
     const fields = {
       'start-date': date.year ? date.month + ' ' + date.day + ', ' + date.year : '',
       'start-time': date.hour ? date.hour + ':' + date.minute + ' ' + date.dayPeriod + ' ' + date.timeZoneName : '',
+      'starter-name': clean(input && input.starterName) || 'the Starter',
       context: clean(input && input.context),
     }
     Object.keys(fields).forEach(function (name) {
@@ -439,6 +440,7 @@
         }
         if (!states.has(element)) states.set(element, element.innerHTML)
         element.textContent = fields[name]
+        if (name === 'starter-name') return
         const wrap = element.closest('[booking-element-wrap]')
         if (wrap) {
           let visibility = freeReceiptVisibilityStates.get(popup)
@@ -564,6 +566,7 @@
       brandName: clean(settings.brandName),
       brandEmail: clean(settings.brandEmail),
       starterEmail: clean(settings.starterEmail),
+      starterName: clean(settings.starterName),
       popup,
       cta: ctas[0],
     }
@@ -690,7 +693,7 @@
                   },
                 )
                 if (!bookingSurfaceOwnership.owns(container, generation)) return result
-                showFreeSuccess(current.popup, input)
+                showFreeSuccess(current.popup, Object.assign({}, input, { starterName: current.starterName }))
                 guestUi.hide()
                 if (calendarDetails) calendarDetails.resetDetails()
                 return result

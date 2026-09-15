@@ -3102,7 +3102,7 @@
       clearPendingPaidSelection()
     }
 
-    function resetBookingUi(generation, nextType) {
+    function restoreReceipt() {
       receiptFields.forEach(function (content, field) { field.innerHTML = content })
       receiptFields.clear()
       receiptGroups.forEach(function (state, group) {
@@ -3111,6 +3111,10 @@
         else group.setAttribute('aria-hidden', state.ariaHidden)
       })
       receiptGroups.clear()
+    }
+
+    function resetBookingUi(generation, nextType) {
+      restoreReceipt()
       activePaidGeneration = generation
       activeSurfaceType = nextType || ''
       queuedPaidGeneration = 0
@@ -3194,6 +3198,7 @@
         'start-time': new Intl.DateTimeFormat('en-US', {
           hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short', timeZone: timezone,
         }).format(date),
+        'starter-name': String(settings.starterName || '').trim() || 'the Starter',
         context: input.context || '',
         price: priceText,
       }
@@ -3201,6 +3206,7 @@
         popup.querySelectorAll('[schedule-step="success"] [booking-element="' + name + '"]').forEach(function (field) {
           if (!receiptFields.has(field)) receiptFields.set(field, field.innerHTML)
           field.textContent = fields[name]
+          if (name === 'starter-name') return
           const group = field.closest('[booking-element-wrap]')
           if (!group) return
           if (!receiptGroups.has(group)) receiptGroups.set(group, { display: group.style.display, ariaHidden: group.getAttribute('aria-hidden') })
@@ -3574,6 +3580,8 @@
 
     if (!bookingSurfaceLifecycle.register(popup, container, resetBookingUi, 'paid')) return false
     paidBookingInstallations.set(popup, function () {
+      restoreReceipt()
+      if (paidCallMessage) paidCallMessage.textContent = authoredPaidCallText
       disposed = true
       cancelPaymentUi()
       listeners.forEach(remove => remove())
