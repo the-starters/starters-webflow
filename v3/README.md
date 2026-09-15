@@ -3747,28 +3747,18 @@ The browser sends neither field. The controller uses this sequence:
 
 ```mermaid
 flowchart TD
-    A[Read authenticated availability] --> B[Render the 14-day calendar]
-    B --> C[Brand selects a slot and chooses Continue]
-    C --> R[Review details and choose Request Call]
-    R --> V{Guest addresses valid?}
-    V -- No --> X
-    V -- Yes --> D[Read canonical payment readiness]
-    D --> E{Bookable?}
-    E -- Yes --> K[Retain the confirmed slot]
-    E -- No --> F[Open secure card dialog]
-    F --> G{Card details complete?}
-    G -- No --> Q[Keep Add card disabled; show field errors]
-    G -- Yes --> H[Create and confirm the SetupIntent]
-    H --> I[Set the PaymentMethod as default]
-    I --> J[Recheck canonical payment readiness]
-    J --> L{Bookable now?}
-    L -- No --> X
-    L -- Yes --> K
-    K --> M[Validate optional guest addresses]
-    M --> N[Submit the booking request]
-    N --> O{Xano rechecks slot, price, readiness, revision, and authority}
-    O -- Pass --> P[Create the provider booking]
-    O -- Fail --> X[Show an inline error]
+    A[Read authenticated availability] --> B[Choose a time and Continue]
+    B --> C[Review Call details]
+    C --> D{Card confirmed?}
+    D -- No --> E[Choose a saved card or add a card]
+    E --> F[Verify default selection and return to review]
+    F --> C
+    D -- Yes --> G[Request Call with reviewed card ID]
+    G --> H{Server validates slot, price, card and authority}
+    H -- Pass --> I[Create Call and return booking-linked card receipt]
+    H -- Reject --> C
+    G -- Uncertain response --> J[Retry the same request with card and details locked]
+    J --> G
 ```
 
 1. Read the next 14 days through authenticated
@@ -3965,46 +3955,36 @@ flowchart TD
    While details are open the renderer hides it and shows a separate Back that
    returns to the calendar without closing the modal.
 3. After selecting a slot, **Continue** opens booking details. **Request Call**
-   validates guests before reading payment readiness. A canonical
-   `bookable=true` result can continue directly to the booking command.
-4. If no ready payment method exists, retain that exact selected slot and open
-   the secure card dialog. Add card stays disabled until all three fields are
-   complete and error-free; field and submission errors remain visible inline.
-5. Call `StartersPaidCallBrandPayment.createSetupAttempt()` once for the current
-   card-setup attempt. Retry its `.run()` method with the same idempotency key
-   until Xano returns the Stripe SetupIntent client secret or a terminal error.
-6. Give that client secret to Stripe.js and let Stripe Elements collect and
-   confirm the card. Never send raw card data through Webflow or Xano.
-7. After Stripe.js returns a `pm_...` PaymentMethod ID, call
-   `createDefaultSelectionAttempt(paymentMethodId)` once for that intentional
-   selection. Retry the returned attempt with its captured key.
-8. Read readiness again. Only `bookable=true` can resume the retained slot.
-9. Revalidate the generated or authored details before submission, normalizing
-   at most five guest addresses and excluding duplicates plus the Brand and
-   Starter addresses. Invalid input stops before the booking command.
-10. Submit the selected slot and any canonical guest list to
-   `brand/booking/request/v3`. Xano rechecks the exact slot, price, payment
-   readiness, configuration revision, and booking authority before it creates
-   the provider booking.
+   validates guests and opens payment choices until a card has been confirmed.
+4. Show the current default initially, all saved cards, and Add payment method.
+   Selecting a row is tentative. **Use this card** sets and verifies the default,
+   then returns to review. The modal discloses the account-default effect.
+5. Add card mounts Stripe's three secure fields. Incomplete fields disable Add
+   card. Setup/default attempts retain their command keys on ambiguous retries.
+6. After a successful setup, verify that the added method is the default and
+   return to review without booking. Back or dismissing entry returns to the picker.
+7. **Request Call** sends `expected_payment_method_id` with the retained slot,
+   message and normalized Guests. The backend claims that reviewed card before
+   provider booking creation and persists it even if the account default later changes.
+8. An uncertain booking response keeps the original payload and command identity.
+   Retry checks that request; card and detail editing remain locked until it resolves.
+   A definitive card-change rejection returns to payment review.
 
 After Xano returns canonical booking proof, the success step is terminal. The
 controller replaces the retired Paid `Confirm payment method` action with a
 safe `Close` action and hides `Change payment method`. Payment readiness was
 already confirmed before the booking command, and changing the method after
 booking would not change the booking's server-owned payment snapshot. The
-success copy says that the saved payment method will be used. It does not show
-the Designer placeholder last-four digits because the readiness DTO does not
-return card details. When a newly saved card resumes and completes the booking,
-the controller closes only the owning secure card dialog. It does not
-activate the earlier booking backdrop, so the paid-call success step remains
-visible.
+success copy identifies the booking's recorded card when the canonical response
+contains a matching valid method ID and four-digit last4. Missing metadata uses
+truthful generic copy and never retries a successful booking.
 
 Closing the main booking modal, its backdrop, or ESC invalidates the shared
 calendar generation and restores `schedule-step="default"`. It also clears the
 selected slot, guest fields, topic, context, calendar, errors, status text, and
 Stripe fields. Closing only the Stripe dialog before canonical booking
-proof clears its card/error state, retained slot, and Paid guest state without
-creating a booking. Reinstalling the Paid controller on the same booking dialog
+proof clears its card/error state and returns to the picker/review while preserving
+the selected slot and Paid guest state without creating a booking. Reinstalling the Paid controller on the same booking dialog
 disposes the previous controller's listeners and destroys its Stripe
 fields. A pending Stripe load cannot mount fields for a disposed controller.
 The shared booking lifecycle replaces each call type's reset callback on
@@ -4077,8 +4057,8 @@ reveals its group. Free displays `$0`. Both use the authored blue payment tile
 (`.table-price_layout.is-consult`) and label the receipt `Free` or `Paid`.
 Free shows only Free actions and hides the legacy
 card-charge notice. Paid retains the shared Close button component and hides
-obsolete payment-method actions; its card notice uses generic copy because the
-readiness response does not supply card digits. Close, call-type handoff, and
+obsolete payment-method actions; its card notice uses booking-linked last4 with
+a generic fallback when valid payment metadata is unavailable. Close, call-type handoff, and
 controller reinstallation restore the populated fields' original HTML and the groups'
 inline display and `aria-hidden` values before reuse. The Free and Paid unit
 suites use [the shared authored receipt fixture](test-helpers/authored-booking-receipt.cjs)

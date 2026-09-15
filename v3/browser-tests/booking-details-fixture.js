@@ -47,8 +47,9 @@ window.xanoAuthFetch = async (url, options) => {
     if (payload.expected_payment_method_id && payload.expected_payment_method_id !== fixture.defaultCard) {
       return {ok:false,status:409,json:async () => ({code:'PAYMENT_METHOD_CHANGED'})}
     }
+    if (fixture.unresolvedBooking) { fixture.unresolvedBooking = false; return {ok:false,status:400,json:async () => ({message:'Nylas booking creation is unresolved; reconciliation is required'})} }
     if (fixture.failBookings > 0) { fixture.failBookings--; throw new Error('Synthetic ambiguous booking response') }
-    body = { booking: { booking_id: 'fixture-provider', row_id: 71, payment_method_id: payload.expected_payment_method_id,
+    body = { booking: { booking_id: 'fixture-provider', row_id: 71, payment_method_id: 'receiptMethodId' in fixture ? fixture.receiptMethodId : payload.expected_payment_method_id,
       payment_method: fixture.receiptCard === undefined ? fixture.cards.find(card => card.id === payload.expected_payment_method_id) : fixture.receiptCard } }
   } else throw new Error('Unexpected fixture request: ' + parsed.pathname)
   return { ok: true, status: 200, json: async () => body }

@@ -2606,6 +2606,7 @@
         button.disabled = true
       })
       setStatus('Sending your request...', 'progress')
+      let retrySameBooking = false
       try {
         await onConfirm({
           start: selectedSlot.start,
@@ -2615,28 +2616,29 @@
         if (isCurrent()) setStatus('')
       } catch (error) {
         console.error('[paid-call] booking failed', error)
-        setStatus('We could not book this call. Please try again.', 'error')
+        retrySameBooking = error.retrySameBooking === true
+        setStatus(retrySameBooking ? 'Your request may have been received. Retry to check the same request.' : 'We could not book this call. Please try again.', 'error')
       } finally {
         confirmationPending = false
         if (isCurrent()) {
           if (details) {
-            details.setBusy(false)
-            setSiteButtonDisabled(detailsBack, false)
+            details.setBusy(retrySameBooking)
+            setSiteButtonDisabled(detailsBack, retrySameBooking)
           }
           Array.from(calendarHost.querySelectorAll('[data-paid-calendar-date]')).forEach(function (button) {
-            button.disabled = false
+            button.disabled = retrySameBooking
           })
           if ($ && $.fn && $.fn.datepicker) {
-            $(calendarHost).datepicker('option', 'disabled', false)
+            $(calendarHost).datepicker('option', 'disabled', retrySameBooking)
           }
           Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (button) {
-            button.disabled = false
+            button.disabled = retrySameBooking
           })
           setConfirmDisabled(!selectedSlot)
-          timezoneControl.select.disabled = false
+          timezoneControl.select.disabled = retrySameBooking
           if (backControl) {
-            setSiteButtonDisabled(backControl, false)
-            backControl.wrap.removeAttribute('data-paid-calendar-busy')
+            setSiteButtonDisabled(backControl, retrySameBooking)
+            if (!retrySameBooking) backControl.wrap.removeAttribute('data-paid-calendar-busy')
           }
         }
       }
@@ -2999,6 +3001,7 @@
     let generation = 0
     let disposed = false
     let mode = 'closed'
+    let bookingPending = false
     let environment = ''
     let selected = null
     let picker = null
@@ -3155,7 +3158,7 @@
     function closed() { if (mode !== 'closed') returnToReview() }
     modal.addEventListener('close', closed)
     async function open(nextEnvironment) {
-      if (disposed || !settings.isCurrent()) return
+      if (disposed || bookingPending || !settings.isCurrent()) return
       if (!['test', 'live'].includes(nextEnvironment)) throw new Error('Payment environment is invalid')
       if (environment && environment !== nextEnvironment) selected = null
       environment = nextEnvironment
@@ -3164,6 +3167,12 @@
     }
     return {
       open,
+      setPending: value => {
+        bookingPending = value
+        setSiteButtonDisabled(change, value)
+        if (value) summary.textContent = 'Your request may have been received. Retry to check the same request before changing your card or details.'
+        else if (selected) summary.textContent = selected.brand + ' ending in ' + selected.last4 + ' will be used for this call.'
+      },
       selected: () => selected && Object.assign({ environment }, selected),
       invalidate: () => { selected = null; summary.textContent = 'Your payment method changed. Please choose a card again.'; display(review, '') },
       dispose: () => {
@@ -3231,6 +3240,7 @@
     if (guestUiEnabled) installGuestFormSubmitGuard(guestWrapper)
 
     let paymentChoice = null
+    let pendingBookingInput = null
     let clearPaidCalendarSelection = null
     let calendarDetails = null
     let paidClickLock = false
@@ -3310,7 +3320,17 @@
       if (staleAction && staleAction.style) staleAction.style.display = 'none'
     }
 
+    function lockAuthoredDetails(locked) {
+      guestBindings.forEach(binding => { if (binding.field) binding.field.readOnly = locked })
+      for (const selector of ['[name="context"], [booking-context]', '[name="topic"], [booking-topic]']) {
+        const field = popup.querySelector(selector)
+        if (field) field.readOnly = locked
+      }
+    }
+
     function resetPaymentUi() {
+      lockAuthoredDetails(false)
+      pendingBookingInput = null
       if (paymentChoice) { paymentChoice.dispose(); paymentChoice = null }
     }
 
@@ -3484,7 +3504,8 @@
       // Only the canonical booking snapshot can identify the receipt's card.
       const booking = result && result.booking
       const card = booking && booking.payment_method
-      const last4 = card && card.id === booking.payment_method_id &&
+      const last4 = card && typeof booking.payment_method_id === 'string' &&
+        /^pm_[a-zA-Z0-9]+$/.test(booking.payment_method_id) && card.id === booking.payment_method_id &&
         typeof card.last4 === 'string' && /^\d{4}$/.test(card.last4) ? card.last4 : ''
       if (paidCallMessage) {
         paidCallMessage.textContent = last4
@@ -3522,8 +3543,8 @@
         confirmation !== paidConfirmationSequence ||
         bookingLocks.has(generation)
       ) return
-      const details = readBookingDetails()
-      const bookingInput = {
+      const details = pendingBookingInput || readBookingDetails()
+      const bookingInput = pendingBookingInput || {
         expected_payment_method_id: paymentChoice.selected().id,
         starter_slug: settings.starterSlug,
         config_id: config.config_id,
@@ -3538,6 +3559,9 @@
       }
       const fingerprint = bookingRequestFingerprint(bookingInput)
       bookingLocks.add(generation)
+      pendingBookingInput = bookingInput
+      paymentChoice.setPending(true)
+      lockAuthoredDetails(true)
       try {
         const result = await bookingSurfaceLifecycle.runBooking(
           container,
@@ -3545,11 +3569,28 @@
           function () { return createBookingAttempt(bookingInput) },
         )
         if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return result
+        pendingBookingInput = null
+        paymentChoice.setPending(false)
+        lockAuthoredDetails(false)
         resetGuestUi()
         setGuestUiVisible(false)
         if (calendarDetails) calendarDetails.resetDetails()
         showPaidSuccess(bookingInput, result)
         return result
+      } catch (error) {
+        if (ownsSurface(generation)) {
+          const unresolved = /reconcil|unresolved/i.test(String(error.data && error.data.message))
+          const safeRejection = !unresolved && ([400, 401, 403, 404, 422].includes(error.status) ||
+            (error.status === 409 && /payment_method_changed/i.test(String(error.data && error.data.code))))
+          if (safeRejection) {
+            pendingBookingInput = null
+            paymentChoice.setPending(false)
+            lockAuthoredDetails(false)
+          } else {
+            error.retrySameBooking = true
+          }
+        }
+        throw error
       } finally {
         bookingLocks.delete(generation)
       }
@@ -3595,8 +3636,9 @@
 
     async function confirmPaidSlot(slot, generation) {
       if (!slot || !ownsSurface(generation)) return
-      readBookingDetails()
       const confirmation = ++paidConfirmationSequence
+      if (pendingBookingInput) return submitBooking(slot, generation, confirmation)
+      readBookingDetails()
       const readiness = await getReadiness()
       if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return
       if (!paymentChoice) paymentChoice = createBookingPaymentChoice({
@@ -3611,7 +3653,7 @@
       try {
         await submitBooking(slot, generation, confirmation)
       } catch (error) {
-        if (ownsSurface(generation) && /payment_method|payment method|selected card/i.test(String(error.data && error.data.code) + ' ' + String(error.data && error.data.message) + ' ' + (error.message || ''))) paymentChoice.invalidate()
+        if (ownsSurface(generation) && !pendingBookingInput && /payment_method|payment method|selected card/i.test(String(error.data && error.data.code) + ' ' + String(error.data && error.data.message) + ' ' + (error.message || ''))) paymentChoice.invalidate()
         throw error
       }
     }

@@ -11,3 +11,15 @@ The authenticated read-only card-list route is already published as endpoint 857
 Outstanding: actual financial-provider workflow and authenticated production screenshots; successful TEST-mode/no-customer backend reads; auth-required payment confirmation controls (separate existing unactivated path); exact visual parity of the authored decorative radio circle. Selected state currently uses outline and aria-checked. Base date/status placeholders in the connected preview are tracked by separate dashboard status/date changes.
 
 The scope and unchanged policy boundaries are documented in the dashboard recovery contract linked above.
+
+## Paid Call card review — local verification, 2026-09-15
+
+The implementation now requires a confirmed saved/new card before Request Call and identifies the canonical booking's card on the receipt. Added-card setup returns to review. The browser fixture covers card selection, empty/error states, leading-zero and malformed receipt metadata, preserved drafts, keyboard/focus, nested payment-dialog backdrops, late responses, replacement, and retries. An unresolved booking locks its card/details and retries the original payload/key.
+
+- Full repository Node suite: 4,667 passed, zero failed/skipped (137 test files).
+- Final focused Free/Paid/dashboard Node checks after review fixes: 147 passed.
+- Extended `booking-details.browser.cjs`: passed in local Chrome, synthetic payment/scheduling APIs and Stripe boundaries.
+- Existing `payment-secure-fields.html` with real Stripe TEST iframes: Inter loaded in all three actual inputs at 16px; changing page-root font size to 20px updated the number field to 20px. No setup, card save, booking or charge was performed. Local evidence: `/tmp/paid-card-stripe-font.json` and `/tmp/paid-card-stripe-font.png`.
+- Four backend XanoScript deployment-candidate files: syntax-valid. Isolated backend command runtime tests remain pending. See [deployment contract and required cases](../xano-workspace/PAID-CALL-CARD-SELECTION.md).
+
+Review caught and corrected ambiguous-response card switching, missing receipt IDs being accepted, the Back wrapper losing its busy marker, and stale documentation. These checks do not establish deployed backend behavior. Do not publish the frontend until the backend contract is runtime-tested and deployed. No push, PR, tag, or production deployment was performed in this implementation run.
