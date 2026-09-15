@@ -1,4 +1,5 @@
 // All network boundaries are synthetic. The controllers and renderer are real.
+Date.now = () => Date.UTC(2026, 8, 30, 12)
 window.fixture = { requests: [], bookings: [], failBookings: 0, installs: {} }
 const fixtureApi = window.StartersPaidCallBrandPayment
 const fixtureParams = new URLSearchParams(location.search)
