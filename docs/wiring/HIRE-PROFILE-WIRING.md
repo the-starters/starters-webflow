@@ -1163,27 +1163,9 @@ compatibility, and entry behavior for rejected guest markup.
 
 ### Free booking confirmation
 
-After canonical success, `free-call-booking.js` labels the shared success step
-`Free Call`, shows only the Free actions, and hides the legacy card-charge notice.
-Inside `[schedule-step="success"]`, it populates every authored
-`[booking-element="context"]`, `[booking-element="start-date"]`, and
-`[booking-element="start-time"]` from the submitted request snapshot. Context is
-trimmed, including clearing the field for an empty submission. The existing
-`formatWithTimezone` formatter renders the selected start in the selected timezone,
-falling back to UTC when the timezone is absent or invalid.
-
-Every success-panel `[booking-element="price"]` has its nearest
-`[booking-element-wrap]` hidden, or the price element itself when no wrapper exists.
-Shared popup reset on close or call-type handoff restores the original authored
-receipt HTML and the price rows' inline display and `aria-hidden` values. Later
-Free requests populate fresh values.
-
-Paid receipt population is a separate pre-existing gap: restoring authored
-placeholders prevents Free details from leaking into Paid reuse, but does not
-supply correct Paid booking details. The existing Starter-name placeholder is
-also a separate remaining issue. The executable regressions in
-[`free-call-booking.test.js`](../../v3/free-call-booking.test.js) cover receipt refresh
-and the shared reset boundary; they do not prove a production Paid booking.
+The [shared booking details contract](../../v3/README.md#booking-details-and-guests)
+owns Free and Paid receipt fields, group visibility, Starter identity, and
+restoration on close or reuse.
 
 ## The owner paints from their own settings
 

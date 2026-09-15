@@ -4055,11 +4055,29 @@ Generated guest rows place their accessible remove button inside the input's
 right edge. Add another guest uses the shared secondary button component,
 including its disabled theme at the five-guest limit and during submission.
 
-Successful Free and Paid requests populate the authored date, time, and optional
-context fields and reveal their `booking-element-wrap` groups. Both desktop and
-mobile date fields receive the selected timezone. Paid receipts show the canonical
-per-call price; Free receipts hide payment details. Empty context stays hidden,
-and closing or switching call types restores the authored receipt state.
+After canonical success, both controllers populate every `start-date`,
+`start-time`, and `context` field with a `booking-element` attribute inside
+`[schedule-step="success"]`. Desktop and mobile copies use the submitted start
+and selected timezone. Free uses `formatWithTimezone`, with UTC fallback for an
+absent or invalid timezone; Paid uses `Intl.DateTimeFormat`, defaulting to UTC
+when absent. Free preserves its two-digit day; Paid uses a numeric day.
+
+The authored receipt's `[booking-element-wrap]` groups start hidden: filling
+their text alone does not reveal the table. Each populated date/time or context
+field reveals its nearest group as `flex` when marked `display-flex`, otherwise
+`block`, with `aria-hidden="false"`. Trimmed empty context clears the field and
+hides its group. The `starter-name` field uses the matching Hire
+`messages-profile-name` or selected Messages participant name, with `the Starter`
+as the fallback. It does not independently reveal the optional message group.
+
+Paid populates `booking-element="price"` with the canonical per-call price and
+reveals its group. Free hides each price field's nearest group (or the field
+itself without a group), labels the receipt `Free Call`, shows only Free actions,
+and hides the legacy card-charge notice. Close, call-type handoff, and controller
+reinstallation restore the populated fields' original HTML and the groups'
+inline display and `aria-hidden` values before reuse. The Free and Paid unit
+suites use [the shared authored receipt fixture](test-helpers/authored-booking-receipt.cjs)
+to cover these restoration boundaries.
 
 **Continue** opens the selected date/time/timezone summary beside the fields on
 wide screens; narrow containers stack the summary above them. Name and Email

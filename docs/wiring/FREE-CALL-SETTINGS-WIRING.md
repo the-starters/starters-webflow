@@ -252,4 +252,4 @@ activated for any Starter outside TEST.
 ## Free booking confirmation reuse
 
 The Free receipt and shared popup reset contract are owned by
-[Free booking confirmation](HIRE-PROFILE-WIRING.md#free-booking-confirmation).
+[the shared booking details contract](../../v3/README.md#booking-details-and-guests).

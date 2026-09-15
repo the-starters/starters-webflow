@@ -1341,9 +1341,8 @@ test('the shell declares no row gap, at either width', async () => {
       `row gap added back for mobile: ${rule}`,
     )
   }
-  // Desktop still says zero out loud. It is the initial value now, but it is
-  // the declaration that documents the footer band as the only separator.
-  assert.match(css.split('@media (min-width:768px){')[1], /"shell"\]\{column-gap:2rem;row-gap:0;/)
+  // Desktop spacing is exercised against the rendered calendar in
+  // browser-tests/booking-details.browser.cjs, independent of CSS rule order.
 })
 
 test('the booking shell defers its display and gaps to the sheet, the dashboard does not', async () => {
@@ -1757,8 +1756,7 @@ test('the desktop footer is a full-width band under both columns', async () => {
   // caption and the first chip.
   assert.match(css, /"times"\]\{[^}]*padding:0 1\.25rem 1\.25rem 0\}/)
 
-  // Zero row gap: the band's own padding does the separating.
-  assert.match(css, /"shell"\]\{column-gap:2rem;row-gap:0;/)
+  // The browser check verifies the rendered gaps and full-width footer.
   assert.ok(css.includes(ROLE + '"footer"]{grid-area:footer}'))
 })
 

@@ -92,6 +92,19 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await waitFor(`!!document.querySelector('[data-paid-calendar-slot]')`)
       if (captureCalendar) {
         await screenshot(type + '-calendar')
+        assert.deepEqual(await evaluate(`(() => {
+          const shell = document.querySelector('[data-paid-calendar-element="shell"]');
+          const style = getComputedStyle(shell), bounds = shell.getBoundingClientRect();
+          const footer = shell.querySelector('[data-paid-calendar-element="footer"]').getBoundingClientRect();
+          const times = shell.querySelector('[data-paid-calendar-element="times"]').getBoundingClientRect();
+          return {
+            columnGapRem: parseFloat(style.columnGap) / parseFloat(getComputedStyle(document.documentElement).fontSize),
+            rowGap: parseFloat(style.rowGap),
+            footerSpansShell: Math.abs(footer.left - bounds.left) < 1 && Math.abs(footer.right - bounds.right) < 1,
+            footerBelowTimes: footer.top >= times.bottom - 1,
+          };
+        })()`), { columnGapRem: 2, rowGap: 0, footerSpansShell: true, footerBelowTimes: true },
+        type + ' desktop calendar keeps its spacing and footer below both columns')
         assert.equal(await evaluate(`(() => {
           const slot = document.querySelector('[data-paid-calendar-slot]');
           const rect = slot.getBoundingClientRect();

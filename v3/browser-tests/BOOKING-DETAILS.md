@@ -26,6 +26,8 @@ Checks cover:
 - Authored confirmation table groups: both date/time copies and context are revealed;
   Paid shows its canonical price and Free hides it. The fixture uses the Hire receipt
   markup captured on September 15, 2026, including initially hidden groups.
+- Starter name population and restoration after close, plus Free/Paid date
+  formatting on a single-digit day using the fixture's fixed clock.
 
 The fixture approximates site button styling. Container sizing mirrors the `.call-details_layout` and `.nylas_custom_container` rules in the public Webflow page stylesheet referenced by `v3/fixtures/card-setup-owner.html`. This is local browser evidence, not full published Webflow visual parity. Paid card collection/setup and authenticated live endpoints are outside this runner's scope.
 
