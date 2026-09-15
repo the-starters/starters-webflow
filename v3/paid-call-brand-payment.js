@@ -3245,7 +3245,10 @@
     change.button.addEventListener('click', () => open(environment))
     modal.addEventListener('click', dismiss, true)
     modal.addEventListener('cancel', dismiss, true)
-    function closed() { if (mode !== 'closed') returnToReview() }
+    function closed() {
+      // Native close events are queued; an earlier close can arrive after reopening.
+      if (!modal.open && mode !== 'closed') returnToReview()
+    }
     modal.addEventListener('close', closed)
     async function open(nextEnvironment) {
       if (disposed || bookingPending || !settings.isCurrent()) return

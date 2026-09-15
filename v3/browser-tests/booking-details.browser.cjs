@@ -70,6 +70,10 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     const layoutFailures = []
     const waitFor = async expression => {
       for (let i = 0; i < 100; i++) { if (await evaluate(expression)) return; await pause(30) }
+      const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true })
+      await fs.writeFile(path.join(evidence, 'browser-failure.png'), Buffer.from(shot.data, 'base64'))
+      const surface = await evaluate(`({ dialogs: Array.from(document.querySelectorAll('dialog')).map(dialog => ({open:dialog.open, mode:dialog.getAttribute('data-booking-payment-mode'), text:dialog.innerText})), fields:document.querySelectorAll('[data-stripe-field] input').length })`)
+      await fs.writeFile(path.join(evidence, 'browser-failure.json'), JSON.stringify({ waitingFor: expression, surface }, null, 2))
       throw new Error('Timed out: ' + expression)
     }
     let chooseDefaultForBooking = false
@@ -555,6 +559,23 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.deepEqual(await evaluate('fixture.bookings[0]'), await evaluate('fixture.bookings[1]'))
     observations.push('unresolved-provider-response-locks-authored-details-and-back')
 
+
+    // Reopen before the browser delivers the queued native close event.
+    await navigate()
+    await openDetails('paid')
+    await openPayment()
+    await waitFor(`!!document.querySelector('[customer-cards-list] [aria-checked="true"]')`)
+    await evaluate(`window.addEventListener('modal-close', function reopen(event) {
+      if (!event.detail.modal.matches('[popup-stripe-card]')) return;
+      window.removeEventListener('modal-close', reopen);
+      document.querySelector('[data-booking-payment-change] button').click();
+    })`)
+    await click('[pm-use-this]')
+    await waitFor(`document.querySelector('[popup-stripe-card]').open`)
+    await addCard()
+    assert.equal(await evaluate(`document.querySelector('[popup-stripe-card]').open`), true, 'queued close from the previous opening leaves card entry open')
+    assert.equal(await evaluate('fixture.bookings.length'), 0)
+    observations.push('immediate-card-reopen-ignores-previous-close-event')
 
     await navigate()
     await openDetails('paid')
