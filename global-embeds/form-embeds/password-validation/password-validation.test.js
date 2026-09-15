@@ -544,8 +544,24 @@ test('01: a valid count attribute enforces exactly that number', () => {
   })
 })
 
-test('01: the old ms-code-pw-validation grammar is gone from the script', () => {
-  assert.equal(source.includes('ms-code-pw-validation'), false)
+test('01: legacy attributes do not enable a password complexity rule', () => {
+  const app = makeForm({ numbers: 'true' })
+  app.wrapper.setAttribute('ms-code-pw-validation-special', 'true')
+  app.rows.special.setAttribute('ms-code-pw-validation', 'special')
+  mount(h('body', {}, [app.form]))
+
+  type(app, 'abc')
+  assert.equal(iconState(app.rows.numbers), 'fail')
+  assert.equal(isGated(app.button), true, 'the current numbers rule still gates submission')
+  dispatch(app.form, 'submit')
+  assert.equal(app.submits.length, 0)
+
+  type(app, '1')
+  assert.equal(iconState(app.rows.numbers), 'pass')
+  assert.equal(iconState(app.rows.special), 'untouched')
+  assert.equal(isOpen(app.button), true, 'legacy attributes do not require a special character')
+  dispatch(app.form, 'submit')
+  assert.equal(app.submits.length, 1, 'a password without special characters reaches the submit handler')
 })
 
 test('01: the checklist shows every rule unmet from load, then flips as they pass', () => {
