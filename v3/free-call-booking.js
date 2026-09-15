@@ -428,8 +428,9 @@
     const fields = {
       'start-date': date.year ? date.month + ' ' + date.day + ', ' + date.year : '',
       'start-time': date.hour ? date.hour + ':' + date.minute + ' ' + date.dayPeriod + ' ' + date.timeZoneName : '',
-      'starter-name': clean(input && input.starterName) || 'the Starter',
-      context: clean(input && input.context),
+      'starter-name': clean(input && input.starterName).split(/\s+/)[0] || 'the Starter',
+      context: clean(input && input.context) || 'No message provided.',
+      price: '$0',
     }
     Object.keys(fields).forEach(function (name) {
       popup.querySelectorAll('[schedule-step="success"] [booking-element="' + name + '"]').forEach(function (element) {
@@ -454,22 +455,11 @@
         }
       })
     })
-    popup.querySelectorAll('[schedule-step="success"] [booking-element="price"]').forEach(function (element) {
-      const wrap = element.closest('[booking-element-wrap]') || element
-      let states = freeReceiptVisibilityStates.get(popup)
-      if (!states) {
-        states = new Map()
-        freeReceiptVisibilityStates.set(popup, states)
-      }
-      if (!states.has(wrap)) states.set(wrap, { display: wrap.style.display, ariaHidden: wrap.getAttribute('aria-hidden') })
-      wrap.style.display = 'none'
-      wrap.setAttribute('aria-hidden', 'true')
-    })
     popup.querySelectorAll('[success-call-buttons]').forEach(function (element) {
       element.style.display = element.getAttribute('data-type') === 'free' ? 'flex' : 'none'
     })
     popup.querySelectorAll('[schedule-step="success"] [booking-element="paid-meeting"]').forEach(function (element) {
-      element.textContent = 'Free Call'
+      element.textContent = 'Free'
     })
     popup.querySelectorAll('[schedule-step="success"] *').forEach(function (element) {
       if (/^Your card ending in .+ will be charged for this call\.$/i.test(clean(element.textContent))) {
@@ -480,7 +470,7 @@
     const successText = popup.querySelector('[booking-success-text]')
     if (successText) {
       successText.textContent =
-        'Your free call request was sent. We will notify you when the Starter confirms it.'
+        "We'll share your call request with " + (clean(input && input.starterName) || 'the Starter') + " and reach out when it's been confirmed, typically within 48 hours"
     }
     switchStep(popup, 'success')
   }

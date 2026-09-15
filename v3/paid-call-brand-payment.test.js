@@ -3128,7 +3128,7 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
       if (guestNodes.length) return guestNodes
       if (selector === '[schedule-step]') return steps
       if (selector === '[success-call-buttons]') return [freeButtons, paidButtons]
-      if (selector === '[success-call-buttons][data-type="paid"] [booking-pm-action]') {
+      if (selector === '[success-call-buttons][data-type="paid"] [booking-pm-action], [success-call-buttons][data-type="paid"] [data-btn-payment="no-cards"]') {
         return [changePayment, confirmPayment]
       }
       if (selector === '[schedule-step="success"] [booking-element="paid-meeting"]') return [successCallType]
@@ -3247,10 +3247,10 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     assert.equal(guestError.style.display, 'none')
     assert.equal(guestField.value, '')
     assert.equal(guestUi.wrapper.style.display, 'none')
-    assert.equal(successText.textContent.includes('paid call request was sent'), true)
+    assert.equal(successText.textContent.includes('typically within 48 hours'), true)
     assert.equal(freeButtons.style.display, 'none')
     assert.equal(paidButtons.style.display, 'flex')
-    assert.equal(successCallType.textContent, 'Paid Call')
+    assert.equal(successCallType.textContent, 'Paid')
     assert.equal(paidText.textContent, 'Your saved payment method will be used for this call.')
     assert.equal(paidText.style.display, '')
     assert.equal(paidText.getAttribute('aria-hidden'), 'false')
@@ -4907,7 +4907,7 @@ for (const reset of ['close', 'reuse', 'reinstall']) {
       receipt.assertVisible('start-date', true, 'May 29, 2026')
       receipt.assertVisible('start-time', true, '12:00 PM UTC')
       receipt.assertVisible('context', true, 'Discuss launch plans')
-      receipt.assertVisible('starter-name', true, 'Alex <Chen>')
+      receipt.assertVisible('starter-name', true, 'Alex')
       receipt.assertVisible('price', true, '$5')
       if (reset === 'close') fixture.closeThroughFade()
       if (reset === 'reuse') global.StartersBookingSurfaceLifecycle.reset(fixture.popup, 'free')
@@ -4917,8 +4917,8 @@ for (const reset of ['close', 'reuse', 'reinstall']) {
       await fixture.paid.onclick({ preventDefault() {} })
       await fixture.calendars.at(-1).options.onConfirm({ ...slot, start: slot.start + 86400000, end: slot.end + 86400000 })
       receipt.assertVisible('start-date', true, 'May 30, 2026')
-      receipt.assertVisible('context', false, '')
-      receipt.assertVisible('starter-name', false, 'the Starter')
+      receipt.assertVisible('context', true, 'No message provided.')
+      receipt.assertVisible('starter-name', true, 'the Starter')
       fixture.closeThroughFade()
       receipt.assertRestored()
       await fixture.paid.onclick({ preventDefault() {} })

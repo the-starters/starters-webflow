@@ -76,6 +76,8 @@ class Element {
     this.value = ''
   }
 
+  hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name) }
+
   get innerHTML() { return this.textContent }
 
   set innerHTML(value) { this.textContent = value }
@@ -484,12 +486,12 @@ test('Free click mounts the authored calendar and canonical command', async () =
   })
   assert.equal(fixture.defaultStep.style.display, 'none')
   assert.equal(fixture.successStep.style.display, 'flex')
-  assert.match(fixture.successText.textContent, /free call request was sent/i)
-  assert.equal(fixture.successCallType.textContent, 'Free Call')
+  assert.match(fixture.successText.textContent, /typically within 48 hours/i)
+  assert.equal(fixture.successCallType.textContent, 'Free')
   assert.equal(fixture.receiptFields.context.textContent, 'Review the launch plan')
   assert.equal(fixture.receiptFields['start-date'].textContent, 'May 29, 2026')
   assert.equal(fixture.receiptFields['start-time'].textContent, '04:26 AM GMT+8')
-  assert.equal(fixture.receiptPriceWrap.style.display, 'none')
+  assert.equal(fixture.receiptPriceWrap.style.display, 'block')
   assert.equal(fixture.legacyCardNotice.style.display, 'none')
   assert.equal(fixture.legacyCardNotice.getAttribute('aria-hidden'), 'true')
   closeThroughFade(fixture)
@@ -511,9 +513,9 @@ test('a later Free receipt clears previous context and refreshes its selected da
     assert.equal(fixture.receiptFields['start-date'].textContent, 'Authored placeholder')
     await fixture.cta.onclick(event())
     await booking.state.mounts[1].onConfirm({ start: 1780086400000, end: 1780088200000, timezone: 'Asia/Manila' })
-    assert.equal(fixture.receiptFields.context.textContent, '')
+    assert.equal(fixture.receiptFields.context.textContent, 'No message provided.')
     assert.equal(fixture.receiptFields['start-date'].textContent, 'May 30, 2026')
-    assert.equal(fixture.receiptPriceWrap.style.display, 'none')
+    assert.equal(fixture.receiptPriceWrap.style.display, 'block')
   })
 })
 
@@ -532,7 +534,7 @@ for (const closeFirst of [false, true]) {
       fixture.context.value = 'Free context A'
       await booking.state.mounts[0].onConfirm({ start: 1780000000000, end: 1780001800000, timezone: 'Asia/Manila' })
       assert.equal(repeated.textContent, 'Free context A')
-      assert.equal(fixture.receiptPriceWrap.style.display, 'none')
+      assert.equal(fixture.receiptPriceWrap.style.display, 'block')
       if (closeFirst) closeThroughFade(fixture)
       global.StartersBookingSurfaceLifecycle.reset(fixture.popup, 'paid')
       fixture.context.value = 'Paid context B'
@@ -946,8 +948,8 @@ for (const reset of ['close', 'reuse', 'reinstall']) {
       receipt.assertVisible('start-date', true, 'May 29, 2026')
       receipt.assertVisible('start-time', true, '12:00 PM UTC')
       receipt.assertVisible('context', true, 'Discuss launch plans')
-      receipt.assertVisible('starter-name', true, 'Alex <Chen>')
-      receipt.assertVisible('price', false)
+      receipt.assertVisible('starter-name', true, 'Alex')
+      receipt.assertVisible('price', true, '$0')
       if (reset === 'close') closeThroughFade(fixture)
       if (reset === 'reuse') global.StartersBookingSurfaceLifecycle.reset(fixture.popup, 'paid')
       if (reset === 'reinstall') assert.equal(api.installFreeBookingController({ ...settings, starterName: '' }), true)
@@ -956,8 +958,8 @@ for (const reset of ['close', 'reuse', 'reinstall']) {
       await fixture.cta.onclick(event())
       await booking.state.mounts.at(-1).onConfirm({ ...slot, start: slot.start + 86400000, end: slot.end + 86400000 })
       receipt.assertVisible('start-date', true, 'May 30, 2026')
-      receipt.assertVisible('context', false, '')
-      receipt.assertVisible('starter-name', false, 'the Starter')
+      receipt.assertVisible('context', true, 'No message provided.')
+      receipt.assertVisible('starter-name', true, 'the Starter')
       closeThroughFade(fixture)
       receipt.assertRestored()
       await fixture.cta.onclick(event())
