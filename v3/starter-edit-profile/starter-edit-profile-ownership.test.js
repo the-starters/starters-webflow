@@ -25,14 +25,14 @@ const EXPECTED_CAPTURE = {
   },
 }
 const EXPECTED_CANDIDATES = {
-  sourceCommit: 'working-tree@ed0776fe2220a599b327c60c80fb2044e39153fb',
+  sourceCommit: 'working-tree@fa560ed66349681801f8cc7042911fc34bb1499f',
   files: {
-    'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 14854, sha256: 'b7593bf81d47c0d59a12125e7ad561a61e8ff1b14649f064e4ede9765cf7e558' },
-    'portfolio-crud.js': { path: 'v3/starter-edit-profile/portfolio-crud.js', bytes: 54689, sha256: '5c69d0c91f0e79cfebb3615321e4b50ebc7449c2c3b4994b175a620d853790e0' },
+    'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 16563, sha256: '988c84c6391241f2aa3969f4acdeb77258831bd7332e5137046e2a8f4440fcf5' },
+    'portfolio-crud.js': { path: 'v3/starter-edit-profile/portfolio-crud.js', bytes: 59243, sha256: 'da21df429b9daad20bd5fac4522e05c462eed1c1fa42de3642a0559f67983c92' },
     'portfolio-list.js': { path: 'v3/starter-edit-profile/portfolio-list.js', bytes: 4013, sha256: 'f559928f524705d1fcce022a1213b0a637c233cbd55f4973dc376457e0ab74ff' },
-    'company-autocomplete.js': { path: 'v3/starter-edit-profile/company-autocomplete.js', bytes: 16343, sha256: '157e32b3f4facf7171d9b609580496a3f55fdcc6d24ff4437fca3151e52cbcae' },
-    'company-experience-crud.js': { path: 'v3/starter-edit-profile/company-experience-crud.js', bytes: 57151, sha256: 'b5eec611d63dc8935783e9c810f9b3c9fc080812a1cd9e07ae9cf08aa27fb83a' },
-    'work-dates.js': { path: 'v3/build-profile/work-dates.js', bytes: 1929, sha256: '3be29b0dfecfadd6057e6da6a30af0a47dc41d67bdedda863aca003512fe2890' },
+    'company-autocomplete.js': { path: 'v3/starter-edit-profile/company-autocomplete.js', bytes: 17306, sha256: 'eeadcf42be5c4388fa8cd5aa7ec0fe74e648d13b6ae64386d3446d3c9c97b94b' },
+    'company-experience-crud.js': { path: 'v3/starter-edit-profile/company-experience-crud.js', bytes: 86045, sha256: '873981f2bb50b183b084118df606d330377e30fb8be03e081b2954370077e21e' },
+    'work-dates.js': { path: 'v3/build-profile/work-dates.js', bytes: 2700, sha256: '4bf43605286b1f6dd796f8227a3f72e7c43aea5f41131f21bd78c283473002b6' },
   },
 }
 

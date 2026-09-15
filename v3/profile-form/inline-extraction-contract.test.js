@@ -76,12 +76,12 @@ const EXPECTED_LIVE_CAPTURES = Object.freeze({
 
 const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
   'v3/profile-form/shared-foundation.js': Object.freeze({
-    characters: 22892, sha256: '7af566f3bd01f172416d0be37d5b669e9e80848049e980653b237d60d047a214',
+    characters: 24674, sha256: 'a24c018b4d015a5d667023bca62bb0b05278e5eb4faef133b9503e5e3aed756c',
     liveCaptureAsset: 'v3/profile-form/shared-foundation-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 3: '  ', 81: ' ', 239: '      ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/profile-form/incremental-dropdowns.js': Object.freeze({
-    characters: 14107, sha256: 'f239896721ec2048d138af0d8874596509710ca5ac039d016f15dcdcffa15faf',
+    characters: 14708, sha256: '015173062d8bfbeeaf9222e149edad5a34e709ad04c4e39506414e752e6eb39e',
     guardKey: 'incrementalDropdowns',
     liveCaptureAsset: 'v3/profile-form/incremental-dropdowns-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
@@ -92,22 +92,22 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({ 4: '  ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/starter-edit-profile/canonical-profile-loader.js': Object.freeze({
-    characters: 19419, sha256: '432b1cb971772518877a5070b060b0eaa2ca39cc1b39f473d6cc3b38d83d3be2',
+    characters: 25233, sha256: '0987ddd56267c76c39fcb9a7b06dd17d50df6d69958ae69dcc2af37d091ff661',
     guardKey: 'canonicalProfileLoader',
     liveCaptureAsset: 'v3/profile-form/edit-canonical-profile-loader-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/draft-state.js': Object.freeze({
-    characters: 11151, sha256: 'f5311c42114ae706587bf0abe9738b80dbb798319b049781766a490df4936f7a',
+    characters: 11857, sha256: 'd7f029fb5e0324078b1c5c962bcd7bb4af301932735eb3f1bd8e32fc90941e2c',
     guardKey: 'buildProfileDraftState',
     liveCaptureAsset: 'v3/profile-form/build-draft-state-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 11438, sha256: '64bdb27d4834cd218ffe4b9dfd3777ebc0e00d0e8ea838f1106a2b503098a445',
+    characters: 19485, sha256: '9fcf1705b1810f73c64ce4671c74e058286a917d610ce7138681f34cb3cd8645',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
-    restoreTrailingWhitespace: Object.freeze({ 219: '          ' }), terminalNewlinesRemoved: 0,
+    restoreTrailingWhitespace: Object.freeze({ 270: '          ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/locations-consult.js': Object.freeze({
     characters: 11065, sha256: '3c2e09a3a55806e1f4a82af2c3e850c6f53120fc70c1506cbf6315d5f311f160',
@@ -230,6 +230,8 @@ const EXPECTED_COMPLETE_REGISTRATIONS = Object.freeze({
   '/starter-edit-profile': Object.freeze([
     ['document', 'DOMContentLoaded', 'v3/profile-form/incremental-dropdowns.js'],
     ['document', 'DOMContentLoaded', 'v3/starter-edit-profile/locations.js'],
+    ['document', 'input', 'v3/starter-edit-profile/canonical-profile-loader.js'],
+    ['document', 'change', 'v3/starter-edit-profile/canonical-profile-loader.js'],
     ['window', 'beforeunload', 'v3/starter-edit-profile/canonical-profile-loader.js'],
     ['document', 'DOMContentLoaded', 'v3/starter-edit-profile/canonical-profile-loader.js'],
     ['document', 'DOMContentLoaded', 'v3/build-profile/profile-photo.js'],
@@ -949,6 +951,35 @@ test('shared foundation owns the empty profile model without creating a form', (
   assert.equal(document.createdTags.includes('form'), false)
 })
 
+test('shared rate setup applies whole-dollar constraints without rewriting authored text', () => {
+  const hourly = new Element('input')
+  hourly.value = '1e2'
+  hourly.getAttribute = (name) => name === 'name' ? 'rate' : (hourly[name] ?? null)
+  const retainer = new Element('input')
+  retainer.value = '2,500'
+  retainer.getAttribute = (name) => name === 'name' ? 'rate-retainer' : (retainer[name] ?? null)
+  const service = new Element('input')
+  service.value = '$500'
+  service.getAttribute = (name) => name === 'name' ? '' : (service[name] ?? null)
+  const document = createDocument({
+    '[data-element="rate"]:not(.initialized)': [hourly, retainer, service],
+  })
+  const context = createBaseContext({ document })
+  run('v3/profile-form/shared-foundation.js', context)
+
+  context.formatRateInputs()
+
+  assert.deepEqual([hourly.value, retainer.value, service.value], ['1e2', '2,500', '$500'])
+  assert.deepEqual([hourly.max, retainer.max, service.max], ['1000', '25000', '50000'])
+  for (const input of [hourly, retainer, service]) {
+    assert.equal(input.type, 'number')
+    assert.equal(input.inputmode, 'numeric')
+    assert.equal(input.step, '1')
+    assert.equal(input.min, '1')
+    assert.equal(input.listeners.size, 0)
+  }
+})
+
 test('each deferred controller registers one boot and never creates a replacement form', async () => {
   const files = [
     'v3/profile-form/incremental-dropdowns.js',
@@ -1155,12 +1186,52 @@ test('build draft state keeps the newest local draft and syncs it once', async (
   assert.equal(memberUpdates[0].json.build_profile.data.step_1.tagline, 'local')
 })
 
+test('build draft state restores saved answers instead of a newer empty route seed', async () => {
+  const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 200, data: {} }
+  const memberProfile = { type: 'consult', type_id: 'consult-id', last_update: 100,
+    data: { step_1: { 'first-name': 'QA Consult' }, step_6: { 'paid-call-rate': '1000' } } }
+  const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
+  assert.equal(context.activeProfile.data.step_1['first-name'], 'QA Consult')
+  assert.equal(context.activeProfile.data.step_6['paid-call-rate'], '1000')
+  assert.equal(memberUpdates.length, 0, 'initial route seeding must not overwrite the saved member draft')
+})
+
+for (const [routeType, savedType] of [['consult', 'full'], ['full', 'consult']]) {
+  for (const memberLastUpdate of [100, 300]) {
+    test(`build draft state preserves ${routeType} route metadata when restoring ${savedType} answers at ${memberLastUpdate}`, async () => {
+      const localProfile = { type: routeType, type_id: `${routeType}-id`, last_update: 200, data: {} }
+      const memberProfile = { type: savedType, type_id: `${savedType}-id`, last_update: memberLastUpdate,
+        data: { step_1: { tagline: 'Saved answer' }, step_6: { 'paid-call-rate': '1000' } } }
+      const tagline = new Element('input')
+      tagline.name = 'tagline'
+      const { context, memberUpdates, values } = await runDraftCase({ localProfile, memberProfile, stepFields: [tagline] })
+      const expected = { ...memberProfile, type: routeType, type_id: `${routeType}-id` }
+
+      assert.deepEqual(JSON.parse(JSON.stringify(context.activeProfile)), expected)
+      assert.deepEqual(JSON.parse(values.get('ts:build_profile:member:member-1')), expected)
+      assert.equal(tagline.value, 'Saved answer')
+      assert.equal(memberUpdates.length, 0)
+    })
+  }
+}
+
+test('build draft state preserves an explicitly cleared newer local step', async () => {
+  const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 200,
+    data: { step_1: { 'first-name': '' } } }
+  const memberProfile = { type: 'consult', type_id: 'consult-id', last_update: 100,
+    data: { step_1: { 'first-name': 'Old answer' } } }
+  const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
+  assert.equal(context.activeProfile.data.step_1['first-name'], '')
+  assert.equal(memberUpdates.length, 1)
+})
+
 test('build draft state keeps a newer member draft without a reverse sync', async () => {
   const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 100, data: { step_1: { tagline: 'local' } } }
   const memberProfile = { type: 'full', type_id: 'full-id', last_update: 200, data: { step_1: { tagline: 'member' } } }
   const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
 
-  assert.equal(context.activeProfile.type, 'full')
+  assert.equal(context.activeProfile.type, 'consult')
+  assert.equal(context.activeProfile.type_id, 'consult-id')
   assert.equal(context.activeProfile.data.step_1.tagline, 'member')
   assert.equal(memberUpdates.length, 0)
 })
@@ -1259,7 +1330,7 @@ test('build draft state preserves non-empty member-bound draft edits', async () 
   assert.equal(email.value, 'draft@example.com')
 })
 
-test('edit canonical loader hydrates authored fields without a load-time mutation', async () => {
+test('edit canonical loader hydrates authored fields without a load-time mutation', { timeout: 30000 }, async () => {
   const country = new Element('select')
   const state = new Element('select')
   const city = new Element('select')
@@ -1274,9 +1345,27 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
   const firstName = new Element('input')
   firstName.name = 'first-name'
   firstName.value = ''
+  const requiredMirrors = [
+    ['function-required', 'category-id'],
+    ['roles-required', 'role-id'],
+    ['subcategories-required', 'subcategory-id'],
+  ].map(([name, expected]) => {
+    const field = new Element('input')
+    field.name = name
+    field.value = ''
+    field.required = true
+    field.expected = expected
+    field.getAttribute = (attribute) => attribute === 'ms-code-select' ? 'input-required' : null
+    return field
+  })
   const step = new Element('div')
   step.getAttribute = (name) => name === 'data-index' ? '1' : null
-  step.querySelectorAll = (selector) => selector === '[data-input-capture]' ? [firstName] : []
+  step.querySelectorAll = (selector) => {
+    if (selector === '[data-input-capture], [ms-code-select="input-required"]') {
+      return [firstName, ...requiredMirrors]
+    }
+    return []
+  }
   const document = createDocument({
     '#country': country, '#state': state, '#city': city,
     '[data-form="step"]': [step],
@@ -1297,6 +1386,8 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
           return {
             Profile_Type: 'full', Profile_Type_ID: 'full-id', Updated_On: 123,
             First_Name: 'Ada', Last_Name: 'Lovelace', Email: 'ada@example.com',
+            Category_ID: 'category-id', Roles_IDs: ['role-id'],
+            Subcategories_IDs: ['subcategory-id'],
             Country: 'United States', State_Province: 'California', City: 'Los Angeles',
             Also_Worked_With: [], Services: {}, Reviewers: {},
           }
@@ -1308,12 +1399,24 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
 
   run('v3/starter-edit-profile/canonical-profile-loader.js', context)
   assert.equal(document.listeners.get('DOMContentLoaded').length, 1)
+  const hydrated = new Promise((resolve) => {
+    const dirtyState = context.window.__tsProfileDirtyState
+    const finishHydration = dirtyState.finishHydration
+    dirtyState.finishHydration = function () {
+      finishHydration.call(this)
+      resolve()
+    }
+  })
   await document.listeners.get('DOMContentLoaded')[0]()
-  await new Promise((resolve) => setTimeout(resolve, 45))
+  await hydrated
 
   assert.equal(reads.length, 1)
   assert.equal(reads[0].options.method, 'POST')
   assert.equal(firstName.value, 'Ada')
+  for (const field of requiredMirrors) {
+    assert.equal(field.value, field.expected)
+    assert.equal(field.required && field.value === '', false)
+  }
   assert.equal(context.activeProfile.data.step_1.email, 'ada@example.com')
 })
 
@@ -1340,11 +1443,11 @@ test('build submit writer sends one normalized payload through the authored form
     ['tools', 'tool-id'], ['industries-option', 'SaaS'], ['industries', 'industry-id'],
     ['subcategories-option', 'Automation'], ['subcategories', 'subcategory-id'],
     ['tagline', 'Profile tagline'], ['pro-headline', 'Profile headline'], ['bio-html', '<p>Bio</p>'],
-    ['best-fit-1', 'Startups'], ['rate', '125.6'], ['availability-option', '11-20'],
+    ['best-fit-1', 'Startups'], ['rate', '126'], ['availability-option', '11-20'],
     ['availability', 'availability-id'], ['full-time-placement', 'yes'],
-    ['free-consulting-calls', 'no'], ['paid-consulting-calls', 'no'],
-    ['paid-call-description', 'Strategy call'], ['paid-call-rate', '199.6'],
-    ['offer-monthly-retainers', 'yes'], ['rate-retainer', '2500.4'],
+    ['free-consulting-calls', 'no'], ['paid-consulting-calls', 'yes'],
+    ['paid-call-description', 'Strategy call'], ['paid-call-rate', '200'],
+    ['offer-monthly-retainers', 'yes'], ['rate-retainer', '2500'],
     ['service', JSON.stringify({ name: 'Audit', price: 500 })],
     ['reviewer', JSON.stringify({ fname: 'Grace', lname: 'Hopper', job: 'CTO', company: 'Navy', email: 'grace@example.com' })],
     ['also-worked-with', JSON.stringify({ one: { name: 'Example' } })],
@@ -1382,7 +1485,7 @@ test('build submit writer sends one normalized payload through the authored form
       return { ok: true, async json() { return { ok: true } } }
     },
   })
-  context.window.location = { pathname: '/build-profile/consult' }
+  context.window.location = { pathname: '/build-profile/full-profile' }
   context.window.intlTelInput = { getInstance() { return { getNumber() { return '+15550000000' } } } }
 
   run('v3/build-profile/submit-writer.js', context)

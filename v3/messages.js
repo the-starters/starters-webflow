@@ -830,7 +830,11 @@
 
     installFeedFilterActions(inbox)
     const identity = installIdentityActions(inbox)
-    inbox.mount(container)
+    const calls = window.StartersMessagesCalls && window.StartersMessagesCalls.install({
+      inbox, member, container, identity,
+    })
+    await inbox.mount(container)
+
 
     // Deliberately after mount and deliberately not awaited: the inbox is already
     // usable, so a deep-link failure degrades to "your normal inbox" instead of

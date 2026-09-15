@@ -5,7 +5,7 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
  *
- * @release v1.59.465
+ * @release v1.59.499
  */
 
 (() => {
@@ -207,17 +207,39 @@ function decorateProfileFeedback(modalName, receipt) {
 	return receipt;
 }
 
+// The feedback modals are shared, so a message written for one reveal must never
+// still be on screen for the next. The authored copy is memoized the first time a
+// modal is painted and restored whenever a reveal supplies no message of its own.
+const authoredProfileFeedbackCopy = new Map();
+
 function setProfileFeedbackMessage(modalName, message) {
 	const target = qs(`[data-modal-target="${modalName}"]`);
-	const messageElement = target ? qs('p', target) : null;
-	if (messageElement && message) messageElement.textContent = message;
+	const explicitMessage = target ? qs('[data-profile-feedback-message]', target) : null;
+	const fallbackParagraph = target ? qs('p', target) : null;
+	const fallbackIsLeaf = fallbackParagraph && (
+		typeof fallbackParagraph.childElementCount === 'number'
+			? fallbackParagraph.childElementCount === 0
+			: !fallbackParagraph.children || fallbackParagraph.children.length === 0
+	);
+	const messageElement = explicitMessage || (
+		fallbackIsLeaf
+			? fallbackParagraph
+			: null
+	);
+	if (!messageElement) return;
+	if (!authoredProfileFeedbackCopy.has(modalName)) {
+		authoredProfileFeedbackCopy.set(modalName, messageElement.textContent);
+	}
+	messageElement.textContent = message || authoredProfileFeedbackCopy.get(modalName);
 }
 
-function configureCanonicalPaidCallSettings() {
+function configureCanonicalCallSettings() {
 	const step = qs('[data-form="step"][data-index="6"]');
 	if (!step) return;
 
 	const controls = qsa([
+		'[name="free-consulting-calls"]',
+		'[name="free-call-description"]',
 		'[name="paid-consulting-calls"]',
 		'[name="paid-call-description"]',
 		'[name="paid-call-rate"]',
@@ -233,16 +255,17 @@ function configureCanonicalPaidCallSettings() {
 	if (qs('[data-paid-call-profile-notice]', step) || typeof document.createElement !== 'function') return;
 	const notice = document.createElement('p');
 	notice.setAttribute('data-paid-call-profile-notice', '');
-	notice.textContent = 'Paid Call pricing is managed in ';
+	notice.textContent = 'Free and Paid Call settings are managed in ';
 	const link = document.createElement('a');
 	link.href = PAID_CALL_SETTINGS_URL;
-	link.textContent = 'Paid Call Settings';
+	link.textContent = 'Call Settings';
 	notice.appendChild(link);
 	notice.appendChild(document.createTextNode('.'));
 	step.appendChild(notice);
 }
 
-function openProfileFeedback(modalName, trigger) {
+function openProfileFeedback(modalName, trigger, message) {
+	setProfileFeedbackMessage(modalName, message);
 	const modalApi = window.lumos?.modal;
 	if (typeof modalApi?.open === 'function') {
 		modalApi.open(modalName);
@@ -253,14 +276,21 @@ function openProfileFeedback(modalName, trigger) {
 }
 
 function waitProfileData(callback) {
+	const runHydrationCallback = (profile) => {
+		const dirtyState = window.__tsProfileDirtyState;
+		if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+			return dirtyState.runHydrationSync(() => callback(profile));
+		}
+		return callback(profile);
+	};
 	if (typeof window.waitProfileData === 'function') {
-		return window.waitProfileData(callback);
+		return window.waitProfileData(runHydrationCallback);
 	}
 
 	const startedAt = Date.now();
 	const poll = () => {
 		if (window.activeProfile) {
-			callback(window.activeProfile);
+			runHydrationCallback(window.activeProfile);
 			return;
 		}
 		if (Date.now() - startedAt < 10000) window.setTimeout(poll, 100);
@@ -294,18 +324,43 @@ function setLoader(state, wrapper) {
 	loader.style.opacity = state ? '1' : '0';
 }
 
-function formatRateInputs() {
-	if (typeof window.formatRateInputs === 'function') {
-		window.formatRateInputs();
-		return;
-	}
+const PRICE_CONTRACTS = Object.freeze({
+	Hourly_Rate: Object.freeze({ min: 1, max: 1000, label: 'hourly rate' }),
+	Retainer_Rate: Object.freeze({ min: 1, max: 25000, label: 'monthly retainer rate' }),
+	Paid_Call_Rate: Object.freeze({ min: 1, max: 1000, label: 'paid call rate' }),
+	Services: Object.freeze({ min: 1, max: 50000, label: 'service price' }),
+});
 
-	qsa('[data-element="rate"]').forEach((input) => {
-		input.addEventListener('input', () => {
-			input.value = input.value.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
-		});
+function rateInputContract(input) {
+	const name = String(input?.getAttribute?.('name') || '');
+	if (name === 'rate') return PRICE_CONTRACTS.Hourly_Rate;
+	if (name === 'rate-retainer') return PRICE_CONTRACTS.Retainer_Rate;
+	if (name === 'paid-call-rate') return PRICE_CONTRACTS.Paid_Call_Rate;
+	return PRICE_CONTRACTS.Services;
+}
+
+function applyRateInputContract(input, contract) {
+	if (!input) return;
+	input.setAttribute('type', 'number');
+	input.setAttribute('inputmode', 'numeric');
+	input.setAttribute('step', '1');
+	input.setAttribute('min', String(contract.min));
+	input.setAttribute('max', String(contract.max));
+}
+
+// The published shared foundation rewrites every authored rate through
+// parseFloat().toFixed(2) on blur, which turns 125 into 125.00 and leaves no
+// value a whole-dollar contract can accept. This page therefore owns the
+// rate-input contract for the prices it validates: claiming each control keeps
+// that formatter off them, and owning the page global keeps the same contract on
+// the service rows other page scripts clone.
+function formatRateInputs(wrapper = null) {
+	qsa('[data-element="rate"]', wrapper).forEach((input) => {
+		input.classList?.add?.('initialized');
+		applyRateInputContract(input, rateInputContract(input));
 	});
 }
+window.formatRateInputs = formatRateInputs;
 
 function stepElement(stepIndex) {
 	return qs(`[data-form="step"][data-index="${stepIndex}"]`);
@@ -326,9 +381,12 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 		{ selector: '[name="state"]', kind: 'nativeConditional' },
 		{ selector: '[name="city"]', kind: 'nativeConditional' },
 		{ selector: '#profile-photo-url', kind: 'mirror', focusSelector: '[data-profile-photo-input], input[type="file"]' },
-		{ selector: '#function-required', kind: 'mirror', focusSelector: '[name="function-option"], [fs-list-instance="function"] input' },
-		{ selector: '#roles-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="role-option"], [fs-list-instance="roles"] input' },
-		{ selector: '#subcategories-required', kind: 'mirror', profileTypes: ['consult'], focusSelector: '[name="subcategories-option"], [fs-list-instance="subcategories"] input' },
+		// Selection groups (see step 5): chip counts inside the picker wrapper, not the
+		// hidden `input-required` mirrors. syncSelectionGroupBounds() mirrors each
+		// minimum onto the wrapper as wf-validate-min for the active profile type.
+		{ selector: '[select-wrap-entity="functions"]', kind: 'group', min: 1, focusSelector: '[name="function-option"], [fs-list-instance="function"] input' },
+		{ selector: '[select-wrap-entity="roles"]', kind: 'group', min: 1, profileTypes: ['full'], focusSelector: '[name="role-option"], [fs-list-instance="roles"] input' },
+		{ selector: '[select-wrap-entity="subcategories"]', kind: 'group', min: 1, profileTypes: ['consult'], focusSelector: '[name="subcategories-option"], [fs-list-instance="subcategories"] input' },
 	],
 	2: [
 		{ selector: '#tagline', kind: 'native' },
@@ -336,8 +394,13 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 		{ selector: '#bio-html', kind: 'mirror', focusSelector: '.ql-editor, [contenteditable="true"]' },
 	],
 	5: [
-		{ selector: '#skills-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="skill-option"], [fs-list-instance="skills"] input' },
-		{ selector: '#tools-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="tool-option"], [fs-list-instance="tools"] input' },
+		// Selection groups: validity is the number of selected chips inside the picker
+		// wrapper, not the hidden `input-required` mirror. The same wrapper also carries
+		// wf-validate-element="group", and syncSelectionGroupBounds() keeps its
+		// wf-validate-min in step with the active profile type so the library's gate
+		// and this contract enforce one rule.
+		{ selector: '[select-wrap-entity="skills"]', kind: 'group', min: 3, profileTypes: ['full'], focusSelector: '[name="skill-option"], [fs-list-instance="skills"] input' },
+		{ selector: '[select-wrap-entity="tools"]', kind: 'group', min: 2, profileTypes: ['full'], focusSelector: '[name="tool-option"], [fs-list-instance="tools"] input' },
 	],
 	6: [
 		{ selector: '[name="rate"]', kind: 'nativeConditional' },
@@ -354,9 +417,29 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 	],
 });
 
-function ruleApplies(rule) {
+function ruleApplies(rule, type = window.activeProfile?.type || '') {
 	if (!rule.profileTypes?.length) return true;
-	return rule.profileTypes.includes(window.activeProfile?.type || '');
+	return rule.profileTypes.includes(type);
+}
+
+const SELECTED_CHIP_SELECTOR = '[ms-code-select="tag"]';
+
+function selectedChipCount(wrapper) {
+	return qsa(SELECTED_CHIP_SELECTOR, wrapper).length;
+}
+
+// Mirror each `group` rule's minimum onto its wrapper as wf-validate-min for the
+// active profile type, and drop it otherwise, so utils/wf-validate.js (which reads
+// the bound live) gates the step 5 save with exactly the rule this controller checks.
+function syncSelectionGroupBounds(type) {
+	Object.values(STEP_VALIDATION_CONTRACT).forEach((rules) => {
+		rules.filter((rule) => rule.kind === 'group').forEach((rule) => {
+			qsa(rule.selector).forEach((wrapper) => {
+				if (ruleApplies(rule, type)) wrapper.setAttribute('wf-validate-min', String(rule.min));
+				else wrapper.removeAttribute('wf-validate-min');
+			});
+		});
+	});
 }
 
 function nonEmptyValue(field) {
@@ -368,7 +451,11 @@ function validationFailure(code, rule, element = null) {
 	return { code, rule, element };
 }
 
-function validateReviewerTuple(rule, step) {
+function normalizeReviewerEmail(email) {
+	return String(email ?? '').trim();
+}
+
+function validateReviewerTuple(rule, step, snapshot) {
 	const failures = [];
 	for (const selector of [rule.selector, ...(rule.optionalSelectors || [])]) {
 		const field = qs(selector, step);
@@ -379,7 +466,7 @@ function validateReviewerTuple(rule, step) {
 			continue;
 		}
 
-		const rawValue = String(field.value ?? '').trim();
+		const rawValue = String((snapshot ? snapshot[field.name] : field.value) ?? '').trim();
 		if (!rawValue) continue;
 
 		let reviewer = null;
@@ -394,11 +481,16 @@ function validateReviewerTuple(rule, step) {
 		if (started && (!String(reviewer.fname ?? '').trim() || !String(reviewer.email ?? '').trim())) {
 			failures.push(validationFailure('REVIEWER_TUPLE_INCOMPLETE', { ...rule, selector }, field));
 		}
+
+		const email = normalizeReviewerEmail(reviewer?.email);
+		if (email && (email.length > 320 || !/^[a-z0-9!#$%&'*+\/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+\/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email))) {
+			failures.push(validationFailure('REVIEWER_EMAIL_INVALID', { ...rule, selector }, field));
+		}
 	}
 	return failures;
 }
 
-function validateOwnedStep(stepIndex, { report = false } = {}) {
+function validateOwnedStep(stepIndex, { report = false, reviewerSnapshot } = {}) {
 	const step = stepElement(stepIndex);
 	if (!step) {
 		return {
@@ -415,10 +507,14 @@ function validateOwnedStep(stepIndex, { report = false } = {}) {
 		return { valid: false, failures: [validationFailure('PROFILE_NOT_READY', { selector: '' })] };
 	}
 
+	// Idempotent: the bound on each picker wrapper must reflect the profile type at
+	// the moment of the check, whatever the hydration order was.
+	syncSelectionGroupBounds(window.activeProfile.type);
+
 	const failures = [];
-	rules.filter(ruleApplies).forEach((rule) => {
+	rules.filter((rule) => ruleApplies(rule)).forEach((rule) => {
 		if (rule.kind === 'reviewerTuple') {
-			failures.push(...validateReviewerTuple(rule, step));
+			failures.push(...validateReviewerTuple(rule, step, reviewerSnapshot));
 			return;
 		}
 
@@ -439,6 +535,11 @@ function validateOwnedStep(stepIndex, { report = false } = {}) {
 
 		if (rule.kind === 'mirror') {
 			if (!nonEmptyValue(field)) failures.push(validationFailure('MIRROR_VALUE_MISSING', rule, field));
+			return;
+		}
+
+		if (rule.kind === 'group') {
+			if (selectedChipCount(field) < rule.min) failures.push(validationFailure('GROUP_MIN_NOT_MET', rule, field));
 			return;
 		}
 
@@ -561,6 +662,8 @@ onDomReady(function () {
 				const checkForType = input.dataset.nonRequired;
 				input.required = checkForType === type ? false : true;
 			});
+
+			syncSelectionGroupBounds(type);
 		}
 
 		/* SUBMIT METHODS */
@@ -612,8 +715,6 @@ onDomReady(function () {
 				Availability: 'availability-option',
 				Availability_ID: 'availability',
 				Open_to_Full_Time: 'full-time-placement',
-				Free_Call_Enabled: 'free-consulting-calls',
-				Free_Call_Description: 'free-call-description',
 				Retainer_Enabled: 'offer-monthly-retainers',
 				Retainer_Description: 'description-retainer',
 				Retainer_Rate: 'rate-retainer',
@@ -625,7 +726,144 @@ onDomReady(function () {
 			},
 		};
 
+		applyPriceInputContracts();
 		initStepSubmits();
+
+		function applyPriceInputContracts() {
+			[
+				{ selector: '[name="rate"]', contract: PRICE_CONTRACTS.Hourly_Rate },
+				{ selector: '[name="rate-retainer"]', contract: PRICE_CONTRACTS.Retainer_Rate },
+			].forEach(({ selector, contract }) => {
+				applyRateInputContract(qs(selector, stepElement(6)), contract);
+			});
+		}
+
+		// Wherever a blank is the compatibility-empty state, the canonical zero this
+		// same page persists for that field is that same state rather than an authored
+		// price. Otherwise the rate it wrote itself blocks every later save on reload.
+		function compatibilityEmpty(raw, allowBlank) {
+			return Boolean(allowBlank) && (raw === '' || /^0+$/.test(raw));
+		}
+
+		function wholeDollar(value, contract, { allowBlank = false } = {}) {
+			const raw = String(value ?? '').trim();
+			if (compatibilityEmpty(raw, allowBlank)) return { valid: true, value: null };
+			if (!raw) return { valid: false, code: 'PRICE_REQUIRED' };
+			if (!/^[0-9]+$/.test(raw)) return { valid: false, code: 'PRICE_NOT_INTEGER' };
+			const number = Number(raw);
+			if (!Number.isSafeInteger(number)) return { valid: false, code: 'PRICE_NOT_INTEGER' };
+			if (number < contract.min || number > contract.max) return { valid: false, code: 'PRICE_OUT_OF_RANGE' };
+			return { valid: true, value: number };
+		}
+
+		function priceMessage(contract) {
+			return `Use a whole-dollar ${contract.label} from $${contract.min.toLocaleString('en-US')} to $${contract.max.toLocaleString('en-US')}.`;
+		}
+
+		function serviceName(service) {
+			return String(service?.name ?? '').trim();
+		}
+
+		// Clearing the price is the only remove gesture these forms author, so an empty
+		// price empties the slot instead of blocking the step on a service the member is
+		// deleting. A non-blank price is authored and stays strict.
+		function servicePriceAuthored(service) {
+			const price = service?.price;
+			// Only a real null/blank price removes a slot. Arrays and objects
+			// must reach validation, not become blank or numeric through String().
+			return price != null && (typeof price !== 'string' || price.trim() !== '');
+		}
+
+		// Services live in hidden JSON capture inputs, so a price failure there cannot
+		// surface through native constraint validation. Those failures, and any failure
+		// whose control is absent, own the authored error modal instead, the same way
+		// mirrored step rules route to a visible owner. A blocked submit always says why.
+		function reportPriceFailure(failure) {
+			const message = failure.message;
+			failure.field?.setCustomValidity?.(message);
+			if (failure.mirror || !failure.field) {
+				openProfileFeedback('edit-form-error', openErrorModal, message);
+				return message;
+			}
+			failure.field?.focus?.();
+			failure.field?.reportValidity?.();
+			return message;
+		}
+
+		// A reported price failure leaves a custom validity message on its control, and
+		// native validation runs before the price contract can revalidate. Without this
+		// reset the next save reports the stale message and returns, so a corrected
+		// whole-dollar value could never be saved without a full page reload.
+		function clearStepSixPriceValidity() {
+			const step = stepElement(6);
+			[qs('[name="rate"]', step), qs('[name="rate-retainer"]', step)].forEach((field) => {
+				field?.setCustomValidity?.('');
+			});
+			['service', 'service-2', 'service-3'].forEach((id) => {
+				qs(`#${id}`, form)?.setCustomValidity?.('');
+			});
+		}
+
+		function validateStepSixPrices(payload, services) {
+			const step = stepElement(6);
+			const hourlyField = qs('[name="rate"]', step);
+			let hourly = { valid: true, value: null };
+			if (Object.prototype.hasOwnProperty.call(payload, 'Hourly_Rate')) {
+				hourly = wholeDollar(payload.Hourly_Rate, PRICE_CONTRACTS.Hourly_Rate, {
+					allowBlank: hourlyField?.required === false,
+				});
+				if (!hourly.valid) {
+					return { ...hourly, field: hourlyField, message: priceMessage(PRICE_CONTRACTS.Hourly_Rate) };
+				}
+				hourlyField?.setCustomValidity?.('');
+			}
+
+			// A retainer rate is only authored while the toggle says yes. Every other
+			// state keeps the compatibility behavior of the collapsed section instead of
+			// blocking the whole step on a value the member cannot see or edit, and its
+			// stale text never reaches Xano unvalidated: the step either sends the
+			// canonical sentinel alongside the toggle it is turning off, or sends nothing.
+			const retainerField = qs('[name="rate-retainer"]', step);
+			let retainer = { valid: true, value: null };
+			if (payload.Retainer_Enabled === true) {
+				retainer = wholeDollar(payload.Retainer_Rate, PRICE_CONTRACTS.Retainer_Rate);
+				if (!retainer.valid) {
+					return { ...retainer, field: retainerField, message: priceMessage(PRICE_CONTRACTS.Retainer_Rate) };
+				}
+				retainerField?.setCustomValidity?.('');
+			} else if (Object.prototype.hasOwnProperty.call(payload, 'Retainer_Rate')) {
+				if (payload.Retainer_Enabled === false) payload.Retainer_Rate = '';
+				else delete payload.Retainer_Rate;
+			}
+
+			for (const [slot, service] of Object.entries(services)) {
+				if (!servicePriceAuthored(service)) continue;
+				const serviceField = qs(`#${slot === 'service-1' ? 'service' : slot}`, form);
+				if (typeof service.price !== 'string' && typeof service.price !== 'number') {
+					return { valid: false, code: 'PRICE_NOT_INTEGER', field: serviceField,
+						mirror: true, message: priceMessage(PRICE_CONTRACTS.Services) };
+				}
+				if (!serviceName(service)) {
+					return {
+						valid: false,
+						code: 'SERVICE_NAME_REQUIRED',
+						field: serviceField,
+						mirror: true,
+						message: 'A service name is required when a service price is set.',
+					};
+				}
+				const price = wholeDollar(service.price, PRICE_CONTRACTS.Services);
+				if (!price.valid) {
+					return { ...price, field: serviceField, mirror: true, message: priceMessage(PRICE_CONTRACTS.Services) };
+				}
+				service.price = price.value;
+				serviceField?.setCustomValidity?.('');
+			}
+
+			if (hourly.value !== null) payload.Hourly_Rate = hourly.value;
+			if (retainer.value !== null) payload.Retainer_Rate = retainer.value;
+			return { valid: true };
+		}
 
 		function initStepSubmits() {
 			qsa('[data-form="step"][data-index]').forEach((step) => {
@@ -642,7 +880,11 @@ onDomReady(function () {
 				submitButton.addEventListener('click', async (event) => {
 					event.preventDefault();
 					const replayProof = stepIndex === 1 ? takePersonalDetailsReplay(form) : null;
+					let saveStarted = false;
+					let saveToken = null;
+					let canonicalSaveAccepted = false;
 					try {
+						if (stepIndex === 6) clearStepSixPriceValidity();
 						const validation = validateOwnedStep(stepIndex, { report: true });
 						if (!validation.valid) {
 							await workflowDiagnosticsReady;
@@ -655,15 +897,18 @@ onDomReady(function () {
 							return;
 						}
 
-						await submitStep(stepIndex, submitButton, replayProof);
+						saveToken = window.__tsProfileDirtyState?.beginSave(stepIndex);
+						saveStarted = true;
+						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof, saveToken);
 					} finally {
+						if (saveStarted) window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted, saveToken);
 						rejectReplayProof(replayProof);
 					}
 				});
 			});
 		}
 
-		async function submitStep(stepIndex, submitButton, replayProof = null) {
+		async function submitStep(stepIndex, submitButton, replayProof = null, saveToken = null) {
 			setSubmitLoading(submitButton, true);
 			let memberScope;
 			try {
@@ -687,8 +932,6 @@ onDomReady(function () {
 
 			const payload = getStepPayload(stepIndex);
 
-			normalizeOptionalCanonicalRates(payload, stepIndex);
-
 			// Country, State
 			if (payload.Country && payload.State_Province) {
 				const countrySelect = qs('#country');
@@ -709,35 +952,60 @@ onDomReady(function () {
 				}
 			};
 
-			// Services
-			if (payload.Services) {
-				let service1 = qs("#service");
-				service1 = service1 ? parseJson(service1.value) : null;
+			// Services. Real FormData always carries the `service` capture field, so the
+			// price contract is owned by the step itself instead of by that field having
+			// a value. Otherwise a blank capture field skips every price check.
+			if (stepIndex === 6) {
+				const serviceFormData = getFormDataObject();
+				const service1 = parseJson(serviceFormData.service);
+				const service2 = parseJson(serviceFormData["service-2"]);
+				const service3 = parseJson(serviceFormData["service-3"]);
 
-				let service2 = qs("#service-2");
-				service2 = service2 ? parseJson(service2.value) : null;
-
-				let service3 = qs("#service-3");
-				service3 = service3 ? parseJson(service3.value) : null;
-
-				function requiredServicesFields(name, price) {
-					if (!name || !price) return false;
-
-					return true;
+				const services = {
+					"service-1": service1,
+					"service-2": service2,
+					"service-3": service3,
+				};
+				const priceValidation = validateStepSixPrices(payload, services);
+				if (!priceValidation.valid) {
+					reportPriceFailure(priceValidation);
+					recordProfileDiagnostic(null, {
+						result: 'failed',
+						stage: 'validation',
+						error_code: priceValidation.code,
+						request_started: false,
+					});
+					setSubmitLoading(submitButton, false);
+					return false;
 				}
 
-				payload.Services = JSON.stringify({
-					"service-1": requiredServicesFields(service1?.name, service1?.price) ? service1 : null,
-					"service-2": requiredServicesFields(service2?.name, service2?.price) ? service2 : null,
-					"service-3": requiredServicesFields(service3?.name, service3?.price) ? service3 : null,
-				});
+				if (Object.prototype.hasOwnProperty.call(payload, 'Services')) {
+					payload.Services = JSON.stringify({
+						"service-1": servicePriceAuthored(service1) ? service1 : null,
+						"service-2": servicePriceAuthored(service2) ? service2 : null,
+						"service-3": servicePriceAuthored(service3) ? service3 : null,
+					});
+				}
 			}
+
+			normalizeOptionalCanonicalRates(payload, stepIndex);
 
 			// Reviewers. The native increment-dropdown component stores each slot as
 			// JSON in reviewer, reviewer-2, and reviewer-3 hidden fields. Keep the
 			// same canonical shape as the Build Profile writer.
 			if (Object.prototype.hasOwnProperty.call(payload, 'Reviewers')) {
 				const formData = getFormDataObject();
+				const validation = validateOwnedStep(stepIndex, { report: true, reviewerSnapshot: formData });
+				if (!validation.valid) {
+					recordProfileDiagnostic(null, {
+						result: 'failed',
+						stage: 'validation',
+						error_code: validation.failures[0]?.code || 'VALIDATION_FAILED',
+						request_started: false,
+					});
+					setSubmitLoading(submitButton, false);
+					return false;
+				}
 				const normalizeReviewer = (reviewer) => {
 					if (!reviewer?.fname || !reviewer?.email) return null;
 
@@ -746,7 +1014,7 @@ onDomReady(function () {
 						'last-name': reviewer.lname || '',
 						position: reviewer.job || '',
 						company: reviewer.company || '',
-						email: reviewer.email || '',
+						email: normalizeReviewerEmail(reviewer.email),
 					};
 				};
 
@@ -781,6 +1049,12 @@ onDomReady(function () {
 				setSubmitLoading(submitButton, false);
 				return;
 			}
+
+			// The payload now owns every edit made through this point. Keep the
+			// active-save warning that began before async preparation, but move its
+			// accepted revision boundary to this exact payload snapshot. An edit
+			// after this line is not in the request and must remain dirty.
+			window.__tsProfileDirtyState?.sealSave?.(saveToken);
 
 			// if (!localStorage.getItem('editSubmit') || localStorage.getItem('editSubmit') !== 'true') {
 			// 	console.log(`Step ${stepIndex} submit skipped (disabled by localStorage).`);
@@ -819,6 +1093,7 @@ onDomReady(function () {
 				return;
 			}
 
+			let canonicalSaveAccepted = false;
 			try {
 				acceptReplayProof(replayProof);
 				requestStarted = true;
@@ -840,6 +1115,7 @@ onDomReady(function () {
 					failureCode = 'SAVE_CONTRACT_ERROR';
 					throw new Error('Profile update did not confirm the save contract.');
 				}
+				canonicalSaveAccepted = true;
 
 				// update Member customFields, if even one of them was changed
 				if (stepIndex === 1) {
@@ -873,14 +1149,14 @@ onDomReady(function () {
 					resource_id: result?.id || result?.profile_id || window.activeProfile?.id || '',
 					projection_pending: result?.projection_pending === true,
 				});
-				setProfileFeedbackMessage(
+				decorateProfileFeedback('edit-form-success', diagnostic);
+				openProfileFeedback(
 					'edit-form-success',
+					openSuccessModal,
 					result?.projection_pending === true
 						? 'Your profile was saved. Public profile changes can take a moment to appear.'
 						: 'Your profile was saved.',
 				);
-				decorateProfileFeedback('edit-form-success', diagnostic);
-				openProfileFeedback('edit-form-success', openSuccessModal);
 			} catch (error) {
 				const authChanged = error?.code === 'MEMBER_SCOPE_CHANGED';
 				diagnostic = recordProfileDiagnostic(diagnostic, {
@@ -900,6 +1176,7 @@ onDomReady(function () {
 			} finally {
 				setSubmitLoading(submitButton, false);
 			}
+			return canonicalSaveAccepted;
 		}
 
 		// Optional rate controls clear their visible values when their owning toggle is
@@ -916,7 +1193,7 @@ onDomReady(function () {
 
 			OPTIONAL_CANONICAL_RATES.forEach(({ field, isOptional }) => {
 				if (!Object.prototype.hasOwnProperty.call(payload, field)) return;
-				if (String(payload[field] ?? '').trim() !== '') return;
+				if (!compatibilityEmpty(String(payload[field] ?? '').trim(), true)) return;
 				if (!isOptional(payload, step)) return;
 
 				payload[field] = 0;
@@ -1107,6 +1384,8 @@ function counterFields(wrapper = null) {
 			});
 
 			input.addEventListener('paste', (event) => {
+				// The shared validator may already have inserted the clipboard text.
+				if (event.defaultPrevented) return;
 				event.preventDefault();
 
 				const pastedText = event.clipboardData?.getData('text') || '';
@@ -1659,6 +1938,9 @@ onDomReady(() => {
 			retainerToggle();
 			paidCallToggle();
 			freeCallToggle();
+			// Profile hydration updates legacy call controls after DOM ready. Re-apply
+			// dashboard ownership after those values have landed so they stay locked.
+			configureCanonicalCallSettings();
 			console.log("retainer/paidCall/freeCall toggles initialized");
 		});
 
@@ -1724,6 +2006,6 @@ onDomReady(() => {
 			});
 		}
 
-		configureCanonicalPaidCallSettings();
+		configureCanonicalCallSettings();
 	});
 })();

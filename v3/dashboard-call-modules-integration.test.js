@@ -41,7 +41,7 @@ test('dashboard exposes only supported migrated actions', () => {
   dashboard.configureActionButtons(card, 'starter', 'pending', booking)
   assert.equal(details.hidden, false)
   assert.equal(accept.hidden, false)
-  assert.equal(decline.hidden, true)
+  assert.equal(decline.hidden, false)
   assert.equal(cancel.hidden, true)
   assert.equal(reschedule.hidden, true)
   assert.equal(media.hidden, true)
@@ -304,7 +304,7 @@ test('optional modules wire once when they load after the fallback', async () =>
   }
 })
 
-test('unsupported lifecycle and payment controls stay inactive', () => {
+test('unsupported lifecycle and payment controls stay inactive', async () => {
   const cancel = button('switch-cancel')
   const reschedule = button('reschedule')
   const payment = button('replace-payment-method')
@@ -325,7 +325,7 @@ test('unsupported lifecycle and payment controls stay inactive', () => {
   assert.equal(cancel.hidden, true)
   assert.equal(reschedule.hidden, true)
   assert.equal(payment.hidden, true)
-  assert.equal(global.StartersDashboardCallPayment.wire(), false)
+  assert.equal(await global.StartersDashboardCallPayment.wire(), false)
 })
 
 test('Details exposes the full cancel chain for booked participant calls only', () => {
@@ -807,6 +807,16 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
       'Paid call cancellation is not available yet.',
     )
     assert.equal(modal.hints.cancel.hidden, false)
+
+    // A proposal must clear a stale Free-only hint for either dashboard role.
+    for (const role of ['brand', 'starter']) {
+      const proposal = { ...paidBooking, status: 'rescheduled' }
+      dashboard.configureDetailActions(
+        modal, role, dashboard.bookingStatus(proposal), proposal, Date.now(),
+      )
+      assert.equal(modal.hints.reschedule.hidden, true)
+      assert.equal(modal.hints.cancel.hidden, false)
+    }
 
     // When the actions become available the hints hide again.
     global.StartersDashboardCallActions.rescheduleKindFor = () => 'reschedule-propose'

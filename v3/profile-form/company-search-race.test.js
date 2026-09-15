@@ -7,6 +7,7 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const SOURCE = path.join(__dirname, '../starter-edit-profile/company-autocomplete.js')
+const BUILD_SOURCE = path.join(__dirname, '../build-profile/company-autocomplete.js')
 const SLOW_SEARCH_DELAY_MS = 4000
 
 function element(overrides = {}) {
@@ -34,11 +35,14 @@ function element(overrides = {}) {
   return Object.assign(node, overrides)
 }
 
-function boot() {
+function boot(source = SOURCE, { multi = false, nodeListTags = false } = {}) {
   const group = element()
   const searchGroup = element()
   const valueInput = element()
-  const input = element()
+  const tagWrapper = element()
+  const input = element({
+    hasAttribute(name) { return multi && name === 'data-multiple' },
+  })
   input.closest = (selector) => (selector === '[form-group]' ? group : searchGroup)
 
   let dropdown = null
@@ -55,6 +59,7 @@ function boot() {
     Array,
     Error,
     MEMBER: { id: 'member-1' },
+    activeProfile: { data: {} },
     console: { log() {}, warn() {}, error() {}, info() {}, debug() {} },
     crypto: { randomUUID: () => 'company-id' },
     document: {
@@ -102,10 +107,15 @@ function boot() {
     },
     qs(selector, root) {
       if (root === group && selector === '#also-worked-with') return valueInput
+      if (root === group && selector === '[also-worked-wrapper]') return tagWrapper
       return null
     },
-    qsa(selector) {
-      return selector === '[logo-search-input]' ? [input] : []
+    qsa(selector, root) {
+      if (selector === '[logo-search-input]') return [input]
+      if (selector === '[also-worked-tag]' && root === tagWrapper && nodeListTags) {
+        return { length: 0, forEach() {}, [Symbol.iterator]: function* () {} }
+      }
+      return []
     },
     setTimeout(callback, delay) {
       const id = nextTimerId++
@@ -119,7 +129,7 @@ function boot() {
   context.window = context
   context.window.xanoAuthFetch = async () => ({ ok: true, json: async () => [] })
   vm.createContext(context)
-  new vm.Script(fs.readFileSync(SOURCE, 'utf8'), { filename: SOURCE }).runInContext(context)
+  new vm.Script(fs.readFileSync(source, 'utf8'), { filename: source }).runInContext(context)
   for (const listener of domReady) listener()
 
   const settle = () => new Promise((resolve) => setImmediate(resolve))
@@ -216,6 +226,48 @@ test('a superseded company search aborts the older network request', async () =>
   assert.doesNotMatch(harness.dropdown.innerHTML, /Search unavailable/)
 })
 
+test('Build Profile also aborts an older company search and rejects its stale response', async () => {
+  const harness = await boot(BUILD_SOURCE)
+
+  await harness.search('open')
+  await harness.search('openstore')
+
+  assert.deepEqual(harness.fetchedQueries, ['open', 'openstore'])
+  assert.deepEqual(harness.abortedQueries, ['open'])
+  await harness.resolveSearch('openstore', [{
+    name: 'OpenStore',
+    domain: '',
+    logo_url: '',
+    company_entity_id: 1448,
+    source: 'platform',
+  }])
+  assert.match(harness.dropdown.innerHTML, /OpenStore/)
+  assert.match(harness.dropdown.innerHTML, /data-company-entity-id="1448"/)
+})
+
+test('provider matches still include an explicit custom-company choice', async () => {
+  const harness = await boot()
+
+  await harness.search('acme corp')
+  await harness.resolveSearch('acme corp', ACME)
+
+  assert.match(harness.dropdown.innerHTML, /Acme Corp/)
+  assert.match(harness.dropdown.innerHTML, /data-source="custom"/)
+  assert.match(harness.dropdown.innerHTML, /Use custom company/)
+})
+
+for (const [label, source] of [['Edit Profile', SOURCE], ['Build Profile', BUILD_SOURCE]]) {
+  test(`${label} accepts a browser NodeList when checking multi-select duplicates`, async () => {
+    const harness = await boot(source, { multi: true, nodeListTags: true })
+
+    await harness.search('acme corp')
+    await harness.resolveSearch('acme corp', ACME)
+
+    assert.match(harness.dropdown.innerHTML, /Acme Corp/)
+    assert.match(harness.dropdown.innerHTML, /Use custom company/)
+  })
+}
+
 test('an abandoned search does not report failure over the dismissed dropdown', async () => {
   const harness = await boot()
 
@@ -234,6 +286,20 @@ test('a failed search that is still active reports that the search is unavailabl
   await harness.failSearch('acme corp')
 
   assert.match(harness.dropdown.innerHTML, /Search unavailable/)
+  assert.match(harness.dropdown.innerHTML, /data-source="custom"/)
+  assert.match(harness.dropdown.innerHTML, /Use custom company/)
+  assert.equal(harness.isOpen(), true)
+})
+
+test('Build Profile also keeps the custom-company fallback when search fails', async () => {
+  const harness = await boot(BUILD_SOURCE)
+
+  await harness.search('acme corp')
+  await harness.failSearch('acme corp')
+
+  assert.match(harness.dropdown.innerHTML, /Search unavailable/)
+  assert.match(harness.dropdown.innerHTML, /data-source="custom"/)
+  assert.match(harness.dropdown.innerHTML, /Use custom company/)
   assert.equal(harness.isOpen(), true)
 })
 

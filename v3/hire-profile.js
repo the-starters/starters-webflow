@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.450
+ * @release v1.59.531
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -11,8 +11,9 @@
  *
  * WHAT IT DOES
  *  - The starter Xano id carrier used to key the public Algolia record lookup.
- *    Experiences and Clients are outside this file: Webflow CMS renders them
- *    natively for all viewers after the Phase 2 cutover.
+ *    Webflow-authored wf-xano wrappers render Experiences and Clients from the
+ *    public Xano taxonomy endpoint. This file only neutralizes unresolved
+ *    custom-Company links after those native templates render.
  *  - Booking wiring, which stays behind the Memberstack Brand gate; logged-out
  *    Book Call entry points are signup-only and never open the chooser.
  *  - Services call-card visibility. Anonymous viewers see only Free/Paid touts
@@ -20,6 +21,10 @@
  *    the booking chooser stays closed. Signed-in brands use canonical booking
  *    discovery and successful controller installs. Starter members keep the
  *    live-derived owner toggles.
+ *  - Side-by-side canonical Xano Free/Paid call cards. Webflow owns one native
+ *    template per surface and wf-xano renders the public call DTO into both;
+ *    this file adds viewer state and stands the legacy reveal down from those
+ *    cards. The duplicated CMS call cards stay for rollback until parity proof.
  *  - Side-by-side canonical Xano Service cards. Webflow owns the visible
  *    template and form; this file adds role-aware interaction attributes and
  *    reconciles only adapter-owned native Service options.
@@ -44,11 +49,12 @@
  *   qs, qsa,
  *   jQuery ($, two utility blocks),
  *   window.WfAlgolia (search record),
- *   window.WfXano (late-safe canonical Service-card results).
+ *   window.WfXano (late-safe canonical Service-card, call-card and Retainer
+ *     results).
  *
  * StartersFreeCallBooking is loaded from the GitHub/jsDelivr asset when an
  * older Webflow page head does not install it yet. The dependency stays
- * fail-closed: booking remains hidden if the hosted controller cannot load.
+ * fail-closed: booking remains disabled if the hosted controller cannot load.
  *
  * The Algolia index is READ FROM THE PAGE, never hardcoded: v3/algolia-environment.js
  * rewrites [wf-algolia-index] per environment and the search key 403s any other
@@ -58,6 +64,8 @@
 (function () {
   'use strict';
 
+  const headerToutEligibility = new Map();
+
   function ensureBookingModalAvailabilityGuard() {
       const guardId = 'hire-booking-modal-availability-guard';
       if (document.getElementById(guardId)) return;
@@ -66,8 +74,10 @@
       style.setAttribute('id', guardId);
       style.textContent = [
           '[data-booking-unavailable]{display:none!important}',
-          '[data-booking-trigger-unavailable]{display:none!important}',
+          '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}',
           '[data-canonical-call-unavailable]{display:none!important}',
+          '[data-call-offer-superseded]{display:none!important}',
+          '[data-header-tout-excluded]{display:none!important}',
           // The chooser pass-through (see openReadyCallType). !important on the
           // subtree as well as the dialog is deliberate: the modal library's
           // GSAP entrance writes inline styles on the backdrop and content, and
@@ -328,7 +338,7 @@
   }
 
   /**
-   * `HH:MMAM on MM/DD`. Prefers the booking module's own exported helper so the
+   * `HH:MMAM on MMM DD`. Prefers the booking module's own exported helper so the
    * load path and the click path are the same code, and falls back to the local
    * reimplementation only for an older controller that predates the export.
    * Returns null when no formatter is reachable — which is a version-skew fault,
@@ -346,10 +356,10 @@
       const format = (freeCallBooking && freeCallBooking.formatWithTimezone) ||
           window.formatWithTimezone;
       if (typeof format !== 'function') return null;
-      const list = (format(seconds * 1000, { month: '2-digit' }) || {}).list;
+      const list = (format(seconds * 1000, { month: 'short' }) || {}).list;
       if (!list || !list.hour || !list.month) return null;
       return list.hour + ':' + list.minute + list.dayPeriod +
-          ' on ' + list.month + '/' + list.day;
+          ' on ' + list.month + ' ' + list.day;
   }
 
   /** One slot hook per surface, anchored like the price hook. */
@@ -530,10 +540,149 @@
       });
   }
 
+  function setBookingWrapperAvailable(wrapper, available) {
+      if (!wrapper) return;
+      if (wrapper.querySelector('[data-signup-trigger-element="hire"]')) {
+          // Shared booking CSS hides this hook by default outside Designer.
+          // Mixed groups are not booking-only: remove that misplaced hook,
+          // preserving authored styles and CMS/Memberstack visibility gates.
+          wrapper.removeAttribute('booking-button-wrapper');
+          return;
+      }
+      if (!wrapper.querySelector('[data-modal-trigger="popup-booking-main"]') &&
+          !wrapper.querySelector('[data-signup-trigger-element="book-call"]') &&
+          !wrapper.querySelector('[data-profile-book-call]')) return;
+      wrapper.style.display = 'flex';
+      wrapper.setAttribute('aria-hidden', 'false');
+  }
+
+  // These controls remain discoverable while their booking action is closed.
+  // Strip delegate hooks while disabled so signup and Lumos cannot open first.
+  const bookingHints = new Map();
+  let bookingOwner = false;
+  let ownerBookingReady = false;
+  function explainBookingAvailability(trigger, available) {
+      let entry = bookingHints.get(trigger);
+      if (!entry) {
+          const hint = document.createElement('div');
+          hint.setAttribute('id', 'call-availability-hint-' + (bookingHints.size + 1));
+          hint.setAttribute('data-call-availability-hint', '');
+          hint.setAttribute('role', 'note');
+          hint.style.cssText = 'position:fixed;z-index:1000;background:#fff;color:#20241f;border:1px solid #ccc;border-radius:4px;padding:12px;max-width:280px;font-size:14px;line-height:1.4;box-shadow:0 4px 16px #0002';
+          hint.style.display = 'none';
+          if (trigger.parentElement) {
+              document.body.appendChild(hint);
+          }
+          entry = { hint: hint, signup: trigger.getAttribute('data-signup-trigger-element'), modal: trigger.getAttribute('data-modal-trigger') };
+          bookingHints.set(trigger, entry);
+          let dismissalTimer;
+          const reveal = function () {
+              clearTimeout(dismissalTimer);
+              if (trigger.getAttribute('aria-disabled') !== 'true') return;
+              hint.style.display = 'block';
+              if (!trigger.getBoundingClientRect || !hint.getBoundingClientRect) return;
+              const rect = trigger.getBoundingClientRect();
+              const width = window.innerWidth || document.documentElement.clientWidth;
+              const height = window.innerHeight || document.documentElement.clientHeight;
+              hint.style.maxWidth = Math.max(0, Math.min(280, width - 24)) + 'px';
+              const box = hint.getBoundingClientRect();
+              hint.style.left = Math.max(12, Math.min(rect.left, width - box.width - 12)) + 'px';
+              hint.style.top = Math.max(12, rect.bottom + box.height + 8 <= height - 12
+                  ? rect.bottom + 8 : rect.top - box.height - 8) + 'px';
+          };
+          let hovered = false;
+          let focused = false;
+          const isInside = function (target) {
+              return !!target && (trigger.contains(target) || hint.contains(target));
+          };
+          const dismissInactive = function () {
+              if (!hovered && !focused) hint.style.display = 'none';
+          };
+          [trigger, hint].forEach(function (surface) {
+              surface.addEventListener('mouseenter', function () {
+                  hovered = true;
+                  reveal();
+              });
+              surface.addEventListener('mouseleave', function (event) {
+                  hovered = isInside(event.relatedTarget);
+                  clearTimeout(dismissalTimer);
+                  dismissalTimer = setTimeout(dismissInactive, 180);
+              });
+              surface.addEventListener('focusin', function () {
+                  focused = true;
+                  reveal();
+              });
+              surface.addEventListener('focusout', function (event) {
+                  focused = isInside(event.relatedTarget);
+                  dismissInactive();
+              });
+          });
+          trigger.addEventListener('click', function (event) {
+              if (trigger.getAttribute('aria-disabled') !== 'true') return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+              reveal();
+          }, true);
+          trigger.addEventListener('keydown', function (event) {
+              if (event.key === 'Tab' && !event.shiftKey && trigger.getAttribute('aria-disabled') === 'true') {
+                  const settings = hint.querySelector('a');
+                  if (settings) {
+                      event.preventDefault();
+                      reveal();
+                      settings.focus();
+                  }
+              }
+              if (event.key === 'Escape') hint.style.display = 'none';
+              if (trigger.getAttribute('aria-disabled') === 'true' && (event.key === 'Enter' || event.key === ' ')) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  reveal();
+              }
+          }, true);
+          hint.addEventListener('keydown', function (event) {
+              if (event.key === 'Tab') {
+                  if (event.shiftKey) event.preventDefault();
+                  trigger.focus();
+              }
+              if (event.key === 'Escape') {
+                  trigger.focus();
+                  hint.style.display = 'none';
+              }
+          });
+      }
+      if (available) {
+          entry.hint.style.display = 'none';
+          trigger.removeAttribute('aria-describedby');
+          if (entry.signup) trigger.setAttribute('data-signup-trigger-element', entry.signup);
+          if (entry.modal && !trigger.hasAttribute('data-logged-out-book-call')) trigger.setAttribute('data-modal-trigger', entry.modal);
+          return;
+      }
+      trigger.removeAttribute('data-signup-trigger-element');
+      trigger.removeAttribute('data-modal-trigger');
+      trigger.setAttribute('data-profile-book-call', '');
+      trigger.setAttribute('tabindex', '0');
+      trigger.setAttribute('role', 'button');
+      trigger.setAttribute('aria-label', 'Book a Call');
+      trigger.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
+      const owner = bookingOwner;
+      entry.hint.textContent = owner
+          ? (ownerBookingReady ? 'Your calls are available to brands. ' : 'Your call booking is unavailable. ')
+          : 'This Starter isn’t accepting calls right now.';
+      if (owner) {
+          const settings = document.createElement('a');
+          settings.textContent = 'Manage call settings';
+          settings.setAttribute('href', '/starter-dashboard');
+          entry.hint.appendChild(settings);
+      }
+  }
+
   function setBookingButtonAvailable(available) {
+      if (available && isBrandMember(MEMBER)) {
+          available = publicCallTypeReady('free') || publicCallTypeReady('paid');
+      }
       document.querySelectorAll('[booking-button-wrapper]').forEach(function (wrapper) {
-          wrapper.style.display = available ? 'flex' : 'none';
-          wrapper.setAttribute('aria-hidden', available ? 'false' : 'true');
+          setBookingWrapperAvailable(wrapper, available);
       });
 
       // The hire template has more than one authored Book Call entry point.
@@ -543,10 +692,9 @@
       // the same discovery result.
       // The calendar engine renders a back control carrying this same trigger
       // name inside the booking dialog. It is not a page-level entry point, and
-      // stamping it unavailable would hand it to the guard stylesheet's
-      // display:none rule — hiding the way back out for the rest of the visit.
+      // stamping it unavailable would disable navigation back to the chooser.
       document.querySelectorAll(
-          '[data-modal-trigger="popup-booking-main"]:not([data-booking-back])'
+          '[data-modal-trigger="popup-booking-main"]:not([data-booking-back]), [data-profile-book-call]'
       ).forEach(function (trigger) {
           if (available) {
               trigger.removeAttribute('data-booking-trigger-unavailable');
@@ -555,6 +703,7 @@
               trigger.setAttribute('data-booking-trigger-unavailable', '');
               trigger.setAttribute('aria-disabled', 'true');
           }
+          explainBookingAvailability(trigger, available);
       });
 
       document.querySelectorAll('[data-modal-target="popup-booking-main"]').forEach(function (dialog) {
@@ -576,22 +725,27 @@
    * controller is missing or cannot confirm the viewer, the CTA opens nothing
    * rather than an unconfigured Free/Paid chooser.
    */
-  function setLoggedOutBookingButtonAvailable() {
+  function setLoggedOutBookingButtonAvailable(available) {
+      const show = available !== false;
       const selector =
-          '[data-modal-trigger="popup-booking-main"]' +
-          '[data-signup-trigger-element="book-call"]' +
-          ':not([data-booking-back])';
+          '[data-signup-trigger-element="book-call"]:not([data-booking-back]), [data-profile-book-call]';
 
       document.querySelectorAll(selector).forEach(function (trigger) {
-          trigger.setAttribute('data-logged-out-book-call', '');
-          trigger.removeAttribute('data-modal-trigger');
-          trigger.removeAttribute('data-booking-trigger-unavailable');
-          trigger.removeAttribute('aria-disabled');
+          const wasLoggedOutAvailable = trigger.hasAttribute('data-logged-out-book-call');
+          if (show) trigger.setAttribute('data-logged-out-book-call', '');
+          else trigger.removeAttribute('data-logged-out-book-call');
+          if (show || wasLoggedOutAvailable) trigger.removeAttribute('data-modal-trigger');
+          if (show) {
+              trigger.removeAttribute('data-booking-trigger-unavailable');
+              trigger.removeAttribute('aria-disabled');
+          } else {
+              trigger.setAttribute('data-booking-trigger-unavailable', '');
+              trigger.setAttribute('aria-disabled', 'true');
+          }
 
           const wrapper = trigger.closest('[booking-button-wrapper]');
-          if (!wrapper) return;
-          wrapper.style.display = 'flex';
-          wrapper.setAttribute('aria-hidden', 'false');
+          setBookingWrapperAvailable(wrapper, show);
+          explainBookingAvailability(trigger, show);
       });
   }
 
@@ -604,11 +758,15 @@
    *
    * Returns whether any surface's visibility state actually changed.
    */
-  function applyCallSurfaceAvailability(availability, onReveal) {
+  function applyCallSurfaceAvailability(availability, onReveal, includeSurface) {
       let changed = false;
 
       ['free', 'paid'].forEach(function (type) {
-          document.querySelectorAll('[has-connection="' + type + '"]').forEach(function (surface) {
+          document.querySelectorAll(
+              '[has-connection="' + type + '"], ' +
+              '[data-service-card="component"][data-type="' + type + '"]'
+          ).forEach(function (surface) {
+              if (includeSurface && !includeSurface(surface, type)) return;
               if (surface.hasAttribute('hidden') || surface.hasAttribute('data-runtime-call-template')) {
                   return;
               }
@@ -630,6 +788,7 @@
                   surface.setAttribute('aria-hidden', 'true');
                   surface.style.display = 'none';
               }
+              trackHeaderCallEligibility(surface, type, !!availability[type]);
           });
       });
       return changed;
@@ -647,15 +806,68 @@
       if (bookingRow) bookingRow.remove();
   }
 
-  function syncCanonicalCallSurfaces(configs) {
-      const records = Array.isArray(configs) ? configs : [];
+  /**
+   * The wf-xano call cards are governed by their own endpoint result, so a
+   * writer that does not own them passes this to stand down. The Algolia and
+   * legacy grant booleans remain only for the untouched CMS comparison cards
+   * during the side-by-side canary.
+   */
+  function excludeXanoCallCards(surface) {
+      return !surface.hasAttribute('data-xano-call-card') &&
+          !surface.hasAttribute('data-canonical-public-call') &&
+          !surface.hasAttribute('data-call-offer-superseded');
+  }
+
+  /**
+   * The legacy reveal's raw selectors read the same `has-connection` /
+   * `no-connection` attributes the wf-xano adapter now stamps on its own
+   * cards, so they need the same stand-down `syncCanonicalCallSurfaces` gets.
+   * Routing them through the one predicate keeps a single definition of which
+   * surfaces the legacy writers still own.
+   */
+  function qsaLegacyCallSurfaces(selector) {
+      return Array.from(qsa(selector)).filter(excludeXanoCallCards);
+  }
+
+  function publicCallTypeReady(type) {
+      const wrapper = document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
+      if (!wrapper) return true; // Legacy pages have no public-readiness contract.
+      if (!latestCanonicalCallItems) return false;
+      return Array.from(latestCanonicalCallItems.values()).some(function (item) {
+          return callOfferTypeOf(item) === type && item.public_available === true;
+      });
+  }
+
+  function syncCanonicalCallSurfaces(configs, includeSurface) {
+      const records = (Array.isArray(configs) ? configs : []).filter(function (record) {
+          return !isBrandMember(MEMBER) || publicCallTypeReady(record.is_paid === true ? 'paid' : 'free');
+      });
       // Same shared predicate as the painters and the chooser lookup, so one
       // record set cannot be read as free by one of them and as nothing by
       // another.
-      return applyCallSurfaceAvailability({
+      const availability = {
           free: !!recordForType(records, 'free'),
           paid: !!recordForType(records, 'paid'),
+      };
+      if (isBrandMember(MEMBER)) {
+          reconcileInstalledBookingModalOptions(records);
+          setBookingButtonAvailable(records.length > 0);
+      }
+      const changed = applyCallSurfaceAvailability(availability, function (surface, type) {
+          if (!surface.hasAttribute('data-xano-call-card')) return;
+          surface.setAttribute('has-connection', type);
+          surface.removeAttribute('no-connection');
+          surface.setAttribute('data-call-offer-state', 'available');
+      }, includeSurface);
+      document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (surface) {
+          const type = surface.getAttribute('data-type');
+          if (includeSurface && !includeSurface(surface, type)) return;
+          if (availability[type]) return;
+          surface.removeAttribute('has-connection');
+          surface.removeAttribute('data-call-service-direct');
+          surface.setAttribute('data-call-offer-state', 'hidden');
       });
+      return changed;
   }
 
   function findReadyCallTypeCta(type) {
@@ -951,6 +1163,11 @@
      slot re-run reuses the availability answer rather than re-requesting it. */
   let paintedCallState = null;
 
+  function settleEmptyCallDiscovery() {
+      paintedCallState = { configs: [], slots: {} };
+      return syncCanonicalCallSurfaces([]);
+  }
+
   function repaintCallSurfaces() {
       if (!paintedCallState) return;
       repaintCanonicalRateSurfaces(paintedCallState.configs);
@@ -971,12 +1188,30 @@
           // The native Webflow service cards identify the call type through
           // has-connection. Keep data-type as a compatibility hook for older
           // saved markup and focused fixtures.
-          const type = card.getAttribute('data-type') || card.getAttribute('has-connection');
+          const type = card.getAttribute('data-type') ||
+              card.getAttribute('has-connection') ||
+              card.getAttribute('no-connection');
           if (type !== 'free' && type !== 'paid') return;
+          if (card.hasAttribute('data-xano-call-card') &&
+              (card.hasAttribute('data-canonical-call-unavailable') ||
+                  (card.getAttribute('aria-hidden') === 'true' &&
+                      card.getAttribute('data-header-tout-excluded') !== 'capacity'))) return;
+          // A cap-hidden but eligible Header call can reappear when a rate
+          // refresh removes a higher-priority tout. Bind it now; the existing
+          // click-time visibility guard still rejects it until then. This
+          // avoids coupling rate reconciliation to booking or owner wiring.
+          // The owner's own preview card is not a booking entry point: owners
+          // never self-book, so `openReadyCallType` can only ever fail for it.
+          // Binding anyway would cancel the setup CTA inside the card, because
+          // this listener is capture-phase and preventDefaults every click.
+          if (card.hasAttribute('data-call-owner-preview')) return;
           // A cloned DOM node copies attributes but not listeners. Track actual
           // listener ownership by element identity instead of trusting the
           // diagnostic attribute as the binding guard.
-          if (directCallServiceCards.has(card)) return;
+          if (directCallServiceCards.has(card)) {
+              card.setAttribute('data-call-service-direct', 'ready');
+              return;
+          }
 
           // Service cards are type-specific shortcuts. They reuse the exact
           // installed chooser CTA so the matching GitHub controller and native
@@ -986,9 +1221,19 @@
           card.removeAttribute('data-modal-trigger');
           card.setAttribute('data-call-service-direct', 'ready');
           card.addEventListener('click', function (event) {
+              // A clone can be observed before the wf-xano adapter resolves its
+              // viewer state. Re-check at click time so a later owner-preview
+              // stamp (or a released/hidden clone) cannot be trapped by this
+              // capture-phase shortcut.
+              if (card.hasAttribute('data-call-owner-preview')) return;
+              if (card.hasAttribute('data-xano-call-card') &&
+                  (card.hasAttribute('data-canonical-call-unavailable') ||
+                      card.getAttribute('aria-hidden') === 'true')) return;
+              const liveType = card.getAttribute('data-type') || card.getAttribute('has-connection');
+              if (liveType !== 'free' && liveType !== 'paid') return;
               event.preventDefault();
               event.stopImmediatePropagation();
-              openReadyCallType(type);
+              openReadyCallType(liveType);
           }, true);
           directCallServiceCards.add(card);
       });
@@ -1000,18 +1245,63 @@
           if (!records.some(function (record) {
               return record && record.type === 'childList' && record.addedNodes && record.addedNodes.length;
           })) return;
+          neutralizeUnavailableCompanyLinks();
           wireCallServiceCardsToDirectEntry();
           // Chooser rows and the back arrow arrive on the same late-node paths
           // as the cards. Both are guarded against rebinding, so re-running
           // them here is free.
           wireChooserRowsToEntryStamp();
           syncBookingBackControls();
+          reconcileLegacyHeaderProjection();
           // A late card arrives unpainted, carrying the stale CMS price and the
           // authored slot sentinel. Both painters are idempotent, so re-running
           // them here costs nothing for cards that are already correct.
           repaintCallSurfaces();
       });
       observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  /* ---- unresolved custom Company links ----
+     The public taxonomy endpoint intentionally renders pending-review custom
+     companies before they have a public Company page. wf-xano keeps the native
+     authored anchor, but an empty slug resolves its prefix to `/companies/`;
+     older pending projections can also expose a temporary `company-pending-*`
+     path. Both destinations misrepresent the visible card as a usable Company
+     profile. Keep the authored card and its content, but remove navigation.
+
+     This scan is restricted to rendered items in the two profile wrappers. It
+     never touches their hidden templates, valid Company links, or links in any
+     other list. Re-running it is a no-op because the href is removed once. */
+  function neutralizeUnavailableCompanyLinks() {
+      const selector = [
+          '[wf-xano-instance="starter-work-histories"] [wf-xano-item][href]',
+          '[wf-xano-instance="starter-clients"] [wf-xano-item][href]',
+      ].join(', ');
+
+      Array.from(document.querySelectorAll(selector)).forEach(function (link) {
+          const href = String(link.getAttribute('href') || '').trim();
+          if (!href) return;
+
+          let path = '';
+          try {
+              const base = window.location && window.location.href
+                  ? window.location.href
+                  : 'https://www.thestarters.com/';
+              path = new URL(href, base).pathname;
+          } catch (error) {
+              return;
+          }
+
+          const normalizedPath = path.replace(/\/+$/, '') || '/';
+          const unavailable = normalizedPath === '/companies' ||
+              path.indexOf('/companies/company-pending-') !== -1;
+          if (!unavailable) return;
+
+          link.removeAttribute('href');
+          link.removeAttribute('target');
+          link.setAttribute('aria-disabled', 'true');
+          link.setAttribute('data-company-link-unavailable', '');
+      });
   }
 
   function isBlockedProductionBookingSurface() {
@@ -1025,10 +1315,11 @@
 
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
-  syncCanonicalCallSurfaces([]);
-  // Webflow authors the structural Book Call triggers and dialog. Canonical
-  // environment-scoped discovery is the only code path that may enable them.
+  applyCallSurfaceAvailability({ free: false, paid: false });
+  // Webflow authors the structural Book Call triggers and dialog. Keep them
+  // closed until the viewer-specific readiness gate admits an entry point.
   setBookingButtonAvailable(false);
+  neutralizeUnavailableCompanyLinks();
   wireCallServiceCardsToDirectEntry();
   wireChooserRowsToEntryStamp();
   // Before any entry has happened there is no stamp, so the arrow starts
@@ -1251,6 +1542,8 @@
               String(record.currency || '').toUpperCase() === 'USD' &&
               Number.isInteger(priceCents) &&
               priceCents >= 100 &&
+              priceCents <= 100000 &&
+              priceCents % 100 === 0 &&
               duration === 60;
       }
       return record.is_paid === false &&
@@ -1259,6 +1552,9 @@
   }
 
   function selectBookableConfigurations(records) {
+      if (freeCallBooking && typeof freeCallBooking.selectBookableConfigurations === 'function') {
+          return freeCallBooking.selectBookableConfigurations(records, location.hostname);
+      }
       if (!Array.isArray(records)) return [];
 
       const environments = bookableEnvironments();
@@ -1303,6 +1599,7 @@
 
   const OWNER_FREE_SETTINGS_PATH = '/starter/free-call-settings/get/v3';
   const OWNER_PAID_SETTINGS_PATH = '/starter/paid-call-settings/get/v3';
+  let ownerCallSettingsSnapshot = null;
 
   /**
    * The viewer IS the starter whose profile this is.
@@ -1383,6 +1680,14 @@
       const label = isPaid ? 'paid' : 'free';
       if (!settings || !Array.isArray(settings.services)) return null;
       if (!settings.readiness || settings.readiness.bookable !== true) return null;
+      const readiness = ownerReadinessOf(settings);
+      if (!readiness.calendar_connected || !readiness.availability_configured) return null;
+      if (isPaid) {
+          if (!readiness.stripe_connect_linked || !readiness.stripe_charges_enabled ||
+              !readiness.stripe_readiness_fresh || !readiness.paid_call_enabled) return null;
+      } else if (!readiness.free_call_enabled) {
+          return null;
+      }
 
       const active = settings.services.filter(function (service) {
           return service && service.active === true && service.config_id;
@@ -1478,37 +1783,78 @@
       if (!isProfileOwner(MEMBER)) return;
 
       try {
-          const settings = await Promise.all([
-              ownerSettings(OWNER_FREE_SETTINGS_PATH).catch(function (error) {
-                  console.warn('[hire-profile] the owner free-call settings lookup failed:', error);
-                  return null;
-              }),
-              ownerSettings(OWNER_PAID_SETTINGS_PATH).catch(function (error) {
-                  console.warn('[hire-profile] the owner paid-call settings lookup failed:', error);
-                  return null;
-              }),
-          ]);
+          ownerCallSettingsSnapshot = {
+              free: null,
+              paid: null,
+              status: { free: 'loading', paid: 'loading' },
+              records: [],
+          };
+          let resolvedStarterGrantId = null;
+          let starterGrantSettled = false;
+          const slotPaintStarted = new Set();
 
-          const records = [
-              ownerRecordFrom(settings[0], false),
-              ownerRecordFrom(settings[1], true),
-          ].filter(Boolean);
-          if (!records.length) return;
+          function paintReadyOwnerSlots() {
+              if (!starterGrantSettled) return;
+              const grantId = ownerGrantId(
+                  ownerCallSettingsSnapshot.free,
+                  resolvedStarterGrantId
+              );
+              if (!grantId) return;
+              ownerCallSettingsSnapshot.records.forEach(function (record) {
+                  const type = record.is_paid === true ? 'paid' : 'free';
+                  if (slotPaintStarted.has(type)) return;
+                  slotPaintStarted.add(type);
+                  paintNextAvailableSlots([record], grantId, {
+                      leaveRowOnDegrade: true,
+                  });
+              });
+          }
 
-          // Late hero and Services cards reach the owner too, so the re-run
-          // point gets the owner's canonical set exactly as it gets the brand's.
-          paintedCallState = { configs: records, slots: {} };
-          repaintCanonicalRateSurfaces(records);
-          // OWNER CONTRACT: a failed lookup, an unbookable readiness, a missing
-          // grant or a missing formatter leaves the authored row standing —
-          // writing "No available slots" over their own profile for what is
-          // really a lookup fault sends them to fix availability settings that
-          // are already correct. A successful but empty answer is not a fault:
-          // a fully booked calendar is written here exactly as it is for a
-          // brand viewer, so no placeholder time survives it.
-          paintNextAvailableSlots(records, ownerGrantId(settings[0], starterGrantId), {
-              leaveRowOnDegrade: true,
+          Promise.resolve(starterGrantId).then(function (grantId) {
+              resolvedStarterGrantId = grantId;
+              starterGrantSettled = true;
+              paintReadyOwnerSlots();
+          }).catch(function (error) {
+              starterGrantSettled = true;
+              console.warn('[hire-profile] the owner grant lookup failed:', error);
           });
+
+          function settleSettings(type, result) {
+              ownerCallSettingsSnapshot[type] = result.value;
+              ownerCallSettingsSnapshot.status[type] = result.status;
+              ownerCallSettingsSnapshot.records = [
+                  ownerRecordFrom(ownerCallSettingsSnapshot.free, false),
+                  ownerRecordFrom(ownerCallSettingsSnapshot.paid, true),
+              ].filter(Boolean);
+              applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+              const record = recordForType(ownerCallSettingsSnapshot.records, type);
+              if (record) {
+                  const priorSlots = paintedCallState && paintedCallState.slots
+                      ? paintedCallState.slots
+                      : {};
+                  paintedCallState = {
+                      configs: ownerCallSettingsSnapshot.records,
+                      slots: priorSlots,
+                  };
+                  repaintCanonicalRateSurfaces([record]);
+                  paintReadyOwnerSlots();
+              }
+              return result;
+          }
+
+          const freeSettings = ownerSettings(OWNER_FREE_SETTINGS_PATH).then(function (value) {
+              return settleSettings('free', { status: 'loaded', value: value });
+          }).catch(function (error) {
+              console.warn('[hire-profile] the owner free-call settings lookup failed:', error);
+              return settleSettings('free', { status: 'error', value: null });
+          });
+          const paidSettings = ownerSettings(OWNER_PAID_SETTINGS_PATH).then(function (value) {
+              return settleSettings('paid', { status: 'loaded', value: value });
+          }).catch(function (error) {
+              console.warn('[hire-profile] the owner paid-call settings lookup failed:', error);
+              return settleSettings('paid', { status: 'error', value: null });
+          });
+          await Promise.all([freeSettings, paidSettings]);
       } catch (error) {
           console.warn('[hire-profile] the owner call-surface paint stood down:', error);
       }
@@ -1516,10 +1862,9 @@
 
   /* ---- owner-path actions ----
      The owner's own /hire page is a preview of what a brand is shown, not a
-     surface they can act on. Book Call is already closed to them: nothing
-     outside the brand's canonical discovery ever calls
-     setBookingButtonAvailable(true), so the trigger keeps the structural
-     fail-closed hide it starts with. The authored Hire and Message CTAs have
+     surface they can act on. Book Call stays disabled and offers settings
+     guidance, including inside the native mobile-hidden action groups.
+     The authored Hire and Message CTAs have
      no such gate — they are plain Designer entry points — so a starter could
      open a contact surface pointed at themselves.
 
@@ -1536,6 +1881,8 @@
 
   function hideOwnerContactActions() {
       if (!isProfileOwner(MEMBER)) return;
+      bookingOwner = true;
+      setBookingButtonAvailable(false);
 
       OWNER_HIDDEN_ACTIONS.forEach(function (element) {
           qsa('[data-signup-trigger-element="' + element + '"]').forEach(function (action) {
@@ -1548,6 +1895,26 @@
               action.removeAttribute('data-modal-trigger');
           });
       });
+
+      // Memberstack removes the brand-only mobile alternatives for owners.
+      // Reveal only the native action groups containing our disabled control;
+      // retain their flex layout, spacing, and every surrounding visibility gate.
+      qsa('[data-profile-book-call]').forEach(function (trigger) {
+          let group = trigger.parentElement;
+          while (group) {
+              if (group.matches && group.matches('.profile-hero_action-buttons, .profile-nav_actions')) {
+                  group.setAttribute('data-profile-owner-call-actions', '');
+                  if (group.matches('.profile-nav_actions')) group.setAttribute('data-profile-owner-mobile-call', '');
+              }
+              group = group.parentElement;
+          }
+      });
+      if (!document.getElementById('profile-owner-call-actions-style')) {
+          const style = document.createElement('style');
+          style.id = 'profile-owner-call-actions-style';
+          style.textContent = '@media(max-width:767px){[data-profile-owner-call-actions]{display:flex!important}[data-profile-owner-mobile-call]{position:fixed;left:0;bottom:0;width:100%;box-sizing:border-box;justify-content:center;padding:12px 20px;margin:0;background:#fff;z-index:30}}';
+          (document.head || document.documentElement).appendChild(style);
+      }
   }
 
   // Park the beside-services calendar experiment. The live Hire experience
@@ -1563,8 +1930,9 @@
   }
   // The starter's Xano id is CMS-bound into the page ([data-starter-xano-id]
   // inside the native-binding wrapper); it keys the public search-record
-  // lookup. Experiences/clients render natively from the CMS since the
-  // Phase 2 cutover, so no runtime fetch supplies this id anymore.
+  // lookup. Separate Webflow-authored wf-xano wrappers render Experiences and
+  // Clients from the public Xano taxonomy endpoint, so this file does not fetch
+  // those lists itself.
   const STARTER_XANO_ID_READY = Promise.resolve((function () {
       const carrier = document.querySelector('[data-starter-xano-id]');
       const value = carrier ? parseInt(carrier.textContent, 10) : NaN;
@@ -1591,6 +1959,15 @@
           freeCallBooking = await ensureFreeCallBooking();
           if (!validFreeCallBooking(freeCallBooking)) {
               console.warn('[hire-profile] Free Call booking controller is unavailable');
+              if (isProfileOwner(MEMBER)) {
+                  ownerCallSettingsSnapshot = {
+                      free: null,
+                      paid: null,
+                      status: { free: 'error', paid: 'error' },
+                      records: [],
+                  };
+                  applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+              }
               return;
           }
 
@@ -1599,27 +1976,41 @@
 
           // if it's not a brand
           if (!isBrandMember(MEMBER)) {
+              // Owner settings are independent of Brand booking discovery.
+              // Start them before the Starter lookup settles so a slow or
+              // failed lookup cannot strand both authored cards in loading.
+              const starterPromise = Promise.resolve().then(function () {
+                  return freeCallBooking.getStarterByMemberId(FREELANCER_ID);
+              }).catch(function (error) {
+                  console.warn('[hire-profile] the Starter lookup failed:', error);
+                  return null;
+              });
+              if (isProfileOwner(MEMBER)) {
+                  paintOwnerCallSurfaces(starterPromise.then(function (starter) {
+                      return starter ? starter['nylas_grant_id'] : null;
+                  }));
+              }
               // check calendar\availability connections
-              const starter = await freeCallBooking.getStarterByMemberId(FREELANCER_ID);
+              const starter = await starterPromise;
               const grant_id = starter ? starter['nylas_grant_id'] : null;
               const ownerConfigs = [];
               if (grant_id) ownerConfigs.push({ is_paid: false });
               if (grant_id && window.stripe_charges) ownerConfigs.push({ is_paid: true });
-              syncCanonicalCallSurfaces(ownerConfigs);
+              syncCanonicalCallSurfaces(ownerConfigs, excludeXanoCallCards);
               if (!grant_id) {
-                  qsa('[no-connection="free"]').forEach((item) => item.style.display = "block");
+                  qsaLegacyCallSurfaces('[no-connection="free"]').forEach((item) => item.style.display = "block");
               } else {
-                  qsa('[has-connection="free"]').forEach((item) => item.style.display = "block");
+                  qsaLegacyCallSurfaces('[has-connection="free"]').forEach((item) => item.style.display = "block");
               }
 
               // check stripe connections
               // `stripe_charges` is a global var (assigned as window.stripe_charges
               // by an embedded script at the top of the page).
               if (!window.stripe_charges) {
-                  qsa('[no-connection="paid"]').forEach((item) => item.style.display = "block");
+                  qsaLegacyCallSurfaces('[no-connection="paid"]').forEach((item) => item.style.display = "block");
 
               } else if (!grant_id && window.stripe_charges) {
-                  qsa('[no-connection="paid"]').forEach((item) => {
+                  qsaLegacyCallSurfaces('[no-connection="paid"]').forEach((item) => {
                       item.style.display = "block";
 
                       qsa('[hover-text]', item).forEach((item) => {
@@ -1639,7 +2030,7 @@
                   });
 
               } else {
-                  qsa('[has-connection="paid"]').forEach((item) => item.style.display = "block");
+                  qsaLegacyCallSurfaces('[has-connection="paid"]').forEach((item) => item.style.display = "block");
               }
 
               // Everything above decides only what the owner can SEE. Nothing
@@ -1648,7 +2039,6 @@
               // every brand viewer sees replaced. Fire and forget, like the
               // brand path's slot paint: a slow settings answer must not hold
               // up the reveal, and a failure leaves the reveal untouched.
-              paintOwnerCallSurfaces(grant_id);
               refreshEmptySectionNav();
               return;
           }
@@ -1665,6 +2055,8 @@
      discovery before any booking surface opens. Starter members keep the
      live-derived owner toggles above. */
   let canonicalRetainerState = 'pending';
+  installXanoHeroRateCards();
+  installXanoCallCardsAdapter();
   installXanoServiceCardsAdapter();
   installXanoRetainerCardAdapter();
 
@@ -1678,9 +2070,8 @@
 
           if (!MEMBER.id) {
               const publicCalls = syncLoggedOutCallSurfaces(record);
-              if (publicCalls.free || publicCalls.paid) {
-                  setLoggedOutBookingButtonAvailable();
-              }
+              loggedOutLegacyCallsAvailable = publicCalls.free || publicCalls.paid;
+              syncLoggedOutBookCallCta();
               markServiceCardsClickable();
           }
           if (isBrand) {
@@ -1727,7 +2118,7 @@
       applyCallSurfaceAvailability(availability, function (surface, type) {
           surface.setAttribute('data-logged-out-call-tout', type);
           stripCallBookingRow(surface);
-      });
+      }, excludeXanoCallCards);
 
       return availability;
   }
@@ -1750,6 +2141,622 @@
           if (getComputedStyle(card).display === 'none') return;
           card.style.cursor = 'pointer';
       });
+  }
+
+  /* XANO CALL CARDS
+     The Hire template owns one native Service Tout template in the hero and
+     one native Service Card template in #services. wf-xano renders the same
+     two-item public DTO into both wrappers. This adapter adds viewer state and
+     routes actions into the controllers that already own signup, booking, and
+     owner settings. It never creates a card or a modal. */
+  let loggedOutXanoCallsSettled = false;
+  let loggedOutXanoCallsAvailable = false;
+  let loggedOutLegacyCallsAvailable = false;
+  let latestCanonicalCallItems = null;
+
+  function syncLoggedOutBookCallCta() {
+      const available = loggedOutXanoCallsSettled
+          ? loggedOutXanoCallsAvailable
+          : loggedOutLegacyCallsAvailable;
+      setLoggedOutBookingButtonAvailable(available);
+  }
+
+  function installXanoCallCardsAdapter() {
+      window.WfXano = window.WfXano || [];
+      if (typeof window.WfXano.push !== 'function') return;
+
+      window.WfXano.push(function (wfx) {
+          if (!wfx || typeof wfx.get !== 'function') return;
+          const callKeys = ['starter-call-offers-header', 'starter-call-offers-services'];
+          function failClosed() {
+              Promise.resolve(memberReady).then(function () {
+                  if (isProfileOwner(MEMBER)) return;
+                  callKeys.forEach(function (key) {
+                      const instance = wfx.get(key);
+                      if (instance && instance.root) adaptXanoCallCards(instance, key, { items: [] });
+                  });
+              }).catch(function (error) {
+                  console.warn('Xano call readiness:', error);
+              });
+          }
+          callKeys.forEach(function (key) {
+              const instance = wfx.get(key);
+              if (!instance || typeof instance.on !== 'function' || !instance.root) return;
+
+              function applyResult(result) {
+                  Promise.resolve(memberReady).then(function () {
+                      if (isProfileOwner(MEMBER)) {
+                          adaptXanoCallCards(instance, key, result);
+                          return;
+                      }
+                      const readinessFailed = callKeys.some(function (callKey) {
+                          const sibling = wfx.get(callKey);
+                          const state = sibling && typeof sibling.getState === 'function'
+                              ? sibling.getState() : null;
+                          return state && state.status === 'error';
+                      });
+                      if (readinessFailed) {
+                          failClosed();
+                          return;
+                      }
+                      callKeys.forEach(function (callKey) {
+                          const sibling = wfx.get(callKey);
+                          if (sibling && sibling.root) adaptXanoCallCards(sibling, callKey, result);
+                      });
+                  }).catch(function (error) {
+                      console.warn('Xano call cards:', error);
+                  });
+              }
+
+              let receivedResult = false;
+              instance.on('results', function (result) {
+                  receivedResult = true;
+                  applyResult(result);
+              });
+              // Keyed wf-xano lists retain their previous rows on refresh
+              // failure and emit error, not results. Old readiness must not
+              // keep either surface or the shared chooser open.
+              instance.on('error', failClosed);
+              if (!receivedResult && typeof instance.getState === 'function') {
+                  const state = instance.getState();
+                  if (state && state.status === 'success' && state.data) applyResult(state.data);
+                  else if (state && state.status === 'error') {
+                      if (state.data) applyResult(state.data);
+                      failClosed();
+                  }
+              }
+          });
+      });
+  }
+
+  /**
+   * The single reader of a DTO item's call type. Admission, the per-card paint
+   * and the logged-out availability lookup all key on this, so one payload
+   * cannot be read as Free by one of them and as nothing by another.
+   */
+  function callOfferTypeOf(item) {
+      const type = String((item && item.type) || '').trim().toLowerCase();
+      return type === 'free' || type === 'paid' ? type : '';
+  }
+
+  function callOfferItemMap(result) {
+      const items = result && Array.isArray(result.items) ? result.items : [];
+      const byId = new Map();
+      items.forEach(function (item) {
+          if (!item || item.id == null) return;
+          if (!callOfferTypeOf(item)) return;
+          byId.set(String(item.id), item);
+      });
+      return byId;
+  }
+
+  // Keep upstream eligibility separate from the presentation cap. Reading
+  // computed visibility here would permanently lose a fourth tout after it
+  // was hidden, or reopen an unavailable offer when another tout disappears.
+  function reconcileHeaderTouts() {
+      // Existing wf-xano clones can reach this during bootstrap, before the
+      // page helper aliases below are assigned. The native query is ready now.
+      const carrier = document.querySelector('[data-profile-type]');
+      const profileType = carrier
+          ? String(carrier.getAttribute('data-profile-type') || carrier.textContent || '').trim().toLowerCase()
+          : '';
+      const priority = ['hourly', 'retainer', 'free', 'paid'];
+      let count = 0;
+      const entries = Array.from(headerToutEligibility.entries()).filter(function (entry) {
+          if (entry[0].isConnected === false) {
+              headerToutEligibility.delete(entry[0]);
+              return false;
+          }
+          return true;
+      }).sort(function (a, b) {
+          return priority.indexOf(a[1].type) - priority.indexOf(b[1].type);
+      });
+      entries.forEach(function (entry) {
+          const node = entry[0];
+          const state = entry[1];
+          let reason = '';
+          if (state.eligible) {
+              if (profileType === 'full' && state.type === 'paid') reason = 'profile-type';
+              else if (count >= 3) reason = 'capacity';
+              else count += 1;
+          }
+          if (reason) {
+              if (node.getAttribute('data-header-tout-excluded') !== reason) {
+                  node.setAttribute('data-header-tout-excluded', reason);
+              }
+              node.setAttribute('aria-hidden', 'true');
+          } else {
+              node.removeAttribute('data-header-tout-excluded');
+              if (state.ariaHidden == null) node.removeAttribute('aria-hidden');
+              else node.setAttribute('aria-hidden', state.ariaHidden);
+          }
+      });
+  }
+
+  function trackHeaderToutEligibility(node, type, eligible) {
+      headerToutEligibility.set(node, {
+          type: type,
+          eligible: eligible,
+          ariaHidden: node.getAttribute('aria-hidden')
+      });
+      reconcileHeaderTouts();
+  }
+
+  function trackHeaderCallEligibility(card, type, eligible) {
+      if (card.closest('#services') || !card.hasAttribute('wf-xano-item') ||
+          card.getAttribute('wf-xano-element') === 'template') return;
+      const root = card.closest('[wf-xano-element="wrapper"]');
+      if (!root || root.getAttribute('wf-xano-instance') !== 'starter-call-offers-header') return;
+      trackHeaderToutEligibility(card, type, eligible);
+  }
+
+  function setCallOfferVisible(card, visible) {
+      if (visible) {
+          card.removeAttribute('data-canonical-call-unavailable');
+          card.removeAttribute('aria-hidden');
+          card.style.display = 'block';
+      } else {
+          card.setAttribute('data-canonical-call-unavailable', '');
+          card.setAttribute('aria-hidden', 'true');
+          card.style.display = 'none';
+      }
+      trackHeaderCallEligibility(card, card.getAttribute('data-type') ||
+          card.getAttribute('data-call-offer-type'), visible);
+  }
+
+  function supersedeLegacyServiceCallCards(instanceRoot) {
+      qsa('[data-service-card="component"]').forEach(function (card) {
+          if (!card.closest('#services')) return;
+          if (instanceRoot && instanceRoot.contains(card)) return;
+          if (card.hasAttribute('data-xano-call-card') || card.hasAttribute('data-rate-card')) return;
+          if (card.hasAttribute('data-runtime-call-template')) return;
+          const type = card.getAttribute('data-type') ||
+              card.getAttribute('has-connection') ||
+              card.getAttribute('no-connection');
+          if (type !== 'free' && type !== 'paid') return;
+          card.setAttribute('data-call-offer-superseded', '');
+          card.setAttribute('aria-hidden', 'true');
+          card.style.display = 'none';
+      });
+  }
+
+  /**
+   * A canonical wrapper owns exactly one neutral `wf-xano` template. If an
+   * authored sibling card is left in the wrapper without `wf-xano-item`, the
+   * library does not own or remove it and it can remain visible beside the
+   * rendered clones with placeholder content. Fail that stray authored card
+   * closed while leaving the actual template untouched for future rerenders.
+   */
+  function supersedeCanonicalCallWrapperExtras(instanceRoot) {
+      if (!instanceRoot) return;
+      qsa('[data-service-card="component"]', instanceRoot).forEach(function (card) {
+          if (card.closest('[wf-xano-element="wrapper"]') !== instanceRoot) return;
+          if (card.hasAttribute('wf-xano-item')) return;
+          if (card.getAttribute('wf-xano-element') === 'template') return;
+          card.setAttribute('data-call-offer-superseded', '');
+          setCallOfferVisible(card, false);
+      });
+  }
+
+  function canonicalPublicItemForType(itemsById, type) {
+      return Array.from(itemsById.values()).find(function (item) {
+          return callOfferTypeOf(item) === type;
+      }) || null;
+  }
+
+  function supersedeLegacyHeaderCallCards() {
+      const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
+      if (!legacyRoot) return;
+      qsa('[data-service-card="component"]', legacyRoot).forEach(function (card) {
+          card.setAttribute('data-call-offer-superseded', '');
+          setCallOfferVisible(card, false);
+      });
+  }
+
+  /**
+   * The published hero still contains the earlier wf-xano `starter-calls`
+   * projection. Until Designer replaces it with `starter-call-offers-header`,
+   * repaint those two native touts from the new public call DTO. This keeps the
+   * Header on the same authority as Services without creating runtime markup.
+   */
+  function paintLegacyHeaderCanonicalContent(itemsById) {
+      const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
+      if (!legacyRoot) return;
+      const hasCanonicalHeader = !!qs('[wf-xano-instance="starter-call-offers-header"]');
+      if (hasCanonicalHeader) {
+          supersedeLegacyHeaderCallCards();
+          return;
+      }
+
+      ['free', 'paid'].forEach(function (type) {
+          const item = canonicalPublicItemForType(itemsById, type);
+          if (!item) return;
+          qsa(
+              '[data-service-card="component"][data-type="' + type + '"], ' +
+              '[data-service-card="component"][has-connection="' + type + '"], ' +
+              '[data-service-card="component"][no-connection="' + type + '"]',
+              legacyRoot
+          ).forEach(function (card) {
+              const title = qs('[data-service-card-element="title"]', card);
+              const titleText = String(item.name || '');
+              if (title && title.textContent !== titleText) title.textContent = titleText;
+              const description = qs('[data-service-card-element="description"]', card);
+              const descriptionText = String(item.description || '');
+              if (description && description.textContent !== descriptionText) {
+                  description.textContent = descriptionText;
+              }
+          });
+      });
+  }
+
+  function syncLoggedOutCanonicalHeader(itemsById) {
+      paintLegacyHeaderCanonicalContent(itemsById);
+      const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
+      if (!legacyRoot || qs('[wf-xano-instance="starter-call-offers-header"]')) return;
+
+      ['free', 'paid'].forEach(function (type) {
+          const item = canonicalPublicItemForType(itemsById, type);
+          qsa(
+              '[data-service-card="component"][data-type="' + type + '"], ' +
+              '[data-service-card="component"][has-connection="' + type + '"], ' +
+              '[data-service-card="component"][no-connection="' + type + '"]',
+              legacyRoot
+          ).forEach(function (card) {
+              card.removeAttribute('data-call-offer-superseded');
+              card.setAttribute('data-canonical-public-call', type);
+              const visible = !!(item && item.public_available === true);
+              setCallOfferVisible(card, visible);
+              if (!visible) {
+                  card.removeAttribute('data-signup-trigger-element');
+                  card.removeAttribute('data-signup-trigger-value');
+                  return;
+              }
+              const amount = Number(item.price);
+              if (Number.isFinite(amount) && amount >= 0) {
+                  const price = priceHookIn(card);
+                  if (price) paintRateElement(price, Math.round(amount * 100));
+              }
+              card.setAttribute('data-service-card-state', 'Default');
+              card.setAttribute('data-signup-trigger-element', 'service');
+              card.setAttribute(
+                  'data-signup-trigger-value',
+                  type === 'paid' ? 'Paid Consulting Call' : 'Free Call'
+              );
+              stripCallBookingRow(card);
+          });
+      });
+  }
+
+  function reconcileLegacyHeaderProjection() {
+      if (qs('[wf-xano-instance="starter-call-offers-header"]')) {
+          supersedeLegacyHeaderCallCards();
+          return;
+      }
+      if (latestCanonicalCallItems) {
+          paintLegacyHeaderCanonicalContent(latestCanonicalCallItems);
+      }
+      if (!MEMBER.id && latestCanonicalCallItems) {
+          syncLoggedOutCanonicalHeader(latestCanonicalCallItems);
+          return;
+      }
+      if (MEMBER.id && !isProfileOwner(MEMBER) && !isBrandMember(MEMBER)) {
+          supersedeLegacyHeaderCallCards();
+      }
+  }
+
+  function releaseXanoCallCard(card) {
+      [
+          'data-xano-call-card',
+          'data-service-card',
+          'data-service-card-state',
+          'data-call-offer-type',
+          'data-type',
+          'data-call-offer-state',
+          'data-call-owner-preview',
+          'data-call-service-direct',
+          'has-connection',
+          'no-connection',
+          'data-signup-trigger-element',
+          'data-signup-trigger-value',
+      ].forEach(function (attribute) {
+          card.removeAttribute(attribute);
+      });
+      setCallOfferVisible(card, false);
+  }
+
+  /**
+   * Normalize the owner call-settings readiness payload to strict booleans.
+   *
+   * free-call-settings.js and paid-call-settings.js own the same payload and
+   * read every flag with `=== true`, as does the `bookable` gate above. Reading
+   * the same keys by truthiness here would let a non-boolean value (`"false"`)
+   * be read as NOT ready by the starter dashboard and as ready by the profile
+   * card, so the owner is told to fix a step the dashboard still considers
+   * outstanding. One normalizer keeps every reader on the same answer.
+   */
+  function ownerReadinessOf(settings) {
+      const readiness = settings && settings.readiness ? settings.readiness : {};
+      return {
+          calendar_connected: readiness.calendar_connected === true,
+          availability_configured: readiness.availability_configured === true,
+          stripe_connect_linked: readiness.stripe_connect_linked === true,
+          stripe_charges_enabled: readiness.stripe_charges_enabled === true,
+          stripe_readiness_fresh: readiness.stripe_readiness_fresh === true,
+          free_call_enabled: readiness.free_call_enabled === true,
+          paid_call_enabled: readiness.paid_call_enabled === true,
+      };
+  }
+
+  function setupMessageFor(type, settings) {
+      const readiness = ownerReadinessOf(settings);
+      if (!readiness.calendar_connected) return 'Connect your calendar to offer calls.';
+      if (!readiness.availability_configured) return 'Add your availability to offer calls.';
+      if (type === 'paid') {
+          if (!readiness.stripe_connect_linked) return 'Connect Stripe to offer paid calls.';
+          if (!readiness.stripe_charges_enabled) return 'Finish your Stripe account setup to offer paid calls.';
+          if (!readiness.stripe_readiness_fresh) return 'Refresh your Stripe connection to offer paid calls.';
+          if (!readiness.paid_call_enabled) return 'Enable and price your Paid Call service.';
+      } else if (!readiness.free_call_enabled) {
+          return 'Enable your Free Call service.';
+      }
+      return 'Finish your call settings before this service can be booked.';
+  }
+
+  function callOfferTooltipNodes(card) {
+      const explicit = qsa('[data-call-offer-tooltip]', card);
+      if (explicit.length) return explicit;
+      const found = [];
+      qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (marker) {
+          let node = marker.parentElement;
+          while (node && node !== card) {
+              if (qs('[data-call-setup-action], [hover-cta]', node)) {
+                  if (found.indexOf(node) === -1) found.push(node);
+                  break;
+              }
+              node = node.parentElement;
+          }
+      });
+      return found;
+  }
+
+  function configureOwnerSetupActions(card, type, settings) {
+      const readiness = ownerReadinessOf(settings);
+      const message = setupMessageFor(type, settings);
+      qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (node) {
+          node.textContent = message;
+      });
+      callOfferTooltipNodes(card).forEach(function (node) {
+          node.style.display = 'block';
+          node.removeAttribute('hidden');
+          node.setAttribute('aria-hidden', 'false');
+      });
+
+      const needsCalendar = !readiness.calendar_connected || !readiness.availability_configured;
+      const needsStripe = type === 'paid' && !needsCalendar &&
+          (!readiness.stripe_connect_linked || !readiness.stripe_charges_enabled ||
+              !readiness.stripe_readiness_fresh);
+      const neededAction = needsCalendar ? 'calendar' : (needsStripe ? 'stripe' : 'settings');
+      qsa('[hover-cta], [data-call-setup-action]', card).forEach(function (cta) {
+          const action = cta.getAttribute('data-call-setup-action') ||
+              (cta.hasAttribute('stripe-connect-url') || cta.hasAttribute('stripe-dashboard-url')
+                  ? 'stripe'
+                  : 'calendar');
+          const show = action === neededAction;
+          const wrap = cta.closest('[hover-cta-wrap]') || cta;
+          wrap.style.display = show ? 'block' : 'none';
+          if (!cta.getAttribute('href') || cta.getAttribute('href') === '#') {
+              cta.setAttribute('href', '/starter-dashboard');
+          }
+      });
+  }
+
+  function configureOwnerSettingsUnavailable(card, loading) {
+      const message = loading
+          ? 'Call settings are loading. Open Call Settings if this continues.'
+          : 'Call settings could not be loaded. Refresh or open Call Settings.';
+      qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (node) {
+          node.textContent = message;
+      });
+      callOfferTooltipNodes(card).forEach(function (node) {
+          node.style.display = 'block';
+          node.removeAttribute('hidden');
+          node.setAttribute('aria-hidden', 'false');
+      });
+      qsa('[hover-cta], [data-call-setup-action]', card).forEach(function (cta) {
+          const action = cta.getAttribute('data-call-setup-action') ||
+              (cta.hasAttribute('stripe-connect-url') || cta.hasAttribute('stripe-dashboard-url')
+                  ? 'stripe'
+                  : 'calendar');
+          const show = action === 'settings';
+          const wrap = cta.closest('[hover-cta-wrap]') || cta;
+          wrap.style.display = show ? 'block' : 'none';
+          if (show && (!cta.getAttribute('href') || cta.getAttribute('href') === '#')) {
+              cta.setAttribute('href', '/starter-dashboard');
+          }
+      });
+  }
+
+  function applyOwnerCallCardStates(snapshot, records) {
+      if (!isProfileOwner(MEMBER)) return;
+      const accepted = Array.isArray(records)
+          ? records
+          : (snapshot && Array.isArray(snapshot.records) ? snapshot.records : []);
+      bookingOwner = true;
+      ownerBookingReady = accepted.length > 0;
+      setBookingButtonAvailable(false);
+      document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (card) {
+          const type = card.getAttribute('data-type');
+          const settings = snapshot && snapshot[type];
+          const settingsStatus = snapshot && snapshot.status
+              ? snapshot.status[type]
+              : 'loading';
+          const record = recordForType(accepted, type);
+          setCallOfferVisible(card, true);
+          card.removeAttribute('data-signup-trigger-element');
+          card.removeAttribute('data-signup-trigger-value');
+          card.removeAttribute('data-modal-trigger');
+          card.removeAttribute('data-call-service-direct');
+          card.setAttribute('data-call-owner-preview', '');
+          if (record) {
+              card.setAttribute('data-service-card-state', 'Default');
+              card.setAttribute('has-connection', type);
+              card.removeAttribute('no-connection');
+              card.setAttribute('data-call-offer-state', 'available');
+              callOfferTooltipNodes(card).forEach(function (node) {
+                  node.style.display = 'none';
+                  node.setAttribute('hidden', 'hidden');
+                  node.setAttribute('aria-hidden', 'true');
+              });
+          } else if (settingsStatus !== 'loaded') {
+              card.setAttribute('data-service-card-state', 'Disabled');
+              card.removeAttribute('has-connection');
+              card.removeAttribute('no-connection');
+              card.setAttribute(
+                  'data-call-offer-state',
+                  settingsStatus === 'loading' ? 'settings-loading' : 'settings-unavailable'
+              );
+              configureOwnerSettingsUnavailable(card, settingsStatus === 'loading');
+          } else {
+              card.setAttribute('data-service-card-state', 'Disabled');
+              card.removeAttribute('has-connection');
+              card.setAttribute('no-connection', type);
+              card.setAttribute('data-call-offer-state', 'setup-required');
+              configureOwnerSetupActions(card, type, settings);
+          }
+      });
+  }
+
+  function adaptXanoCallCards(instance, key, result) {
+      const itemsById = callOfferItemMap(result);
+      latestCanonicalCallItems = itemsById;
+      supersedeCanonicalCallWrapperExtras(instance.root);
+      paintLegacyHeaderCanonicalContent(itemsById);
+      if (key === 'starter-call-offers-services') {
+          supersedeLegacyServiceCallCards(instance.root);
+      } else if (key === 'starter-call-offers-header') {
+          supersedeLegacyHeaderCallCards();
+      }
+      const cards = Array.from(qsa('[wf-xano-item]', instance.root)).filter(function (card) {
+          return card.closest('[wf-xano-element="wrapper"]') === instance.root;
+      });
+      const adapted = [];
+
+      cards.forEach(function (card) {
+          const item = itemsById.get(String(card.getAttribute('data-wf-xano-id') || ''));
+          if (!item) {
+              releaseXanoCallCard(card);
+              return;
+          }
+          const type = callOfferTypeOf(item);
+          if (!type) {
+              releaseXanoCallCard(card);
+              return;
+          }
+          const title = qs('[data-service-card-element="title"]', card);
+          const description = qs('[data-service-card-element="description"]', card);
+          if (title) title.textContent = String(item.name || '');
+          if (description) description.textContent = String(item.description || '');
+          if (type === 'paid' && item.public_available === true) {
+              const amount = Number(item.price);
+              if (Number.isFinite(amount) && amount > 0) {
+                  const price = priceHookIn(card);
+                  if (price) paintRateElement(price, Math.round(amount * 100));
+              }
+          }
+
+          card.setAttribute('data-service-card', 'component');
+          card.setAttribute(
+              'data-service-card-state',
+              isProfileOwner(MEMBER) ? 'Disabled' : 'Default'
+          );
+          card.setAttribute('data-xano-call-card', key);
+          card.setAttribute('data-call-offer-type', type);
+          card.setAttribute('data-type', type);
+          card.setAttribute('data-call-offer-state', 'pending');
+          card.removeAttribute('booking-popup-open');
+          card.removeAttribute('data-modal-trigger');
+          adapted.push({ card: card, item: item, type: type });
+      });
+
+      if (!MEMBER.id) {
+          syncLoggedOutCanonicalHeader(itemsById);
+          adapted.forEach(function (entry) {
+              const card = entry.card;
+              const type = entry.type;
+              const visible = entry.item.public_available === true;
+              setCallOfferVisible(card, visible);
+              card.setAttribute('data-call-offer-state', visible ? 'available' : 'hidden');
+              if (visible) {
+                  card.setAttribute('has-connection', type);
+                  card.setAttribute('data-signup-trigger-element', 'service');
+                  card.setAttribute(
+                      'data-signup-trigger-value',
+                      type === 'paid' ? 'Paid Consulting Call' : 'Free Call'
+                  );
+                  stripCallBookingRow(card);
+              } else {
+                  card.removeAttribute('has-connection');
+                  card.removeAttribute('data-signup-trigger-element');
+                  card.removeAttribute('data-signup-trigger-value');
+              }
+          });
+          const anyPublicType = Array.from(itemsById.values()).some(function (item) {
+              return item.public_available === true;
+          });
+          loggedOutXanoCallsSettled = true;
+          // Both wrappers read the same canonical endpoint. Treat its latest
+          // completed response as authoritative for the shared Book Call CTA;
+          // retaining a per-wrapper OR lets a stale sibling keep the CTA open.
+          loggedOutXanoCallsAvailable = anyPublicType;
+          syncLoggedOutBookCallCta();
+          markServiceCardsClickable();
+      } else if (isProfileOwner(MEMBER)) {
+          applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+      } else if (isBrandMember(MEMBER)) {
+          adapted.forEach(function (entry) {
+              const card = entry.card;
+              setCallOfferVisible(card, false);
+              card.setAttribute('data-call-offer-state', 'pending');
+          });
+          // Canonical discovery can finish before wf-xano clones this card.
+          // Replay the already-installed set so a late clone does not stay in
+          // pending until some unrelated DOM mutation happens.
+          if (paintedCallState && Array.isArray(paintedCallState.configs)) {
+              syncCanonicalCallSurfaces(paintedCallState.configs);
+          }
+      } else {
+          supersedeLegacyHeaderCallCards();
+          adapted.forEach(function (entry) {
+              const card = entry.card;
+              setCallOfferVisible(card, false);
+              card.setAttribute('data-call-offer-state', 'hidden');
+          });
+      }
+
+      wireCallServiceCardsToDirectEntry();
+      repaintCallSurfaces();
+      reconcileHeaderTouts();
+      refreshEmptySectionNav();
   }
 
   /* XANO SERVICE CARDS (side-by-side CMS canary)
@@ -1884,6 +2891,108 @@
       });
   }
 
+  /* Normalize the legacy hero tout wrappers into native wf-xano lists. They
+     shipped without a template and reused the Services Retainer instance key,
+     leaving their authored zero visible without ever issuing a request. */
+  function installXanoHeroRateCards() {
+      const carrier = document.querySelector('[data-starter-xano-id]');
+      const pageStarterId = carrier ? String(carrier.textContent || '').trim() : '';
+      const roots = Array.from(qsa('[wf-xano-element="wrapper"]')).filter(function (root) {
+          const key = root.getAttribute('wf-xano-instance');
+          return !root.closest('#services') && (key === 'starter-hourly' || key === 'starter-retainer');
+      });
+      const prepared = [];
+      roots.forEach(function (root, index) {
+          const kind = root.getAttribute('wf-xano-instance') === 'starter-hourly' ? 'hourly' : 'retainer';
+          const display = root.style.display;
+          root.style.display = 'none';
+          root.setAttribute('aria-hidden', 'true');
+          root.setAttribute('data-canonical-hero-rate-state', 'pending');
+          trackHeaderToutEligibility(root, kind, false);
+          const templates = Array.from(qsa('[data-service-card="component"]', root)).filter(function (card) {
+              return card.closest('[wf-xano-element="wrapper"]') === root;
+          });
+          const starterId = String(root.getAttribute('wf-xano-param-starter_id') || '').trim();
+          if (templates.length !== 1 || !/^[1-9][0-9]*$/.test(starterId) || starterId !== pageStarterId) return;
+          const template = templates[0];
+          const price = qs('[wf-xano-bind="price"]', template);
+          if (!price) return;
+          // Preserve authored links, role attributes and layout; the library owns
+          // cloning/binding and the template's parent is its default list.
+          template.setAttribute('wf-xano-element', 'template');
+          template.style.display = 'none';
+          price.removeAttribute('data-millify-raw');
+          price.removeAttribute('data-millify-max');
+          price.setAttribute('data-millify', '');
+          price.textContent = '';
+          const key = 'starter-hero-' + kind + '-' + index;
+          root.setAttribute('wf-xano-instance', key);
+          root.setAttribute('wf-xano-source', 'KZf7nFnk:profile/starter/rates/v3');
+          root.setAttribute('wf-xano-method', 'GET');
+          root.setAttribute('wf-xano-auth', 'none');
+          root.setAttribute('wf-xano-param-kind', kind);
+          root.setAttribute('wf-xano-defer', 'true');
+          prepared.push({ root, kind, starterId, key, display });
+      });
+      window.WfXano = window.WfXano || [];
+      if (typeof window.WfXano.push !== 'function') return;
+      window.WfXano.push(function (wfx) {
+          if (!wfx || typeof wfx.init !== 'function' || typeof wfx.get !== 'function' || typeof wfx.destroy !== 'function') return;
+          prepared.forEach(function (entry) {
+              const root = entry.root;
+              function hide(status) {
+                  root.style.display = 'none';
+                  root.setAttribute('aria-hidden', 'true');
+                  root.setAttribute('data-canonical-hero-rate-state', status);
+                  trackHeaderToutEligibility(root, entry.kind, false);
+              }
+              function validated(items) {
+                  if (!Array.isArray(items) || items.length !== 1) return [];
+                  const item = items[0];
+                  return item && item.id === entry.kind + ':' + entry.starterId && item.type === entry.kind &&
+                      typeof item.price === 'number' && Number.isSafeInteger(item.price) && item.price > 0 &&
+                      item.price <= Number.MAX_SAFE_INTEGER / 100 ? [item] : [];
+              }
+              // Destroy by root, never by the formerly duplicated instance name.
+              wfx.destroy(root);
+              wfx.init(root);
+              const instance = wfx.get(entry.key);
+              if (!instance || instance.root !== root || typeof instance.on !== 'function') return;
+              instance.on('beforeRender', validated);
+              function apply(result) {
+                  const items = validated(result && result.items);
+                  const cards = Array.from(qsa('[wf-xano-item]', root)).filter(function (card) {
+                      return card.closest('[wf-xano-element="wrapper"]') === root;
+                  });
+                  if (items.length !== 1 || cards.length !== 1 || cards[0].getAttribute('data-wf-xano-id') !== items[0].id) {
+                      hide('empty');
+                      return;
+                  }
+                  const price = qs('[wf-xano-bind="price"]', cards[0]);
+                  if (!price) { hide('error'); return; }
+                  price.removeAttribute('data-millify-max');
+                  if (!paintRateElement(price, items[0].price * 100)) { hide('error'); return; }
+                  cards[0].setAttribute('data-canonical-hero-rate', entry.kind);
+                  root.style.display = entry.display;
+                  root.setAttribute('aria-hidden', 'false');
+                  root.setAttribute('data-canonical-hero-rate-state', 'ready');
+                  trackHeaderToutEligibility(root, entry.kind, true);
+              }
+              instance.on('results', apply);
+              instance.on('error', function () { hide('error'); });
+              if (typeof instance.subscribe === 'function') {
+                  instance.subscribe(function (state) {
+                      if (state.status !== 'success') hide(state.status || 'pending');
+                  });
+              }
+              if (typeof instance.getState === 'function') {
+                  const state = instance.getState();
+                  if (state && state.status === 'success') apply(state.data);
+              }
+          });
+      });
+  }
+
   /* XANO RETAINER CARD
      The Designer owns a separate `starter-retainer` wrapper because Retainer
      is a one-per-profile commercial format, not one row in the custom Services
@@ -1972,6 +3081,18 @@
           if (title) title.textContent = String(item.name || 'Ongoing Advisory Retainer');
           if (description) description.textContent = String(item.description || '');
 
+          // This canonical Retainer is not a Paid/custom-service price. Its
+          // authored template carries a 5000 formatting ceiling, below the
+          // valid Retainer range. Match the hero's formatter contract without
+          // clamping legacy rates or changing another offer's guard.
+          const price = qs('[wf-xano-bind="price"][data-millify]', card);
+          const amount = Number(item.price);
+          if (price && Number.isSafeInteger(amount) && amount > 0 &&
+              Number.isSafeInteger(amount * 100)) {
+              price.removeAttribute('data-millify-max');
+              paintRateElement(price, amount * 100);
+          }
+
           card.setAttribute('data-service-card', 'component');
           card.setAttribute('data-service-card-state', 'Default');
           card.setAttribute('data-rate-card', 'retainer');
@@ -2022,7 +3143,17 @@
 
   function renderRateCards(record) {
       const list = document.querySelector('#services .services-list_wrapper');
-      const template = list ? list.querySelector('[data-service-card="component"][data-service-card-state="Default"]') : null;
+      // The clone source has to be the AUTHORED card. Every wf-xano adapter
+      // stamps the same `data-service-card` / `data-service-card-state` pair on
+      // its rendered clones for styling parity, and the authored wf-xano
+      // template carries that pair too and survives in the DOM — both live in
+      // this same list. Rejecting anything owned by a wf-xano wrapper covers
+      // both decoys for all three adapters, so the Designer's placement order
+      // cannot decide which element the Freelance and Retainer cards clone.
+      const template = list
+          ? Array.from(list.querySelectorAll('[data-service-card="component"][data-service-card-state="Default"]'))
+              .find(function (candidate) { return !candidate.closest('[wf-xano-element="wrapper"]'); })
+          : null;
       if (!list || !template) {
           console.warn('Rate services:', 'Card template not found');
           return;
@@ -2054,6 +3185,7 @@
           el.removeAttribute('data-runtime-call-template');
           el.removeAttribute('data-runtime-free-call-card');
           el.removeAttribute('data-canonical-call-unavailable');
+          el.removeAttribute('data-call-offer-superseded');
           el.setAttribute('aria-hidden', 'false');
 
           // Keep data-signup-trigger-* so signup-attribution.js opens the
@@ -2275,7 +3407,7 @@
   async function startersBooking_handler(freelancerId, brand_name, brand_email) {
 
       if (!validBookingDiscovery(freeCallBooking)) {
-          syncCanonicalCallSurfaces([]);
+          settleEmptyCallDiscovery();
           console.warn('[hire-profile] Free Call booking controller is unavailable');
           return;
       }
@@ -2396,15 +3528,16 @@
               repaintCallSurfaces();
               if (callSurfacesChanged) refreshEmptySectionNav();
               if (!bookingSurfaceAvailable) return;
-              setBookingButtonAvailable(true);
+              // syncCanonicalCallSurfaces owns the final intersection of
+              // installed controllers and current public readiness.
 
           } else {
-              syncCanonicalCallSurfaces([]);
+              settleEmptyCallDiscovery();
               console.warn("No Configurations found for the current starter.");
           }
 
       } else {
-          syncCanonicalCallSurfaces([]);
+          settleEmptyCallDiscovery();
           console.warn("No Nylas Grant ID found for the current starter.");
       }
   }

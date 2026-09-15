@@ -14,6 +14,12 @@ The header block in [`turnstile-contents-fix.js`](turnstile-contents-fix.js) is
 **authoritative**. This document explains the model behind it; where the two ever
 disagree, the header wins.
 
+[`memberstack-loader/memberstack-loader.js`](memberstack-loader/memberstack-loader.js)
+is the second exception. It has no docs-site page yet, so its contract lives in
+its own header block, which is **authoritative**. The
+[root README](../../README.md) and the table below carry a one-line summary and
+point back to that header.
+
 ## Turnstile arming for `display: contents` forms
 
 Webflow "bot protection" (Cloudflare Turnstile) is on site-wide, so the published
@@ -29,6 +35,41 @@ forms runtime does this to every `form[data-turnstile-sitekey]`:
 4. in the widget callback, stores the token on Webflow's own state object
    (`jQuery.data(form, '.w-form').turnstileToken`), re-enables the buttons
    (`disabled = !!(sitekey && !turnstileToken)`) and clears `w-form-loading`.
+
+Memberstack forms (`form[data-ms-form]`) are armed like every other form, but
+they submit through Memberstack instead of Webflow, so the token is never used.
+The global stylesheet embed [`global-embeds/global.css`](../global.css) hides the
+appended Turnstile wrapper on those forms (search that file for
+`cf-turnstile-response`), because it otherwise counts as an extra flex item under
+the signup modal and account settings forms. That stylesheet is a body embed
+pasted into Webflow rather than a CDN script, so the live copy is edited by hand.
+
+## CTA disabled-state ownership marks
+
+More than one script can disable the same `[ms-code-submit-button]` CTA, so
+[`password-validation/password-validation.js`](password-validation/password-validation.js)
+marks its own writes: `data-password-validation-aria` wherever it sets
+`aria-disabled="true"`, and `data-password-validation-native` wherever it sets a
+native control's `disabled`. Both land on the marker root, the theme element and
+every control under the marker, at runtime only. Never author either attribute in
+Webflow, and never write them from another script: the CTA gate clears only the
+state carrying its own mark, so a mark written by anyone else lets it erase a
+refusal it does not own. Scripts that hold the same CTA should keep announcing
+themselves with `data-form-flow-disabled` / `data-validate-disabled`, which the
+gate reads as a refusal it must leave alone.
+
+[`memberstack-loader/memberstack-loader.js`](memberstack-loader/memberstack-loader.js)
+marks its own writes the same way, with `data-memberstack-loader-theme`,
+`data-memberstack-loader-busy` and `data-memberstack-loader-aria`. They are
+written at runtime only, so never author them in Webflow either. The loader
+lifts only what carries one of its own marks, which is what lets
+password-validation's hold and the loader's Pending state share one CTA
+without either script undoing the other. The theme is one exception: it is
+always overwritten while Pending, and an authored value is parked on the wrap
+and put back on hide, so a wrap that had no theme ends up with none.
+`data-ms-loading` is the second exception: the loader writes and removes it
+without a mark because nothing else on the site writes it, so give it a mark
+like the others if that ever changes.
 
 A form carrying Webflow's `display-contents` class **generates no box**, so its
 `getBoundingClientRect()` is `0 × 0` and the observer never reports it as
@@ -272,10 +313,13 @@ full inventory is in the root [`README.md`](../../README.md).
 | [`timepicker/timepicker.js`](timepicker/timepicker.js) | Time-input picker ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/timepicker)) |
 | [`checkbox-toggle/checkbox-toggle.js`](checkbox-toggle/checkbox-toggle.js) | Checkbox-driven visibility toggling ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/checkbox-toggle)) |
 | [`password-toggle/password-toggle.js`](password-toggle/password-toggle.js) | Show/hide password control ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-toggle)) |
-| [`password-validation/password-validation.js`](password-validation/password-validation.js) | Password-requirements checklist and whole-form CTA gating (password rules + terms + plausible email when present); disables the full `[ms-code-submit-button]` control set including Memberstack's `.clickable_btn` overlay, bridges an enabled non-submitting overlay click into a cancelable synthetic submit (never a native submission), and paints post-submit Memberstack/Turnstile rejections onto the form's `.w-form-fail` block; rule set configured per instance via `starters-password-validation-*` wrapper attributes ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation)) |
+| [`password-validation/password-validation.js`](password-validation/password-validation.js) | Password-requirements checklist and whole-form CTA gating on Memberstack forms carrying `[ms-code-submit-button]`: the checklist rules plus the Gateable Fields the form has, the reset code (`input[data-ms-member="token"]`) among them, so a reset-password form holds its CTA until both the code and the new password are in. The root [`README.md`](../../README.md#current-scripts) entry owns the full contract ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-validation)) |
+| [`memberstack-loader/memberstack-loader.js`](memberstack-loader/memberstack-loader.js) | Busy and disabled Button look on Memberstack auth forms for as long as Memberstack shows its `data-ms-loader` spinner, with a double-submit guard; read `window.startersMemberstackLoader.release` for the version in the page. The file header owns the full contract |
 | [`form-input-filter/form-input-filter.js`](form-input-filter/form-input-filter.js) | Input filtering and normalization ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-input-filter)) |
 | [`input-preview.js`](input-preview.js) | Echoes an input's value into a preview element ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/input-preview)) |
 
 Companion stylesheets sit beside their scripts, plus a folder-level
 [`form.css`](form.css). Unlike the other embeds in [`global-embeds/`](../README.md),
 nothing here is documented per-file in this folder except the Turnstile fix above.
+The Memberstack loader's own header block owns the full contract. The root README
+and this table carry one-line summaries that point back to it.

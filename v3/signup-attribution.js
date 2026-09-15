@@ -1,7 +1,7 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.232
+ * @release v1.59.565
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code) rather than on
  * one funnel, which is why it lives here in `v3/` alongside the other standalone
@@ -214,7 +214,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.232'
+    var RELEASE = 'v1.59.565'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72
@@ -330,7 +330,7 @@
     var LEAD_ENTRY_API_URL =
         'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/lead_email/register/v3'
     var LEAD_ENTRY_RETRY_DELAYS = [0, 750, 2000, 5000]
-    var LEAD_ENTRY_POSTHOG_RETRY_DELAYS = [0, 250, 1000, 3000, 7500]
+    var LEAD_ENTRY_POSTHOG_RETRY_DELAYS = [0, 250, 1000, 3000, 7500, 15000]
     var LEAD_ENTRY_MAX_AGE_MS = 24 * 60 * 60 * 1000
     var LEAD_ENTRY_PRODUCTION_HOSTS = {
         'thestarters.com': true,
@@ -394,7 +394,7 @@
             posthogSourceContext: true,
         },
         {
-            prefix: '/learn/interviews-analyses/',
+            prefix: '/learn/interviews-analysis/',
             collectionId: '69dca9df095d2fbcf34e255b',
             pageId: '69dca9df095d2fbcf34e2575',
             intentSubtype: 'learn_signup',
@@ -886,7 +886,10 @@
                 properties.source_route = pending.source_route
                 properties.source_resource_slug = pending.source_resource_slug
             }
-            window.posthog.capture('v3_lead_entry_registered', properties)
+            window.posthog.capture('v3_lead_entry_registered', properties, {
+                send_instantly: true,
+                transport: 'sendBeacon',
+            })
             return true
         } catch (error) {
             try {
@@ -1208,11 +1211,61 @@
         }
     }
 
+    var onLeadEntrySignupControlClick = function (event) {
+        try {
+            if (
+                !leadEntryContextForPath(
+                    (window.location && window.location.pathname) || '',
+                )
+            ) {
+                return
+            }
+            var target = event && event.target
+            if (!target || typeof target.closest !== 'function') return
+            if (target.closest(LOGIN_FORM_SELECTOR)) {
+                leadEntrySignupSubmitted = false
+            }
+        } catch (error) {
+            /* an unreadable control fails closed */
+        }
+    }
+
+    var bindLeadEntryFormSubmit = function (form) {
+        try {
+            if (!form || typeof form.addEventListener !== 'function') return
+            if (form.__startersLeadEntrySubmitBound) return
+            form.__startersLeadEntrySubmitBound = true
+            form.addEventListener('submit', onLeadEntrySignupSubmit, false)
+        } catch (error) {
+            /* a form that cannot listen stays on the delegated fallback */
+        }
+    }
+
+    var bindLeadEntryFormSubmits = function () {
+        try {
+            if (!document || typeof document.querySelectorAll !== 'function') return
+            var selectors = [SIGNUP_FORM_SELECTOR, 'form[data-ms-form="login"]']
+            selectors.forEach(function (selector) {
+                var forms = document.querySelectorAll(selector)
+                for (var index = 0; index < forms.length; index += 1) {
+                    bindLeadEntryFormSubmit(forms[index])
+                }
+            })
+        } catch (error) {
+            /* delegated submit remains the fail-closed fallback */
+        }
+    }
+
     /** @returns {void} */
     var bindLeadEntrySignupSubmit = function () {
         try {
             if (!document || typeof document.addEventListener !== 'function') return
-            document.addEventListener('submit', onLeadEntrySignupSubmit, true)
+            // The shared Memberstack bridge dispatches submit on the form. A
+            // direct target listener runs after its capture-phase validation
+            // gate but before Memberstack can stop bubbling at document level.
+            bindLeadEntryFormSubmits()
+            document.addEventListener('submit', onLeadEntrySignupSubmit, false)
+            document.addEventListener('click', onLeadEntrySignupControlClick, true)
         } catch (error) {
             /* a page that cannot listen never registers a lead entry */
         }

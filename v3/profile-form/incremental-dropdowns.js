@@ -284,7 +284,6 @@
 
         const captureField = qs('[data-input-capture]', dropdown);
         if (captureField) {
-          const data = JSON.parse(captureField.value || '{}');
           const fields = qsa('input, textarea, select', dropdown);
 
           fields.forEach(field => {
@@ -293,12 +292,20 @@
             const syncCaptureField = () => {
               const name = field.dataset.name.replace(`${dropdown.dataset.entity.toLowerCase()}-`, '');
 
-              data[name] = field.value;
-
               // validateFields(dropdown);
               updateAddButtonState(wrapper, addButton, MAX);
 
+              // Hydration or another field can replace this JSON after setup.
+              // Read it now so a blur never restores a closed-over stale sibling.
+              const data = JSON.parse(captureField.value || '{}');
+              const previous = data[name];
+              if (previous === field.value ||
+                  (typeof previous === 'number' && Number.isFinite(previous) && String(previous) === field.value)) return;
+              data[name] = field.value;
               captureField.value = JSON.stringify(data);
+              // Missing/null and blank are the same unfilled control state.
+              // Normalize the capture without inventing an unsaved member edit.
+              if (previous == null && field.value === '') return;
               captureField.dispatchEvent(new Event('change', { bubbles: true }));
             };
 

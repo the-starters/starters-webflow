@@ -54,6 +54,16 @@ class Link {
     this.listeners.set(type, listener)
   }
 
+  matches(selector) {
+    assert.equal(selector, '[ms-code-field-link]')
+    return this.attributes.has('ms-code-field-link')
+  }
+
+  querySelectorAll(selector) {
+    assert.equal(selector, '[ms-code-field-link]')
+    return []
+  }
+
   click() {
     const event = {
       defaultPrevented: false,
@@ -74,6 +84,7 @@ class Link {
 function load(options) {
   const links = options.links || []
   const listeners = new Map()
+  const observers = []
   const requests = []
   const timers = []
   let fetchesPending = 0
@@ -87,6 +98,8 @@ function load(options) {
       return timers.length
     },
     document: {
+      readyState: options.readyState || 'loading',
+      documentElement: {},
       addEventListener(type, listener) {
         listeners.set(type, listener)
       },
@@ -94,6 +107,14 @@ function load(options) {
         assert.equal(selector, '[ms-code-field-link]')
         return links
       },
+    },
+    MutationObserver: class {
+      constructor(callback) {
+        this.callback = callback
+        observers.push(this)
+      }
+
+      observe() {}
     },
     localStorage: {
       getItem(key) {
@@ -123,8 +144,20 @@ function load(options) {
   }
 
   vm.runInNewContext(SOURCE, context)
-  listeners.get('DOMContentLoaded')()
-  return { context, links, requests, timers, maxFetchesPending: () => maxFetchesPending }
+  if (context.document.readyState === 'loading') listeners.get('DOMContentLoaded')()
+  return {
+    context,
+    links,
+    requests,
+    timers,
+    maxFetchesPending: () => maxFetchesPending,
+    addLink(link) {
+      links.push(link)
+      observers.forEach((observer) => {
+        observer.callback([{ addedNodes: [link] }])
+      })
+    },
+  }
 }
 
 async function flush() {
@@ -150,7 +183,7 @@ test('View Profile waits for live Memberstack identity and ignores a stale membe
   })
 
   assert.equal(link.style.display, '')
-  assert.equal(link.textContent, 'View Profile')
+  assert.equal(link.textContent, 'View Profile (Publishing)')
   assert.equal(link.classList.contains('is-disabled'), true)
   assert.equal(link.getAttribute('aria-disabled'), 'true')
   assert.equal(link.getAttribute('href'), null)
@@ -199,7 +232,7 @@ test('View Profile awaits memberReady before reading the live Memberstack identi
   assert.equal(link.style.display, '')
 })
 
-test('View Profile shows publishing only after an empty resolver result and then activates', async () => {
+test('View Profile stays in publishing state for an empty resolver result and then activates', async () => {
   const link = new Link({
     href: '#',
     'ms-code-field-link': 'freelancer-profile-url',
@@ -251,7 +284,7 @@ test('View Profile retries a late Memberstack arrival without changing its autho
   })
   const result = load({ links: [link], memberstack: false })
 
-  assert.equal(link.textContent, 'View Profile')
+  assert.equal(link.textContent, 'View Profile (Publishing)')
   assert.equal(link.href, '')
   await flush()
   assert.equal(result.requests.length, 0)
@@ -282,7 +315,7 @@ test('View Profile recovers when getCurrentMember initially rejects', async () =
   })
 
   await flush()
-  assert.equal(link.textContent, 'View Profile')
+  assert.equal(link.textContent, 'View Profile (Publishing)')
   assert.equal(result.requests.length, 0)
   assert.equal(result.timers.length, 1)
   result.timers.shift().callback()
@@ -306,7 +339,7 @@ test('View Profile recovers from a resolver failure with one non-overlapping ret
   })
 
   await flush()
-  assert.equal(link.textContent, 'View Profile')
+  assert.equal(link.textContent, 'View Profile (Publishing)')
   assert.equal(result.requests.length, 1)
   assert.equal(result.timers.length, 0)
   firstResponse.resolve({ ok: false })
@@ -367,4 +400,48 @@ test('a real static profile link remains authoritative', async () => {
   await flush()
   assert.equal(result.requests.length, 0)
   assert.equal(link.href, '/hire/static-profile')
+})
+
+test('View Profile binds when the script loads after DOMContentLoaded', async () => {
+  const link = new Link({
+    href: '#',
+    'ms-code-field-link': 'freelancer-profile-url',
+    'data-class-disabled': '.is-disabled',
+  })
+  const result = load({
+    links: [link],
+    readyState: 'complete',
+    currentMember: { id: 'mem_afterdom123' },
+    response: { ok: true, json: async () => ({ slug: '' }) },
+  })
+
+  assert.equal(link.style.display, '')
+  assert.equal(link.textContent, 'View Profile (Publishing)')
+  assert.equal(link.classList.contains('is-disabled'), true)
+  assert.equal(link.getAttribute('aria-disabled'), 'true')
+  await flush()
+  assert.equal(result.requests.length, 1)
+})
+
+test('View Profile binds when the navbar link is added after startup', async () => {
+  const result = load({
+    links: [],
+    readyState: 'complete',
+    currentMember: { id: 'mem_latenav123' },
+    response: { ok: true, json: async () => ({ slug: '' }) },
+  })
+  const link = new Link({
+    href: '#',
+    'ms-code-field-link': 'freelancer-profile-url',
+    'data-class-disabled': '.is-disabled',
+  })
+
+  result.addLink(link)
+
+  assert.equal(link.style.display, '')
+  assert.equal(link.textContent, 'View Profile (Publishing)')
+  assert.equal(link.classList.contains('is-disabled'), true)
+  assert.equal(link.getAttribute('aria-disabled'), 'true')
+  await flush()
+  assert.equal(result.requests.length, 1)
 })

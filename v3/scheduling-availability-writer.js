@@ -37,6 +37,13 @@
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
+  // A stored paid-call rate the whole-dollar contract rejects stops the transition
+  // before the irreversible provider request. That is a repairable Call Settings
+  // problem, not a connection failure, so the authored error step must name the
+  // rate instead of leaving the member with generic calendar copy.
+  const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
+  const ERROR_TEXT_PAID_CALL_RATE =
+    'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
@@ -453,6 +460,33 @@
   /* UI helpers (legacy step semantics)                                  */
   /* ------------------------------------------------------------------ */
 
+  // Remembers the authored copy the first time the shared error step is revealed,
+  // so every path that reveals it restores that copy and only a rate-aware caller
+  // can replace it. Otherwise one transition's remediation message would still be
+  // on screen for the next, unrelated failure.
+  let authoredTransitionErrorCopy = null
+
+  // Only a leaf the step authored as its copy may be written through. An element
+  // holding markup of its own — an icon beside the text, a wrapper — is left alone
+  // so the step is revealed exactly as authored rather than flattened into a
+  // single text node for the rest of the session.
+  function transitionErrorCopyLeaf(step) {
+    const errorEl = step ? qs('[error-text-element]', step) : null
+    if (!errorEl) return null
+    const childElements = typeof errorEl.childElementCount === 'number'
+      ? errorEl.childElementCount
+      : (errorEl.children ? errorEl.children.length : 0)
+    return childElements === 0 ? errorEl : null
+  }
+
+  function restoreTransitionErrorCopy(step) {
+    const errorEl = transitionErrorCopyLeaf(step)
+    if (!errorEl) return null
+    if (authoredTransitionErrorCopy === null) authoredTransitionErrorCopy = errorEl.textContent
+    errorEl.textContent = authoredTransitionErrorCopy
+    return errorEl
+  }
+
   function switchStep(step) {
     let stepElement = null
     qsa('[availability-step]').forEach(function (el) {
@@ -463,7 +497,15 @@
         el.style.display = 'none'
       }
     })
+    if (step === 'config-request-error') restoreTransitionErrorCopy(stepElement)
     return stepElement
+  }
+
+  function showTransitionError(error) {
+    const step = switchStep('config-request-error')
+    if (!error || error.code !== PAID_CALL_RATE_UNSUPPORTED) return
+    const errorEl = transitionErrorCopyLeaf(step)
+    if (errorEl) errorEl.textContent = ERROR_TEXT_PAID_CALL_RATE
   }
 
   // Matches the page's shared `[data-custom-loader]` contract.
@@ -643,13 +685,31 @@
     const avails = availability.items
     for (const id in avails) {
       if (!Object.prototype.hasOwnProperty.call(avails, id)) continue
+      const avail = avails[id]
+      if (id === 'general' && avail.days.length === 0) continue
       availabilityArray.push({
-        days: avails[id].days,
-        start: avails[id].start,
-        end: avails[id].end,
+        days: avail.days,
+        start: avail.start,
+        end: avail.end,
       })
     }
     return availabilityArray
+  }
+
+  function reconcileGeneralDays() {
+    const general = availability.items.general
+    if (!general) return
+    const baseDays = Array.isArray(general.defaultDays) ? general.defaultDays : general.days
+    const claimed = []
+    for (const id in availability.items) {
+      if (!Object.prototype.hasOwnProperty.call(availability.items, id) || id === 'general') continue
+      availability.items[id].days.forEach(function (day) {
+        if (claimed.indexOf(day) === -1) claimed.push(day)
+      })
+    }
+    general.days = baseDays.filter(function (day) {
+      return claimed.indexOf(day) === -1
+    })
   }
 
   function writeAvailabilityCache() {
@@ -821,11 +881,17 @@
       duration_minutes: Number(service.duration),
     }
     if (
-      intent.title.length < 3 ||
       !Number.isInteger(intent.price_cents) ||
       intent.price_cents < 100 ||
-      [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1
+      intent.price_cents > 100000 ||
+      intent.price_cents % 100 !== 0
     ) {
+      throw Object.assign(
+        new Error('Canonical paid-call rate is outside the whole-dollar contract'),
+        { code: PAID_CALL_RATE_UNSUPPORTED },
+      )
+    }
+    if (intent.title.length < 3 || [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1) {
       throw new Error('Canonical paid-call service cannot be preserved')
     }
     return intent
@@ -1240,25 +1306,21 @@
 
     const step = form.closest('[availability-step]')
     setLoader(true, step)
+    const previousAvailability = JSON.parse(JSON.stringify(availability))
+    let canonicalSaved = false
 
     try {
       const availId = form.dataset.availabilityId || 'general'
       const avail = { days: selectedDays, start: startTime.value, end: endTime.value }
 
-      if (availId !== 'general') {
-        const general = availability.items.general
-        if (general) {
-          general.days = general.days.filter(function (day) {
-            return avail.days.indexOf(day) === -1
-          })
-          availability.items.general = general
-        }
-      } else {
+      if (availId === 'general') {
         avail.defaultDays = avail.days
       }
 
       availability.items[availId] = avail
+      if (availId !== 'general') reconcileGeneralDays()
       await updateAvail()
+      canonicalSaved = true
 
       if (initialState) {
         await refreshCanonicalConnectionState()
@@ -1310,6 +1372,11 @@
       switchStep('default')
       setLoader(false, step)
     } catch (error) {
+      if (!canonicalSaved) {
+        availability = previousAvailability
+        window.STARTER_AVAILABILITY = previousAvailability
+        renderAvail()
+      }
       publishCalendarConnectionError()
       setLoader(false, step)
       switchStep('config-request-error')
@@ -1398,7 +1465,7 @@
         console.warn('[scheduling-writer] manager recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
-      switchStep('config-request-error')
+      showTransitionError(error)
       console.warn('[scheduling-writer] manager change failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'manager-submit',
@@ -1453,7 +1520,7 @@
         console.warn('[scheduling-writer] disconnect recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
-      switchStep('config-request-error')
+      showTransitionError(error)
       console.warn('[scheduling-writer] disconnect failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'disconnect-calendar',
@@ -1508,16 +1575,14 @@
     const removed = availability.items[item.dataset.id]
     const general = availability.items.general
     if (!removed || !general) return
-    removed.days.forEach(function (day) {
-      if (general.defaultDays && general.defaultDays.indexOf(day) > -1) {
-        general.days.push(day)
-      }
-    })
-    availability.items.general = general
+    const previousAvailability = JSON.parse(JSON.stringify(availability))
+    let canonicalSaved = false
     delete availability.items[item.dataset.id]
+    reconcileGeneralDays()
 
     try {
       await updateAvail()
+      canonicalSaved = true
       if (grantId) {
         const updated = await updateConfigs(null, true)
         if (!updated) {
@@ -1532,6 +1597,11 @@
       renderAvail()
       emit('starterSchedulingWriteSuccess', { action: 'availability-remove' })
     } catch (error) {
+      if (!canonicalSaved) {
+        availability = previousAvailability
+        window.STARTER_AVAILABILITY = previousAvailability
+        renderAvail()
+      }
       publishCalendarConnectionError()
       switchStep('config-request-error')
       console.warn('[scheduling-writer] availability remove failed:', error && error.message)

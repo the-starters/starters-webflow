@@ -73,7 +73,7 @@
  * Install: one deferred page-level tag on each in-scope page, AFTER
  * v3/route-guard.js. Diagnostics are staging-only (`*.webflow.io`,
  * localhost, 127.0.0.1, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`);
- * production is silent. Wiring: v3/STARTER-PROFILE-REDIRECT-WIRING.md.
+ * production is silent. Wiring: docs/wiring/STARTER-PROFILE-REDIRECT-WIRING.md.
  */
 ;(function () {
   'use strict'

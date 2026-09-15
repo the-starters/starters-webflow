@@ -117,8 +117,8 @@
   },
   "candidateAssets": {
     "v3/profile-form/shared-foundation.js": {
-      "candidateCharacters": 22892,
-      "candidateSha256": "7af566f3bd01f172416d0be37d5b669e9e80848049e980653b237d60d047a214",
+      "candidateCharacters": 24674,
+      "candidateSha256": "a24c018b4d015a5d667023bca62bb0b05278e5eb4faef133b9503e5e3aed756c",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "liveCaptureAsset": "v3/profile-form/shared-foundation-published.capture.txt",
@@ -127,8 +127,8 @@
       }
     },
     "v3/profile-form/incremental-dropdowns.js": {
-      "candidateCharacters": 14107,
-      "candidateSha256": "f239896721ec2048d138af0d8874596509710ca5ac039d016f15dcdcffa15faf",
+      "candidateCharacters": 14708,
+      "candidateSha256": "015173062d8bfbeeaf9222e149edad5a34e709ad04c4e39506414e752e6eb39e",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "incrementalDropdowns",
@@ -148,8 +148,8 @@
       }
     },
     "v3/starter-edit-profile/canonical-profile-loader.js": {
-      "candidateCharacters": 19419,
-      "candidateSha256": "432b1cb971772518877a5070b060b0eaa2ca39cc1b39f473d6cc3b38d83d3be2",
+      "candidateCharacters": 25233,
+      "candidateSha256": "0987ddd56267c76c39fcb9a7b06dd17d50df6d69958ae69dcc2af37d091ff661",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "canonicalProfileLoader",
@@ -159,8 +159,8 @@
       }
     },
     "v3/build-profile/draft-state.js": {
-      "candidateCharacters": 11151,
-      "candidateSha256": "f5311c42114ae706587bf0abe9738b80dbb798319b049781766a490df4936f7a",
+      "candidateCharacters": 11857,
+      "candidateSha256": "d7f029fb5e0324078b1c5c962bcd7bb4af301932735eb3f1bd8e32fc90941e2c",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileDraftState",
@@ -170,12 +170,12 @@
       }
     },
     "v3/build-profile/submit-writer.js": {
-      "candidateCharacters": 11438,
-      "candidateSha256": "64bdb27d4834cd218ffe4b9dfd3777ebc0e00d0e8ea838f1106a2b503098a445",
+      "candidateCharacters": 19485,
+      "candidateSha256": "9fcf1705b1810f73c64ce4671c74e058286a917d610ce7138681f34cb3cd8645",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileSubmitWriter",
-        "restoreTrailingWhitespace": { "219": "          " },
+        "restoreTrailingWhitespace": { "270": "          " },
         "terminalNewlinesRemoved": 0,
         "liveCaptureAsset": "v3/profile-form/build-submit-writer-published.capture.txt"
       }

@@ -8,7 +8,7 @@ const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.232'
+const RELEASE = 'v1.59.565'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
@@ -164,8 +164,20 @@ const markerOnDiv = (kind) => ({ kind, isForm: false })
  *
  * @param {string | {kind: string, isForm: boolean}} entry
  */
-const markerElement = (entry) =>
-    typeof entry === 'string' ? { kind: entry, isForm: true } : entry
+const markerElement = (entry) => {
+    const marker = typeof entry === 'string' ? { kind: entry, isForm: true } : entry
+    const listeners = []
+    return Object.assign({}, marker, {
+        listeners,
+        addEventListener(name, handler, options) {
+            const capture = options === true || (options && options.capture === true)
+            listeners.push([name, handler, capture])
+        },
+        getAttribute(name) {
+            return name === 'data-ms-form' ? marker.kind : null
+        },
+    })
+}
 
 /**
  * `document` double whose `cookie` accessor behaves like the browser's: reading
@@ -187,6 +199,7 @@ function documentDouble(initial, readOnly, forms, referrer) {
     const jar = new Map(Object.entries(initial || {}))
     const writes = []
     const markers = forms || []
+    const markerElements = []
 
     return {
         readyState: 'complete',
@@ -214,7 +227,10 @@ function documentDouble(initial, readOnly, forms, referrer) {
             const formOnly = Boolean(match[1])
             const kind = match[2]
             return markers
-                .map(markerElement)
+                .map((entry, index) => {
+                    if (!markerElements[index]) markerElements[index] = markerElement(entry)
+                    return markerElements[index]
+                })
                 .filter(
                     (element) =>
                         element.kind === kind &&
@@ -266,6 +282,7 @@ function boot(options = {}) {
     const updateCalls = []
     const fetchCalls = []
     const posthogCalls = []
+    const posthogCaptureOptions = []
     const memberReads = []
     let releaseMember = () => {}
 
@@ -404,7 +421,10 @@ function boot(options = {}) {
             ? undefined
             : {
                   __loaded: options.posthogLoaded !== false,
-                  capture: (name, properties) => posthogCalls.push({ name, properties }),
+                  capture: (name, properties, captureOptions) => {
+                      posthogCalls.push({ name, properties })
+                      posthogCaptureOptions.push(captureOptions)
+                  },
               },
     }
     if (!options.noFbq) {
@@ -456,6 +476,7 @@ function boot(options = {}) {
         updateCalls,
         fetchCalls,
         posthogCalls,
+        posthogCaptureOptions,
         warnings,
         window,
         openedSignup,
@@ -535,6 +556,32 @@ function boot(options = {}) {
             const event = { target }
             const handlers = document.listeners.filter(([name]) => name === 'submit')
             for (const entry of handlers) entry[1](event)
+            return event
+        },
+        clickSignupControl: (accepted = false, kind = 'signup') => {
+            const control = {}
+            const target = {
+                closest(selector) {
+                    return (selector === 'form[data-ms-form="signup"] [ms-code-submit-button]' && kind === 'signup') ||
+                        (selector === '[data-ms-form="login"]' && kind === 'login')
+                        ? control : null
+                },
+            }
+            const event = { target }
+            const handlers = document.listeners.filter(([name]) => name === 'click')
+            for (const entry of handlers) entry[1](event)
+            if (accepted) {
+                const form = document.querySelectorAll(`form[data-ms-form="${kind}"]`)[0]
+                const submit = { target: form || { getAttribute: (name) => name === 'data-ms-form' ? kind : null } }
+                for (const [name, handler] of form?.listeners || []) {
+                    if (name === 'submit') handler(submit)
+                }
+                if (!options.blockDocumentSubmit) {
+                    for (const [name, handler] of document.listeners) {
+                        if (name === 'submit') handler(submit)
+                    }
+                }
+            }
             return event
         },
         rerun: () => vm.runInNewContext(source, context),
@@ -900,23 +947,6 @@ test('SIGNUP_PATH_POLICY covers /quiz and /sign-up with directSave only on /sign
     })
 })
 
-test('the two form selectors keep their deliberate asymmetry', () => {
-    // Arming is anchored to `form`, the veto is not. Losing the prefix on the
-    // signup selector would arm on any stray marker; adding it to the login
-    // selector would let a login wrapped in a div slip past the veto. Pinned as
-    // code because both directions are silent failures in the browser.
-    assert.match(
-        source,
-        /var SIGNUP_FORM_SELECTOR = 'form\[data-ms-form="signup"\]'/,
-        'SIGNUP_FORM_SELECTOR must stay anchored to a real form element',
-    )
-    assert.match(
-        source,
-        /var LOGIN_FORM_SELECTOR = '\[data-ms-form="login"\]'/,
-        'LOGIN_FORM_SELECTOR must match the marker on any element',
-    )
-})
-
 test('every V3 Xano Collection and Learn route produces its exact observable contract', async () => {
     const cases = [
         ['/skills/example', '69cccee53fd01363c8d406f3', '69cccee53fd01363c8d406f9', 'collection_signup'],
@@ -926,7 +956,7 @@ test('every V3 Xano Collection and Learn route produces its exact observable con
         ['/categories/example', '69f2329d4f5bacf6765c1ca1', '69f2329e4f5bacf6765c1cc6', 'collection_signup'],
         ['/subcategories/example', '69f233f6f3e97748419e3a3d', '69f233f7f3e97748419e3a43', 'collection_signup'],
         ['/learn/playbooks-frameworks/example', '69e1e416f6476e12f572b39b', '69e1e417f6476e12f572b468', 'learn_unlock'],
-        ['/learn/interviews-analyses/example', '69dca9df095d2fbcf34e255b', '69dca9df095d2fbcf34e2575', 'learn_signup'],
+        ['/learn/interviews-analysis/example', '69dca9df095d2fbcf34e255b', '69dca9df095d2fbcf34e2575', 'learn_signup'],
         ['/learn/sessions/example', '69e08554183023227aa46c1e', '69e08554183023227aa46c24', 'session_signup'],
     ]
 
@@ -1054,7 +1084,7 @@ test('a Hire signup without a supported CTA intent fails closed', async () => {
 test('the normal ungated Learn Get Started link opens the existing signup modal', async () => {
     const harness = boot({
         hostname: 'thestarters.com',
-        pathname: '/learn/interviews-analyses/operator-story',
+        pathname: '/learn/interviews-analysis/operator-story',
         pageId: '69dca9df095d2fbcf34e2575',
         forms: ['signup'],
         member: null,
@@ -1071,7 +1101,7 @@ test('the normal ungated Learn Get Started link opens the existing signup modal'
 test('the ungated Learn Get Started link keeps its normal route for logged-in viewers', async () => {
     const harness = boot({
         hostname: 'thestarters.com',
-        pathname: '/learn/interviews-analyses/operator-story',
+        pathname: '/learn/interviews-analysis/operator-story',
         pageId: '69dca9df095d2fbcf34e2575',
         forms: ['signup'],
         member: loggedInMember,
@@ -1146,6 +1176,120 @@ test('a real production CMS signup registers one authenticated V3 lead entry', a
             },
         },
     ])
+    assert.deepEqual(plain(harness.posthogCaptureOptions), [
+        { send_instantly: true, transport: 'sendBeacon' },
+    ])
+})
+
+test('the shared custom signup button registers an ungated Learn lead entry', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analysis/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'],
+        member: null,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await harness.settle()
+
+    harness.clickSignupControl(true)
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+    await harness.settle()
+
+    const registrations = harness.fetchCalls.filter((call) =>
+        /lead_email\/register\/v3$/.test(call.url),
+    )
+    assert.equal(registrations.length, 1)
+    assert.deepEqual(JSON.parse(registrations[0].init.body), {
+        source_event_id: 'evt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        source_route: '/learn/interviews-analysis/operator-story',
+        source_collection_id: '69dca9df095d2fbcf34e255b',
+        source_resource_slug: 'operator-story',
+        intent_subtype: 'learn_signup',
+        properties: {
+            client_payload_version: 'lead_entry_browser_v1',
+            signup_source: '/learn/interviews-analysis/operator-story',
+        },
+    })
+})
+
+test('Article acceptance captures immediately once across repeated auth and redirect reload', async () => {
+    const first = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analysis/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'],
+        member: null,
+        fetchHandler: async (url) => ({
+            ok: true,
+            status: 200,
+            json: async () => String(url).includes('/auth/trade-token/v3')
+                ? { token: 'test-token' } : { ok: true, replayed: false },
+        }),
+    })
+    await first.settle()
+    first.clickSignupControl(true)
+    first.authHandlers[0](loggedInMember)
+    first.authHandlers[0](loggedInMember)
+    await first.settle()
+    await first.settle()
+    await first.settle()
+    const registrations = first.fetchCalls.filter((call) =>
+        /lead_email\/register\/v3$/.test(call.url))
+    assert.equal(registrations.length, 1)
+    assert.equal(first.posthogCalls.length, 1)
+    assert.deepEqual(plain(first.posthogCaptureOptions), [
+        { send_instantly: true, transport: 'sendBeacon' },
+    ])
+    const next = boot({
+        hostname: 'thestarters.com', pathname: '/quiz', forms: [],
+        member: loggedInMember, session: Object.fromEntries(first.session),
+    })
+    await next.settle()
+    await next.settle()
+    assert.equal(next.fetchCalls.length, 0)
+    assert.equal(next.posthogCalls.length, 0)
+    assert.equal(next.pendingLeadEntryPosthog(), undefined)
+    console.log('Article simulated integration trace:', JSON.stringify({
+        environment: 'VM browser with Memberstack, Xano and PostHog doubles',
+        registration: JSON.parse(registrations[0].init.body),
+        captures: plain(first.posthogCalls),
+        captureOptions: plain(first.posthogCaptureOptions),
+        redirectRequests: next.fetchCalls,
+        redirectCaptures: next.posthogCalls,
+    }))
+})
+
+test('a validated form-target submit survives Memberstack stopping document bubbling', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analysis/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'],
+        member: null,
+        blockDocumentSubmit: true,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await harness.settle()
+
+    harness.clickSignupControl(true)
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(
+        harness.fetchCalls.filter((call) => /lead_email\/register\/v3$/.test(call.url)).length,
+        1,
+    )
 })
 
 test('an accepted lead entry retries PostHog after the real SDK loads', async () => {
@@ -1229,7 +1373,7 @@ test('an accepted lead entry uses the bounded same-page PostHog retry schedule',
     assert.deepEqual(harness.parkedTimerDelays(), [250])
     assert.equal(harness.posthogCalls.length, 0)
 
-    for (const expectedDelay of [250, 1000, 3000, 7500]) {
+    for (const expectedDelay of [250, 1000, 3000, 7500, 15000]) {
         assert.equal(harness.runNextParkedTimer(), expectedDelay)
         await harness.settle()
     }
@@ -1242,7 +1386,7 @@ test('an accepted lead entry uses the bounded same-page PostHog retry schedule',
 test('the same-page retry captures once when PostHog finishes loading', async () => {
     const harness = boot({
         hostname: 'thestarters.com',
-        pathname: '/learn/interviews-analyses/operator-story',
+        pathname: '/learn/interviews-analysis/operator-story',
         pageId: '69dca9df095d2fbcf34e2575',
         forms: ['signup'],
         member: null,
@@ -1269,7 +1413,7 @@ test('the same-page retry captures once when PostHog finishes loading', async ()
             properties: {
                 track_key: 'learn_ungated',
                 intent_subtype: 'learn_signup',
-                source_route: '/learn/interviews-analyses/operator-story',
+                source_route: '/learn/interviews-analysis/operator-story',
                 source_collection_id: '69dca9df095d2fbcf34e255b',
                 source_resource_slug: 'operator-story',
                 payload_version: 'lead_entry_browser_v1',
@@ -1278,6 +1422,59 @@ test('the same-page retry captures once when PostHog finishes loading', async ()
     ])
     assert.deepEqual(harness.parkedTimerDelays(), [])
     assert.equal(harness.pendingLeadEntryPosthog(), undefined)
+})
+
+test('Article redirect captures once when SDK readiness follows the old retry window', async () => {
+    const first = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analysis/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'], member: null, posthogLoaded: false, parkTimers: true,
+        fetchHandler: async (url) => ({ ok: true, status: 200,
+            json: async () => String(url).includes('/auth/trade-token/v3')
+                ? { token: 'xano-token' } : { ok: true } }),
+    })
+    await first.settle()
+    first.clickSignupControl(true)
+    first.authHandlers[0](loggedInMember)
+    await first.settle()
+    await first.settle()
+    assert.equal(first.fetchCalls.filter(call => /lead_email\/register\/v3$/.test(call.url)).length, 1)
+    assert.equal(first.posthogCalls.length, 0)
+    const redirected = boot({
+        hostname: 'thestarters.com', pathname: '/quiz', member: loggedInMember,
+        session: Object.fromEntries(first.session), posthogLoaded: false, parkTimers: true,
+    })
+    await redirected.settle()
+    let elapsed = 0
+    for (const delay of [250, 1000, 3000, 7500]) {
+        assert.equal(redirected.runNextParkedTimer(), delay)
+        elapsed += delay
+        await redirected.settle()
+    }
+    assert.equal(redirected.posthogCalls.length, 0)
+    assert.ok(redirected.pendingLeadEntryPosthog())
+    redirected.window.posthog.__loaded = true
+    redirected.runNextParkedTimer()
+    await redirected.settle()
+    assert.equal(redirected.posthogCalls.length, 1)
+    assert.equal(redirected.posthogCalls[0].properties.source_route, '/learn/interviews-analysis/operator-story')
+    assert.deepEqual(plain(redirected.posthogCaptureOptions), [{ send_instantly: true, transport: 'sendBeacon' }])
+    assert.equal(redirected.pendingLeadEntryPosthog(), undefined)
+    assert.equal(redirected.fetchCalls.length, 0)
+    const reload = boot({ hostname: 'thestarters.com', pathname: '/quiz',
+        member: loggedInMember, session: Object.fromEntries(redirected.session) })
+    await reload.settle()
+    assert.equal(reload.posthogCalls.length, 0)
+    assert.equal(reload.fetchCalls.length, 0)
+    console.log('Delayed Article redirect evidence:', JSON.stringify({
+        environment: 'executed CDN script in VM; Memberstack, Xano and PostHog doubles',
+        sdkUnavailableThroughMs: elapsed,
+        registrationRequests: first.fetchCalls.filter(call => /lead_email\/register\/v3$/.test(call.url)).length,
+        redirectRegistrationRequests: redirected.fetchCalls.length,
+        captures: plain(redirected.posthogCalls), captureOptions: plain(redirected.posthogCaptureOptions),
+        reloadCaptures: reload.posthogCalls.length, reloadRequests: reload.fetchCalls.length,
+    }))
 })
 
 test('blocked PostHog storage cannot retry an accepted Xano registration', async () => {
@@ -1325,6 +1522,27 @@ test('a CMS login without a signup-form submit never registers a lead entry', as
 
     assert.equal(harness.fetchCalls.length, 0)
     assert.equal(harness.pendingLeadEntry(), undefined)
+})
+
+test('rejected custom signup clicks followed by login never register Article leads', async () => {
+    for (const previouslyAccepted of [false, true]) {
+        const harness = boot({
+            hostname: 'thestarters.com',
+            pathname: '/learn/interviews-analysis/operator-story',
+            pageId: '69dca9df095d2fbcf34e2575',
+            forms: ['signup'],
+            member: null,
+        })
+        await harness.settle()
+        if (previouslyAccepted) harness.clickSignupControl(true)
+        harness.clickSignupControl(false)
+        harness.clickSignupControl(false, 'login')
+        harness.authHandlers[0](loggedInMember)
+        await harness.settle()
+        await harness.settle()
+        assert.equal(harness.fetchCalls.length, 0)
+        assert.equal(harness.pendingLeadEntry(), undefined)
+    }
 })
 
 test('a login submit cancels stale signup intent before the auth transition', async () => {

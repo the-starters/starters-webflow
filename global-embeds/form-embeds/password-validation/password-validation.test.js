@@ -132,6 +132,17 @@ class Element {
   matches(selector) {
     return matches(this, selector)
   }
+  contains(node) {
+    for (let n = node; n; n = n.parentElement) if (n === this) return true
+    return false
+  }
+  /** detach from the tree, so a swapped-out CTA subtree can be modelled */
+  remove() {
+    const parent = this.parentElement
+    if (!parent) return
+    parent.childNodes = parent.childNodes.filter((n) => n !== this)
+    this.parentElement = null
+  }
   closest(selector) {
     let node = this
     while (node) {
@@ -1934,15 +1945,52 @@ const SIGNUP_RULES = {
 }
 
 /**
+ * The [ms-code-submit-button] CTA in each shape the live Button component ships.
+ * @param {'overlay'|'native'|'anchor'|'none'} [kind]
+ * @returns {{overlay: Element|null, wrapBtn: Element|null}}
+ */
+function buildCta(kind) {
+  if (kind === 'none') return { overlay: null, wrapBtn: null }
+  if (kind === 'native') {
+    const native = h('button', { type: 'submit', 'ms-code-submit-button': '' }, ['SIGN UP'])
+    return { overlay: native, wrapBtn: native }
+  }
+  let overlay
+  if (kind === 'anchor') {
+    overlay = h('a', { href: '#' }, ['SIGN UP'])
+    overlay.classList.add('clickable_link')
+  } else {
+    overlay = h('button', { type: 'button' }, ['SIGN UP'])
+    overlay.classList.add('clickable_btn')
+  }
+  const clickWrap = h('div', {}, [overlay])
+  clickWrap.classList.add('clickable_wrap')
+  const wrapBtn = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [clickWrap])
+  wrapBtn.classList.add('button_main-wrap')
+  return { overlay, wrapBtn }
+}
+
+/**
  * The published /sign-up shape: marker + theme on the Button wrap, the
  * overlay button inside it, email + terms alongside the password.
- * @param {{email?: boolean, terms?: boolean, customCheckbox?: boolean, failBlock?: boolean, mount?: object}} [opts]
+ *
+ * `wrapper: false` drops the checklist entirely (the page the fix is for),
+ * `cta` picks the control shape ('none' authors no marker at all), and
+ * `msForm` sets or removes the data-ms-form kind.
+ * @param {{email?: boolean, password?: boolean, token?: boolean, terms?: boolean, customCheckbox?: boolean, failBlock?: boolean, wrapper?: false|object, cta?: 'overlay'|'native'|'anchor'|'none', msForm?: false|string, mount?: object}} [opts]
  */
 function liveSetup(opts = {}) {
-  const { wrapper, rows } = buildWrapper(SIGNUP_RULES)
-  const input = h('input', { type: 'password', 'data-ms-member': 'password' })
+  const config = opts.wrapper === false ? null : opts.wrapper || SIGNUP_RULES
+  const built = config ? buildWrapper(config) : { wrapper: null, rows: null }
+  const wrapper = built.wrapper
+  const rows = built.rows
+  const input =
+    opts.password === false ? null : h('input', { type: 'password', 'data-ms-member': 'password' })
 
   const email = opts.email === false ? null : h('input', { type: 'email', 'data-ms-member': 'email' })
+
+  // the reset pages ship the code as a number input, so its value is a string
+  const token = opts.token ? h('input', { type: 'number', 'data-ms-member': 'token' }) : null
 
   let terms = null
   let termsVisual = null
@@ -1958,19 +2006,20 @@ function liveSetup(opts = {}) {
     }
   }
 
-  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
-  overlay.classList.add('clickable_btn')
-  const clickWrap = h('div', {}, [overlay])
-  clickWrap.classList.add('clickable_wrap')
-  const wrapBtn = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [clickWrap])
-  wrapBtn.classList.add('button_main-wrap')
+  const { overlay, wrapBtn } = buildCta(opts.cta)
 
-  const inForm = [input]
+  const inForm = []
+  if (input) inForm.push(input)
   if (email) inForm.push(email)
-  inForm.push(wrapper)
+  if (token) inForm.push(token)
+  if (wrapper) inForm.push(wrapper)
   if (terms) inForm.push(termsWrap || terms)
-  inForm.push(wrapBtn)
-  const form = h('form', { 'data-ms-form': 'signup', 'data-ms-redirect': '/brand-dashboard' }, inForm)
+  if (wrapBtn) inForm.push(wrapBtn)
+  const formAttrs =
+    opts.msForm === false
+      ? {}
+      : { 'data-ms-form': opts.msForm || 'signup', 'data-ms-redirect': '/brand-dashboard' }
+  const form = h('form', formAttrs, inForm)
 
   const submits = []
   form.addEventListener('submit', (event) => {
@@ -1993,7 +2042,7 @@ function liveSetup(opts = {}) {
   const root = h('body', {}, [wForm])
   const app = mount(root, opts.mount || {})
   return Object.assign(
-    { root, wrapper, rows, input, email, terms, termsVisual, overlay, wrapBtn, form, submits, fail, failText },
+    { root, wrapper, rows, input, email, token, terms, termsVisual, overlay, wrapBtn, form, submits, fail, failText },
     app,
   )
 }
@@ -2014,9 +2063,14 @@ const overlayOpen = (f) =>
   f.wrapBtn.getAttribute('data-button-theme') === 'black' &&
   f.wrapBtn.getAttribute('aria-disabled') === null
 
+/** set a text input's value and fire the input event a browser would */
+function fill(el, value) {
+  el.value = value
+  return dispatch(el, 'input')
+}
+
 function fillEmail(f, value) {
-  f.email.value = value
-  dispatch(f.email, 'input')
+  return fill(f.email, value)
 }
 
 function checkTerms(f) {
@@ -2253,4 +2307,1093 @@ test('r5-9: unchecking a custom terms checkbox regreys once the visual state set
 
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(overlayGated(f), true, 'the deferred render reads the settled state')
+})
+
+// ===========================================================================
+// Round 6 — the submit bridge is independent of the rules gate
+//
+// The live SIGN UP CTA is a type="button" overlay, and this script's click
+// bridge is the only thing that turns it into a submit. Removing the
+// validation component from the page removed the bridge with it, so Sign up
+// did nothing at all. The bridge now belongs to every form[data-ms-form]
+// carrying [ms-code-submit-button]; the gate still belongs to the wrapper.
+// ===========================================================================
+
+/** the whole CTA as authored: nothing the gate would have written to it */
+const ctaUntouched = (f) => overlayOpen(f)
+
+/**
+ * Every Gateable Field the form has, satisfied, so the required-fields gate is
+ * open and only the thing under test can still refuse the CTA.
+ */
+function satisfy(f, password) {
+  type(f, password || VALID_PASSWORD)
+  if (f.email) fillEmail(f, 'brand@example.com')
+  if (f.terms) checkTerms(f)
+  if (f.token) fillToken(f, '481920')
+}
+
+test('r6-1: an overlay CTA on a wrapperless Memberstack form still submits', () => {
+  const f = liveSetup({ wrapper: false, mount: onStaging() })
+  satisfy(f)
+
+  const click = dispatch(f.overlay, 'click')
+  assert.equal(click.defaultPrevented, false, 'the type=button click is left alone')
+  assert.equal(f.submits.length, 1, 'one synthetic submit reached the page (Memberstack) handler')
+  assert.equal(f.submits[0].stopped, false, 'no capture-phase blocker interfered')
+  assert.equal(ctaUntouched(f), true, 'a satisfied form leaves the CTA open')
+  assert.deepEqual(f.warnings, [], 'a wrapperless signup form is a legitimate shape')
+})
+
+test('r6-2: a fail-open wrapper (every toggle off) still submits on click', () => {
+  const f = liveSetup({ wrapper: ZERO_RULES })
+  satisfy(f)
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1)
+  assert.equal(ctaUntouched(f), true, 'no rule can refuse a form with none configured')
+})
+
+test('r6-3: a wrapperless native submitter under the marker gets no synthetic submit', () => {
+  const f = liveSetup({ wrapper: false, cta: 'native' })
+  satisfy(f)
+
+  assert.equal(f.wrapBtn.listenerCount('click'), 1, 'the bridge is bound')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'the browser owns a type=submit click; the bridge adds nothing')
+})
+
+test('r6-4: an anchor CTA is prevented and submits once', () => {
+  const f = liveSetup({ wrapper: false, cta: 'anchor' })
+  satisfy(f)
+
+  const click = dispatch(f.overlay, 'click')
+  assert.equal(click.defaultPrevented, true, 'the anchor must not navigate')
+  assert.equal(f.submits.length, 1)
+})
+
+test('r6-5: a form without data-ms-form is left entirely alone', () => {
+  const f = liveSetup({ wrapper: false, msForm: false })
+
+  assert.equal(f.form.listenerCount('submit'), 1, 'only the page own handler')
+  assert.equal(f.wrapBtn.listenerCount('click'), 0, 'no bridge on a non-Memberstack form')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0)
+})
+
+test('r6-6: a bridged form that gains a wrapper on rescan starts gating, once', () => {
+  const f = liveSetup({ wrapper: false })
+  const { wrapper } = buildWrapper(SIGNUP_RULES)
+  f.form.append(wrapper)
+  f.window.startersPasswordValidation.rescan()
+
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus one gate')
+  assert.equal(f.wrapBtn.listenerCount('click'), 1, 'still one bridge, not two')
+
+  type(f, 'weakpass')
+  const blocked = dispatch(f.form, 'submit')
+  assert.equal(blocked.stopped, true, 'the capture blocker now stops the submit')
+  assert.equal(f.submits.length, 0, 'the page handler never ran')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'and the click is blocked too')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'a satisfied form submits exactly once')
+})
+
+test('r6-7: a wrapperless signup click still arms the rejection watcher', async () => {
+  const f = liveSetup({
+    wrapper: false,
+    mount: { fetch: () => Promise.resolve(msFailure({ message: 'nope' })) },
+  })
+  satisfy(f)
+
+  dispatch(f.overlay, 'click')
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+
+  assert.equal(f.fail.style.display, 'block', 'the watcher was armed by the bridged click')
+})
+
+test('r6-8: the @release header and the exposed release property cannot drift apart', () => {
+  const header = source.match(/^\/\/ @release (v\d+\.\d+\.\d+)$/m)
+  assert.ok(header, 'the file header must carry an @release marker')
+  const app = mount(h('body', {}, []))
+  assert.equal(app.window.startersPasswordValidation.release, header[1])
+})
+
+test('r6-9: a wired form whose marker arrives later greys its CTA on rescan', () => {
+  // wired with no CTA at all: the old code snapshotted button === null here and
+  // the CTA could never grey, however many rescans ran
+  const f = liveSetup({ cta: 'none', mount: onStaging() })
+  assert.match(f.warnings.join(' '), /no \[ms-code-submit-button\]/, 'staging says so')
+
+  const { wrapBtn, overlay } = buildCta('overlay')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  const live = Object.assign({}, f, { wrapBtn, overlay })
+  assert.equal(overlayGated(live), true, 'the late CTA greys immediately, not on first input')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(live), true, 'and opens once the form is satisfied')
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1)
+})
+
+test('r6-10: a swapped CTA subtree moves the bridge and leaves the old root inert', () => {
+  const f = liveSetup({ wrapper: false })
+  const old = f.wrapBtn
+  old.remove()
+
+  const { wrapBtn, overlay } = buildCta('overlay')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+  satisfy(f)
+
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the new control submits exactly once')
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the detached root has no live effect')
+})
+
+test('r6-11: a login form with the marker submits but arms no signup watcher', async () => {
+  const f = liveSetup({
+    wrapper: false,
+    msForm: 'login',
+    mount: { fetch: () => Promise.resolve(msFailure({ message: 'nope' })) },
+  })
+  satisfy(f)
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the CTA still works')
+
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+  assert.equal(f.fail.style.display, undefined, 'signup copy never lands on a login form')
+})
+
+test('r6-12: a wired non-signup form arms, and falls back to neutral copy', async () => {
+  const f = liveSetup({
+    msForm: 'reset-password',
+    mount: { fetch: () => Promise.resolve(msFailure({})) },
+  })
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  dispatch(f.form, 'submit')
+
+  f.window.fetch('https://client.memberstack.com/member')
+  await flush()
+
+  assert.equal(f.fail.style.display, 'block', 'a checklist-wired form still gets its watcher')
+  assert.equal(f.failText.textContent, 'Something went wrong. Please try again.')
+})
+
+test('r6-13: a click another script already refused is never turned into a submit', () => {
+  const prevented = liveSetup({ wrapper: false })
+  satisfy(prevented)
+  dispatch(prevented.overlay, 'click', { defaultPrevented: true })
+  assert.equal(prevented.submits.length, 0, 'the other script owns a click it preventDefaulted')
+
+  const aria = liveSetup({ wrapper: false })
+  satisfy(aria)
+  aria.wrapBtn.setAttribute('aria-disabled', 'true')
+  dispatch(aria.overlay, 'click')
+  assert.equal(aria.submits.length, 0, 'an aria-disabled CTA is another script gating it')
+
+  const ariaControl = liveSetup({ wrapper: false })
+  satisfy(ariaControl)
+  ariaControl.overlay.setAttribute('aria-disabled', 'true')
+  dispatch(ariaControl.overlay, 'click')
+  assert.equal(ariaControl.submits.length, 0, 'on the control too')
+})
+
+test('r6-14: a foreign refusal survives our own render clearing it', () => {
+  // our gate is open and has painted the CTA open, so anything disabled on the
+  // CTA now was written by somebody else
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true, 'our gate is open')
+
+  f.wrapBtn.setAttribute('aria-disabled', 'true')
+  // real browsers fire the password field's focusout before the click, so the
+  // render it triggers must not clear an aria-disabled we never wrote
+  dispatch(f.input, 'focusout')
+  assert.equal(aria(f.wrapBtn), 'true', 'our render never removes what we did not write')
+
+  const click = dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'the other script refused this click')
+  assert.equal(click.defaultPrevented, false, 'and owns it — we do not preventDefault')
+})
+
+test('r6-14: our own stale aria-disabled is not mistaken for a foreign refusal', () => {
+  // the gate was closed at the last render, so the disabled state on the CTA is
+  // ours; the fields are then filled with no event, exactly as a password
+  // manager can, and the click's own render is the first to see them
+  const f = liveSetup()
+  type(f, 'weakpass')
+  assert.equal(overlayGated(f), true, 'we wrote the disabled state')
+
+  f.input.value = VALID_PASSWORD
+  f.email.value = 'brand@example.com'
+  f.terms.checked = true
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the click renders open and submits once')
+})
+
+test('r6-15: rescan refreshes a checklist bridge on a form with no data-ms-form', () => {
+  const f = liveSetup({ cta: 'none', msForm: false })
+
+  const { wrapBtn, overlay } = buildCta('overlay')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  const live = Object.assign({}, f, { wrapBtn, overlay })
+  assert.equal(overlayGated(live), true, 'the late CTA greys even with no data-ms-form')
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus one gate')
+  assert.equal(wrapBtn.listenerCount('click'), 1, 'one bridge on the live root')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(live), true)
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1, 'exactly one synthetic submit')
+})
+
+test('r6-16a: authored aria-disabled at first resolve is adopted, not left to brick the CTA', () => {
+  // nobody claims this attribute, so it is stale authoring, not a live refusal:
+  // if we refuse to touch it the CTA can never open and Sign up is dead
+  const f = liveSetup({ cta: 'none' })
+  const { wrapBtn, overlay } = buildCta('overlay')
+  wrapBtn.setAttribute('aria-disabled', 'true')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+
+  assert.equal(aria(wrapBtn), null, 'adopted at resolve, so our open render clears it')
+  assert.equal(aria(overlay), null)
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1, 'the CTA works instead of being silently dead')
+})
+
+test('r6-16b: a foreign native disabled survives our open render and refuses the click', () => {
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true, 'our gate is open and has released the control')
+
+  // another script disables the overlay itself, leaving no mark of ours
+  f.overlay.disabled = true
+  dispatch(f.input, 'focusout')
+  assert.equal(f.overlay.disabled, true, 'our render never re-enables what we did not disable')
+
+  const click = dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'a type=button overlay would otherwise have submitted')
+  assert.equal(click.defaultPrevented, false, 'the other script owns it')
+})
+
+test('r6-17: a peer marker keeps the CTA greyed through our open render', () => {
+  const f = liveSetup({ mount: onStaging() })
+  assert.equal(overlayGated(f), true, 'we closed the gate on the empty form')
+
+  // step-flow.js holds the CTA with its own marker and no aria of its own
+  f.wrapBtn.setAttribute('data-form-flow-disabled', '')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+
+  assert.equal(theme(f.wrapBtn), 'disabled', 'our open verdict does not restore the theme')
+  assert.equal(f.wrapBtn.classList.contains('disabled'), true, 'nor the disabled class')
+  assert.equal(aria(f.wrapBtn), 'true', 'a peer holding the node keeps the attribute')
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'and the click stands down')
+  assert.match(f.warnings.join(' '), /refused by another script/, 'staging says why')
+})
+
+test('r6-18: a stranded ownership mark cannot be used to clear a peer refusal', () => {
+  const f = liveSetup()
+  assert.equal(aria(f.wrapBtn), 'true', 'we gated the empty form and marked it ours')
+
+  // a peer strips our mark, then writes its own refusal over the same node
+  f.wrapBtn.removeAttribute('data-password-validation-aria')
+  f.wrapBtn.setAttribute('aria-disabled', 'true')
+  f.wrapBtn.setAttribute('data-form-flow-disabled', '')
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+
+  assert.equal(aria(f.wrapBtn), 'true', 'the refusal survives our open render')
+  assert.equal(theme(f.wrapBtn), 'disabled', 'and the CTA still looks dead')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0)
+})
+
+test('r6-19: a bridge with no gate leaves authored disabled state as a refusal', () => {
+  // nothing here will ever re-open the CTA, so claiming what we found would
+  // only throw away somebody else's refusal. Auth kinds always get the
+  // required-fields gate now, so a gateless bridge is a non-auth form.
+  const f = liveSetup({ wrapper: false, cta: 'none', msForm: 'profile', mount: onStaging() })
+
+  const { wrapBtn, overlay } = buildCta('overlay')
+  wrapBtn.setAttribute('aria-disabled', 'true')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 0, 'the gateless bridge stands down')
+  assert.equal(aria(wrapBtn), 'true', 'and leaves the attribute where it found it')
+  assert.equal(
+    wrapBtn.hasAttribute('data-password-validation-aria'),
+    false,
+    'never claimed as ours',
+  )
+  assert.match(f.warnings.join(' '), /refused by another script/, 'staging says why')
+})
+
+test('r6-20: authored aria-disabled on a marker root that is not the theme element opens', () => {
+  // theme on the wrap AROUND the marker, the control inside it: the root is
+  // neither, and state stranded there would brick the CTA for good
+  const f = liveSetup({ cta: 'none' })
+
+  const link = h('a', { href: '#' }, ['SIGN UP'])
+  link.classList.add('clickable_link')
+  const marker = h('div', { 'ms-code-submit-button': '', 'aria-disabled': 'true' }, [link])
+  const themeWrap = h('div', { 'data-button-theme': 'black' }, [marker])
+  themeWrap.classList.add('button_main-wrap')
+  f.form.append(themeWrap)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+
+  assert.equal(aria(marker), null, 'the root is adopted at resolve and released on open')
+  assert.equal(theme(themeWrap), 'black', 'so the theme comes back')
+  assert.equal(marker.classList.contains('disabled'), false)
+
+  dispatch(link, 'click')
+  assert.equal(f.submits.length, 1, 'the CTA works instead of being permanently dead')
+})
+
+test('r6-21: a foreign hold on a control other than the clicked one refuses the click', () => {
+  // hidden native submit + overlay: the peer disables the one the member never
+  // touches, so only the wider read catches it
+  const f = liveSetup({ cta: 'none' })
+
+  const hidden = h('button', { type: 'submit' }, ['SIGN UP'])
+  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
+  overlay.classList.add('clickable_btn')
+  const wrapBtn = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [
+    hidden,
+    overlay,
+  ])
+  wrapBtn.classList.add('button_main-wrap')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(theme(wrapBtn), 'black', 'our gate opened the CTA')
+
+  // another script refuses on the hidden control, with no mark of its own
+  hidden.setAttribute('aria-disabled', 'true')
+  type(f, 'weakpass')
+  type(f, VALID_PASSWORD)
+
+  assert.equal(aria(hidden), 'true', 'our render never clears what we did not write')
+  assert.equal(theme(wrapBtn), 'disabled', 'and the CTA is not painted live over the refusal')
+  assert.equal(wrapBtn.classList.contains('disabled'), true)
+
+  const click = dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 0, 'the click on the open-looking overlay stands down')
+  assert.equal(click.defaultPrevented, false, 'the other script owns it')
+})
+
+test('r6-22: a hold that appears after we opened greys the CTA on the next render', () => {
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.ok(overlayOpen(f), 'our gate opened the CTA')
+
+  // another script refuses on the wrap, with no mark of its own, after we opened
+  f.wrapBtn.setAttribute('aria-disabled', 'true')
+  type(f, VALID_PASSWORD)
+
+  assert.equal(theme(f.wrapBtn), 'disabled', 'the disabled look is applied, not merely kept')
+  assert.equal(f.wrapBtn.classList.contains('disabled'), true)
+  assert.equal(aria(f.wrapBtn), 'true', 'their refusal is untouched')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0)
+})
+
+test('r6-23: adoption is not spent while a peer holds the root; it happens once the peer lets go', () => {
+  const f = liveSetup({ cta: 'none' })
+  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
+  overlay.classList.add('clickable_btn')
+  const wrapBtn = h(
+    'div',
+    { 'ms-code-submit-button': '', 'data-button-theme': 'black', 'aria-disabled': 'true', 'data-form-flow-disabled': '' },
+    [overlay]
+  )
+  wrapBtn.classList.add('button_main-wrap')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 0, 'peer-held: refused')
+  assert.equal(aria(wrapBtn), 'true', 'and not adopted while the peer holds it')
+
+  wrapBtn.removeAttribute('data-form-flow-disabled')
+  type(f, VALID_PASSWORD)
+  assert.equal(aria(wrapBtn), null, 'the authored state is adopted once the peer lets go, and released')
+  assert.equal(theme(wrapBtn), 'black')
+  dispatch(overlay, 'click')
+  assert.equal(f.submits.length, 1)
+})
+
+test('r6-24: our native disabled is not released while another node is foreign-held', () => {
+  const f = liveSetup({ cta: 'none' })
+  const hidden = h('button', { type: 'submit' }, ['SIGN UP'])
+  const overlay = h('button', { type: 'button' }, ['SIGN UP'])
+  overlay.classList.add('clickable_btn')
+  const wrapBtn = h('div', { 'ms-code-submit-button': '', 'data-button-theme': 'black' }, [hidden, overlay])
+  wrapBtn.classList.add('button_main-wrap')
+  f.form.append(wrapBtn)
+  f.window.startersPasswordValidation.rescan()
+
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(hidden.disabled, false, 'open: our native disable was released')
+
+  hidden.setAttribute('aria-disabled', 'true') // a foreign hold on the hidden control
+  type(f, 'weakpass')
+  assert.equal(hidden.disabled, true, 'closed: we disabled it again')
+  type(f, VALID_PASSWORD)
+  assert.equal(hidden.disabled, true, 'open but held: our native disable stays, so Enter cannot submit')
+  assert.equal(theme(wrapBtn), 'disabled')
+
+  hidden.removeAttribute('aria-disabled')
+  type(f, VALID_PASSWORD)
+  assert.equal(hidden.disabled, false, 'first unheld open render releases it')
+  assert.equal(theme(wrapBtn), 'black')
+})
+
+// ===========================================================================
+// Round regate — a peer that borrowed the CTA hands back one form
+//
+// memberstack-loader dresses the same CTA as busy while Memberstack spins. On
+// hide it has to let this script re-adjudicate, but a whole rescan re-prints
+// every page-level staging warning, so it calls regate(form) instead.
+// ===========================================================================
+
+test('r-regate: regate is exposed and refuses a form it never bridged', () => {
+  const f = liveSetup()
+  const pv = f.window.startersPasswordValidation
+
+  assert.equal(typeof pv.regate, 'function')
+  assert.equal(pv.regate(h('form', {}, [])), false, 'a form with no bridge is not gated')
+  assert.equal(pv.regate(null), false)
+  assert.equal(pv.regate(undefined), false)
+})
+
+test('r-regate: regate accepts a bridged form that has no checklist', () => {
+  const f = liveSetup({ wrapper: false, msForm: 'login', mount: onStaging() })
+  const orphans = () => f.warnings.filter((line) => line.includes('sit outside any wrapper')).length
+
+  // a login form: bridged for its Button, but with no rules to re-adjudicate
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true)
+
+  f.root.append(h('div', { 'starters-password-validation-rule': 'numbers' }))
+  f.window.startersPasswordValidation.regate(f.form)
+  f.window.startersPasswordValidation.regate(f.form)
+  assert.equal(orphans(), 0, f.warnings.join(' | '))
+
+  f.window.startersPasswordValidation.rescan()
+  assert.equal(orphans(), 1, 'only a page-wide pass reports it')
+})
+
+test('r-regate: regate puts back a gate a peer stripped off the CTA', () => {
+  const f = liveSetup()
+  assert.equal(overlayGated(f), true, 'an empty password gates the CTA')
+
+  f.overlay.removeAttribute('aria-disabled')
+  f.overlay.removeAttribute('data-password-validation-aria')
+
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true)
+  assert.equal(f.overlay.getAttribute('aria-disabled'), 'true')
+  assert.equal(f.overlay.getAttribute('data-password-validation-aria'), '')
+  assert.equal(overlayGated(f), true)
+})
+
+test('r-regate: regate says nothing where a rescan repeats a page warning', () => {
+  const f = liveSetup({ mount: onStaging() })
+  const orphans = () => f.warnings.filter((line) => line.includes('sit outside any wrapper')).length
+
+  f.root.append(h('div', { 'starters-password-validation-rule': 'numbers' }))
+  assert.equal(orphans(), 0, 'the row arrived after the one-shot init')
+
+  f.window.startersPasswordValidation.regate(f.form)
+  assert.equal(orphans(), 0, f.warnings.join(' | '))
+
+  f.window.startersPasswordValidation.rescan()
+  assert.equal(orphans(), 1, 'a page-wide pass is what reports it')
+})
+
+test('r-regate: regate on an open gate leaves the CTA live', () => {
+  const f = liveSetup()
+  type(f, VALID_PASSWORD)
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true)
+
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true)
+  assert.equal(overlayOpen(f), true)
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'and it still submits')
+})
+
+test('r-regate: regate gates the CTA that replaced the one it was holding', () => {
+  const f = liveSetup()
+  assert.equal(overlayGated(f), true, 'an empty password gates the CTA')
+
+  // the peer hands the form back after the page swapped the whole Button out
+  f.wrapBtn.remove()
+  const swapped = buildCta('overlay')
+  f.form.append(swapped.wrapBtn)
+
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true)
+  assert.equal(overlayGated(swapped), true, 'the live CTA is the one gated')
+  dispatch(swapped.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'and it cannot submit while the gate is closed')
+})
+
+// ===========================================================================
+// Ticket 05 — the required-fields gate is installed at bridge time
+//
+// Every bridged Auth Form greys its CTA from first paint and opens only when
+// every Gateable Field it HAS is satisfied — checklist or no checklist. The
+// starters-password-validation-* toggles are not a kill switch: they turn the
+// checklist off, never the gate. Non-auth bridged forms get nothing.
+// ===========================================================================
+
+/**
+ * The bare native auth shape on staging: the marker rides an input[type=submit]
+ * with no Button wrap and no checklist.
+ * @param {string} kind the data-ms-form value
+ * @param {{email?: boolean, password?: boolean, token?: boolean, mount?: object}} [opts]
+ */
+function nativeSetup(kind, opts = {}) {
+  const control = h('input', {
+    type: 'submit',
+    'ms-code-submit-button': '',
+    value: 'Reset password',
+  })
+  const email = opts.email === false ? null : h('input', { type: 'email', 'data-ms-member': 'email' })
+  const input = opts.password ? h('input', { type: 'password', 'data-ms-member': 'password' }) : null
+  // the reset pages ship the code as a number input, so its value is a string
+  const token = opts.token ? h('input', { type: 'number', 'data-ms-member': 'token' }) : null
+
+  const inForm = []
+  if (email) inForm.push(email)
+  if (token) inForm.push(token)
+  if (input) inForm.push(input)
+  inForm.push(control)
+  const form = h('form', { 'data-ms-form': kind }, inForm)
+
+  const submits = []
+  form.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submits.push(event)
+  })
+
+  const root = h('body', {}, [form])
+  const app = mount(root, opts.mount || {})
+  return Object.assign({ root, form, control, email, input, token, submits }, app)
+}
+
+/** the three events every Gateable Field is bound on, counted per field */
+const bindings = (field) => [
+  field.listenerCount('input'),
+  field.listenerCount('change'),
+  field.listenerCount('focusout'),
+]
+
+test('t05-15: a login form with no checklist opens only on a plausible email AND a password', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+  assert.equal(overlayGated(f), true, 'greyed from first paint, before a single keystroke')
+
+  fillEmail(f, 'brand@example.com')
+  assert.equal(overlayGated(f), true, 'an email alone is not a login')
+
+  fillEmail(f, '')
+  type(f, 'anything')
+  assert.equal(overlayGated(f), true, 'a password alone is not a login either')
+
+  fillEmail(f, 'brand@example.com')
+  assert.equal(overlayOpen(f), true, 'both in: Log in goes live')
+
+  type(f, '')
+  assert.equal(overlayGated(f), true, 'clearing the password greys it again')
+
+  type(f, 'anything')
+  fillEmail(f, 'not-an-email')
+  assert.equal(overlayGated(f), true, 'and so does an implausible email')
+})
+
+test('t05-15: a password of nothing but whitespace counts as empty', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+  fillEmail(f, 'brand@example.com')
+  ;[' ', '   ', '\t', '\n '].forEach((value) => {
+    type(f, value)
+    assert.equal(overlayGated(f), true, JSON.stringify(value) + ' must not count as a password')
+  })
+  type(f, ' x ')
+  assert.equal(overlayOpen(f), true, 'a real character opens it')
+})
+
+test('t05-16: a native forgot-password form is disabled until the email is plausible', () => {
+  const f = nativeSetup('forgot-password')
+
+  assert.equal(f.control.disabled, true, 'the native submit is really disabled at first paint')
+  assert.equal(f.control.getAttribute('aria-disabled'), 'true')
+  assert.equal(f.control.classList.contains('disabled'), true)
+
+  f.email.value = 'brand@'
+  dispatch(f.email, 'input')
+  assert.equal(f.control.disabled, true, 'an implausible email leaves it disabled')
+
+  f.email.value = 'brand@example.com'
+  dispatch(f.email, 'input')
+  assert.equal(f.control.disabled, false, 'a plausible email opens it')
+  assert.equal(f.control.getAttribute('disabled'), null)
+  assert.equal(f.control.getAttribute('aria-disabled'), null)
+})
+
+test('t05-16: a form with no Gateable Field at all is left fail-open', () => {
+  const f = nativeSetup('forgot-password', { email: false })
+
+  assert.equal(f.control.disabled, undefined, 'nothing to gate on, so nothing is gated')
+  assert.equal(f.control.classList.contains('disabled'), false)
+  dispatch(f.control, 'click')
+  assert.equal(f.submits.length, 0, 'a type=submit click belongs to the browser')
+  const submit = dispatch(f.form, 'submit')
+  assert.equal(submit.stopped, false, 'and a submit is never blocked')
+  assert.equal(f.submits.length, 1)
+})
+
+test('t05-19: a signup form with no checklist still gates on email, password and terms', () => {
+  const f = liveSetup({ wrapper: false })
+  assert.equal(overlayGated(f), true, 'greyed from first paint')
+
+  type(f, 'anything')
+  assert.equal(overlayGated(f), true, 'password only')
+  fillEmail(f, 'brand@example.com')
+  assert.equal(overlayGated(f), true, 'the terms box is still unchecked')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true, 'all three in')
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'and it submits')
+})
+
+test('t05-19: every toggle off is not a kill switch — the gate still applies', () => {
+  const f = liveSetup({ wrapper: ZERO_RULES })
+  assert.equal(overlayGated(f), true, 'a fail-open checklist leaves the required-fields gate alone')
+
+  type(f, 'anything')
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayOpen(f), true, 'and no rule can hold it shut')
+})
+
+test('t05-20: autofill that fires only change opens the gate', () => {
+  const f = liveSetup({ wrapper: false })
+  assert.equal(overlayGated(f), true, 'closed before the password manager fires')
+
+  // a password manager writing all three fields, then one change event each —
+  // no input event anywhere
+  f.input.value = 'autofilled'
+  dispatch(f.input, 'change')
+  f.email.value = 'brand@example.com'
+  dispatch(f.email, 'change')
+  f.terms.checked = true
+  dispatch(f.terms, 'change')
+
+  assert.equal(overlayOpen(f), true, 'the CTA is live without a single keystroke')
+})
+
+test('t05-21: Enter on a closed form is blocked ahead of the page handler', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+
+  const blocked = dispatch(f.form, 'submit')
+  assert.equal(blocked.defaultPrevented, true, 'the capture blocker cancelled it')
+  assert.equal(blocked.stopped, true)
+  assert.equal(f.submits.length, 0, 'the page (Memberstack) handler never ran')
+
+  satisfy(f, 'anything')
+  const passed = dispatch(f.form, 'submit')
+  assert.equal(passed.stopped, false, 'a satisfied form is not stopped')
+  assert.equal(f.submits.length, 1, 'and Enter reaches Memberstack')
+})
+
+test('t05-23: a bridged non-auth form gets no gate at all', () => {
+  const f = liveSetup({ wrapper: false, msForm: 'profile' })
+
+  assert.equal(ctaUntouched(f), true, 'the CTA is exactly as authored')
+  assert.equal(f.wrapBtn.hasAttribute('data-password-validation-aria'), false, 'nothing claimed')
+  assert.deepEqual(bindings(f.input), [0, 0, 0], 'no field is listened to')
+  assert.deepEqual(bindings(f.email), [0, 0, 0])
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'an empty profile form submits')
+  const submit = dispatch(f.form, 'submit')
+  assert.equal(submit.stopped, false, 'and Enter is never blocked')
+})
+
+test('t05-24: a foreign hold on the CTA survives an open render of the field gate', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+  assert.equal(overlayGated(f), true, 'our gate closed it first')
+  satisfy(f, 'anything')
+  assert.equal(overlayOpen(f), true, 'and then opened it')
+
+  // a peer greys the CTA without any mark of ours on it
+  f.wrapBtn.setAttribute('aria-disabled', 'true')
+  dispatch(f.input, 'focusout')
+  assert.equal(aria(f.wrapBtn), 'true', 'our render never removes what we did not write')
+
+  const click = dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 0, 'the other script refused this click')
+  assert.equal(click.defaultPrevented, false, 'and owns it — we do not preventDefault')
+})
+
+test('t05-rescan: a rescan of a sweep-gated login form binds no second listener set', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+  assert.deepEqual(bindings(f.input), [1, 1, 1], 'bound once at bridge time')
+  assert.deepEqual(bindings(f.email), [1, 1, 1])
+
+  f.window.startersPasswordValidation.rescan()
+  f.window.startersPasswordValidation.rescan()
+
+  assert.deepEqual(bindings(f.input), [1, 1, 1], 'and never again')
+  assert.deepEqual(bindings(f.email), [1, 1, 1])
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus one blocker')
+  assert.equal(f.wrapBtn.listenerCount('click'), 1, 'one bridge')
+
+  satisfy(f, 'anything')
+  assert.equal(overlayOpen(f), true, 'one render path, and it opens')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'exactly one synthetic submit')
+})
+
+test('t05-rescan: a sweep-gated form that gains a checklist ends up on the checklist gate', () => {
+  const f = liveSetup({ wrapper: false })
+  assert.equal(overlayGated(f), true, 'the field gate greys it first')
+
+  const { wrapper } = buildWrapper(SIGNUP_RULES)
+  f.form.append(wrapper)
+  f.window.startersPasswordValidation.rescan()
+
+  assert.deepEqual(bindings(f.input), [1, 1, 1], 'still one listener per field per event')
+  assert.deepEqual(bindings(f.email), [1, 1, 1])
+  assert.deepEqual(bindings(f.terms), [1, 1, 1])
+
+  type(f, 'anything')
+  fillEmail(f, 'brand@example.com')
+  checkTerms(f)
+  assert.equal(overlayGated(f), true, 'the rules now adjudicate the password, not emptiness')
+
+  type(f, VALID_PASSWORD)
+  assert.equal(overlayOpen(f), true, 'and open on a password that meets them')
+})
+
+// ===========================================================================
+// Ticket 05 fixes — the gate reads the form it has now, and heals a CTA that
+// was greyed before an event-less fill.
+// ===========================================================================
+
+test('t05-swap: the gate reads the password input the form has now, not the one it bound', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+  fillEmail(f, 'brand@example.com')
+
+  const fresh = h('input', { type: 'password', 'data-ms-member': 'password' })
+  f.input.remove()
+  f.form.append(fresh)
+  f.window.startersPasswordValidation.rescan()
+
+  fresh.value = 'anything'
+  dispatch(fresh, 'input')
+  assert.equal(overlayOpen(f), true, 'the swapped-in input is the one that opens the CTA')
+
+  f.input.value = ''
+  dispatch(f.input, 'input')
+  assert.equal(overlayOpen(f), true, 'and the detached one adjudicates nothing')
+  assert.deepEqual(bindings(f.input), [1, 1, 1], 'though its listeners are still on it')
+
+  fresh.value = ''
+  dispatch(fresh, 'input')
+  assert.equal(overlayGated(f), true, 'clearing the live input greys it again')
+})
+
+test('t05-swap: regate re-adjudicates on the swapped-in input too', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+  fillEmail(f, 'brand@example.com')
+
+  const fresh = h('input', { type: 'password', 'data-ms-member': 'password' })
+  fresh.value = 'anything'
+  f.input.remove()
+  f.form.append(fresh)
+
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true, 'the form is bridged')
+  assert.equal(overlayOpen(f), true, 'and regate read the input the form has now')
+})
+
+test('t05-swap: a swapped-in field is bound exactly once across repeated rescans', () => {
+  const f = liveSetup({ wrapper: false, terms: false, msForm: 'login' })
+
+  const fresh = h('input', { type: 'password', 'data-ms-member': 'password' })
+  f.input.remove()
+  f.form.append(fresh)
+  f.window.startersPasswordValidation.rescan()
+  f.window.startersPasswordValidation.rescan()
+
+  assert.deepEqual(bindings(fresh), [1, 1, 1], 'one listener set on the new input')
+  assert.deepEqual(bindings(f.email), [1, 1, 1], 'and the untouched email is never re-bound')
+})
+
+test('t05-wake: an event-less fill heals before the click reaches a disabled control', () => {
+  const f = nativeSetup('reset-password', { email: false, password: true })
+  assert.equal(f.control.disabled, true, 'greyed from first paint')
+
+  // a password manager writing the value with no event of any kind
+  f.input.value = 'secret'
+  assert.equal(f.control.disabled, true, 'nothing fired, so nothing has recomputed yet')
+
+  dispatch(f.form, 'mouseover')
+  assert.equal(f.control.disabled, false, 'the pointer approaching the CTA re-adjudicated it')
+  assert.equal(f.control.getAttribute('aria-disabled'), null)
+})
+
+test('t05-wake: focusin re-adjudicates a silently filled email', () => {
+  const f = nativeSetup('forgot-password')
+  assert.equal(f.control.disabled, true, 'greyed from first paint')
+
+  f.email.value = 'brand@example.com'
+  dispatch(f.email, 'focusin')
+  assert.equal(f.control.disabled, false, 'the gate re-read the field on the way in')
+})
+
+test('t05-wake: an already-open CTA is never re-rendered by a pointer moving over it', () => {
+  const f = nativeSetup('forgot-password')
+  f.email.value = 'brand@example.com'
+  dispatch(f.email, 'input')
+  assert.equal(f.control.disabled, false, 'open before the pointer arrives')
+
+  let renders = 0
+  const remove = f.control.classList.remove
+  f.control.classList.remove = (name) => {
+    renders += 1
+    return remove(name)
+  }
+  dispatch(f.form, 'mouseover')
+  dispatch(f.form, 'pointerdown')
+  dispatch(f.form, 'keydown')
+
+  assert.equal(renders, 0, 'an open CTA costs nothing per event')
+  assert.equal(f.control.disabled, false, 'and stays open')
+})
+
+test('t05-late: regate installs the gate when the fields arrived after init', () => {
+  const f = nativeSetup('reset-password', { email: false })
+  assert.equal(f.control.disabled, undefined, 'no Gateable Field at init, so no gate')
+
+  const password = h('input', { type: 'password', 'data-ms-member': 'password' })
+  f.form.append(password)
+
+  assert.equal(f.window.startersPasswordValidation.regate(f.form), true, 'the form was bridged')
+  assert.equal(f.control.disabled, true, 'and the late field gets it gated')
+
+  password.value = 'secret'
+  dispatch(password, 'input')
+  assert.equal(f.control.disabled, false, 'typing a password opens it')
+})
+
+test('t05-warn: a field-gated form whose CTA cannot be greyed says so once', () => {
+  const marker = h('div', { 'ms-code-submit-button': '' }, ['Log in'])
+  const email = h('input', { type: 'email', 'data-ms-member': 'email' })
+  const form = h('form', { 'data-ms-form': 'login' }, [email, marker])
+  const app = mount(h('body', {}, [form]), onStaging())
+
+  const dead = () => app.warnings.filter((w) => /cannot be greyed out or disabled/.test(w))
+  assert.equal(dead().length, 1, 'the field gate reports a CTA it can do nothing to')
+
+  app.window.startersPasswordValidation.rescan()
+  assert.equal(dead().length, 1, 'and a rescan does not repeat it')
+})
+
+// ===========================================================================
+// Ticket 06: the reset code joins the Gateable Fields
+//
+// input[data-ms-member="token"] is gated on exactly like the rest: non-empty
+// after trimming, no format check. It reaches both gates through
+// fieldsSatisfied, so a reset form with a checklist holds until the code is in
+// AND every rule passes, and a signup form is untouched.
+// ===========================================================================
+
+function fillToken(f, value) {
+  return fill(f.token, value)
+}
+
+test('t06-17: a native reset form is disabled until the code AND the password are in', () => {
+  const f = nativeSetup('reset-password', { email: false, password: true, token: true })
+
+  assert.equal(f.control.disabled, true, 'the native submit is really disabled at first paint')
+  assert.equal(f.control.getAttribute('aria-disabled'), 'true')
+
+  fillToken(f, '481920')
+  assert.equal(f.control.disabled, true, 'a code with no new password is not a reset')
+
+  fillToken(f, '')
+  f.input.value = 'secret'
+  dispatch(f.input, 'input')
+  assert.equal(f.control.disabled, true, 'and a password with no code is not one either')
+
+  fillToken(f, '481920')
+  assert.equal(f.control.disabled, false, 'both in: the reset button goes live')
+  assert.equal(f.control.getAttribute('disabled'), null)
+  assert.equal(f.control.getAttribute('aria-disabled'), null)
+
+  fillToken(f, '')
+  assert.equal(f.control.disabled, true, 'clearing the code disables it again')
+})
+
+test('t06-17: a reset code of nothing but whitespace counts as empty', () => {
+  // the fixture sanitises nothing the way a number input would, so the trim in
+  // the gate is the only thing under test here
+  const f = nativeSetup('reset-password', { email: false, password: true, token: true })
+  f.input.value = 'secret'
+  dispatch(f.input, 'input')
+
+  ;[' ', '   ', '\t', '\n '].forEach((value) => {
+    fillToken(f, value)
+    assert.equal(f.control.disabled, true, JSON.stringify(value) + ' must not count as a code')
+  })
+
+  fillToken(f, ' 4 ')
+  assert.equal(f.control.disabled, false, 'a real character opens it')
+})
+
+test('t06-17: a Button-component reset form greys its overlay on the same rule', () => {
+  const f = liveSetup({ wrapper: false, email: false, terms: false, token: true, msForm: 'reset-password' })
+  assert.equal(overlayGated(f), true, 'greyed from first paint, before a single keystroke')
+
+  type(f, 'secret')
+  assert.equal(overlayGated(f), true, 'the password alone leaves it grey')
+
+  fillToken(f, '481920')
+  assert.equal(overlayOpen(f), true, 'the code opens it')
+
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'and the click reaches Memberstack')
+})
+
+test('t06-18: a reset form with a checklist opens on the code AND every rule', () => {
+  const f = liveSetup({ wrapper: SIGNUP_RULES, email: false, terms: false, token: true, msForm: 'reset-password' })
+  assert.equal(overlayGated(f), true, 'greyed from first paint')
+
+  type(f, VALID_PASSWORD)
+  assert.equal(overlayGated(f), true, 'every rule passes, but there is no code yet')
+
+  fillToken(f, '481920')
+  assert.equal(overlayOpen(f), true, 'code plus rules opens it')
+
+  type(f, 'short')
+  assert.equal(overlayGated(f), true, 'a password that fails a rule closes it again')
+  assert.equal(iconState(f.rows.characters), 'fail', 'and the checklist says which rule')
+
+  type(f, VALID_PASSWORD)
+  fillToken(f, '   ')
+  assert.equal(overlayGated(f), true, 'a whitespace-only code closes it too')
+})
+
+test('t06-gate: a checklist reset form keeps the checklist gate and one listener set', () => {
+  const f = liveSetup({ wrapper: SIGNUP_RULES, email: false, terms: false, token: true, msForm: 'reset-password' })
+
+  assert.deepEqual(bindings(f.token), [1, 1, 1], 'the code is bound once at wiring time')
+  assert.deepEqual(bindings(f.input), [1, 1, 1])
+
+  f.window.startersPasswordValidation.rescan()
+  f.window.startersPasswordValidation.rescan()
+
+  assert.deepEqual(bindings(f.token), [1, 1, 1], 'and the marker sweep never re-binds it')
+  assert.deepEqual(bindings(f.input), [1, 1, 1])
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus one blocker')
+  assert.equal(f.wrapBtn.listenerCount('click'), 1, 'one bridge')
+
+  fillToken(f, '481920')
+  type(f, 'short')
+  assert.equal(overlayGated(f), true, 'the checklist gate is the one in force, not the sweep gate')
+
+  type(f, VALID_PASSWORD)
+  assert.equal(overlayOpen(f), true, 'one render path, and it opens')
+  dispatch(f.overlay, 'click')
+  assert.equal(f.submits.length, 1, 'exactly one synthetic submit')
+})
+
+test('t06-gate: a sweep-gated reset form binds one listener set per field', () => {
+  const f = liveSetup({ wrapper: false, email: false, terms: false, token: true, msForm: 'reset-password' })
+  assert.deepEqual(bindings(f.token), [1, 1, 1], 'bound once at bridge time')
+  assert.deepEqual(bindings(f.input), [1, 1, 1])
+
+  f.window.startersPasswordValidation.rescan()
+  f.window.startersPasswordValidation.rescan()
+
+  assert.deepEqual(bindings(f.token), [1, 1, 1], 'and never again')
+  assert.deepEqual(bindings(f.input), [1, 1, 1])
+  assert.equal(f.form.listenerCount('submit'), 2, 'the page handler plus one blocker')
+  assert.equal(f.wrapBtn.listenerCount('click'), 1, 'one bridge')
+})
+
+test('t06-22: an auth form with nothing to gate on says so once on staging', () => {
+  const f = nativeSetup('forgot-password', { email: false, mount: onStaging() })
+  const said = () => f.warnings.filter((w) => /nothing to gate on/.test(w))
+
+  assert.equal(said().length, 1, 'staging names the form with no Gateable Field')
+  f.window.startersPasswordValidation.rescan()
+  assert.equal(said().length, 1, 'and a rescan does not repeat it')
+
+  assert.equal(f.control.disabled, undefined, 'the warning changes nothing: it stays fail-open')
+  const submit = dispatch(f.form, 'submit')
+  assert.equal(submit.stopped, false)
+  assert.equal(f.submits.length, 1)
+})
+
+test('t06-22: the same form is silent in production', () => {
+  const f = nativeSetup('forgot-password', { email: false })
+
+  assert.deepEqual(f.warnings, [], 'production says nothing at all')
+  assert.equal(f.control.disabled, undefined, 'and the CTA is still fail-open')
 })

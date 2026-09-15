@@ -207,6 +207,36 @@ function buildDom(options) {
     root.appendChild(step)
   }
 
+  // Same `[error-text-element]` contract the section's shared notification modal
+  // authors. Designer has not added it to this page's error step yet
+  // (v3/README.md, availability-step markup gaps), so the writer must degrade to
+  // the authored generic copy when it is absent and use it when it is present.
+  let errorText = null
+  if (!options.withoutErrorTextElement) {
+    errorText = new El('div', { 'error-text-element': '' })
+    errorText.textContent =
+      "We couldn't complete that calendar change. Please try again or contact support."
+    if (options.nestedErrorTextMarkup) {
+      // Designer may author the copy beside an inline icon. Real DOM semantics
+      // apply on this node: assigning textContent discards every child, so the
+      // writer must leave it alone instead of flattening the authored subtree.
+      let text = errorText.textContent
+      Object.defineProperty(errorText, 'textContent', {
+        get() { return text },
+        set(value) {
+          text = String(value)
+          errorText.children = []
+        },
+      })
+      const icon = new El('span', { class: 'error-icon' })
+      const copy = new El('span', { class: 'error-copy' })
+      copy.textContent = text
+      errorText.appendChild(icon)
+      errorText.appendChild(copy)
+    }
+    steps['config-request-error'].appendChild(errorText)
+  }
+
   let form = null
   const fields = { days: [] }
   if (!options.withoutForm) {
@@ -322,7 +352,7 @@ function buildDom(options) {
   const list = new El('div', { 'availability-list': '' })
   root.appendChild(list)
 
-  return { root, steps, form, fields, buttons, managers, list, popupClose }
+  return { root, steps, form, fields, buttons, managers, list, popupClose, errorText }
 }
 
 // Deliberately WITHOUT nylas-* custom fields: the Memberstack mirror is not
@@ -809,6 +839,96 @@ test('form submit writes the authenticated member id and reaches the success ste
   const cache = JSON.parse(result.storage.get('starter-scheduling-availability:member-a'))
   assert.deepEqual(cache.availability.items.general.days, [1])
   assert.ok(result.events.some((e) => e.type === 'starterSchedulingWriteSuccess'))
+})
+
+test('editing an override restores its previous default day and omits an empty provider window', async () => {
+  const availability = {
+    items: {
+      general: { days: [2], start: '09:00', end: '17:00', defaultDays: [1, 2] },
+      'ov-1': { days: [1], start: '13:00', end: '15:00' },
+    },
+    manager: 'platform',
+  }
+  let canonicalAvailability = availability
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/update_availability/v3': (body) => {
+        canonicalAvailability = body.availability
+        return { status: 200, body: { id: 1 } }
+      },
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: canonicalAvailability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+    },
+  })
+  await settle()
+
+  const item = new El('div', { 'availability-item': '' })
+  item.dataset.id = 'ov-1'
+  const editBtn = new El('a', { 'availability-action-btn': 'availability-edit' })
+  item.appendChild(editBtn)
+  result.dom.root.appendChild(item)
+  result.clickAction(editBtn)
+  result.dom.fields.days.forEach((day) => { day.checked = false })
+  result.dom.fields.days[2].checked = true
+  result.dom.fields.start.value = '13:00'
+  result.dom.fields.end.value = '15:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  const update = result.calls.find((call) => call.path === '/starter/update_availability/v3')
+  assert.deepEqual(update.body.availability.items.general.days, [1])
+  assert.deepEqual(update.body.availability.items['ov-1'].days, [2])
+  const configUpdate = result.calls.find((call) => call.path === '/scheduler/configurations/update/v3')
+  const providerHours = configUpdate.body.in_availability.availability_rules.default_open_hours
+  assert.equal(providerHours.some((window) => window.days.length === 0), false)
+  assert.deepEqual(providerHours.map((window) => window.days), [[1], [2]])
+})
+
+test('failed canonical override save restores the mirrored model and cards', async () => {
+  const availability = {
+    items: {
+      general: { days: [2], start: '09:00', end: '17:00', defaultDays: [1, 2] },
+      'ov-1': { days: [1], start: '13:00', end: '15:00' },
+    },
+    manager: 'platform',
+  }
+  const expectedAvailability = JSON.parse(JSON.stringify(availability))
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/update_availability/v3': () => ({ status: 500, body: { message: 'rejected' } }),
+    },
+  })
+  await settle()
+
+  const item = new El('div', { 'availability-item': '' })
+  item.dataset.id = 'ov-1'
+  const editBtn = new El('a', { 'availability-action-btn': 'availability-edit' })
+  item.appendChild(editBtn)
+  result.dom.root.appendChild(item)
+  result.clickAction(editBtn)
+  result.dom.fields.days.forEach((day) => { day.checked = false })
+  result.dom.fields.days[2].checked = true
+  result.dom.fields.start.value = '13:00'
+  result.dom.fields.end.value = '15:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  assert.equal(JSON.stringify(result.window.STARTER_AVAILABILITY), JSON.stringify(expectedAvailability))
+  assert.deepEqual(result.dom.list.children.map((card) => card.dataset.id), ['general', 'ov-1'])
+  assert.equal(result.calls.some((call) => call.path === '/scheduler/configurations/update/v3'), false)
 })
 
 test('form submit accepts provider 2xx statuses for configuration updates', async () => {
@@ -1404,6 +1524,188 @@ test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virt
   assert.match(loader.getAttribute('style'), /visibility: hidden/)
 })
 
+// Calendar transitions preserve the canonical paid-call service by re-writing it
+// after the grant is deleted, so a rate the paid-call contract rejects must stop
+// the transition before the irreversible provider mutation — and must say which
+// repairable value stopped it instead of blaming the calendar connection.
+function blockedPaidRateRoutes(priceCents) {
+  return {
+    '/starter/paid-call-settings/get/v3': () => ({
+      status: 200,
+      body: {
+        readiness: { paid_call_enabled: true },
+        services: [
+          {
+            config_id: 'cfg-paid-old',
+            title: 'Paid Strategy Call',
+            price_cents: priceCents,
+            duration: 45,
+            active: true,
+          },
+        ],
+      },
+    }),
+    '/starter/get_by_memberstack/v3': () => ({
+      status: 200,
+      body: {
+        id: 1,
+        timezone: 'Asia/Manila',
+        availability: { ...defaultAvailability(), manager: 'calendar' },
+        nylas_grant_id: 'grant-1',
+        nylas_grant_email: 'grant@example.com',
+        nylas_calendar_id: 'cal-1',
+      },
+    }),
+    '/nylas_configurations/get_all/v3': () => ({
+      status: 200,
+      body: [{ config_id: 'cfg-free-old', grant_id: 'grant-1', is_paid: false }],
+    }),
+  }
+}
+
+for (const [label, priceCents] of [
+  ['above the $1,000 maximum', 100100],
+  ['not a whole dollar', 42550],
+]) {
+  test(`a canonical paid-call rate ${label} stops the writer disconnect before the grant is deleted`, async () => {
+    const result = loadWriter({ storage: TZ_CACHED, routes: blockedPaidRateRoutes(priceCents) })
+    await settle()
+
+    result.clickAction(result.dom.buttons.disconnectConfirm)
+    result.clickAction(result.dom.buttons.disconnectCalendar)
+    await settle()
+
+    const paths = result.calls.map((c) => c.path)
+    assert.equal(
+      paths.filter((path) => path === '/grants/delete/v3').length,
+      0,
+      'the provider grant must survive a paid-call rate the contract rejects',
+    )
+    assert.equal(
+      paths.filter((path) => path === '/starter/paid-call-settings/upsert/v3').length,
+      0,
+      'no paid-call rate may be rewritten from a rejected canonical value',
+    )
+    assert.equal(result.dom.steps['success-disconnect'].style.display, 'none')
+    assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+    assert.match(result.dom.errorText.textContent, /paid call rate/i)
+    assert.match(result.dom.errorText.textContent, /\$1 to \$1,000/)
+    assert.match(result.dom.errorText.textContent, /Call Settings/)
+    assert.doesNotMatch(result.dom.errorText.textContent, /contact support/)
+  })
+}
+
+// Designer owns the error step's markup. Where the copy sits beside an inline
+// icon, no reveal may replace that subtree with a single text node.
+test('a revealed error step keeps nested authored markup inside its error-text element', async () => {
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    nestedErrorTextMarkup: true,
+    routes: blockedPaidRateRoutes(100100),
+  })
+  await settle()
+
+  result.clickAction(result.dom.buttons.disconnectConfirm)
+  result.clickAction(result.dom.buttons.disconnectCalendar)
+  await settle()
+
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(
+    result.calls.filter((call) => call.path === '/grants/delete/v3').length,
+    0,
+    'the provider grant must survive regardless of which error copy the page can show',
+  )
+  assert.equal(result.dom.errorText.children.length, 2, 'authored icon and copy must survive')
+  assert.match(result.dom.errorText.children[1].textContent, /contact support/)
+})
+
+test('a blocked paid-call rate still stops the disconnect where Designer authored no error-text element', async () => {
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    withoutErrorTextElement: true,
+    routes: blockedPaidRateRoutes(100100),
+  })
+  await settle()
+
+  result.clickAction(result.dom.buttons.disconnectConfirm)
+  result.clickAction(result.dom.buttons.disconnectCalendar)
+  await settle()
+
+  assert.equal(result.dom.errorText, null)
+  assert.equal(
+    result.calls.filter((call) => call.path === '/grants/delete/v3').length,
+    0,
+    'the provider grant must survive regardless of which error copy the page can show',
+  )
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.dom.steps['success-disconnect'].style.display, 'none')
+})
+
+// The error step is shared. Once a blocked transition has replaced its copy with
+// the paid-call remediation message, the next unrelated failure that reveals the
+// same step must not still be telling the member to fix their rate.
+test('a stale paid-call remediation message never survives into an unrelated failure', async () => {
+  const routes = blockedPaidRateRoutes(100100)
+  routes['/scheduler/configurations/update/v3'] = () => ({
+    status: 200,
+    body: { response: { status: 400 } },
+  })
+  const result = loadWriter({ storage: TZ_CACHED, routes })
+  await settle()
+
+  result.clickAction(result.dom.buttons.disconnectConfirm)
+  result.clickAction(result.dom.buttons.disconnectCalendar)
+  await settle()
+  assert.match(result.dom.errorText.textContent, /paid call rate/i)
+
+  result.dom.fields.days[0].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.match(result.dom.errorText.textContent, /contact support/)
+  assert.doesNotMatch(result.dom.errorText.textContent, /paid call rate/i)
+})
+
+test('a calendar failure unrelated to the paid-call rate keeps the authored generic copy', async () => {
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => ({
+        status: 200,
+        body: { readiness: { paid_call_enabled: false }, services: [] },
+      }),
+      '/grants/delete/v3': () => ({ status: 500, body: {} }),
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: { ...defaultAvailability(), manager: 'calendar' },
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({
+        status: 200,
+        body: [{ config_id: 'cfg-free-old', grant_id: 'grant-1', is_paid: false }],
+      }),
+    },
+  })
+  await settle()
+
+  result.clickAction(result.dom.buttons.disconnectConfirm)
+  result.clickAction(result.dom.buttons.disconnectCalendar)
+  await settle()
+
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.match(result.dom.errorText.textContent, /contact support/)
+  assert.doesNotMatch(result.dom.errorText.textContent, /paid call rate/i)
+})
+
 test('an active-booking rejection preserves calendar state in the disconnect flow', async () => {
   const availability = defaultAvailability()
   availability.manager = 'calendar'
@@ -1675,6 +1977,33 @@ test('removing an override returns its days to the general schedule', async () =
   const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', configIndex + 1)
   assert.ok(updateIndex > -1 && configIndex > updateIndex)
   assert.ok(canonicalReadIndex > configIndex)
+})
+
+test('failed canonical removal restores the mirrored model and cards', async () => {
+  const availability = defaultAvailability()
+  availability.items.general.days = [1, 2]
+  availability.items['ov-1'] = { days: [3], start: '13:00', end: '15:00' }
+  const expectedAvailability = JSON.parse(JSON.stringify(availability))
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/update_availability/v3': () => ({ status: 500, body: { message: 'rejected' } }),
+    },
+  })
+  await settle()
+
+  const item = new El('div', { 'availability-item': '' })
+  item.dataset.id = 'ov-1'
+  const removeBtn = new El('a', { 'availability-action-btn': 'availability-remove' })
+  item.appendChild(removeBtn)
+  result.dom.root.appendChild(item)
+  result.clickAction(removeBtn)
+  await settle()
+
+  assert.equal(JSON.stringify(result.window.STARTER_AVAILABILITY), JSON.stringify(expectedAvailability))
+  assert.deepEqual(result.dom.list.children.map((card) => card.dataset.id), ['general', 'ov-1'])
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
 })
 
 test('rejects malformed canonical availability after a mutation', async () => {

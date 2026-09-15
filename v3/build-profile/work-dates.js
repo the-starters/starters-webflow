@@ -4,7 +4,10 @@
  * Captured read-only from /build-profile/consult on 2026-08-12.
  */
     // Handles work experience dates, including Present state and date validation.
-    document.addEventListener('DOMContentLoaded', function () {
+    let starterProfileWorkDatesBooted = false;
+    function bootStarterProfileWorkDates() {
+        if (starterProfileWorkDatesBooted) return;
+        starterProfileWorkDatesBooted = true;
         function initWorkDateFields(endSelector, checkboxSelector) {
             const endDateInput = qs(endSelector);
             const currentWorkCheckbox = qs(checkboxSelector);
@@ -13,22 +16,30 @@
 
             if (!endDateInput || !currentWorkCheckbox) return;
 
-            function setCurrentWorkState(isCurrent) {
+            function setCurrentWorkState(isCurrent, isInitial = false) {
                 if (isCurrent) {
-                    if (endDateInput.value && endDateInput.value !== 'Present') {
-                        previousEndDate = endDateInput.value;
-                    }
+                    previousEndDate = endDateInput.value && endDateInput.value !== 'Present'
+                        ? endDateInput.value
+                        : '';
 
-                    endDateInput.value = 'Present';
+                    endDateInput.value = endDateInput.type === 'month' ? '' : 'Present';
                     endDateInput.setAttribute('disabled', 'disabled');
                     endDateInput.classList.add('is-disabled');
                 } else {
                     endDateInput.removeAttribute('disabled');
                     endDateInput.classList.remove('is-disabled');
 
-                    endDateInput.value = previousEndDate;
+                    if (!isInitial) {
+                        endDateInput.value = previousEndDate;
+                        previousEndDate = '';
+                        endDateInput.dispatchEvent(new Event('starter:work-date-value-restored'));
+                    }
                 }
             }
+
+            endDateInput.addEventListener('starter:work-date-operation-reset', function () {
+                previousEndDate = '';
+            });
 
             endDateInput.addEventListener('focus', function () {
                 if (currentWorkCheckbox.checked) {
@@ -40,10 +51,15 @@
                 setCurrentWorkState(currentWorkCheckbox.checked);
             });
 
-            setCurrentWorkState(currentWorkCheckbox.checked);
+            setCurrentWorkState(currentWorkCheckbox.checked, true);
         }
 
         initWorkDateFields('#company-end', '#company-current');
         initWorkDateFields('#edit-company-end', '#edit-company-current');
-    });
+    }
 
+    if (!document.readyState || document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootStarterProfileWorkDates, { once: true });
+    } else {
+        bootStarterProfileWorkDates();
+    }

@@ -50,6 +50,20 @@ function pageHtml({
         })
       `
 
+  if (submitOwner === 'cdn') {
+    // Post-extraction shape: no inline writer, the owner is the CDN module.
+    return `
+      ${canonical ? `<link rel="canonical" href="${canonical}">` : ''}
+      ${guard}
+      ${engines}
+      <form build-profile-form>
+        <a form-submit="" href="#">Submit your profile</a>
+      </form>
+      ${success}
+      <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/submit-writer.js?v=1.59.508"></script>
+    `
+  }
+
   return `
     ${canonical ? `<link rel="canonical" href="${canonical}">` : ''}
     ${guard}
@@ -64,6 +78,15 @@ function pageHtml({
     </script>
   `
 }
+
+const cdnWriterStub = `
+  const form = document.querySelector('[build-profile-form]')
+  const formSubmit = form ? qs('[form-submit]', form) : null
+  formSubmit.addEventListener('click', async function (e) {
+    const ENDPOINT_URL = "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/update"
+    const response = await xanoAuthFetch(ENDPOINT_URL, { method: 'POST' })
+  })
+`
 
 test('a missing, deferred, or late identity guard fails the audit', () => {
   const missing = auditBuildProfileHtml(
@@ -470,4 +493,41 @@ test('the no-op failover probe is allowed when exactly one pinned engine is pres
   const result = auditBuildProfileHtml('/build-profile/consult', html)
 
   assert.equal(result.ok, true, result.findings.join('; '))
+})
+
+
+test('a page that loads the writer from the CDN passes when the module owns the click path', () => {
+  for (const pagePath of ['/build-profile/full-profile', '/build-profile/consult']) {
+    const withStub = auditBuildProfileHtml(pagePath, pageHtml({ submitOwner: 'cdn' }), { submitWriterSource: cdnWriterStub })
+    assert.deepEqual(withStub.findings, [])
+    assert.equal(withStub.submitOwnerSource, 'cdn')
+    // and against the real repo module, which is what the page executes
+    const withRepo = auditBuildProfileHtml(pagePath, pageHtml({ submitOwner: 'cdn' }))
+    assert.deepEqual(withRepo.findings, [])
+  }
+})
+
+test('a CDN writer that lost the endpoint or the click owner still fails', () => {
+  const noEndpoint = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+    submitWriterSource: cdnWriterStub.replace('build_profile/starter/update', 'somewhere/else'),
+  })
+  assert.ok(noEndpoint.findings.includes('authoritative build-profile Xano endpoint is missing'))
+  const nativeOnly = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+    submitWriterSource: cdnWriterStub.replace("addEventListener('click'", "addEventListener('submit'"),
+  })
+  assert.ok(nativeOnly.findings.some((f) => f.startsWith('authoritative Xano submit must be owned by the [form-submit] click path')))
+})
+
+test('a CDN writer from outside the Starters repo, or an unresolvable one, fails', () => {
+  const foreign = pageHtml({ submitOwner: 'cdn' }).replace('gh/the-starters/starters-webflow@latest', 'gh/someone-else/fork@main')
+  const foreignResult = auditBuildProfileHtml('/build-profile/consult', foreign)
+  assert.ok(foreignResult.findings.some((f) => f.startsWith('submit-writer must load from the Starters jsDelivr repo')))
+  const unresolved = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), { submitWriterSource: null })
+  assert.ok(unresolved.findings.includes('submit-writer is loaded from the CDN but its source could not be resolved for the click-owner check'))
+})
+
+test('an inline owner still passes without consulting the CDN module', () => {
+  const result = auditBuildProfileHtml('/build-profile/full-profile', pageHtml(), { submitWriterSource: null })
+  assert.deepEqual(result.findings, [])
+  assert.equal(result.submitOwnerSource, 'inline')
 })
