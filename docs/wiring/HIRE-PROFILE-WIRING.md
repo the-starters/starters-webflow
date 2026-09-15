@@ -1112,22 +1112,21 @@ Paid has no accepted configuration. A failed Paid install does not remove an
 installed Free chooser row or add a duplicate call row. A Paid-only set also
 keeps the Book Call trigger closed when the Paid controller cannot install.
 
-On the Free Call details screen, the authored calendar reveals the native guest
-form after a timeslot is selected. Add and remove controls manage up to five
-guest email fields. The authenticated canonical Xano command derives member
-identity and sends the selected slot, call details, and normalized guest emails.
-The browser does not create a provider booking directly. Free uses the same
-optional five-row guest-hook structure and validation contract linked below.
-No guest hooks keep Free bookable without `guest_emails`; a partial guest tree
-fails closed.
+Free and Paid new bookings use a code-rendered details step in the existing
+`[nylas-container]`. Select a time, then choose **Continue** to review its date,
+time and selected timezone. Name and Email show the signed-in member's identity
+read-only; Call Context and up to five guest emails are optional. **Back** returns
+to the calendar while preserving the slot and draft. **Request Call** uses the
+existing authenticated canonical Xano command; it never books directly with the
+provider. The same controllers supply this screen in Messages. Dashboard
+rescheduling does not enable the details step.
 
-The Paid guest-field markup, validation, payload, and retry contract is owned by
-the [Brand paid-call payment method client](../../v3/README.md#brand-paid-call-payment-method-client).
-Zero guest hooks keep Paid bookable without `guest_emails`. When guest entry is
-installed, its complete five-row native Designer-authored tree sits outside
-`[nylas-container]` and enables Paid guests. Any partial guest tree or stray
-guest hook fails closed. The Paid controller owns the complete tree's
-Paid/Free/close/success visibility and reset lifecycle.
+The [shared details and guest contract](../../v3/README.md#booking-details-and-guests)
+owns rendering, payload validation, and compatibility. With no native guest hooks,
+the script generates guest controls. A complete five-row Designer-authored tree
+outside `[nylas-container]` remains supported and appears on the details step.
+Partial trees fail closed with a booking-form configuration error. Authored
+context fields remain supported; a textarea is generated when none exists.
 
 ### Free booking confirmation
 

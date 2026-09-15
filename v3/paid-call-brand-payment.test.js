@@ -935,6 +935,8 @@ async function mountFooterFixture(options = {}) {
     if (options.confirmText) mount.confirmText = options.confirmText
     if (options.backText) mount.backText = options.backText
     if (options.onConfirm) mount.onConfirm = options.onConfirm
+    if (options.bookingDetails) mount.bookingDetails = options.bookingDetails
+    if (options.onDetailsChange) mount.onDetailsChange = options.onDetailsChange
     const result = await api.mountPaidCalendar(mount)
     const role = (name) => container.querySelectorAll('[data-paid-calendar-element]')
       .find((node) => node.getAttribute('data-paid-calendar-element') === name) || null
@@ -956,6 +958,66 @@ async function mountFooterFixture(options = {}) {
     global.xanoAuthFetch = previous.xanoAuthFetch
   }
 }
+
+test('booking details wait for Continue, preserve the draft on Back, and validate before sending', async () => {
+  let requests = 0
+  let finishRequest
+  const visibility = []
+  const fixture = await mountFooterFixture({
+    bookingDetails: { name: 'Brand Member', email: 'brand@example.com', starterEmail: 'starter@example.com', generateGuests: true, generateContext: true },
+    onDetailsChange: visible => visibility.push(visible),
+    onConfirm: async () => {
+      requests += 1
+      await new Promise(resolve => { finishRequest = resolve })
+    },
+  })
+  const roles = name => fixture.container.querySelectorAll('[data-paid-calendar-element]')
+    .filter(node => node.getAttribute('data-paid-calendar-element') === name)
+  const role = name => roles(name)[0]
+  const submit = () => fixture.confirmParts.button.listeners.click({ preventDefault() {} })
+  assert.equal(role('details').style.display, 'none')
+  assert.equal(role('participant-name').value, 'Brand Member')
+  assert.equal(role('participant-email').readOnly, true)
+  const slot = fixture.container.querySelectorAll('[data-paid-calendar-slot]')[0]
+  slot.listeners.click()
+  assert.equal(role('details').style.display, 'none')
+  await submit()
+  assert.equal(requests, 0)
+  assert.equal(role('details').style.display, 'grid')
+  assert.ok(role('selected-date').textContent)
+  assert.ok(role('selected-timezone').textContent)
+  assert.equal(fixture.confirmParts.button.getAttribute('aria-label'), 'Request Call')
+  assert.equal(role('back').style.display, 'none')
+  assert.equal(role('details-back').getAttribute('data-modal-close'), null)
+  role('context').value = ' Discuss the launch '
+  roles('guest-email')[0].value = 'not-an-email'
+  await submit()
+  assert.equal(requests, 0)
+  assert.equal(role('details-error').style.display, 'block')
+  roles('guest-email')[0].value = ' Guest@Example.com '
+  role('guest-add').listeners.click()
+  roles('guest-email')[1].value = 'brand@example.com'
+  const back = siteButtonParts(role('details-back')).button
+  back.listeners.click()
+  assert.equal(role('details').style.display, 'none')
+  assert.equal(slot.getAttribute('aria-pressed'), 'true')
+  assert.equal(role('context').value, ' Discuss the launch ')
+  await submit()
+  assert.deepEqual(fixture.result.readDetails(), { context: 'Discuss the launch', guest_emails: ['guest@example.com'] })
+  const request = submit()
+  assert.equal(requests, 1)
+  assert.equal(back.disabled, true)
+  assert.equal(role('context').readOnly, true)
+  await submit()
+  assert.equal(requests, 1, 'double click cannot send twice')
+  finishRequest()
+  await request
+  assert.equal(back.disabled, false)
+  assert.equal(role('context').readOnly, false)
+  assert.deepEqual(visibility.slice(-3), [true, false, true])
+  fixture.result.resetDetails()
+  assert.deepEqual(fixture.result.readDetails(), { context: '', guest_emails: [] })
+})
 
 test('the calendar footer puts Back beside the confirm control', async () => {
   const { document, shell, footer, back, confirm, status, backParts } = await mountFooterFixture()
@@ -3120,16 +3182,19 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
       start: 1787000000000,
       end: 1787001800000,
     })
+    assert.equal(guestUi.wrapper.style.display, 'none', 'selection alone does not open details')
+    calendarOptions.onDetailsChange(true)
     assert.equal(guestUi.wrapper.style.display, 'flex')
     assert.equal(guestUi.wrapper.getAttribute('aria-hidden'), 'false')
-    guestField.value = 'discard-on-slot-clear@example.com'
+    guestField.value = 'preserve-on-back@example.com'
     calendarOptions.onSelectionChange(null)
     assert.equal(guestUi.wrapper.style.display, 'none')
-    assert.equal(guestField.value, '')
+    assert.equal(guestField.value, 'preserve-on-back@example.com')
     calendarOptions.onSelectionChange({
       start: 1787000000000,
       end: 1787001800000,
     })
+    calendarOptions.onDetailsChange(true)
     assert.equal(guestUi.wrapper.style.display, 'flex')
     guestField.value = 'not-an-email'
     await assert.rejects(
@@ -3142,6 +3207,7 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     )
     assert.equal(guestError.textContent, 'Enter a valid guest email address')
     assert.equal(guestError.style.display, 'block')
+    assert.equal(requests.filter(({ url }) => url.endsWith(api.READINESS_PATH)).length, 0, 'invalid details stop before payment work')
     assert.equal(requests.filter(({ url }) => url.endsWith(api.BOOKING_PATH)).length, 0)
     const guestValues = [
       ' One@Example.com ',
@@ -4072,6 +4138,8 @@ test('booking retry reuses completed card setup and booking attempt', async () =
   let setupCount = 0
   let defaultCount = 0
   const bookingBodies = []
+  const draft = { context: 'Review the launch plan', guest_emails: ['guest@example.com'] }
+  let draftClears = 0
   const fixture = makePaidLifecycleFixture(async (url, options) => {
     if (url.endsWith(api.READINESS_PATH)) {
       readinessCount += 1
@@ -4091,20 +4159,31 @@ test('booking retry reuses completed card setup and booking attempt', async () =
       return response({ booking: { booking_id: 'booking_retry', row_id: 905 } })
     }
     throw new Error('Unexpected request: ' + url)
+  }, {
+    mountCalendar: async () => ({
+      slots: [],
+      readDetails: () => ({ ...draft, guest_emails: draft.guest_emails.slice() }),
+      resetDetails: () => { draftClears += 1 },
+    }),
   })
   try {
     const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
     await fixture.paid.onclick({ preventDefault() {} })
     await fixture.calendars[0].options.onConfirm(slot)
+    assert.equal(bookingBodies.length, 0, 'details wait for card setup')
     fixture.cardListeners.change({ complete: true })
     const saveEvent = { preventDefault() {}, stopImmediatePropagation() {} }
     await fixture.save.listeners.click[0](saveEvent)
+    assert.equal(draftClears, 0, 'failed booking retains the generated draft')
     await fixture.save.listeners.click[0](saveEvent)
     assert.equal(setupCount, 1)
     assert.equal(defaultCount, 1)
     assert.equal(fixture.getCardConfirmations(), 1)
     assert.equal(bookingBodies.length, 2)
     assert.equal(new Set(bookingBodies).size, 1)
+    assert.equal(JSON.parse(bookingBodies[0]).context, draft.context)
+    assert.deepEqual(JSON.parse(bookingBodies[0]).guest_emails, draft.guest_emails)
+    assert.equal(draftClears, 1, 'only canonical success clears the draft')
   } finally {
     fixture.restore()
   }
