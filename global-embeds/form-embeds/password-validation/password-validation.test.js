@@ -475,6 +475,45 @@ test('01: all four rules on means all four must pass', () => {
   assert.equal(isOpen(app.button), true)
 })
 
+// Adapted from the retired attribute-only password proposal. Exercise the
+// current component's submit gate and icons; its existing symbol rule is kept.
+const PASSWORD_CASES = [
+  ['empty password', '', false],
+  ['seven characters with every class', 'Aa1!aaa', false],
+  ['no uppercase', 'aa1!aaaa', false],
+  ['no lowercase', 'AA1!AAAA', false],
+  ['no number', 'Aa!aaaaa', false],
+  ['no special character', 'Aa1aaaaa', false],
+  ['classic Passw0rd', 'Passw0rd', false],
+  ['all lowercase', 'password', false],
+  ['space alone does not satisfy special', 'Correct horse 9', false],
+  ['Unicode symbol alone does not satisfy special', 'Str0ngPass€', false],
+  ['hyphen alone does not satisfy special', 'Str0ngPass-', false],
+  ['underscore alone does not satisfy special', 'Str0ngPass_', false],
+  ['shortest passing password', 'Aa1!aaaa', true],
+  ['long passing password', 'Aa1!' + 'a'.repeat(60), true],
+  ['spaces allowed alongside a listed special character', 'Correct horse 9!', true],
+  ['Unicode allowed alongside a listed special character', 'Str0ngPass€!', true],
+]
+
+for (const [label, value, accepted] of PASSWORD_CASES) {
+  test('password checklist: ' + label, () => {
+    const app = setup({
+      characters: 'true',
+      'character-count': '8',
+      special: 'true',
+      capitalization: 'true',
+      numbers: 'true',
+    })
+    type(app, value)
+    assert.equal(isOpen(app.button), accepted)
+    assert.equal(isGated(app.button), !accepted)
+    assert.equal(ALL_RULES.every((rule) => iconState(app.rows[rule]) === 'pass'), accepted)
+    dispatch(app.form, 'submit')
+    assert.equal(app.submits.length, accepted ? 1 : 0, 'only accepted passwords reach the submit handler')
+  })
+}
+
 test('01: characters with no count attribute enforces a minimum of 8', () => {
   const app = setup({ characters: 'true' })
   type(app, 'abcdefg')
