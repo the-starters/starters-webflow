@@ -3230,7 +3230,7 @@
       // buttons belonged to the retired two-phase flow. Its Confirm handler
       // expects a legacy unique ID, then hides every step when that ID is not
       // present. Keep the native button, but make it a safe Close action and
-      // hide the obsolete payment-method change action.
+      // hide the obsolete payment-method add/change actions.
       popup.querySelectorAll(
         '[success-call-buttons][data-type="paid"] [booking-pm-action], [success-call-buttons][data-type="paid"] [data-btn-payment="no-cards"]',
       ).forEach(function (control) {
