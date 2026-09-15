@@ -3748,8 +3748,11 @@ The browser sends neither field. The controller uses this sequence:
 ```mermaid
 flowchart TD
     A[Read authenticated availability] --> B[Render the 14-day calendar]
-    B --> C[Brand selects and confirms a slot]
-    C --> D[Read canonical payment readiness]
+    B --> C[Brand selects a slot and chooses Continue]
+    C --> R[Review details and choose Request Call]
+    R --> V{Guest addresses valid?}
+    V -- No --> X
+    V -- Yes --> D[Read canonical payment readiness]
     D --> E{Bookable?}
     E -- Yes --> K[Retain the confirmed slot]
     E -- No --> F[Open secure card dialog]
@@ -3962,9 +3965,11 @@ flowchart TD
    line, writes no status tone attribute, and uses a plain single-element
    confirm that reads `data-booking-confirm-class`. Its separate, layout-only
    sheet is documented in the [dashboard call section](#dashboard-call-sections).
-   Display and `aria-hidden` on the booking back control belong to
-   `hire-profile.js`, never to this file.
-3. When the Brand confirms a slot, read payment readiness. A canonical
+   The chooser Back control's entry visibility belongs to `hire-profile.js`.
+   While details are open the renderer hides it and shows a separate Back that
+   returns to the calendar without closing the modal.
+3. After selecting a slot, **Continue** opens booking details. **Request Call**
+   validates guests before reading payment readiness. A canonical
    `bookable=true` result can continue directly to the booking command.
 4. If no ready payment method exists, retain that exact selected slot and open
    the secure card dialog. Add card stays disabled until all three fields are
@@ -3978,11 +3983,9 @@ flowchart TD
    `createDefaultSelectionAttempt(paymentMethodId)` once for that intentional
    selection. Retry the returned attempt with its captured key.
 8. Read readiness again. Only `bookable=true` can resume the retained slot.
-9. When the optional native Paid guest form is installed, read its
-   `[data-call-guest-email]` fields, normalize and validate at most five guest
-   addresses, and exclude duplicates plus the Brand and Starter addresses.
-   Invalid guest input stops before the request. When no guest-form hook exists,
-   continue without Paid guests.
+9. Revalidate the generated or authored details before submission, normalizing
+   at most five guest addresses and excluding duplicates plus the Brand and
+   Starter addresses. Invalid input stops before the booking command.
 10. Submit the selected slot and any canonical guest list to
    `brand/booking/request/v3`. Xano rechecks the exact slot, price, payment
    readiness, configuration revision, and booking authority before it creates
@@ -4045,21 +4048,46 @@ choice is ignored. A Free choice invalidates that load. If the member then
 chooses Paid again, the controller runs only that latest Paid choice after the
 stale load settles.
 
+### Booking details and guests
+
+The shared Free/Paid controllers opt into `mountPaidCalendar({ bookingDetails })`
+for new bookings in Hire and Messages. Other callers, including dashboard
+rescheduling, keep their existing single calendar confirmation. An empty calendar
+shows its existing availability notice and does not create a details form.
+
+**Continue** opens the selected date/time/timezone summary beside the fields on
+wide screens; narrow containers stack the summary above them. Name and Email
+are prefilled from the signed-in member and read-only. Call Context is optional.
+An existing `[name="context"]` or `[booking-context]` field remains authoritative;
+otherwise the renderer supplies the textarea. Guest entry is optional, with up
+to five email rows and Add/Remove controls. The generated controls are scoped
+with the shared `data-paid-calendar-element` vocabulary (`details`,
+`participant-name`, `participant-email`, `guest-email`, `context`, and
+`details-error`). No Designer changes or provider scheduling component are needed
+for an empty calendar container.
+
+The details **Back** button preserves the slot, guest rows, and context. Changing
+the day or timezone clears the slot but preserves the draft. The original
+calendar Back still returns to the Free/Paid chooser. Completed modal close and
+call-type changes clear the booking draft. Success clears guest rows and generated
+fields; authored topic/context fields reset when the modal closes. During
+submission the generated fields are read-only, guest controls and navigation
+are disabled, and duplicate confirmation is blocked. Invalid generated guests
+show an inline alert; no booking or payment readiness request is sent. Failed
+requests retain the details for retry.
+
 The booking payload contains only the Starter slug, configuration ID, selected
 slot, timezone, optional topic/context, optional canonical `guest_emails`, and a
-bounded idempotency key. Guest inputs stay Webflow-authored: JavaScript reads
-`[data-call-guest-email]` and writes validation copy to
-`[data-call-guest-error]` when the optional guest form is installed; it never
-creates or clones guest-form HTML. The client trims,
-lowercases, validates, deduplicates, sorts, caps the list at five, and excludes
-the Brand and Starter emails. A retry for the same slot and normalized guests
-reuses the exact payload and idempotency key. Changing the slot, timezone,
-topic, context, or guest set creates a new attempt. Price, payment method, Brand identity, Starter ownership,
-booking authority, and environment stay server-owned.
+bounded idempotency key. The client trims, lowercases, validates, deduplicates,
+sorts, caps guests at five, and excludes the Brand and Starter emails. Retrying
+the same slot and normalized details reuses the exact payload and idempotency
+key. Changing the slot, timezone, topic, context, or guest set creates a new
+attempt. Name/Email display values do not enter this payload: Brand identity,
+price, payment method, Starter ownership, booking authority, and environment
+remain server-owned.
 
-Paid guest entry is optional. When it is installed, the controller requires
-this complete native Designer structure as a sibling of, never a child of,
-`[nylas-container]`:
+For compatibility, a complete native Designer guest structure outside
+`[nylas-container]` is used instead of generating duplicate guest controls:
 
 ```text
 [data-call-guest-fields]                 hidden initially
@@ -4071,17 +4099,21 @@ this complete native Designer structure as a sibling of, never a child of,
   [data-call-guest-error][role=alert][aria-live=polite]
 ```
 
-All five rows and their controls are authored in Webflow. Row one becomes
-visible only after the Brand selects a valid Paid slot in the final request
-step. The wrapper stays hidden and reset while the Brand chooses Paid and while
-availability loads. Add and Remove only reveal, hide, focus, clear, or disable
-those existing rows. Free selection, modal close, Paid success, and returning
-to a date with no selected slot clear all guest values and validation, restore
-the one-row state, and hide the Paid guest wrapper. With no guest hooks, Paid
-booking remains available and sends no `guest_emails`. Partial guest markup
-fails closed: a missing wrapper/list/error/add/remove hook, a row count other
-than five, or any row missing its native input or remove control keeps Paid
-closed.
+All five rows and their controls must exist. The wrapper becomes visible on
+**Continue**, hides on details **Back**, and preserves its draft between those
+steps. Add and Remove manage the existing rows. Call-type changes, modal close,
+and success reset the rows and hide the wrapper. With no native hooks, the
+generated form supplies guest entry.
+
+Partial or stray guest hooks, including guest trees inside `[nylas-container]`,
+block booking in both controllers. Installation retains the call options so
+Hire and Messages entry opens the existing red-background, white-text calendar
+error banner with actionable support guidance. There are no slot or request
+controls, and native form submission is blocked. A dedicated script-owned error
+mount preserves rejected authored nodes and values through Back, close, call-type
+changes, and reinstallation. Temporary guest hiding preserves the banner,
+container, and navigation paths and restores prior display styles on reset.
+Repairing the authored structure and reinstalling permits booking again.
 
 The guest wrapper can remain a native Webflow Form Block for Designer ownership,
 but it is not an email form. The controller captures submit events on the
@@ -4100,6 +4132,10 @@ Run the focused contract tests with:
 node --test v3/scheduling-auth.test.js v3/free-call-booking.test.js \
   v3/hire-profile.test.js v3/paid-call-brand-payment.test.js
 ```
+
+See [Booking details browser verification](browser-tests/BOOKING-DETAILS.md)
+for the browser command, prerequisites, evidence locations, coverage, and limits.
+The focused unit suite covers retained card-setup submission and retry.
 
 ## Dashboard Action Items panel
 
@@ -4366,7 +4402,8 @@ metadata. All booking requests remain owned by the shared controllers.
 Messages requires the native `popup-booking-main` and `popup-booking` dialogs.
 Install [`messages-payment-dialog.html`](messages-payment-dialog.html) in the
 empty Messages footer for Brands that need the Hire payment-method dialog.
-The native dialog guest fields are optional, as on older Hire markup.
+Native dialog guest fields are optional; the shared booking details step supplies
+generated guest entry when no authored guest tree is present.
 
 ### CS-17 backend release prerequisite
 

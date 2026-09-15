@@ -317,6 +317,7 @@ function bookingApiFixture(options = {}) {
     runs: 0,
   }
   const bookingApi = {
+    inspectAuthoredGuests: require('./paid-call-brand-payment.js').inspectAuthoredGuests,
     bookingRequestFingerprint(input) {
       return JSON.stringify(input)
     },
@@ -449,12 +450,16 @@ test('Free click mounts the authored calendar and canonical command', async () =
     })
     fixture.topic.value = 'Growth audit'
     fixture.context.value = 'Review the launch plan'
-    booking.state.mounts[0].onSelectionChange({ start: 1780000000000, end: 1780001800000 })
+    booking.state.mounts[0].onDetailsChange(true)
     assert.equal(fixture.guestUi.wrapper.style.display, 'flex')
     assert.equal(fixture.guestUi.rows[0].field.disabled, false)
     fixture.guestUi.add.listeners.click[0](event())
     assert.equal(fixture.guestUi.rows[1].row.style.display, 'flex')
     fixture.guestUi.rows[1].field.value = 'Guest@Example.com'
+    booking.state.mounts[0].onDetailsChange(false)
+    assert.equal(fixture.guestUi.wrapper.style.display, 'none')
+    booking.state.mounts[0].onDetailsChange(true)
+    assert.equal(fixture.guestUi.rows[1].field.value, 'Guest@Example.com', 'Back preserves the authored guest draft')
     await booking.state.mounts[0].onConfirm({
       start: 1780000000000,
       end: 1780001800000,

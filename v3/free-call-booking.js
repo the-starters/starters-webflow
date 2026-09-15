@@ -331,35 +331,22 @@
   }
 
   function installGuestUi(api, popup, container) {
-    const wrapper = popup.querySelector('[data-call-guest-fields]')
     const hookSelector =
       '[data-call-guest-fields], [data-call-guest-list], [data-call-guest-error], [data-call-guest-add], [data-call-guest-row], [data-call-guest-email], [data-call-guest-remove]'
     if (!popup.querySelectorAll(hookSelector).length) {
       return {
+        authored: false,
         hide: function () {},
         read: function () { return [] },
-        reset: function () {},
-        show: function () {},
+        setVisible: function () {},
       }
     }
-    const list = wrapper && wrapper.querySelector('[data-call-guest-list]')
-    const error = wrapper && wrapper.querySelector('[data-call-guest-error]')
-    const add = wrapper && wrapper.querySelector('[data-call-guest-add]')
-    const rows = list ? Array.from(list.querySelectorAll('[data-call-guest-row]')) : []
-    const bindings = rows.map(function (row) {
-      return {
-        row,
-        field: row.querySelector('[data-call-guest-email]'),
-        remove: row.querySelector('[data-call-guest-remove]'),
-      }
-    })
-    if (
-      !wrapper || !list || !error || !add || rows.length !== 5 ||
-      popup.querySelectorAll('[data-call-guest-email]').length !== 5 ||
-      popup.querySelectorAll('[data-call-guest-remove]').length !== 5 ||
-      bindings.some(function (binding) { return !binding.field || !binding.remove }) ||
-      (typeof container.contains === 'function' && container.contains(wrapper))
-    ) return null
+    if (typeof api.inspectAuthoredGuests !== 'function') return null
+    const markup = api.inspectAuthoredGuests(popup, container)
+    if (!markup.hasCompleteGuestMarkup) return null
+    const wrapper = markup.guestWrapper
+    const add = markup.guestAdd
+    const bindings = markup.guestBindings
 
     if (typeof api.installGuestFormSubmitGuard === 'function') {
       api.installGuestFormSubmitGuard(wrapper)
@@ -423,10 +410,10 @@
     reset()
     setVisible(false)
     return {
+      authored: true,
       hide: function () { reset(); setVisible(false) },
       read: function (excluded) { return readGuestEmails(api, popup, excluded) },
-      reset,
-      show: function () { setVisible(true) },
+      setVisible,
     }
   }
 
@@ -548,7 +535,10 @@
     )
     if (!popup || !container || !ctas.length) return false
     const guestUi = installGuestUi(bookingApi, popup, container)
-    if (!guestUi) return false
+    if (!guestUi) {
+      return typeof bookingApi.installBookingErrorController === 'function' &&
+        bookingApi.installBookingErrorController({ popup, container, ctas, config })
+    }
 
     const state = {
       bookingApi,
@@ -560,6 +550,7 @@
       configId,
       grantId,
       starterSlug,
+      brandName: clean(settings.brandName),
       brandEmail: clean(settings.brandEmail),
       starterEmail: clean(settings.starterEmail),
       popup,
@@ -568,6 +559,7 @@
     if (!state.brandEmail) return false
 
     let clearFreeCalendarSelection = null
+    let calendarDetails = null
     const bookingLocks = new Set()
 
     function clearField(selector) {
@@ -594,6 +586,7 @@
       }
       if (clearFreeCalendarSelection) clearFreeCalendarSelection()
       clearFreeCalendarSelection = null
+      calendarDetails = null
       guestUi.hide()
       clearField('[name="topic"], [booking-topic]')
       clearField('[name="context"], [booking-context]')
@@ -628,6 +621,16 @@
             container,
             config: current.config,
             confirmText: 'Request free call',
+            bookingDetails: {
+              name: current.brandName,
+              email: current.brandEmail,
+              starterEmail: current.starterEmail,
+              generateGuests: !guestUi.authored,
+              generateContext: !current.popup.querySelector('[name="context"], [booking-context]'),
+            },
+            onDetailsChange: function (visible) {
+              if (bookingSurfaceOwnership.owns(container, generation)) guestUi.setVisible(visible)
+            },
             isCurrent: function () {
               return bookingSurfaceOwnership.owns(container, generation)
             },
@@ -637,8 +640,10 @@
                 bookingLocks.has(generation)
               ) return
               let guests
+              let details = {}
               try {
-                guests = guestUi.read([
+                details = calendarDetails ? calendarDetails.readDetails() : {}
+                guests = details.guest_emails || guestUi.read([
                   current.brandEmail,
                   current.starterEmail,
                 ])
@@ -654,7 +659,8 @@
                 end: slot.end,
                 timezone: slot.timezone,
                 topic: fieldValue(current.popup, '[name="topic"], [booking-topic]'),
-                context: fieldValue(current.popup, '[name="context"], [booking-context]'),
+                context: details.context === undefined
+                  ? fieldValue(current.popup, '[name="context"], [booking-context]') : details.context,
                 guest_emails: guests,
                 brand_email: current.brandEmail,
                 starter_email: current.starterEmail,
@@ -674,22 +680,16 @@
                 )
                 if (!bookingSurfaceOwnership.owns(container, generation)) return result
                 showFreeSuccess(current.popup, input)
+                guestUi.hide()
+                if (calendarDetails) calendarDetails.resetDetails()
                 return result
               } finally {
                 bookingLocks.delete(generation)
               }
             },
-            onSelectionChange: function (slot) {
-              if (!bookingSurfaceOwnership.owns(container, generation)) return
-              if (!slot) {
-                guestUi.hide()
-                return
-              }
-              guestUi.reset()
-              guestUi.show()
-            },
           })
           if (bookingSurfaceOwnership.owns(container, generation)) {
+            calendarDetails = result && typeof result.readDetails === 'function' ? result : null
             clearFreeCalendarSelection = result && typeof result.clearSelection === 'function'
               ? result.clearSelection
               : null

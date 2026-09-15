@@ -29,6 +29,16 @@
   const MAX_KEY_LENGTH = 128
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
+  const AUTHORED_GUEST_SELECTORS = [
+    '[data-call-guest-fields]',
+    '[data-call-guest-list]',
+    '[data-call-guest-error]',
+    '[data-call-guest-add]',
+    '[data-call-guest-row]',
+    '[data-call-guest-email]',
+    '[data-call-guest-remove]',
+  ]
+  const bookingErrorSurfaces = new WeakMap()
   const GUEST_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   // The back arrow carries a close marker too, because closing the booking
   // dialog is half of its hand-off back to the chooser. A synthesized close
@@ -1729,8 +1739,8 @@
 
   /**
    * Human label for the calendar's timezone, e.g. "Asia/Manila (GMT+8)". The
-   * calendar renders in the visitor's detected zone and offers no picker, so
-   * this label is what tells them which clock the times use (Kaeser QA B4).
+   * calendar starts in the visitor's detected zone; the picker and details
+   * summary use this label to identify the clock used for the displayed times.
    * The reference timestamp keeps the offset DST-correct for the shown dates.
    */
   function timezoneLabel(timezone, referenceMsInput) {
@@ -1895,6 +1905,176 @@
     return summary
   }
 
+  function createBookingDetails(settings) {
+    const document = global.document
+    function element(tag, role, styles) {
+      const node = document.createElement(tag)
+      node.setAttribute('data-paid-calendar-element', role)
+      if (styles) applyStyles(node, styles)
+      return node
+    }
+    const root = element('div', 'details', {
+      display: 'none', gridColumn: '1 / -1', padding: CALENDAR_FRAME,
+      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 20rem), 1fr))',
+      gap: '2rem', minWidth: '0',
+    })
+    root.setAttribute('role', 'group')
+    root.setAttribute('aria-label', 'Booking details')
+    const summary = element('div', 'selected-event', {
+      display: 'flex', flexDirection: 'column', justifyContent: 'center',
+      alignItems: 'center', textAlign: 'center', background: '#f3f4ef',
+      borderRadius: '0.25rem', padding: '2rem', minHeight: '12rem', gap: '0.75rem',
+    })
+    const date = element('p', 'selected-date', { margin: '0', fontSize: '1.25rem', fontWeight: '600' })
+    const time = element('p', 'selected-time', { margin: '0' })
+    const zone = element('p', 'selected-timezone', { margin: '0', overflowWrap: 'anywhere' })
+    summary.appendChild(date)
+    summary.appendChild(time)
+    summary.appendChild(zone)
+    root.appendChild(summary)
+    const fields = element('div', 'details-fields', { display: 'grid', gap: '1.25rem', minWidth: '0' })
+    root.appendChild(fields)
+    function field(labelText, role, tag, parent) {
+      const label = document.createElement('label')
+      applyStyles(label, { display: 'grid', gap: '0.5rem', margin: '0', fontWeight: '400' })
+      const caption = document.createElement('span')
+      caption.textContent = labelText
+      const input = element(tag || 'input', role, {
+        boxSizing: 'border-box', width: '100%', minWidth: '0', padding: '0.75rem',
+        border: '1px solid #dededb', borderRadius: '0.25rem', background: '#fff',
+        color: '#1f211d', font: 'inherit',
+      })
+      label.appendChild(caption)
+      label.appendChild(input)
+      ;(parent || fields).appendChild(label)
+      return input
+    }
+    const name = field('Name', 'participant-name')
+    name.value = String(settings.name || '')
+    name.readOnly = true
+    const email = field('Email', 'participant-email')
+    email.value = String(settings.email || '')
+    email.readOnly = true
+    email.type = 'email'
+    const guestInputs = []
+    const guestControls = []
+    if (settings.generateGuests) {
+      const guestGroup = element('div', 'guests', { display: 'grid', gap: '0.75rem' })
+      fields.appendChild(guestGroup)
+      const add = element('button', 'guest-add', {
+        padding: '0.75rem', border: '1px solid #1f211d', background: '#fff',
+        borderRadius: '0.25rem', font: 'inherit', cursor: 'pointer',
+      })
+      add.type = 'button'
+      add.textContent = 'Add another guest +'
+      function updateGuests() {
+        add.disabled = guestInputs.every(function (input) { return !input.disabled })
+      }
+      for (let index = 0; index < MAX_GUEST_EMAILS; index += 1) {
+        const row = element('div', 'guest-row', { display: index ? 'none' : 'flex', gap: '0.5rem', alignItems: 'end' })
+        const input = field(index ? 'Guest email ' + (index + 1) : 'Guest email (optional)', 'guest-email', 'input', row)
+        input.type = 'email'
+        input.disabled = index !== 0
+        input.parentElement.style.flex = '1'
+        const remove = element('button', 'guest-remove', {
+          padding: '0.75rem', color: '#b42318', background: '#fff1f0',
+          border: '0', borderRadius: '0.25rem', cursor: 'pointer',
+        })
+        remove.type = 'button'
+        remove.textContent = '×'
+        remove.setAttribute('aria-label', 'Remove guest ' + (index + 1))
+        remove.addEventListener('click', function () {
+          input.value = ''
+          input.disabled = index !== 0
+          row.style.display = index ? 'none' : 'flex'
+          updateGuests()
+        })
+        row.appendChild(remove)
+        guestGroup.appendChild(row)
+        guestInputs.push(input)
+        guestControls.push(remove)
+      }
+      add.addEventListener('click', function () {
+        const input = guestInputs.find(function (candidate) { return candidate.disabled })
+        if (!input) return
+        input.disabled = false
+        input.parentElement.parentElement.style.display = 'flex'
+        updateGuests()
+        if (typeof input.focus === 'function') input.focus()
+      })
+      guestGroup.appendChild(add)
+      guestControls.push(add)
+    }
+    const context = settings.generateContext ? field('Call Context (optional)', 'context', 'textarea') : null
+    if (context) {
+      context.rows = 4
+      context.style.resize = 'vertical'
+    }
+    const error = element('p', 'details-error', { display: 'none', margin: '0', color: '#b42318' })
+    error.setAttribute('role', 'alert')
+    fields.appendChild(error)
+    fields.addEventListener('input', function () {
+      error.textContent = ''
+      error.style.display = 'none'
+    })
+    return {
+      root,
+      show: function (slot, timezone) {
+        date.textContent = new Intl.DateTimeFormat('en-US', {
+          weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: timezone,
+        }).format(new Date(slot.start))
+        const formatter = new Intl.DateTimeFormat('en-US', {
+          hour: 'numeric', minute: '2-digit', hour12: true, timeZone: timezone,
+        })
+        time.textContent = formatter.format(new Date(slot.start)) + ' – ' + formatter.format(new Date(slot.end))
+        zone.textContent = timezoneLabel(timezone, slot.start)
+        root.style.display = 'grid'
+        if (typeof name.focus === 'function') name.focus()
+      },
+      read: function () {
+        error.textContent = ''
+        error.style.display = 'none'
+        const result = {}
+        if (settings.generateGuests) {
+          try {
+            result.guest_emails = normalizeGuestEmails(guestInputs.map(function (input) {
+              if (!input.disabled && input.value && typeof input.checkValidity === 'function' && !input.checkValidity()) {
+                throw new Error('Enter a valid guest email address')
+              }
+              return input.disabled ? '' : input.value
+            }), [settings.email, settings.starterEmail])
+          } catch (failure) {
+            error.textContent = failure.message
+            error.style.display = 'block'
+            const invalid = guestInputs.find(function (input) {
+              return !input.disabled && input.value && !isValidGuestEmail(String(input.value).trim())
+            })
+            if (invalid && typeof invalid.focus === 'function') invalid.focus()
+            throw failure
+          }
+        }
+        if (context) result.context = String(context.value || '').trim()
+        return result
+      },
+      setBusy: function (busy) {
+        guestInputs.forEach(function (input) { input.readOnly = busy })
+        guestControls.forEach(function (control) { control.disabled = busy })
+        if (!busy && guestControls.length) guestControls[guestControls.length - 1].disabled = guestInputs.every(function (input) { return !input.disabled })
+        if (context) context.readOnly = busy
+      },
+      reset: function () {
+        guestInputs.forEach(function (input, index) {
+          input.value = ''
+          input.disabled = index !== 0
+          input.parentElement.parentElement.style.display = index ? 'none' : 'flex'
+        })
+        if (context) context.value = ''
+        error.textContent = ''
+        error.style.display = 'none'
+      },
+    }
+  }
+
   async function mountPaidCalendar(options) {
     const settings = options || {}
     const container = settings.container
@@ -1912,10 +2092,11 @@
     let timezone = String(
       settings.initialTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     ).trim() || 'UTC'
-    const slots = await getPaidAvailability(config)
+    const bookingError = String(settings.bookingError || '').trim()
+    const slots = bookingError ? [] : await getPaidAvailability(config)
     if (!isCurrent()) return { slots: [], stale: true }
     container.textContent = ''
-    container.setAttribute('data-paid-calendar-state', slots.length ? 'ready' : 'empty')
+    container.setAttribute('data-paid-calendar-state', bookingError ? 'error' : slots.length ? 'ready' : 'empty')
 
     /* Whether this mount is the profile's booking dialog. Everything the
        booking surface adds — the injected stylesheet, the component buttons,
@@ -1926,6 +2107,10 @@
     if (!onBookingSurface) ensureDashboardCalendarLayout(global.document)
     if (onBookingSurface) {
       ensureBookingCalendarLayout(global.document)
+      // The authored step aligns children to the start and the mount has auto
+      // margins. Give the details grid the panel width instead of letting its
+      // fields shrink the entire calendar container to their minimum width.
+      if (settings.bookingDetails) applyStyles(container, { width: '100%', minWidth: '0', boxSizing: 'border-box' })
       /* The authored step this calendar lives in, marked so the sheet can
          reset ITS padding without touching the dialog's other steps. There are
          four `.call-details_layout` wrappers in the booking dialog — calendar,
@@ -1953,9 +2138,8 @@
 
     /**
      * The one place the status line is written, so the sheet always has a tone
-     * to colour it by. Three strings ever reach it — the empty-availability
-     * notice, the in-flight notice and the booking failure — and only the last
-     * is a failure, which is why they are not all the same red.
+     * to colour it by. Availability and in-flight notices use a different tone
+     * from booking failures and rejected-form errors.
      *
      * The tone is a booking-surface concern (it is what the injected sheet
      * keys on), so it is not written on the dashboard's reschedule calendar:
@@ -2080,7 +2264,8 @@
         container.appendChild(summary)
       }
       container.appendChild(status)
-      setStatus('No available times were found in the next 14 days.', 'empty')
+      if (bookingError) status.setAttribute('role', 'alert')
+      setStatus(bookingError || 'No available times were found in the next 14 days.', bookingError ? 'error' : 'empty')
       // An empty calendar is exactly when a visitor most wants the other kind
       // of call, so the way back out has to survive the early return.
       if (footer) container.appendChild(footer)
@@ -2176,7 +2361,9 @@
       gap: '8px',
     })
     times.setAttribute('data-paid-calendar-element', 'times')
-    const confirmLabel = String(settings.confirmText || 'Request paid call')
+    const details = settings.bookingDetails ? createBookingDetails(settings.bookingDetails) : null
+    let showingDetails = false
+    const confirmLabel = details ? 'Continue' : String(settings.confirmText || 'Request paid call')
     const slotRestingBackground = onBookingSurface
       ? BOOKING_SLOT_RESTING_BACKGROUND
       : '#f3f4ef'
@@ -2221,11 +2408,61 @@
     }
     setConfirmDisabled(true)
 
-    if (footer) {
+    if (footer && !details) {
       footer.appendChild(confirm)
     }
 
+    const detailsBack = details ? buildSiteButton(global.document, 'Back', 'secondary') : null
+    if (detailsBack) {
+      detailsBack.wrap.setAttribute('data-paid-calendar-element', 'details-back')
+      detailsBack.wrap.style.display = 'none'
+      if (footer) {
+        footer.appendChild(detailsBack.wrap)
+        footer.appendChild(confirm)
+      }
+      else shell.appendChild(detailsBack.wrap)
+      detailsBack.button.addEventListener('click', function () {
+        if (!isCurrent() || confirmationPending) return
+        setDetailsVisible(false)
+        if (typeof confirmButton.focus === 'function') confirmButton.focus()
+      })
+      details.root.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter' || String(event.target && event.target.tagName).toLowerCase() !== 'input') return
+        event.preventDefault()
+        event.stopPropagation()
+        confirmButton.click()
+      })
+    }
+    const backDisplay = back ? back.style.display : ''
+    function setDetailsVisible(visible) {
+      if (!details) return
+      showingDetails = visible
+      if (visible) details.show(selectedSlot, timezone)
+      else details.root.style.display = 'none'
+      if (onBookingSurface) {
+        layout.style.display = visible ? 'none' : ''
+        shell.style.gridTemplateAreas = visible ? '"details" "footer"' : ''
+        shell.style.gridTemplateColumns = visible ? 'minmax(0, 1fr)' : ''
+        shell.style.gridTemplateRows = visible ? 'auto auto' : ''
+        details.root.style.gridArea = visible ? 'details' : ''
+      } else {
+        calendarHost.style.display = visible ? 'none' : 'grid'
+        timezoneControl.wrapper.style.display = visible ? 'none' : ''
+        times.style.display = visible ? 'none' : 'grid'
+      }
+      if (back) back.style.display = visible ? 'none' : backDisplay
+      detailsBack.wrap.style.display = visible ? '' : 'none'
+      const label = visible ? 'Request Call' : 'Continue'
+      if (confirmControl) {
+        confirmControl.text.textContent = label
+        confirmButton.setAttribute('aria-label', label)
+      } else confirmButton.textContent = label
+      setStatus('')
+      if (typeof settings.onDetailsChange === 'function') settings.onDetailsChange(visible)
+    }
+
     function clearSelection() {
+      setDetailsVisible(false)
       selectedSlot = null
       onSelectionChange(null)
       setConfirmDisabled(true)
@@ -2260,7 +2497,7 @@
           cursor: 'pointer',
         })
         button.addEventListener('click', function () {
-          if (confirmationPending) return
+          if (!isCurrent() || confirmationPending) return
           Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (candidate) {
             candidate.setAttribute('aria-pressed', candidate === button ? 'true' : 'false')
             candidate.style.background = candidate === button
@@ -2337,8 +2574,18 @@
       renderCalendar()
     })
 
-    confirmButton.addEventListener('click', async function () {
-      if (!selectedSlot || confirmButton.disabled || confirmationPending) return
+    confirmButton.addEventListener('click', async function (event) {
+      if (event) event.preventDefault()
+      if (!isCurrent() || !selectedSlot || confirmButton.disabled || confirmationPending) return
+      if (details && !showingDetails) {
+        setDetailsVisible(true)
+        return
+      }
+      if (details) {
+        try { details.read() } catch (_error) { return }
+        details.setBusy(true)
+        setSiteButtonDisabled(detailsBack, true)
+      }
       confirmationPending = true
       setConfirmDisabled(true)
       timezoneControl.select.disabled = true
@@ -2373,12 +2620,17 @@
           end: selectedSlot.end,
           timezone,
         })
+        if (isCurrent()) setStatus('')
       } catch (error) {
         console.error('[paid-call] booking failed', error)
         setStatus('We could not book this call. Please try again.', 'error')
       } finally {
         confirmationPending = false
         if (isCurrent()) {
+          if (details) {
+            details.setBusy(false)
+            setSiteButtonDisabled(detailsBack, false)
+          }
           Array.from(calendarHost.querySelectorAll('[data-paid-calendar-date]')).forEach(function (button) {
             button.disabled = false
           })
@@ -2414,11 +2666,16 @@
       shell.appendChild(timezoneControl.wrapper)
       shell.appendChild(times)
     }
+    if (details) shell.appendChild(details.root)
     shell.appendChild(footer || confirm)
     shell.appendChild(status)
     container.appendChild(shell)
     renderCalendar()
     const result = { slots, clearSelection }
+    if (details) {
+      result.readDetails = details.read
+      result.resetDetails = details.reset
+    }
     Object.defineProperty(result, 'timezone', {
       enumerable: true,
       get: function () { return timezone },
@@ -2540,6 +2797,133 @@
     }
   }
 
+  function inspectAuthoredGuests(popup, container) {
+    const guestHooks = AUTHORED_GUEST_SELECTORS.reduce(function (hooks, selector) {
+      hooks[selector] = Array.from(popup.querySelectorAll(selector))
+      return hooks
+    }, {})
+    const guestWrapper = guestHooks['[data-call-guest-fields]'][0] || null
+    const guestList = guestWrapper && guestWrapper.querySelector('[data-call-guest-list]')
+    const guestError = guestWrapper && guestWrapper.querySelector('[data-call-guest-error]')
+    const guestAdd = guestWrapper && guestWrapper.querySelector('[data-call-guest-add]')
+    const guestRows = guestList
+      ? Array.from(guestList.querySelectorAll('[data-call-guest-row]'))
+      : []
+    const guestBindings = guestRows.map(function (row) {
+      return {
+        row,
+        field: row.querySelector('[data-call-guest-email]'),
+        remove: row.querySelector('[data-call-guest-remove]'),
+      }
+    })
+    const authoredGuestFields = guestHooks['[data-call-guest-email]']
+    const authoredGuestRemoves = guestHooks['[data-call-guest-remove]']
+    const hasGuestMarkup = AUTHORED_GUEST_SELECTORS.some(function (selector) {
+      return guestHooks[selector].length > 0
+    })
+    const hasCompleteGuestMarkup = Boolean(
+      guestHooks['[data-call-guest-fields]'].length === 1 &&
+      guestHooks['[data-call-guest-list]'].length === 1 &&
+      guestHooks['[data-call-guest-error]'].length === 1 &&
+      guestHooks['[data-call-guest-add]'].length === 1 &&
+      guestHooks['[data-call-guest-row]'].length === MAX_GUEST_EMAILS &&
+      authoredGuestFields.length === MAX_GUEST_EMAILS &&
+      authoredGuestRemoves.length === MAX_GUEST_EMAILS &&
+      guestWrapper &&
+      guestList === guestHooks['[data-call-guest-list]'][0] &&
+      guestError === guestHooks['[data-call-guest-error]'][0] &&
+      guestAdd === guestHooks['[data-call-guest-add]'][0] &&
+      guestRows.length === MAX_GUEST_EMAILS &&
+      guestRows.every(function (row) { return guestHooks['[data-call-guest-row]'].includes(row) }) &&
+      !guestBindings.some(function (binding) { return !binding.field || !binding.remove }) &&
+      !guestBindings.some(function (binding) { return !authoredGuestFields.includes(binding.field) }) &&
+      !guestBindings.some(function (binding) { return !authoredGuestRemoves.includes(binding.remove) }) &&
+      !(typeof container.contains === 'function' && container.contains(guestWrapper)),
+    )
+    return { hasGuestMarkup, hasCompleteGuestMarkup, guestWrapper, guestError, guestAdd, guestBindings }
+  }
+
+  function installBookingErrorController(options) {
+    const { popup, container, ctas, config } = options
+    const type = config.is_paid ? 'paid' : 'free'
+    let surface = bookingErrorSurfaces.get(container)
+    if (!surface) {
+      surface = { mount: null, hiddenGuests: new Map() }
+      bookingErrorSurfaces.set(container, surface)
+    }
+    function protectedPaths() {
+      const protectedNodes = [container, popup].concat(Array.from(popup.querySelectorAll(
+        BOOKING_CLOSE_SELECTOR + ', [data-booking-back]',
+      )))
+      return function (element) {
+        return protectedNodes.some(function (node) {
+          return element === node || element.contains(node)
+        })
+      }
+    }
+    function reset() {
+      if (surface.mount) surface.mount.remove()
+      surface.mount = null
+      container.removeAttribute('data-paid-calendar-state')
+      const isProtected = protectedPaths()
+      popup.querySelectorAll('[schedule-step]').forEach(function (step) {
+        if (step.getAttribute('schedule-step') === 'default') step.style.display = 'flex'
+        else if (!isProtected(step)) step.style.display = 'none'
+      })
+      surface.hiddenGuests.forEach(function (display, element) {
+        if (display.value) element.style.setProperty('display', display.value, display.priority)
+        else element.style.removeProperty('display')
+      })
+      surface.hiddenGuests.clear()
+    }
+    if (!bookingSurfaceLifecycle.register(popup, container, reset, type)) return false
+    installGuestFormSubmitGuard(popup)
+    bookingSurfaceLifecycle.reset(popup)
+    ctas.forEach(function (cta) {
+      cta.setAttribute('data-config', config.config_id)
+      cta.setAttribute('data-' + type + '-call-v3', 'ready')
+      const item = cta.closest('[call-type-item]')
+      if (item) {
+        item.style.display = 'block'
+        const price = item.querySelector('[call-type-price]')
+        if (price && type === 'paid') price.textContent = canonicalPaidPrice(config)
+      }
+      cta.onclick = function (event) {
+        event.preventDefault()
+        const generation = bookingSurfaceLifecycle.reset(popup, type)
+        const isProtected = protectedPaths()
+        const guestElements = new Set(Array.from(popup.querySelectorAll(AUTHORED_GUEST_SELECTORS.join(', ')))
+          .filter(function (element) { return !isProtected(element) }))
+        guestElements.forEach(function (element) {
+          let parent = element.parentElement
+          while (parent && parent !== popup) {
+            if (guestElements.has(parent)) return
+            parent = parent.parentElement
+          }
+          surface.hiddenGuests.set(element, {
+            value: element.style.getPropertyValue('display'),
+            priority: element.style.getPropertyPriority('display'),
+          })
+          element.style.display = 'none'
+        })
+        const mount = global.document.createElement('div')
+        mount.setAttribute('data-booking-error-mount', '')
+        mount.style.width = '100%'
+        container.appendChild(mount)
+        container.setAttribute('data-paid-calendar-state', 'error')
+        surface.mount = mount
+        return mountPaidCalendar({
+          container: mount,
+          config,
+          bookingError: 'We could not load the booking form. Please contact support.',
+          onConfirm: function () {},
+          isCurrent: function () { return bookingSurfaceOwnership.owns(container, generation) },
+        })
+      }
+    })
+    return true
+  }
+
   function installPaidBookingController(options) {
     const settings = options || {}
     const config = settings.config
@@ -2575,59 +2959,11 @@
     const authoredPaidCallText = paidCallMessage
       ? String(paidCallMessage.textContent || '')
       : ''
-    const guestHookSelectors = [
-      '[data-call-guest-fields]',
-      '[data-call-guest-list]',
-      '[data-call-guest-error]',
-      '[data-call-guest-add]',
-      '[data-call-guest-row]',
-      '[data-call-guest-email]',
-      '[data-call-guest-remove]',
-    ]
-    const guestHooks = guestHookSelectors.reduce(function (hooks, selector) {
-      hooks[selector] = Array.from(popup.querySelectorAll(selector))
-      return hooks
-    }, {})
-    const guestWrapper = guestHooks['[data-call-guest-fields]'][0] || null
-    const guestList = guestWrapper && guestWrapper.querySelector('[data-call-guest-list]')
-    const guestError = guestWrapper && guestWrapper.querySelector('[data-call-guest-error]')
-    const guestAdd = guestWrapper && guestWrapper.querySelector('[data-call-guest-add]')
-    const guestRows = guestList
-      ? Array.from(guestList.querySelectorAll('[data-call-guest-row]'))
-      : []
-    const guestBindings = guestRows.map(function (row) {
-      return {
-        row,
-        field: row.querySelector('[data-call-guest-email]'),
-        remove: row.querySelector('[data-call-guest-remove]'),
-      }
-    })
-    const authoredGuestFields = guestHooks['[data-call-guest-email]']
-    const authoredGuestRemoves = guestHooks['[data-call-guest-remove]']
-    const hasGuestMarkup = guestHookSelectors.some(function (selector) {
-      return guestHooks[selector].length > 0
-    })
-    const hasCompleteGuestMarkup = Boolean(
-      guestHooks['[data-call-guest-fields]'].length === 1 &&
-      guestHooks['[data-call-guest-list]'].length === 1 &&
-      guestHooks['[data-call-guest-error]'].length === 1 &&
-      guestHooks['[data-call-guest-add]'].length === 1 &&
-      guestHooks['[data-call-guest-row]'].length === MAX_GUEST_EMAILS &&
-      authoredGuestFields.length === MAX_GUEST_EMAILS &&
-      authoredGuestRemoves.length === MAX_GUEST_EMAILS &&
-      guestWrapper &&
-      guestList === guestHooks['[data-call-guest-list]'][0] &&
-      guestError === guestHooks['[data-call-guest-error]'][0] &&
-      guestAdd === guestHooks['[data-call-guest-add]'][0] &&
-      guestRows.length === MAX_GUEST_EMAILS &&
-      guestRows.every(function (row) { return guestHooks['[data-call-guest-row]'].includes(row) }) &&
-      !guestBindings.some(function (binding) { return !binding.field || !binding.remove }) &&
-      !guestBindings.some(function (binding) { return !authoredGuestFields.includes(binding.field) }) &&
-      !guestBindings.some(function (binding) { return !authoredGuestRemoves.includes(binding.remove) }) &&
-      !(typeof container.contains === 'function' && container.contains(guestWrapper)),
-    )
+    const {
+      hasGuestMarkup, hasCompleteGuestMarkup, guestWrapper, guestError, guestAdd, guestBindings,
+    } = inspectAuthoredGuests(popup, container)
     if (hasGuestMarkup && !hasCompleteGuestMarkup) {
-      return false
+      return installBookingErrorController({ popup, container, ctas, config: availabilityConfig })
     }
     const guestUiEnabled = hasCompleteGuestMarkup
     const bindings = ctas.map(function (cta) {
@@ -2650,6 +2986,7 @@
     let pendingPaidSlotGeneration = 0
     let pendingPaidConfirmation = 0
     let clearPaidCalendarSelection = null
+    let calendarDetails = null
     let paidClickLock = false
     const bookingLocks = new Set()
     let paidConfirmationSequence = 0
@@ -2794,6 +3131,7 @@
       setGuestUiVisible(false)
       clearPendingPaidSelection()
       clearPaidCalendarSelection = null
+      calendarDetails = null
       clearField('[name="topic"], [booking-topic]')
       clearField('[name="context"], [booking-context]')
       container.textContent = ''
@@ -2923,22 +3261,27 @@
       switchStep(popup, 'success')
     }
 
+    function readBookingDetails() {
+      const details = calendarDetails ? calendarDetails.readDetails() : {}
+      try {
+        if (details.guest_emails === undefined) details.guest_emails = guestUiEnabled
+          ? readGuestEmails(popup, [settings.brandEmail, settings.starterEmail]) : []
+        setGuestError('')
+      } catch (error) {
+        setGuestError(error && error.message)
+        throw error
+      }
+      if (details.context === undefined) details.context = fieldValue('[name="context"], [booking-context]')
+      return details
+    }
+
     async function submitBooking(slot, generation, confirmation) {
       if (
         !ownsSurface(generation) ||
         confirmation !== paidConfirmationSequence ||
         bookingLocks.has(generation)
       ) return
-      let guestEmails
-      try {
-        guestEmails = guestUiEnabled
-          ? readGuestEmails(popup, [settings.brandEmail, settings.starterEmail])
-          : []
-        setGuestError('')
-      } catch (error) {
-        setGuestError(error && error.message)
-        throw error
-      }
+      const details = readBookingDetails()
       const bookingInput = {
         starter_slug: settings.starterSlug,
         config_id: config.config_id,
@@ -2946,8 +3289,8 @@
         end: slot.end,
         timezone: slot.timezone,
         topic: fieldValue('[name="topic"], [booking-topic]'),
-        context: fieldValue('[name="context"], [booking-context]'),
-        guest_emails: guestEmails,
+        context: details.context,
+        guest_emails: details.guest_emails,
         brand_email: settings.brandEmail,
         starter_email: settings.starterEmail,
       }
@@ -2962,6 +3305,7 @@
         if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return result
         resetGuestUi()
         setGuestUiVisible(false)
+        if (calendarDetails) calendarDetails.resetDetails()
         pendingPaidSlot = null
         pendingPaidSlotGeneration = 0
         pendingPaidConfirmation = 0
@@ -2980,6 +3324,16 @@
       const result = await mount({
         container,
         config: availabilityConfig,
+        bookingDetails: {
+          name: settings.brandName,
+          email: settings.brandEmail,
+          starterEmail: settings.starterEmail,
+          generateGuests: !guestUiEnabled,
+          generateContext: !popup.querySelector('[name="context"], [booking-context]'),
+        },
+        onDetailsChange: function (visible) {
+          if (ownsSurface(generation)) setGuestUiVisible(visible)
+        },
         onConfirm: function (slot) { return confirmPaidSlot(slot, generation) },
         onSelectionChange: function (slot) {
           if (!ownsSurface(generation)) return
@@ -2988,17 +3342,14 @@
             pendingPaidSlot = null
             pendingPaidSlotGeneration = 0
             pendingPaidConfirmation = 0
-            resetGuestUi()
             setGuestUiVisible(false)
             return
           }
-          if (!guestUiEnabled) return
-          if (guestWrapper.getAttribute('aria-hidden') === 'true') resetGuestUi()
-          setGuestUiVisible(true)
         },
         isCurrent: function () { return ownsSurface(generation) },
       })
       if (ownsSurface(generation)) {
+        calendarDetails = result && typeof result.readDetails === 'function' ? result : null
         clearPaidCalendarSelection = result && typeof result.clearSelection === 'function'
           ? result.clearSelection
           : null
@@ -3104,6 +3455,7 @@
 
     async function confirmPaidSlot(slot, generation) {
       if (!slot || !ownsSurface(generation)) return
+      readBookingDetails()
       const confirmation = ++paidConfirmationSequence
       pendingPaidSlot = slot
       pendingPaidSlotGeneration = generation
@@ -3292,7 +3644,9 @@
     getSavedPaymentMethods,
     getPaidAvailability,
     timezoneLabel,
+    inspectAuthoredGuests,
     installGuestFormSubmitGuard,
+    installBookingErrorController,
     installPaidBookingController,
     mountPaidCalendar,
     minimumBookingNoticeMinutes,
