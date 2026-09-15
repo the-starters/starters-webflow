@@ -76,12 +76,12 @@ const EXPECTED_LIVE_CAPTURES = Object.freeze({
 
 const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
   'v3/profile-form/shared-foundation.js': Object.freeze({
-    characters: 22714, sha256: '76b0feb6c2d2b616bcf12be70b25eb5803d0252efa0b14936ad3837cb1ee3be9',
+    characters: 24674, sha256: 'a24c018b4d015a5d667023bca62bb0b05278e5eb4faef133b9503e5e3aed756c',
     liveCaptureAsset: 'v3/profile-form/shared-foundation-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 3: '  ', 81: ' ', 239: '      ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/profile-form/incremental-dropdowns.js': Object.freeze({
-    characters: 14107, sha256: 'f239896721ec2048d138af0d8874596509710ca5ac039d016f15dcdcffa15faf',
+    characters: 14708, sha256: '015173062d8bfbeeaf9222e149edad5a34e709ad04c4e39506414e752e6eb39e',
     guardKey: 'incrementalDropdowns',
     liveCaptureAsset: 'v3/profile-form/incremental-dropdowns-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
@@ -92,19 +92,19 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({ 4: '  ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/starter-edit-profile/canonical-profile-loader.js': Object.freeze({
-    characters: 23574, sha256: 'f5ed797903dcf7dcb9c7ee79017a8224c67f5de588368a9f5c300e8e9dcdb6f3',
+    characters: 25233, sha256: '0987ddd56267c76c39fcb9a7b06dd17d50df6d69958ae69dcc2af37d091ff661',
     guardKey: 'canonicalProfileLoader',
     liveCaptureAsset: 'v3/profile-form/edit-canonical-profile-loader-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/draft-state.js': Object.freeze({
-    characters: 11151, sha256: 'f5311c42114ae706587bf0abe9738b80dbb798319b049781766a490df4936f7a',
+    characters: 11857, sha256: 'd7f029fb5e0324078b1c5c962bcd7bb4af301932735eb3f1bd8e32fc90941e2c',
     guardKey: 'buildProfileDraftState',
     liveCaptureAsset: 'v3/profile-form/build-draft-state-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 18239, sha256: '528a4c787ae071e73d14e4113217a8888eb398bc9d168f43392ad6f3b6de43aa',
+    characters: 19485, sha256: '9fcf1705b1810f73c64ce4671c74e058286a917d610ce7138681f34cb3cd8645',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 270: '          ' }), terminalNewlinesRemoved: 0,
@@ -1186,12 +1186,52 @@ test('build draft state keeps the newest local draft and syncs it once', async (
   assert.equal(memberUpdates[0].json.build_profile.data.step_1.tagline, 'local')
 })
 
+test('build draft state restores saved answers instead of a newer empty route seed', async () => {
+  const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 200, data: {} }
+  const memberProfile = { type: 'consult', type_id: 'consult-id', last_update: 100,
+    data: { step_1: { 'first-name': 'QA Consult' }, step_6: { 'paid-call-rate': '1000' } } }
+  const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
+  assert.equal(context.activeProfile.data.step_1['first-name'], 'QA Consult')
+  assert.equal(context.activeProfile.data.step_6['paid-call-rate'], '1000')
+  assert.equal(memberUpdates.length, 0, 'initial route seeding must not overwrite the saved member draft')
+})
+
+for (const [routeType, savedType] of [['consult', 'full'], ['full', 'consult']]) {
+  for (const memberLastUpdate of [100, 300]) {
+    test(`build draft state preserves ${routeType} route metadata when restoring ${savedType} answers at ${memberLastUpdate}`, async () => {
+      const localProfile = { type: routeType, type_id: `${routeType}-id`, last_update: 200, data: {} }
+      const memberProfile = { type: savedType, type_id: `${savedType}-id`, last_update: memberLastUpdate,
+        data: { step_1: { tagline: 'Saved answer' }, step_6: { 'paid-call-rate': '1000' } } }
+      const tagline = new Element('input')
+      tagline.name = 'tagline'
+      const { context, memberUpdates, values } = await runDraftCase({ localProfile, memberProfile, stepFields: [tagline] })
+      const expected = { ...memberProfile, type: routeType, type_id: `${routeType}-id` }
+
+      assert.deepEqual(JSON.parse(JSON.stringify(context.activeProfile)), expected)
+      assert.deepEqual(JSON.parse(values.get('ts:build_profile:member:member-1')), expected)
+      assert.equal(tagline.value, 'Saved answer')
+      assert.equal(memberUpdates.length, 0)
+    })
+  }
+}
+
+test('build draft state preserves an explicitly cleared newer local step', async () => {
+  const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 200,
+    data: { step_1: { 'first-name': '' } } }
+  const memberProfile = { type: 'consult', type_id: 'consult-id', last_update: 100,
+    data: { step_1: { 'first-name': 'Old answer' } } }
+  const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
+  assert.equal(context.activeProfile.data.step_1['first-name'], '')
+  assert.equal(memberUpdates.length, 1)
+})
+
 test('build draft state keeps a newer member draft without a reverse sync', async () => {
   const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 100, data: { step_1: { tagline: 'local' } } }
   const memberProfile = { type: 'full', type_id: 'full-id', last_update: 200, data: { step_1: { tagline: 'member' } } }
   const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
 
-  assert.equal(context.activeProfile.type, 'full')
+  assert.equal(context.activeProfile.type, 'consult')
+  assert.equal(context.activeProfile.type_id, 'consult-id')
   assert.equal(context.activeProfile.data.step_1.tagline, 'member')
   assert.equal(memberUpdates.length, 0)
 })
@@ -1290,7 +1330,7 @@ test('build draft state preserves non-empty member-bound draft edits', async () 
   assert.equal(email.value, 'draft@example.com')
 })
 
-test('edit canonical loader hydrates authored fields without a load-time mutation', async () => {
+test('edit canonical loader hydrates authored fields without a load-time mutation', { timeout: 30000 }, async () => {
   const country = new Element('select')
   const state = new Element('select')
   const city = new Element('select')
@@ -1305,9 +1345,27 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
   const firstName = new Element('input')
   firstName.name = 'first-name'
   firstName.value = ''
+  const requiredMirrors = [
+    ['function-required', 'category-id'],
+    ['roles-required', 'role-id'],
+    ['subcategories-required', 'subcategory-id'],
+  ].map(([name, expected]) => {
+    const field = new Element('input')
+    field.name = name
+    field.value = ''
+    field.required = true
+    field.expected = expected
+    field.getAttribute = (attribute) => attribute === 'ms-code-select' ? 'input-required' : null
+    return field
+  })
   const step = new Element('div')
   step.getAttribute = (name) => name === 'data-index' ? '1' : null
-  step.querySelectorAll = (selector) => selector === '[data-input-capture]' ? [firstName] : []
+  step.querySelectorAll = (selector) => {
+    if (selector === '[data-input-capture], [ms-code-select="input-required"]') {
+      return [firstName, ...requiredMirrors]
+    }
+    return []
+  }
   const document = createDocument({
     '#country': country, '#state': state, '#city': city,
     '[data-form="step"]': [step],
@@ -1328,6 +1386,8 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
           return {
             Profile_Type: 'full', Profile_Type_ID: 'full-id', Updated_On: 123,
             First_Name: 'Ada', Last_Name: 'Lovelace', Email: 'ada@example.com',
+            Category_ID: 'category-id', Roles_IDs: ['role-id'],
+            Subcategories_IDs: ['subcategory-id'],
             Country: 'United States', State_Province: 'California', City: 'Los Angeles',
             Also_Worked_With: [], Services: {}, Reviewers: {},
           }
@@ -1339,12 +1399,24 @@ test('edit canonical loader hydrates authored fields without a load-time mutatio
 
   run('v3/starter-edit-profile/canonical-profile-loader.js', context)
   assert.equal(document.listeners.get('DOMContentLoaded').length, 1)
+  const hydrated = new Promise((resolve) => {
+    const dirtyState = context.window.__tsProfileDirtyState
+    const finishHydration = dirtyState.finishHydration
+    dirtyState.finishHydration = function () {
+      finishHydration.call(this)
+      resolve()
+    }
+  })
   await document.listeners.get('DOMContentLoaded')[0]()
-  await new Promise((resolve) => setTimeout(resolve, 45))
+  await hydrated
 
   assert.equal(reads.length, 1)
   assert.equal(reads[0].options.method, 'POST')
   assert.equal(firstName.value, 'Ada')
+  for (const field of requiredMirrors) {
+    assert.equal(field.value, field.expected)
+    assert.equal(field.required && field.value === '', false)
+  }
   assert.equal(context.activeProfile.data.step_1.email, 'ada@example.com')
 })
 

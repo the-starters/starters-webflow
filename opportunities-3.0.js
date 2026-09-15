@@ -1823,6 +1823,7 @@
   const INVOICE_MIN_AMOUNT = 0.01
   const INVOICE_MAX_AMOUNT = 1000000
   const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
+  const INVOICE_FINAL_AMOUNT_MESSAGE = 'Enter a final invoice amount between $0.01 and $1,000,000, with no more than two decimal places.'
   const INVOICE_FINAL_DESCRIPTION_MAX_LENGTH = 500
   const INVOICE_FINAL_DESCRIPTION_MESSAGE =
     'Enter a final invoice description between 1 and 500 characters.'
@@ -1930,6 +1931,7 @@
           ? 'final_closed'
           : (completed ? 'unavailable' : 'standard'),
       finalInvoiceId: Number(finalPlaceholder && finalPlaceholder.id) || null,
+      finalInvoiceRecoveryReady: recoveryReady,
       finalInvoiceStatus: finalState.state === 'terminal'
         ? String(finalState.invoice.status || '').trim().toLowerCase()
         : '',
@@ -1947,6 +1949,13 @@
     const amount = Math.round(raw * 100) / 100
     if (amount < INVOICE_MIN_AMOUNT || amount > INVOICE_MAX_AMOUNT) return null
     return amount
+  }
+
+  // Final invoices must preserve the entered cents, never silently round them.
+  function normalizeFinalInvoiceAmount(value) {
+    const text = String(value == null ? '' : value).trim()
+    if (!/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)) return null
+    return normalizeInvoiceAmount(text)
   }
 
   /**
@@ -2060,8 +2069,8 @@
       return
     }
     const target = $('[data-wf-invoice="error-message"]', fail) || fail
+    target.textContent = text
     if (receipt) decorateWorkflowMessage(target, text, receipt)
-    else target.textContent = text
     fail.style.display = 'block'
   }
 
@@ -2097,6 +2106,8 @@
       const amountInput = typeof form.querySelector === 'function'
         ? ($('#Amount', form) || $('[name="Amount"]', form))
         : null
+      const recovering = Boolean(context && context.invoiceMode === 'final' && context.finalInvoiceRecoveryReady)
+      if (amountInput) amountInput.readOnly = recovering
       if (amountInput && recoveryAmount !== null) amountInput.value = String(recoveryAmount)
       const recoveryDescription = context && context.invoiceMode === 'final'
         ? normalizeFinalInvoiceDescription(context.finalInvoiceDescription)
@@ -2104,6 +2115,7 @@
       const descriptionInput = typeof form.querySelector === 'function'
         ? ($('#Description', form) || $('[name="Description"]', form))
         : null
+      if (descriptionInput) descriptionInput.readOnly = recovering
       if (descriptionInput && recoveryDescription !== null) descriptionInput.value = recoveryDescription
       form.style.display = ''
       delete form.dataset.invoiceIdempotencyKey
@@ -2431,16 +2443,22 @@
 
       const amountInput = $('#Amount', form) || $('[name="Amount"]', form)
       const descriptionInput = $('#Description', form) || $('[name="Description"]', form)
-      const amount = normalizeInvoiceAmount(amountInput && amountInput.value)
+      const recovering = context.invoiceMode === 'final' && context.finalInvoiceRecoveryReady
+      const rawAmount = recovering ? context.finalInvoiceAmount : amountInput && amountInput.value
+      const amount = context.invoiceMode === 'final'
+        ? normalizeFinalInvoiceAmount(rawAmount)
+        : normalizeInvoiceAmount(rawAmount)
       if (amount === null) {
         invoiceError(
           modal,
-          INVOICE_AMOUNT_MESSAGE,
+          context.invoiceMode === 'final' ? INVOICE_FINAL_AMOUNT_MESSAGE : INVOICE_AMOUNT_MESSAGE,
           validationDiagnostic('generate_invoice', 'invoice', 'INVALID_AMOUNT'),
         )
         return
       }
-      const rawDescription = descriptionInput ? descriptionInput.value : ''
+      const rawDescription = recovering
+        ? context.finalInvoiceDescription
+        : (descriptionInput ? descriptionInput.value : '')
       const description = context.invoiceMode === 'final'
         ? normalizeFinalInvoiceDescription(rawDescription)
         : String(rawDescription || '').trim()
@@ -3829,14 +3847,10 @@
         action: 'cancel',
         reason: '',
         title: 'Cancel Project',
-        subtitle: 'This project has not started yet. Tell us what happened before cancelling.',
+        subtitle: 'This cancels the project before it starts.',
         submit: 'Cancel Project',
-        // A cancellation captures an internal record of what happened for
-        // admin ops (JP, 2026-09-01). It is deliberately NOT a review: it never
-        // reaches core_reviews_v3, never shows on /hire, and never moves
-        // ranking points. The text rides along as the project's cancel reason.
-        showReason: true,
-        requireReason: true,
+        showReason: false,
+        requireReason: false,
         showReview: false,
       }
     }
@@ -4022,12 +4036,9 @@
   function endProjectPromptIntent(project, confirmAction, promptAction) {
     const step = endProjectStep(project)
     if (step === 'cancel') {
-      const response = promptAction(
-        'Tell us what happened before cancelling this project. Leave blank to keep it active.',
-        '',
-      )
-      const reason = String(response || '').trim()
-      return reason ? { action: 'cancel', reason } : null
+      return confirmAction('Cancel this project before it starts?')
+        ? { action: 'cancel', reason: '' }
+        : null
     }
     const pendingReason = lifecycleState(project) === 'termination_requested'
       ? String(project.end_reason || '').trim()
@@ -4043,7 +4054,7 @@
   }
 
   // Returns a promise so the designed modal can resolve the intent. The
-  // prompt/confirm path stays reachable for pages published before the
+  // confirmation fallback stays reachable for pages published before the
   // `end-project` markup shipped, so a rollout skew never strands the button.
   async function projectActionIntent(
     project,
@@ -4065,23 +4076,7 @@
     if (!request || request.modal !== modal) return
     const view = request.view
     const form = event.target
-    let reason = view.reason
-    if (view.showReason) {
-      const input = $('[data-end-project-reason]', form) || $('[data-end-project-reason]', modal)
-      reason = String(input && input.value || '').trim()
-      if (!reason) {
-        // `showReason` is only ever true on the pre-activation cancel branch,
-        // so this is the one copy the field can ask for. Started projects now
-        // always complete and never collect a reason.
-        reviewError(
-          modal,
-          'Tell us what happened before cancelling this project.',
-          validationDiagnostic('project_end', 'reason', 'MISSING_REASON'),
-        )
-        return
-      }
-    }
-    const intent = { action: view.action, reason }
+    const intent = { action: view.action, reason: view.reason }
     if (view.showReview) {
       const ratingInput = $('input[name="Call-Rating"]:checked', form)
       const reviewInput = $('[name="Public-Feedback"], [name="Feedback"]', form)

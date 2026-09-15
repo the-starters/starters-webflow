@@ -381,9 +381,12 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 		{ selector: '[name="state"]', kind: 'nativeConditional' },
 		{ selector: '[name="city"]', kind: 'nativeConditional' },
 		{ selector: '#profile-photo-url', kind: 'mirror', focusSelector: '[data-profile-photo-input], input[type="file"]' },
-		{ selector: '#function-required', kind: 'mirror', focusSelector: '[name="function-option"], [fs-list-instance="function"] input' },
-		{ selector: '#roles-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="role-option"], [fs-list-instance="roles"] input' },
-		{ selector: '#subcategories-required', kind: 'mirror', profileTypes: ['consult'], focusSelector: '[name="subcategories-option"], [fs-list-instance="subcategories"] input' },
+		// Selection groups (see step 5): chip counts inside the picker wrapper, not the
+		// hidden `input-required` mirrors. syncSelectionGroupBounds() mirrors each
+		// minimum onto the wrapper as wf-validate-min for the active profile type.
+		{ selector: '[select-wrap-entity="functions"]', kind: 'group', min: 1, focusSelector: '[name="function-option"], [fs-list-instance="function"] input' },
+		{ selector: '[select-wrap-entity="roles"]', kind: 'group', min: 1, profileTypes: ['full'], focusSelector: '[name="role-option"], [fs-list-instance="roles"] input' },
+		{ selector: '[select-wrap-entity="subcategories"]', kind: 'group', min: 1, profileTypes: ['consult'], focusSelector: '[name="subcategories-option"], [fs-list-instance="subcategories"] input' },
 	],
 	2: [
 		{ selector: '#tagline', kind: 'native' },
@@ -391,8 +394,13 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 		{ selector: '#bio-html', kind: 'mirror', focusSelector: '.ql-editor, [contenteditable="true"]' },
 	],
 	5: [
-		{ selector: '#skills-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="skill-option"], [fs-list-instance="skills"] input' },
-		{ selector: '#tools-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="tool-option"], [fs-list-instance="tools"] input' },
+		// Selection groups: validity is the number of selected chips inside the picker
+		// wrapper, not the hidden `input-required` mirror. The same wrapper also carries
+		// wf-validate-element="group", and syncSelectionGroupBounds() keeps its
+		// wf-validate-min in step with the active profile type so the library's gate
+		// and this contract enforce one rule.
+		{ selector: '[select-wrap-entity="skills"]', kind: 'group', min: 3, profileTypes: ['full'], focusSelector: '[name="skill-option"], [fs-list-instance="skills"] input' },
+		{ selector: '[select-wrap-entity="tools"]', kind: 'group', min: 2, profileTypes: ['full'], focusSelector: '[name="tool-option"], [fs-list-instance="tools"] input' },
 	],
 	6: [
 		{ selector: '[name="rate"]', kind: 'nativeConditional' },
@@ -409,9 +417,29 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 	],
 });
 
-function ruleApplies(rule) {
+function ruleApplies(rule, type = window.activeProfile?.type || '') {
 	if (!rule.profileTypes?.length) return true;
-	return rule.profileTypes.includes(window.activeProfile?.type || '');
+	return rule.profileTypes.includes(type);
+}
+
+const SELECTED_CHIP_SELECTOR = '[ms-code-select="tag"]';
+
+function selectedChipCount(wrapper) {
+	return qsa(SELECTED_CHIP_SELECTOR, wrapper).length;
+}
+
+// Mirror each `group` rule's minimum onto its wrapper as wf-validate-min for the
+// active profile type, and drop it otherwise, so utils/wf-validate.js (which reads
+// the bound live) gates the step 5 save with exactly the rule this controller checks.
+function syncSelectionGroupBounds(type) {
+	Object.values(STEP_VALIDATION_CONTRACT).forEach((rules) => {
+		rules.filter((rule) => rule.kind === 'group').forEach((rule) => {
+			qsa(rule.selector).forEach((wrapper) => {
+				if (ruleApplies(rule, type)) wrapper.setAttribute('wf-validate-min', String(rule.min));
+				else wrapper.removeAttribute('wf-validate-min');
+			});
+		});
+	});
 }
 
 function nonEmptyValue(field) {
@@ -423,7 +451,11 @@ function validationFailure(code, rule, element = null) {
 	return { code, rule, element };
 }
 
-function validateReviewerTuple(rule, step) {
+function normalizeReviewerEmail(email) {
+	return String(email ?? '').trim();
+}
+
+function validateReviewerTuple(rule, step, snapshot) {
 	const failures = [];
 	for (const selector of [rule.selector, ...(rule.optionalSelectors || [])]) {
 		const field = qs(selector, step);
@@ -434,7 +466,7 @@ function validateReviewerTuple(rule, step) {
 			continue;
 		}
 
-		const rawValue = String(field.value ?? '').trim();
+		const rawValue = String((snapshot ? snapshot[field.name] : field.value) ?? '').trim();
 		if (!rawValue) continue;
 
 		let reviewer = null;
@@ -449,11 +481,16 @@ function validateReviewerTuple(rule, step) {
 		if (started && (!String(reviewer.fname ?? '').trim() || !String(reviewer.email ?? '').trim())) {
 			failures.push(validationFailure('REVIEWER_TUPLE_INCOMPLETE', { ...rule, selector }, field));
 		}
+
+		const email = normalizeReviewerEmail(reviewer?.email);
+		if (email && (email.length > 320 || !/^[a-z0-9!#$%&'*+\/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+\/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email))) {
+			failures.push(validationFailure('REVIEWER_EMAIL_INVALID', { ...rule, selector }, field));
+		}
 	}
 	return failures;
 }
 
-function validateOwnedStep(stepIndex, { report = false } = {}) {
+function validateOwnedStep(stepIndex, { report = false, reviewerSnapshot } = {}) {
 	const step = stepElement(stepIndex);
 	if (!step) {
 		return {
@@ -470,10 +507,14 @@ function validateOwnedStep(stepIndex, { report = false } = {}) {
 		return { valid: false, failures: [validationFailure('PROFILE_NOT_READY', { selector: '' })] };
 	}
 
+	// Idempotent: the bound on each picker wrapper must reflect the profile type at
+	// the moment of the check, whatever the hydration order was.
+	syncSelectionGroupBounds(window.activeProfile.type);
+
 	const failures = [];
-	rules.filter(ruleApplies).forEach((rule) => {
+	rules.filter((rule) => ruleApplies(rule)).forEach((rule) => {
 		if (rule.kind === 'reviewerTuple') {
-			failures.push(...validateReviewerTuple(rule, step));
+			failures.push(...validateReviewerTuple(rule, step, reviewerSnapshot));
 			return;
 		}
 
@@ -494,6 +535,11 @@ function validateOwnedStep(stepIndex, { report = false } = {}) {
 
 		if (rule.kind === 'mirror') {
 			if (!nonEmptyValue(field)) failures.push(validationFailure('MIRROR_VALUE_MISSING', rule, field));
+			return;
+		}
+
+		if (rule.kind === 'group') {
+			if (selectedChipCount(field) < rule.min) failures.push(validationFailure('GROUP_MIN_NOT_MET', rule, field));
 			return;
 		}
 
@@ -616,6 +662,8 @@ onDomReady(function () {
 				const checkForType = input.dataset.nonRequired;
 				input.required = checkForType === type ? false : true;
 			});
+
+			syncSelectionGroupBounds(type);
 		}
 
 		/* SUBMIT METHODS */
@@ -720,7 +768,10 @@ onDomReady(function () {
 		// price empties the slot instead of blocking the step on a service the member is
 		// deleting. A non-blank price is authored and stays strict.
 		function servicePriceAuthored(service) {
-			return String(service?.price ?? '').trim() !== '';
+			const price = service?.price;
+			// Only a real null/blank price removes a slot. Arrays and objects
+			// must reach validation, not become blank or numeric through String().
+			return price != null && (typeof price !== 'string' || price.trim() !== '');
 		}
 
 		// Services live in hidden JSON capture inputs, so a price failure there cannot
@@ -788,6 +839,10 @@ onDomReady(function () {
 			for (const [slot, service] of Object.entries(services)) {
 				if (!servicePriceAuthored(service)) continue;
 				const serviceField = qs(`#${slot === 'service-1' ? 'service' : slot}`, form);
+				if (typeof service.price !== 'string' && typeof service.price !== 'number') {
+					return { valid: false, code: 'PRICE_NOT_INTEGER', field: serviceField,
+						mirror: true, message: priceMessage(PRICE_CONTRACTS.Services) };
+				}
 				if (!serviceName(service)) {
 					return {
 						valid: false,
@@ -940,6 +995,17 @@ onDomReady(function () {
 			// same canonical shape as the Build Profile writer.
 			if (Object.prototype.hasOwnProperty.call(payload, 'Reviewers')) {
 				const formData = getFormDataObject();
+				const validation = validateOwnedStep(stepIndex, { report: true, reviewerSnapshot: formData });
+				if (!validation.valid) {
+					recordProfileDiagnostic(null, {
+						result: 'failed',
+						stage: 'validation',
+						error_code: validation.failures[0]?.code || 'VALIDATION_FAILED',
+						request_started: false,
+					});
+					setSubmitLoading(submitButton, false);
+					return false;
+				}
 				const normalizeReviewer = (reviewer) => {
 					if (!reviewer?.fname || !reviewer?.email) return null;
 
@@ -948,7 +1014,7 @@ onDomReady(function () {
 						'last-name': reviewer.lname || '',
 						position: reviewer.job || '',
 						company: reviewer.company || '',
-						email: reviewer.email || '',
+						email: normalizeReviewerEmail(reviewer.email),
 					};
 				};
 
@@ -1318,6 +1384,8 @@ function counterFields(wrapper = null) {
 			});
 
 			input.addEventListener('paste', (event) => {
+				// The shared validator may already have inserted the clipboard text.
+				if (event.defaultPrevented) return;
 				event.preventDefault();
 
 				const pastedText = event.clipboardData?.getData('text') || '';

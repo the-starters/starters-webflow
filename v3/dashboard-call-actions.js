@@ -4,8 +4,9 @@
  * Webflow owns the base modal plus the authored decline, cancel, and reschedule
  * reason fields. This module binds those elements, creates only missing
  * supporting reschedule views, and sends environment-safe commands with
- * published V3 contracts: decline, cancel, direct pending-request time updates,
- * and propose-then-confirm reschedule for eligible Free calls.
+ * V3 contracts: decline, cancel, direct pending-request time updates,
+ * and proposal responses for eligible Free calls. Reschedule-decline release
+ * prerequisites are owned by README.md, "CS-17 backend release prerequisite".
  */
 ;(function (global) {
   'use strict'
@@ -88,7 +89,7 @@
       attemptPrefix: 'dashboard-reschedule-decline',
       reasonField: null,
       responseKey: 'reschedule_decline',
-      successStatus: 'confirmed',
+      successStatus: 'cancelled',
       successContent: 'reschedule-declined',
       failureMessage: 'Canonical reschedule response failed',
     },
@@ -555,7 +556,16 @@
       const active = content.getAttribute('booking-popup-content') === target
       content.hidden = !active
       content.style.display = active ? 'flex' : 'none'
-      if (active) found = true
+      if (active) {
+        found = true
+        if (target === 'decline') {
+          content.querySelectorAll(
+            '[booking-action-btn="switch-decline-reason"], [booking-card-action-btn="switch-decline-reason"]',
+          ).forEach(function (control) {
+            setAuthoredActionLabel(control, 'Decline Call')
+          })
+        }
+      }
     })
     // The authored back control returns to the base panel, so it is only
     // meaningful away from it. Hiding it there removes the doubled close icon
@@ -949,6 +959,17 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
+    const declinedReceipt = modal.querySelector('[booking-popup-content="reschedule-declined"]')
+    if (declinedReceipt && typeof declinedReceipt.querySelectorAll === 'function') {
+      Array.prototype.forEach.call(declinedReceipt.querySelectorAll('p, h1, h2, h3'), function (node) {
+        if (node.children && node.children.length) return
+        const text = clean(node.textContent)
+        if (text === 'Proposal declined') node.textContent = 'Call cancelled'
+        if (text === 'The call keeps its original time.') {
+          node.textContent = 'The proposed time was declined and the call was cancelled.'
+        }
+      })
+    }
     const hasAuthoredRescheduleView = normalizeRescheduleViewCopy(modal)
     if (modal.querySelector('[data-starters-reschedule-views]')) {
       ensureRespondButtons(document, modal)
@@ -1039,9 +1060,9 @@
 
     if (!modal.querySelector('[booking-popup-content="reschedule-declined"]')) {
       const declinedPanel = reschedulePanel(document, 'reschedule-declined')
-      declinedPanel.appendChild(panelText(document, 'h3', 'Proposal declined'))
+      declinedPanel.appendChild(panelText(document, 'h3', 'Call cancelled'))
       declinedPanel.appendChild(
-        panelText(document, 'p', 'The call keeps its original time.', true),
+        panelText(document, 'p', 'The proposed time was declined and the call was cancelled.', true),
       )
       host.appendChild(declinedPanel)
     }
@@ -1081,6 +1102,11 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
+    if (typeof modal.querySelectorAll === 'function') {
+      modal.querySelectorAll('[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]').forEach(function (control) {
+        setAuthoredActionLabel(control, 'Cancel call')
+      })
+    }
     if (modal.querySelector('[data-starters-reschedule-respond]')) return true
     /* Both views now author the respond pair in the base panel, where the
        member can reach it. Generating a second pair there left four controls
@@ -1116,7 +1142,7 @@
       document,
       modal,
       'reschedule-decline',
-      'Keep current time',
+      'Cancel call',
     )
     decline.setAttribute('data-starters-reschedule-respond', '')
     anchor.parentNode.insertBefore(accept, anchor.nextSibling)
@@ -1195,6 +1221,7 @@
       await calendarModule.mountPaidCalendar({
       container,
       config: {
+        booking_id: clean(booking && booking.booking_id),
         config_id: clean(booking && booking.config_id),
         grant_id: clean(booking && booking.grant_id),
         duration: Number(booking && booking.duration),
@@ -1224,21 +1251,31 @@
         if (!isCurrent()) return result
         const reasonField = modal.querySelector('[booking-reschedule-reason]')
         if (reasonField) reasonField.value = ''
-        /* The success panel renders the booking's own `[booking-element]`
-           fields, filled when the modal opened, so its date row would still
-           show the pre-change time. Only the pending contract actually moved
-           the call: a proposal leaves the time alone until the counterpart
-           answers, so its panel is correct as-is and must not be rewritten. */
+        // The receipt describes the selected slot. A pending request moves
+        // immediately; a confirmed call keeps its canonical time until the
+        // counterpart accepts, so render its proposal from a separate model.
         if (kind === 'reschedule-request' && booking) {
           booking.start = Number(slot && slot.start)
           booking.end = Number(slot && slot.end)
           booking.rescheduled_reason = reason || booking.rescheduled_reason
           if (typeof refreshDetail === 'function') refreshDetail(modal, booking)
         }
+        if (kind === 'reschedule-propose' && booking && typeof refreshDetail === 'function') {
+          refreshDetail(modal, Object.assign({}, booking, {
+            start: Number(slot && slot.start),
+            end: Number(slot && slot.end),
+            rescheduled_reason: reason || booking.rescheduled_reason,
+          }), config.successContent)
+        }
         switchPopupContent(modal, config.successContent)
         restartAfterModalClose(document, modal, restart)
       },
       })
+    } catch (error) {
+      if (isCurrent()) {
+        container.textContent = 'Available times could not load. Go back and try again.'
+      }
+      throw error
     } finally {
       // The engine has painted (or failed) by here, so the loader comes down
       // either way rather than covering a rendered calendar.
@@ -1346,6 +1383,9 @@
         }
         const config = KINDS[step.kind]
         if (step.step === 'open') {
+          const card = button.closest && button.closest('[data-booking-id]')
+          if (card && typeof settings.openDetail === 'function' &&
+              !settings.openDetail(modal, booking)) return
           if (step.kind === 'reschedule-propose' || step.kind === 'reschedule-request') {
             ensureRescheduleViews(document, modal)
             applyRescheduleContractCopy(modal, step.kind)
@@ -1388,10 +1428,19 @@
           try {
             const result = await respondReschedule(step.kind, booking, settings.role)
             if (!result) throw new Error(config.failureMessage)
+            if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
+            if (step.kind === 'reschedule-confirm' || step.kind === 'reschedule-decline') {
+              const confirmed = result[config.responseKey]
+              booking.status = confirmed.status
+              if (Number.isFinite(Number(confirmed.start)) && Number(confirmed.start) > 0) booking.start = Number(confirmed.start)
+              if (Number.isFinite(Number(confirmed.end)) && Number(confirmed.end) > 0) booking.end = Number(confirmed.end)
+              if (typeof settings.refreshDetail === 'function') settings.refreshDetail(modal, booking)
+            }
             ensureRescheduleViews(document, modal)
             switchPopupContent(modal, config.successContent)
             restartAfterModalClose(document, modal, settings.restart)
           } catch (error) {
+            if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
             console.error(
               '[dashboard-call-actions] ' + step.kind + ' failed closed:',
               error && error.message,

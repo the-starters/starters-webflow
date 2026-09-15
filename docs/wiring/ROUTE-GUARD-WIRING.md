@@ -1,0 +1,631 @@
+# V3 Route Guard Wiring
+
+Status: Sitewide route guard for staging and production. The production quiz
+email-test canary requires `v1.59.163` or later on both custom domains; verify
+the served release before operator testing.
+
+> **Embed pin:** a head embed pinned to a specific tag does **not** deploy a new
+> git tag on its own; the embed URL has to be bumped too. Re-check the head code
+> before assuming a tag shipped. If the embed uses `@latest`, tagging is enough,
+> subject to CDN cache verification.
+
+Tracking: Jira `INITIATIVE-132`. This router release remains independent from
+the `INITIATIVE-131` points reconciliation and dashboard tile rollout.
+
+`v3/route-guard.js` is the sitewide companion to [auth-route.js](../../v3/auth-route.js).
+`auth-route.js` only runs at `/login`, `/starter-login`, and `/auth-route`, so a
+logged-in member can still open another role's page by navigating directly. This guard closes
+that direct-access gap using the same stable plan-ID role matrix documented in
+[ACCESS-MATRIX.md](../../v3/ACCESS-MATRIX.md).
+
+Before it evaluates any access table or waits for Memberstack, the guard owns
+one V3 compatibility redirect. On the three approved V3 hosts only,
+`/memberstack/search-freelancers` and its trailing-slash form are replaced with
+`/all-starters`. The original query and fragment are appended unchanged. This
+repairs app-level Memberstack checkout and Login as Member destinations without
+changing the retired path on V2 or any unapproved host.
+
+## What it does
+
+On an approved V3 host, for a page it recognises:
+
+| Member state | Action |
+| --- | --- |
+| Logged out | Replace with `/login?next=<current path+query>`, or with the page's `LOGGED_OUT_DESTINATIONS` override where one is configured |
+| Mapped member on `/dashboard` | Replace with the role-specific authored page (or Free Brand quiz home) |
+| Role allowed on this page | Stay immediately; set `html[data-route-guard="allowed"]` |
+| Role not allowed on this page | Replace with that role's own default (never the other role's page) |
+| Authenticated, no mapped active plan | Stay with `html[data-route-guard-error="unmapped-plan"]` |
+| Active Talent plus Brand roles | Stay with `html[data-route-guard-error="conflicting-plan-roles"]` |
+| Page not in any of the three tables | Do nothing (no Memberstack lookup), except for the V3 compatibility redirect above |
+
+Role defaults (identical to `auth-route.js`): Talent → `/starter-dashboard`,
+Brand paid → `/brand-dashboard`, Brand free → `/quiz` (or `/quiz-results` once
+the quiz is completed — see brand-free routing below).
+
+`/dashboard` is deliberately a thin router page. It must contain only a neutral
+loading/error surface, never copies of the Starter or Brand dashboard bodies.
+The role-specific pages remain the implementation and compatibility URLs.
+
+## Three page tables
+
+The guard keeps three separate tables, in descending strength. They must stay
+disjoint — a path in two of them would be served by whichever boot branch runs
+first — and `v3/route-guard.test.js` parses all three out of the source and
+asserts no path appears in two.
+
+| Table | Logged-out visitor | Wrong-role member | Section |
+| --- | --- | --- | --- |
+| `PAGE_ROLES` | Sent to `/login?next=` or the page's override | Sent to their role home | [Guarded pages](#guarded-pages) |
+| `MEMBER_BOUNCE_PAGES` | Untouched | n/a — every mapped member is bounced | [Member-home bounce pages](#member-home-bounce-pages) |
+| `ROLE_BOUNCE_PAGES` | Untouched | Sent to their role home | [Member-only role bounce pages](#member-only-role-bounce-pages) |
+
+At boot the V3 compatibility redirect runs first. It returns immediately on a
+match and does not wait for Memberstack. The member-bounce test then runs first
+among the three access tables (those paths are absent from
+`PAGE_ROLES`, so the guarded-path test would bail on them), then the guarded-page
+test, then the role-bounce test — so `PAGE_ROLES` outranks only `ROLE_BOUNCE_PAGES`,
+and the strength ordering in the table above is not the boot ordering. Because the
+tables are disjoint that order decides nothing today; if a path were ever
+duplicated by mistake the earlier branch would win, which is why the two tables
+that can force a login or a redirect for the widest set of visitors are tested
+before the weakest one.
+
+## Guarded pages
+
+Derived from the ACCESS-MATRIX route-level table. A role listed for a page may
+view it; any other authenticated role is redirected to its default.
+
+| Page | Allowed roles |
+| --- | --- |
+| `/dashboard` and `/dashboard/` | None stay; all mapped roles redirect to their role home |
+| `/brand-dashboard` | Brand paid |
+| `/opportunities` and `/opportunities/` | Talent, Brand paid |
+| `/opportunities-brands-view` | Brand paid |
+| `/opportunities---create` | Brand paid |
+| `/starter-dashboard` | Talent |
+| `/starter-edit-profile` | Talent |
+| `/build-profile/select-profile` | Talent |
+| `/build-profile/full-profile` | Talent |
+| `/build-profile/consult` | Talent |
+| `/starter-onboarding` | Talent |
+| `/opportunities-freelancer-view` | Talent |
+| `/messages` | Talent, Brand paid |
+| `/opportunities/<slug>` | Talent, Brand paid |
+| `/favorites` and `/favorites/` | Brand paid |
+| `/generate-invoice` and `/generate-invoice/` | Talent |
+
+The merged feed lists both `/opportunities` forms explicitly: the exact page
+map would otherwise miss the trailing slash, while the detail prefix requires a
+non-empty slug. `/opportunities/<slug>` matches a single non-empty path segment
+only, so nested paths such as `/opportunities/<slug>/apply` are not treated as
+detail pages. `/dashboard` and `/favorites` list both slash forms for the same
+reason: no prefix rule catches their trailing-slash twin, so each must appear
+explicitly for both canonical URL forms to route identically.
+
+Memberstack can initially expose only a lower Brand Free connection for a
+multi-plan member. On the two exact merged-feed paths, an allowed Talent or
+paid-Brand snapshot proceeds without delay. Before redirecting a denied role or
+showing `unmapped-plan`, the guard polls for an allowed snapshot for up to two
+seconds. A rejected polling lookup is retried within the same deadline, and a
+lookup that never settles is capped by the remaining time. At the deadline, the
+latest valid snapshot follows the normal fail-closed redirect or error. Other
+guarded routes and opportunity detail pages do not use this hydration delay.
+
+`/generate-invoice` was added on 2026-08-03 with its trailing-slash twin for the
+same reason as `/favorites/`, and appears in `auth-route.js` `ROLE_DESTINATIONS`
+too. The guard/router parity test in `v3/auth-route.test.js` enforces that pair —
+a new `PAGE_ROLES` row without the matching router entry fails the suite rather
+than silently dropping a `next`. The standalone page is still live and stays
+guarded: the Generate Invoice modal that `opportunities-3.0.js` drives on
+`/starter-dashboard` (see the root [`README.md`](../../README.md#opportunities-30-invoice-generation))
+is a second entry point to invoicing, not a replacement for this route.
+
+`/complete-profile` briefly lived in this table on 2026-08-03 and was removed the
+same day. Memberstack is now its sole gate: the `restrict-pages` gated content
+group carries a URL rule STARTS `complete-profile` with Access Denied URL
+`login` (dashboard slug form; the destination is the path `/login`). Two
+owners would mean two logged-out destinations for one URL, and the guard's would
+lose anyway — Memberstack's `protectPages()` calls
+`window.location.replace('/login')` from cached group data before the guard has
+resolved a member. That redirect carries no `?next=`, so the page is out of
+`ROLE_DESTINATIONS` as well; the member-home bounce pages forward whoever lands
+on `/login` to their role home, which is what completes the routing. Do not
+re-add the page here without revisiting that decision — `v3/route-guard.test.js`
+asserts `pageRolesFor('/complete-profile')` is `null` so the re-add cannot be
+accidental.
+
+What the page did gain on 2026-08-03 is a page-scoped module rather than a table
+entry: `v3/complete-profile-redirect.js` sends a paid Brand to
+`/brand-dashboard` only when Xano reports both `has_record === true` and
+`brand_profile_done === true`. Separately, the durable-submit session marker is a
+fast path that skips Xano. This changed from Memberstack-field routing
+on 2026-08-06 so the inbound and outbound redirects use one completion signal.
+The module also routes the other two roles off a form that is not theirs: a free
+Brand to its quiz-funnel home and a Talent member to `/starter-dashboard`. It
+borrows this guard's `memberRole` **and** `roleHome`, which is why those destinations
+match the member-home bounce without the `/login` trip. It adds no access rule, so
+the division above is unchanged; the `restrict-pages` group must allow **All
+Members** so a logged-in non-paid member can reach the page to be routed. See
+[COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
+
+## Member-home bounce pages
+
+`MEMBER_BOUNCE_PAGES` — `/`, `/login`, `/starter-login`, `/sign-up` — is a
+separate mechanism from the guarded-pages table above, added 2026-08-03 by
+Jerico's decision. These four paths are deliberately absent from `PAGE_ROLES`,
+because a guarded page forces a login and these are the pre-signup funnel itself.
+
+| Visitor state on a bounce page | Action |
+| --- | --- |
+| Logged out, or Memberstack unavailable | Nothing at all: no redirect, no attribute, no event |
+| Mapped member with a valid, permitted `?next=` | Replace with that `next` |
+| Mapped member otherwise | Replace with the role home (Free Brand: quiz home) |
+| Authenticated but unmapped or cross-role conflicted | Stay, with a `console.error` only — no `data-route-guard-error` |
+
+A `?next=` is honoured only when it is same-origin, free of embedded
+credentials, and either allowed for the member's role or on a page the guard does
+not police at all — the second case is what returns a member to the public page
+they were reading before signing in. Three refusals are deliberate: a `next`
+pointing back at a bounce page (it would bounce again), `/dashboard` (an empty
+allowlist, so it resolves to the role home exactly as `auth-route.js` resolves
+it), and any page the member's role may not view.
+
+Unlike a guarded page, a bounce page never gets the `data-route-guard="checking"`
+stamp. These pages are authored for signed-out visitors and must not depend on
+this script to become visible; the only attribute the bounce ever sets is
+`data-route-guard="redirecting"` on the way out. No role home is itself a bounce
+page, so the bounce cannot loop — `v3/route-guard.test.js` asserts that directly.
+
+Note that `/login` and `/starter-login` are also configured by
+`v3/auth-route.js`, which stores a `?next=` in session storage for the
+`/auth-route` hop. When a signed-in member is bounced off a login page, that
+stored value is left behind unconsumed; it is harmless, since it is re-validated
+against the role allowlist at `/auth-route` on the next real login.
+
+### Homepage-only overrides
+
+Two rules apply when the bounce page is `/`, and on no other page (decision by
+Jerico 2026-08-03). They live in the homepage branch of `bounceTargetFor`, which
+is why that function now takes the current pathname as a third argument — called
+without it, only the pre-override role-home behavior is reachable.
+
+| Member on `/` | Action |
+| --- | --- |
+| Valid, permitted `?next=` | Replace with that `next` — deep-link intent outranks both rules below |
+| Cancelled paid Brand (either sub-kind) | Replace with `/all-starters` |
+| Free Brand with no completed quiz | Stay: no redirect, no attribute, no event |
+| Anyone else | Unchanged from the table above |
+
+Rule 1 applies to every member on `/`, including one the guard cannot map to a
+role at all — a deliberate widening ratified 2026-08-03. Before the overrides,
+`bounceTargetFor` returned early on a missing role and never examined the
+`?next=`, so an unmapped member stayed put no matter what the query string said.
+Deep-link intent does not depend on plan state, so on `/` it is now honoured for
+them too. Only unguarded destinations can match, since there is no role for the
+allowlist test, and the widening is homepage-only: on `/login`,
+`/starter-login`, and `/sign-up` the missing-role bail still runs first.
+
+Rule 2 overrides two different pre-existing outcomes at once. A cancelled member
+whose older free plan is still active resolves to `brand-free` and would have
+been sent into the quiz funnel, which is the wrong ask of someone who already
+paid. A cancelled member with no active plans at all is `unmapped-plan` and would
+have sat on the homepage while the console logged a configuration error. Both now
+land on `/all-starters`.
+
+`hasCancelledPaidBrandPlan` (exported on the window API) is true when
+`planConnections` hold at least one paid-Brand connection
+(`pln_new-paid-plan-463h04ph`, `pln_dorxata-test-brand-plan-777r02pa`) that is
+not active by the same `connection.active === true || connection.status ===
+'ACTIVE'` rule the role resolver uses, and no paid-Brand connection that is
+active. It reads the connection shape, not the plan display name, and not the
+status string — `CANCELED` is merely the expected value, so a `PAST_DUE` or
+`EXPIRED` connection counts without a code change. During a cancel-at-period-end
+grace window the payload is unverified; while the paid connection still reports
+active the member keeps full paid-Brand access, which is the fail-safe direction.
+
+Rule 2 outranks rule 3, so a cancelled Brand with a live free plan and no quiz is
+treated as cancelled, not as a stay. Rule 3 exists so the homepage stops pushing
+a browsing free Brand into `/quiz`; once the quiz is done they go to
+`/quiz-results` exactly as before.
+
+Both rules are scoped to `/`. `/login`, `/starter-login`, and `/sign-up` still
+send a not-yet-quizzed free Brand to `/quiz` and still leave an unmapped
+cancelled member where they are, and guarded-page wrong-role redirects still
+resolve through `brandFreeHome`. `v3/route-guard.test.js` asserts each of those
+explicitly, plus that `/all-starters` is a one-hop terminus for both cancelled
+sub-kinds so the new redirect cannot loop.
+
+## Member-only role bounce pages
+
+`ROLE_BOUNCE_PAGES` — added 2026-08-03 by Jerico's decision — is the third table
+and the weakest. It combines the member-home bounce's silence with the guarded
+pages' role test: only a positively identified, role-mapped member is ever moved,
+and only ever to their own role home.
+
+| Page | Roles that stay | Quiz-state rule |
+| --- | --- | --- |
+| `/quiz-results` and `/quiz-results/` | Brand free; exact production email-test canary | Yes — see below, including the pending-payload exception |
+| `/all-starters` and `/all-starters/` | Brand paid, Brand free | No |
+
+| Visitor state on a role-bounce page | Action |
+| --- | --- |
+| Logged out, or Memberstack unavailable | Nothing at all: no redirect, no attribute, no event |
+| Role on the page's allowlist | Stay, with no attribute either |
+| Role not on the allowlist | Replace with the role home (never the other role's page), except for the separately gated production canary |
+| Authenticated but unmapped or cross-role conflicted | Stay, with a `console.error` only |
+
+Neither page may become a guarded page. `/quiz-results` legitimately serves
+pre-signup anonymous visitors whose answers are still in `sessionStorage`, and
+`quiz-results.js` owns that case; `/all-starters` is a public browse page whose
+content is gated by Memberstack `data-ms-content` rather than by route. A guarded
+page sends a logged-out visitor to a login form, which would break both.
+
+The quiz-state rule is `/quiz-results`-specific. An allowed free Brand belongs on
+that page only once the quiz is done, because until then `brandFreeHome()` is
+`/quiz` and the results page has nothing to show them — so a mid-funnel free
+Brand is sent to `/quiz` even though its role is on the allowlist.
+`/all-starters` deliberately has no such rule: both Brand tiers stay regardless
+of quiz state.
+
+### The pending-payload exception (regression fix 2026-08-04)
+
+"Done" is **two** signals for this rule, not one. The Memberstack `starter-quiz`
+field cannot be the only gate here, because of the order the post-signup funnel
+runs in:
+
+1. `quiz-main.js` writes the finished answers to
+   `sessionStorage.starterQuizPending` with `status: "ready"`.
+2. Memberstack signs the visitor up and redirects them to `/quiz-results`.
+3. `quiz-results.js` renders from that payload and **then** writes the
+   `starter-quiz` custom field.
+
+A member who has just signed up therefore always reads as not-completed for a
+moment. Gating on the field alone redirected them off the very page that was
+about to save it: a visitor completed the quiz, signed up, landed on
+`/quiz-results`, and was immediately bounced to `/quiz`; retrying looped and only
+stuck on roughly the third attempt, because the intermittent success was the race
+where the Memberstack save happened to land before the guard's redirect. That
+shipped in v1.59.76 and was reproduced on staging on 2026-08-04.
+
+So `enforceBrandFreeQuizState` also accepts a ready pending payload, via
+`hasReadyPendingQuiz()` — the same signal `quiz-results.js` renders from and is
+about to persist. Properties worth knowing:
+
+- **Read-only, always.** The guard never calls `setItem` or `removeItem` on
+  `sessionStorage`. `quiz-loader/quiz-loader.js` derives its skip-on-refresh run
+  id from this key's `updatedAt`, and `quiz-results.js` needs the payload to
+  render. `route-guard.test.js` asserts the no-write invariant across every page
+  and member combination.
+- **Only `ready` counts.** A `draft` payload, a payload with no `status` at all,
+  malformed JSON, and blocked or absent storage all read as NOT ready, so every
+  failure mode falls back to the pre-fix `/quiz` bounce. (`quiz-results.js` is
+  deliberately more tolerant of a status-less payload; this gate is not.)
+- **Scoped to this one branch.** It is consulted only inside
+  `rule.enforceBrandFreeQuizState && role === 'brand-free'`. The wrong-role
+  bounces run first, so a Talent member on `/quiz-results` is still sent to its
+  own home whatever sits in `sessionStorage`. A paid Brand is also sent home
+  unless it matches the separately gated production canary documented in the
+  root [Quiz-results email tester](../../README.md#quiz-results-email-tester)
+  section.
+  `brandFreeHome()`, `roleHome()`, `redirectTargetFor()`, the member-home bounce,
+  and the homepage overrides all still read the durable field only.
+- **A genuine never-took-the-quiz free Brand is still bounced** to `/quiz`, which
+  is the original intent of the rule.
+- The helper is deliberately a second copy of the one in
+  `quiz-main/quiz-redirect.js` (added there in v1.59.84 for the mirror-image
+  problem on `/quiz`). Two independently loaded browser scripts have no module
+  boundary between them, so cross-file duplication is the convention here — the
+  same reason `PLAN_ROLES` and `hasCompletedQuiz` are duplicated.
+
+`/quiz-results` is itself the done free Brand's role home, and it is on its own
+allowlist, so that case resolves to "stay" rather than to a redirect at itself.
+More generally, no role home is bounced by its own role's rule, so the role
+bounce cannot loop — `v3/route-guard.test.js` asserts both the general rule and
+that specific case, plus that every bounce target is a one-hop terminus under
+both tables.
+
+One known two-hop path is deliberate: the member-home bounce still honours a
+`?next=` to any page outside `PAGE_ROLES`, and `/quiz-results` is outside it, so
+a Talent member arriving at `/login?next=/quiz-results` is handed to
+`/quiz-results` and then bounced again to `/starter-dashboard`. That terminates
+and is asserted as such. Teaching `bounceTargetFor` about the role-bounce table
+would change member-bounce behaviour, which this release deliberately does not
+touch.
+
+## Per-page logged-out destinations
+
+`LOGGED_OUT_DESTINATIONS` overrides the default `/login?next=<here>` for
+specific guarded paths (decision by Jerico, 2026-08-03):
+
+| Guarded page | Logged-out destination |
+| --- | --- |
+| `/build-profile/select-profile` | `/` |
+| `/build-profile/full-profile` | `/` |
+| `/build-profile/consult` | `/` |
+
+Everything else keeps `/login?next=`, which is what makes a deep link survive a
+login. These three are reached from marketing flows rather than from a member's
+bookmark, so a login form would ask a stranger to authenticate into a funnel step
+they have no account for yet; the homepage restarts the funnel properly. The
+override replaces the whole destination, so no `?next=` is preserved for them.
+
+The guard's Brand paid allowance is role-level only. On both
+`/opportunities/<slug>` and the legacy
+`/opportunities-details---brand-view?opp=<id>` entry point,
+`opportunities-3.0.js` probes the owner-scoped applicant list. A `403` or `404`
+redirects a foreign brand to `/opportunities-brands-view`; transient, server, and
+network errors do not redirect. Xano remains responsible for ownership enforcement.
+
+**Intentionally not guarded:** `/quiz`, `/quiz-results`, and `/all-starters`.
+None of them may force a login, because all three serve pre-signup visitors.
+`/quiz-results` and `/all-starters` carry their logged-in role rules in
+`ROLE_BOUNCE_PAGES` instead (see that section above); `/quiz` is in no table at
+all. Its `quiz-main/quiz-redirect.js` page controller sends an active live or
+Test paid Brand to `/brand-dashboard`, an active Talent member to
+`/starter-dashboard`, and a completed active production free Brand to
+`/quiz-results`. `?retake=true` is the intentional escape hatch for the two Brand
+redirects but not for the Talent one, which has no quiz to retake; unknown and
+inactive plans are unaffected. On entry, `quiz-main.js` combines the logged-in
+member's saved quiz answers with any homepage-bucket selections.
+Logged-out and missing-data handling on `/quiz-results` stays entirely with
+`quiz-results.js`; the authoritative redirect and query-preservation contract
+is in the [access matrix](../../v3/ACCESS-MATRIX.md#route-level-access). `/all-starters` is
+excluded from `PAGE_ROLES` permanently (decision 2026-08-03): its content
+gating is Memberstack `data-ms-content` on the page plus list/render-level
+limiting for free Brands, and the Talent role bounce is the only route-level rule
+it gets.
+
+## Webflow install
+
+1. Load `v3/route-guard.js` once sitewide in Site Settings Head Code, before
+   `v3/auth-route.js` and `opportunities-3.0.js`. This includes opportunity
+   pages: opp30 detects the guard through `html[data-route-guard]` and defers
+   its access decisions to it.
+
+   The tag is **static, parser-inserted, `defer`red, and unconditional** on
+   every page — this is the live installed state and the authoritative contract
+   the [auth-route gate](AUTH-ROUTE-WIRING.md#release-gate) verifies:
+
+   ```html
+   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/route-guard.js"></script>
+   ```
+
+   `defer` keeps the head from blocking on it while still guaranteeing it runs
+   before `DOMContentLoaded`, which is what `v3/auth-page-loader.js` relies on
+   when it waits for that event before inserting `auth-route.js` on
+   `/auth-route`. Never move this tag behind a conditional or a dynamic insert:
+   every controller that reads `window.StartersV3RouteGuard` fails open to a
+   `null` role if the guard has not executed by the time its own tag runs.
+2. Do not install it on V2.
+3. Give guarded pages an error block keyed by `html[data-route-guard-error]`
+   (same visible pattern as `/auth-route`). Optionally pre-hide protected
+   content until `html[data-route-guard="allowed"]` to avoid a cross-role flash.
+   The pre-hide CSS remains recommended but was deliberately deferred on
+   2026-08-03; the staging install runs without it.
+4. Create `/dashboard` as a utility page with a neutral loading/error surface.
+   Keep `/starter-dashboard` and `/brand-dashboard` unchanged as the actual
+   authored dashboards.
+
+Regression rule: published source must contain one `opportunities-3.0.js` tag
+and place the route-guard tag first. The controller has a bounded handoff for an
+authored guard that executes later, waits for its terminal `allowed`, error, or
+redirect outcome, and falls back after two seconds only if the guard never
+boots. The guard itself owns the merged route's bounded denial-side plan
+hydration described above. If the configured guard never boots, opp30
+separately polls for up to two seconds when an authenticated Memberstack
+snapshot has empty `planConnections`; it does not retry a non-empty, unmapped
+snapshot. If no mapped role hydrates, opp30 leaves protected content hidden and
+stamps `html[data-route-guard-error="member-role-unavailable"]` instead of
+redirecting to `/`. It also has an existing duplicate-load run-once guard, but those
+protections are incident containment—not a replacement for clean Webflow script
+placement.
+
+### Recommended install scope
+
+Install the guard sitewide so it boots before page controllers and is present on
+every route in its page table:
+
+- `/brand-dashboard`, `/opportunities-brands-view`, `/opportunities---create`
+- `/starter-dashboard`, `/starter-edit-profile`, `/opportunities-freelancer-view`
+- `/dashboard` canonical role-router utility page
+- `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`
+- `/starter-onboarding`
+- `/favorites` (including its trailing-slash URL)
+- `/messages`
+- `/generate-invoice` (including its trailing-slash URL)
+- `/opportunities` merged-feed page (including its trailing-slash URL)
+- `/opportunities/<slug>` collection-template pages
+- `/`, `/login`, `/starter-login`, `/sign-up` — not guarded, but the sitewide
+  install is what lets the member-home bounce run there
+- `/quiz-results`, `/all-starters` (both including their trailing-slash URLs) —
+  not guarded either, but the sitewide install is what lets the role bounce run
+  there
+- `/memberstack/search-freelancers` (including its trailing-slash URL) — a
+  compatibility-only entry that redirects to `/all-starters` before auth state
+  is read
+
+With the guard sitewide, opp30 does not double-guard opportunity pages: it uses
+the guard's presence to defer access redirects and validates the same plan-ID
+role only before starting role-specific rendering or requests.
+
+`/quiz`, `/quiz-results`, and `/all-starters` are deliberately outside
+`PAGE_ROLES` (see the note above the guarded-pages table). `/all-starters` stays
+out for good and is content-gated on the page instead; both quiz pages keep their
+page-controller redirects, and `/quiz-results` and `/all-starters` additionally
+get the role bounce, which is why the sitewide install matters on them.
+
+## Brand Action Items completion marker
+
+After the role bounce allows a paid or free Brand to stay on `/all-starters` or
+`/all-starters/`, the guard records the visit in Memberstack JSON at
+`brandActionItems.allStartersVisitedAt` with an ISO timestamp. It first reads the
+current JSON, preserves every top-level key, shallow-copies every existing
+`brandActionItems` key, and then updates only the visit timestamp. A repeat visit
+refreshes that timestamp.
+
+This is the guard's only Memberstack write. It requires a mapped Brand role, a
+member ID, and both `getMemberJSON` and `updateMemberJSON`; other roles and
+unavailable APIs return without writing. Read or write failures fail quietly and
+do not change the page's routing decision. The marker is Action Items UX state,
+not an access or authorization boundary.
+
+The guard exports `hasBrandAllStartersVisit(memberstack, member)` for
+`dashboard-action-items.js`. That reader uses the same paid/free Brand boundary
+and returns `false` for missing data, unavailable APIs, other roles, or read
+failures. The Action Items behavior and Designer row selector remain owned by
+the [Dashboard Action Items panel](../../v3/README.md#dashboard-action-items-panel)
+documentation.
+
+## Integration checklist
+
+- Point new generic dashboard links, post-auth Memberstack destinations, and
+  shared navbar Dashboard links to `/dashboard`.
+- Keep existing role-specific links and bookmarks working; do not redirect
+  `/starter-dashboard` or `/brand-dashboard` into `/dashboard`.
+- Keep V3 login/signup forms on `/auth-route`; a stored `next=/dashboard` is
+  consumed there and translated directly to the member's role home.
+- Verify Talent, paid Brand, Test Brand, Free Brand before quiz, and Free Brand
+  after quiz.
+- Verify both direct legacy dashboard URLs with the allowed role and the wrong
+  role.
+- Treat the dashboard-router release independently from INITIATIVE-131 points
+  reconciliation. Neither release is a prerequisite or implicit approval for
+  the other.
+
+## Relationship to other layers
+
+The guard is a routing/UX boundary only. It does not replace:
+
+- **Memberstack gated content** — page visibility and navigation variants.
+- **Xano endpoint authorization** — mutations and private records, enforced
+  server-side against the authenticated member and role.
+- **List/render gating** — e.g. Free Brand blurred results on `/all-starters`.
+
+`opportunities-3.0.js` defers access redirects to the sitewide guard. Before
+starting role-specific work, it verifies the member against the same stable plan
+IDs. On the exact merged-feed paths, the guard performs the bounded
+denial-side hydration retry, including partial lower-role and unmapped
+snapshots. The opportunity controller's fallback retries only an authenticated
+snapshot with no plan connections; a complete unmapped snapshot does not.
+After the guard allows the route, an unresolved role bails without revealing or
+initializing either role's UI.
+
+## Release markers
+
+Standing convention (Jerico, 2026-08-03), applied to every browser-facing script
+touched by a release:
+
+- The file header comment carries a ` * @release vX.Y.Z` line naming the tag that
+  shipped the change.
+- Where the script exports a window API object, the same value appears as a
+  `release` property on it.
+- The two must stay in sync. Each touched script's test file parses the header
+  marker out of the source and compares it against the exported property, so an
+  edit that updates one and forgets the other fails the suite.
+
+Verify what is actually deployed either way:
+
+```sh
+curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/route-guard.js" \
+  | grep '@release'
+```
+
+```js
+window.StartersV3RouteGuard.release // -> 'v1.59.441'
+window.StartersV3AuthRouter.release
+window.StartersBuildProfileRedirect.release
+window.StartersCompleteProfileRedirect.release
+```
+
+The marker states the tag that shipped the file's current contents, not the tag
+the browser happened to load it from — a `@latest` URL resolves to the newest
+tag, so the two agree unless a cached copy is being served. A mismatch between
+the console property and the tag you expect is the fastest signal that a stale
+CDN copy is still in play; purge it with `purge.jsdelivr.net`.
+
+## Diagnostics
+
+- `window.StartersV3RouteGuard` exposes `release`, `activePlanIds`, `memberRole`,
+  `memberRoleError`, `roleResolution`, `roleHome`, `hasCompletedQuiz`,
+  `brandFreeHome`, `pageRolesFor`, `isGuardedPath`, and `redirectTargetFor` for
+  console checks, plus `waitForSharedOpportunitiesAccess` for the merged-feed
+  hydration decision, `isMemberBouncePage`, `bounceTargetFor`, `localPath`,
+  `loggedOutDestinationFor`, and `legacyV3RedirectFor` for the bounce,
+  logged-out override, and V3 compatibility decisions,
+  `hasCancelledPaidBrandPlan` for the homepage cancelled-Brand decision, and
+  `isRoleBouncePage`, `roleBounceRolesFor`, and
+  `roleBounceTargetFor` for the role-bounce decision.
+- `hasReadyPendingQuiz()` takes no arguments and reports whether
+  `sessionStorage.starterQuizPending` currently holds a `ready` payload. It is the
+  fastest way to check the post-signup exception from the console on
+  `/quiz-results`: `hasCompletedQuiz(member) === false` together with
+  `hasReadyPendingQuiz() === true` is exactly the just-signed-up state that must
+  resolve to a stay, i.e. `roleBounceTargetFor(member, '/quiz-results') === ''`.
+- `bounceTargetFor` takes `(member, next, pathname)`. Pass `'/'` as the third
+  argument to exercise the homepage overrides from the console; omit it and only
+  the pre-override role-home path runs.
+- `window.Opp30` exposes `routeGuardActive`, `routeGuardConfigured`,
+  `waitForRouteGuardHandoff`, `gateOrRedirect`, `gateByPlan`, `memberPlanRole`,
+  `waitForMappedMemberRole`, `hasCompletedQuiz`, `brandFreeHome`, `initMergedOppFeed`,
+  `syncMergedNavbarRole`, `activateDeferredFeed`, and
+  `redirectForeignBrandToFeed` for verifying the opportunity controller's
+  handoff, plan hydration, merged-feed activation, legacy fallback, and
+  ownership-denied redirect policy.
+- Errors dispatch `starters:v3-route-guard-error` on `window` with `detail.code`
+  (`unmapped-plan`, `conflicting-plan-roles`, `memberstack-unavailable`,
+  `unexpected-error`).
+- If an authored guard never boots and opp30 cannot hydrate a mapped role,
+  opp30 stamps `html[data-route-guard-error="member-role-unavailable"]`; this
+  controller fallback does not dispatch the guard's error event.
+- A resolved allow dispatches `starters:v3-route-guard-allowed`.
+- Navigation stamps `html[data-route-guard="redirecting"]` and dispatches
+  `starters:v3-route-guard-redirecting` before replacing the location.
+
+## Release gate
+
+- Run `node --test v3/route-guard.test.js`, and `v3/auth-route.test.js` with it:
+  the guard/router parity sweep lives there and is what catches a new
+  `PAGE_ROLES` row whose `ROLE_DESTINATIONS` twin was forgotten. Add
+  `quiz-main/quiz-redirect.test.js` when the `/quiz` controller moves with the
+  guard, since the two split the quiz funnel's rules between them.
+- Confirm `/dashboard` has no role page body and hides its neutral content while
+  `data-route-guard="checking"`.
+- Verify the bounce on all four pages (`/`, `/login`, `/starter-login`,
+  `/sign-up`) signed in as Talent, paid Brand, and both Free Brand quiz states,
+  and confirm each one still renders untouched when signed out. On `/` the two
+  homepage overrides change two of those cases: a not-yet-quizzed Free Brand must
+  stay with no `<html>` attribute at all, while `/login` and `/starter-login`
+  must still send that same member to `/quiz`.
+- Verify the homepage cancelled-Brand redirect with a Memberstack account whose
+  paid Brand plan is cancelled, in both sub-kinds — free plan still active, and
+  no active plan at all. Both must land on `/all-starters` from `/` and then stay
+  there. Confirm `/login` is unchanged for the same accounts (quiz funnel for the
+  first, stay-put for the second), and check
+  `window.StartersV3RouteGuard.hasCancelledPaidBrandPlan((await
+  $memberstackDom.getCurrentMember()).data)` reads `true` in the console.
+- Verify `/login?next=/messages` bounces a signed-in Talent member to
+  `/messages`, and that `/starter-login?next=/brand-dashboard` sends that same
+  member to `/starter-dashboard` instead.
+- Verify a signed-out visit to each build-profile page lands on `/` rather than
+  on a login form.
+- Verify the role bounce on `/quiz-results` and `/all-starters`: signed out, both
+  pages must render exactly as before with no `<html>` attribute at all — this is
+  what keeps a pre-signup quiz working. Signed in, Talent must leave both pages
+  for `/starter-dashboard`; a paid Brand must stay on `/all-starters` and leave
+  `/quiz-results`; a free Brand must stay on `/all-starters` in either quiz state,
+  and on `/quiz-results` only once the quiz is done (before that it goes to
+  `/quiz`).
+- Verify `/quiz` signed in as Talent, with and without `?retake=true`: both must
+  land on `/starter-dashboard`, unlike the Brand redirects which `?retake=`
+  suppresses.
+- Verify a signed-out visit to `/complete-profile` lands on `/login` from
+  Memberstack alone, with no guard attribute on `<html>`, and that a signed-in
+  paid Brand is left on the page.
+- Confirm each guarded page has a visible error state.
+- Back up page-level code before installing.
+- Verify `/dashboard`, `/starter-dashboard`, and `/brand-dashboard` for Talent,
+  paid Brand, Test Brand, both Free Brand quiz states, logged-out, unmapped, and
+  deliberately conflicted fixtures.
+- Run the full cross-role staging matrix behind the Webflow password.
+- Do not publish custom domains until the separate production go signal.

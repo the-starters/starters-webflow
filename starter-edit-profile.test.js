@@ -105,6 +105,14 @@ function createEnvironment(fetchImpl, {
     return field
   }
 
+  // A taxonomy picker wrapper: validity is the number of selected chips inside it.
+  function createGroup(selector, chips) {
+    const wrapper = Object.assign(new Target(), { chips }, fieldOverrides[selector] || {})
+    wrapper.removeAttribute = (name) => { wrapper.attributes.delete(name) }
+    wrapper.querySelectorAll = (sel) => sel === '[ms-code-select="tag"]' ? Array.from({ length: wrapper.chips }, () => new Target()) : []
+    return wrapper
+  }
+
   const globalFields = {
     email: createField('#email', { value: 'new@example.com', required: publishedRequired(1, 'email') }),
     phone: createField('#phone', { value: '+15555555555', required: publishedRequired(1, 'phone') }),
@@ -121,9 +129,9 @@ function createEnvironment(fetchImpl, {
       '[name="state"]': createField('[name="state"]', { value: '', required: false }),
       '[name="city"]': createField('[name="city"]', { value: '', required: false }),
       '#profile-photo-url': createField('#profile-photo-url', { value: 'https://example.test/profile.jpg' }),
-      '#function-required': createField('#function-required', { value: '1' }),
-      '#roles-required': createField('#roles-required', { value: '1' }),
-      '#subcategories-required': createField('#subcategories-required', { value: '1' }),
+      '[select-wrap-entity="functions"]': createGroup('[select-wrap-entity="functions"]', 1),
+      '[select-wrap-entity="roles"]': createGroup('[select-wrap-entity="roles"]', 1),
+      '[select-wrap-entity="subcategories"]': createGroup('[select-wrap-entity="subcategories"]', 1),
     },
     2: {
       '#tagline': createField('#tagline', { value: 'Product strategist', required: publishedRequired(2, 'tagline') }),
@@ -131,8 +139,8 @@ function createEnvironment(fetchImpl, {
       '#bio-html': createField('#bio-html', { value: '<p>Profile biography</p>' }),
     },
     5: {
-      '#skills-required': createField('#skills-required', { value: '1' }),
-      '#tools-required': createField('#tools-required', { value: '1' }),
+      '[select-wrap-entity="skills"]': createGroup('[select-wrap-entity="skills"]', 3),
+      '[select-wrap-entity="tools"]': createGroup('[select-wrap-entity="tools"]', 2),
     },
     6: {
       '[name="rate"]': createField('[name="rate"]', { value: '125', required: publishedRequired(6, 'rate') }),
@@ -301,6 +309,8 @@ function createEnvironment(fetchImpl, {
     },
     querySelectorAll(selector) {
       if (selector === '[data-form="step"][data-index]') return [step]
+      // picker wrappers are document-scoped for the profile-type bound sync
+      if (Object.prototype.hasOwnProperty.call(stepFields, selector) && selector.startsWith('[select-wrap-entity=')) return [stepFields[selector]]
       if (selector === '[data-element="rate"]') return rateInputs
       if (selector === 'input.with-count:not(.initialized), textarea.with-count:not(.initialized)') {
         return domParsed ? [counterInput] : []
@@ -441,6 +451,7 @@ function createEnvironment(fetchImpl, {
     counter,
     counterInput,
     fields,
+    stepFields,
     focusTarget,
     window,
     liveRateFormatterCalls,
@@ -921,6 +932,26 @@ async function testStepSixPersistsExactPriceBoundaries() {
 	assert.equal(JSON.parse(payload.Services)['service-1'].price, 50000)
 }
 
+async function testEnabledRetainerLexicalInputUsesItsOwnWriterGuard() {
+	for (const value of ['1,000', '$100', '1e2', '   ', '-1']) {
+		const environment = saved({
+			stepIndex: 6,
+			additionalFormValues: [['offer-monthly-retainers', 'yes'], ['rate-retainer', value]],
+		})
+		await submit(environment)
+		assert.equal(environment.requests.length, 0, `enabled Retainer ${JSON.stringify(value)} must not send`)
+		assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+		assert.equal(environment.fields['[name="rate-retainer"]'].reportValidityCount, 1)
+	}
+	const padded = saved({
+		stepIndex: 6,
+		additionalFormValues: [['offer-monthly-retainers', 'yes'], ['rate-retainer', ' 100 ']],
+	})
+	await submit(padded)
+	assert.equal(padded.requests.length, 1)
+	assert.equal(JSON.parse(padded.requests[0][1].body).Retainer_Rate, 100)
+}
+
 async function testStepSixPriceContractSurvivesABlankServiceCaptureField() {
 	const environment = saved({
 		stepIndex: 6,
@@ -1073,6 +1104,30 @@ async function testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt() 
 
 // Clearing a custom-service price is the only remove gesture these forms author.
 // It must empty that slot, not block the step on the service being deleted.
+async function testServicePriceRequiresScalarBeforeCoercion() {
+  for (const slot of ['service', 'service-2', 'service-3']) {
+    for (const price of [[100], [], [null], [[100]], [1, 2], true, false, {}, { value: 100 }, 1.5]) {
+      const environment = saved({ stepIndex: 6,
+        additionalFormValues: ['service', 'service-2', 'service-3'].map(key => [key, key === slot ? JSON.stringify({ name: 'Audit', price }) : '']),
+      })
+      await submit(environment)
+      assert.equal(environment.requests.length, 0, `${slot} price ${JSON.stringify(price)} must not send`)
+      assert.equal(environment.modalEvents.error, 1)
+    }
+    for (const price of [1, 50000, '1', '50000', null, '', '   ']) {
+      const environment = saved({ stepIndex: 6,
+        additionalFormValues: ['service', 'service-2', 'service-3'].map(key => [key, key === slot ? JSON.stringify({ name: 'Audit', price }) : '']),
+      })
+      await submit(environment)
+      assert.equal(environment.requests.length, 1, `${slot} price ${JSON.stringify(price)} should save`)
+      const payload = JSON.parse(environment.requests[0][1].body)
+      const service = JSON.parse(payload.Services)[slot === 'service' ? 'service-1' : slot]
+      if (price == null || String(price).trim() === '') assert.equal(service, null)
+      else assert.equal(service.price, Number(price))
+    }
+  }
+}
+
 async function testClearingAServicePriceRemovesThatService() {
 	const payload = await submittedStepPayload(saved({
 		stepIndex: 6,
@@ -1496,7 +1551,7 @@ async function testEmptyMirrorFocusesAuthoredControlWithoutStartingRequest() {
     throw new Error('fetch must not run')
   }, {
     workflowDiagnostics: true,
-    fieldOverrides: { '#function-required': { value: '' } },
+    fieldOverrides: { '[select-wrap-entity="functions"]': { chips: 0 } },
   })
 
   await submit(environment)
@@ -1504,7 +1559,7 @@ async function testEmptyMirrorFocusesAuthoredControlWithoutStartingRequest() {
   assert.equal(environment.requests.length, 0)
   assert.equal(environment.focusTarget.focusCount, 1)
   assert.equal(environment.button.style.pointerEvents ?? '', '')
-  assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'MIRROR_VALUE_MISSING')
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'GROUP_MIN_NOT_MET')
 }
 
 async function testMissingAuthoredMarkerFailsClosed() {
@@ -1544,7 +1599,7 @@ async function testProfileTypeSelectsOnlyItsOwnedMirrorBranch() {
     json: async () => ({ saved: true, projection_pending: false }),
   }), {
     profileType: 'consult',
-    fieldOverrides: { '#roles-required': { value: '' } },
+    fieldOverrides: { '[select-wrap-entity="roles"]': { chips: 0 } },
   })
   await submit(consultValid)
   assert.equal(consultValid.requests.length, 1)
@@ -1553,14 +1608,18 @@ async function testProfileTypeSelectsOnlyItsOwnedMirrorBranch() {
     throw new Error('fetch must not run')
   }, {
     profileType: 'consult',
-    fieldOverrides: { '#subcategories-required': { value: '' } },
+    fieldOverrides: { '[select-wrap-entity="subcategories"]': { chips: 0 } },
   })
   await submit(consultInvalid)
   assert.equal(consultInvalid.requests.length, 0)
 }
 
 async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles() {
-  for (const [stepIndex, selector] of [[5, '#skills-required'], [5, '#tools-required'], [6, '#availability-required']]) {
+  for (const [stepIndex, selector, emptyOverride] of [
+    [5, '[select-wrap-entity="skills"]', { chips: 0 }],
+    [5, '[select-wrap-entity="tools"]', { chips: 1 }],
+    [6, '#availability-required', { value: '' }],
+  ]) {
     const consult = createEnvironment(async () => ({
       ok: true,
       status: 200,
@@ -1568,7 +1627,7 @@ async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(
     }), {
       stepIndex,
       profileType: 'consult',
-      fieldOverrides: { [selector]: { value: '' } },
+      fieldOverrides: { [selector]: emptyOverride },
     })
     await submit(consult)
     assert.equal(consult.requests.length, 1, `consult step ${stepIndex} ignores ${selector}`)
@@ -1577,7 +1636,7 @@ async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(
       throw new Error('fetch must not run')
     }, {
       stepIndex,
-      fieldOverrides: { [selector]: { value: '' } },
+      fieldOverrides: { [selector]: emptyOverride },
     })
     await submit(full)
     assert.equal(full.requests.length, 0, `full step ${stepIndex} requires ${selector}`)
@@ -1650,6 +1709,90 @@ async function testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots() 
   })
   await submit(absentOptionalSlots)
   assert.equal(absentOptionalSlots.requests.length, 1)
+}
+
+async function testReviewerEmailValidationBlocksEverySlotBeforeFetch() {
+  for (const selector of ['[name="reviewer"]', '[name="reviewer-2"]', '[name="reviewer-3"]']) {
+    for (const email of ['a@example..com', 'a@example.com,', 'a@-example.com', 'a@example-.com', 'not-an-email', 'a,b@example.com', 'a<b@example.com', '.a@example.com', 'a..b@example.com', 'a.@example.com', 'a@@example.com', 'a b@example.com', 'a@localhost', '@example.com', 'a@', 'a'.repeat(310) + '@example.com']) {
+      const environment = createEnvironment(async () => { throw new Error('fetch must not run') }, {
+        stepIndex: 7,
+        workflowDiagnostics: true,
+        fieldOverrides: { [selector]: { value: JSON.stringify({ fname: 'Reviewer', email }) } },
+      })
+      await submit(environment)
+      assert.equal(environment.requests.length, 0, `${selector}: ${email}`)
+      assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'REVIEWER_EMAIL_INVALID')
+    }
+  }
+  const valid = createEnvironment(async () => ({
+    ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }),
+  }), {
+    stepIndex: 7,
+    fieldOverrides: Object.fromEntries(['reviewer', 'reviewer-2', 'reviewer-3'].map((name, index) => [
+      `[name="${name}"]`, { value: JSON.stringify({ fname: `Reviewer ${index}`, email: `owned+${index}@example.com` }) },
+    ])),
+  })
+  await submit(valid)
+  assert.equal(valid.requests.length, 1)
+}
+
+async function testReviewerEmailsAreNormalizedBeforeSerialization() {
+  for (const duringPreparation of [false, true]) {
+    const ready = deferred()
+    const names = ['reviewer', 'reviewer-2', 'reviewer-3']
+    const tuple = (index, padded) => ({
+      fname: ` Reviewer ${index} `, lname: ' Last ', job: ' Role ', company: ' Company ',
+      email: padded ? ` \tOwned+Tag${index}@Example.COM\n ` : 'initial@example.com',
+    })
+    const environment = createEnvironment(async () => ({
+      ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }),
+    }), {
+      stepIndex: 7,
+      workflowDiagnosticsReady: ready.promise,
+      fieldOverrides: Object.fromEntries(names.map((name, index) => [
+        `[name="${name}"]`, { value: JSON.stringify(tuple(index, !duringPreparation)) },
+      ])),
+    })
+    const submission = submit(environment)
+    await new Promise(setImmediate)
+    if (duringPreparation) {
+      names.forEach((name, index) => {
+        environment.fields[`[name="${name}"]`].value = JSON.stringify(tuple(index, true))
+      })
+    }
+    ready.resolve(null)
+    await submission
+    assert.equal(environment.requests.length, 1)
+    const payload = JSON.parse(environment.requests[0][1].body)
+    names.forEach((name, index) => {
+      assert.deepEqual(payload.Reviewers[`reviewer-${index + 1}`], {
+        'first-name': ` Reviewer ${index} `, 'last-name': ' Last ',
+        position: ' Role ', company: ' Company ', email: `Owned+Tag${index}@Example.COM`,
+      })
+    })
+  }
+}
+
+async function testReviewerEditsDuringPreparationAreValidated() {
+  for (const name of ['reviewer', 'reviewer-2', 'reviewer-3']) {
+    for (const email of ['not-an-email', 'a@example..com', 'a@example.com,', ' a b@example.com ', 'a@exam ple.com']) {
+      const ready = deferred()
+      const environment = createEnvironment(async () => { throw new Error('fetch must not run') }, {
+        stepIndex: 7,
+        workflowDiagnosticsReady: ready.promise,
+        fieldOverrides: { [`[name="${name}"]`]: { value: JSON.stringify({ fname: 'Reviewer', email: 'valid+review@example.com' }) } },
+      })
+      const submission = submit(environment)
+      await new Promise(setImmediate)
+      environment.fields[`[name="${name}"]`].value = JSON.stringify({ fname: 'Reviewer', email })
+      ready.resolve(null)
+      await submission
+      assert.equal(environment.requests.length, 0, `${name}: ${email}`)
+      assert.equal(environment.button.style.pointerEvents, '')
+      assert.equal(environment.button.style.opacity, '')
+      assert.equal(environment.modalEvents.success, 0)
+    }
+  }
 }
 
 async function testDynamicRequiredCaptureBlocksBeforeLoading() {
@@ -1812,6 +1955,7 @@ Promise.all([
   testEnabledOptionalRatesNeverSilentlyPersistZero(),
 	testStepSixRejectsInvalidWholeDollarPricesBeforeFetch(),
 	testStepSixPersistsExactPriceBoundaries(),
+	testEnabledRetainerLexicalInputUsesItsOwnWriterGuard(),
 	testStepSixPriceContractSurvivesABlankServiceCaptureField(),
 	testServiceFailuresExplainThemselvesInTheErrorModal(),
 	testCollapsedRetainerSectionNeverBlocksStepSix(),
@@ -1826,6 +1970,7 @@ Promise.all([
   testFeedbackMessagesNeverFlattenNestedAuthoredMarkup(),
   testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt(),
   testClearingAServicePriceRemovesThatService(),
+  testServicePriceRequiresScalarBeforeCoercion(),
   testANonBlankMalformedServicePriceStillBlocksTheStep(),
   testReviewerStepUsesCanonicalBuildProfileShape(),
   testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
@@ -1843,8 +1988,12 @@ Promise.all([
   testProfileHydrationMustFinishBeforeValidationCanWrite(),
   testProfileTypeSelectsOnlyItsOwnedMirrorBranch(),
   testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(),
+  testStepFiveGroupRulesCountChipsAndSyncBounds(),
   testConditionalLocationRequirementTransitions(),
   testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
+  testReviewerEmailValidationBlocksEverySlotBeforeFetch(),
+  testReviewerEmailsAreNormalizedBeforeSerialization(),
+  testReviewerEditsDuringPreparationAreValidated(),
   testDynamicRequiredCaptureBlocksBeforeLoading(),
   testPersonalDetailsValidationBoundary(),
   testReplayProofRejectsChangedMemberAtCapture(),
@@ -1856,3 +2005,39 @@ Promise.all([
     console.error(error)
     process.exitCode = 1
   })
+
+
+async function testStepFiveGroupRulesCountChipsAndSyncBounds() {
+  const blocked = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    stepIndex: 5,
+    workflowDiagnostics: true,
+    fieldOverrides: { '[select-wrap-entity="skills"]': { chips: 2 } },
+  })
+  await submit(blocked)
+  assert.equal(blocked.requests.length, 0, 'two skills on a Full profile must not save')
+  assert.equal(blocked.focusTarget.focusCount, 1, 'the picker input receives focus')
+  assert.equal(blocked.window.__startersWorkflowDiagnosticLast.error_code, 'GROUP_MIN_NOT_MET')
+
+  const saved = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true, projection_pending: false }),
+  }), { stepIndex: 5 })
+  await submit(saved)
+  assert.equal(saved.requests.length, 1, 'three skills and two tools save')
+  const skills = saved.stepFields['[select-wrap-entity="skills"]']
+  const tools = saved.stepFields['[select-wrap-entity="tools"]']
+  assert.equal(skills.getAttribute('wf-validate-min'), '3', 'Full profile: skills minimum mirrored for wf-validate')
+  assert.equal(tools.getAttribute('wf-validate-min'), '2', 'Full profile: tools minimum mirrored for wf-validate')
+
+  const consult = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true, projection_pending: false }),
+  }), { stepIndex: 5, profileType: 'consult', fieldOverrides: { '[select-wrap-entity="skills"]': { chips: 0 } } })
+  await submit(consult)
+  assert.equal(consult.requests.length, 1, 'Consult profile: no skills minimum')
+  assert.equal(consult.stepFields['[select-wrap-entity="skills"]'].getAttribute('wf-validate-min'), null, 'Consult profile: no wf-validate-min on the wrapper')
+}

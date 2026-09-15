@@ -200,6 +200,29 @@ test('Full Profile rejects a selected Paid Call rate that is not a whole dollar'
   assert.match(invalid.inputs['[name="paid-call-rate"]'].validationMessage, /\$1 to \$1,000/)
 })
 
+for (const [label, toggle, field, payloadField, max] of [
+  ['Retainer', 'offer-monthly-retainers', 'rate-retainer', 'retainer_rate', 25000],
+  ['Paid Call', 'paid-consulting-calls', 'paid-call-rate', 'paid_call_rate', 1000],
+]) {
+  for (const value of ['1,000', '$100', '1e2', '   ', '-1']) {
+    test(`Full enabled ${label} rejects lexical ${JSON.stringify(value)} before request`, async () => {
+      const result = load({ [toggle]: 'yes', [field]: value }, '/build-profile/full-profile')
+      await result.submit.click()
+      assert.equal(result.requests.length, 0)
+      assert.match(result.inputs[`[name="${field}"]`].validationMessage, value.trim() === ''
+        ? /rate is required\./
+        : new RegExp(`1 to \\${'$'}${max.toLocaleString('en-US')}`))
+      assert.equal(result.inputs[`[name="${field}"]`].reportValidityCount, 1)
+    })
+  }
+  test(`Full enabled ${label} trims padded digits without changing whole-dollar value`, async () => {
+    const result = load({ [toggle]: 'yes', [field]: ' 100 ' }, '/build-profile/full-profile')
+    await result.submit.click()
+    assert.equal(result.requests.length, 1)
+    assert.equal(result.requests[0].body[payloadField], 100)
+  })
+}
+
 test('a collapsed section keeps its compatibility value instead of blocking the submit', async () => {
   const retainer = load({ 'offer-monthly-retainers': 'no', 'rate-retainer': '30000' })
   await retainer.submit.click()
@@ -422,6 +445,26 @@ test('a later non-price failure restores the authored error copy', async () => {
 
 // Clearing a custom-service price is the only remove gesture these forms author.
 // It must empty the slot, not block the whole submit on the service being deleted.
+test('all custom service slots reject non-scalar prices before coercion and retain scalar/removal semantics', async () => {
+  for (const slot of ['service', 'service-2', 'service-3']) {
+    for (const price of [[100], [], [null], [[100]], [1, 2], true, false, {}, { value: 100 }, 1.5]) {
+      const result = load({ [slot]: JSON.stringify({ name: 'Audit', price }) })
+      await result.submit.click()
+      assert.equal(result.requests.length, 0, `${slot} price ${JSON.stringify(price)} must not reach Xano`)
+      assert.equal(result.error.style.display, 'block')
+      assert.match(result.errorMessage.textContent, /whole-dollar service price/)
+    }
+    for (const price of [1, 50000, '1', '50000', null, '', '   ']) {
+      const result = load({ [slot]: JSON.stringify({ name: 'Audit', price }) })
+      await result.submit.click()
+      assert.equal(result.requests.length, 1, `${slot} price ${JSON.stringify(price)} should save`)
+      const service = result.requests[0].body.services[slot === 'service' ? 'service-1' : slot]
+      if (price == null || String(price).trim() === '') assert.equal(service, null)
+      else assert.equal(service.price, Number(price))
+    }
+  }
+})
+
 test('clearing a service price removes that service instead of blocking the submit', async () => {
   const cleared = load({
     service: JSON.stringify({ name: 'Audit', price: '' }),

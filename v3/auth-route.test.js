@@ -2538,7 +2538,7 @@ test('the header @release marker matches the exported release property', () => {
 
 // The router and the site-head loader ship as one unit: the loader requests
 // auth-route.js from its own release ref, so a release that stamps one and not
-// the other makes the served-byte check in ROUTE-GUARD-WIRING.md answer two
+// the other makes the served-byte check in docs/wiring/ROUTE-GUARD-WIRING.md answer two
 // different versions for one deployment. Both values here come from the
 // executed modules, not from their source text. route-guard.js is deliberately
 // NOT in this unit — it is untouched by this release and keeps the marker that

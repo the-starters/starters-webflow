@@ -1,7 +1,7 @@
 /**
  * GitHub-owned Free Call booking controller for /hire/<slug>.
  *
- * @release v1.59.429
+ * @release v1.59.520
  *
  * Webflow owns the chooser, modal shell, guest fields, and success step. This
  * module binds those authored elements and sends Free requests through the
@@ -24,6 +24,8 @@
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const chooserBindings = new WeakMap()
+  const freeReceiptPriceStates = new WeakMap()
+  const freeReceiptFieldStates = new WeakMap()
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
 
@@ -93,14 +95,14 @@
        * is what would reset twice, and neither one can miss a close.
        */
       resetTiming: 'close-complete',
-      register: function (popup, container, onReset) {
+      register: function (popup, container, onReset, owner) {
         let binding = bindings.get(popup)
         if (!binding) {
           // `closePending` makes the reset idempotent per close cycle: one
           // reset per close no matter how many close-complete events the embed
           // emits, re-armed whenever the dialog is opened again or a call type
           // claims the surface.
-          binding = { container, resets: new Set(), closePending: true }
+          binding = { container, resets: new Map(), closePending: true }
           bindings.set(popup, binding)
           if (typeof global.addEventListener === 'function') {
             global.addEventListener('modal-open', function (event) {
@@ -119,7 +121,7 @@
           }
         }
         if (binding.container !== container) return false
-        binding.resets.add(onReset)
+        binding.resets.set(owner || onReset, onReset)
         return true
       },
       reset: function (popup, nextType) {
@@ -428,7 +430,41 @@
     }
   }
 
-  function showFreeSuccess(popup) {
+  function showFreeSuccess(popup, input) {
+    let date
+    const options = { month: 'long', year: 'numeric', timeZone: clean(input && input.timezone) || 'UTC' }
+    try {
+      date = formatWithTimezone(input && input.start, options).list
+    } catch (_error) {
+      date = formatWithTimezone(input && input.start, Object.assign({}, options, { timeZone: 'UTC' })).list
+    }
+    const fields = {
+      'start-date': date.year ? date.month + ' ' + date.day + ', ' + date.year : '',
+      'start-time': date.hour ? date.hour + ':' + date.minute + ' ' + date.dayPeriod + ' ' + date.timeZoneName : '',
+      context: clean(input && input.context),
+    }
+    Object.keys(fields).forEach(function (name) {
+      popup.querySelectorAll('[schedule-step="success"] [booking-element="' + name + '"]').forEach(function (element) {
+        let states = freeReceiptFieldStates.get(popup)
+        if (!states) {
+          states = new Map()
+          freeReceiptFieldStates.set(popup, states)
+        }
+        if (!states.has(element)) states.set(element, element.innerHTML)
+        element.textContent = fields[name]
+      })
+    })
+    popup.querySelectorAll('[schedule-step="success"] [booking-element="price"]').forEach(function (element) {
+      const wrap = element.closest('[booking-element-wrap]') || element
+      let states = freeReceiptPriceStates.get(popup)
+      if (!states) {
+        states = new Map()
+        freeReceiptPriceStates.set(popup, states)
+      }
+      if (!states.has(wrap)) states.set(wrap, { display: wrap.style.display, ariaHidden: wrap.getAttribute('aria-hidden') })
+      wrap.style.display = 'none'
+      wrap.setAttribute('aria-hidden', 'true')
+    })
     popup.querySelectorAll('[success-call-buttons]').forEach(function (element) {
       element.style.display = element.getAttribute('data-type') === 'free' ? 'flex' : 'none'
     })
@@ -450,8 +486,8 @@
   }
 
   function nextSlotText(value) {
-    const list = formatWithTimezone(value * 1000, { month: '2-digit' }).list
-    return list.hour + ':' + list.minute + list.dayPeriod + ' on ' + list.month + '/' + list.day
+    const list = formatWithTimezone(value * 1000, { month: 'short' }).list
+    return list.hour + ':' + list.minute + list.dayPeriod + ' on ' + list.month + ' ' + list.day
   }
 
   /**
@@ -540,6 +576,22 @@
     }
 
     function resetFreeUi() {
+      const fieldStates = freeReceiptFieldStates.get(popup)
+      if (fieldStates) {
+        fieldStates.forEach(function (content, element) {
+          element.innerHTML = content
+        })
+        freeReceiptFieldStates.delete(popup)
+      }
+      const priceStates = freeReceiptPriceStates.get(popup)
+      if (priceStates) {
+        priceStates.forEach(function (state, wrap) {
+          wrap.style.display = state.display
+          if (state.ariaHidden == null) wrap.removeAttribute('aria-hidden')
+          else wrap.setAttribute('aria-hidden', state.ariaHidden)
+        })
+        freeReceiptPriceStates.delete(popup)
+      }
       if (clearFreeCalendarSelection) clearFreeCalendarSelection()
       clearFreeCalendarSelection = null
       guestUi.hide()
@@ -621,7 +673,7 @@
                   },
                 )
                 if (!bookingSurfaceOwnership.owns(container, generation)) return result
-                showFreeSuccess(current.popup)
+                showFreeSuccess(current.popup, input)
                 return result
               } finally {
                 bookingLocks.delete(generation)
@@ -651,7 +703,7 @@
       }
     })
 
-    if (!bookingSurfaceLifecycle.register(popup, container, resetFreeUi)) return false
+    if (!bookingSurfaceLifecycle.register(popup, container, resetFreeUi, 'free')) return false
     bookingSurfaceLifecycle.reset(popup)
 
     mainButtons.forEach(function (button) {
@@ -671,7 +723,61 @@
     return true
   }
 
+  function isBookableRecordShape(record, environments) {
+      if (!record || !record.config_id || record.active !== true) return false;
+      if (!environments) return false;
+      if (record.data_environment !== environments.data) return false;
+      if (record.is_paid === true) {
+          const priceCents = Number(record.price_cents);
+          const duration = Number(record.duration);
+          return record.payment_environment === environments.payment &&
+              String(record.currency || '').toUpperCase() === 'USD' &&
+              Number.isInteger(priceCents) &&
+              priceCents >= 100 &&
+              priceCents <= 100000 &&
+              priceCents % 100 === 0 &&
+              duration === 60;
+      }
+      return record.is_paid === false &&
+          (record.price_cents == null || Number(record.price_cents) === 0) &&
+          (record.duration == null || Number(record.duration) === 30);
+  }
+
+  function selectBookableConfigurations(records, hostname) {
+      if (!Array.isArray(records)) return [];
+
+      const host = hostname || (global.location && global.location.hostname);
+      const environments = host === 'the-starters-3-0.webflow.io'
+          ? { data: 'test', payment: 'test' }
+          : (host === 'thestarters.com' || host === 'www.thestarters.com')
+              ? { data: 'production', payment: 'live' } : null;
+      if (!environments) return [];
+
+      const active = records.filter(function (record) {
+          return isBookableRecordShape(record, environments);
+      });
+      const configIds = new Set();
+      const hasDuplicateConfigId = active.some(function (record) {
+          if (configIds.has(record.config_id)) return true;
+          configIds.add(record.config_id);
+          return false;
+      });
+      const free = active.filter(function (record) { return record.is_paid !== true; });
+      const paid = active.filter(function (record) { return record.is_paid === true; });
+
+      if (hasDuplicateConfigId || free.length > 1 || paid.length > 1) {
+          console.warn('Duplicate active booking configurations require reconciliation.');
+          return [];
+      }
+
+      // Keep Free first so the shared modal's nearest-slot preview remains
+      // deterministic while each option still receives its own config ID.
+      return free.concat(paid);
+  }
+
+
   const api = {
+    selectBookableConfigurations,
     AVAILABILITY_PATH,
     BOOKING_PATH,
     CONFIGS_PATH,

@@ -1,3 +1,53 @@
+    function canonicalMirrorValue(value) {
+        if (Array.isArray(value)) return value.join(',');
+        if (typeof value === 'number') return String(value);
+        if (typeof value === 'boolean') return value ? 'yes' : 'no';
+        return String(value ?? '').trim();
+    }
+
+    function canonicalRequiredMirrors(profile) {
+        function firstValue(primary, fallback) {
+            return canonicalMirrorValue(primary) || canonicalMirrorValue(fallback);
+        }
+
+        return {
+            step_1: {
+                'function-required': firstValue(profile?.Category_ID, profile?.Category),
+                'roles-required': firstValue(profile?.Roles_IDs, profile?.Roles),
+                'subcategories-required': firstValue(profile?.Subcategories_IDs, profile?.Subcategories),
+            },
+            step_5: {
+                'skills-required': firstValue(profile?.Skills_IDs, profile?.Skills),
+                'tools-required': firstValue(profile?.Tools_IDs, profile?.Tool),
+            },
+            step_6: {
+                'availability-required': firstValue(profile?.Availability_ID, profile?.Availability),
+            },
+        };
+    }
+
+    function restoreCanonicalProfileFields(profile, steps, getStepIndex, findFields, applyValue) {
+        steps.forEach((step) => {
+            const stepIndex = getStepIndex(step);
+            if (!stepIndex) return;
+
+            const stepData = profile?.data?.[`step_${stepIndex}`];
+            if (!stepData) return;
+
+            const fields = findFields('[data-input-capture], [ms-code-select="input-required"]', step);
+            fields.forEach((field) => {
+                const fieldName = field.name;
+                if (!fieldName || !(fieldName in stepData)) return;
+
+                applyValue(field, stepData[fieldName]);
+            });
+        });
+    }
+
+    window.StartersCanonicalProfileLoader = Object.assign(window.StartersCanonicalProfileLoader || {}, {
+        canonicalRequiredMirrors,
+        restoreCanonicalProfileFields,
+    });
 
     var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
     if (!profileFormControllers.canonicalProfileLoader) {
@@ -169,24 +219,7 @@
             }
 
             function restoreFieldsData(profile) {
-                const steps = getSteps();
-                steps.forEach((step) => {
-                    const stepIndex = getStepIndex(step);
-                    if (!stepIndex) return;
-
-                    const stepKey = `step_${stepIndex}`;
-                    const stepData = profile?.data?.[stepKey];
-
-                    if (!stepData) return;
-
-                    const fields = qsa('[data-input-capture]', step);
-                    fields.forEach((field) => {
-                        const fieldName = field.name;
-                        if (!fieldName || !(fieldName in stepData)) return;
-
-                        setFieldValue(field, stepData[fieldName]);
-                    });
-                });
+                restoreCanonicalProfileFields(profile, getSteps(), getStepIndex, qsa, setFieldValue);
             }
 
             function getFieldValue(field) {
@@ -390,6 +423,7 @@
                     if (value) reviewersData[field] = JSON.stringify(value);
                 }
 
+                const requiredMirrors = canonicalRequiredMirrors(xanoProfile);
                 const profile = {
                     type: getXanoValue(xanoProfile, 'Profile_Type') || PROFILE_TYPE,
                     type_id: getXanoValue(xanoProfile, 'Profile_Type_ID') || PROFILE_TYPE_ID,
@@ -410,6 +444,7 @@
                             'subcategories-option': getXanoValue(xanoProfile, 'Subcategories'),
                             subcategories: getXanoValue(xanoProfile, 'Subcategories_IDs'),
                             'profile-photo-url': getXanoValue(xanoProfile, 'Profile_Photo'),
+                            ...requiredMirrors.step_1,
                         },
                         step_2: {
                             tagline: getXanoValue(xanoProfile, 'Tagline'),
@@ -430,6 +465,7 @@
                             tools: getXanoValue(xanoProfile, 'Tools_IDs'),
                             'industries-option': getXanoValue(xanoProfile, 'Industry_Experience'),
                             industries: getXanoValue(xanoProfile, 'Industry_Experience_IDs'),
+                            ...requiredMirrors.step_5,
                         },
                         step_6: {
                             rate: getXanoValue(xanoProfile, 'Hourly_Rate'),
@@ -444,6 +480,7 @@
                             'offer-monthly-retainers': getXanoValue(xanoProfile, 'Retainer_Enabled'),
                             'description-retainer': getXanoValue(xanoProfile, 'Retainer_Description'),
                             'rate-retainer': getXanoValue(xanoProfile, 'Retainer_Rate'),
+                            ...requiredMirrors.step_6,
                             ...servicesData,
                         },
                         step_7: { ...reviewersData },

@@ -1,6 +1,32 @@
 
   var activeProfile = createEmptyProfile();
 
+  // Legacy Build uses Videsigns, whose numeric gate checks text length only.
+  // Enforce authored native constraints before target draft and wizard handlers.
+  // Do not change field values, business limits, visibility, or final-save rules.
+  (function bindLegacyBuildNumericValidity() {
+    const route = String(window.location?.pathname || '').replace(/\/+$/, '');
+    if (route !== '/build-profile/consult' && route !== '/build-profile/full-profile') return;
+    if (window.__tsLegacyBuildNumericValidity) return;
+    window.__tsLegacyBuildNumericValidity = true;
+    document.addEventListener('click', function (event) {
+      const next = event.target?.closest?.('[data-form="next-btn"]');
+      const step = next?.closest('[data-form="step"]');
+      if (!step?.closest('form[data-form="multistep"]')) return;
+      const fields = step.querySelectorAll('input[type="number"][required]');
+      for (const field of fields) {
+        if (field.disabled || !field.willValidate || !field.getClientRects().length) continue;
+        const visibility = window.getComputedStyle(field).visibility;
+        if (visibility === 'hidden' || visibility === 'collapse') continue;
+        if (field.checkValidity()) continue;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        field.reportValidity();
+        break;
+      }
+    }, true);
+  })();
+
   /* GLOBAL METHODS */
   function isValidEmail(email) {
     return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email);
@@ -248,6 +274,7 @@
       $wrapper.addClass('ready');
 
       let selectedOptions = [];
+      let preservedUnmatchedValues = [];
       let highlightedIndex = -1;
       let listOpenedByTap = false;
       let activeScrollTop = 0;
@@ -397,7 +424,8 @@
 
       function checkOnMin() {
         if ($input_value.length && MIN_SELECTIONS) {
-          const idsValue = selectedOptions.map((option) => option.id).join(', ');
+          const selectedIds = selectedOptions.map((option) => option.id);
+          const idsValue = selectedIds.join(', ');
 
           if (selectedOptions.length >= Number(MIN_SELECTIONS)) {
             if ($input_required.length) {
@@ -409,7 +437,7 @@
             }
           }
 
-          $input_value.val(idsValue);
+          $input_value.val(selectedIds.concat(preservedUnmatchedValues).join(', '));
 
           $input_value[0].dispatchEvent(
             new Event('change', {
@@ -643,11 +671,17 @@
             .map((v) => v.trim())
             .filter(Boolean);
 
+          preservedUnmatchedValues = [];
+
           initialValues.forEach((value) => {
+            if (!isMulti && selectedOptions.length) return;
+
             const matchingOption = options.find((option) => option.id === value || option.name === value);
 
             if (matchingOption) {
               addTag(matchingOption);
+            } else if (isMulti && !preservedUnmatchedValues.includes(value)) {
+              preservedUnmatchedValues.push(value);
             }
           });
 
@@ -786,7 +820,12 @@
       });
 
       waitProfileData(() => {
-        initializeWithValue();
+        const dirtyState = window.__tsProfileDirtyState;
+        if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+          dirtyState.runHydrationSync(initializeWithValue);
+        } else {
+          initializeWithValue();
+        }
       });
 
       toggleList(false);
