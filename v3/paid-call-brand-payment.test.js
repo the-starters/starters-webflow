@@ -3954,6 +3954,53 @@ test('shared booking surface blocks overlapping Free and Paid commands', async (
   assert.equal(paidRuns, 1)
 })
 
+test('shared owner recovers original Paid identity without blocking Free or marking replacements uncertain', async () => {
+  const previousFetch = global.xanoAuthFetch
+  const owner = global.StartersBookingSurfaceLifecycle
+  const container = {}
+  const bodies = []
+  let paidRuns = 0
+  const original = {starter_slug:'starter-one',config_id:'paid-original',start:1787000000000,end:1787003600000,
+    timezone:'UTC',context:'Original message',guest_emails:['original@example.com'],expected_payment_method_id:'pm_original'}
+  const review = {input:original,card:{brand:'visa',last4:'0042'},priceText:'$250',starterName:'Original Starter'}
+  const createPaid = input => {
+    const attempt = api.createBookingAttempt(input)
+    attempt.review = JSON.parse(JSON.stringify({...review,input}))
+    return attempt
+  }
+  global.xanoAuthFetch = async (_url, options) => {
+    const body = JSON.parse(options.body)
+    bodies.push(body)
+    if (body.expected_payment_method_id) {
+      paidRuns += 1
+      if (paidRuns === 1) throw new Error('Successful response lost')
+      if (paidRuns === 2) return {ok:false,status:401,json:async () => ({message:'Not authenticated'})}
+    }
+    return response({booking:{row_id:71,booking_id:'canonical-booking'}})
+  }
+  try {
+    await assert.rejects(owner.runBooking(container, 'original', () => createPaid(original)), error => error.retrySameBooking === true)
+    const replacement = {...original,start:1787086400000,end:1787090000000,context:'Replacement message',expected_payment_method_id:'pm_other'}
+    assert.throws(() => owner.runBooking(container, 'replacement', () => createPaid(replacement)), error => error.bookingNotSubmitted === true && error.retrySameBooking === false)
+    assert.equal(bodies.length, 1, 'rejected replacement is never sent')
+    const snapshot = owner.getBookingRecovery(container)
+    snapshot.review.input.context = 'Caller mutation'
+    assert.deepEqual(owner.getBookingRecovery(container).review.input, original)
+    await owner.runBooking(container, 'free', () => api.createBookingAttempt({...replacement,config_id:'free',expected_payment_method_id:undefined}))
+    assert.equal(bodies.length, 2)
+    assert.deepEqual(owner.getBookingRecovery(container).review.input, original, 'Free success preserves Paid recovery')
+    const noReplacement = () => { throw new Error('Recovery must reuse its owned attempt') }
+    await assert.rejects(owner.runBooking(container, 'original', noReplacement), error => error.retrySameBooking === true)
+    const result = await owner.runBooking(container, 'original', noReplacement)
+    assert.deepEqual(bodies[0], bodies[2])
+    assert.deepEqual(bodies[0], bodies[3])
+    assert.deepEqual(await owner.runBooking(container, 'original', noReplacement), result, 'completed proof stays recoverable until displayed')
+    assert.equal(bodies.length, 4, 'retained canonical proof does not repeat the command')
+    owner.acknowledgeBooking(container, 'original')
+    assert.equal(owner.getBookingRecovery(container), null)
+  } finally { global.xanoAuthFetch = previousFetch }
+})
+
 test('a reset booking blocks a changed command while one is in flight', async () => {
   let bookingCount = 0
   let resolveStaleBooking

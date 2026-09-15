@@ -61,6 +61,12 @@ window.xanoAuthFetch = async (url, options) => {
     body = { booking: { booking_id: 'fixture-provider', row_id: 71, payment_method_id: 'receiptMethodId' in fixture ? fixture.receiptMethodId : payload.expected_payment_method_id,
       payment_method: fixture.receiptCard === undefined ? fixture.cards.find(card => card.id === payload.expected_payment_method_id) : fixture.receiptCard } }
     fixture.canonicalBookings.set(payload.idempotency_key, body)
+    if (fixture.pauseBookingResponse) {
+      fixture.pauseBookingResponse = false
+      fixture.waiting = true
+      await new Promise(resolve => { fixture.release = resolve })
+      fixture.waiting = false
+    }
     if (fixture.loseBookingResponse) { fixture.loseBookingResponse = false; throw new Error('Synthetic successful booking response lost') }
   } else throw new Error('Unexpected fixture request: ' + parsed.pathname)
   return { ok: true, status: 200, json: async () => body }

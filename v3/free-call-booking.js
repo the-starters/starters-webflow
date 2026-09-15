@@ -132,39 +132,63 @@
         binding.resets.forEach(function (reset) { reset(generation, nextType || '') })
         return generation
       },
+      getBookingRecovery: function (container) {
+        const state = bookingStates.get(container)
+        const entry = state && state.recovery
+        if (!entry || (!entry.uncertain && !entry.result)) return null
+        return { fingerprint: entry.fingerprint, review: JSON.parse(JSON.stringify(entry.attempt.review)) }
+      },
+      acknowledgeBooking: function (container, fingerprint) {
+        const state = bookingStates.get(container)
+        if (!state || !state.recovery || state.recovery.fingerprint !== fingerprint) return
+        state.attempts.delete(fingerprint)
+        state.recovery = null
+      },
       runBooking: function (container, fingerprint, createAttempt, validateResult) {
         let state = bookingStates.get(container)
         if (!state) {
-          state = { active: null, attempts: new Map() }
+          state = { active: null, recovery: null, attempts: new Map() }
           bookingStates.set(container, state)
         }
         let entry = state.active
         if (entry && entry.fingerprint !== fingerprint) {
-          throw Object.assign(new Error('Another booking request is still being processed'), { retrySameBooking: Boolean(entry.uncertain) })
+          throw Object.assign(new Error('Another booking request is still being processed'), { retrySameBooking: false, bookingNotSubmitted: true })
         }
         if (!entry) {
           entry = state.attempts.get(fingerprint)
           if (!entry) {
-            entry = { attempt: createAttempt(), fingerprint, inFlight: null, uncertain: false }
+            const attempt = createAttempt()
+            if (attempt.review && state.recovery) {
+              throw Object.assign(new Error('Check your previous Paid Call request before requesting another.'), {
+                retrySameBooking: false, bookingNotSubmitted: true,
+              })
+            }
+            entry = { attempt, fingerprint, inFlight: null, uncertain: false, result: null }
             state.attempts.set(fingerprint, entry)
+            if (attempt.review) state.recovery = entry
           }
+          if (entry.result) return Promise.resolve(entry.result)
           state.active = entry
         }
         if (!entry.inFlight) {
           entry.inFlight = entry.attempt.run().then(function (result) {
             if (validateResult) validateResult(result)
-            if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
+            if (entry.attempt.review) entry.result = result
+            else if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
             entry.uncertain = false
             return result
           }).catch(function (error) {
             if (typeof entry.attempt.isDefinitiveRejection === 'function') {
               entry.uncertain = !entry.attempt.isDefinitiveRejection(error, entry.uncertain)
               error.retrySameBooking = entry.uncertain
-              if (!entry.uncertain) state.attempts.delete(fingerprint)
+              if (!entry.uncertain) {
+                state.attempts.delete(fingerprint)
+                if (state.recovery === entry) state.recovery = null
+              }
             }
             throw error
           }).finally(function () {
-            if (state.active === entry && !entry.uncertain) state.active = null
+            if (state.active === entry) state.active = null
             entry.inFlight = null
           })
         }

@@ -157,39 +157,63 @@
         binding.resets.forEach(function (reset) { reset(generation, nextType || '') })
         return generation
       },
+      getBookingRecovery: function (container) {
+        const state = bookingStates.get(container)
+        const entry = state && state.recovery
+        if (!entry || (!entry.uncertain && !entry.result)) return null
+        return { fingerprint: entry.fingerprint, review: JSON.parse(JSON.stringify(entry.attempt.review)) }
+      },
+      acknowledgeBooking: function (container, fingerprint) {
+        const state = bookingStates.get(container)
+        if (!state || !state.recovery || state.recovery.fingerprint !== fingerprint) return
+        state.attempts.delete(fingerprint)
+        state.recovery = null
+      },
       runBooking: function (container, fingerprint, createAttempt, validateResult) {
         let state = bookingStates.get(container)
         if (!state) {
-          state = { active: null, attempts: new Map() }
+          state = { active: null, recovery: null, attempts: new Map() }
           bookingStates.set(container, state)
         }
         let entry = state.active
         if (entry && entry.fingerprint !== fingerprint) {
-          throw Object.assign(new Error('Another booking request is still being processed'), { retrySameBooking: Boolean(entry.uncertain) })
+          throw Object.assign(new Error('Another booking request is still being processed'), { retrySameBooking: false, bookingNotSubmitted: true })
         }
         if (!entry) {
           entry = state.attempts.get(fingerprint)
           if (!entry) {
-            entry = { attempt: createAttempt(), fingerprint, inFlight: null, uncertain: false }
+            const attempt = createAttempt()
+            if (attempt.review && state.recovery) {
+              throw Object.assign(new Error('Check your previous Paid Call request before requesting another.'), {
+                retrySameBooking: false, bookingNotSubmitted: true,
+              })
+            }
+            entry = { attempt, fingerprint, inFlight: null, uncertain: false, result: null }
             state.attempts.set(fingerprint, entry)
+            if (attempt.review) state.recovery = entry
           }
+          if (entry.result) return Promise.resolve(entry.result)
           state.active = entry
         }
         if (!entry.inFlight) {
           entry.inFlight = entry.attempt.run().then(function (result) {
             if (validateResult) validateResult(result)
-            if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
+            if (entry.attempt.review) entry.result = result
+            else if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
             entry.uncertain = false
             return result
           }).catch(function (error) {
             if (typeof entry.attempt.isDefinitiveRejection === 'function') {
               entry.uncertain = !entry.attempt.isDefinitiveRejection(error, entry.uncertain)
               error.retrySameBooking = entry.uncertain
-              if (!entry.uncertain) state.attempts.delete(fingerprint)
+              if (!entry.uncertain) {
+                state.attempts.delete(fingerprint)
+                if (state.recovery === entry) state.recovery = null
+              }
             }
             throw error
           }).finally(function () {
-            if (state.active === entry && !entry.uncertain) state.active = null
+            if (state.active === entry) state.active = null
             entry.inFlight = null
           })
         }
@@ -3461,7 +3485,8 @@
       if (paidCallMessage) paidCallMessage.textContent = 'We could not book this call. Please try again.'
     }
 
-    function showPaidSuccess(input, result) {
+    function showPaidSuccess(input, result, review) {
+      const receiptStarterName = review ? review.starterName : settings.starterName
       const timezone = input.timezone || 'UTC'
       const date = new Date(input.start)
       const fields = {
@@ -3471,9 +3496,9 @@
         'start-time': new Intl.DateTimeFormat('en-US', {
           hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short', timeZone: timezone,
         }).format(date),
-        'starter-name': String(settings.starterName || '').trim().split(/\s+/)[0] || 'the Starter',
+        'starter-name': String(receiptStarterName || '').trim().split(/\s+/)[0] || 'the Starter',
         context: String(input.context || '').trim() || 'No message provided.',
-        price: priceText,
+        price: review ? review.priceText : priceText,
       }
       Object.keys(fields).forEach(function (name) {
         popup.querySelectorAll('[schedule-step="success"] [booking-element="' + name + '"]').forEach(function (field) {
@@ -3553,7 +3578,7 @@
       }
       const successText = popup.querySelector('[booking-success-text]')
       if (successText) {
-        successText.textContent = "We'll share your call request with " + (String(settings.starterName || '').trim() || 'the Starter') + " and reach out when it's been confirmed, typically within 48 hours"
+        successText.textContent = "We'll share your call request with " + (String(receiptStarterName || '').trim() || 'the Starter') + " and reach out when it's been confirmed, typically within 48 hours"
       }
       switchStep(popup, 'success')
     }
@@ -3601,7 +3626,12 @@
         const result = await bookingSurfaceLifecycle.runBooking(
           container,
           fingerprint,
-          function () { return createBookingAttempt(bookingInput) },
+          function () {
+            const attempt = createBookingAttempt(bookingInput)
+            attempt.review = JSON.parse(JSON.stringify({ input: bookingInput, card: paymentChoice.selected(),
+              priceText, starterName: settings.starterName || '' }))
+            return attempt
+          },
         )
         if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return result
         pendingBookingInput = null
@@ -3611,10 +3641,11 @@
         setGuestUiVisible(false)
         if (calendarDetails) calendarDetails.resetDetails()
         showPaidSuccess(bookingInput, result)
+        if (bookingSurfaceLifecycle.acknowledgeBooking) bookingSurfaceLifecycle.acknowledgeBooking(container, fingerprint)
         return result
       } catch (error) {
         if (ownsSurface(generation)) {
-          if (error.retrySameBooking === false) {
+          if (error.bookingNotSubmitted || error.retrySameBooking === false) {
             pendingBookingInput = null
             paymentChoice.setPending(false)
             lockAuthoredDetails(false)
@@ -3626,6 +3657,75 @@
       } finally {
         bookingLocks.delete(generation)
       }
+    }
+
+    function bookingRecovery() {
+      return typeof bookingSurfaceLifecycle.getBookingRecovery === 'function'
+        ? bookingSurfaceLifecycle.getBookingRecovery(container) : null
+    }
+
+    function showBookingRecovery(generation, recovery) {
+      if (!ownsSurface(generation) || disposed) return
+      resetPaymentUi()
+      clearPendingPaidSelection()
+      calendarDetails = null
+      clearPaidCalendarSelection = null
+      container.textContent = ''
+      container.setAttribute('data-paid-calendar-state', 'recovery')
+      const panel = document.createElement('div')
+      panel.setAttribute('data-booking-recovery', '')
+      panel.className = 'call-details_layout height-auto'
+      const heading = document.createElement('h2')
+      heading.textContent = 'Check your previous Paid Call request'
+      const details = document.createElement('p')
+      const review = recovery.review
+      const input = review.input
+      const when = new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeStyle: 'short', timeZone: input.timezone }).format(new Date(input.start))
+      details.textContent = (review.starterName || 'The Starter') + ' · ' + when + ' (' + input.timezone + ') · ' + review.priceText +
+        ' · ' + review.card.brand + ' ending in ' + review.card.last4
+      const message = document.createElement('p')
+      message.textContent = 'Message: ' + (input.context || 'No message provided.')
+      const guests = document.createElement('p')
+      guests.textContent = 'Guests: ' + ((input.guest_emails || []).join(', ') || 'None')
+      const status = document.createElement('p')
+      status.setAttribute('role', 'status')
+      status.textContent = 'This request may have been received. Check it before requesting another Paid Call.'
+      const check = buildSiteButton(document, 'Check original request', 'primary')
+      check.wrap.setAttribute('data-booking-recovery-check', '')
+      panel.append(heading, details, message, guests, status, check.wrap)
+      container.appendChild(panel)
+      let busy = false
+      let finished = false
+      check.button.addEventListener('click', async function (event) {
+        event.preventDefault()
+        if (busy || disposed || !ownsSurface(generation)) return
+        if (finished) { await runPaidSelection(generation); return }
+        busy = true
+        setSiteButtonDisabled(check, true)
+        status.textContent = 'Checking your original request…'
+        try {
+          const result = await bookingSurfaceLifecycle.runBooking(container, recovery.fingerprint, function () {
+            throw new Error('The original request is no longer available.')
+          })
+          if (disposed || !ownsSurface(generation)) return
+          showPaidSuccess(input, result, review)
+          bookingSurfaceLifecycle.acknowledgeBooking(container, recovery.fingerprint)
+        } catch (error) {
+          if (disposed || !ownsSurface(generation)) return
+          status.textContent = error.retrySameBooking === false && !error.bookingNotSubmitted
+            ? 'Your previous request was not booked. You can choose a new time.'
+            : 'We could not confirm your original request. Check it again to keep the same request and card.'
+          finished = !bookingRecovery()
+          if (finished) {
+            check.text.textContent = 'Choose a new time'
+            check.button.setAttribute('aria-label', 'Choose a new time')
+          }
+        } finally {
+          busy = false
+          if (!disposed && ownsSurface(generation)) setSiteButtonDisabled(check, false)
+        }
+      })
+      check.button.focus()
     }
 
     async function mountCalendar(generation) {
@@ -3670,6 +3770,8 @@
       if (!slot || !ownsSurface(generation)) return
       const confirmation = ++paidConfirmationSequence
       if (pendingBookingInput) return submitBooking(slot, generation, confirmation)
+      const recovery = bookingRecovery()
+      if (recovery) { showBookingRecovery(generation, recovery); return }
       readBookingDetails()
       const readiness = await getReadiness()
       if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return
@@ -3691,6 +3793,8 @@
     }
 
     async function runPaidSelection(generation) {
+      const recovery = bookingRecovery()
+      if (recovery) { showBookingRecovery(generation, recovery); return }
       try {
         await mountCalendar(generation)
       } catch (error) {
