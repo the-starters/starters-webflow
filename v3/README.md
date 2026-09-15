@@ -4446,3 +4446,16 @@ The frontend remains subject to no-mistakes review and CI before merge/release.
 Backend evidence does not establish Paid settlement, production canaries, or
 completion of the full20-workflow checklist. Historical completed backend
 receipts must remain immutable.
+
+
+### Paid Call card choice and receipt (deployment candidate)
+
+Paid booking now opens the saved-card picker before submission, even when a default card is ready. Confirming a card or saving a new one changes the account default (disclosed in the modal), then returns to the Call review. Only **Request Call** creates the booking. **Change card** reopens payment choices. Back, Escape and payment-dialog dismissal preserve the slot, message and Guests; closing the whole booking clears the draft and cancels local pending work.
+
+The controller adds the missing picker list inside the authored `[popup-stripe-card]` dialog, reuses the existing `[pm-use-this]` and `[save-card-btn]` actions, and hides their inactive parent footer. The earlier Webflow blanket CSS rule hiding the Use-card footer is superseded by the controller's mode-specific inline display. No separate custom script snippet is required. Payment typography uses rem values; Stripe loads the site's Inter font and resolves page rem sizes to pixels inside its secure frames.
+
+New paid commands send `expected_payment_method_id`. Receipt copy uses only the canonical response's `booking.payment_method` when its identifier matches `booking.payment_method_id` and `last4` is a four-digit string. Missing/malformed metadata preserves successful booking with generic text. A default-change rejection requires another card review.
+
+**Do not release the frontend before the backend contract is deployed and tested.** The backend XanoScript deployment candidate and remaining runtime checks are documented in [the backend deployment guide](xano-workspace/PAID-CALL-CARD-SELECTION.md). Committing these files does not update Xano. This implementation does not change pricing or charge timing.
+
+Verification: `node --test v3/paid-call-brand-payment.test.js v3/dashboard-call-payment.test.js` and `node v3/browser-tests/booking-details.browser.cjs`. The browser fixture uses real controllers and synthetic API/Stripe boundaries; it cannot establish provider behavior. The previous auto-book-after-save tests have been replaced with explicit review and cancellation cases at this browser boundary.

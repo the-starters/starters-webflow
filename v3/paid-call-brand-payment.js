@@ -557,6 +557,7 @@
     if (!isCurrent()) return false
     if (readiness.environment !== settings.environment) throw new Error('Card setup environment changed')
     if (!readiness.bookable) throw new Error('The payment method is not ready')
+    paymentAttempt.paymentMethodId = paymentMethod
     paymentAttempt.setupAttempt = null
     paymentAttempt.defaultAttempt = null
     paymentAttempt.defaultPaymentMethod = ''
@@ -642,7 +643,7 @@
         })
         if (!done || !isCurrent()) return
         status.textContent = 'Card saved.'
-        if (typeof settings.onSaved === 'function') await settings.onSaved()
+        if (typeof settings.onSaved === 'function') await settings.onSaved(attempt.paymentMethodId)
       } catch (failure) {
         if (!isCurrent()) return
         paintCardError(error, failure.message || 'Card setup failed')
@@ -740,6 +741,10 @@
         row.setAttribute('tabindex', '0')
         row.setAttribute('aria-label', card.brand + ' ending in ' + card.last4 +
           ', expires ' + card.exp_month + '/' + card.exp_year + (card.is_default ? ', default' : ''))
+        const brand = row.querySelector('[data-payment-card-brand]')
+        if (brand) brand.textContent = card.brand
+        const expiry = row.querySelector('[data-payment-card-expiry]')
+        if (expiry) expiry.textContent = ' · Expires ' + card.exp_month + '/' + card.exp_year
         const last4 = row.querySelector('[last-numbers]')
         if (last4) last4.textContent = card.last4
         const badge = row.querySelector('[tag-default]')
@@ -798,7 +803,7 @@
         verifiedDefaultId = state.selectedId
         render()
         status.textContent = 'Default card updated.'
-        if (typeof settings.onSaved === 'function') await settings.onSaved(state.selectedId)
+        if (typeof settings.onSaved === 'function') await settings.onSaved(state.selectedId, state)
         verifiedDefaultId = ''
       } catch (error) {
         if (!disposed && ownsContext()) status.textContent = verifiedDefaultId
@@ -846,6 +851,7 @@
       timezone,
       idempotency_key: validateKey(idempotencyKey),
     }
+    if (source.expected_payment_method_id !== undefined) payload.expected_payment_method_id = validatePaymentMethodId(source.expected_payment_method_id)
     const topic = String(source.topic || '').trim()
     const context = String(source.context || '').trim()
     if (topic) payload.topic = topic
@@ -2695,27 +2701,51 @@
     }
   }
 
+  function installPaymentModalStyles(document) {
+    if (!document || !document.head || !document.querySelector ||
+        document.querySelector('[data-payment-modal-styles]')) return
+    const style = document.createElement('style')
+    style.setAttribute('data-payment-modal-styles', '')
+    style.textContent = `
+      [popup-stripe-card] { font-family: "Inter Variable", Inter, sans-serif; }
+      [popup-stripe-card] [data-payment-card-label],
+      [popup-stripe-card] [booking-popup-title] { font-size: 1.125rem; font-weight: 500; line-height: 1; }
+      [popup-stripe-card] [data-payment-entry-heading] { margin: 0; font-size: 1.25rem; font-weight: 500; line-height: 1.7; }
+      [popup-stripe-card] [data-payment-field-label] { font-size: 1rem; font-weight: 500; line-height: 1.5; }
+      [popup-stripe-card] .button_main-text { font-family: "Inter Variable", Inter, sans-serif; font-size: .875rem; font-weight: 700; line-height: 1; letter-spacing: .02em; }
+      [popup-stripe-card] [save-card-btn][aria-disabled="true"] .button_main-element,
+      [popup-stripe-card] [pm-use-this][aria-disabled="true"] .button_main-element { background: #e5e5e5; border-color: #e5e5e5; color: #a3a3a3; }
+      [popup-stripe-card] [aria-disabled="true"] { cursor: not-allowed; }
+    `
+    document.head.appendChild(style)
+  }
+
   function secureCardMounts(document, host) {
+    installPaymentModalStyles(document)
     const mounts = {}
     host.textContent = ''
     host.style.display = 'grid'
     host.style.gridTemplateColumns = 'minmax(0, 1fr) minmax(0, 1fr)'
-    host.style.gap = '12px'
+    host.style.gap = '1.5rem 1.25rem'
     const heading = document.createElement('h3')
+    heading.setAttribute('data-payment-entry-heading', '')
     heading.textContent = 'Add payment method'
     heading.style.gridColumn = '1 / -1'
     host.appendChild(heading)
     ;[['cardNumber', 'Card number'], ['cardExpiry', 'Expiry date'], ['cardCvc', 'CVC']].forEach(function (item) {
       const group = document.createElement('div')
       group.setAttribute('data-payment-field', item[0])
+      group.style.minWidth = '0'
       if (item[0] === 'cardNumber') group.style.gridColumn = '1 / -1'
       const label = document.createElement('div')
+      label.setAttribute('data-payment-field-label', '')
       label.textContent = item[1]
-      label.style.marginBottom = '6px'
+      label.style.marginBottom = '.75rem'
       const mount = document.createElement('div')
       mount.setAttribute('data-stripe-field', item[0])
-      mount.style.border = '1px solid #d9dcd7'
-      mount.style.padding = '12px'
+      mount.style.border = '1px solid #eee'
+      mount.style.borderRadius = '.25rem'
+      mount.style.padding = '.75rem'
       group.appendChild(label)
       group.appendChild(mount)
       host.appendChild(group)
@@ -2730,10 +2760,47 @@
         names.some(function (name) { return !mounts || !mounts[name] })) {
       throw new Error('The secure payment field mounts are incomplete')
     }
-    const elements = stripe.elements()
+    const elements = stripe.elements({ fonts: [{
+      family: 'Inter Variable',
+      src: 'url(https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6a9be2f67d467a1616bfaccd_InterVariablelatin.woff2)',
+      weight: '100 900', style: 'normal', display: 'swap',
+    }] })
     const fields = {}
     const states = {}
     let disposed = false
+    const document = mounts.cardNumber.ownerDocument
+    const view = document && document.defaultView
+    let fontSize
+    let sizeObserver
+    let sizeProbe
+    function pageRemPixels() {
+      const value = view && typeof view.getComputedStyle === 'function' && document.documentElement
+        ? parseFloat(view.getComputedStyle(document.documentElement).fontSize) : 16
+      return Number.isFinite(value) && value > 0 ? value : 16
+    }
+    function inputStyle(size) {
+      return {
+        base: { color: '#1e211e', fontFamily: '"Inter Variable", Inter, sans-serif',
+          fontWeight: '400', fontSize: size + 'px', lineHeight: (Math.round(size * 1.6 * 1000) / 1000) + 'px',
+          letterSpacing: '-0.02em', '::placeholder': { color: 'rgba(30,33,30,.4)' } },
+        invalid: { color: '#b42318' },
+      }
+    }
+    function syncTypography() {
+      if (disposed) return
+      const nextSize = pageRemPixels()
+      if (nextSize === fontSize) return
+      fontSize = nextSize
+      names.forEach(function (name) {
+        if (fields[name] && typeof fields[name].update === 'function') fields[name].update({ style: inputStyle(fontSize) })
+      })
+    }
+    function stopTypography() {
+      if (sizeObserver) sizeObserver.disconnect()
+      if (sizeProbe) sizeProbe.remove()
+      if (view && typeof view.removeEventListener === 'function') view.removeEventListener('resize', syncTypography)
+    }
+    fontSize = pageRemPixels()
     const publish = function () {
       if (disposed || typeof onChange !== 'function') return
       const failed = names.find(function (name) { return states[name].error })
@@ -2746,10 +2813,7 @@
     try {
       names.forEach(function (name) {
         const field = elements.create(name, {
-          style: {
-            base: { color: '#1f211d', '::placeholder': { color: '#74786f' } },
-            invalid: { color: '#b42318' },
-          },
+          style: inputStyle(fontSize),
         })
         fields[name] = field
         field.on('change', function (event) {
@@ -2759,8 +2823,19 @@
         })
         field.mount(mounts[name])
       })
+      if (view && typeof view.ResizeObserver === 'function' && document.body) {
+        // Measuring one page rem also catches stylesheet changes without a window resize.
+        sizeProbe = document.createElement('span')
+        sizeProbe.setAttribute('aria-hidden', 'true')
+        sizeProbe.style.cssText = 'position:absolute;width:1rem;height:0;overflow:hidden;visibility:hidden;pointer-events:none;'
+        document.body.appendChild(sizeProbe)
+        sizeObserver = new view.ResizeObserver(syncTypography)
+        sizeObserver.observe(sizeProbe)
+      }
+      if (view && typeof view.addEventListener === 'function') view.addEventListener('resize', syncTypography)
     } catch (error) {
       disposed = true
+      stopTypography()
       Object.keys(fields).forEach(function (name) { fields[name].destroy() })
       throw error
     }
@@ -2777,6 +2852,7 @@
       destroy: function () {
         if (disposed) return
         disposed = true
+        stopTypography()
         names.forEach(function (name) { fields[name].destroy() })
       },
     }
@@ -2909,6 +2985,201 @@
     return true
   }
 
+  // One owner spans the picker, secure entry and booking review. Closing a
+  // payment step never clears the calendar's draft or submits a booking.
+  function createBookingPaymentChoice(settings) {
+    const document = global.document
+    const marker = document.querySelector('[popup-stripe-card]')
+    const modal = marker && (marker.closest('[data-modal-target]') || marker)
+    const host = modal && modal.querySelector('[card-element]')
+    const use = modal && modal.querySelector('[pm-use-this]')
+    const save = modal && modal.querySelector('[save-card-btn]')
+    if (!host || !use || !save) throw new Error('The authored payment form is incomplete')
+    installPaymentModalStyles(document)
+    let generation = 0
+    let disposed = false
+    let mode = 'closed'
+    let environment = ''
+    let selected = null
+    let picker = null
+    let form = null
+    let busy = false
+    const generated = []
+    const displays = new Map()
+    function display(node, value) {
+      if (!node) return
+      if (!displays.has(node)) displays.set(node, node.getAttribute('style'))
+      node.style.setProperty('display', value, 'important')
+    }
+    const panel = document.createElement('div')
+    panel.setAttribute('data-booking-payment-picker', '')
+    const disclosure = document.createElement('p')
+    disclosure.textContent = 'The card you confirm becomes your default for future payments.'
+    const list = document.createElement('div')
+    list.setAttribute('customer-cards-list', '')
+    const template = document.createElement('div')
+    template.setAttribute('pm-card-template', '')
+    template.innerHTML = '<span data-payment-card-brand></span> ending in <span last-numbers></span><span data-payment-card-expiry></span><span tag-default> Default</span>'
+    applyStyles(template, { padding: '1rem', border: '1px solid #ddd', borderRadius: '.25rem', marginBottom: '.75rem' })
+    host.parentNode.insertBefore(disclosure, host)
+    generated.push(disclosure)
+    panel.append(template, list)
+    const add = buildSiteButton(document, 'Add payment method', 'secondary')
+    const retry = buildSiteButton(document, 'Retry loading cards', 'secondary')
+    panel.append(add.wrap, retry.wrap)
+    host.parentNode.insertBefore(panel, host)
+    generated.push(panel)
+    const back = buildSiteButton(document, 'Back', 'secondary')
+    back.wrap.setAttribute('data-booking-payment-back', '')
+    use.parentNode.insertBefore(back.wrap, use)
+    generated.push(back.wrap)
+    const review = document.createElement('div')
+    review.setAttribute('data-booking-payment-review', '')
+    const summary = document.createElement('p')
+    summary.setAttribute('role', 'status')
+    const change = buildSiteButton(document, 'Change card', 'secondary')
+    change.wrap.setAttribute('data-booking-payment-change', '')
+    review.append(summary, change.wrap)
+    const details = settings.popup.querySelector('[data-paid-calendar-element="details-fields"]')
+    ;(details || settings.popup.querySelector('[nylas-container]')).appendChild(review)
+    generated.push(review)
+    display(review, 'none')
+    const current = token => !disposed && generation === token && settings.isCurrent()
+    function showDialog() {
+      const owner = global.lumos && global.lumos.modal && global.lumos.modal.list && global.lumos.modal.list['popup-stripe-card']
+      if (owner && typeof owner.open === 'function') owner.open()
+      else if (typeof modal.showModal === 'function') { if (!modal.open) modal.showModal() }
+      else throw new Error('The payment dialog is unavailable')
+    }
+    function returnToReview() {
+      mode = 'closed'
+      generation += 1
+      if (picker) { picker.dispose(); picker = null }
+      if (form) { form.dispose(); form = null }
+      busy = false
+      const owner = global.lumos && global.lumos.modal && global.lumos.modal.list && global.lumos.modal.list['popup-stripe-card']
+      if (owner && typeof owner.close === 'function') owner.close()
+      else if (typeof modal.close === 'function') modal.close()
+      if (selected) {
+        summary.textContent = selected.brand + ' ending in ' + selected.last4 + ' will be used for this call.'
+        display(review, '')
+      }
+      const focus = selected ? change.button : settings.popup.querySelector('[data-paid-calendar-element="confirm"] button')
+      if (focus) focus.focus()
+    }
+    function paintMode() {
+      const adding = mode === 'entry'
+      display(panel, adding ? 'none' : 'block')
+      display(host, adding ? 'grid' : 'none')
+      display(save.parentNode, adding ? 'flex' : 'none')
+      display(use.parentNode, adding ? 'none' : 'flex')
+      display(use, adding ? 'none' : '')
+      use.hidden = adding
+      display(back.wrap, adding ? 'none' : '')
+      for (const marker of ['[card-error]', '[save-card-status]']) {
+        const node = modal.querySelector(marker)
+        if (node) { node.textContent = ''; display(node, adding ? '' : 'none') }
+      }
+      modal.setAttribute('data-booking-payment-mode', mode)
+    }
+    async function showPicker() {
+      const token = ++generation
+      mode = 'picker'
+      busy = false
+      if (form) { form.dispose(); form = null }
+      if (picker) picker.dispose()
+      paintMode()
+      picker = installSavedCardPicker(modal, {
+        environment, isCurrent: () => current(token) && mode === 'picker',
+        acquire: () => { if (busy) return false; busy = true; add.button.disabled = true; return true },
+        release: () => { busy = false; add.button.disabled = false },
+        onSaved: async (id, state) => {
+          const readiness = await getReadiness()
+          if (!current(token)) return
+          if (readiness.environment !== environment || !readiness.bookable) throw new Error('The selected card is not ready')
+          selected = state.cards.find(card => card.id === id && card.is_default)
+          if (!selected) throw new Error('The selected card could not be verified')
+          returnToReview()
+        },
+      })
+      display(retry.wrap, 'none')
+      const loaded = await picker.load()
+      if (!current(token)) return
+      display(retry.wrap, loaded ? 'none' : '')
+      add.button.disabled = false
+      const first = list.querySelector('[aria-checked="true"]') || list.querySelector('[role="radio"]')
+      ;(first || add.button).focus()
+    }
+    async function addCard(event) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (busy || mode !== 'picker' || !settings.isCurrent()) return
+      const token = ++generation
+      mode = 'entry'
+      if (picker) { picker.dispose(); picker = null }
+      paintMode()
+      try {
+        const stripe = await stripeForPaymentEnvironment(environment)
+        if (!current(token)) return
+        form = installCardSetupForm(modal, {
+          stripe, environment, brandName: settings.brandName, brandEmail: settings.brandEmail,
+          isCurrent: () => current(token) && mode === 'entry',
+          onBack: showPicker,
+          onSaved: async methodId => {
+            const result = await getSavedPaymentMethods(environment)
+            if (!current(token)) return
+            const card = result.items.find(card => card.id === methodId && card.is_default)
+            if (!card) throw new Error('The added card could not be verified. Please try again.')
+            selected = card
+            returnToReview()
+          },
+        })
+      } catch (error) {
+        if (current(token)) paintCardError(modal.querySelector('[card-error]'), error.message)
+      }
+    }
+    function dismiss(event) {
+      if (mode === 'closed' || disposed) return
+      if (event.type === 'click' && !event.target.closest('[data-modal-close], [popup-stripe-card-close]')) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (mode === 'entry') showPicker()
+      else returnToReview()
+    }
+    add.button.addEventListener('click', addCard)
+    retry.button.addEventListener('click', showPicker)
+    back.button.addEventListener('click', returnToReview)
+    change.button.addEventListener('click', () => open(environment))
+    modal.addEventListener('click', dismiss, true)
+    modal.addEventListener('cancel', dismiss)
+    function closed() { if (mode !== 'closed') returnToReview() }
+    modal.addEventListener('close', closed)
+    async function open(nextEnvironment) {
+      if (disposed || !settings.isCurrent()) return
+      if (!['test', 'live'].includes(nextEnvironment)) throw new Error('Payment environment is invalid')
+      if (environment && environment !== nextEnvironment) selected = null
+      environment = nextEnvironment
+      showDialog()
+      await showPicker()
+    }
+    return {
+      open,
+      selected: () => selected && Object.assign({ environment }, selected),
+      invalidate: () => { selected = null; summary.textContent = 'Your payment method changed. Please choose a card again.'; display(review, '') },
+      dispose: () => {
+        if (disposed) return
+        returnToReview()
+        disposed = true
+        modal.removeEventListener('click', dismiss, true)
+        modal.removeEventListener('cancel', dismiss)
+        modal.removeEventListener('close', closed)
+        modal.removeAttribute('data-booking-payment-mode')
+        generated.forEach(node => node.remove())
+        displays.forEach((style, node) => { if (style === null) node.removeAttribute('style'); else node.setAttribute('style', style) })
+      },
+    }
+  }
+
   function installPaidBookingController(options) {
     const settings = options || {}
     const config = settings.config
@@ -2959,17 +3230,7 @@
     if (bindings.some(function (binding) { return !binding.item || !binding.price })) return false
     if (guestUiEnabled) installGuestFormSubmitGuard(guestWrapper)
 
-    let cardElement = null
-    let secureFields = null
-    let cardComplete = false
-    let cardSaveBusy = false
-    let cardSetupInstalled = false
-    let cardSetupInstallPromise = null
-    const paymentAttempts = new Map()
-    let paymentUiGeneration = 0
-    let pendingPaidSlot = null
-    let pendingPaidSlotGeneration = 0
-    let pendingPaidConfirmation = 0
+    let paymentChoice = null
     let clearPaidCalendarSelection = null
     let calendarDetails = null
     let paidClickLock = false
@@ -2997,29 +3258,6 @@
         error: document.querySelector('[popup-stripe-card] [card-error], [card-error]'),
         status: document.querySelector('[popup-stripe-card] [save-card-status], [save-card-status]'),
       }
-    }
-
-    /**
-     * The card dialog's own dismissal controls, and only those.
-     *
-     * `popup-stripe-card-close` is authored on the booking dialog's backdrop as
-     * well as on the card dialog's X and its backdrop, so matching that marker
-     * across the whole document let a backdrop dismissal of the *booking*
-     * modal cancel an in-progress card setup. Containment decides instead: the
-     * scope is the card dialog, widened to the `[data-modal-target]` that owns the
-     * marker so a Designer re-nest onto a child cannot silently unbind the
-     * dialog's own backdrop. (`closest` returns the marker itself on the
-     * authored page, where the marker is the dialog.) A page that nested the
-     * card dialog inside the booking dialog would have one dialog, not two, so
-     * the cross-dialog concern cannot arise from the widening.
-     */
-    function paymentCloseControls() {
-      const marker = document.querySelector('[popup-stripe-card]')
-      if (!marker) return []
-      const owner = typeof marker.closest === 'function' ? marker.closest('[data-modal-target]') : null
-      const scope = owner || marker
-      if (typeof scope.querySelectorAll !== 'function') return []
-      return Array.from(scope.querySelectorAll('[data-modal-close], [popup-stripe-card-close]'))
     }
 
     function installPaymentAccessibility() {
@@ -3072,41 +3310,14 @@
       if (staleAction && staleAction.style) staleAction.style.display = 'none'
     }
 
-    function updatePaymentSaveState() {
-      const save = paymentNodes().save
-      if (!save) return
-      const attempt = paymentAttempts.get(paymentUiGeneration)
-      const disabled = cardSaveBusy || (!cardComplete && !(attempt && attempt.ready))
-      save.disabled = disabled
-      if (save.setAttribute) save.setAttribute('aria-disabled', String(disabled))
-      if (save.querySelectorAll) save.querySelectorAll('button').forEach(function (button) { button.disabled = disabled })
-    }
-
     function resetPaymentUi() {
-      const previousGeneration = paymentUiGeneration
-      paymentUiGeneration += 1
-      paymentAttempts.delete(previousGeneration)
-      cardComplete = false
-      cardSaveBusy = false
-      const nodes = paymentNodes()
-      paintCardError(nodes.error, '')
-      if (nodes.status) nodes.status.textContent = ''
-      if (secureFields) secureFields.clear()
-      updatePaymentSaveState()
+      if (paymentChoice) { paymentChoice.dispose(); paymentChoice = null }
     }
 
     function clearPendingPaidSelection() {
-      pendingPaidSlot = null
-      pendingPaidSlotGeneration = 0
-      pendingPaidConfirmation = 0
       if (clearPaidCalendarSelection) clearPaidCalendarSelection()
       resetGuestUi()
       setGuestUiVisible(false)
-    }
-
-    function cancelPaymentUi() {
-      resetPaymentUi()
-      clearPendingPaidSelection()
     }
 
     function restoreReceipt() {
@@ -3195,7 +3406,7 @@
       if (paidCallMessage) paidCallMessage.textContent = 'We could not book this call. Please try again.'
     }
 
-    function showPaidSuccess(input) {
+    function showPaidSuccess(input, result) {
       const timezone = input.timezone || 'UTC'
       const date = new Date(input.start)
       const fields = {
@@ -3270,11 +3481,15 @@
       popup.querySelectorAll('[schedule-step="success"] [booking-element="paid-meeting"]').forEach(function (element) {
         element.textContent = 'Paid'
       })
-      // Do not display the Designer placeholder card digits. The canonical
-      // readiness contract intentionally returns no card details, so generic
-      // truthful copy is safer than stale or guessed last-four digits.
+      // Only the canonical booking snapshot can identify the receipt's card.
+      const booking = result && result.booking
+      const card = booking && booking.payment_method
+      const last4 = card && card.id === booking.payment_method_id &&
+        typeof card.last4 === 'string' && /^\d{4}$/.test(card.last4) ? card.last4 : ''
       if (paidCallMessage) {
-        paidCallMessage.textContent = 'Your saved payment method will be used for this call.'
+        paidCallMessage.textContent = last4
+          ? 'Your card ending in ' + last4 + ' will be used for this call.'
+          : 'Your saved payment method will be used for this call.'
         if (paidCallMessage.style) paidCallMessage.style.display = ''
         if (typeof paidCallMessage.setAttribute === 'function') {
           paidCallMessage.setAttribute('aria-hidden', 'false')
@@ -3309,6 +3524,7 @@
       ) return
       const details = readBookingDetails()
       const bookingInput = {
+        expected_payment_method_id: paymentChoice.selected().id,
         starter_slug: settings.starterSlug,
         config_id: config.config_id,
         start: slot.start,
@@ -3332,10 +3548,7 @@
         resetGuestUi()
         setGuestUiVisible(false)
         if (calendarDetails) calendarDetails.resetDetails()
-        pendingPaidSlot = null
-        pendingPaidSlotGeneration = 0
-        pendingPaidConfirmation = 0
-        showPaidSuccess(bookingInput)
+        showPaidSuccess(bookingInput, result)
         return result
       } finally {
         bookingLocks.delete(generation)
@@ -3365,9 +3578,6 @@
           if (!ownsSurface(generation)) return
           paidConfirmationSequence += 1
           if (!slot) {
-            pendingPaidSlot = null
-            pendingPaidSlotGeneration = 0
-            pendingPaidConfirmation = 0
             setGuestUiVisible(false)
             return
           }
@@ -3383,121 +3593,27 @@
       return ownsSurface(generation) ? result : undefined
     }
 
-    async function installCardSetup(readiness) {
-      if (disposed || cardSetupInstalled) return
-      if (!readiness || !['test', 'live'].includes(readiness.environment)) throw new Error('Card setup environment is invalid')
-      if (!cardSetupInstallPromise) cardSetupInstallPromise = (async function () {
-        const nodes = paymentNodes()
-        const cardMount = nodes.mount
-        const save = nodes.save
-        const errorText = nodes.error
-        const statusText = nodes.status
-        if (!cardMount || !save || !errorText || !statusText) {
-          throw new Error('The authored payment form is incomplete')
-        }
-        const Stripe = await loadStripe()
-        if (disposed) return
-        const stripe = Stripe(readiness.environment === 'test' ? STRIPE_PUBLIC_KEY_TEST : STRIPE_PUBLIC_KEY_LIVE)
-        secureFields = mountSecureCardFields(stripe, secureCardMounts(document, cardMount), function (event) {
-          if (disposed) return
-          cardComplete = event.complete
-          paintCardError(errorText, event.error ? event.error.message : '')
-          updatePaymentSaveState()
-        })
-        cardElement = secureFields.card
-        updatePaymentSaveState()
-        listen(save, 'click', async function (event) {
-          event.preventDefault()
-          event.stopImmediatePropagation()
-          if (save.disabled) return
-          const attemptGeneration = paymentUiGeneration
-          let paymentAttempt = paymentAttempts.get(attemptGeneration)
-          if (!paymentAttempt) {
-            paymentAttempt = {
-              defaultAttempt: null,
-              defaultPaymentMethod: '',
-              ready: false,
-              setupAttempt: null,
-            }
-            paymentAttempts.set(attemptGeneration, paymentAttempt)
-          }
-          const paymentAlreadyReady = paymentAttempt.ready
-          if (!paymentAlreadyReady && !cardComplete) {
-            paintCardError(errorText, 'Enter complete card details.')
-            statusText.textContent = ''
-            return
-          }
-          cardSaveBusy = true
-          updatePaymentSaveState()
-          paintCardError(errorText, '')
-          statusText.textContent = paymentAlreadyReady ? 'Sending...' : 'Saving...'
-          try {
-            if (!paymentAlreadyReady) {
-              const completed = await completeCardSetupAttempt(paymentAttempt, {
-                stripe,
-                environment: readiness.environment,
-                card: cardElement,
-                brandName: settings.brandName,
-                brandEmail: settings.brandEmail,
-                isCurrent: function () { return attemptGeneration === paymentUiGeneration },
-              })
-              if (!completed) return
-              statusText.textContent = 'Card saved. Sending...'
-            }
-            if (attemptGeneration !== paymentUiGeneration) return
-            await resumePendingPaidBooking()
-            if (attemptGeneration !== paymentUiGeneration) return
-            statusText.textContent = 'Card saved.'
-            const close = paymentCloseControls()[0]
-            if (close && typeof close.click === 'function') close.click()
-          } catch (error) {
-            if (attemptGeneration !== paymentUiGeneration) return
-            paintCardError(errorText, error.message || 'Card setup failed')
-            statusText.textContent = ''
-          } finally {
-            if (attemptGeneration === paymentUiGeneration) {
-              cardSaveBusy = false
-              updatePaymentSaveState()
-            }
-          }
-        }, true)
-        cardSetupInstalled = true
-      })()
-      try {
-        await cardSetupInstallPromise
-      } catch (error) {
-        cardSetupInstallPromise = null
-        throw error
-      }
-    }
-
-    async function resumePendingPaidBooking() {
-      const slot = pendingPaidSlot
-      const generation = pendingPaidSlotGeneration
-      const confirmation = pendingPaidConfirmation
-      if (!slot || !generation || !ownsSurface(generation)) return
-      await submitBooking(slot, generation, confirmation)
-    }
-
     async function confirmPaidSlot(slot, generation) {
       if (!slot || !ownsSurface(generation)) return
       readBookingDetails()
       const confirmation = ++paidConfirmationSequence
-      pendingPaidSlot = slot
-      pendingPaidSlotGeneration = generation
-      pendingPaidConfirmation = confirmation
       const readiness = await getReadiness()
       if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return
-      if (readiness.bookable) {
-        await submitBooking(slot, generation, confirmation)
+      if (!paymentChoice) paymentChoice = createBookingPaymentChoice({
+        popup, brandName: settings.brandName, brandEmail: settings.brandEmail,
+        isCurrent: () => !disposed && ownsSurface(generation),
+      })
+      const selected = paymentChoice.selected()
+      if (!selected || selected.environment !== readiness.environment || !readiness.bookable) {
+        await paymentChoice.open(readiness.environment)
         return
       }
-      await installCardSetup(readiness)
-      if (!ownsSurface(generation) || confirmation !== paidConfirmationSequence) return
-      resetPaymentUi()
-      const openCard = document.querySelector('[popup-stripe-card-open]')
-      if (!openCard) throw new Error('The payment form opener is unavailable')
-      openCard.click()
+      try {
+        await submitBooking(slot, generation, confirmation)
+      } catch (error) {
+        if (ownsSurface(generation) && /payment_method|payment method|selected card/i.test(String(error.data && error.data.code) + ' ' + String(error.data && error.data.message) + ' ' + (error.message || ''))) paymentChoice.invalidate()
+        throw error
+      }
     }
 
     async function runPaidSelection(generation) {
@@ -3566,39 +3682,14 @@
       })
     }
 
-    paymentCloseControls().forEach(function (control) {
-      if (typeof control.addEventListener === 'function') {
-        listen(control, 'click', cancelPaymentUi)
-      }
-    })
-
-    const paymentModal = document.querySelector('[popup-stripe-card]')
-    if (paymentModal && typeof paymentModal.addEventListener === 'function') {
-      listen(paymentModal, 'cancel', cancelPaymentUi)
-    }
-
-    if (typeof global.addEventListener === 'function') {
-      listen(global, 'modal-close', function (event) {
-        const modal = event && event.detail && event.detail.modal
-        if (
-          modal === 'popup-stripe-card' ||
-          (modal && typeof modal.hasAttribute === 'function' && modal.hasAttribute('popup-stripe-card'))
-        ) cancelPaymentUi()
-      })
-    }
-
     if (!bookingSurfaceLifecycle.register(popup, container, resetBookingUi, 'paid')) return false
     paidBookingInstallations.set(popup, function () {
       restoreReceipt()
       if (paidCallMessage) paidCallMessage.textContent = authoredPaidCallText
       disposed = true
-      cancelPaymentUi()
+      resetPaymentUi()
       listeners.forEach(remove => remove())
-      if (secureFields) {
-        secureFields.destroy()
-        secureFields = null
-        cardElement = null
-      }
+
     })
     installPaymentAccessibility()
     bookingSurfaceLifecycle.reset(popup)
@@ -3641,6 +3732,7 @@
   const api = {
     paintCardError,
     labelCardSaveControl,
+    installPaymentModalStyles,
     secureCardMounts,
     mountSecureCardFields,
     SETUP_PATH,
